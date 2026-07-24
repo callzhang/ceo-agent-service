@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import shlex
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -10,7 +11,6 @@ import pytest
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsCalendarEvent
-from app.prompt import LinkedDocumentContext
 from app.store import AutoReplyStore, ReplyTask
 from app.universal_consumer import UniversalConsumerOutcome, UniversalConsumerResult
 from app.universal_context import (
@@ -330,34 +330,29 @@ def test_universal_reply_includes_only_explicitly_quoted_minutes_target() -> Non
     ]
 
 
-def test_universal_worker_injects_service_read_file_body_before_planning(
+def test_universal_worker_passes_material_references_without_reading_bodies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     worker = make_worker(tmp_path)
-    trigger = message("[文件] MorningStar复盘.docx")
     file_reference = message(
-        "[文件] MorningStar复盘.docx fileId: file-1",
+        "材料在这里：https://alidocs.dingtalk.com/i/nodes/NZQYprEoWoEOXajDiBrvmqyEJ1waOeDk",
         message_id="msg-file",
     )
-    stale_reply = message(
-        "我这边现在读不到这份 MorningStar复盘.docx 的正文",
-        message_id="msg-stale",
+    old_unrelated_reference = message(
+        "之前别的材料：https://alidocs.dingtalk.com/i/nodes/OLDunrelatedDocNode000000000000000000",
+        message_id="msg-old-file",
+    )
+    trigger = message(
+        "@Derek Zen(磊哥) 请审核这份材料",
+        message_id="msg-trigger",
+    ).model_copy(
+        update={
+            "quoted_message_id": "msg-file",
+            "quoted_content": file_reference.content,
+        }
     )
     consumer = CapturingConsumer()
-    document_reader_calls = []
     monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
-
-    def fake_read_documents(messages, context_messages):
-        document_reader_calls.append((messages, context_messages))
-        return [
-            LinkedDocumentContext(
-                url="https://alidocs.dingtalk.com/i/nodes/file-1",
-                title="MorningStar复盘",
-                markdown="核心问题是 owner 决策链过长。",
-            )
-        ]
-
-    monkeypatch.setattr(worker, "_read_calendar_linked_documents", fake_read_documents)
     monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
     monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
 
@@ -365,16 +360,65 @@ def test_universal_worker_injects_service_read_file_body_before_planning(
         conversation(),
         reply_task(trigger),
         trigger,
-        [file_reference, stale_reply, trigger],
-        [stale_reply, trigger],
+        [old_unrelated_reference, file_reference, trigger],
+        [old_unrelated_reference, file_reference, trigger],
     )
 
-    assert document_reader_calls[0][1] == [file_reference, stale_reply, trigger]
-    trusted = consumer.contexts[0].context_messages[-1]
-    assert trusted.open_message_id.endswith(":trusted-document-1")
-    assert "必须据此处理，不要只看文件名" in trusted.content
-    assert "owner 决策链过长" in trusted.content
-    assert file_reference not in consumer.contexts[0].context_messages
+    assert not hasattr(worker, "_read_calendar_linked_documents")
+    context = consumer.contexts[0]
+    assert all(
+        ":trusted-document-" not in message.open_message_id
+        for message in context.context_messages
+    )
+    assert context.material_references
+    assert context.material_references[0].kind == "dingtalk_doc"
+    assert context.material_references[0].reference == (
+        "https://alidocs.dingtalk.com/i/nodes/NZQYprEoWoEOXajDiBrvmqyEJ1waOeDk"
+    )
+    assert context.material_references[0].read_command == (
+        "dws doc info --node https://alidocs.dingtalk.com/i/nodes/"
+        "NZQYprEoWoEOXajDiBrvmqyEJ1waOeDk --format json"
+    )
+    assert all(
+        reference.reference
+        != "https://alidocs.dingtalk.com/i/nodes/OLDunrelatedDocNode000000000000000000"
+        for reference in context.material_references
+    )
+
+
+def test_default_material_read_command_shell_quotes_unsafe_references() -> None:
+    unsafe_doc_url = "https://alidocs.dingtalk.com/i/nodes/abc;touch /tmp/pwn"
+    unsafe_minutes_id = "minutes-1;touch /tmp/pwn"
+    unsafe_lark_url = "https://example.larksuite.com/docx/abc;touch /tmp/pwn"
+
+    assert DingTalkAutoReplyWorker._default_material_read_command(
+        "dingtalk_doc", unsafe_doc_url
+    ) == f"dws doc info --node {shlex.quote(unsafe_doc_url)} --format json"
+    assert DingTalkAutoReplyWorker._default_material_read_command(
+        "dingtalk_minutes", unsafe_minutes_id
+    ) == f"dws minutes get info --id {shlex.quote(unsafe_minutes_id)} --format json"
+    assert DingTalkAutoReplyWorker._default_material_read_command(
+        "lark_doc", unsafe_lark_url
+    ) == (
+        "lark-cli docs +fetch "
+        f"--doc {shlex.quote(unsafe_lark_url)} "
+        "--doc-format markdown --format json --as bot"
+    )
+
+
+def test_referenced_file_read_command_shell_quotes_unsafe_file_id() -> None:
+    message_with_unsafe_file_id = message(
+        "[文件] quote.xlsx fileId: file-1;touch /tmp/pwn",
+        message_id="msg-file",
+    )
+
+    assert DingTalkAutoReplyWorker._referenced_file_read_command(
+        message_with_unsafe_file_id
+    ) == (
+        "dws drive download --node "
+        f"{shlex.quote('file-1;touch')} "
+        "--output <local-path> --format json"
+    )
 
 
 def test_universal_worker_injects_task_details_before_planning(
@@ -420,7 +464,6 @@ def test_universal_worker_injects_task_details_before_planning(
     trigger = message("这个任务现在是什么状态？")
     consumer = CapturingConsumer()
     monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(worker, "_read_calendar_linked_documents", lambda *_: [])
     monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
     monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
 
@@ -450,7 +493,6 @@ def test_universal_worker_freezes_image_content_hash_not_local_path(
     image_path.write_bytes(b"trusted-image-content")
     consumer = CapturingConsumer()
     monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(worker, "_read_calendar_linked_documents", lambda *_: [])
     monkeypatch.setattr(
         worker,
         "_collect_image_paths",

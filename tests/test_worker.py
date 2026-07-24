@@ -4,6 +4,7 @@ from io import BytesIO
 import importlib
 import json
 from pathlib import Path
+import shlex
 import sqlite3
 import zipfile
 from zoneinfo import ZoneInfo
@@ -8012,86 +8013,41 @@ def test_oa_approval_detail_param_error_is_recovered_by_openapi(
     assert "--fields" in detail["dws_detail_status"]["message"]
 
 
-def docx_bytes(paragraphs: list[str]) -> bytes:
-    body = "".join(
-        "<w:p><w:r><w:t>"
-        + paragraph
-        + "</w:t></w:r></w:p>"
-        for paragraph in paragraphs
-    )
-    document = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        f"<w:body>{body}</w:body></w:document>"
-    )
-    buffer = BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("word/document.xml", document)
-    return buffer.getvalue()
-
-
-def test_oa_approval_detail_searches_and_reads_openapi_attachments(
+def test_oa_approval_detail_reports_attachment_reference_without_service_body_read(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("[Ding]郑威格提醒您审批他的项目立项", single_chat=True)
+    trigger = message(
+        "[Ding]刘瑞安提醒您审批他的项目申请 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    dws.pending_oa_approvals = [
-        DwsOaApprovalCandidate(
-            process_instance_id="proc-1",
-            title="郑威格提交的项目立项全流程（第三曲线）",
-            process_name="项目立项全流程（第三曲线）",
-        )
-    ]
-    dws.oa_approval_details["proc-1"] = {
-        "result": {"formValueVOS": [{"details": []}]}
+    dws.oa_approval_details["proc-1"] = DwsError("detail parse failed")
+    dws.oa_approval_records["proc-1"] = {"records": []}
+    dws.oa_approval_tasks["proc-1"] = {
+        "tasks": [{"taskId": "task-1", "userid": "derek-user"}]
     }
+    dws.current_user_id = "derek-user"
     dws.openapi_oa_details["proc-1"] = {
         "process_instance": {
-            "title": "郑威格提交的项目立项全流程（第三曲线）",
             "form_component_values": [
                 {
-                    "name": "项目实施计划文档链接",
-                    "component_type": "DDAttachment",
+                    "componentType": "DDAttachment",
                     "value": json.dumps(
                         [
                             {
-                                "fileName": "项目实施计划（第三曲线大模型解决方案）(2)(2)(1).docx",
+                                "fileName": "项目实施计划（第三曲线大模型解决方案）.docx",
                                 "fileId": "224596585916",
-                                "spaceId": "671896910",
+                                "spaceId": "space-1",
                                 "fileType": "docx",
                             }
                         ],
                         ensure_ascii=False,
                     ),
                 }
-            ],
-            "tasks": [
-                {
-                    "taskid": "task-1",
-                    "task_status": "RUNNING",
-                    "userid": "principal-user-1",
-                }
-            ],
+            ]
         }
     }
-    dws.document_search_results["项目实施计划（第三曲线大模型解决方案）"] = [
-        DwsDocumentSearchResult(
-            node_id="doc-1",
-            name="项目实施计划（第三曲线大模型解决方案）",
-            extension="adoc",
-            content_type="ALIDOC",
-        )
-    ]
-    dws.docs["doc-1"] = {
-        "markdown": "## 项目范围\n\n"
-    }
-    dws.oa_attachment_downloads[("proc-1", "224596585916")] = docx_bytes(
-        [
-            "项目范围",
-            "本项目包含奥迪 ADAS 场景挖掘、搜索界面开发和标注平台优化。",
-            "项目里程碑 T+30 交付全量切片数据，T+60 交付完整搜索网页。",
-        ]
-    )
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
@@ -8102,19 +8058,207 @@ def test_oa_approval_detail_searches_and_reads_openapi_attachments(
         oa_approval_handler=oa_handler,
     )
 
-    worker.run_once()
+    handled = worker._handle_oa_approval_if_actionable(
+        conversation(single_chat=True),
+        trigger,
+        [trigger],
+        ignore_existing_attempt=True,
+    )
 
+    assert handled is True
     detail = json.loads(oa_handler.approval_detail_texts[0])
-    assert dws.download_oa_attachment_calls == [("proc-1", "224596585916")]
-    assert dws.search_document_calls == [
-        ("项目实施计划（第三曲线大模型解决方案）", 5)
+    process_id = "proc-1"
+    file_id = "224596585916"
+    assert "oa_attachment_fallbacks" not in detail
+    assert detail["oa_material_references"] == [
+        {
+            "kind": "dingtalk_oa_attachment",
+            "reference": file_id,
+            "source": "openapi_detail.form_component_values",
+            "file_name": "项目实施计划（第三曲线大模型解决方案）.docx",
+            "space_id": "space-1",
+            "file_type": "docx",
+            "read_command": (
+                "dws oa attachment download "
+                f"--process-instance-id {shlex.quote(process_id)} "
+                f"--file-id {shlex.quote(file_id)} "
+                "--output <local-path> --format json"
+            ),
+        }
     ]
-    assert dws.read_doc_calls == ["doc-1"]
-    fallback = detail["oa_attachment_fallbacks"][0]
-    assert fallback["file_id"] == "224596585916"
-    assert "T+60 交付完整搜索网页" in fallback["downloaded_attachment"]["text"]
-    assert fallback["matches"][0]["node_id"] == "doc-1"
-    assert fallback["read_document"]["markdown"] == "## 项目范围\n\n"
+    assert dws.download_oa_attachment_calls == []
+    assert dws.search_document_calls == []
+    assert dws.read_doc_calls == []
+
+
+def test_oa_approval_detail_quotes_unsafe_attachment_reference_command(
+    tmp_path: Path, monkeypatch
+):
+    process_id = "proc 1; rm"
+    encoded_process_id = "proc%201%3B%20rm"
+    file_id = "file 2; rm"
+    oa_url = (
+        "https://aflow.dingtalk.com/detail"
+        f"?procInstId={encoded_process_id}&taskId=task-1"
+    )
+    trigger = message(
+        "[Ding]刘瑞安提醒您审批他的项目申请 "
+        f"{oa_url}",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.oa_approval_details[process_id] = DwsError("detail parse failed")
+    dws.oa_approval_records[process_id] = {"records": []}
+    dws.oa_approval_tasks[process_id] = {
+        "tasks": [{"taskId": "task-1", "userid": "derek-user"}]
+    }
+    dws.current_user_id = "derek-user"
+    dws.openapi_oa_details[process_id] = {
+        "process_instance": {
+            "form_component_values": [
+                {
+                    "componentType": "DDAttachment",
+                    "value": json.dumps(
+                        [
+                            {
+                                "fileName": "材料.docx",
+                                "fileId": file_id,
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                }
+            ]
+        }
+    }
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+    )
+
+    detail = json.loads(worker._oa_approval_detail_text(trigger, oa_url))
+    assert detail["oa_material_references"][0]["read_command"] == (
+        "dws oa attachment download "
+        f"--process-instance-id {shlex.quote(process_id)} "
+        f"--file-id {shlex.quote(file_id)} "
+        "--output <local-path> --format json"
+    )
+
+
+def test_oa_approval_detail_reports_alidocs_folder_reference_from_openapi_form(
+    tmp_path: Path, monkeypatch
+):
+    folder_url = (
+        "https://alidocs.dingtalk.com/i/nodes/"
+        "NZQYprEoWoEOXajDiBrvmqyEJ1waOeDk"
+    )
+    trigger = message(
+        "[Ding]susu提醒您审批他的项目申请 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.oa_approval_details["proc-1"] = DwsError("detail parse failed")
+    dws.oa_approval_records["proc-1"] = {"records": []}
+    dws.oa_approval_tasks["proc-1"] = {
+        "tasks": [{"taskId": "task-1", "userid": "derek-user"}]
+    }
+    dws.current_user_id = "derek-user"
+    dws.openapi_oa_details["proc-1"] = {
+        "process_instance": {
+            "form_component_values": [
+                {
+                    "name": "立项材料",
+                    "componentType": "TextField",
+                    "value": f"项目材料：{folder_url}",
+                }
+            ]
+        }
+    }
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    oa_handler = FakeOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        oa_approval_handler=oa_handler,
+    )
+
+    handled = worker._handle_oa_approval_if_actionable(
+        conversation(single_chat=True),
+        trigger,
+        [trigger],
+        ignore_existing_attempt=True,
+    )
+
+    assert handled is True
+    detail = json.loads(oa_handler.approval_detail_texts[0])
+    assert {
+        "kind": "dingtalk_doc",
+        "reference": folder_url,
+        "source": "openapi_detail.form_component_values",
+        "field_name": "立项材料",
+        "read_command": (
+            f"dws doc info --node {shlex.quote(folder_url)} --format json"
+        ),
+    } in detail["oa_material_references"]
+
+
+def test_oa_approval_detail_extracts_alidocs_reference_from_json_string_value(
+    tmp_path: Path, monkeypatch
+):
+    folder_url = (
+        "https://alidocs.dingtalk.com/i/nodes/"
+        "P7QG4Yx2JpEnpRkgiQbmEGqB89dEq3XD"
+    )
+    trigger = message(
+        "[Ding]susu提醒您审批他的项目申请 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.oa_approval_details["proc-1"] = DwsError("detail parse failed")
+    dws.oa_approval_records["proc-1"] = {"records": []}
+    dws.oa_approval_tasks["proc-1"] = {
+        "tasks": [{"taskId": "task-1", "userid": "derek-user"}]
+    }
+    dws.current_user_id = "derek-user"
+    dws.openapi_oa_details["proc-1"] = {
+        "process_instance": {
+            "form_component_values": [
+                {
+                    "name": "立项材料",
+                    "componentType": "TextField",
+                    "value": json.dumps({"url": folder_url}, ensure_ascii=False),
+                }
+            ]
+        }
+    }
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    detail = json.loads(
+        worker._oa_approval_detail_text(
+            trigger,
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        )
+    )
+
+    assert detail["oa_material_references"] == [
+        {
+            "kind": "dingtalk_doc",
+            "reference": folder_url,
+            "source": "openapi_detail.form_component_values",
+            "field_name": "立项材料",
+            "read_command": (
+                f"dws doc info --node {shlex.quote(folder_url)} --format json"
+            ),
+        }
+    ]
 
 
 def test_oa_approval_detail_login_error_is_reported_as_tool_issue(
@@ -8839,7 +8983,7 @@ def test_dingtalk_doc_permission_setup_is_irrelevant_to_worker_material_referenc
             [
                 f"第一份材料：{blocked_url}",
                 f"第二份材料：{readable_url}",
-                "@Alex Chen(明哥) 按第二份材料判断主叙事",
+                "@Derek Zen(磊哥) 按第二份材料判断主叙事",
             ]
         )
     )
@@ -8852,31 +8996,21 @@ def test_dingtalk_doc_permission_setup_is_irrelevant_to_worker_material_referenc
         "title": "OpenAI 合作建议补充版",
         "markdown": "核心结论：Stardust 应主打 Expert Signal Flywheel。",
     }
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.SEND_REPLY,
-            reply_text="主打 Expert Signal Flywheel",
-        )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        dry_run=True,
     )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
-
-    worker.run_once()
+    references = worker._material_references([trigger], [trigger])
 
     assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
-    assert len(codex.calls) == 1
-    prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
-    assert canonical_blocked_url in prompt
-    assert canonical_readable_url in prompt
-    assert "钉钉材料权限不足" not in prompt
-    assert "OpenAI 合作建议补充版" not in prompt
-    assert "Expert Signal Flywheel" not in prompt
-    assert final_sent(dws) == []
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.send_status == "dry_run"
-    assert attempt.action == "send_reply"
+    assert [(reference.kind, reference.reference) for reference in references] == [
+        ("dingtalk_doc", canonical_blocked_url),
+        ("dingtalk_doc", canonical_readable_url),
+    ]
 
 
 def test_dingtalk_aitable_link_is_passed_to_codex_without_worker_read(
@@ -8884,29 +9018,25 @@ def test_dingtalk_aitable_link_is_passed_to_codex_without_worker_read(
 ):
     aitable_url = "https://alidocs.dingtalk.com/i/nodes/base123?utm_source=im"
     canonical_url = "https://alidocs.dingtalk.com/i/nodes/base123"
-    trigger = message(f"{aitable_url} @Alex Chen(明哥) 看下进展")
+    trigger = message(f"{aitable_url} @Derek Zen(磊哥) 看下进展")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="优先验证关系排序")
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        dry_run=True,
     )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
-
-    worker.run_once()
+    references = worker._material_references([trigger], [trigger])
 
     assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     assert dws.get_aitable_base_calls == []
     assert dws.get_aitable_tables_calls == []
     assert dws.query_aitable_record_calls == []
-    prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
-    assert canonical_url in prompt
-    assert "dws doc read --node" in prompt
-    assert "AI表格: 算法迭代看板" not in prompt
-    assert "迭代名称: 关系排序优化" not in prompt
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.send_status == "dry_run"
+    assert len(references) == 1
+    assert references[0].kind == "dingtalk_doc"
+    assert references[0].reference == canonical_url
 
 
 def test_docs_dingtalk_aitable_material_no_reply_retries_without_worker_read(
@@ -9054,7 +9184,7 @@ def test_referenced_file_context_is_passed_to_codex_without_worker_read(
         message_id="file-msg-1",
     )
     trigger = message(
-        "@Alex Chen(明哥) 明哥comments一下",
+        "@Derek Zen(磊哥) 磊哥comments一下",
         message_id="msg-2",
     )
     dws = FakeDws([conversation()], {"cid-1": [file_message, trigger]})
@@ -9063,18 +9193,17 @@ def test_referenced_file_context_is_passed_to_codex_without_worker_read(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
-    worker.run_once()
+    references = worker._material_references([trigger], [file_message, trigger])
 
     assert dws.search_document_calls == []
     assert dws.download_doc_calls == []
-    prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
-    assert "类型: dingtalk_file" in prompt
-    assert "02_下一步推进建议.md" in prompt
-    assert "来源消息: file-msg-1" in prompt
+    assert len(references) == 1
+    assert references[0].kind == "dingtalk_file"
+    assert references[0].reference == "02_下一步推进建议.md"
+    assert references[0].source_message_id == "file-msg-1"
 
 
-def test_referenced_file_with_file_id_is_downloaded_for_universal_planning(
+def test_referenced_file_with_file_id_is_passed_as_read_command_without_download(
     tmp_path: Path, monkeypatch
 ):
     file_name = "Stardust_Company_Brief_IMDA_English_20260722152953.pdf"
@@ -9085,34 +9214,30 @@ def test_referenced_file_with_file_id_is_downloaded_for_universal_planning(
     )
     trigger = message(
         "最底下的customers部分 可以多写一些大公司，"
-        "请磊哥直接给我一个改好的pdf版本",
+        "请 @Derek Zen(磊哥) 直接给我一个改好的pdf版本",
         message_id="msg-2",
     )
     dws = FakeDws([conversation()], {"cid-1": [file_message, trigger]})
-    dws.drive_file_downloads[file_id] = b"%PDF fake company brief"
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
-    monkeypatch.setattr(
-        DingTalkAutoReplyWorker,
-        "_extract_pdf_text",
-        classmethod(lambda cls, data: "Customers\nHuawei\nJAC\nIMDA"),
-    )
 
-    documents = worker._read_calendar_linked_documents([trigger], [file_message])
+    references = worker._material_references([trigger], [file_message, trigger])
 
-    assert dws.drive_file_download_calls == [(file_id, file_name, "")]
+    assert dws.drive_file_download_calls == []
     assert dws.search_document_calls == []
-    assert len(documents) == 1
-    assert documents[0].title == file_name
-    assert "Customers" in documents[0].markdown
-    assert "Huawei" in documents[0].markdown
+    assert len(references) == 1
+    assert references[0].kind == "dingtalk_file"
+    assert references[0].reference == file_name
+    assert references[0].read_command == (
+        f"dws drive download --node {file_id} --output <local-path> --format json"
+    )
 
 
 def test_referenced_file_reference_does_not_download_or_expose_credentials(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
-        "@Alex Chen(明哥) 明哥comments一下",
+        "@Derek Zen(磊哥) 磊哥comments一下",
         quoted_content="[文件] 02_下一步推进建议.md",
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
@@ -9124,14 +9249,14 @@ def test_referenced_file_reference_does_not_download_or_expose_credentials(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
-    worker.run_once()
+    references = worker._material_references([trigger], [trigger])
 
-    prompt = codex.calls[0][0]
     assert dws.search_document_calls == []
     assert dws.download_doc_calls == []
-    assert "02_下一步推进建议.md" in prompt
-    assert "文件正文：这里是可审阅内容。" not in prompt
-    assert "authorizationUrl" not in prompt
+    assert len(references) == 1
+    assert references[0].kind == "dingtalk_file"
+    assert references[0].reference == "02_下一步推进建议.md"
+    assert references[0].read_command == ""
 
 
 def test_minutes_link_is_passed_to_codex_without_worker_read(
@@ -9150,33 +9275,21 @@ def test_minutes_link_is_passed_to_codex_without_worker_read(
         single_chat=True,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.SEND_REPLY,
-            reply_text="这几个事项我看到了，先按材料方向推进。",
-        )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
     )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch)
-
-    worker.run_once()
+    references = worker._material_references([trigger], [trigger])
 
     assert dws.minutes_info_calls == []
     assert dws.minutes_summary_calls == []
     assert dws.minutes_todo_calls == []
     assert dws.minutes_transcription_calls == []
-    prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
-    assert minutes_id in prompt
-    assert "dws minutes get info --id" in prompt
-    assert "AI 听记材料:" not in prompt
-    assert "韩露周三前完成自动驾驶能力图谱初版大纲" not in prompt
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "sent"
-    signed_reply = "这几个事项我看到了，先按材料方向推进。（by明哥分身）"
-    assert dws.reply_messages == [("cid-1", "msg-1", "sender-1", signed_reply)]
-    assert dws.doc_comments == []
+    assert len(references) == 1
+    assert references[0].kind == "dingtalk_minutes"
+    assert references[0].reference == minutes_id
 
 
 def test_single_chat_minutes_no_reply_does_not_trigger_material_retry(

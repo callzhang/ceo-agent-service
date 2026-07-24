@@ -3,21 +3,17 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import time
 import urllib.request
-import zipfile
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from io import BytesIO
 from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit, urlunsplit
-from xml.etree import ElementTree as ET
-
-from pypdf import PdfReader
 
 from app.codex_decision import (
     DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX,
@@ -42,7 +38,6 @@ from app.dws_client import (
     DINGTALK_MESSAGE_TIME_ZONE,
     DwsCalendarEvent,
     DwsClient,
-    DwsDocumentSearchResult,
     DwsError,
     native_reply_delivery_payload,
     normalize_message_emoji,
@@ -101,6 +96,7 @@ from app.store import (
     RecentFollowUpCandidate,
     ReplyAttempt,
     ReplyTask,
+    is_terminal_reply_attempt,
 )
 from app.task_models import WorkItem
 from app.task_retrieval import (
@@ -114,6 +110,7 @@ from app.universal_consumer import (
 )
 from app.universal_context import (
     UniversalContextMessage,
+    UniversalMaterialReference,
     UniversalTaskContext,
     build_universal_context,
 )
@@ -374,8 +371,6 @@ def _extract_text_emotion_background_id(payload: object) -> str:
     return ""
 
 
-MINUTES_SUMMARY_MAX_CHARS = 5000
-MINUTES_TRANSCRIPTION_PARAGRAPH_LIMIT = 20
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
 DINGTALK_FILE_ID_PATTERN = re.compile(r"(?:^|\s)fileId:\s*(?P<file_id>\S+)")
 IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)")
@@ -388,7 +383,6 @@ REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
 DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
 DOWNLOADED_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
-PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 DWS_UPGRADE_CHECK_RESULT_STATE_KEY = "dws_upgrade_check_result"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
@@ -416,8 +410,6 @@ DWS_PAT_AUTHORIZATION_REQUEST_SUPPRESSION_WINDOW = timedelta(hours=1)
 DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
 DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(minutes=5)
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
-AITABLE_TABLE_PREVIEW_LIMIT = 5
-AITABLE_RECORD_PREVIEW_LIMIT = 10
 MESSAGE_RECOVERY_INTERVAL = message_recovery_interval()
 FAST_PATH_UNREAD_BACKOFF = fast_path_unread_backoff_duration()
 SINGLE_CHAT_READ_RECOVERY_WINDOW = single_chat_read_recovery_window()
@@ -701,12 +693,7 @@ class DingTalkAutoReplyWorker:
             context.conversation_id,
             context.trigger_message_id,
         )
-        return attempt is not None and attempt.send_status in {
-            "sent",
-            "skipped",
-            "commented",
-            "reacted",
-        }
+        return attempt is not None and is_terminal_reply_attempt(attempt)
 
     def _universal_existing_sent_reply(self, context: UniversalTaskContext) -> bool:
         if context.force_new_decision:
@@ -760,29 +747,10 @@ class DingTalkAutoReplyWorker:
             )
 
         material_context_messages = list(context_messages) or list(prompt_context_messages)
-        linked_documents = self._read_calendar_linked_documents(
+        material_references = self._universal_material_references(
             [trigger],
             material_context_messages,
         )
-        for index, document in enumerate(linked_documents[:3], start=1):
-            planner_context_messages.append(
-                DingTalkMessage(
-                    open_conversation_id=conversation.open_conversation_id,
-                    open_message_id=(
-                        f"{trigger.open_message_id}:trusted-document-{index}"
-                    ),
-                    conversation_title=conversation.title,
-                    single_chat=conversation.single_chat,
-                    sender_name="CEO系统",
-                    create_time=trigger.create_time,
-                    content=(
-                        f"可信材料 {index}：{document.title or '未命名材料'}\n"
-                        f"链接：{document.url or '无'}\n"
-                        "以下正文由服务在规划前读取；必须据此处理，不要只看文件名。\n"
-                        f"{document.markdown[:30000]}"
-                    ),
-                )
-            )
 
         image_paths, image_download_errors = self._collect_image_paths(
             [trigger],
@@ -820,7 +788,7 @@ class DingTalkAutoReplyWorker:
                     content=(
                         "可信OA审批材料：\n"
                         "以下审批详情由服务在规划前读取，包含当前用户、表单、"
-                        "审批记录、待办任务和可用 fallback；处理审批时必须据此"
+                        "审批记录、待办任务和可读取材料引用；处理审批时必须据此"
                         "判断，不要只看群消息。\n"
                         f"{approval_detail_text[:60000]}"
                     ),
@@ -854,9 +822,48 @@ class DingTalkAutoReplyWorker:
             trusted_task_context=trusted_task_context,
             image_paths=tuple(str(path) for path in image_paths),
             image_sha256s=image_sha256s,
+            material_references=material_references,
         )
         result = self._universal_consumer().process(context)
         return self._map_universal_consumer_result(result, trigger)
+
+    def _universal_material_references(
+        self,
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
+    ) -> tuple[UniversalMaterialReference, ...]:
+        references = self._material_references(new_messages, context_messages)
+        universal_references: list[UniversalMaterialReference] = []
+        for reference in references:
+            universal_references.append(
+                UniversalMaterialReference(
+                    kind=reference.kind,
+                    reference=reference.reference,
+                    source_message_id=reference.source_message_id,
+                    source_sender=reference.source_sender,
+                    source_time=reference.source_time,
+                    read_command=reference.read_command
+                    or self._default_material_read_command(
+                        reference.kind,
+                        reference.reference,
+                    ),
+                )
+            )
+        return tuple(universal_references)
+
+    @staticmethod
+    def _default_material_read_command(kind: str, reference: str) -> str:
+        quoted_reference = shlex.quote(reference)
+        if kind == "dingtalk_doc":
+            return f"dws doc info --node {quoted_reference} --format json"
+        if kind == "dingtalk_minutes":
+            return f"dws minutes get info --id {quoted_reference} --format json"
+        if kind == "lark_doc":
+            return (
+                "lark-cli docs +fetch "
+                f"--doc {quoted_reference} --doc-format markdown --format json --as bot"
+            )
+        return ""
 
     def _trusted_task_context_for_universal(
         self,
@@ -5242,12 +5249,7 @@ class DingTalkAutoReplyWorker:
             conversation_id,
             trigger_message_id,
         )
-        return attempt is not None and attempt.send_status in {
-            "sent",
-            "skipped",
-            "commented",
-            "reacted",
-        }
+        return attempt is not None and is_terminal_reply_attempt(attempt)
 
     def _should_regenerate_after_processing_failure(
         self,
@@ -6438,187 +6440,144 @@ class DingTalkAutoReplyWorker:
         except Exception as exc:
             if self._oa_detail_needs_openapi(documents.get("dws_detail")):
                 documents["openapi_detail"] = self._dws_tool_error_payload(exc)
-        self._append_oa_attachment_fallbacks(documents)
+        self._append_oa_material_references(documents)
         self._annotate_oa_detail_recovery(documents)
         self._annotate_oa_tool_status(documents)
         return json.dumps(documents, ensure_ascii=False)
 
-    def _append_oa_attachment_fallbacks(self, documents: dict[str, Any]) -> None:
+    def _append_oa_material_references(self, documents: dict[str, Any]) -> None:
         openapi_detail = documents.get("openapi_detail")
         if not isinstance(openapi_detail, dict):
             return
         process = openapi_detail.get("process_instance")
         if not isinstance(process, dict):
             return
-        attachments = self._oa_attachment_records(
-            process.get("form_component_values")
+        values = process.get("form_component_values")
+        references: list[dict[str, str]] = []
+        self._collect_oa_attachment_references(
+            str(documents.get("process_instance_id") or ""),
+            values,
+            references,
         )
-        if not attachments:
-            return
-        process_instance_id = str(documents.get("process_instance_id") or "")
-        documents["oa_attachment_fallbacks"] = [
-            self._oa_attachment_fallback(process_instance_id, attachment)
-            for attachment in attachments[:12]
-        ]
-
-    def _oa_attachment_fallback(
-        self,
-        process_instance_id: str,
-        attachment: dict[str, Any],
-    ) -> dict[str, Any]:
-        file_name = str(attachment.get("fileName") or attachment.get("file_name") or "")
-        file_id = str(attachment.get("fileId") or attachment.get("file_id") or "")
-        fallback: dict[str, Any] = {
-            "file_name": file_name,
-            "file_id": file_id,
-            "space_id": str(
-                attachment.get("spaceId") or attachment.get("space_id") or ""
-            ),
-            "file_type": str(
-                attachment.get("fileType") or attachment.get("file_type") or ""
-            ),
-        }
-        if process_instance_id and file_id:
-            try:
-                data = self.dws.download_oa_process_attachment(
-                    process_instance_id,
-                    file_id,
-                )
-                fallback["downloaded_attachment"] = {
-                    "bytes": len(data),
-                    "text": self._oa_attachment_text(file_name, data)[:12000],
-                }
-            except Exception as exc:
-                fallback["download_error"] = self._dws_tool_error_payload(exc)
-        query = self._oa_attachment_search_query(file_name)
-        fallback["search_query"] = query
-        if not query:
-            fallback["search_error"] = "missing attachment file name"
-            return fallback
-        try:
-            matches = self.dws.search_documents(query, page_size=5)
-        except Exception as exc:
-            fallback["search_error"] = self._dws_tool_error_payload(exc)
-            return fallback
-        fallback["matches"] = [
-            {
-                "node_id": match.node_id,
-                "name": match.name,
-                "extension": match.extension,
-                "content_type": match.content_type,
-                "doc_url": match.doc_url,
-            }
-            for match in matches[:5]
-        ]
-        readable = next(
-            (
-                match
-                for match in matches
-                if match.extension.lower() == "adoc"
-                or match.content_type.upper() == "ALIDOC"
-            ),
-            None,
-        )
-        if readable is None:
-            return fallback
-        try:
-            content = self.dws.read_doc(readable.node_id)
-        except Exception as exc:
-            fallback["read_error"] = self._dws_tool_error_payload(exc)
-            return fallback
-        fallback["read_document"] = {
-            "node_id": readable.node_id,
-            "name": readable.name,
-            "markdown": str(content.get("markdown") or content.get("content") or "")[
-                :12000
-            ],
-        }
-        return fallback
+        self._collect_oa_alidocs_references(values, references)
+        if references:
+            documents["oa_material_references"] = self._dedupe_oa_material_references(
+                references
+            )
 
     @classmethod
-    def _oa_attachment_text(cls, file_name: str, data: bytes) -> str:
-        suffix = Path(file_name).suffix.lower()
-        if suffix == ".docx":
-            return cls._docx_text(data)
-        if suffix == ".xlsx":
-            return cls._xlsx_text(data)
-        if suffix == ".pdf":
-            return cls._pdf_text(data)
-        return ""
+    def _collect_oa_attachment_references(
+        cls,
+        process_instance_id: str,
+        value: Any,
+        references: list[dict[str, str]],
+    ) -> None:
+        quoted_process_instance_id = shlex.quote(process_instance_id)
+        for attachment in cls._oa_attachment_records(value):
+            file_name = str(
+                attachment.get("fileName") or attachment.get("file_name") or ""
+            )
+            file_id = str(attachment.get("fileId") or attachment.get("file_id") or "")
+            if not file_id:
+                continue
+            quoted_file_id = shlex.quote(file_id)
+            references.append(
+                {
+                    "kind": "dingtalk_oa_attachment",
+                    "reference": file_id,
+                    "source": "openapi_detail.form_component_values",
+                    "file_name": file_name,
+                    "space_id": str(
+                        attachment.get("spaceId") or attachment.get("space_id") or ""
+                    ),
+                    "file_type": str(
+                        attachment.get("fileType") or attachment.get("file_type") or ""
+                    ),
+                    "read_command": (
+                        "dws oa attachment download "
+                        f"--process-instance-id {quoted_process_instance_id} "
+                        f"--file-id {quoted_file_id} "
+                        "--output <local-path> --format json"
+                    ),
+                }
+            )
 
-    @staticmethod
-    def _docx_text(data: bytes) -> str:
-        with zipfile.ZipFile(BytesIO(data)) as archive:
-            document_xml = archive.read("word/document.xml")
-        root = ET.fromstring(document_xml)
-        namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-        paragraphs = []
-        for paragraph in root.findall(".//w:p", namespace):
-            text = "".join(
-                node.text or "" for node in paragraph.findall(".//w:t", namespace)
-            ).strip()
-            if text:
-                paragraphs.append(text)
-        return "\n".join(paragraphs)
-
-    @staticmethod
-    def _xlsx_text(data: bytes) -> str:
-        with zipfile.ZipFile(BytesIO(data)) as archive:
-            shared_strings: list[str] = []
-            if "xl/sharedStrings.xml" in archive.namelist():
-                root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
-                shared_strings = [
-                    "".join(node.itertext())
-                    for node in root.findall(
-                        ".//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si"
-                    )
-                ]
-            sheet_names = [
-                name
-                for name in archive.namelist()
-                if re.match(r"xl/worksheets/sheet\d+\.xml$", name)
+    @classmethod
+    def _collect_oa_alidocs_references(
+        cls,
+        value: Any,
+        references: list[dict[str, str]],
+        *,
+        field_name: str = "",
+    ) -> None:
+        if isinstance(value, list):
+            for item in value:
+                cls._collect_oa_alidocs_references(
+                    item,
+                    references,
+                    field_name=field_name,
+                )
+            return
+        if isinstance(value, dict):
+            next_field_name = str(value.get("name") or value.get("label") or field_name)
+            nested_keys = [
+                nested_key
+                for nested_key in ("value", "extendValue", "rowValue")
+                if nested_key in value
             ]
-            rows = []
-            namespace = {
-                "x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-            }
-            for sheet_name in sheet_names[:5]:
-                root = ET.fromstring(archive.read(sheet_name))
-                for row in root.findall(".//x:row", namespace)[:120]:
-                    values = []
-                    for cell in row.findall("x:c", namespace):
-                        value_node = cell.find("x:v", namespace)
-                        inline_node = cell.find("x:is/x:t", namespace)
-                        if inline_node is not None and inline_node.text:
-                            values.append(inline_node.text)
-                            continue
-                        if value_node is None or value_node.text is None:
-                            continue
-                        value = value_node.text
-                        if cell.get("t") == "s" and value.isdigit():
-                            index = int(value)
-                            if 0 <= index < len(shared_strings):
-                                value = shared_strings[index]
-                        values.append(value)
-                    if values:
-                        rows.append("\t".join(values))
-        return "\n".join(rows)
+            if not nested_keys:
+                nested_keys = [
+                    nested_key
+                    for nested_key in value
+                    if nested_key not in {"name", "label", "componentType"}
+                ]
+            for nested_key in nested_keys:
+                cls._collect_oa_alidocs_references(
+                    value.get(nested_key),
+                    references,
+                    field_name=next_field_name,
+                )
+            return
+        if not isinstance(value, str):
+            return
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = None
+        if parsed is not None:
+            cls._collect_oa_alidocs_references(
+                parsed,
+                references,
+                field_name=field_name,
+            )
+            return
+        for match in DINGTALK_DOC_URL_PATTERN.finditer(value):
+            url = cls._canonical_doc_url(match.group(0))
+            references.append(
+                {
+                    "kind": "dingtalk_doc",
+                    "reference": url,
+                    "source": "openapi_detail.form_component_values",
+                    "field_name": field_name,
+                    "read_command": (
+                        f"dws doc info --node {shlex.quote(url)} --format json"
+                    ),
+                }
+            )
 
     @staticmethod
-    def _pdf_text(data: bytes) -> str:
-        reader = PdfReader(BytesIO(data))
-        pages = []
-        for page in reader.pages[:20]:
-            text = page.extract_text() or ""
-            if text.strip():
-                pages.append(text.strip())
-        return "\n\n".join(pages)
-
-    @staticmethod
-    def _oa_attachment_search_query(file_name: str) -> str:
-        stem = Path(file_name).stem.strip()
-        stem = re.sub(r"(?:\([^)]*\))+$", "", stem).strip()
-        return stem or file_name.strip()
+    def _dedupe_oa_material_references(
+        references: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        deduped: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for reference in references:
+            key = (reference.get("kind", ""), reference.get("reference", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(reference)
+        return deduped
 
     @classmethod
     def _oa_attachment_records(cls, value: Any) -> list[dict[str, Any]]:
@@ -6707,7 +6666,7 @@ class DingTalkAutoReplyWorker:
                 "dws oa approval detail failed because the DWS detail command "
                 "could not parse this process instance. The worker already "
                 "recovered the approval detail through OpenAPI. Use openapi_detail, "
-                "dws_records, dws_tasks, and oa_attachment_fallbacks as the "
+                "dws_records, dws_tasks, and oa_material_references as the "
                 "source of truth. Do not call dws oa approval detail again, "
                 "and do not try --format raw or --fields variants for this instance."
             ),
@@ -8328,10 +8287,6 @@ class DingTalkAutoReplyWorker:
             context_messages,
         )
         linked_documents: list[LinkedDocumentContext] = []
-        if calendar_response_event is not None:
-            linked_documents = self._read_calendar_linked_documents(
-                material_messages, context_messages
-            )
         session_id = None
         if not ignore_existing_attempt:
             session_id = self.store.get_codex_session_id(
@@ -9056,13 +9011,7 @@ class DingTalkAutoReplyWorker:
             and attempt.codex_reason == "system_or_notification_message"
         ):
             return False
-        if attempt.send_status in {
-            "sent",
-            "skipped",
-            "blocked",
-            "commented",
-            CALENDAR_ACTION_SEND_STATUS,
-        }:
+        if is_terminal_reply_attempt(attempt):
             self._mark_seen(new_messages)
             return True
         if attempt.send_status == "dry_run":
@@ -9090,57 +9039,6 @@ class DingTalkAutoReplyWorker:
                 )
             return False
         return False
-
-    def _read_calendar_linked_documents(
-        self,
-        new_messages: list[DingTalkMessage],
-        context_messages: list[DingTalkMessage],
-    ) -> list[LinkedDocumentContext]:
-        documents: list[LinkedDocumentContext] = []
-        referenced_messages = self._referenced_document_messages(
-            new_messages, context_messages
-        )
-        for task_uuid in self._dingtalk_minutes_ids(referenced_messages):
-            try:
-                documents.append(self._read_linked_minutes(task_uuid))
-            except Exception as exc:
-                documents.append(self._linked_document_read_failure_context(task_uuid, exc))
-        for url in self._dingtalk_doc_urls(referenced_messages):
-            try:
-                documents.append(self._read_linked_alidocs_node(url))
-            except Exception as exc:
-                documents.append(self._linked_document_read_failure_context(url, exc))
-        file_source_by_name = self._referenced_file_source_messages(
-            new_messages,
-            context_messages,
-        )
-        for file_name in self._referenced_file_names(new_messages, context_messages):
-            try:
-                document = self._read_referenced_file(
-                    file_name,
-                    source_message=file_source_by_name.get(file_name),
-                )
-            except Exception as exc:
-                documents.append(self._linked_document_read_failure_context(file_name, exc))
-                continue
-            if document is not None:
-                documents.append(document)
-        return documents
-
-    @staticmethod
-    def _linked_document_read_failure_context(
-        reference: str, error: Exception
-    ) -> LinkedDocumentContext:
-        return LinkedDocumentContext(
-            url=reference,
-            title="钉钉材料读取失败",
-            markdown=(
-                "材料读取失败: 当前账号未能读取这份钉钉材料。\n"
-                "处理要求: agent 不能臆测材料内容；如果判断依赖材料正文，"
-                "应说明权限或读取问题，并要求补充正文或开放权限。\n"
-                f"错误: {str(error)}"
-            ),
-        )
 
     def _material_references(
         self,
@@ -9478,209 +9376,6 @@ class DingTalkAutoReplyWorker:
             return ".gif"
         return ".img"
 
-    def _read_linked_alidocs_node(self, url: str) -> LinkedDocumentContext:
-        info = self.dws.doc_info(url)
-        extension = str(info.get("extension") or "").lower()
-        content_type = str(info.get("contentType") or "").upper()
-        if content_type == "ALIDOC" and extension == "adoc":
-            payload = self.dws.read_doc(url)
-            title = str(payload.get("title") or info.get("name") or "钉钉文档")
-            markdown = str(payload.get("markdown") or "")
-            if not markdown.strip():
-                raise DwsError(f"DingTalk doc read returned empty markdown: {url}")
-            return LinkedDocumentContext(url=url, title=title, markdown=markdown)
-        if content_type == "ALIDOC" and extension == "able":
-            return self._read_linked_aitable(url, info)
-        return LinkedDocumentContext(
-            url=url,
-            title=str(info.get("name") or "钉钉材料"),
-            markdown=(
-                "该链接不是钉钉在线文档，不能使用文档正文读取。\n"
-                f"材料类型: {content_type or 'unknown'}\n"
-                f"扩展名: {extension or 'unknown'}\n"
-                "如果新消息要求审核或判断该材料正文，需要取得对应类型的可读内容后再回复。"
-            ),
-        )
-
-    def _read_linked_aitable(
-        self, url: str, info: dict[str, object]
-    ) -> LinkedDocumentContext:
-        base_id = str(info.get("nodeId") or self._alidocs_node_id(url))
-        base_payload = self.dws.get_aitable_base(base_id)
-        base_data = self._payload_data(base_payload)
-        base_name = str(base_data.get("baseName") or info.get("name") or "AI表格")
-        table_summaries = self._aitable_tables_from_payload(base_payload)
-        table_ids = [
-            str(table.get("tableId"))
-            for table in table_summaries
-            if table.get("tableId")
-        ][:AITABLE_TABLE_PREVIEW_LIMIT]
-        table_payload = self.dws.get_aitable_tables(base_id, table_ids or None)
-        tables = self._aitable_tables_from_payload(table_payload) or table_summaries
-        lines = [f"AI表格: {base_name}", "说明: 该链接是 AI 表格，不是钉钉在线文档。"]
-        for table in tables[:AITABLE_TABLE_PREVIEW_LIMIT]:
-            table_id = str(table.get("tableId") or "")
-            table_name = str(table.get("tableName") or "未命名数据表")
-            description = str(table.get("description") or table.get("tableDescription") or "")
-            fields = table.get("fields") if isinstance(table.get("fields"), list) else []
-            field_names = [
-                str(field.get("fieldName"))
-                for field in fields
-                if isinstance(field, dict) and field.get("fieldName")
-            ]
-            lines.append(f"\n数据表: {table_name}")
-            if description:
-                lines.append(f"描述: {description}")
-            if field_names:
-                lines.append(f"字段: {', '.join(field_names)}")
-            if table_id:
-                records_payload = self.dws.query_aitable_records(
-                    base_id,
-                    table_id,
-                    limit=AITABLE_RECORD_PREVIEW_LIMIT,
-                )
-                record_lines = self._format_aitable_records(records_payload, fields)
-                if record_lines:
-                    lines.append("记录预览:")
-                    lines.extend(record_lines)
-        return LinkedDocumentContext(
-            url=url,
-            title=base_name,
-            markdown="\n".join(lines),
-        )
-
-    def _read_linked_minutes(self, task_uuid: str) -> LinkedDocumentContext:
-        info = self.dws.get_minutes_info(task_uuid)
-        summary = self.dws.get_minutes_summary(task_uuid)
-        todos = self.dws.get_minutes_todos(task_uuid)
-        transcription = self.dws.get_minutes_transcription(task_uuid)
-        markdown = self._format_minutes_material(
-            task_uuid,
-            info,
-            summary,
-            todos,
-            transcription,
-        )
-        title = self._minutes_title(info) or f"AI 听记 {task_uuid}"
-        return LinkedDocumentContext(
-            url=self._minutes_url(info),
-            title=title,
-            markdown=markdown,
-        )
-
-    @classmethod
-    def _format_minutes_material(
-        cls,
-        task_uuid: str,
-        info: dict[str, object],
-        summary: dict[str, object],
-        todos: dict[str, object],
-        transcription: dict[str, object],
-    ) -> str:
-        lines = [
-            "AI 听记材料:",
-            f"taskUuid: {task_uuid}",
-        ]
-        title = cls._minutes_title(info)
-        if title:
-            lines.append(f"标题: {title}")
-        url = cls._minutes_url(info)
-        if url:
-            lines.append(f"链接: {url}")
-        summary_text = cls._minutes_summary_text(summary)
-        if summary_text:
-            lines.extend(["", "摘要:", summary_text[:MINUTES_SUMMARY_MAX_CHARS]])
-        todo_lines = cls._minutes_todo_lines(todos)
-        if todo_lines:
-            lines.extend(["", "处理事项:"])
-            lines.extend(todo_lines)
-        transcription_lines = cls._minutes_transcription_lines(transcription)
-        if transcription_lines:
-            lines.extend(["", "文字稿预览:"])
-            lines.extend(transcription_lines)
-        return "\n".join(lines)
-
-    @classmethod
-    def _minutes_title(cls, payload: dict[str, object]) -> str:
-        data = cls._payload_data(payload)
-        title = data.get("title")
-        return str(title).strip() if title else ""
-
-    @classmethod
-    def _minutes_url(cls, payload: dict[str, object]) -> str:
-        data = cls._payload_data(payload)
-        url = data.get("url")
-        return str(url).strip() if url else ""
-
-    @classmethod
-    def _minutes_summary_text(cls, payload: dict[str, object]) -> str:
-        data = cls._payload_data(payload)
-        for key in ("fullSummary", "summary", "markdown", "content", "text"):
-            value = data.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return ""
-
-    @classmethod
-    def _minutes_todo_lines(cls, payload: dict[str, object]) -> list[str]:
-        data = cls._payload_data(payload)
-        values: list[str] = []
-        actions = data.get("actions")
-        if isinstance(actions, list):
-            for action in actions:
-                text = cls._minutes_todo_text(action)
-                if text:
-                    values.append(text)
-        todo_list = data.get("dingtalkTodoList")
-        if isinstance(todo_list, list):
-            for item in todo_list:
-                text = cls._minutes_todo_text(item)
-                if text:
-                    values.append(text)
-        result: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            if value in seen:
-                continue
-            seen.add(value)
-            result.append(f"- {value}")
-        return result
-
-    @classmethod
-    def _minutes_todo_text(cls, value: object) -> str:
-        if isinstance(value, str):
-            stripped = value.strip()
-            if stripped.startswith("{") and stripped.endswith("}"):
-                try:
-                    decoded = json.loads(stripped)
-                except json.JSONDecodeError:
-                    return stripped
-                return cls._minutes_todo_text(decoded)
-            return stripped
-        if isinstance(value, dict):
-            for key in ("title", "value", "content", "text"):
-                text = value.get(key)
-                if isinstance(text, str) and text.strip():
-                    return text.strip()
-        return ""
-
-    @classmethod
-    def _minutes_transcription_lines(cls, payload: dict[str, object]) -> list[str]:
-        data = cls._payload_data(payload)
-        paragraphs = data.get("paragraphList")
-        if not isinstance(paragraphs, list):
-            return []
-        lines: list[str] = []
-        for paragraph in paragraphs[:MINUTES_TRANSCRIPTION_PARAGRAPH_LIMIT]:
-            if not isinstance(paragraph, dict):
-                continue
-            text = str(paragraph.get("paragraph") or "").strip()
-            if not text:
-                continue
-            speaker = str(paragraph.get("nickName") or "发言人").strip()
-            lines.append(f"- {speaker}: {text}")
-        return lines
-
     @staticmethod
     def _referenced_document_messages(
         new_messages: list[DingTalkMessage],
@@ -9801,131 +9496,10 @@ class DingTalkAutoReplyWorker:
             file_id = cls._file_id_from_message_text(message.quoted_content or "")
         if not file_id:
             return ""
-        return f"dws drive download --node {file_id} --output <local-path> --format json"
-
-    def _read_referenced_file(
-        self,
-        file_name: str,
-        *,
-        source_message: DingTalkMessage | None = None,
-    ) -> LinkedDocumentContext | None:
-        if source_message is not None:
-            direct_document = self._read_referenced_file_by_message_file_id(
-                file_name,
-                source_message,
-            )
-            if direct_document is not None:
-                return direct_document
-        matches = self._matching_document_search_results(
-            file_name,
-            self.dws.search_documents(file_name, page_size=5),
+        return (
+            f"dws drive download --node {shlex.quote(file_id)} "
+            "--output <local-path> --format json"
         )
-        if not matches:
-            return LinkedDocumentContext(
-                url="",
-                title=file_name,
-                markdown="钉钉文件消息已在上下文中出现，但没有搜索到可访问的文件正文。",
-            )
-        if len(matches) > 1:
-            titles = ", ".join(self._document_display_name(match) for match in matches)
-            return LinkedDocumentContext(
-                url="",
-                title=file_name,
-                markdown=f"钉钉文件消息已在上下文中出现，但同名可访问文件不唯一：{titles}。",
-            )
-        match = matches[0]
-        if match.content_type.upper() == "ALIDOC" and match.extension.lower() == "adoc":
-            payload = self.dws.read_doc(match.node_id)
-            markdown = str(payload.get("markdown") or "")
-            if markdown.strip():
-                return LinkedDocumentContext(
-                    url=match.doc_url,
-                    title=str(
-                        payload.get("title") or self._document_display_name(match)
-                    ),
-                    markdown=markdown,
-                )
-        payload = self.dws.download_doc(match.node_id)
-        markdown = self._downloaded_file_markdown(match, payload)
-        if markdown.strip():
-            return LinkedDocumentContext(
-                url=match.doc_url,
-                title=self._document_display_name(match) or file_name,
-                markdown=markdown,
-            )
-        return LinkedDocumentContext(
-            url=match.doc_url,
-            title=self._document_display_name(match) or file_name,
-            markdown=(
-                "钉钉普通文件已定位，但正文未能读取。"
-                f"node_id: {match.node_id}\n"
-                f"extension: {match.extension or 'unknown'}\n"
-                f"content_type: {match.content_type or 'unknown'}\n"
-                "如果新消息要求对文件内容 comments、审核、总结或判断，不能只凭文件名回复。"
-            ),
-        )
-
-    def _read_referenced_file_by_message_file_id(
-        self,
-        file_name: str,
-        source_message: DingTalkMessage,
-    ) -> LinkedDocumentContext | None:
-        file_id = self._file_id_from_message_text(source_message.content)
-        if not file_id:
-            file_id = self._file_id_from_message_text(source_message.quoted_content or "")
-        if not file_id:
-            return None
-        data = self.dws.download_drive_file(file_id, file_name=file_name)
-        if len(data) > DOWNLOADED_FILE_MAX_BYTES:
-            raise DwsError("dingtalk_file_too_large")
-        markdown = self._downloaded_bytes_markdown(file_name, data)
-        if markdown.strip():
-            return LinkedDocumentContext(
-                url="",
-                title=file_name,
-                markdown=markdown,
-            )
-        return LinkedDocumentContext(
-            url="",
-            title=file_name,
-            markdown=(
-                "钉钉普通文件已按 fileId 下载，但正文未能读取。\n"
-                f"file_id: {file_id}\n"
-                f"extension: {Path(file_name).suffix.lstrip('.').lower() or 'unknown'}\n"
-                "如果新消息要求对文件内容 comments、审核、总结或判断，不能只凭文件名回复。"
-            ),
-        )
-
-    def _downloaded_file_markdown(
-        self, match: DwsDocumentSearchResult, payload: dict
-    ) -> str:
-        for key in ("markdown", "text", "content"):
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
-
-        resource_url = str(payload.get("resourceUrl") or "")
-        if not resource_url:
-            return ""
-        data = self._download_resource_bytes(resource_url, payload.get("headers"))
-        extension = match.extension.lower()
-        if extension in {"txt", "md", "markdown", "csv", "json"}:
-            return self._decode_text_file(data)
-        if extension == "pdf":
-            return self._extract_pdf_text(data)
-        if extension == "docx":
-            return self._extract_docx_text(data)
-        return ""
-
-    def _downloaded_bytes_markdown(self, file_name: str, data: bytes) -> str:
-        extension = Path(file_name).suffix.lstrip(".").lower()
-        if extension in {"txt", "md", "markdown", "csv", "json"}:
-            return self._decode_text_file(data)
-        if extension == "pdf":
-            return self._extract_pdf_text(data)
-        if extension == "docx":
-            return self._extract_docx_text(data)
-        return ""
 
     @staticmethod
     def _download_resource_bytes(url: str, headers: object) -> bytes:
@@ -9953,57 +9527,6 @@ class DingTalkAutoReplyWorker:
             except UnicodeDecodeError:
                 continue
         return data.decode("utf-8", errors="replace")
-
-    @classmethod
-    def _extract_pdf_text(cls, data: bytes) -> str:
-        reader = PdfReader(BytesIO(data))
-        chunks: list[str] = []
-        for page_number, page in enumerate(reader.pages[:PDF_TEXT_PAGE_LIMIT], start=1):
-            text = (page.extract_text() or "").strip()
-            if text:
-                chunks.append(f"第 {page_number} 页:\n{text}")
-        if len(reader.pages) > PDF_TEXT_PAGE_LIMIT:
-            chunks.append(f"[PDF 超过 {PDF_TEXT_PAGE_LIMIT} 页，后续页面未预读]")
-        return "\n\n".join(chunks)
-
-    @staticmethod
-    def _extract_docx_text(data: bytes) -> str:
-        with zipfile.ZipFile(BytesIO(data)) as archive:
-            xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
-        text = re.sub(r"<w:tab[^>]*/>", "\t", xml)
-        text = re.sub(r"</w:p>", "\n", text)
-        text = re.sub(r"<[^>]+>", "", text)
-        return text
-
-    @classmethod
-    def _matching_document_search_results(
-        cls,
-        file_name: str,
-        results: list[DwsDocumentSearchResult],
-    ) -> list[DwsDocumentSearchResult]:
-        expected = cls._normalized_document_name(file_name)
-        matches = []
-        for result in results:
-            candidates = {
-                cls._normalized_document_name(result.name),
-                cls._normalized_document_name(cls._document_display_name(result)),
-            }
-            if expected in candidates:
-                matches.append(result)
-        return matches
-
-    @staticmethod
-    def _document_display_name(result: DwsDocumentSearchResult) -> str:
-        if not result.extension:
-            return result.name
-        suffix = f".{result.extension.lstrip('.')}"
-        if result.name.endswith(suffix):
-            return result.name
-        return f"{result.name}{suffix}"
-
-    @staticmethod
-    def _normalized_document_name(value: str) -> str:
-        return " ".join(value.strip().split()).casefold()
 
     @classmethod
     def _dingtalk_doc_urls(cls, messages: list[DingTalkMessage]) -> list[str]:
@@ -10095,182 +9618,9 @@ class DingTalkAutoReplyWorker:
         return ""
 
     @staticmethod
-    def _payload_data(payload: dict[str, object]) -> dict[str, object]:
-        data = payload.get("data")
-        if isinstance(data, dict):
-            return data
-        result = payload.get("result")
-        return result if isinstance(result, dict) else payload
-
-    @classmethod
-    def _aitable_tables_from_payload(
-        cls, payload: dict[str, object]
-    ) -> list[dict[str, object]]:
-        data = cls._payload_data(payload)
-        tables = data.get("tables")
-        if isinstance(tables, list):
-            return [table for table in tables if isinstance(table, dict)]
-        table = data.get("table")
-        if isinstance(table, dict):
-            return [table]
-        return []
-
-    @classmethod
-    def _format_aitable_records(
-        cls,
-        payload: dict[str, object],
-        fields: object,
-    ) -> list[str]:
-        data = cls._payload_data(payload)
-        records = data.get("records")
-        if not isinstance(records, list):
-            return []
-        field_names = cls._aitable_field_names(fields)
-        lines: list[str] = []
-        for index, record in enumerate(records[:AITABLE_RECORD_PREVIEW_LIMIT], start=1):
-            if not isinstance(record, dict):
-                continue
-            cells = record.get("cells")
-            if not isinstance(cells, dict) or not cells:
-                continue
-            cell_parts = []
-            for field_id, value in cells.items():
-                name = field_names.get(str(field_id), str(field_id))
-                rendered = cls._render_aitable_cell(value)
-                if rendered:
-                    cell_parts.append(f"{name}: {rendered}")
-            if cell_parts:
-                lines.append(f"- 记录 {index}: " + "；".join(cell_parts))
-        return lines
-
-    @staticmethod
-    def _aitable_field_names(fields: object) -> dict[str, str]:
-        if not isinstance(fields, list):
-            return {}
-        names: dict[str, str] = {}
-        for field in fields:
-            if not isinstance(field, dict):
-                continue
-            field_id = field.get("fieldId")
-            field_name = field.get("fieldName")
-            if field_id and field_name:
-                names[str(field_id)] = str(field_name)
-        return names
-
-    @classmethod
-    def _render_aitable_cell(cls, value: object) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value
-        if isinstance(value, (bool, int, float)):
-            return str(value)
-        if isinstance(value, dict):
-            if value.get("name"):
-                return str(value["name"])
-            if value.get("text"):
-                return str(value["text"])
-            if value.get("userId") or value.get("corpId"):
-                return "用户"
-            return cls._compact_json(value)
-        if isinstance(value, list):
-            rendered = [cls._render_aitable_cell(item) for item in value]
-            return ", ".join(item for item in rendered if item)
-        return str(value)
-
-    @staticmethod
-    def _compact_json(value: object) -> str:
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-
-    @staticmethod
-    def _alidocs_node_id(url: str) -> str:
-        path = urlsplit(url).path.rstrip("/")
-        return path.rsplit("/", 1)[-1]
-
-    @staticmethod
     def _canonical_doc_url(url: str) -> str:
         parts = urlsplit(url.rstrip(".,;，。；"))
         return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
-
-    def _record_linked_document_error(
-        self,
-        conversation: DingTalkConversation,
-        trigger: DingTalkMessage,
-        error: Exception,
-        *,
-        raise_on_delivery_failure: bool = False,
-    ) -> bool:
-        error_text = str(error)
-        if self._is_linked_document_permission_error(error):
-            reason = f"linked_dingtalk_doc_permission_required: {error_text}"
-            attempt_id = self.store.record_reply_attempt_for_trigger(
-                conversation_id=conversation.open_conversation_id,
-                conversation_title=conversation.title,
-                trigger_message_id=trigger.open_message_id,
-                trigger_sender=trigger.sender_name,
-                trigger_text=trigger.content,
-                action=CodexAction.ASK_CLARIFYING_QUESTION.value,
-                sensitivity_kind="general",
-                codex_reason=reason,
-                audit_summary="新消息引用的钉钉材料读取权限不足；已请求对方开放权限或重发正文。",
-            )
-            self._send_reply(
-                conversation=conversation,
-                trigger=trigger,
-                new_messages=[trigger],
-                reply_text=self._linked_document_permission_request_reply(),
-                reason=reason,
-                attempt_id=attempt_id,
-                raise_on_delivery_failure=raise_on_delivery_failure,
-            )
-            return True
-        reason = f"linked_dingtalk_doc_read_failed: {error_text}"
-        reason = f"{CRITICAL_INFO_UNAVAILABLE_PREFIX} {reason}"
-        attempt_id = self.store.record_reply_attempt_for_trigger(
-            conversation_id=conversation.open_conversation_id,
-            conversation_title=conversation.title,
-            trigger_message_id=trigger.open_message_id,
-            trigger_sender=trigger.sender_name,
-            trigger_text=trigger.content,
-            action=CodexAction.STOP_WITH_ERROR.value,
-            sensitivity_kind="general",
-            codex_reason=reason,
-            audit_summary="新消息包含钉钉文档链接，但读取文档正文失败；按照规则不生成回复。",
-        )
-        self.store.update_reply_attempt(
-            attempt_id,
-            send_status="failed",
-            send_error=reason,
-        )
-        self.store.record_error(
-            conversation.open_conversation_id,
-            trigger.open_message_id,
-            "linked_dingtalk_doc_read",
-            error_text,
-        )
-        if raise_on_delivery_failure:
-            raise CriticalInformationUnavailableError(reason)
-        self._notify(
-            title=f"CEO doc read failed: {conversation.title}",
-            message=error_text[:120],
-            conversation=conversation,
-        )
-        return False
-
-    @staticmethod
-    def _is_linked_document_permission_error(error: Exception) -> bool:
-        permission_codes = {"B_PERMISSION_NoPermission", "forbidden.accessDenied"}
-        if isinstance(error, DwsError) and error.code in permission_codes:
-            return True
-        error_text = str(error)
-        return any(code in error_text for code in permission_codes)
-
-    @staticmethod
-    def _linked_document_permission_request_reply() -> str:
-        return (
-            "我这边没有权限读取你引用的材料。麻烦把听记/文档权限开给我，"
-            "或者把正文和关键结论直接发过来，我再继续处理。"
-        )
 
     def _retry_existing_reply_attempt(
         self,

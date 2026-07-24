@@ -199,6 +199,15 @@ class UniversalPlanner:
                 "available tools and CLI when it is needed to make the plan. You must "
                 "not run mutating MCP or CLI operations; service executors own all "
                 "writes.",
+                "When task context includes Material references, treat each supplied "
+                "read_command as the trusted read-only path for that material. If "
+                "your decision depends on the material body, use that read_command "
+                "or an equivalent read-only CLI/tool before planning blocked, "
+                "stop_with_error, or an ask for access. Do not say a material link "
+                "is inaccessible until the supplied read path has been tried or the "
+                "tool returns a concrete permission, login, or not-found error. For "
+                "DingTalk folder or document references, prefer dws doc info/list "
+                "style read-only inspection over service-side material expansion.",
                 "For Feishu/Lark material, use the available read-only lark CLI. "
                 "For external web retrieval, use the configured Exa MCP. These are "
                 "planning-time evidence tools: when a read succeeds, do not declare "

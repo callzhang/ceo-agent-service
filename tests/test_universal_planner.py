@@ -4,7 +4,11 @@ from pathlib import Path
 import pytest
 
 from app.process_runner import ProcessRunResult
-from app.universal_context import UniversalContextMessage, UniversalTaskContext
+from app.universal_context import (
+    UniversalContextMessage,
+    UniversalMaterialReference,
+    UniversalTaskContext,
+)
 
 
 def _context(
@@ -155,6 +159,42 @@ def test_universal_planner_prompt_asks_when_document_material_can_be_recovered()
     assert "ordinary file body, or required review material cannot be read" in prompt
     assert "emit ask_clarifying_question with the exact missing access" in prompt
     assert "use stop_with_error only when the missing evidence is unrecoverable" in prompt
+
+
+def test_universal_planner_prompt_requires_reading_material_references_first():
+    from app.universal_planner import UniversalPlanner
+
+    context = _context("请看这个项目材料再回复。")
+    context = UniversalTaskContext(
+        **{
+            **context.__dict__,
+            "material_references": (
+                UniversalMaterialReference(
+                    kind="dingtalk_doc",
+                    reference="https://alidocs.dingtalk.com/i/nodes/doc-1",
+                    source_message_id="msg-2",
+                    source_sender="Derek",
+                    source_time="2026-07-25T10:00:00Z",
+                    read_command=(
+                        "dws doc info --node "
+                        "https://alidocs.dingtalk.com/i/nodes/doc-1 --format json"
+                    ),
+                ),
+            ),
+        }
+    )
+    prompt = UniversalPlanner(workspace=Path("/tmp/universal-planner-workspace")).build_prompt(
+        context
+    )
+
+    assert "When task context includes Material references" in prompt
+    assert "treat each supplied read_command as the trusted read-only path" in prompt
+    assert "before planning blocked, stop_with_error, or an ask for access" in prompt
+    assert "dws doc info/list style read-only inspection" in prompt
+    assert (
+        "dws doc info --node https://alidocs.dingtalk.com/i/nodes/doc-1 --format json"
+        in prompt
+    )
 
 
 def test_parse_universal_plan_json_accepts_direct_and_newest_nested_jsonl_payload():
