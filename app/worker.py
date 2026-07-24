@@ -725,7 +725,6 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage],
         prompt_context_messages: list[DingTalkMessage],
     ) -> bool:
-        trigger = self._with_resolved_sender_user_id_for_universal(trigger)
         effective_oa_url = task.oa_url.strip()
         if not effective_oa_url and not self._is_oa_approval_message(trigger):
             effective_oa_url = self._oa_context_url_override(
@@ -733,6 +732,7 @@ class DingTalkAutoReplyWorker:
                 trigger,
                 prompt_context_messages,
             ) or self._oa_follow_up_url_override(conversation, trigger)
+        trigger = self._with_resolved_sender_user_id_for_universal(trigger)
 
         planner_context_messages = list(prompt_context_messages)
         calendar_context = self._calendar_invite_context(

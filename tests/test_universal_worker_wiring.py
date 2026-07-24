@@ -597,6 +597,80 @@ def test_worker_builds_trusted_context_and_force_generation(tmp_path, monkeypatc
     assert planner.calls[0][1] is None
 
 
+def test_worker_binds_coalesced_oa_card_before_resolving_trigger_sender(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
+    oa_url = (
+        "https://aflow.dingtalk.com/dingtalk/pc/query/pchomepage.htm"
+        "?procInstId=proc-1&taskId=task-1"
+    )
+    oa_card = trigger_message(content=f"李思录用申请\n{oa_url}").model_copy(
+        update={
+            "open_message_id": "msg-oa-card",
+            "sender_user_id": None,
+            "single_chat": True,
+            "create_time": "2026-07-21 09:54:30",
+        }
+    )
+    trigger = trigger_message(content="磊哥分身，快批一下李思的录用申请").model_copy(
+        update={
+            "sender_user_id": None,
+            "single_chat": True,
+            "raw_payload": {
+                "coalesced_messages": [
+                    {
+                        "open_message_id": oa_card.open_message_id,
+                        "create_time": oa_card.create_time,
+                        "sender_name": oa_card.sender_name,
+                        "content": oa_card.content,
+                    },
+                    {
+                        "open_message_id": "msg-1",
+                        "create_time": "2026-07-21 09:55:00",
+                        "sender_name": "宇航",
+                        "content": "磊哥分身，快批一下李思的录用申请",
+                    },
+                ]
+            },
+        }
+    )
+    planner = RecordingPlanner(no_reply_plan())
+    worker, _ = make_worker(tmp_path, monkeypatch, trigger=trigger, planner=planner)
+    direct_conversation = conversation().model_copy(update={"single_chat": True})
+    worker.store.upsert_conversation("cid-1", "测试群", True, None)
+    assert worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="测试群",
+        single_chat=True,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    task = worker.store.list_reply_tasks(limit=1)[0]
+
+    assert worker._process_universal_queued_task(
+        direct_conversation,
+        task,
+        trigger,
+        [oa_card, trigger],
+        [oa_card, trigger],
+    ) is True
+
+    context = planner.calls[0][0]
+    assert worker.dws.oa_detail_reads == ["proc-1"]
+    assert context.trusted_oa_process_instance_id == "proc-1"
+    assert context.trusted_oa_task_id == "task-1"
+    assert any(
+        message.open_message_id == "msg-1:trusted-oa-approval"
+        and "测试审批" in message.content
+        for message in context.context_messages
+    )
+
+
 def test_worker_reuses_existing_native_codex_session(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(no_reply_plan())

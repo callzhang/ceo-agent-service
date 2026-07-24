@@ -255,6 +255,13 @@ uses that card's OA URL as the approval target. This keeps `OA card -> please
 review this link` sequences on the OA handler path even when the unread read only
 returns the final follow-up message.
 
+The OA target is bound before the trigger sender is enriched from
+`open_dingtalk_id` to `user_id`. Recent message cards may still carry only the
+open DingTalk identity, so enriching one side first must not prevent the worker
+from recognizing the card and follow-up as messages from the same person. Sender
+enrichment still happens before the universal context is rendered for the
+planner.
+
 ## Consumer retry behavior
 
 Reply tasks move from `pending` to `processing` when claimed. If task processing
