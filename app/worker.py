@@ -1539,6 +1539,14 @@ class DingTalkAutoReplyWorker:
         ]
         if not current_user_records:
             return "oa_task_not_current_user"
+        task_action_state = cls._universal_oa_task_action_state(
+            current_user_records,
+            action=action,
+        )
+        if task_action_state == "expected":
+            return "already_handled"
+        if task_action_state == "different":
+            return "handled_by_different_action"
         current_statuses = {
             cls._universal_oa_task_status(task)
             for task in current_user_records
@@ -1581,19 +1589,28 @@ class DingTalkAutoReplyWorker:
         action: str,
     ) -> str:
         try:
-            refreshed_user_id, _, _, records = self._read_universal_oa_state(
+            refreshed_user_id, detail, tasks, records = self._read_universal_oa_state(
                 process_instance_id
             )
         except Exception:
             return "none"
         if refreshed_user_id != current_user_id:
             return "none"
-        return self._universal_oa_record_action_state(
+        record_state = self._universal_oa_record_action_state(
             records,
             task_id=task_id,
             current_user_id=current_user_id,
             action=action,
         )
+        if record_state != "none":
+            return record_state
+        matching_tasks = [
+            task
+            for task in self._universal_oa_tasks(detail, tasks)
+            if self._universal_oa_task_id(task) == task_id
+            and self._universal_oa_task_owner(task) == current_user_id
+        ]
+        return self._universal_oa_task_action_state(matching_tasks, action=action)
 
     @staticmethod
     def _universal_oa_receipt_is_success(result: Any) -> bool:
@@ -1653,6 +1670,32 @@ class DingTalkAutoReplyWorker:
                 or ""
             ).strip().upper()
             recorded_action = cls._universal_oa_canonical_action(operation)
+            if not recorded_action:
+                continue
+            if recorded_action == action:
+                return "expected"
+            found_different = True
+        return "different" if found_different else "none"
+
+    @classmethod
+    def _universal_oa_task_action_state(
+        cls,
+        tasks: list[dict[str, Any]],
+        *,
+        action: str,
+    ) -> str:
+        found_different = False
+        for task in tasks:
+            if cls._universal_oa_task_status(task) != "COMPLETED":
+                continue
+            result = str(
+                task.get("taskResult")
+                or task.get("task_result")
+                or task.get("operationResult")
+                or task.get("operation_result")
+                or ""
+            ).strip()
+            recorded_action = cls._universal_oa_canonical_action(result)
             if not recorded_action:
                 continue
             if recorded_action == action:

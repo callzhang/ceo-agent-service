@@ -18,7 +18,11 @@ from app.task_models import (
     WorkItemSourceType,
     WorkSummaryInput,
 )
-from app.task_retrieval import render_candidate_prompt, retrieve_project_candidates
+from app.task_retrieval import (
+    render_candidate_prompt,
+    retrieve_project_candidates,
+    tokenize,
+)
 from app.todo_sync import maybe_create_dingtalk_todo, sync_completed_todo_to_dingtalk
 
 
@@ -29,6 +33,55 @@ TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
 FOLLOW_UP_WORK_START_HOUR = 9
 FOLLOW_UP_WORK_END_HOUR = 18
+
+TASK_AGENT_RETRIEVED_EXAMPLES = (
+    {
+        "name": "prototype_owner_boundary",
+        "text": (
+            "样例：当输入要求拆分用户旅程、产品原型、交互方案或 Demo 话术时，"
+            "先判断交付物性质。原型、交互、产品方案由产品或设计 owner 承担；"
+            "测试 owner 只承担测试计划、用例、验收验证。不要把“做原型”拆给测试，"
+            "可以只更新项目背景，或生成面向产品 owner 的 TODO。"
+        ),
+    },
+    {
+        "name": "external_todo_readability",
+        "text": (
+            "样例：如果要创建会同步到 DingTalk Todo 的 TODO，title 要让执行人"
+            "单独看到也知道动作和对象；description 写来源事项、交付内容、完成标准"
+            "和用途。若当前上下文只能得到模糊标题，先生成 follow_up_draft 问清，"
+            "不要创建只有标题、缺少事项说明的外部待办。"
+        ),
+    },
+)
+
+
+def render_task_agent_examples(work_item: WorkItem, *, limit: int = 2) -> str:
+    query_terms = set(
+        tokenize(
+            "\n".join(
+                [
+                    work_item.summary,
+                    work_item.project_name,
+                    work_item.source.title,
+                    work_item.context.source_conversation_title,
+                ]
+            )
+        )
+    )
+    if not query_terms:
+        return ""
+
+    ranked = []
+    for example in TASK_AGENT_RETRIEVED_EXAMPLES:
+        terms = set(tokenize(example["text"]))
+        score = len(query_terms & terms)
+        if score > 1:
+            ranked.append((score, example["name"], example["text"]))
+    if not ranked:
+        return ""
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return "\n".join(text for _, _, text in ranked[:limit])
 
 
 class TaskCodex(Protocol):
@@ -133,6 +186,7 @@ class TaskAgentCodexRunner:
             session_id,
             image_paths=None,
             output_schema_path=TASK_AGENT_DECISION_SCHEMA_PATH,
+            ignore_user_config=True,
         )
         if self.executor is not None:
             return self.executor(command, prompt)
@@ -164,6 +218,12 @@ def build_task_agent_prompt(
         indent=2,
     )
     memory_status = _memory_connector_prompt_status(memory_issue)
+    retrieved_examples = render_task_agent_examples(work_item)
+    example_prompt = (
+        f"\n可召回样例（只迁移判断方式，不要照抄字段）:\n{retrieved_examples}\n"
+        if retrieved_examples
+        else ""
+    )
     return f"""你是 CEO Agent task agent。
 
 职责边界：
@@ -221,6 +281,7 @@ def build_task_agent_prompt(
 
 Memory connector 状态:
 {memory_status}
+{example_prompt}
 
 Work Item JSON:
 {work_item_json}

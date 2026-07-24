@@ -99,6 +99,33 @@ def test_maybe_create_dingtalk_todo_creates_high_confidence_link(tmp_path):
     assert stored.status == "active"
 
 
+def test_maybe_create_dingtalk_todo_pushes_context_in_external_title(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(
+        store,
+        title="准备宝马专家邀请材料",
+        description=(
+            "来源：宝马项目周末攻坚与客户Demo推进；交付：补齐专家背景、"
+            "邀请理由、Demo议程和客户确认口径。完成标准：可直接发给客户。"
+        ),
+    )
+    dws = FakeTodoDws()
+
+    link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert link is not None
+    created_title = dws.created[0]["title"]
+    assert created_title.startswith("准备宝马专家邀请材料：来源：宝马项目周末攻坚")
+    assert len(created_title) <= 80
+    stored = store.get_work_todo_dingtalk_link(link.id)
+    assert stored.title_snapshot == created_title
+
+
 def test_maybe_create_dingtalk_todo_accepts_create_todo_task_id(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)

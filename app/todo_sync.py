@@ -8,6 +8,8 @@ from app.task_models import ProjectCategory, ProjectPriority, TodoStatus
 
 
 WEAK_TITLES = {"跟进一下", "同步进展", "确认进展", "问一下", "推进一下"}
+DINGTALK_TODO_TITLE_LIMIT = 80
+DINGTALK_TODO_CONTEXT_LIMIT = 42
 
 
 def _parse_datetime(value: str) -> datetime | None:
@@ -108,6 +110,46 @@ def _is_actionable_title(title: str) -> bool:
     return len(compact) >= 6 and compact not in WEAK_TITLES
 
 
+def _normalize_inline_text(value: str) -> str:
+    return " ".join((value or "").split())
+
+
+def _trim_inline_text(value: str, limit: int) -> str:
+    text = _normalize_inline_text(value)
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 1)]}…"
+
+
+def _first_context_sentence(value: str) -> str:
+    text = _normalize_inline_text(value)
+    if not text:
+        return ""
+    for separator in ("。", "；", ";", "！", "!", "？", "?"):
+        index = text.find(separator)
+        if index > 0:
+            text = text[:index]
+            break
+    return _trim_inline_text(text, DINGTALK_TODO_CONTEXT_LIMIT)
+
+
+def _dingtalk_todo_title(todo: Any) -> str:
+    title = _trim_inline_text(todo.title, DINGTALK_TODO_TITLE_LIMIT)
+    if not title:
+        return ""
+    for field in ("description", "follow_up_question", "blocker"):
+        detail = _first_context_sentence(str(getattr(todo, field, "") or ""))
+        if not detail:
+            continue
+        if detail in title or title in detail:
+            continue
+        return _trim_inline_text(
+            f"{title}：{detail}",
+            DINGTALK_TODO_TITLE_LIMIT,
+        )
+    return title
+
+
 def _is_project_sensitive(store: AutoReplyStore, project_id: int) -> bool:
     project = store.get_work_project(project_id)
     return project is not None and project.category == ProjectCategory.HR
@@ -121,6 +163,8 @@ def _todo_is_eligible(store: AutoReplyStore, todo: Any) -> bool:
     if not _deadline_to_iso(todo.deadline_at):
         return False
     if not _is_actionable_title(todo.title):
+        return False
+    if not _is_actionable_title(_dingtalk_todo_title(todo)):
         return False
     if _has_completion_evidence(todo.completion_evidence_json):
         return False
@@ -196,11 +240,12 @@ def maybe_create_dingtalk_todo(
     if not _todo_is_eligible(store, todo):
         return None
 
+    dingtalk_title = _dingtalk_todo_title(todo)
     link_id = store.create_work_todo_dingtalk_link(
         work_todo_id=todo.id,
         executor_user_id=todo.owner_user_id,
         executor_name=todo.owner_name,
-        title_snapshot=todo.title,
+        title_snapshot=dingtalk_title,
         deadline_at_snapshot=todo.deadline_at,
         priority_snapshot=todo.priority.value,
         status="creating",
@@ -213,7 +258,7 @@ def maybe_create_dingtalk_todo(
 
     try:
         create_payload = dws.create_todo_task(
-            title=todo.title,
+            title=dingtalk_title,
             executor_user_id=todo.owner_user_id,
             due=_deadline_to_iso(todo.deadline_at),
             priority=_priority_to_dingtalk(str(todo.priority)),

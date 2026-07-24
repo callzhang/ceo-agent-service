@@ -547,6 +547,33 @@ def test_no_reply_can_be_combined_with_calendar_response() -> None:
     ]
 
 
+def test_no_reply_can_be_combined_with_oa_approval() -> None:
+    result = UniversalValidator().validate(
+        make_plan(
+            PlannedAction(
+                kind=PlannedActionKind.OA_APPROVAL,
+                reason="Approve through the trusted OA task",
+                target={
+                    "process_instance_id": "proc-1",
+                    "task_id": "task-1",
+                },
+                payload={"action": "同意", "remark": "同意。"},
+            ),
+            PlannedAction(
+                kind=PlannedActionKind.NO_REPLY,
+                reason="The OA approval itself responds to the trigger",
+            ),
+        ),
+        make_context(),
+    )
+
+    assert result.allowed is True
+    assert [action.kind for action in result.actions] == [
+        PlannedActionKind.OA_APPROVAL,
+        PlannedActionKind.NO_REPLY,
+    ]
+
+
 def test_memory_write_is_not_terminal() -> None:
     action = PlannedAction(
         kind=PlannedActionKind.MEMORY_WRITE,

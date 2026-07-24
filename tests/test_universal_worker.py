@@ -228,6 +228,7 @@ class UniversalOaFakeDws(FakeDws):
         self.owner = owner
         self.tasks_owner = owner
         self.task_status = task_status
+        self.task_result = "NONE"
         self.process_status = process_status
         self.action_calls: list[tuple[str, str, str, str]] = []
         self.comment_calls: list[tuple[str, str]] = []
@@ -338,6 +339,8 @@ class UniversalOaFakeDws(FakeDws):
         return {
             "taskId": "task-1",
             "status": self.task_status,
+            "taskStatus": self.task_status,
+            "taskResult": self.task_result,
             "userId": self.owner,
         }
 
@@ -356,6 +359,7 @@ class UniversalOaFakeDws(FakeDws):
                 self.process_status = "COMPLETED"
             return
         self.task_status = "COMPLETED"
+        self.task_result = self.recorded_action_override or action
         self.process_status = "COMPLETED"
 
 
@@ -1734,7 +1738,10 @@ def test_universal_reply_uses_immutable_context_and_completes_after_delivery(
     assert trigger.open_message_id == "msg-context"
     assert captured["reply_text"] == "Reply from plan"
     assert captured["reason"] == f"Reason for {kind.value}"
-    assert captured["kwargs"] == {"raise_on_delivery_failure": True}
+    assert captured["kwargs"] == {
+        "allow_duplicate_send": False,
+        "raise_on_delivery_failure": True,
+    }
     assert [message.open_message_id for message in captured["new_messages"]] == [
         "msg-context",
     ]
@@ -2860,6 +2867,29 @@ def test_universal_oa_post_call_invalid_payload_without_live_proof_is_unknown(
     assert json.loads(attempt.oa_action_result_json)["outcome"] == "unknown"
 
 
+def test_universal_oa_post_call_invalid_payload_salvages_from_completed_task_result(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "同意", "remark": "同意"},
+    )
+    dws = UniversalOaFakeDws()
+    dws.action_result = {}
+    dws.record_action_after_apply = False
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert json.loads(attempt.oa_action_result_json)["outcome"] == "salvaged"
+
+
 def test_universal_oa_value_error_after_mutating_call_is_unknown_without_proof(
     tmp_path: Path,
 ) -> None:
@@ -3108,6 +3138,35 @@ def test_universal_oa_already_handled_is_idempotent_success(
         "taskId": "task-1",
         "userId": "principal-user-1",
         "operationType": "通过",
+    }]
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.action_calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "oa_already_handled"
+    assert json.loads(attempt.oa_action_result_json)["outcome"] == "already_handled"
+
+
+def test_universal_oa_completed_task_result_is_idempotent_success_without_record_task_id(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "同意", "remark": "同意"},
+    )
+    dws = UniversalOaFakeDws(task_status="COMPLETED", process_status="RUNNING")
+    dws.task_result = "AGREE"
+    dws.records = [{
+        "operationResult": "AGREE",
+        "operationType": "EXECUTE_TASK_NORMAL",
+        "userId": "principal-user-1",
     }]
     worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
 

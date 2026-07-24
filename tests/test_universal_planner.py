@@ -7,7 +7,9 @@ from app.process_runner import ProcessRunResult
 from app.universal_context import UniversalContextMessage, UniversalTaskContext
 
 
-def _context() -> UniversalTaskContext:
+def _context(
+    trigger_text: str = "Please review the supplier request.",
+) -> UniversalTaskContext:
     return UniversalTaskContext(
         task_id=42,
         conversation_id="cid-1",
@@ -15,12 +17,12 @@ def _context() -> UniversalTaskContext:
         single_chat=False,
         trigger_message_id="msg-2",
         trigger_sender="Derek",
-        trigger_text="Please review the supplier request.",
+        trigger_text=trigger_text,
         context_messages=(
             UniversalContextMessage(
                 sender_name="Derek",
                 open_message_id="msg-2",
-                content="Please review the supplier request.",
+                content=trigger_text,
             ),
         ),
         required_dependencies=("dws",),
@@ -231,6 +233,24 @@ def test_build_prompt_sets_planner_boundary_and_includes_schema_and_context():
     assert "at least one action" in prompt
     assert "0.0..1.0" in prompt
     assert "Please review the supplier request." in prompt
+
+
+def test_build_prompt_retrieves_downloadable_windows_material_example():
+    from app.universal_planner import UniversalPlanner
+
+    prompt = UniversalPlanner(workspace=Path("/tmp/workspace")).build_prompt(
+        _context(
+            "Windows 系统的分身轮子资料在这个钉钉文件里，你先下载看完再回复。"
+        )
+    )
+
+    assert "Retrieved planning examples" in prompt
+    assert "download or read it" in prompt
+    assert "Windows 分身、persona" in prompt
+    assert (
+        "Do not return blocked while a trusted material download path still exists"
+        in prompt
+    )
 
 
 def test_plan_uses_new_and_resume_commands_with_configured_mcps(tmp_path, monkeypatch):

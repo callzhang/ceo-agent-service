@@ -17,6 +17,7 @@ from app.codex_runner import (
     passthrough_mcp_server_config_options,
 )
 from app.process_runner import run_process_with_idle_timeout
+from app.task_retrieval import tokenize
 from app.universal_context import UniversalTaskContext
 from app.universal_plan import UniversalPlan
 
@@ -28,6 +29,31 @@ UNIVERSAL_PLANNER_DEVELOPER_OVERLAY = (
     "Apply all shared business, permission, evidence, style, privacy, and safety "
     "rules when deciding the plan. Return UniversalPlan JSON only. Plan external "
     "side effects but never execute them yourself."
+)
+
+UNIVERSAL_PLANNER_RETRIEVED_EXAMPLES = (
+    {
+        "name": "recover_downloadable_material",
+        "text": (
+            "Example: if the task context references a DingTalk document, file, "
+            "attachment, or material that is not already expanded, first use the "
+            "available read-only DWS or document tool to download or read it. If "
+            "the read fails because access is missing, ask the requester for access "
+            "or the exact material. Do not return blocked while a trusted material "
+            "download path still exists."
+        ),
+    },
+    {
+        "name": "windows_persona_request",
+        "text": (
+            "Example: when asked to compare, confirm, or recommend a Windows "
+            "分身、persona, avatar, or multi-account tool, gather the referenced "
+            "资料 or material before answering. If the material is available, send "
+            "a substantive reply with the concrete conclusion; if the key file is "
+            "unreadable, ask for that file or access instead of sending a generic "
+            "failure note."
+        ),
+    },
 )
 
 
@@ -47,6 +73,22 @@ def universal_planner_developer_instructions() -> str:
         "send_reply/ask_clarifying_question payload.text",
     )
     return f"{shared}\n\n{UNIVERSAL_PLANNER_DEVELOPER_OVERLAY}"
+
+
+def render_universal_planner_examples(context_text: str, *, limit: int = 2) -> str:
+    query_terms = set(tokenize(context_text))
+    if not query_terms:
+        return ""
+    ranked = []
+    for example in UNIVERSAL_PLANNER_RETRIEVED_EXAMPLES:
+        terms = set(tokenize(example["text"]))
+        score = len(query_terms & terms)
+        if score > 1:
+            ranked.append((score, example["name"], example["text"]))
+    if not ranked:
+        return ""
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return "\n".join(text for _, _, text in ranked[:limit])
 
 UNIVERSAL_PLAN_SCHEMA_HINT = (
     "UniversalPlan JSON contract: "
@@ -101,7 +143,9 @@ UNIVERSAL_PLAN_SCHEMA_HINT = (
     "with handoff_to_human; if a human must take over, use only "
     "handoff_to_human and put the handoff note in payload.text. "
     "Non-terminal follow-up actions such as memory_write may follow the single "
-    "terminal action when needed."
+    "terminal action when needed. If an oa_approval action fully responds to "
+    "the trigger and no chat text should be sent, pair it with no_reply only; "
+    "do not pair no_reply with send_reply or ask_clarifying_question."
     " queue_okr_review requires target.conversation_id and "
     "target.trigger_message_id copied exactly from task context and an empty "
     "payload. Use it only when the sender explicitly asks Derek to review, "
@@ -131,6 +175,14 @@ class UniversalPlanner:
         self.last_audit_tool_events: list[dict[str, Any]] = []
 
     def build_prompt(self, context: UniversalTaskContext) -> str:
+        context_text = context.render_for_agent()
+        retrieved_examples = render_universal_planner_examples(context_text)
+        example_prompt = (
+            "Retrieved planning examples. Use the decision pattern only; do not "
+            f"copy field values:\n{retrieved_examples}"
+            if retrieved_examples
+            else ""
+        )
         return "\n\n".join(
             [
                 "You are the Universal Planner. Classify and plan this task, but "
@@ -164,10 +216,11 @@ class UniversalPlanner:
                 "names, or other raw payload ids as personnel_subject_user_id. If the "
                 "subject is the sender but no trusted user_id is available, leave "
                 "personnel_subject_user_id null and avoid concrete personnel claims.",
+                example_prompt,
                 UNIVERSAL_PLAN_SCHEMA_HINT,
                 "Return only UniversalPlan JSON. Do not use Markdown fences or add "
                 "explanatory text.",
-                "Task context:\n" + context.render_for_agent(),
+                "Task context:\n" + context_text,
             ]
         )
 

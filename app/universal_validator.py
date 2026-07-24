@@ -210,6 +210,7 @@ class UniversalValidator:
                 action.kind
                 in {
                     PlannedActionKind.CALENDAR_RESPONSE,
+                    PlannedActionKind.OA_APPROVAL,
                     PlannedActionKind.NO_REPLY,
                     PlannedActionKind.DWS_MESSAGE_REACTION,
                 }

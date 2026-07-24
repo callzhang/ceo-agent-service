@@ -2516,6 +2516,23 @@ def test_task_agent_prompt_defines_important_vs_routine_process_boundary():
     assert "不要用关键词或固定业务词表做决定" in prompt
 
 
+def test_task_agent_prompt_retrieves_product_prototype_owner_example():
+    work_item = _work_item(project_name="宝马项目客户 Demo 推进")
+    work_item.summary = (
+        "宝马项目周末攻坚要准备客户 Demo 原型，原型应该产品同学负责，"
+        "之前拆给测试不对。"
+    )
+
+    prompt = build_task_agent_prompt(
+        work_item,
+        candidate_prompt="候选上下文为空。",
+    )
+
+    assert "可召回样例" in prompt
+    assert "不要把“做原型”拆给测试" in prompt
+    assert "生成面向产品 owner 的 TODO" in prompt
+
+
 def test_update_project_without_id_raises_value_error(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     decision = TaskAgentDecision.model_validate(
