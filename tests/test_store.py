@@ -2017,6 +2017,83 @@ def test_get_latest_reply_attempt_for_trigger(tmp_path: Path):
     assert store.get_latest_reply_attempt_for_trigger("cid-1", "missing") is None
 
 
+def test_history_treats_superseded_blocked_reply_as_skipped(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    blocked_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="stop_with_error",
+        sensitivity_kind="general",
+        send_status="blocked",
+    )
+    sent_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+
+    blocked_items = store.list_history_items(send_statuses=("blocked",))
+    skipped_items = store.list_history_items(send_statuses=("skipped",))
+
+    assert blocked_id != sent_id
+    assert [item.source_id for item in blocked_items] == []
+    assert [item.source_id for item in skipped_items] == [blocked_id]
+
+
+def test_history_treats_superseded_meeting_failure_as_skipped(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-1",
+        title="招聘站会",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-07-22T10:12:44+00:00",
+        eligible_at="2026-07-22T10:22:44+00:00",
+        status="pending",
+    )
+    failed_run_id = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="meeting-session-failed",
+        decision_json="{}",
+        audit_summary="首次生成失败",
+        status="retry",
+        error="Codex did not return a valid MeetingAlignmentDecision",
+    )
+    sent_run_id = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="meeting-session-sent",
+        decision_json='{"action":"send"}',
+        audit_summary="再次生成完成",
+        status="ready_to_send",
+        error="",
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="sent",
+        target_kind="group",
+        target_title="HR",
+        final_message="会后对齐已发送。",
+        send_result_json='{"status":"sent"}',
+    )
+
+    failed_items = store.list_history_items(send_statuses=("failed",))
+    skipped_items = store.list_history_items(send_statuses=("skipped",))
+    sent_items = store.list_history_items(send_statuses=("sent",))
+
+    assert failed_run_id != sent_run_id
+    assert [item.source_id for item in failed_items] == []
+    assert [item.source_id for item in skipped_items] == [failed_run_id]
+    assert [item.source_id for item in sent_items] == [sent_run_id]
+
+
 def test_lists_reply_attempts_newest_first_with_limit(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first_id = store.record_reply_attempt(

@@ -6455,11 +6455,14 @@ class AutoReplyStore:
                     end as output_text,
                     action,
                     case
-                        when channel != 'wechat' then send_status
-                        else coalesce((
+                        when channel = 'wechat' then coalesce((
                             select case deliveries.status
                                 when 'ready_to_send' then 'pending'
                                 when 'sending' then 'processing'
+                                when 'failed' then case
+                                    when deliveries.error='user_rejected' then 'skipped'
+                                    else 'failed'
+                                end
                                 else deliveries.status
                             end
                             from reply_tasks as tasks
@@ -6470,6 +6473,32 @@ class AutoReplyStore:
                               and tasks.trigger_message_id=reply_attempts.trigger_message_id
                             limit 1
                         ), send_status)
+                        when send_status='blocked'
+                             and lower(send_error) like 'blocked_unrecoverable_%'
+                        then 'blocked-terminal'
+                        when send_status in ('failed', 'blocked', 'pending', 'dry_run')
+                             and exists (
+                                select 1
+                                from reply_attempts as newer_attempts
+                                where newer_attempts.conversation_id=reply_attempts.conversation_id
+                                  and newer_attempts.trigger_message_id=reply_attempts.trigger_message_id
+                                  and newer_attempts.id>reply_attempts.id
+                                  and newer_attempts.send_status in (
+                                      'sent', 'skipped', 'commented', 'reacted',
+                                      'calendar', 'document', 'blocked'
+                                  )
+                             )
+                        then 'skipped'
+                        when send_status in ('failed', 'blocked', 'pending', 'dry_run')
+                             and exists (
+                                select 1
+                                from sent_replies as sent
+                                where sent.conversation_id=reply_attempts.conversation_id
+                                  and sent.trigger_message_id=reply_attempts.trigger_message_id
+                                  and datetime(sent.sent_at)>=datetime(reply_attempts.created_at)
+                             )
+                        then 'skipped'
+                        else send_status
                     end as status,
                     conversation_title as target_title,
                     codex_session_id,
@@ -6506,12 +6535,16 @@ class AutoReplyStore:
                     end as action,
                     case
                         when runs.status='no_action' then 'skipped'
+                        when runs.status in ('retry', 'failed') and exists (
+                            select 1 from meeting_alignment_runs as later_runs
+                            where later_runs.job_id=runs.job_id and later_runs.id>runs.id
+                        ) then 'skipped'
                         when runs.status in ('retry', 'failed') then 'failed'
                         when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
                         when runs.status='ready_to_send' and exists (
                             select 1 from meeting_alignment_runs as later_runs
                             where later_runs.job_id=runs.job_id and later_runs.id>runs.id
-                        ) then 'ready_to_send'
+                        ) then 'skipped'
                         when runs.status='ready_to_send' and jobs.status in ('retry', 'failed') then 'failed'
                         else runs.status
                     end as status,
