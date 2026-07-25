@@ -3349,6 +3349,80 @@ class AutoReplyStore:
                     "updated_at=current_timestamp where id=?",
                     (status, error, delivery_id),
                 )
+            self._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=delivery_id,
+                delivery_status=status,
+                error=error,
+            )
+
+    @staticmethod
+    def _wechat_delivery_reply_attempt_status(
+        delivery_status: str,
+        error: str,
+    ) -> tuple[str, str] | None:
+        status = delivery_status.strip().lower()
+        reason = error.strip()
+        if status in {"ready_to_send", "sending"}:
+            return "pending", reason or f"wechat_delivery_{status}"
+        if status == "sent":
+            return "sent", reason
+        if status == "failed" and reason == "user_rejected":
+            return "skipped", reason
+        if status in {"failed", "send_unknown"}:
+            return "failed", reason or status
+        return None
+
+    def _sync_wechat_delivery_reply_attempt(
+        self,
+        db: sqlite3.Connection,
+        *,
+        delivery_id: int,
+        delivery_status: str,
+        error: str,
+    ) -> None:
+        next_status = self._wechat_delivery_reply_attempt_status(
+            delivery_status,
+            error,
+        )
+        if next_status is None:
+            return
+        send_status, send_error = next_status
+        row = db.execute(
+            """
+            select tasks.conversation_id, tasks.trigger_message_id
+            from wechat_deliveries as deliveries
+            join reply_tasks as tasks on tasks.id=deliveries.reply_task_id
+            where deliveries.id=?
+            """,
+            (delivery_id,),
+        ).fetchone()
+        if row is None:
+            return
+        attempt = db.execute(
+            """
+            select id
+            from reply_attempts
+            where channel='wechat'
+              and conversation_id=?
+              and trigger_message_id=?
+            order by id desc
+            limit 1
+            """,
+            (row["conversation_id"], row["trigger_message_id"]),
+        ).fetchone()
+        if attempt is None:
+            return
+        db.execute(
+            """
+            update reply_attempts
+            set send_status=?,
+                send_error=?,
+                updated_at=current_timestamp
+            where id=?
+            """,
+            (send_status, send_error, attempt["id"]),
+        )
 
     # ---- WeChat channel: memory candidates ----
     def add_wechat_memory_candidate(self, *, import_run_id: str, account_id: str,

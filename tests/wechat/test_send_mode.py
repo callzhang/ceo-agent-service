@@ -19,6 +19,22 @@ def _seed(store, *, binding="verified", task_id=1):
     return store.get_wechat_delivery_for_task(task_id)
 
 
+def _seed_with_attempt(store, *, task_id=1):
+    delivery = _seed(store, task_id=task_id)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="u9",
+        conversation_title="Alex",
+        trigger_message_id=f"m{task_id}",
+        trigger_sender="Alex",
+        trigger_text="hi",
+        action="send_reply",
+        sensitivity_kind="normal",
+        send_status="pending",
+        channel="wechat",
+    )
+    return delivery, attempt_id
+
+
 class FakeSender:
     def __init__(self):
         self.sent = []
@@ -58,10 +74,35 @@ def test_approve_sends_specific_pending(tmp_path):
 
 
 def test_reject_marks_failed_without_send(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); d = _seed(store)
+    store = AutoReplyStore(tmp_path / "w.sqlite3"); d, attempt_id = _seed_with_attempt(store)
     service.reject_wechat_delivery(store, d.id)
     assert store.get_wechat_delivery_for_task(1).status == "failed"
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "user_rejected"
     assert service.pending_wechat_deliveries(store) == []
+
+
+def test_delivery_status_updates_history_attempt(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3"); d, attempt_id = _seed_with_attempt(store)
+
+    store.set_wechat_delivery_status(d.id, "sent")
+
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+
+
+def test_unknown_delivery_status_fails_history_attempt(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3"); d, attempt_id = _seed_with_attempt(store)
+
+    store.set_wechat_delivery_status(d.id, "send_unknown", error="no_visible_confirmation")
+
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "no_visible_confirmation"
 
 
 def test_recall_uses_runner_capability_with_text(tmp_path):

@@ -53,6 +53,9 @@ def test_send_reply_creates_ready_delivery(fake_codex, consumer, store):
     assert delivery is not None
     assert delivery.status == "ready_to_send"
     assert delivery.reply_text == "收到，我下午给你结论。"
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "pending"
     assert "memory_recall" in fake_codex.prompts[0]
 
 
@@ -60,6 +63,10 @@ def test_no_reply_completes_without_delivery(fake_codex, consumer, store):
     fake_codex.decision = CodexDecision(action=CodexAction.NO_REPLY, audit_summary="无需回复")
     assert consumer.run_once(limit=1) == 1
     assert store.get_wechat_delivery_for_task(1) is None
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "no_reply"
 
 
 def test_dingtalk_system_actions_rejected(fake_codex, consumer, store):
@@ -69,3 +76,22 @@ def test_dingtalk_system_actions_rejected(fake_codex, consumer, store):
     )
     assert consumer.run_once(limit=1) == 1
     assert store.get_wechat_delivery_for_task(1) is None
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "dingtalk_only_system_actions_rejected"
+
+
+def test_stop_with_error_records_failed_attempt(fake_codex, consumer, store):
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.STOP_WITH_ERROR,
+        reason="missing_wechat_context",
+        audit_summary="缺上下文",
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "missing_wechat_context"

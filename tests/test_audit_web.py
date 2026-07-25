@@ -380,7 +380,7 @@ def test_history_send_buttons_gone_after_delivery_leaves_pending(tmp_path: Path)
 
     # badge still shows (it is a WeChat item), but no actionable buttons remain
     assert "微信</span>" in html
-    assert "💬 Failed" in html
+    assert "💬 Skipped" in html
     assert "💬 Pending" not in html
     assert f"/wechat/deliveries/{delivery_id}/approve" not in html
     assert ">发送</button>" not in html

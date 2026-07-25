@@ -96,6 +96,13 @@ state, and navigates duplicate direct-chat names with the stable target ID befor
 requiring the composer title to match the expected display name. Group navigation
 uses the verified unique group name.
 
+Delivery status is mirrored back to the History `reply_attempts` row. A
+`ready_to_send` or `sending` delivery remains `pending`; `sent` becomes `sent`;
+user rejection becomes `skipped`; `failed` and `send_unknown` become `failed`
+with the delivery error. `no_reply` and `handoff_to_human` decisions do not
+create a delivery and must be recorded as `skipped`, so the audit backlog does
+not retain stale WeChat `pending` attempts.
+
 ## Diagnostic CLI
 
 ```bash

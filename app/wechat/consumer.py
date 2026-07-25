@@ -74,8 +74,9 @@ class WechatReplyConsumer:
         # Record a history attempt so WeChat activity appears in the audit feed
         # (the DingTalk worker does this per decision; WeChat previously only wrote
         # wechat_deliveries, so it was invisible on the history page).
+        attempt_id = 0
         try:
-            self.store.record_reply_attempt(
+            attempt_id = self.store.record_reply_attempt(
                 conversation_id=trigger.conversation_id,
                 conversation_title=task.conversation_title,
                 trigger_message_id=trigger.message_id,
@@ -94,6 +95,12 @@ class WechatReplyConsumer:
 
         if decision.action in (CodexAction.SEND_REPLY, CodexAction.ASK_CLARIFYING_QUESTION):
             if getattr(decision, "system_actions", None):
+                if attempt_id:
+                    self.store.update_reply_attempt(
+                        attempt_id,
+                        send_status="failed",
+                        send_error="dingtalk_only_system_actions_rejected",
+                    )
                 self.store.fail_reply_task(task.id, "dingtalk_only_system_actions_rejected")
                 return
             text = decision.reply_text or ""
@@ -110,6 +117,18 @@ class WechatReplyConsumer:
             )
             self.store.complete_reply_task(task.id)
         elif decision.action in (CodexAction.NO_REPLY, CodexAction.HANDOFF_TO_HUMAN):
+            if attempt_id:
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    send_status="skipped",
+                    send_error=getattr(decision.action, "value", str(decision.action)),
+                )
             self.store.complete_reply_task(task.id)
         else:  # STOP_WITH_ERROR (and anything unexpected) -> bounded retry via fail
+            if attempt_id:
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    send_status="failed",
+                    send_error=decision.reason or "stop_with_error",
+                )
             self.store.fail_reply_task(task.id, decision.reason or "stop_with_error")
