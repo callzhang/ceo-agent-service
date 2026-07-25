@@ -50,6 +50,8 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 
 当同一 `conversation_id + trigger_message_id` 已经产生更新的 terminal attempt（例如 `sent`、`skipped`、`commented`、`blocked`）或 `sent_replies` 记录时，后续恢复流程遇到 Universal Plan 上下文身份漂移应收敛旧 `reply_tasks` 为 `done`，避免已经处理过的消息在最大重试次数后再次显示为 failed。
 
+重复发送保护命中已有 `sent_replies` 时，新的发送 attempt 记为 `skipped`，不记为 `blocked`，也不写入 service error；这表示同一触发消息已处理完成，只是跳过了重复投递。
+
 ## 消息如何被处理
 
 ### 快路径

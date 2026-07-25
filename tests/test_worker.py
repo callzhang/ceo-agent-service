@@ -1267,6 +1267,50 @@ def test_run_once_with_zero_batches_is_noop(tmp_path, monkeypatch):
     assert worker.store.list_errors() == []
 
 
+def test_legacy_delivery_skips_duplicate_sent_reply(tmp_path: Path, monkeypatch):
+    dws = FakeDws(
+        conversations=[conversation(single_chat=True)],
+        messages={},
+    )
+    trigger = message("@Alex Chen 这个已经回复过了吗？", single_chat=True)
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker.store.record_sent_reply(
+        trigger.open_conversation_id,
+        trigger.open_message_id,
+        "已回复。",
+    )
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        trigger_message_id=trigger.open_message_id,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="再次回复。",
+        send_status="pending",
+    )
+
+    delivered = worker._deliver_trigger_reply(
+        conversation=conversation(single_chat=True),
+        trigger=trigger,
+        new_messages=[trigger],
+        attempt_id=attempt_id,
+        reply_text="再次回复。",
+        feedback_token="feedback-token",
+    )
+
+    attempt = worker.store.get_reply_attempt(attempt_id)
+    assert delivered is True
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "duplicate_sent_reply_for_trigger"
+    assert dws.sent == []
+    with worker.store._connect() as db:
+        row = db.execute("select count(*) as count from errors").fetchone()
+    assert row["count"] == 0
+
+
 def developer_instructions_from_command(command: list[str]) -> str:
     for index, item in enumerate(command):
         if item != "-c":

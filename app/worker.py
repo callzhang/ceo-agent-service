@@ -10684,17 +10684,11 @@ class DingTalkAutoReplyWorker:
         ):
             self.store.update_reply_attempt(
                 attempt_id,
-                send_status="blocked",
+                send_status="skipped",
                 send_error="duplicate_sent_reply_for_trigger",
             )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "duplicate_sent_reply_for_trigger",
-                "A sent reply already exists for this trigger; skipped duplicate delivery.",
-            )
             self._mark_seen(new_messages)
-            return False
+            return True
         if not self._execute_mail_reply_if_needed(
             conversation=conversation,
             trigger=trigger,
