@@ -1002,6 +1002,26 @@ class DingTalkAutoReplyWorker:
                 ]
             )
             return self._universal_sheet_text(payload)
+        if content_type == "ALIDOC" and extension == "adraw":
+            metadata_lines = [
+                f"材料名称：{name}",
+                "材料类型：钉钉画布 / ALIDOC/adraw",
+            ]
+            doc_url = str(info.get("docUrl") or "").strip()
+            if doc_url:
+                metadata_lines.append(f"材料链接：{doc_url}")
+            file_size = info.get("fileSize")
+            if file_size not in (None, ""):
+                metadata_lines.append(f"文件大小：{file_size}")
+            metadata_lines.extend(
+                [
+                    "读取状态：DWS 当前只能读取该画布的元数据，不能读取画布正文、"
+                    "动画内容或可审阅页面。",
+                    "处理要求：如果任务需要审阅画布内容，必须要求发送者导出 "
+                    "PDF/PNG/GIF 或把关键页面截图发到对话里；不要声称已经看过画布内容。",
+                ]
+            )
+            return "\n".join(metadata_lines)
         if extension == "xlsx":
             data = self.dws.download_drive_file(
                 reference,

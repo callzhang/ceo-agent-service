@@ -661,6 +661,29 @@ def test_universal_worker_resolves_oa_folder_material_before_planning(
     ]
 
 
+def test_universal_dingtalk_adraw_material_reports_canvas_metadata_only(
+    tmp_path: Path,
+) -> None:
+    worker = make_worker(tmp_path)
+
+    content = worker._read_universal_dingtalk_node(
+        {
+            "name": "产品全景图20260721(1)",
+            "contentType": "ALIDOC",
+            "extension": "adraw",
+            "docUrl": "https://alidocs.dingtalk.com/i/nodes/canvas-1",
+            "fileSize": 201223226,
+        },
+        "canvas-1",
+    )
+
+    assert "材料类型：钉钉画布 / ALIDOC/adraw" in content
+    assert "只能读取该画布的元数据" in content
+    assert "不能读取画布正文" in content
+    assert "PDF/PNG/GIF" in content
+    assert "不要声称已经看过画布内容" in content
+
+
 def test_default_material_read_command_shell_quotes_unsafe_references() -> None:
     unsafe_doc_url = "https://alidocs.dingtalk.com/i/nodes/abc;touch /tmp/pwn"
     unsafe_minutes_id = "minutes-1;touch /tmp/pwn"
