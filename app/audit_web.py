@@ -111,6 +111,7 @@ from app.store import (
     ReplyAttempt,
     ReplyError,
     ServiceBugfixCandidate,
+    SentTodoRecord,
     ReplyTask,
     SentReply,
     UserFeedbackItem,
@@ -297,6 +298,15 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .progress-meter{height:6px;border-radius:999px;background:var(--surface-soft);overflow:hidden}
 .progress-bar{height:100%;border-radius:999px;background:#3772cf}
 .progress-label{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:800;line-height:1.25;white-space:nowrap}
+.sent-todos-section{display:grid;gap:12px;margin-top:24px;padding-top:18px;border-top:1px solid var(--hairline-soft)}
+.section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;min-width:0}
+.section-head h2{margin:0;color:var(--ink);font-size:18px;line-height:1.25}
+.section-head p{margin:0}
+.sent-todos-toolbar{display:grid;grid-template-columns:320px 116px 136px minmax(160px,220px) 1fr 204px auto 72px;align-items:center;gap:8px;min-width:0}
+.sent-todo-filter{width:100%}
+.sent-todos-toolbar-spacer{min-width:0}
+.sent-todo-link{display:block;color:var(--ink);font-weight:760;line-height:1.35;text-decoration:none;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.sent-todo-link:hover{color:#245aa5;text-decoration:underline}
 .task-state{display:inline-flex;align-items:center;height:24px;padding:0 8px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);font-size:12px;font-weight:800;line-height:1;white-space:nowrap}
 .task-state.completed{background:#ddfff6;border-color:rgba(0,180,138,.46);color:#005b49}
 .task-state.over-due{background:rgba(212,86,86,.12);border-color:rgba(212,86,86,.24);color:#9a2f2f}
@@ -518,7 +528,8 @@ label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-wei
 .danger{background:#9f1d1d}
 .muted{color:var(--steel)}
 @media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}.attempt-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-time{margin-left:0}.log-head{grid-template-columns:1fr}.log-time{text-align:left}.log-body{grid-template-columns:1fr}.history-chart{height:220px}.table-toolbar{grid-template-columns:1fr}.table-toolbar-center{justify-content:flex-start}.table-toolbar-right{justify-content:flex-start}}
+@media (max-width:960px){.sent-todos-toolbar{grid-template-columns:1fr 1fr}.sent-todos-toolbar-spacer{display:none}.sent-todos-toolbar .table-toolbar-search{width:100%}.section-head{align-items:flex-start;flex-direction:column}}
+@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-time{margin-left:0}.log-head{grid-template-columns:1fr}.log-time{text-align:left}.log-body{grid-template-columns:1fr}.history-chart{height:220px}.table-toolbar{grid-template-columns:1fr}.table-toolbar-center{justify-content:flex-start}.table-toolbar-right{justify-content:flex-start}.sent-todos-toolbar{grid-template-columns:1fr}}
 """
 
 FAVICON_HREF = (
@@ -3446,6 +3457,10 @@ def render_tasks_page(
     categories = _task_categories(items)
     task_states = _task_states(items)
     rows = [_task_row_payload(project, todos) for project, todos in items]
+    sent_todo_rows = [
+        _sent_todo_row_payload(record)
+        for record in store.list_sent_todo_records(limit=5000)
+    ]
     initial_state = {
         "query": query.strip(),
         "category": category.strip(),
@@ -3454,6 +3469,7 @@ def render_tasks_page(
         "page": max(page, 1),
         "pageSize": _bounded_task_page_size(page_size),
     }
+    sent_todo_filter_values = _sent_todo_filter_values(sent_todo_rows)
     toolbar = _task_toolbar(
         total_count=len(rows),
         query=query,
@@ -3470,6 +3486,15 @@ def render_tasks_page(
         f"<script id=\"tasks-categories\" type=\"application/json\">{_json_script_payload(categories)}</script>"
         f"<script id=\"tasks-states\" type=\"application/json\">{_json_script_payload(task_states)}</script>"
         f"{_task_tabulator_script()}"
+        "<section class=\"sent-todos-section\">"
+        "<div class=\"section-head\"><h2>Sent TODOs</h2>"
+        "<p class=\"muted\">DingTalk Todo and follow-up messages sent by task maintenance.</p></div>"
+        f"{_sent_todos_toolbar(total_count=len(sent_todo_rows), filters=sent_todo_filter_values)}"
+        "<div id=\"sent-todos-table\" class=\"tasks-tabulator sent-todos-table\"></div>"
+        f"<script id=\"sent-todos-data\" type=\"application/json\">{_json_script_payload(sent_todo_rows)}</script>"
+        f"<script id=\"sent-todos-filters\" type=\"application/json\">{_json_script_payload(sent_todo_filter_values)}</script>"
+        f"{_sent_todos_tabulator_script()}"
+        "</section>"
         "</section>"
     )
     head_extra = (
@@ -3487,6 +3512,111 @@ def render_tasks_page(
 
 def _json_script_payload(value) -> str:
     return json.dumps(value, ensure_ascii=False).replace("</", "<\\/")
+
+
+def _sent_todo_row_payload(record: SentTodoRecord) -> dict:
+    owner = record.owner_name or record.owner_user_id or "-"
+    project_title = record.project_title or "-"
+    todo_title = record.todo_title or "-"
+    deadline = _format_local_time(record.deadline_at) or record.deadline_at
+    sent_at = _format_local_time(record.sent_at) or record.sent_at
+    detail_url = (
+        f"/tasks/{record.project_id}#todo-{record.todo_id}"
+        if record.project_id and record.todo_id
+        else f"/tasks/{record.project_id}" if record.project_id else ""
+    )
+    target = record.target_kind or ""
+    if record.target_conversation_id:
+        target = f"{target}:{record.target_conversation_id}".strip(":")
+    elif record.external_id:
+        target = record.external_id
+    values = [
+        record.kind,
+        record.status,
+        owner,
+        record.owner_user_id,
+        project_title,
+        todo_title,
+        record.todo_description,
+        record.original_text,
+        deadline,
+        record.priority,
+        target,
+        record.external_id,
+        record.detail,
+    ]
+    return {
+        "kind": record.kind,
+        "kindLabel": "DingTalk Todo" if record.kind == "dingtalk_todo" else "Follow-up",
+        "sourceId": record.source_id,
+        "sentAt": sent_at,
+        "sentAtRaw": record.sent_at,
+        "status": record.status,
+        "owner": owner,
+        "ownerUserId": record.owner_user_id,
+        "projectId": record.project_id,
+        "projectTitle": project_title,
+        "todoId": record.todo_id,
+        "todoTitle": todo_title,
+        "description": _excerpt(record.todo_description, 180),
+        "originalText": record.original_text,
+        "deadline": deadline,
+        "priority": record.priority,
+        "target": target or "-",
+        "externalId": record.external_id,
+        "detailUrl": detail_url,
+        "search": "\n".join(value for value in values if value).casefold(),
+    }
+
+
+def _sent_todo_filter_values(rows: list[dict]) -> dict[str, list[str]]:
+    return {
+        "types": sorted({str(row["kindLabel"]) for row in rows if row.get("kindLabel")}),
+        "owners": sorted({str(row["owner"]) for row in rows if row.get("owner")}),
+        "projects": sorted(
+            {str(row["projectTitle"]) for row in rows if row.get("projectTitle")}
+        ),
+    }
+
+
+def _sent_todos_toolbar(*, total_count: int, filters: dict[str, list[str]]) -> str:
+    return (
+        '<div class="sent-todos-toolbar">'
+        '<label class="table-toolbar-search">'
+        '<span class="sr-only">Search sent TODOs</span>'
+        '<input id="sent-todo-search-input" type="text" data-live-search-input '
+        'value="" placeholder="搜索" autocomplete="off">'
+        '<button id="sent-todo-search-clear" class="table-search-clear" type="button" '
+        'data-live-search-clear aria-label="Clear search" hidden>×</button>'
+        '</label>'
+        f"{_sent_todo_select('sent-todo-type-filter', 'type: all', filters.get('types', []))}"
+        f"{_sent_todo_select('sent-todo-owner-filter', 'owner: all', filters.get('owners', []))}"
+        f"{_sent_todo_select('sent-todo-project-filter', 'project: all', filters.get('projects', []))}"
+        '<div class="sent-todos-toolbar-spacer"></div>'
+        '<nav id="sent-todos-pages" class="table-page-links tasks-pages" '
+        'aria-label="Sent TODO pages"></nav>'
+        '<select id="sent-todo-page-size" class="table-page-size tasks-page-size" '
+        'aria-label="Sent TODOs per page">'
+        + "".join(
+            f"<option value=\"{size}\"{' selected' if size == DEFAULT_TASK_PAGE_SIZE else ''}>{size}/页</option>"
+            for size in TASK_PAGE_SIZE_OPTIONS
+        )
+        + "</select>"
+        f'<span id="sent-todos-total" class="table-toolbar-total">共 {total_count} 条</span>'
+        "</div>"
+    )
+
+
+def _sent_todo_select(element_id: str, label: str, values: list[str]) -> str:
+    options = [f'<option value="">{escape(label)}</option>']
+    options.extend(
+        f'<option value="{escape(value)}">{escape(value)}</option>'
+        for value in values
+    )
+    return (
+        f'<select id="{escape(element_id)}" class="table-type-select sent-todo-filter" '
+        f'aria-label="{escape(label)}">{"".join(options)}</select>'
+    )
 
 
 def _task_row_payload(project, todos) -> dict:
@@ -3870,6 +4000,134 @@ def _task_tabulator_script() -> str:
 }})();
 </script>
 """
+
+
+def _sent_todos_tabulator_script() -> str:
+    return f"""
+<script>
+(() => {{
+  const rows = JSON.parse(document.getElementById("sent-todos-data").textContent || "[]");
+  const filters = JSON.parse(document.getElementById("sent-todos-filters").textContent || "{{}}");
+  const countEl = document.getElementById("sent-todos-total");
+  const searchInput = document.getElementById("sent-todo-search-input");
+  const clearButton = document.getElementById("sent-todo-search-clear");
+  const typeFilter = document.getElementById("sent-todo-type-filter");
+  const ownerFilter = document.getElementById("sent-todo-owner-filter");
+  const projectFilter = document.getElementById("sent-todo-project-filter");
+  const pageSizeSelect = document.getElementById("sent-todo-page-size");
+  const pagesEl = document.getElementById("sent-todos-pages");
+
+  const escapeHtml = (value) => String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  const pill = (value) => `<span class="pill">${{escapeHtml(value || "-")}}</span>`;
+  const textCell = (value) => `<div class="task-cell-text">${{escapeHtml(value)}}</div>`;
+  const linkedCell = (field) => (cell) => {{
+    const row = cell.getRow().getData();
+    const value = cell.getValue() || "-";
+    if (!row.detailUrl) {{
+      return textCell(value);
+    }}
+    return `<a class="sent-todo-link" href="${{escapeHtml(row.detailUrl)}}">${{escapeHtml(value)}}</a>`;
+  }};
+  const filterValues = (items, label) => {{
+    const values = {{"": label}};
+    (items || []).forEach((item) => {{ values[item] = item; }});
+    return values;
+  }};
+  const table = new Tabulator("#sent-todos-table", {{
+    data: rows,
+    layout: "fitColumns",
+    maxHeight: "520px",
+    pagination: "local",
+    paginationSize: {DEFAULT_TASK_PAGE_SIZE},
+    paginationSizeSelector: [{", ".join(str(size) for size in TASK_PAGE_SIZE_OPTIONS)}],
+    placeholder: "No sent TODOs.",
+    initialSort: [{{column: "sentAtRaw", dir: "desc"}}],
+    columns: [
+      {{title: "Sent", field: "sentAtRaw", width: 138, sorter: "string", formatter: (cell) => escapeHtml(cell.getRow().getData().sentAt || cell.getValue())}},
+      {{title: "Type", field: "kindLabel", width: 122, sorter: "string", headerFilter: "select", headerFilterParams: {{values: filterValues(filters.types, "All types")}}, formatter: (cell) => pill(cell.getValue())}},
+      {{title: "Owner", field: "owner", width: 126, sorter: "string", headerFilter: "select", headerFilterParams: {{values: filterValues(filters.owners, "All owners")}}, variableHeight: true, formatter: (cell) => escapeHtml(cell.getValue())}},
+      {{title: "Project", field: "projectTitle", minWidth: 180, widthGrow: 1.1, sorter: "string", headerFilter: "select", headerFilterParams: {{values: filterValues(filters.projects, "All projects")}}, variableHeight: true, formatter: linkedCell("projectTitle")}},
+      {{title: "TODO", field: "todoTitle", minWidth: 180, widthGrow: 1, sorter: "string", variableHeight: true, formatter: linkedCell("todoTitle")}},
+      {{title: "DDL", field: "deadline", width: 132, sorter: "string", formatter: (cell) => escapeHtml(cell.getValue() || "-")}},
+      {{title: "Status", field: "status", width: 96, sorter: "string", formatter: (cell) => pill(cell.getValue())}},
+      {{title: "Original Text", field: "originalText", minWidth: 280, widthGrow: 1.8, sorter: "string", variableHeight: true, formatter: textCell}},
+      {{title: "Target", field: "target", minWidth: 150, widthGrow: .7, sorter: "string", variableHeight: true, formatter: textCell}},
+    ],
+  }});
+
+  const activeRows = () => table.getRows("active");
+  const applyFilters = () => {{
+    const terms = String(searchInput.value || "").trim().toLowerCase().split(/\\s+/).filter(Boolean);
+    const typeValue = typeFilter.value;
+    const ownerValue = ownerFilter.value;
+    const projectValue = projectFilter.value;
+    table.setFilter((data) => {{
+      if (typeValue && data.kindLabel !== typeValue) return false;
+      if (ownerValue && data.owner !== ownerValue) return false;
+      if (projectValue && data.projectTitle !== projectValue) return false;
+      return !terms.length || terms.every((term) => String(data.search || "").includes(term));
+    }});
+    clearButton.hidden = !terms.length;
+  }};
+  const updateCount = (_filters, filteredRows) => {{
+    const count = filteredRows ? filteredRows.length : activeRows().length;
+    countEl.textContent = `共 ${{count}} 条`;
+  }};
+  const updatePages = () => {{
+    const current = table.getPage();
+    const max = table.getPageMax();
+    if (!max || max <= 1) {{
+      pagesEl.innerHTML = "";
+      return;
+    }}
+    const visible = new Set([1, max, current - 1, current, current + 1].filter((page) => page >= 1 && page <= max));
+    const pieces = [];
+    let previous = 0;
+    [...visible].sort((a, b) => a - b).forEach((page) => {{
+      if (previous && page - previous > 1) {{
+        pieces.push(`<span class="table-page-ellipsis">...</span>`);
+      }}
+      if (page === current) {{
+        pieces.push(`<span class="table-page-link active" aria-current="page" aria-label="Page ${{page}}">${{page}}</span>`);
+      }} else {{
+        pieces.push(`<button class="table-page-link" type="button" data-page="${{page}}" aria-label="Page ${{page}}">${{page}}</button>`);
+      }}
+      previous = page;
+    }});
+    const prevClass = current <= 1 ? "table-page-arrow disabled" : "table-page-arrow";
+    const nextClass = current >= max ? "table-page-arrow disabled" : "table-page-arrow";
+    pagesEl.innerHTML = `<button class="${{prevClass}}" type="button" data-page="${{Math.max(current - 1, 1)}}" aria-label="Previous page">‹</button>${{pieces.join("")}}<button class="${{nextClass}}" type="button" data-page="${{Math.min(current + 1, max)}}" aria-label="Next page">›</button>`;
+  }};
+
+  table.on("dataFiltered", updateCount);
+  table.on("dataFiltered", updatePages);
+  table.on("pageLoaded", updatePages);
+  table.on("tableBuilt", updatePages);
+  searchInput.addEventListener("input", applyFilters);
+  clearButton.addEventListener("click", () => {{
+    searchInput.value = "";
+    applyFilters();
+    searchInput.focus();
+  }});
+  typeFilter.addEventListener("change", applyFilters);
+  ownerFilter.addEventListener("change", applyFilters);
+  projectFilter.addEventListener("change", applyFilters);
+  pageSizeSelect.addEventListener("change", () => table.setPageSize(Number(pageSizeSelect.value)));
+  pagesEl.addEventListener("click", (event) => {{
+    const button = event.target.closest("button[data-page]");
+    if (button) {{
+      table.setPage(Number(button.dataset.page));
+    }}
+  }});
+}})();
+</script>
+"""
+
 
 def _task_project_search_values(project, todos) -> list[str]:
     values = [

@@ -205,6 +205,27 @@ class OperationLog(BaseModel):
     message_id: str = ""
 
 
+class SentTodoRecord(BaseModel):
+    kind: str
+    source_id: int
+    sent_at: str
+    status: str
+    owner_user_id: str = ""
+    owner_name: str = ""
+    project_id: int = 0
+    project_title: str = ""
+    todo_id: int = 0
+    todo_title: str = ""
+    todo_description: str = ""
+    original_text: str = ""
+    deadline_at: str = ""
+    priority: str = ""
+    target_kind: str = ""
+    target_conversation_id: str = ""
+    external_id: str = ""
+    detail: str = ""
+
+
 class SentReply(BaseModel):
     id: int
     conversation_id: str
@@ -8203,6 +8224,70 @@ class AutoReplyStore:
                 (since, limit),
             ).fetchall()
             return [FollowUpDraft.model_validate(dict(row)) for row in rows]
+
+    def list_sent_todo_records(self, *, limit: int = 5000) -> list[SentTodoRecord]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from (
+                    select
+                        'dingtalk_todo' as kind,
+                        links.id as source_id,
+                        coalesce(nullif(links.last_push_at, ''), links.created_at) as sent_at,
+                        links.status as status,
+                        links.executor_user_id as owner_user_id,
+                        links.executor_name as owner_name,
+                        coalesce(projects.id, 0) as project_id,
+                        coalesce(projects.title, '') as project_title,
+                        coalesce(todos.id, 0) as todo_id,
+                        coalesce(todos.title, '') as todo_title,
+                        coalesce(todos.description, '') as todo_description,
+                        coalesce(nullif(links.title_snapshot, ''), todos.title, '') as original_text,
+                        coalesce(nullif(links.deadline_at_snapshot, ''), todos.deadline_at, '') as deadline_at,
+                        coalesce(nullif(links.priority_snapshot, ''), todos.priority, '') as priority,
+                        '' as target_kind,
+                        '' as target_conversation_id,
+                        links.dingtalk_task_id as external_id,
+                        links.last_error as detail
+                    from work_todo_dingtalk_links links
+                    left join work_todos todos on todos.id=links.work_todo_id
+                    left join work_projects projects on projects.id=todos.project_id
+                    where trim(coalesce(links.dingtalk_task_id, '')) != ''
+                    union all
+                    select
+                        'follow_up' as kind,
+                        drafts.id as source_id,
+                        coalesce(nullif(drafts.sent_at, ''), drafts.updated_at, drafts.created_at) as sent_at,
+                        drafts.status as status,
+                        drafts.owner_user_id as owner_user_id,
+                        drafts.owner_name as owner_name,
+                        coalesce(projects.id, 0) as project_id,
+                        coalesce(projects.title, '') as project_title,
+                        coalesce(todos.id, 0) as todo_id,
+                        coalesce(todos.title, '') as todo_title,
+                        coalesce(todos.description, '') as todo_description,
+                        drafts.question_text as original_text,
+                        coalesce(todos.deadline_at, '') as deadline_at,
+                        coalesce(todos.priority, '') as priority,
+                        drafts.target_kind as target_kind,
+                        drafts.target_conversation_id as target_conversation_id,
+                        '' as external_id,
+                        drafts.send_result_json as detail
+                    from follow_up_drafts drafts
+                    left join work_todos todos on todos.id=drafts.todo_id
+                    left join work_projects projects on projects.id=drafts.project_id
+                    where drafts.status='sent'
+                      and trim(coalesce(drafts.sent_at, '')) != ''
+                )
+                order by datetime(sent_at) desc, source_id desc
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [SentTodoRecord.model_validate(dict(row)) for row in rows]
 
     def set_daily_scan_state(
         self,

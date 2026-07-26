@@ -755,6 +755,69 @@ def test_operation_logs_include_dingtalk_todo_links(tmp_path: Path):
     assert "todo get failed" in logs[0].detail
 
 
+def test_list_sent_todo_records_combines_dingtalk_todos_and_followups(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        description="确认交付验收时间和阻塞。",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        executor_name="Alex",
+        title_snapshot="给客户同步验收 ETA：来源于客户群红灯风险",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+        last_push_at="2026-06-27 09:00:00",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="",
+        executor_user_id="owner-1",
+        executor_name="Alex",
+        title_snapshot="失败前未拿到 task id",
+        status="failed",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="基于客户群红灯风险，请确认验收 ETA。",
+        status="sent",
+        sent_at="2026-06-27 10:00:00",
+    )
+
+    records = store.list_sent_todo_records()
+
+    assert [record.kind for record in records] == ["follow_up", "dingtalk_todo"]
+    assert records[0].original_text == "基于客户群红灯风险，请确认验收 ETA。"
+    assert records[0].target_conversation_id == "cid-1"
+    assert records[1].external_id == "dt-task-1"
+    assert records[1].project_title == "客户交付"
+    assert records[1].todo_description == "确认交付验收时间和阻塞。"
+    assert records[1].original_text == "给客户同步验收 ETA：来源于客户群红灯风险"
+
+
 def test_list_and_update_project_memory_context_backfill_targets(tmp_path: Path):
     store = _store(tmp_path)
     missing_id = store.create_work_project(

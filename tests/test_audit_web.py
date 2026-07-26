@@ -1912,6 +1912,72 @@ def test_tasks_page_todo_cell_limits_visible_items(tmp_path: Path):
     assert "总共 ${todos.length} 条" in html
 
 
+def test_tasks_page_renders_sent_todos_with_owner_project_filters(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        description="确认交付验收时间和阻塞。",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        executor_name="Alex",
+        title_snapshot="给客户同步验收 ETA：来源于客户群红灯风险",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+        last_push_at="2026-06-27 09:00:00",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="基于客户群红灯风险，请确认验收 ETA。",
+        status="sent",
+        sent_at="2026-06-27 10:00:00",
+    )
+
+    html = render_tasks_page(store)
+    rows = task_script_json(html, "sent-todos-data")
+    filters = task_script_json(html, "sent-todos-filters")
+
+    assert "Sent TODOs" in html
+    assert 'id="sent-todos-table"' in html
+    assert 'id="sent-todo-owner-filter"' in html
+    assert 'id="sent-todo-project-filter"' in html
+    assert 'title: "Original Text"' in html
+    assert "sent-todo-search-input" in html
+    assert "typeFilter.addEventListener" in html
+    assert "ownerFilter.addEventListener" in html
+    assert "projectFilter.addEventListener" in html
+    assert len(rows) == 2
+    assert rows[0]["kindLabel"] == "Follow-up"
+    assert rows[0]["originalText"] == "基于客户群红灯风险，请确认验收 ETA。"
+    assert rows[0]["detailUrl"] == f"/tasks/{project_id}#todo-{todo_id}"
+    assert rows[1]["kindLabel"] == "DingTalk Todo"
+    assert rows[1]["originalText"] == "给客户同步验收 ETA：来源于客户群红灯风险"
+    assert filters["owners"] == ["Alex"]
+    assert filters["projects"] == ["客户交付"]
+    assert filters["types"] == ["DingTalk Todo", "Follow-up"]
+
+
 def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     matching_project_id = store.create_work_project(

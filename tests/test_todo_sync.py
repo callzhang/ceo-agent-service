@@ -88,7 +88,7 @@ def test_maybe_create_dingtalk_todo_creates_high_confidence_link(tmp_path):
     assert link is not None
     assert dws.created == [
         {
-            "title": "给客户同步验收 ETA",
+            "title": "给客户同步验收 ETA：项目：客户交付",
             "executor_user_id": "owner-1",
             "due": "2026-07-01T18:00:00+08:00",
             "priority": 30,
@@ -97,6 +97,28 @@ def test_maybe_create_dingtalk_todo_creates_high_confidence_link(tmp_path):
     stored = store.get_work_todo_dingtalk_link(link.id)
     assert stored.dingtalk_task_id == "dt-task-1"
     assert stored.status == "active"
+
+
+def test_maybe_create_dingtalk_todo_uses_project_context_when_description_has_no_source(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(
+        store,
+        description="确认交付验收时间和阻塞。",
+    )
+    dws = FakeTodoDws()
+
+    maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert dws.created[0]["title"] == (
+        "给客户同步验收 ETA：项目：客户交付；确认交付验收时间和阻塞"
+    )
 
 
 def test_maybe_create_dingtalk_todo_pushes_context_in_external_title(tmp_path):

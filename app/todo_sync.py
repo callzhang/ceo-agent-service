@@ -4,7 +4,7 @@ from typing import Any
 
 from app.dws_client import DwsError
 from app.store import AutoReplyStore
-from app.task_models import ProjectCategory, ProjectPriority, TodoStatus
+from app.task_models import ProjectPriority, TodoStatus
 
 
 WEAK_TITLES = {"跟进一下", "同步进展", "确认进展", "问一下", "推进一下"}
@@ -133,7 +133,12 @@ def _first_context_sentence(value: str) -> str:
     return _trim_inline_text(text, DINGTALK_TODO_CONTEXT_LIMIT)
 
 
-def _dingtalk_todo_title(todo: Any) -> str:
+def _project_context(project: Any) -> str:
+    title = _normalize_inline_text(str(getattr(project, "title", "") or ""))
+    return f"项目：{title}" if title else ""
+
+
+def _dingtalk_todo_title(todo: Any, project: Any = None) -> str:
     title = _trim_inline_text(todo.title, DINGTALK_TODO_TITLE_LIMIT)
     if not title:
         return ""
@@ -141,21 +146,32 @@ def _dingtalk_todo_title(todo: Any) -> str:
         detail = _first_context_sentence(str(getattr(todo, field, "") or ""))
         if not detail:
             continue
+        project_context = _project_context(project)
+        if (
+            project_context
+            and project_context not in title
+            and project_context not in detail
+            and "来源" not in detail
+            and "基于" not in detail
+        ):
+            detail = f"{project_context}；{detail}"
         if detail in title or title in detail:
             continue
         return _trim_inline_text(
             f"{title}：{detail}",
             DINGTALK_TODO_TITLE_LIMIT,
         )
+    project_context = _project_context(project)
+    if project_context and project_context not in title:
+        return _trim_inline_text(
+            f"{title}：{project_context}",
+            DINGTALK_TODO_TITLE_LIMIT,
+        )
     return title
 
 
-def _is_project_sensitive(store: AutoReplyStore, project_id: int) -> bool:
-    project = store.get_work_project(project_id)
-    return project is not None and project.category == ProjectCategory.HR
-
-
 def _todo_is_eligible(store: AutoReplyStore, todo: Any) -> bool:
+    project = store.get_work_project(todo.project_id)
     if todo.status not in {TodoStatus.OPEN, TodoStatus.WAITING_OWNER}:
         return False
     if not todo.owner_user_id.strip():
@@ -164,11 +180,11 @@ def _todo_is_eligible(store: AutoReplyStore, todo: Any) -> bool:
         return False
     if not _is_actionable_title(todo.title):
         return False
-    if not _is_actionable_title(_dingtalk_todo_title(todo)):
+    if not _is_actionable_title(_dingtalk_todo_title(todo, project)):
         return False
     if _has_completion_evidence(todo.completion_evidence_json):
         return False
-    if _is_project_sensitive(store, todo.project_id):
+    if project is not None and str(project.category) == "HR":
         return False
     return store.get_active_work_todo_dingtalk_link(todo.id) is None
 
@@ -240,7 +256,8 @@ def maybe_create_dingtalk_todo(
     if not _todo_is_eligible(store, todo):
         return None
 
-    dingtalk_title = _dingtalk_todo_title(todo)
+    project = store.get_work_project(todo.project_id)
+    dingtalk_title = _dingtalk_todo_title(todo, project)
     link_id = store.create_work_todo_dingtalk_link(
         work_todo_id=todo.id,
         executor_user_id=todo.owner_user_id,
