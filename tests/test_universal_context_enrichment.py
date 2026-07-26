@@ -386,6 +386,96 @@ def test_universal_worker_passes_material_references_without_reading_bodies(
     )
 
 
+def test_universal_worker_extracts_material_from_coalesced_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = make_worker(tmp_path)
+    document_url = "https://alidocs.dingtalk.com/i/nodes/coalescedDoc"
+    trigger = message(
+        "你先看着，咱俩对差不多了我再改",
+        message_id="msg-trigger",
+    ).model_copy(
+        update={
+            "raw_payload": {
+                "coalesced_messages": [
+                    {
+                        "open_message_id": "msg-doc-card",
+                        "create_time": "2026-07-21 09:54:10",
+                        "sender_name": "宇航",
+                        "content": f"产品全景图\n{document_url}",
+                    },
+                    {
+                        "open_message_id": "msg-trigger",
+                        "create_time": "2026-07-21 09:55:00",
+                        "sender_name": "宇航",
+                        "content": "你先看着，咱俩对差不多了我再改",
+                    },
+                ]
+            }
+        }
+    )
+    consumer = CapturingConsumer()
+    monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
+
+    worker._process_universal_queued_task(
+        conversation(single_chat=True),
+        reply_task(trigger),
+        trigger,
+        [trigger],
+        [trigger],
+    )
+
+    context = consumer.contexts[0]
+    assert [reference.reference for reference in context.material_references] == [
+        document_url
+    ]
+    assert context.material_references[0].source_message_id == "msg-doc-card"
+
+
+def test_universal_worker_recovers_nearby_same_sender_material_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = make_worker(tmp_path)
+    document_url = "https://alidocs.dingtalk.com/i/nodes/recentDoc"
+    nearby_material = message(
+        f"材料在这里：{document_url}",
+        message_id="msg-recent-doc",
+    ).model_copy(update={"create_time": "2026-07-21 09:54:30"})
+    other_sender_material = message(
+        "别人的材料：https://alidocs.dingtalk.com/i/nodes/otherDoc",
+        message_id="msg-other-doc",
+    ).model_copy(
+        update={
+            "sender_name": "其他人",
+            "create_time": "2026-07-21 09:54:40",
+        }
+    )
+    trigger = message(
+        "@Derek Zen(磊哥) 看这版吧",
+        message_id="msg-trigger",
+    )
+    consumer = CapturingConsumer()
+    monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
+
+    worker._process_universal_queued_task(
+        conversation(),
+        reply_task(trigger),
+        trigger,
+        [nearby_material, other_sender_material, trigger],
+        [nearby_material, other_sender_material, trigger],
+    )
+
+    context = consumer.contexts[0]
+    assert [reference.reference for reference in context.material_references] == [
+        document_url
+    ]
+    assert context.material_references[0].source_message_id == "msg-recent-doc"
+
+
 def test_universal_worker_promotes_oa_material_references_into_planner_context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

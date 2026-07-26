@@ -9641,8 +9641,9 @@ class DingTalkAutoReplyWorker:
             return ".gif"
         return ".img"
 
-    @staticmethod
+    @classmethod
     def _referenced_document_messages(
+        cls,
         new_messages: list[DingTalkMessage],
         context_messages: list[DingTalkMessage],
     ) -> list[DingTalkMessage]:
@@ -9651,19 +9652,103 @@ class DingTalkAutoReplyWorker:
         context_by_message_id = {
             message.open_message_id: message for message in context_messages
         }
+
+        def add_message(message: DingTalkMessage) -> bool:
+            if message.open_message_id in seen_message_ids:
+                return False
+            result.append(message)
+            seen_message_ids.add(message.open_message_id)
+            return cls._message_has_material_reference(message)
+
+        direct_material_found = False
         for message in new_messages:
-            if message.open_message_id not in seen_message_ids:
-                result.append(message)
-                seen_message_ids.add(message.open_message_id)
+            direct_material_found = add_message(message) or direct_material_found
+            for coalesced_message in cls._coalesced_messages(message):
+                direct_material_found = (
+                    add_message(coalesced_message) or direct_material_found
+                )
             if (
                 message.quoted_message_id
                 and message.quoted_message_id in context_by_message_id
                 and message.quoted_message_id not in seen_message_ids
             ):
                 quoted = context_by_message_id[message.quoted_message_id]
-                result.append(quoted)
-                seen_message_ids.add(quoted.open_message_id)
+                direct_material_found = add_message(quoted) or direct_material_found
+        if direct_material_found or not new_messages:
+            return result
+
+        trigger = new_messages[-1]
+        try:
+            trigger_time = datetime.strptime(trigger.create_time, DINGTALK_TIME_FORMAT)
+        except ValueError:
+            return result
+        window_start = trigger_time - REFERENCED_FILE_CONTEXT_WINDOW
+        for message in context_messages:
+            if message.sender_name != trigger.sender_name:
+                continue
+            try:
+                message_time = datetime.strptime(
+                    message.create_time,
+                    DINGTALK_TIME_FORMAT,
+                )
+            except ValueError:
+                continue
+            if not window_start <= message_time <= trigger_time:
+                continue
+            if cls._message_has_material_reference(message):
+                add_message(message)
         return result
+
+    @classmethod
+    def _message_has_material_reference(cls, message: DingTalkMessage) -> bool:
+        for text in (message.content, message.quoted_content or ""):
+            if (
+                DINGTALK_DOC_URL_PATTERN.search(text)
+                or DINGTALK_SHANJI_DOC_SELECTOR_PATTERN.search(text)
+                or DINGTALK_MINUTES_LINK_PATTERN.search(text)
+                or LARK_DOC_URL_PATTERN.search(text)
+                or cls._file_name_from_message_text(text)
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _coalesced_messages(message: DingTalkMessage) -> list[DingTalkMessage]:
+        raw_messages = message.raw_payload.get("coalesced_messages")
+        if not isinstance(raw_messages, list):
+            return []
+        messages: list[DingTalkMessage] = []
+        for raw_message in raw_messages:
+            if not isinstance(raw_message, dict):
+                continue
+            content = str(raw_message.get("content") or "")
+            message_id = str(raw_message.get("open_message_id") or "").strip()
+            if (
+                not content.strip()
+                or not message_id
+                or message_id == message.open_message_id
+            ):
+                continue
+            messages.append(
+                DingTalkMessage(
+                    open_conversation_id=message.open_conversation_id,
+                    open_message_id=message_id,
+                    conversation_title=message.conversation_title,
+                    single_chat=message.single_chat,
+                    sender_name=str(
+                        raw_message.get("sender_name") or message.sender_name
+                    ),
+                    sender_open_dingtalk_id=message.sender_open_dingtalk_id,
+                    sender_user_id=message.sender_user_id,
+                    message_type=message.message_type,
+                    create_time=str(
+                        raw_message.get("create_time") or message.create_time
+                    ),
+                    content=content,
+                    raw_payload=raw_message,
+                )
+            )
+        return messages
 
     def _resume_prompt_context_messages(
         self,
