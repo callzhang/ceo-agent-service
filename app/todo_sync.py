@@ -5,6 +5,7 @@ from typing import Any
 from app.dws_client import DwsError
 from app.store import AutoReplyStore
 from app.task_models import ProjectPriority, TodoStatus
+from app.todo_completion import close_todo_with_completion_evidence
 
 
 WEAK_TITLES = {"跟进一下", "同步进展", "确认进展", "问一下", "推进一下"}
@@ -528,25 +529,17 @@ def _close_internal_todo_from_dingtalk(
         return False
     evidence = {
         "source": f"dingtalk_todo:{task_id}",
-        "summary": "DingTalk Todo marked done",
-        "synced_at": now,
+        "reason": "DingTalk Todo marked done by owner",
+        "completed_at": now,
+        "checked_at": now,
     }
-    store.update_work_todo(
-        todo.id,
-        status=TodoStatus.DONE.value,
-        completion_evidence_json=json.dumps(evidence, ensure_ascii=False),
-        completed_at=now,
-    )
-    store.create_work_update(
-        project_id=todo.project_id,
+    return close_todo_with_completion_evidence(
+        store,
+        todo_id=todo.id,
+        evidence=evidence,
+        now=now,
         source_type="dingtalk_todo",
         source_ref=task_id,
-        summary=f"Todo completed in DingTalk: {todo.title}",
-        changes_json=json.dumps(
-            {"todo_id": todo.id, "status": TodoStatus.DONE.value},
-            ensure_ascii=False,
-        ),
         merge_reason="dingtalk_todo_status_pull",
         confidence=1.0,
     )
-    return True

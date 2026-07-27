@@ -253,15 +253,26 @@ def _completion_supported_by_current_evidence(
     return False, ""
 
 
-def _skip_completed_follow_up(store: AutoReplyStore, draft, *, now: str, reason: str) -> None:
+def _skip_completed_follow_up(
+    store: AutoReplyStore,
+    draft,
+    *,
+    now: str,
+    reason: str,
+    completed: bool = True,
+) -> None:
+    status = "completed" if completed else "skipped"
     store.update_follow_up_draft(
         draft.id,
-        status="skipped",
+        status=status,
         sent_at=now,
         send_result_json=json.dumps(
             {
-                "skipped": True,
+                "completed": completed,
+                "skipped": not completed,
                 "reason": reason,
+                "source": reason,
+                "checked_at": now,
                 "evidence_check": "completion_supported",
             },
             ensure_ascii=False,
@@ -559,7 +570,13 @@ def process_due_follow_ups(
             draft,
         )
         if completed:
-            _skip_completed_follow_up(store, draft, now=now, reason=reason)
+            _skip_completed_follow_up(
+                store,
+                draft,
+                now=now,
+                reason=reason,
+                completed=reason != "todo status is cancelled",
+            )
             continue
         try:
             recovered_owner_user_id, recovered_owner_name = _recover_follow_up_owner(

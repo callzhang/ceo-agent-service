@@ -429,9 +429,9 @@ def test_due_follow_up_skips_when_todo_completion_evidence_exists(tmp_path):
 
     assert sent == 0
     assert dws.sent == []
-    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
-    assert skipped.id == draft_id
-    assert "todo has completion evidence" in skipped.send_result_json
+    completed = store.list_follow_up_drafts(statuses=("completed",))[0]
+    assert completed.id == draft_id
+    assert "todo has completion evidence" in completed.send_result_json
 
 
 def test_due_follow_up_skips_when_todo_is_done(tmp_path):
@@ -471,8 +471,8 @@ def test_due_follow_up_skips_when_todo_is_done(tmp_path):
 
     assert sent == 0
     assert dws.sent == []
-    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
-    assert "todo status is done" in skipped.send_result_json
+    completed = store.list_follow_up_drafts(statuses=("completed",))[0]
+    assert "todo status is done" in completed.send_result_json
 
 
 def test_due_follow_up_skips_when_todo_is_cancelled(tmp_path):
@@ -564,8 +564,8 @@ def test_due_follow_up_skips_when_linked_dingtalk_todo_is_done(tmp_path):
 
     assert sent == 0
     assert dws.sent == []
-    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
-    assert "dingtalk_todo_done" in skipped.send_result_json
+    completed = store.list_follow_up_drafts(statuses=("completed",))[0]
+    assert "dingtalk_todo_done" in completed.send_result_json
 
 
 def test_due_follow_up_sends_when_linked_dingtalk_todo_is_not_done(tmp_path):
