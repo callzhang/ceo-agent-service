@@ -32,6 +32,8 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 
 ## 系统架构
 
+维护总览见 [docs/architecture.md](docs/architecture.md)。下面是产品视角的简版架构说明。
+
 系统由九层组成：
 
 1. **DingTalk Inputs**：群聊、私聊、配置机器人私聊、在线文档、文件、图片、OA、日程、会议权限请求。

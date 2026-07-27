@@ -4503,43 +4503,25 @@ def test_macos_wifi_connected_accepts_reachable_wifi_default_route(monkeypatch):
     assert cli._macos_wifi_connected(run=run) is True
 
 
-def test_service_dependency_gate_skips_dws_when_wifi_is_down(tmp_path):
-    calls = []
-    gate = cli.ServiceDependencyGate(
-        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
-        monotonic=lambda: 1.0,
-        wifi_connected=lambda: False,
-        dws_ready=lambda settings: calls.append("dws") or True,
-    )
-
-    assert gate.ready() is False
-    assert calls == []
-
-
-def test_service_dependency_gate_caches_dws_failure(tmp_path):
+def test_network_dependency_gate_only_checks_connectivity():
     times = iter([1.0, 10.0, 40.0])
-    dws_results = iter([False, True])
+    wifi_results = iter([True, False])
     calls = []
 
-    def dws_ready(settings):
-        calls.append(settings.db_path)
-        return next(dws_results)
+    def wifi_connected():
+        calls.append("wifi")
+        return next(wifi_results)
 
-    gate = cli.ServiceDependencyGate(
-        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+    gate = cli.NetworkDependencyGate(
         monotonic=lambda: next(times),
-        wifi_connected=lambda: True,
-        dws_ready=dws_ready,
+        wifi_connected=wifi_connected,
         check_interval_seconds=30,
     )
 
-    assert gate.ready() is False
-    assert gate.ready() is False
     assert gate.ready() is True
-    assert calls == [
-        tmp_path / "worker.sqlite3",
-        tmp_path / "worker.sqlite3",
-    ]
+    assert gate.ready() is True
+    assert gate.ready() is False
+    assert calls == ["wifi", "wifi"]
 
 
 def test_producer_and_consumer_loops_call_separate_methods_once():
@@ -4621,6 +4603,64 @@ def test_producer_and_consumer_loops_skip_when_network_not_ready():
     assert calls == [
         "sleep:7",
         "sleep:11",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("loop", "method_name", "error_kind"),
+    [
+        (run_producer_loop, "produce_once", "producer_loop_error"),
+        (run_consumer_loop, "consume_once", "consumer_loop_error"),
+    ],
+)
+def test_reply_loop_isolates_one_dws_failure_and_runs_next_iteration(
+    loop,
+    method_name,
+    error_kind,
+):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class FakeStore:
+        def record_error(self, conversation_id, message_id, kind, detail):
+            calls.append(("error", conversation_id, message_id, kind, detail))
+
+    class FakeWorker:
+        store = FakeStore()
+
+        def __init__(self):
+            self.run_count = 0
+
+        def run_iteration(self, max_tasks=None):
+            self.run_count += 1
+            calls.append(("run", self.run_count, max_tasks))
+            if self.run_count == 1:
+                raise DwsError("malformed DWS response")
+
+    setattr(FakeWorker, method_name, FakeWorker.run_iteration)
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        if calls.count(("sleep", seconds)) == 2:
+            raise StopLoop
+
+    with pytest.raises(StopLoop):
+        loop(
+            FakeWorker(),
+            poll_interval_seconds=7,
+            max_tasks=3,
+            sleep=sleep,
+            network_ready=lambda: True,
+        )
+
+    assert calls == [
+        ("run", 1, 3),
+        ("error", "", "", error_kind, "malformed DWS response"),
+        ("sleep", 7),
+        ("run", 2, 3),
+        ("sleep", 7),
     ]
 
 
@@ -5076,6 +5116,67 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
     ]
 
 
+def test_task_maintenance_loop_isolates_failed_step_and_continues(
+    monkeypatch, tmp_path
+):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
+    store = SimpleNamespace(
+        record_error=lambda *args: calls.append(("error", *args))
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda received: (_ for _ in ()).throw(DwsError("bad todo field")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_okr_reviews_command",
+        lambda received: calls.append("okr"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda received, max_new_items=None: calls.append("scan"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_oa_approvals_command",
+        lambda received, max_new_items=None: calls.append("oa-scan"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
+    )
+
+    with pytest.raises(StopLoop):
+        run_task_maintenance_loop(
+            settings,
+            work_item_interval_seconds=31,
+            daily_interval_seconds=3600,
+            follow_up_interval_seconds=900,
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+            monotonic=lambda: 10.0,
+            network_ready=lambda: True,
+        )
+
+    assert calls == [
+        ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
+        "okr",
+        "scan",
+        "oa-scan",
+        ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
+        "okr",
+        "follow",
+    ]
+
+
 def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
     monkeypatch, tmp_path
 ):
@@ -5303,7 +5404,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         lambda settings, component, exc: failures.append((component, str(exc))),
     )
     gate = SimpleNamespace(ready=lambda: True)
-    monkeypatch.setattr(cli, "ServiceDependencyGate", lambda settings: gate)
+    monkeypatch.setattr(cli, "NetworkDependencyGate", lambda: gate)
 
     run_service(
         WorkerSettings(

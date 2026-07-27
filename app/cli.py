@@ -2180,23 +2180,6 @@ def _macos_interface_has_default_reachable_network(
     return False
 
 
-def _dws_read_dependency_ready(settings: WorkerSettings) -> bool:
-    if settings.dry_run:
-        return True
-    client = DwsClient(
-        ding_robot_code=settings.ding_robot_code,
-        ding_robot_name=settings.ding_robot_name,
-        ding_receiver_user_id=settings.ding_receiver_user_id,
-        transient_retry_attempts=1,
-        transient_retry_delay_seconds=0,
-    )
-    try:
-        client.run_json(client.build_get_current_user_command(), timeout_seconds=10)
-    except Exception:
-        return False
-    return True
-
-
 def _is_dws_transient_dependency_error(exc: Exception) -> bool:
     if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError)):
         return True
@@ -2223,20 +2206,16 @@ def _is_dws_transient_dependency_error(exc: Exception) -> bool:
     )
 
 
-class ServiceDependencyGate:
+class NetworkDependencyGate:
     def __init__(
         self,
-        settings: WorkerSettings,
         *,
         monotonic: Callable[[], float] = time.monotonic,
         wifi_connected: Callable[[], bool] = _macos_wifi_connected,
-        dws_ready: Callable[[WorkerSettings], bool] = _dws_read_dependency_ready,
         check_interval_seconds: int = 30,
     ):
-        self.settings = settings
         self.monotonic = monotonic
         self.wifi_connected = wifi_connected
-        self.dws_ready = dws_ready
         self.check_interval_seconds = check_interval_seconds
         self._last_checked_at: float | None = None
         self._last_ready = True
@@ -2249,7 +2228,7 @@ class ServiceDependencyGate:
         ):
             return self._last_ready
         self._last_checked_at = now
-        self._last_ready = self.wifi_connected() and self.dws_ready(self.settings)
+        self._last_ready = self.wifi_connected()
         return self._last_ready
 
 
@@ -2279,7 +2258,10 @@ def run_producer_loop(
         if not network_ready():
             sleep(poll_interval_seconds)
             continue
-        worker.produce_once(max_tasks=max_tasks)
+        try:
+            worker.produce_once(max_tasks=max_tasks)
+        except Exception as exc:
+            worker.store.record_error("", "", "producer_loop_error", str(exc))
         sleep(poll_interval_seconds)
 
 
@@ -2294,7 +2276,10 @@ def run_consumer_loop(
         if not network_ready():
             sleep(poll_interval_seconds)
             continue
-        worker.consume_once(max_tasks=max_tasks)
+        try:
+            worker.consume_once(max_tasks=max_tasks)
+        except Exception as exc:
+            worker.store.record_error("", "", "consumer_loop_error", str(exc))
         sleep(poll_interval_seconds)
 
 
@@ -2426,6 +2411,14 @@ def run_task_maintenance_loop(
     monotonic: Callable[[], float] = time.monotonic,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
+    store = AutoReplyStore(settings.db_path)
+
+    def run_step(kind: str, step: Callable[[], object]) -> None:
+        try:
+            step()
+        except Exception as exc:
+            store.record_error("", "", f"task_maintenance_{kind}", str(exc))
+
     now = monotonic()
     next_daily_run = now
     next_follow_up_run = now
@@ -2433,26 +2426,35 @@ def run_task_maintenance_loop(
         if not network_ready():
             sleep(work_item_interval_seconds)
             continue
-        process_work_items_command(settings)
-        process_okr_reviews_command(settings)
+        run_step("process_work_items", lambda: process_work_items_command(settings))
+        run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
         now = monotonic()
         if now >= next_daily_run:
-            scan_task_sources_command(
-                settings,
-                max_new_items=settings.max_batches,
+            run_step(
+                "scan_task_sources",
+                lambda: scan_task_sources_command(
+                    settings,
+                    max_new_items=settings.max_batches,
+                ),
             )
-            scan_oa_approvals_command(
-                settings,
-                max_new_items=settings.max_batches,
+            run_step(
+                "scan_oa_approvals",
+                lambda: scan_oa_approvals_command(
+                    settings,
+                    max_new_items=settings.max_batches,
+                ),
             )
-            process_work_items_command(settings)
-            process_okr_reviews_command(settings)
+            run_step("process_work_items", lambda: process_work_items_command(settings))
+            run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
             next_daily_run = now + daily_interval_seconds
         if now >= next_follow_up_run:
-            process_follow_ups_command(
-                settings,
-                refresh_evidence=False,
-                limit=50 if settings.max_batches is None else settings.max_batches,
+            run_step(
+                "process_follow_ups",
+                lambda: process_follow_ups_command(
+                    settings,
+                    refresh_evidence=False,
+                    limit=50 if settings.max_batches is None else settings.max_batches,
+                ),
             )
             next_follow_up_run = now + follow_up_interval_seconds
         sleep(work_item_interval_seconds)
@@ -2582,7 +2584,7 @@ def run_service(
         ),
         notify=True,
     )
-    dependency_gate = ServiceDependencyGate(settings)
+    dependency_gate = NetworkDependencyGate()
     components = (
         (
             "audit-web",
