@@ -427,7 +427,18 @@ def test_maybe_create_dingtalk_todo_prefers_active_link_over_failed_recovery(
 
 def test_pull_done_dingtalk_todo_closes_internal_todo(tmp_path):
     store = _store(tmp_path)
-    _, todo_id = _project_and_todo(store)
+    project_id, todo_id = _project_and_todo(store)
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请确认验收 ETA。",
+        scheduled_at="2026-06-27 09:00:00",
+        status="sent",
+        sent_at="2026-06-27 09:05:00",
+    )
     link_id = store.create_work_todo_dingtalk_link(
         work_todo_id=todo_id,
         dingtalk_task_id="dt-task-1",
@@ -451,6 +462,12 @@ def test_pull_done_dingtalk_todo_closes_internal_todo(tmp_path):
     assert todo.status == "done"
     assert "dingtalk_todo:dt-task-1" in todo.completion_evidence_json
     assert store.get_work_todo_dingtalk_link(link_id).status == "done"
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    assert follow_up is not None
+    assert follow_up.status == "completed"
+    check = json.loads(follow_up.evidence_check_json)
+    assert check["source"] == "dingtalk_todo:dt-task-1"
+    assert check["reason"] == "DingTalk Todo marked done by owner"
 
 
 def test_pull_done_dingtalk_todo_closes_from_detail_model_done(tmp_path):
