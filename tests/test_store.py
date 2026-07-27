@@ -2048,6 +2048,50 @@ def test_history_treats_superseded_blocked_reply_as_skipped(tmp_path: Path):
     assert [item.source_id for item in skipped_items] == [blocked_id]
 
 
+def test_history_keeps_blocked_side_effects_visible_after_terminal_reply(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_sent_reply("cid-memory", "msg-memory", "reply delivered")
+    memory_id = store.record_reply_attempt(
+        conversation_id="cid-memory",
+        conversation_title="Strategy",
+        trigger_message_id="msg-memory",
+        trigger_sender="Derek",
+        trigger_text="Remember this",
+        action="memory_write",
+        sensitivity_kind="general",
+        send_status="blocked",
+    )
+    store.update_reply_attempt(memory_id, send_error="memory backend unavailable")
+    oa_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="Approvals",
+        trigger_message_id="msg-oa",
+        trigger_sender="System",
+        trigger_text="Pending approval",
+        action="oa_approval",
+        sensitivity_kind="general",
+        send_status="blocked",
+    )
+    store.update_reply_attempt(oa_id, send_error="oa_task_not_current_user")
+    store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="Approvals",
+        trigger_message_id="msg-oa",
+        trigger_sender="System",
+        trigger_text="Pending approval",
+        action="no_reply",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+
+    blocked_items = store.list_history_items(send_statuses=("blocked",))
+
+    assert {item.source_id for item in blocked_items} == {memory_id, oa_id}
+    assert store.count_recoverable_blocked_reply_attempts() == 2
+
+
 def test_history_treats_superseded_meeting_failure_as_skipped(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = store.upsert_meeting_alignment_job(

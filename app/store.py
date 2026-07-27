@@ -6497,7 +6497,23 @@ class AutoReplyStore:
                         when send_status='blocked'
                              and lower(send_error) like 'blocked_unrecoverable_%'
                         then 'blocked-terminal'
+                        when action in ('memory_write', 'oa_approval')
+                             and send_status in ('failed', 'blocked', 'pending', 'dry_run')
+                             and exists (
+                                select 1
+                                from reply_attempts as newer_side_effects
+                                where newer_side_effects.conversation_id=reply_attempts.conversation_id
+                                  and newer_side_effects.trigger_message_id=reply_attempts.trigger_message_id
+                                  and newer_side_effects.action=reply_attempts.action
+                                  and newer_side_effects.id>reply_attempts.id
+                                  and newer_side_effects.send_status in (
+                                      'sent', 'skipped', 'commented', 'reacted',
+                                      'calendar', 'document', 'blocked'
+                                  )
+                             )
+                        then 'skipped'
                         when send_status in ('failed', 'blocked', 'pending', 'dry_run')
+                             and action not in ('memory_write', 'oa_approval')
                              and exists (
                                 select 1
                                 from reply_attempts as newer_attempts
@@ -6511,6 +6527,7 @@ class AutoReplyStore:
                              )
                         then 'skipped'
                         when send_status in ('failed', 'blocked', 'pending', 'dry_run')
+                             and action not in ('memory_write', 'oa_approval')
                              and exists (
                                 select 1
                                 from sent_replies as sent
@@ -6995,17 +7012,32 @@ class AutoReplyStore:
                 from reply_attempts as attempts
                 where attempts.send_status='blocked'
                   and lower(attempts.send_error) not like ?
-                  and attempts.id = (
-                      select max(latest.id)
-                      from reply_attempts as latest
-                      where latest.conversation_id=attempts.conversation_id
-                        and latest.trigger_message_id=attempts.trigger_message_id
-                  )
-                  and not exists (
-                      select 1
-                      from sent_replies as sent
-                      where sent.conversation_id=attempts.conversation_id
-                        and sent.trigger_message_id=attempts.trigger_message_id
+                  and (
+                      (
+                          attempts.action in ('memory_write', 'oa_approval')
+                          and attempts.id = (
+                              select max(latest.id)
+                              from reply_attempts as latest
+                              where latest.conversation_id=attempts.conversation_id
+                                and latest.trigger_message_id=attempts.trigger_message_id
+                                and latest.action=attempts.action
+                          )
+                      )
+                      or (
+                          attempts.action not in ('memory_write', 'oa_approval')
+                          and attempts.id = (
+                              select max(latest.id)
+                              from reply_attempts as latest
+                              where latest.conversation_id=attempts.conversation_id
+                                and latest.trigger_message_id=attempts.trigger_message_id
+                          )
+                          and not exists (
+                              select 1
+                              from sent_replies as sent
+                              where sent.conversation_id=attempts.conversation_id
+                                and sent.trigger_message_id=attempts.trigger_message_id
+                          )
+                      )
                   )
                 """,
                 (f"{UNRECOVERABLE_BLOCKED_ERROR_PREFIX}%",),
