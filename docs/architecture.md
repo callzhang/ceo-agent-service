@@ -55,7 +55,7 @@ CEO Agent Service 是一个本地优先的企业消息处理服务。它从钉�
 
 DWS 是按操作使用的外部依赖，不是整个服务的启动或运行闸门。服务只在本机网络不可用时暂停轮询；DWS 的授权失效、返回字段异常、命令超时或单个业务接口失败，不得暂停其他线程。
 
-- `DwsClient` 负责命令级超时、只读操作重试、进程并发控制和错误分类。
+- `DwsClient` 负责命令级超时、只读操作重试、进程并发控制和错误分类；文档或钉盘下载遇到可识别的临时网络错误时可重试，但发送、审批、升级等动作不使用该重试路径。
 - `CachedDwsClient` 必须完整转发 worker 使用的公开材料读取接口；worker 只调用 `doc_info`、`list_doc_nodes`、`read_doc`、`read_sheet` 和文件下载等公开方法，不访问底层 CLI 字段或通用命令执行方法。
 - producer、consumer 和 meeting 循环在单轮边界隔离异常；失败写入 `errors`，下一轮继续。
 - task-maintenance 按工作事项、OKR、任务扫描、OA 扫描和 follow-up 分步骤隔离；一个步骤失败不阻断同轮其他步骤。

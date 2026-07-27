@@ -279,6 +279,10 @@ class DwsClient:
         ("contact", "user", "get"),
         ("contact", "user", "search"),
     }
+    TEXT_RETRYABLE_READ_COMMANDS = {
+        ("doc", "download"),
+        ("drive", "download"),
+    }
     SENSITIVE_COMMAND_FLAGS = {
         "--robot-code",
         "--webhook",
@@ -3257,22 +3261,45 @@ class DwsClient:
         timeout_seconds: int | None = None,
     ) -> str:
         command_timeout_seconds = timeout_seconds or self.timeout_seconds
-        try:
-            result = self._run_cli_process(
-                command,
-                timeout=command_timeout_seconds,
-                env=self._cli_environment(),
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise DwsError(
-                f"dws command timed out after {command_timeout_seconds} seconds"
-            ) from exc
-        if result.returncode != 0:
+        remaining_retries = self.transient_retry_attempts
+        attempt_index = 0
+        command_path = tuple(command[1:])
+        retry_allowed = self._command_path_matches(
+            command_path,
+            self.TEXT_RETRYABLE_READ_COMMANDS,
+        )
+        while True:
+            try:
+                result = self._run_cli_process(
+                    command,
+                    timeout=command_timeout_seconds,
+                    env=self._cli_environment(),
+                )
+            except subprocess.TimeoutExpired as exc:
+                if retry_allowed and remaining_retries > 0:
+                    self._sleep_before_retry(attempt_index)
+                    attempt_index += 1
+                    remaining_retries -= 1
+                    continue
+                raise DwsError(
+                    f"dws command timed out after {command_timeout_seconds} seconds"
+                ) from exc
+            if result.returncode == 0:
+                return result.stdout.strip()
             code = (
                 self._error_code(result.stderr)
                 or self._error_code(result.stdout)
                 or self._process_error_code(result.returncode)
             )
+            if (
+                retry_allowed
+                and self._is_retryable_error(command, code)
+                and remaining_retries > 0
+            ):
+                self._sleep_before_retry(attempt_index)
+                attempt_index += 1
+                remaining_retries -= 1
+                continue
             raise DwsError(
                 self._format_command_error(command, result, code),
                 code=code,
@@ -3280,7 +3307,6 @@ class DwsClient:
                     result.stderr, result.stdout
                 ),
             )
-        return result.stdout.strip()
 
     @classmethod
     def _cli_environment(cls) -> dict[str, str]:
@@ -3556,7 +3582,7 @@ class DwsClient:
         error = payload.get("error")
         if not isinstance(error, dict):
             return None
-        if str(error.get("category") or "").casefold() != "api":
+        if str(error.get("category") or "").casefold() not in {"api", "internal"}:
             return None
         fields: list[str] = []
         for key in ("cause", "hint", "message"):

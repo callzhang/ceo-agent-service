@@ -5388,6 +5388,45 @@ def test_run_text_uses_per_call_timeout_when_provided(monkeypatch):
     assert seen_timeouts == [180]
 
 
+def test_run_text_retries_read_only_download_after_network_eof(monkeypatch):
+    calls = []
+    sleeps = []
+    command = [
+        "dws",
+        "drive",
+        "download",
+        "--node",
+        "file-1",
+        "--output",
+        "/tmp/file.xlsx",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(
+                returncode=5,
+                stdout="",
+                stderr=(
+                    '{"error":{"category":"internal","code":5,'
+                    '"message":"Get download URL: EOF"}}'
+                ),
+            )
+        return SimpleNamespace(returncode=0, stdout="downloaded", stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    client = DwsClient(
+        transient_retry_attempts=1,
+        transient_retry_delay_seconds=0.25,
+    )
+
+    assert client.run_text(command) == "downloaded"
+    assert calls == [command, command]
+    assert sleeps == [0.25]
+
+
 def test_upgrade_uses_longer_process_timeout(monkeypatch):
     seen_timeouts = []
 
