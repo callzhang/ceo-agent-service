@@ -262,21 +262,21 @@ def _skip_completed_follow_up(
     completed: bool = True,
 ) -> None:
     status = "completed" if completed else "skipped"
+    payload = {
+        "completed": completed,
+        "skipped": not completed,
+        "reason": reason,
+        "source": reason,
+        "checked_at": now,
+        "evidence_check": "completion_supported",
+    }
     store.update_follow_up_draft(
         draft.id,
         status=status,
         sent_at=now,
-        send_result_json=json.dumps(
-            {
-                "completed": completed,
-                "skipped": not completed,
-                "reason": reason,
-                "source": reason,
-                "checked_at": now,
-                "evidence_check": "completion_supported",
-            },
-            ensure_ascii=False,
-        ),
+        send_result_json=json.dumps(payload, ensure_ascii=False),
+        evidence_check_json=json.dumps(payload, ensure_ascii=False),
+        suppressed_reason=reason,
     )
 
 

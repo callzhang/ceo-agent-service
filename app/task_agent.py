@@ -258,6 +258,7 @@ def build_task_agent_prompt(
 - 样例：如果小青显示“最终决策=淘汰/已淘汰”，输出 todo_changes.close 和 follow_up_changes.suppress；如果小青显示“最终决策=waiting/pending”，可以保留跟进，但 question_text 要写成“当前小青最终决策仍为 waiting，请确认是否要更新最终决策”，而不是让 HR 代替你查小青。
 - 行政、工商、法务、财务、人事合规类事项必须区分汇报人、推动人和实际执行 owner；只有材料明确写出“某人负责/待办/owner/由某人完成”且不是低可信说话人标签推导时，才能给该人生成 follow_up_draft。否则只更新项目背景或生成需要确认真实 owner 的 TODO，不要直接私聊。
 - 只有消息、会议纪要或文档明确证明 TODO 完成时，才能自动清理 TODO，并写入 completion_evidence。
+- Work Item 来源为 follow_up_completion_check 时，只是在提醒你检查已有 follow-up 是否完成；只有 sources、DWS 检索、会议纪要或 memory_recall 明确证明 owner 已完成时，才能 close TODO。completion_evidence 必须写 reason、source、completed_at；证据不足时不要 close，也不要新建 TODO。
 - 生成 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
 - 每个 follow_up_draft 必须绑定一个 TODO：跟进已有 TODO 时填写 todo_id；跟进本次新建 TODO 时，todo_changes.create 和 follow_up_drafts 使用相同的 todo_ref，系统会把 todo_ref 转成真实 todo_id。不能生成没有 TODO 绑定的 follow_up_draft。
 - follow_up_draft.status 固定填 draft；不要用 approved 表达“需审批”。项目跟进发送必须依赖 risk_check 审计：sensitive=true 表示不能在群里公开追问，发送端会优先转私聊或延后。
@@ -636,6 +637,14 @@ def _validate_task_agent_decision(
     for todo_change in decision.todo_changes:
         if todo_change.action != "create" and todo_change.todo_id is None:
             raise ValueError(f"{todo_change.action} requires todo_id")
+        if todo_change.action == "close":
+            evidence = todo_change.completion_evidence
+            if not isinstance(evidence, dict):
+                raise ValueError("close requires completion_evidence")
+            if not str(evidence.get("reason") or "").strip():
+                raise ValueError("completion_evidence.reason is required")
+            if not str(evidence.get("source") or "").strip():
+                raise ValueError("completion_evidence.source is required")
     for draft in decision.follow_up_drafts:
         if not draft.title.strip():
             raise ValueError("follow_up_draft.title is required")
