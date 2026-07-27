@@ -179,6 +179,12 @@ def test_parser_supports_process_follow_ups():
     assert args.command == "process-follow-ups"
 
 
+def test_parser_supports_check_follow_up_completions():
+    args = build_parser().parse_args(["check-follow-up-completions"])
+
+    assert args.command == "check-follow-up-completions"
+
+
 def test_parser_supports_daily_task_maintenance():
     args = build_parser().parse_args(["daily-task-maintenance", "--max-batches", "4"])
 
@@ -327,6 +333,11 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         or 4,
         raising=False,
     )
+    monkeypatch.setattr(
+        cli,
+        "check_follow_up_completions_command",
+        lambda settings, limit=1: calls.append(("completion-check", limit)) or 7,
+    )
 
     result = cli.daily_task_maintenance_command(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
@@ -338,6 +349,7 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         "work_items": 2,
         "okr_reviews": 5,
         "dingtalk_todos_closed": 4,
+        "follow_up_completions_checked": 7,
         "follow_ups": 1,
     }
     assert calls == [
@@ -346,11 +358,13 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("dingtalk_todo_pull", "FakeDwsClient"),
+        ("completion-check", 1),
         ("follow", tmp_path / "worker.sqlite3", False),
     ]
     assert capsys.readouterr().out == (
         "daily-task-maintenance sources=3 oa_approvals=6 work_items=2 "
-        "okr_reviews=5 dingtalk_todos_closed=4 follow_ups=1\n"
+        "okr_reviews=5 dingtalk_todos_closed=4 "
+        "follow_up_completions_checked=7 follow_ups=1\n"
     )
 
 
@@ -456,6 +470,11 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
         or 4,
         raising=False,
     )
+    monkeypatch.setattr(
+        cli,
+        "check_follow_up_completions_command",
+        lambda settings, limit=1: calls.append(("completion-check", limit)) or 7,
+    )
 
     result = cli.daily_task_maintenance_command(WorkerSettings(db_path=db_path))
 
@@ -465,9 +484,11 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
         ("work", db_path),
         ("okr", db_path),
         ("dingtalk_todo_pull", "FakeDwsClient"),
+        ("completion-check", 1),
         ("follow", db_path, False),
     ]
     assert result["dingtalk_todos_closed"] == 4
+    assert result["follow_up_completions_checked"] == 7
     assert result["oa_approvals"] == 6
     assert "dingtalk_todos_closed=4" in capsys.readouterr().out
 

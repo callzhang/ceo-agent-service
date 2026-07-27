@@ -97,6 +97,7 @@ from app.task_noise_backfill import (
     RoutineProcessBackfillResult,
     backfill_routine_process_todos,
 )
+from app.todo_completion import enqueue_follow_up_completion_checks
 from app.todo_sync import pull_dingtalk_todo_statuses
 from app.work_profile import (
     build_initial_profile,
@@ -267,6 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
         "scan-task-sources",
         "scan-oa-approvals",
         "process-follow-ups",
+        "check-follow-up-completions",
         "daily-task-maintenance",
         "channel-doctor",
         "doctor-mcp",
@@ -1327,6 +1329,26 @@ def process_follow_ups_command(
     return sent
 
 
+def check_follow_up_completions_command(
+    settings: WorkerSettings,
+    *,
+    limit: int = 1,
+) -> int:
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+    )
+    checked = enqueue_follow_up_completion_checks(
+        AutoReplyStore(settings.db_path),
+        dws,
+        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        limit=limit,
+    )
+    print(f"check-follow-up-completions checked={checked}", flush=True)
+    return checked
+
+
 def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     sources = scan_task_sources_command(settings)
     oa_approvals = scan_oa_approvals_command(settings)
@@ -1342,6 +1364,10 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         dws,
         now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
     )
+    follow_up_completions_checked = check_follow_up_completions_command(
+        settings,
+        limit=1,
+    )
     follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
         "sources": sources,
@@ -1349,6 +1375,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         "work_items": work_items,
         "okr_reviews": okr_reviews,
         "dingtalk_todos_closed": dingtalk_todos_closed,
+        "follow_up_completions_checked": follow_up_completions_checked,
         "follow_ups": follow_ups,
     }
     print(
@@ -1357,6 +1384,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         f"work_items={work_items} "
         f"okr_reviews={okr_reviews} "
         f"dingtalk_todos_closed={dingtalk_todos_closed} "
+        f"follow_up_completions_checked={follow_up_completions_checked} "
         f"follow_ups={follow_ups}",
         flush=True,
     )
@@ -2481,6 +2509,10 @@ def run_task_maintenance_loop(
             )
             run_step("process_work_items", lambda: process_work_items_command(settings))
             run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
+            run_step(
+                "check_follow_up_completions",
+                lambda: check_follow_up_completions_command(settings, limit=1),
+            )
             next_daily_run = now + daily_interval_seconds
         if settings.oa_pending_scan_enabled and now >= next_oa_pending_scan_run:
             run_step(
@@ -3032,6 +3064,8 @@ def main() -> None:
     elif args.command == "process-follow-ups":
         ensure_live_send_allowed(settings)
         process_follow_ups_command(settings)
+    elif args.command == "check-follow-up-completions":
+        check_follow_up_completions_command(settings, limit=1)
     elif args.command == "daily-task-maintenance":
         ensure_live_send_allowed(settings)
         daily_task_maintenance_command(settings)
