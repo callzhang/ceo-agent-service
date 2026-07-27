@@ -252,6 +252,75 @@ def test_codex_mcp_memory_write_runner_write_surfaces_codex_authorization_errors
         )
 
 
+def test_codex_mcp_memory_write_runner_accepts_deferred_function_call_json(
+    tmp_path: Path,
+):
+    arguments = {
+        "data": "Durable decision",
+        "type": "text",
+        "created_at": "2026-07-20T10:00:00+08:00",
+    }
+    raw = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "tool_search_call",
+                        "id": "search-1",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "function_call",
+                        "namespace": "mcp__memory_connector",
+                        "name": "memory_write",
+                        "arguments": json.dumps(arguments),
+                        "call_id": "call-1",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "function_call_output",
+                        "call_id": "call-1",
+                        "output": json.dumps(
+                            {
+                                "structured_content": {
+                                    "result": json.dumps(
+                                        {
+                                            "ok": True,
+                                            "episode_uuid": "episode-1",
+                                            "processing_status": "completed",
+                                        }
+                                    )
+                                },
+                            }
+                        ),
+                    },
+                }
+            ),
+            json.dumps({"status": "attempted"}),
+        ]
+    )
+
+    result = run_codex_memory_write(
+        workspace=tmp_path,
+        data=arguments["data"],
+        type=arguments["type"],
+        created_at=arguments["created_at"],
+        source_description="source",
+        executor=lambda _command, _prompt: raw,
+    )
+
+    assert result == MemoryWriteResult("episode-1", "completed", False)
+
+
 def test_codex_mcp_memory_write_runner_surfaces_explicit_tool_failure(
     tmp_path: Path,
 ):

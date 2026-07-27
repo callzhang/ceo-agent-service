@@ -48,10 +48,35 @@ def completed_tool_events(raw: str) -> list[dict]:
 
 
 def completed_mcp_tool_calls(raw: str) -> list[dict]:
-    return [
-        event for event in completed_tool_events(raw)
+    completed_items: list[dict] = []
+    for payload in _jsonl_payloads(raw):
+        if payload.get("type") != "item.completed":
+            continue
+        item = payload.get("item")
+        if isinstance(item, dict):
+            completed_items.append(item)
+
+    calls = [
+        event
+        for event in completed_items
         if event.get("type") == "mcp_tool_call"
     ]
+    outputs = {
+        str(event.get("call_id") or ""): event.get("output")
+        for event in completed_items
+        if event.get("type") == "function_call_output"
+        and str(event.get("call_id") or "")
+    }
+    for event in completed_items:
+        namespace = str(event.get("namespace") or "")
+        if event.get("type") != "function_call" or not namespace.startswith("mcp__"):
+            continue
+        normalized = dict(event)
+        normalized["type"] = "mcp_tool_call"
+        normalized["tool"] = str(event.get("name") or "")
+        normalized["result"] = outputs.get(str(event.get("call_id") or ""))
+        calls.append(normalized)
+    return calls
 
 
 def has_any_tool_event(raw: str) -> bool:

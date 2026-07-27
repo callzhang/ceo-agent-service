@@ -136,6 +136,11 @@ def memory_result_from_codex_audit(
     type: str,
     created_at: str,
 ) -> MemoryWriteResult:
+    effectful_tool_events = [
+        event
+        for event in completed_tool_events(raw)
+        if event.get("type") != "tool_search_call"
+    ]
     calls = completed_mcp_tool_calls(raw)
     memory_calls = [
         call
@@ -143,7 +148,7 @@ def memory_result_from_codex_audit(
         if AutoReplyStore._is_memory_write_tool_name(str(call.get("tool") or ""))
     ]
     if (
-        len(completed_tool_events(raw)) != 1
+        len(effectful_tool_events) != 1
         or len(calls) != 1
         or len(memory_calls) != 1
     ):
