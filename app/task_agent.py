@@ -24,6 +24,7 @@ from app.task_retrieval import (
     tokenize,
 )
 from app.todo_sync import maybe_create_dingtalk_todo, sync_completed_todo_to_dingtalk
+from app.todo_completion import complete_follow_ups_for_todo
 
 
 TASK_AGENT_DECISION_SCHEMA_PATH = (
@@ -843,6 +844,13 @@ def _apply_todo_change(
     elif change.action == "cancel":
         values["status"] = "cancelled"
     store.update_work_todo(change.todo_id, **values)
+    if change.action == "close" and change.completion_evidence:
+        complete_follow_ups_for_todo(
+            store,
+            todo_id=change.todo_id,
+            evidence=change.completion_evidence,
+            now=str(change.completion_evidence.get("completed_at") or ""),
+        )
     return change.todo_id
 
 

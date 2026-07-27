@@ -6663,6 +6663,7 @@ class AutoReplyStore:
                     '结果' as output_label,
                     case
                         when drafts.status='sent' then coalesce(nullif(drafts.reaction_summary, ''), '已发送跟进')
+                        when drafts.status='completed' then coalesce(nullif(drafts.suppressed_reason, ''), '已完成跟进')
                         when drafts.status in ('skipped', 'cancelled') then coalesce(nullif(drafts.suppressed_reason, ''), '已跳过跟进')
                         when drafts.status='failed' then coalesce(nullif(drafts.send_result_json, '{}'), '发送失败')
                         else drafts.scheduled_at
@@ -6670,6 +6671,7 @@ class AutoReplyStore:
                     'follow_up_' || drafts.status as action,
                     case
                         when drafts.status='sent' then 'sent'
+                        when drafts.status='completed' then 'done'
                         when drafts.status in ('draft', 'approved') then 'pending'
                         when drafts.status in ('skipped', 'cancelled') then 'skipped'
                         when drafts.status='failed' then 'failed'
@@ -7920,7 +7922,7 @@ class AutoReplyStore:
                     select id
                     from follow_up_drafts
                     where dedupe_key=?
-                      and status in ('draft', 'approved', 'sent', 'skipped', 'cancelled')
+                      and status in ('draft', 'approved', 'sent', 'completed', 'skipped', 'cancelled')
                     order by id desc
                     limit 1
                     """,
