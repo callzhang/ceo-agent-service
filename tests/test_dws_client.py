@@ -4171,6 +4171,37 @@ def test_read_recent_messages_reports_missing_single_chat_direct_target():
     ]
 
 
+def test_read_recent_messages_treats_contact_search_business_error_as_missing_target():
+    client = SequenceRecordingDwsClient(
+        [
+            DwsError(
+                "dws command failed with exit code 1; "
+                "command=dws contact user search --query 吴柯欣 --format json; "
+                'code=ERROR; stderr={"error.code":1,'
+                '"error.message":"[UNCLASSIFIED] business error: success=false",'
+                '"error.reason":"business_error",'
+                '"error.server_error_code":"ERROR"}',
+                code="ERROR",
+            )
+        ]
+    )
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-direct",
+        title="吴柯欣",
+        single_chat=True,
+        unread_point=0,
+        last_message_create_at=1778666181403,
+    )
+
+    with pytest.raises(DwsError) as exc_info:
+        client.read_recent_messages(conversation, limit=5)
+
+    assert exc_info.value.code == DwsError.DIRECT_CHAT_TARGET_NOT_FOUND_CODE
+    assert client.commands == [
+        ["dws", "contact", "user", "search", "--query", "吴柯欣", "--format", "json"]
+    ]
+
+
 def test_message_list_time_uses_dingtalk_message_timezone(monkeypatch):
     monkeypatch.setattr(
         dws_client,

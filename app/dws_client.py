@@ -2990,7 +2990,18 @@ class DwsClient:
             return conversation
         if conversation.direct_user_id or conversation.direct_open_dingtalk_id:
             return conversation
-        matches = self.search_user_profiles(conversation.title)
+        try:
+            matches = self.search_user_profiles(conversation.title)
+        except DwsError as exc:
+            if self._single_chat_direct_search_unavailable(exc):
+                raise DwsError(
+                    (
+                        "direct chat target search unavailable for "
+                        f"{conversation.title!r}"
+                    ),
+                    code=DwsError.DIRECT_CHAT_TARGET_NOT_FOUND_CODE,
+                ) from exc
+            raise
         exact_matches = [
             match
             for match in matches
@@ -3020,6 +3031,17 @@ class DwsClient:
             candidate.strip().casefold() == normalized_title
             for candidate in (profile.name, profile.nick)
             if candidate.strip()
+        )
+
+    @staticmethod
+    def _single_chat_direct_search_unavailable(exc: DwsError) -> bool:
+        if exc.code not in {"1", "ERROR", "business_error"}:
+            return False
+        message = str(exc)
+        return (
+            "contact user search" in message
+            and "success=false" in message
+            and "TOKEN_VERIFIED_FAILED" not in message
         )
 
     def _enrich_user_profile_from_search(
