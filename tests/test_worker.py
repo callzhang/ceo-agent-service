@@ -8449,6 +8449,51 @@ def test_oa_approval_detail_login_error_is_reported_as_tool_issue(
     } in notifications
 
 
+def test_oa_approval_detail_reports_quota_block_when_openapi_fallback_is_exhausted(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]曹芃提醒您审批他的关联交易定价审批 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.oa_approval_details["proc-1"] = DwsError(
+        "dws command failed with exit code 1; code=PARAM_ERROR; "
+        "technical_detail=iPaaS 调用失败: saNode parse output error, expPayload: {...}",
+        code="PARAM_ERROR",
+    )
+    dws.oa_approval_records["proc-1"] = {
+        "result": {
+            "operationRecords": [
+                {"operationType": "START_PROCESS_INSTANCE", "userId": "applicant"}
+            ]
+        }
+    }
+    dws.oa_approval_tasks["proc-1"] = {
+        "result": {"taskIdList": [{"taskId": "task-1"}]}
+    }
+    dws.openapi_oa_details["proc-1"] = DwsError(
+        "DingTalk OpenAPI error 90020: 您的企业本月api调用量已超过限制",
+        code="90020",
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    detail = json.loads(
+        worker._oa_approval_detail_text(
+            trigger,
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        )
+    )
+    assert detail["tool_status"] == "oa_detail_unavailable"
+    assert "OpenAPI 兜底被钉钉企业 API 月度配额限制挡住" in detail["tool_issue"]
+    assert detail["dws_detail"]["error_kind"] == "dws_error"
+    assert detail["openapi_detail"]["error_kind"] == (
+        "dingtalk_openapi_quota_exceeded"
+    )
+
+
 def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     tmp_path: Path, monkeypatch
 ):

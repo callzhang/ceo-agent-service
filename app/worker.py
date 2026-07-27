@@ -6957,10 +6957,24 @@ class DingTalkAutoReplyWorker:
                 "error_kind": "dws_authorization_required",
                 "message": str(exc),
             }
+        if self._is_dingtalk_openapi_quota_error(exc):
+            return {
+                "error_kind": "dingtalk_openapi_quota_exceeded",
+                "message": str(exc),
+            }
         return {
             "error_kind": "dws_error",
             "message": str(exc),
         }
+
+    @staticmethod
+    def _is_dingtalk_openapi_quota_error(exc: Exception) -> bool:
+        if isinstance(exc, DwsError) and (
+            exc.code == DwsError.DINGTALK_OPENAPI_QUOTA_EXCEEDED_CODE
+        ):
+            return True
+        message = str(exc)
+        return "90020" in message and "api调用量已超过限制" in message
 
     @staticmethod
     def _annotate_oa_detail_recovery(documents: dict[str, Any]) -> None:
@@ -7012,6 +7026,12 @@ class DingTalkAutoReplyWorker:
             documents["tool_status"] = "dws_authorization_required"
             documents["tool_issue"] = (
                 "DWS 权限不足，当前不是审批材料缺失。"
+            )
+        elif "dingtalk_openapi_quota_exceeded" in error_kinds:
+            documents["tool_status"] = "oa_detail_unavailable"
+            documents["tool_issue"] = (
+                "DWS 审批详情解析失败，OpenAPI 兜底被钉钉企业 API 月度配额限制挡住；"
+                "当前不是申请人材料缺失，也不能继续重试详情接口或执行审批通过。"
             )
 
     @staticmethod

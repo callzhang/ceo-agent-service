@@ -93,6 +93,7 @@ def extract_recall_key_from_send_result(send_result: dict[str, Any] | None) -> s
 class DwsError(RuntimeError):
     DIRECT_CHAT_TARGET_NOT_FOUND_CODE = "DIRECT_CHAT_TARGET_NOT_FOUND"
     AGENT_CODE_NOT_EXISTS_CODE = "AGENT_CODE_NOT_EXISTS"
+    DINGTALK_OPENAPI_QUOTA_EXCEEDED_CODE = "90020"
     LOGIN_ERROR_CODES = {"2", "not_authenticated"}
     LOGIN_ERROR_MARKERS = (
         "not_authenticated",
@@ -2126,10 +2127,11 @@ class DwsClient:
                 }
             ),
         )
+        self._raise_for_dingtalk_openapi_error(token_payload)
         token = token_payload.get("access_token")
         if not isinstance(token, str) or not token:
             raise DwsError("DingTalk OpenAPI token response did not include access_token")
-        return self._http_json(
+        detail_payload = self._http_json(
             "POST",
             "https://oapi.dingtalk.com/topapi/processinstance/get?"
             + urlencode({"access_token": token}),
@@ -2137,6 +2139,17 @@ class DwsClient:
                 "process_instance_id": process_instance_id,
             },
         )
+        self._raise_for_dingtalk_openapi_error(detail_payload)
+        return detail_payload
+
+    @staticmethod
+    def _raise_for_dingtalk_openapi_error(payload: dict[str, Any]) -> None:
+        errcode = payload.get("errcode")
+        if errcode in (None, 0):
+            return
+        code = str(payload.get("sub_code") or errcode)
+        message = str(payload.get("sub_msg") or payload.get("errmsg") or payload)
+        raise DwsError(f"DingTalk OpenAPI error {code}: {message}", code=code)
 
     def download_oa_process_attachment(
         self,

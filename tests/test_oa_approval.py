@@ -1094,6 +1094,49 @@ def test_handle_tells_agent_to_use_recovered_openapi_detail(tmp_path: Path):
     assert "`--fields`" in prompts[0]
 
 
+def test_handle_tells_agent_not_to_retry_when_oa_detail_is_unavailable(
+    tmp_path: Path,
+):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    prompts: list[str] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        del command
+        prompts.append(prompt)
+        return _oa_envelope_json(
+            action="退回",
+            remark="工具阻断，当前无法完整读取审批材料。",
+            summary="DWS detail 解析失败且 OpenAPI 兜底不可用。",
+        )
+
+    runner = OaApprovalSpecHandler(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    _handle_approval(
+        runner,
+        "触发消息",
+        "",
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        approval_detail_text=json.dumps(
+            {
+                "tool_status": "oa_detail_unavailable",
+                "tool_issue": "DWS detail 解析失败，OpenAPI 配额耗尽。",
+            },
+            ensure_ascii=False,
+        ),
+        execute=False,
+    )
+
+    assert "tool_status=oa_detail_unavailable" in prompts[0]
+    assert "不要继续重试 `dws oa approval detail`" in prompts[0]
+    assert "不得执行通过" in prompts[0]
+    assert "工具/配额阻断" in prompts[0]
+
+
 def test_read_only_runner_can_use_local_dws_auth(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("DWS_CLIENT_ID", "wrong-client-id")
     monkeypatch.setenv("DWS_CLIENT_SECRET", "wrong-client-secret")
