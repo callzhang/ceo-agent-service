@@ -333,6 +333,21 @@ def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
             self.calls.append(("read_doc", node))
             return {"markdown": "正文"}
 
+        def list_doc_nodes(
+            self,
+            workspace_id=None,
+            folder_id=None,
+            page_token="",
+        ):
+            self.calls.append(
+                ("list_doc_nodes", workspace_id, folder_id, page_token)
+            )
+            return {"nodes": [{"nodeId": "child-1"}]}
+
+        def read_sheet(self, node):
+            self.calls.append(("read_sheet", node))
+            return {"cells": [[{"value": "计划"}]]}
+
         def get_aitable_base(self, base_id):
             self.calls.append(("get_aitable_base", base_id))
             return {"data": {"baseName": "看板"}}
@@ -378,6 +393,10 @@ def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
 
     assert cached.doc_info("node-1") == {"extension": "able"}
     assert cached.read_doc("node-1") == {"markdown": "正文"}
+    assert cached.list_doc_nodes(folder_id="folder-1") == {
+        "nodes": [{"nodeId": "child-1"}]
+    }
+    assert cached.read_sheet("sheet-1") == {"cells": [[{"value": "计划"}]]}
     assert cached.get_aitable_base("base-1") == {"data": {"baseName": "看板"}}
     assert cached.get_aitable_tables("base-1", ["tbl-1"]) == {
         "data": {"tables": []}
@@ -395,6 +414,8 @@ def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
     assert cached.dws.calls == [
         ("doc_info", "node-1"),
         ("read_doc", "node-1"),
+        ("list_doc_nodes", None, "folder-1", ""),
+        ("read_sheet", "sheet-1"),
         ("get_aitable_base", "base-1"),
         ("get_aitable_tables", "base-1", ["tbl-1"]),
         ("query_aitable_records", "base-1", "tbl-1", 5),

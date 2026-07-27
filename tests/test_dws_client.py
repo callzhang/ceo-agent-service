@@ -687,6 +687,24 @@ def test_read_doc_command_shape():
     ]
 
 
+def test_read_sheet_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_read_sheet_command(
+        "https://alidocs.dingtalk.com/i/nodes/sheet123"
+    )
+
+    assert command == [
+        "dws",
+        "sheet",
+        "+read",
+        "--node",
+        "https://alidocs.dingtalk.com/i/nodes/sheet123",
+        "--format",
+        "json",
+    ]
+
+
 def test_search_documents_command_shape():
     client = DwsClient(dws_bin="dws")
 

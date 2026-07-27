@@ -1057,6 +1057,17 @@ class DwsClient:
             "json",
         ]
 
+    def build_read_sheet_command(self, node: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "sheet",
+            "+read",
+            "--node",
+            node,
+            "--format",
+            "json",
+        ]
+
     def build_doc_list_command(
         self,
         workspace_id: str | None = None,
@@ -2288,6 +2299,12 @@ class DwsClient:
         payload = self.run_json(self.build_read_doc_command(node))
         if not isinstance(payload, dict):
             raise DwsError("invalid doc read response")
+        return payload
+
+    def read_sheet(self, node: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_read_sheet_command(node))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid sheet read response")
         return payload
 
     def list_doc_nodes(

@@ -991,17 +991,7 @@ class DingTalkAutoReplyWorker:
                 raise DwsError(f"DingTalk doc read returned empty content: {reference}")
             return markdown
         if content_type == "ALIDOC" and extension == "axls":
-            payload = self.dws.run_json(
-                [
-                    self.dws.dws_bin,
-                    "sheet",
-                    "+read",
-                    "--node",
-                    reference,
-                    "--format",
-                    "json",
-                ]
-            )
+            payload = self.dws.read_sheet(reference)
             return self._universal_sheet_text(payload)
         if content_type == "ALIDOC" and extension == "adraw":
             metadata_lines = [

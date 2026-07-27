@@ -589,8 +589,8 @@ def test_universal_worker_resolves_oa_folder_material_before_planning(
             self.calls.append(("read_doc", node))
             return {"markdown": "执行范围：3D OD、OCC、4D车道线"}
 
-        def run_json(self, command: list[str]) -> dict[str, object]:
-            self.calls.append(("run_json", " ".join(command)))
+        def read_sheet(self, node: str) -> dict[str, object]:
+            self.calls.append(("read_sheet", node))
             return {
                 "cells": [
                     [{"value": "日期"}, {"value": "项目类型"}],
@@ -654,10 +654,7 @@ def test_universal_worker_resolves_oa_folder_material_before_planning(
         ("doc_info", folder_url),
         ("list_doc_nodes", folder_url),
         ("read_doc", "doc-project"),
-        (
-            "run_json",
-            "dws sheet +read --node sheet-plan --format json",
-        ),
+        ("read_sheet", "sheet-plan"),
     ]
 
 

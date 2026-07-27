@@ -173,8 +173,23 @@ class CachedDwsClient:
     def read_doc(self, node: str):
         return self.dws.read_doc(node)
 
+    def read_sheet(self, node: str):
+        return self.dws.read_sheet(node)
+
     def doc_info(self, node: str):
         return self.dws.doc_info(node)
+
+    def list_doc_nodes(
+        self,
+        workspace_id: str | None = None,
+        folder_id: str | None = None,
+        page_token: str = "",
+    ):
+        return self.dws.list_doc_nodes(
+            workspace_id=workspace_id,
+            folder_id=folder_id,
+            page_token=page_token,
+        )
 
     def get_aitable_base(self, base_id: str):
         return self.dws.get_aitable_base(base_id)
