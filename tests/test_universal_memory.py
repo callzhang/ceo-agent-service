@@ -290,17 +290,18 @@ def test_codex_mcp_memory_write_runner_accepts_deferred_function_call_json(
                         "type": "function_call_output",
                         "call_id": "call-1",
                         "output": json.dumps(
-                            {
-                                "structured_content": {
-                                    "result": json.dumps(
+                            [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(
                                         {
                                             "ok": True,
                                             "episode_uuid": "episode-1",
                                             "processing_status": "completed",
                                         }
-                                    )
-                                },
-                            }
+                                    ),
+                                }
+                            ]
                         ),
                     },
                 }
@@ -338,8 +339,17 @@ def test_codex_mcp_memory_write_runner_surfaces_explicit_tool_failure(
                             "created_at": "2026-07-20T10:00:00+08:00",
                         },
                         "result": (
-                            "Error executing tool memory_write: "
-                            "backend connection refused"
+                            json.dumps(
+                                [
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            "Error executing tool memory_write: "
+                                            "backend connection refused"
+                                        ),
+                                    }
+                                ]
+                            )
                         ),
                     },
                 }

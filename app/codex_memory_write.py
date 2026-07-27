@@ -182,12 +182,13 @@ def memory_result_from_codex_audit(
     output_text = (
         output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
     )
-    explicit_failure = _explicit_memory_tool_failure(output_text)
+    normalized_output = _normalize_memory_tool_output(output_text)
+    explicit_failure = _explicit_memory_tool_failure(normalized_output)
     if explicit_failure:
-        if _looks_like_memory_authorization_error(output_text):
+        if _looks_like_memory_authorization_error(normalized_output):
             raise CodexMemoryWriteAuthorizationRequired(explicit_failure)
         raise CodexMemoryWriteToolFailed(explicit_failure)
-    parsed = AutoReplyStore._parse_memory_write_output(output_text)
+    parsed = AutoReplyStore._parse_memory_write_output(normalized_output)
     if parsed.get("status") == "failed":
         raise RuntimeError(parsed.get("last_error") or "memory_write failed")
     episode_uuid = str(parsed.get("memory_episode_id") or "").strip()
@@ -202,9 +203,28 @@ def memory_result_from_codex_audit(
     )
 
 
+def _normalize_memory_tool_output(output: str) -> str:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return output
+    if isinstance(payload, list):
+        return json.dumps({"content": payload}, ensure_ascii=False)
+    return output
+
+
 def _explicit_memory_tool_failure(output: str) -> str:
-    normalized = " ".join(output.split()).casefold()
-    if not normalized.startswith("error executing tool memory_write:"):
+    payload = AutoReplyStore._load_memory_json(output)
+    texts: list[str] = []
+    if isinstance(payload, dict) and isinstance(payload.get("content"), list):
+        texts.extend(
+            str(item.get("text") or "")
+            for item in payload["content"]
+            if isinstance(item, dict)
+        )
+    texts.append(output)
+    normalized = " ".join(texts).casefold()
+    if "error executing tool memory_write:" not in normalized:
         return ""
     if any(
         marker in normalized
