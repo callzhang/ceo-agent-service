@@ -168,9 +168,10 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert '"name": "💬 Sent"' in html
     assert f"/attempts/{attempt_id}" in html
     assert (
-        f'<article class="attempt-item" role="link" tabindex="0" '
+        f'<article class="attempt-item history-kind-reply" role="link" tabindex="0" '
         f'data-history-detail-href="/attempts/{attempt_id}">'
     ) in html
+    assert '<span class="history-type-badge history-type-reply">Reply</span>' in html
     assert "data-history-clickable-items" in html
     assert "技术部" in html
     assert "Xiaomin" in html
@@ -197,6 +198,37 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "查看/反馈" in html
     assert ">Codex</a>" not in html
     assert "/codex/session-1" not in html
+
+
+def test_render_attempt_list_marks_oa_history_type(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="OA 审批",
+        trigger_message_id="msg-oa",
+        trigger_sender="Derek",
+        trigger_text="审批这个项目",
+        action="oa_approval",
+        sensitivity_kind="general",
+        codex_reason="审批材料完整",
+        draft_reply_text="同意",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text="同意",
+        permission_action="allow",
+        send_status="sent",
+    )
+
+    html = render_attempt_list(store)
+
+    assert (
+        f'<article class="attempt-item history-kind-oa" role="link" tabindex="0" '
+        f'data-history-detail-href="/attempts/{attempt_id}">'
+    ) in html
+    assert '<span class="history-type-badge history-type-oa">OA</span>' in html
 
 
 def test_attempt_detail_links_oa_metadata_to_process_history(tmp_path: Path):
@@ -443,6 +475,12 @@ def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
 
     assert "task-history-item" not in html
     assert (
+        'class="attempt-item history-kind-task" role="link" tabindex="0" '
+        f'data-history-detail-href="/tasks/{project_id}#follow-up-{follow_up_id}"'
+        in html
+    )
+    assert '<span class="history-type-badge history-type-task">Task</span>' in html
+    assert (
         f'data-history-detail-href="/tasks/{project_id}#follow-up-{follow_up_id}"'
         in html
     )
@@ -478,6 +516,7 @@ def test_render_attempt_list_shows_draft_follow_up_as_pending(tmp_path: Path):
         f'data-history-detail-href="/tasks/{project_id}#follow-up-{follow_up_id}"'
         in html
     )
+    assert '<span class="history-type-badge history-type-task">Task</span>' in html
     assert ">Pending</span>" in html
     assert ">Processing</span>" not in html
 
@@ -490,9 +529,10 @@ def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
 
     assert f'/meeting-attempts/{run_id}' in html
     assert (
-        f'<article class="attempt-item" role="link" tabindex="0" '
+        f'<article class="attempt-item history-kind-meeting" role="link" tabindex="0" '
         f'data-history-detail-href="/meeting-attempts/{run_id}">'
     ) in html
+    assert '<span class="history-type-badge history-type-meeting">Meeting</span>' in html
     assert "会后对齐" in html
     assert "项目群" in html
 

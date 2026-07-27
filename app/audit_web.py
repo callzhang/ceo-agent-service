@@ -351,10 +351,19 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .history-chart{width:100%;height:260px}
 .history-chart-empty{display:flex;align-items:center;justify-content:center;height:180px;border:1px dashed var(--hairline);border-radius:8px;color:var(--steel);background:var(--surface-soft);font-size:13px}
 .attempt-feed{display:grid;gap:8px}
-.attempt-item{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
+.attempt-item{--history-kind-color:var(--hairline);background:var(--canvas);border:1px solid var(--hairline);border-left:4px solid var(--history-kind-color);border-radius:8px;padding:10px 12px 10px 10px}
 .attempt-item[data-history-detail-href]{cursor:pointer}
 .attempt-item[data-history-detail-href]:hover{border-color:rgba(55,114,207,.22);background:#f8fbff}
 .attempt-item[data-history-detail-href]:focus-visible{outline:3px solid rgba(55,114,207,.24);outline-offset:2px}
+.attempt-item.history-kind-reply{--history-kind-color:#3772cf}
+.attempt-item.history-kind-task{--history-kind-color:#00a884}
+.attempt-item.history-kind-meeting{--history-kind-color:#6d5bd0}
+.attempt-item.history-kind-oa{--history-kind-color:#b7791f}
+.attempt-item.history-kind-calendar{--history-kind-color:#087ea4}
+.attempt-item.history-kind-memory{--history-kind-color:#6b7280}
+.attempt-item.history-kind-reaction{--history-kind-color:#b83280}
+.attempt-item.history-kind-wechat{--history-kind-color:#07c160}
+.history-type-badge{display:inline-flex;align-items:center;height:20px;padding:0 7px;border:1px solid color-mix(in srgb,var(--history-kind-color) 35%,#fff);border-radius:999px;background:color-mix(in srgb,var(--history-kind-color) 10%,#fff);color:var(--history-kind-color);font-size:11px;font-weight:800;line-height:1;letter-spacing:0;text-transform:uppercase;white-space:nowrap}
 .todo-detail-item:target{border-color:rgba(55,114,207,.45);box-shadow:0 0 0 3px rgba(55,114,207,.12)}
 .todo-followup-item:target .todo-followup-bubble{border-color:rgba(55,114,207,.45);box-shadow:0 0 0 3px rgba(55,114,207,.12)}
 .attempt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
@@ -3225,12 +3234,14 @@ def render_attempt_list(
         )
         wechat_delivery_id = wechat_ready_delivery_by_attempt.get(attempt.id)
         detail_href = f"/attempts/{attempt.id}"
+        history_type = _history_attempt_type(attempt)
         items.append(
-            "<article class=\"attempt-item\" role=\"link\" tabindex=\"0\" "
+            f"<article class=\"attempt-item history-kind-{history_type[0]}\" role=\"link\" tabindex=\"0\" "
             f"data-history-detail-href=\"{escape(detail_href, quote=True)}\">"
             "<div class=\"attempt-head\">"
             "<div class=\"attempt-title\">"
             f"<a class=\"attempt-id\" href=\"{escape(detail_href, quote=True)}\">#{attempt.id}</a>"
+            f"{_history_type_badge(*history_type)}"
             f"{info_html}"
             f"{_attempt_action_pills(attempt)}"
             f"<div class=\"attempt-main\">{_channel_badge(attempt.channel)}{escape(attempt.conversation_title)}</div>"
@@ -3365,6 +3376,31 @@ def _history_clickable_items_script() -> str:
 """
 
 
+def _history_type_badge(kind: str, label: str) -> str:
+    return (
+        f'<span class="history-type-badge history-type-{escape(kind)}">'
+        f"{escape(label)}</span>"
+    )
+
+
+def _history_attempt_type(attempt: ReplyAttempt) -> tuple[str, str]:
+    channel = (attempt.channel or "").strip().lower()
+    if channel == "wechat":
+        return ("wechat", "WeChat")
+
+    action = (attempt.action or "").strip().lower()
+    status = (attempt.send_status or "").strip().lower()
+    if action == "oa_approval" or attempt.oa_process_instance_id.strip():
+        return ("oa", "OA")
+    if action in {"calendar_response", "calendar"} or attempt.calendar_response_status.strip():
+        return ("calendar", "Calendar")
+    if action == "memory_write":
+        return ("memory", "Memory")
+    if status == "reacted" or action in {"add_reaction", "reaction"}:
+        return ("reaction", "React")
+    return ("reply", "Reply")
+
+
 def _channel_badge(channel: str) -> str:
     if (channel or "").strip().lower() == "wechat":
         return (
@@ -3422,12 +3458,13 @@ def _meeting_history_card(item) -> str:
     status = item.status.strip().lower() or "processing"
     detail_url = f"/meeting-attempts/{item.source_id}"
     return (
-        '<article class="attempt-item" role="link" tabindex="0" '
+        '<article class="attempt-item history-kind-meeting" role="link" tabindex="0" '
         f'data-history-detail-href="{escape(detail_url, quote=True)}">'
         '<div class="attempt-head">'
         '<div class="attempt-title">'
         f'<a class="attempt-id" href="{escape(detail_url, quote=True)}">'
         f'#meeting-{item.source_id}</a>'
+        f'{_history_type_badge("meeting", "Meeting")}'
         f'<span class="pill status-action {_action_state_class(status)}">'
         f'🧭 {_display_action_state(status)}</span>'
         '<div class="attempt-main">会后对齐 · '
@@ -3472,12 +3509,13 @@ def _task_history_card(item) -> str:
     status = item.status.strip().lower() or "done"
     detail_url = _task_history_detail_url(item)
     return (
-        '<article class="attempt-item" role="link" tabindex="0" '
+        '<article class="attempt-item history-kind-task" role="link" tabindex="0" '
         f'data-history-detail-href="{escape(detail_url, quote=True)}">'
         '<div class="attempt-head">'
         '<div class="attempt-title">'
         f'<a class="attempt-id" href="{escape(detail_url, quote=True)}">'
         f'{escape(_task_history_id_label(item))}</a>'
+        f'{_history_type_badge("task", "Task")}'
         f'<span class="pill status-action {_action_state_class(status)}">'
         f'{escape(_display_action_state(status))}</span>'
         '<div class="attempt-main">'
