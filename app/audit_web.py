@@ -494,6 +494,16 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .log-field{min-width:0;padding:8px 9px;border:1px solid var(--hairline-soft);border-radius:7px;background:var(--surface-soft)}
 .log-label{margin-bottom:3px;color:var(--steel);font-size:11px;font-weight:800;line-height:1.25;text-transform:uppercase}
 .log-value{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;color:var(--charcoal);font-size:12px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word}
+.worker-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 12px}
+.worker-card{min-width:0;padding:14px 16px;border:1px solid var(--hairline);border-radius:8px;background:var(--canvas)}
+.worker-card-label{color:var(--steel);font-size:12px;font-weight:800;line-height:1.35;text-transform:uppercase}
+.worker-card-value{margin-top:5px;color:var(--ink);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:20px;font-weight:800;line-height:1.2;overflow-wrap:anywhere}
+.worker-card-detail{margin-top:4px;color:var(--steel);font-size:12px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
+.worker-section{margin:12px 0}
+.worker-table td,.worker-table th{font-size:13px}
+.worker-status-ok{color:#006b55}
+.worker-status-bad{color:#9a2f2f}
+.worker-status-muted{color:var(--steel)}
 .quality-warning{border-color:rgba(212,86,86,.28);background:rgba(212,86,86,.08)}
 .quality-warning ul{margin:8px 0 0;padding-left:20px;color:#8a2626}
 .context-only-info{display:inline-flex;align-items:center;gap:8px}
@@ -543,7 +553,8 @@ label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-wei
 .muted{color:var(--steel)}
 @media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}.attempt-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:960px){.sent-todos-toolbar{grid-template-columns:1fr 1fr}.sent-todos-toolbar-spacer{display:none}.sent-todos-toolbar .table-toolbar-search{width:100%}.section-head{align-items:flex-start;flex-direction:column}}
-@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-time{margin-left:0}.log-head{grid-template-columns:1fr}.log-time{text-align:left}.log-body{grid-template-columns:1fr}.history-chart{height:220px}.table-toolbar{grid-template-columns:1fr}.table-toolbar-center{justify-content:flex-start}.table-toolbar-right{justify-content:flex-start}.sent-todos-toolbar{grid-template-columns:1fr}}
+@media (max-width:960px){.worker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-time{margin-left:0}.log-head{grid-template-columns:1fr}.log-time{text-align:left}.log-body{grid-template-columns:1fr}.worker-grid{grid-template-columns:1fr}.history-chart{height:220px}.table-toolbar{grid-template-columns:1fr}.table-toolbar-center{justify-content:flex-start}.table-toolbar-right{justify-content:flex-start}.sent-todos-toolbar{grid-template-columns:1fr}}
 """
 
 FAVICON_HREF = (
@@ -1665,6 +1676,7 @@ def _top_nav(
         ("history", "History", "/"),
         ("tutorial", "Tutorial", "/tutorial"),
         ("tasks", "Tasks", "/tasks"),
+        ("workers", "Workers", "/workers"),
         ("user-feedback", "用户反馈", "/user-feedback"),
         ("service-bugfix", "服务修复", "/service-bugfix-candidates"),
         ("codex", "Codex Sessions", "/codex"),
@@ -1699,6 +1711,374 @@ def _top_nav_item(
     if active:
         return f"<span class=\"nav-item active\" aria-current=\"page\">{label_html}</span>"
     return f"<a class=\"nav-item\" href=\"{escape(href)}\">{label_html}</a>"
+
+
+def build_worker_status_payload(
+    store: AutoReplyStore,
+    *,
+    launchd_label: str = "com.ceo-agent-service.main",
+) -> dict[str, object]:
+    service = _launchd_service_status(launchd_label)
+    queues = _queue_status_snapshots(store)
+    attention_rows = _queue_attention_rows(store)
+    return {
+        "service": service,
+        "components": _service_component_snapshots(),
+        "queues": queues,
+        "attention_rows": attention_rows,
+        "database": {"path": str(store.path)},
+        "summary": {
+            "queue_count": len(queues),
+            "pending": sum(int(queue["pending"]) for queue in queues),
+            "processing": sum(int(queue["processing"]) for queue in queues),
+            "failed": sum(int(queue["failed"]) for queue in queues),
+            "attention": len(attention_rows),
+        },
+    }
+
+
+def render_workers_page(store: AutoReplyStore) -> str:
+    payload = build_worker_status_payload(store)
+    service = payload["service"]
+    summary = payload["summary"]
+    service_ok = bool(service.get("ok")) if isinstance(service, dict) else False
+    pid_detail = f"runs {service.get('runs') or '-'}"
+    failed_detail = f"attention {summary.get('attention') or 0}"
+    body = (
+        "<section class=\"worker-grid\">"
+        f"{_worker_metric_card('Service', str(service.get('state') or 'unknown'), str(service.get('detail') or ''), ok=service_ok)}"
+        f"{_worker_metric_card('PID', str(service.get('pid') or '-'), pid_detail)}"
+        f"{_worker_metric_card('Processing', str(summary.get('processing') or 0), 'all queues')}"
+        f"{_worker_metric_card('Failed', str(summary.get('failed') or 0), failed_detail, ok=int(summary.get('failed') or 0) == 0)}"
+        "</section>"
+        "<section class=\"card worker-section compact-card\">"
+        "<h2>Workers</h2>"
+        f"{_worker_components_table(payload['components'])}"
+        "</section>"
+        "<section class=\"card worker-section compact-card\">"
+        "<h2>Queues</h2>"
+        f"{_worker_queues_table(payload['queues'])}"
+        "</section>"
+        "<section class=\"card worker-section compact-card\">"
+        "<h2>Attention</h2>"
+        f"{_worker_attention_table(payload['attention_rows'])}"
+        "</section>"
+    )
+    return render_page(
+        "Workers",
+        body,
+        auto_refresh=True,
+        active_nav="workers",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def _worker_metric_card(label: str, value: str, detail: str, *, ok: bool | None = None) -> str:
+    status_class = ""
+    if ok is not None:
+        status_class = " worker-status-ok" if ok else " worker-status-bad"
+    return (
+        "<article class=\"worker-card\">"
+        f"<div class=\"worker-card-label\">{escape(label)}</div>"
+        f"<div class=\"worker-card-value{status_class}\">{escape(value)}</div>"
+        f"<div class=\"worker-card-detail\">{escape(detail)}</div>"
+        "</article>"
+    )
+
+
+def _service_component_snapshots() -> list[dict[str, str]]:
+    return [
+        {"name": "audit-web", "role": "UI/API", "cadence": "always on"},
+        {"name": "database-backup", "role": "sqlite backup", "cadence": "periodic"},
+        {"name": "producer", "role": "DingTalk message scan", "cadence": f"{producer_interval_seconds()}s"},
+        {"name": "consumer", "role": "reply task execution", "cadence": f"{consumer_poll_interval_seconds()}s"},
+        {"name": "meeting-producer", "role": "AI minutes scan", "cadence": f"{meeting_producer_interval_seconds()}s"},
+        {"name": "meeting-consumer", "role": "meeting alignment", "cadence": f"{meeting_consumer_poll_interval_seconds()}s"},
+        {"name": "task-maintenance", "role": "task agent scans/follow-ups", "cadence": f"{task_work_item_interval_seconds()}s"},
+    ]
+
+
+def _launchd_service_status(label: str) -> dict[str, object]:
+    target = f"gui/{os.getuid()}/{label}"
+    try:
+        completed = subprocess.run(
+            ["launchctl", "print", target],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception as exc:
+        return {
+            "label": label,
+            "target": target,
+            "ok": False,
+            "state": "unavailable",
+            "detail": str(exc),
+            "pid": "",
+            "runs": "",
+            "initialized": "",
+        }
+    parsed = _parse_launchctl_print(completed.stdout)
+    state = str(parsed.get("state") or ("error" if completed.returncode else "unknown"))
+    initialized = str(parsed.get("initialized") or "")
+    ok = completed.returncode == 0 and state == "running" and initialized != "0"
+    detail = (
+        "running"
+        if ok
+        else (completed.stderr.strip() or parsed.get("last terminating signal") or state)
+    )
+    return {
+        "label": label,
+        "target": target,
+        "ok": ok,
+        "state": state,
+        "detail": str(detail),
+        "pid": str(parsed.get("pid") or ""),
+        "runs": str(parsed.get("runs") or ""),
+        "initialized": initialized,
+        "last_terminating_signal": str(parsed.get("last terminating signal") or ""),
+        "returncode": completed.returncode,
+    }
+
+
+def _parse_launchctl_print(output: str) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for line in output.splitlines():
+        stripped = line.strip()
+        if " = " not in stripped:
+            continue
+        key, value = stripped.split(" = ", 1)
+        key = key.strip().lower()
+        if (
+            key in {"state", "pid", "runs", "initialized", "last terminating signal"}
+            and key not in parsed
+        ):
+            parsed[key] = value.strip()
+    return parsed
+
+
+def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
+    specs = [
+        ("Reply tasks", "reply_tasks", "status", "updated_at", "error"),
+        ("Reply attempts", "reply_attempts", "send_status", "updated_at", "send_error"),
+        ("Work items", "work_summary_inputs", "status", "updated_at", "error"),
+        ("Follow-ups", "follow_up_drafts", "status", "updated_at", "suppressed_reason"),
+        ("Meeting jobs", "meeting_alignment_jobs", "status", "updated_at", "error"),
+        ("OKR reviews", "okr_review_requests", "status", "updated_at", "error"),
+        ("Memory writes", "memory_write_events", "status", "updated_at", "last_error"),
+        ("DingTalk Todos", "work_todo_dingtalk_links", "status", "updated_at", "last_error"),
+        ("Universal actions", "universal_action_executions", "status", "updated_at", "error"),
+        ("WeChat deliveries", "wechat_deliveries", "status", "updated_at", "error"),
+    ]
+    snapshots: list[dict[str, object]] = []
+    with store._connect() as db:
+        for name, table, status_column, updated_column, error_column in specs:
+            if not _sqlite_table_exists(db, table):
+                continue
+            counts = _queue_status_counts(db, table, status_column)
+            snapshots.append(
+                {
+                    "name": name,
+                    "table": table,
+                    "counts": counts,
+                    "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
+                    "processing": _queue_count_for(counts, {"processing", "sending"}),
+                    "failed": _queue_count_for(counts, {"failed", "error"}),
+                    "latest_updated_at": _queue_latest_value(db, table, updated_column),
+                    "latest_error": _queue_latest_error(db, table, status_column, error_column),
+                }
+            )
+    return snapshots
+
+
+def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dict[str, str]]:
+    specs = [
+        ("Reply task", "reply_tasks", "status", "conversation_title", "trigger_text", "updated_at", "error"),
+        ("Reply", "reply_attempts", "send_status", "conversation_title", "trigger_text", "updated_at", "send_error"),
+        ("Work item", "work_summary_inputs", "status", "source_type", "source_ref", "updated_at", "error"),
+        ("Follow-up", "follow_up_drafts", "status", "owner_name", "question_text", "updated_at", "suppressed_reason"),
+        ("Meeting", "meeting_alignment_jobs", "status", "title", "target_title", "updated_at", "error"),
+        ("OKR", "okr_review_requests", "status", "conversation_title", "trigger_text", "updated_at", "error"),
+    ]
+    rows: list[dict[str, str]] = []
+    with store._connect() as db:
+        for category, table, status_column, context_column, summary_column, updated_column, error_column in specs:
+            if not _sqlite_table_exists(db, table):
+                continue
+            sql = f"""
+                select id, {status_column} as status, {context_column} as context,
+                       {summary_column} as summary, {updated_column} as updated_at,
+                       {error_column} as error
+                from {table}
+                where lower({status_column}) in ('pending','processing','failed','draft','approved','waiting')
+                order by
+                    case lower({status_column})
+                        when 'failed' then 0
+                        when 'processing' then 1
+                        else 2
+                    end,
+                    {updated_column} desc,
+                    id desc
+                limit ?
+            """
+            for row in db.execute(sql, (limit,)).fetchall():
+                rows.append(
+                    {
+                        "category": category,
+                        "id": str(row["id"]),
+                        "status": str(row["status"] or ""),
+                        "context": str(row["context"] or ""),
+                        "summary": str(row["summary"] or ""),
+                        "updated_at": str(row["updated_at"] or ""),
+                        "error": str(row["error"] or ""),
+                    }
+                )
+    rows.sort(key=lambda row: (_attention_status_rank(row["status"]), row["updated_at"]), reverse=False)
+    return rows[:limit]
+
+
+def _attention_status_rank(status: str) -> int:
+    normalized = status.strip().lower()
+    if normalized == "failed":
+        return 0
+    if normalized == "processing":
+        return 1
+    return 2
+
+
+def _sqlite_table_exists(db: sqlite3.Connection, table: str) -> bool:
+    row = db.execute(
+        "select 1 from sqlite_master where type='table' and name=?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _queue_status_counts(
+    db: sqlite3.Connection,
+    table: str,
+    status_column: str,
+) -> dict[str, int]:
+    rows = db.execute(
+        f"""
+        select lower(coalesce({status_column}, '')) as status, count(*) as count
+        from {table}
+        group by lower(coalesce({status_column}, ''))
+        order by status
+        """
+    ).fetchall()
+    return {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
+
+
+def _queue_count_for(counts: Mapping[str, int], statuses: set[str]) -> int:
+    return sum(int(counts.get(status, 0)) for status in statuses)
+
+
+def _queue_latest_value(db: sqlite3.Connection, table: str, column: str) -> str:
+    row = db.execute(
+        f"select {column} as value from {table} order by {column} desc limit 1"
+    ).fetchone()
+    return "" if row is None else str(row["value"] or "")
+
+
+def _queue_latest_error(
+    db: sqlite3.Connection,
+    table: str,
+    status_column: str,
+    error_column: str,
+) -> str:
+    columns = _sqlite_table_columns(db, table)
+    order_sql = "updated_at desc"
+    if "id" in columns:
+        order_sql += ", id desc"
+    row = db.execute(
+        f"""
+        select {error_column} as value
+        from {table}
+        where lower({status_column})='failed' and trim(coalesce({error_column}, ''))<>''
+        order by {order_sql}
+        limit 1
+        """
+    ).fetchone()
+    return "" if row is None else str(row["value"] or "")
+
+
+def _sqlite_table_columns(db: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row["name"]) for row in db.execute(f"pragma table_info({table})")}
+
+
+def _worker_components_table(components: object) -> str:
+    rows = "".join(
+        "<tr>"
+        f"<td>{escape(str(component.get('name') or ''))}</td>"
+        f"<td>{escape(str(component.get('role') or ''))}</td>"
+        f"<td>{escape(str(component.get('cadence') or ''))}</td>"
+        "</tr>"
+        for component in components
+        if isinstance(component, dict)
+    )
+    return (
+        "<table class=\"column-sized-table worker-table\"><thead><tr>"
+        "<th>Worker</th><th>Role</th><th>Cadence</th>"
+        "</tr></thead><tbody>"
+        f"{rows or '<tr><td colspan=\"3\" class=\"muted\">No workers configured.</td></tr>'}"
+        "</tbody></table>"
+    )
+
+
+def _worker_queues_table(queues: object) -> str:
+    rows = "".join(
+        "<tr>"
+        f"<td>{escape(str(queue.get('name') or ''))}<div class=\"muted\">{escape(str(queue.get('table') or ''))}</div></td>"
+        f"<td>{escape(_status_counts_label(queue.get('counts')))}</td>"
+        f"<td>{escape(str(queue.get('pending') or 0))}</td>"
+        f"<td>{escape(str(queue.get('processing') or 0))}</td>"
+        f"<td>{escape(str(queue.get('failed') or 0))}</td>"
+        f"<td>{escape(_format_local_time(str(queue.get('latest_updated_at') or '')))}</td>"
+        f"<td>{escape(_excerpt(str(queue.get('latest_error') or ''), 160) or '-')}</td>"
+        "</tr>"
+        for queue in queues
+        if isinstance(queue, dict)
+    )
+    return (
+        "<table class=\"column-sized-table worker-table\"><thead><tr>"
+        "<th>Queue</th><th>Status counts</th><th>Pending</th><th>Processing</th>"
+        "<th>Failed</th><th>Updated</th><th>Latest error</th>"
+        "</tr></thead><tbody>"
+        f"{rows or '<tr><td colspan=\"7\" class=\"muted\">No queues found.</td></tr>'}"
+        "</tbody></table>"
+    )
+
+
+def _worker_attention_table(rows_obj: object) -> str:
+    rows = "".join(
+        "<tr>"
+        f"<td>{escape(str(row.get('category') or ''))} #{escape(str(row.get('id') or ''))}</td>"
+        f"<td><span class=\"pill {_operation_status_class(str(row.get('status') or ''))}\">{escape(str(row.get('status') or '-'))}</span></td>"
+        f"<td>{escape(str(row.get('context') or '-'))}</td>"
+        f"<td>{escape(_excerpt(str(row.get('summary') or ''), 220) or '-')}</td>"
+        f"<td>{escape(_format_local_time(str(row.get('updated_at') or '')))}</td>"
+        f"<td>{escape(_excerpt(str(row.get('error') or ''), 220) or '-')}</td>"
+        "</tr>"
+        for row in rows_obj
+        if isinstance(row, dict)
+    )
+    return (
+        "<table class=\"column-sized-table worker-table\"><thead><tr>"
+        "<th>Item</th><th>Status</th><th>Context</th><th>Summary</th><th>Updated</th><th>Error</th>"
+        "</tr></thead><tbody>"
+        f"{rows or '<tr><td colspan=\"6\" class=\"muted\">No pending, processing, or failed queue items.</td></tr>'}"
+        "</tbody></table>"
+    )
+
+
+def _status_counts_label(value: object) -> str:
+    if not isinstance(value, Mapping) or not value:
+        return "-"
+    return ", ".join(
+        f"{status}:{count}" for status, count in sorted(value.items())
+    )
 
 
 def render_config_page(
@@ -6386,6 +6766,14 @@ def create_audit_app(
     def task_project_detail(project_id: int) -> HTMLResponse:
         status, html = render_task_project_detail(AutoReplyStore(db_path), project_id)
         return HTMLResponse(html, status_code=status)
+
+    @app.get("/workers", response_class=HTMLResponse)
+    def workers_page() -> str:
+        return render_workers_page(AutoReplyStore(db_path))
+
+    @app.get("/api/workers/status", response_class=JSONResponse)
+    def workers_status() -> JSONResponse:
+        return JSONResponse(build_worker_status_payload(AutoReplyStore(db_path)))
 
     @app.get("/logs", response_class=HTMLResponse)
     def log_list(request: Request) -> str:

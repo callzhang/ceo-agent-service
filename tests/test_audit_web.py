@@ -21,6 +21,7 @@ from app.audit_web import (
     handle_user_feedback_sync_post,
     handle_recall_post,
     handle_reviewed_message_reply,
+    build_worker_status_payload,
     render_attempt_detail,
     render_attempt_list,
     render_codex_session_detail,
@@ -34,6 +35,7 @@ from app.audit_web import (
     render_task_project_detail,
     render_tasks_page,
     render_tutorial_page,
+    render_workers_page,
     render_user_feedback_list,
     run_audit_web,
 )
@@ -1526,7 +1528,22 @@ def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
     assert "window.open(payload.url" not in html
 
 
-def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Path):
+def test_top_nav_highlights_current_page_and_disables_current_link(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {
+            "label": label,
+            "ok": True,
+            "state": "running",
+            "detail": "running",
+            "pid": "123",
+            "runs": "1",
+        },
+    )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)
 
@@ -1537,6 +1554,7 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
     codex_html = render_codex_session_list(store)
     errors_html = render_error_list(store)
     tasks_html = render_tasks_page(store)
+    workers_html = render_workers_page(store)
 
     assert '<span class="nav-item active" aria-current="page">History</span>' in history_html
     assert '<a class="nav-item" href="/">History</a>' not in history_html
@@ -1561,6 +1579,9 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
 
     assert '<span class="nav-item active" aria-current="page">Tasks</span>' in tasks_html
     assert '<a class="nav-item" href="/tasks">Tasks</a>' not in tasks_html
+
+    assert '<span class="nav-item active" aria-current="page">Workers</span>' in workers_html
+    assert '<a class="nav-item" href="/workers">Workers</a>' not in workers_html
 
 
 def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
@@ -5582,6 +5603,105 @@ def test_render_log_list_shows_recent_operations(tmp_path: Path):
     assert html.count("authorization required") == 1
     assert "cid-1" in html
     assert "active" in html
+
+
+def test_render_workers_page_shows_service_and_queue_status(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {
+            "label": label,
+            "target": "gui/501/com.ceo-agent-service.main",
+            "ok": True,
+            "state": "running",
+            "detail": "running",
+            "pid": "12345",
+            "runs": "4",
+            "initialized": "1",
+        },
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"新增任务"}')
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=0,
+        owner_name="Alex",
+        question_text="客户交付进展如何？",
+        status="draft",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="客户群",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="请看一下",
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="收到",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="failed",
+        send_error="send failed",
+    )
+
+    payload = build_worker_status_payload(store)
+    html = render_workers_page(store)
+
+    assert payload["service"]["state"] == "running"
+    assert payload["summary"]["pending"] >= 2
+    assert payload["summary"]["failed"] >= 1
+    assert any(queue["name"] == "Work items" for queue in payload["queues"])
+    assert any(queue["name"] == "Follow-ups" for queue in payload["queues"])
+    assert "Workers" in html
+    assert "Queues" in html
+    assert "Attention" in html
+    assert "12345" in html
+    assert "Work items" in html
+    assert "Follow-ups" in html
+    assert "send failed" in html
+    assert '<span class="nav-item active" aria-current="page">Workers</span>' in html
+
+
+def test_workers_routes_render_page_and_json(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {
+            "label": label,
+            "ok": True,
+            "state": "running",
+            "detail": "running",
+            "pid": "12345",
+            "runs": "4",
+            "initialized": "1",
+        },
+    )
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"新增任务"}')
+    client = TestClient(create_audit_app(db_path))
+
+    page_response = client.get("/workers")
+    api_response = client.get("/api/workers/status")
+
+    assert page_response.status_code == 200
+    assert "Workers" in page_response.text
+    assert "Work items" in page_response.text
+    assert api_response.status_code == 200
+    payload = api_response.json()
+    assert payload["service"]["state"] == "running"
+    assert payload["summary"]["pending"] >= 1
 
 
 def test_render_log_list_paginates(tmp_path: Path):
