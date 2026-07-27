@@ -296,6 +296,7 @@ def scan_pending_oa_approvals(
 ) -> int:
     list_pending = getattr(dws, "list_pending_oa_approvals", None)
     read_tasks = getattr(dws, "read_oa_approval_tasks", None)
+    read_detail = getattr(dws, "read_oa_approval_detail", None)
     if list_pending is None:
         store.set_daily_scan_state(
             OA_PENDING_SCANNER,
@@ -310,6 +311,14 @@ def scan_pending_oa_approvals(
             last_success_at="",
             cursor_json="{}",
             last_error="dws read_oa_approval_tasks unavailable",
+        )
+        return 0
+    if read_detail is None:
+        store.set_daily_scan_state(
+            OA_PENDING_SCANNER,
+            last_success_at="",
+            cursor_json="{}",
+            last_error="dws read_oa_approval_detail unavailable",
         )
         return 0
 
@@ -362,11 +371,12 @@ def scan_pending_oa_approvals(
             continue
         try:
             tasks_payload = read_tasks(process_instance_id)
+            detail_payload = read_detail(process_instance_id)
         except Exception:
             skipped_missing_task_id.append(process_instance_id)
             continue
         task_id = _pending_oa_task_id_for_current_user(
-            tasks_payload,
+            {"result": [detail_payload, tasks_payload]},
             current_user_id=current_user_id,
         )
         if not task_id:
@@ -461,7 +471,9 @@ def _pending_oa_task_id_for_current_user(
             running.append(task_id)
         if is_running and current_user_id and user_id == current_user_id:
             running_for_current_user.append(task_id)
-    for candidates in (running_for_current_user, running, all_task_ids):
+    if current_user_id:
+        return running_for_current_user[0] if running_for_current_user else ""
+    for candidates in (running, all_task_ids):
         if candidates:
             return candidates[0]
     return ""
@@ -478,7 +490,16 @@ def _oa_task_records(value: Any) -> list[dict[str, Any]]:
             records.extend(_oa_task_records(value.get(key)))
         return records
     if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
+        records: list[dict[str, Any]] = []
+        for item in value:
+            if isinstance(item, dict):
+                if any(
+                    key in item
+                    for key in ("taskId", "taskid", "task_id", "id")
+                ):
+                    records.append(item)
+                records.extend(_oa_task_records(item))
+        return records
     return []
 
 

@@ -471,6 +471,24 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
                 }
             }
 
+        def read_oa_approval_detail(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": 102648882814,
+                            "userId": "other-user",
+                            "status": "COMPLETED",
+                        },
+                        {
+                            "taskId": 102648910080,
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        },
+                    ]
+                }
+            }
+
     dws = FakeDws()
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
@@ -495,7 +513,7 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert task.conversation_title == "每日审批待办"
     assert task.trigger_message_id == "oa-pending:2026-07-27:proc-1"
     assert "张三提交的录用申请" in task.trigger_text
-    assert "procInstId=proc-1&taskId=102648882814" in task.oa_url
+    assert "procInstId=proc-1&taskId=102648910080" in task.oa_url
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
 
 
@@ -511,6 +529,48 @@ def test_scan_pending_oa_approvals_skips_when_current_task_id_is_missing(tmp_pat
             ]
 
         def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": []}}
+
+        def read_oa_approval_detail(self, process_instance_id):
+            return {"result": {"tasks": []}}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    queued = scan_pending_oa_approvals(
+        store,
+        FakeDws(),
+        now=datetime.fromisoformat("2026-07-27T09:30:00+08:00"),
+    )
+
+    assert queued == 0
+    assert store.claim_reply_tasks(limit=1) == []
+
+
+def test_scan_pending_oa_approvals_does_not_guess_unowned_task_ids(tmp_path):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [
+                DwsOaApprovalCandidate(
+                    process_instance_id="proc-1",
+                    title="张三提交的录用申请",
+                    process_name="录用申请",
+                )
+            ]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {
+                "result": {
+                    "taskIdList": [
+                        {"taskId": 102648882814},
+                        {"taskId": 102648910080},
+                    ]
+                }
+            }
+
+        def read_oa_approval_detail(self, process_instance_id):
             return {"result": {"tasks": []}}
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
