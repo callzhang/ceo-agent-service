@@ -167,6 +167,11 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "historyEventChartData" in html
     assert '"name": "💬 Sent"' in html
     assert f"/attempts/{attempt_id}" in html
+    assert (
+        f'<article class="attempt-item" role="link" tabindex="0" '
+        f'data-history-detail-href="/attempts/{attempt_id}">'
+    ) in html
+    assert "data-history-clickable-items" in html
     assert "技术部" in html
     assert "Xiaomin" in html
     assert "💬 Sent" in html
@@ -436,7 +441,12 @@ def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
     html = render_attempt_list(store)
     detail = render_task_project_detail(store, project_id)[1]
 
-    assert "task-history-item" in html
+    assert "task-history-item" not in html
+    assert (
+        f'data-history-detail-href="/tasks/{project_id}#follow-up-{follow_up_id}"'
+        in html
+    )
+    assert "onclick=\"if (!event.target.closest('a'))" not in html
     assert f"/tasks/{project_id}#follow-up-{follow_up_id}" in html
     assert "查看 task" in html
     assert f'id="todo-{todo_id}"' in detail
@@ -464,6 +474,10 @@ def test_render_attempt_list_shows_draft_follow_up_as_pending(tmp_path: Path):
     html = render_attempt_list(store, search_object_types=("task",))
 
     assert f"#follow-up-{follow_up_id}" in html
+    assert (
+        f'data-history-detail-href="/tasks/{project_id}#follow-up-{follow_up_id}"'
+        in html
+    )
     assert ">Pending</span>" in html
     assert ">Processing</span>" not in html
 
@@ -475,7 +489,10 @@ def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
     html = render_attempt_list(store)
 
     assert f'/meeting-attempts/{run_id}' in html
-    assert 'class="attempt-item"' in html
+    assert (
+        f'<article class="attempt-item" role="link" tabindex="0" '
+        f'data-history-detail-href="/meeting-attempts/{run_id}">'
+    ) in html
     assert "会后对齐" in html
     assert "项目群" in html
 

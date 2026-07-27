@@ -352,8 +352,9 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .history-chart-empty{display:flex;align-items:center;justify-content:center;height:180px;border:1px dashed var(--hairline);border-radius:8px;color:var(--steel);background:var(--surface-soft);font-size:13px}
 .attempt-feed{display:grid;gap:8px}
 .attempt-item{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
-.task-history-item{cursor:pointer}
-.task-history-item:hover{border-color:rgba(55,114,207,.22);background:#f8fbff}
+.attempt-item[data-history-detail-href]{cursor:pointer}
+.attempt-item[data-history-detail-href]:hover{border-color:rgba(55,114,207,.22);background:#f8fbff}
+.attempt-item[data-history-detail-href]:focus-visible{outline:3px solid rgba(55,114,207,.24);outline-offset:2px}
 .todo-detail-item:target{border-color:rgba(55,114,207,.45);box-shadow:0 0 0 3px rgba(55,114,207,.12)}
 .todo-followup-item:target .todo-followup-bubble{border-color:rgba(55,114,207,.45);box-shadow:0 0 0 3px rgba(55,114,207,.12)}
 .attempt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
@@ -3223,11 +3224,13 @@ def render_attempt_list(
             f'<div class="attempt-foot">{warning_html}</div>' if warning_html else ""
         )
         wechat_delivery_id = wechat_ready_delivery_by_attempt.get(attempt.id)
+        detail_href = f"/attempts/{attempt.id}"
         items.append(
-            "<article class=\"attempt-item\">"
+            "<article class=\"attempt-item\" role=\"link\" tabindex=\"0\" "
+            f"data-history-detail-href=\"{escape(detail_href, quote=True)}\">"
             "<div class=\"attempt-head\">"
             "<div class=\"attempt-title\">"
-            f"<a class=\"attempt-id\" href=\"/attempts/{attempt.id}\">#{attempt.id}</a>"
+            f"<a class=\"attempt-id\" href=\"{escape(detail_href, quote=True)}\">#{attempt.id}</a>"
             f"{info_html}"
             f"{_attempt_action_pills(attempt)}"
             f"<div class=\"attempt-main\">{_channel_badge(attempt.channel)}{escape(attempt.conversation_title)}</div>"
@@ -3259,6 +3262,7 @@ def render_attempt_list(
             f"{session_search_html}"
             "<section class=\"card\"><p class=\"muted\">No reply attempts recorded.</p>"
             f"<p class=\"muted\">DB: {escape(str(store.path))}</p></section>"
+            f"{_history_clickable_items_script()}"
             "</div>"
         )
     else:
@@ -3282,6 +3286,7 @@ def render_attempt_list(
             "<section class=\"attempt-feed\">"
             + "".join(items)
             + "</section>"
+            + _history_clickable_items_script()
             + "</div>"
         )
     return render_page(
@@ -3308,6 +3313,56 @@ def _pending_service_bugfix_card(store: AutoReplyStore) -> str:
         "<p class=\"muted\">来自明确指出本服务 bug、失败或回归的用户反馈。</p>"
         "</section>"
     )
+
+
+def _history_clickable_items_script() -> str:
+    return """
+<script data-history-clickable-items>
+(() => {
+  if (window.__ceoHistoryClickableItemsInstalled) {
+    return;
+  }
+  window.__ceoHistoryClickableItemsInstalled = true;
+
+  const interactiveSelector = "a, button, input, textarea, select, option, label, summary, details, [role='button'], [data-no-history-item-click]";
+  const navigateFromItem = (item) => {
+    const href = item.getAttribute("data-history-detail-href");
+    if (href) {
+      window.location.assign(href);
+    }
+  };
+
+  document.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    if (event.target.closest(interactiveSelector)) {
+      return;
+    }
+    const selection = window.getSelection();
+    if (selection && String(selection).trim()) {
+      return;
+    }
+    const item = event.target.closest("[data-history-detail-href]");
+    if (item) {
+      navigateFromItem(item);
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    const item = event.target.closest("[data-history-detail-href]");
+    if (!item || document.activeElement !== item) {
+      return;
+    }
+    event.preventDefault();
+    navigateFromItem(item);
+  });
+})();
+</script>
+"""
 
 
 def _channel_badge(channel: str) -> str:
@@ -3365,11 +3420,13 @@ def _wechat_send_actions(delivery_id: int | None) -> str:
 
 def _meeting_history_card(item) -> str:
     status = item.status.strip().lower() or "processing"
+    detail_url = f"/meeting-attempts/{item.source_id}"
     return (
-        '<article class="attempt-item">'
+        '<article class="attempt-item" role="link" tabindex="0" '
+        f'data-history-detail-href="{escape(detail_url, quote=True)}">'
         '<div class="attempt-head">'
         '<div class="attempt-title">'
-        f'<a class="attempt-id" href="/meeting-attempts/{item.source_id}">'
+        f'<a class="attempt-id" href="{escape(detail_url, quote=True)}">'
         f'#meeting-{item.source_id}</a>'
         f'<span class="pill status-action {_action_state_class(status)}">'
         f'🧭 {_display_action_state(status)}</span>'
@@ -3379,7 +3436,7 @@ def _meeting_history_card(item) -> str:
         '</div><div class="attempt-side">'
         f'<time class="attempt-time">{escape(_format_local_time(item.created_at))}</time>'
         '<div class="attempt-actions">'
-        f'<a class="review-link" href="/meeting-attempts/{item.source_id}">查看</a>'
+        f'<a class="review-link" href="{escape(detail_url, quote=True)}">查看</a>'
         '</div></div></div>'
         '<div class="attempt-lines">'
         f'{_attempt_text_line(item.input_label, item.input_text, 260)}'
@@ -3415,10 +3472,8 @@ def _task_history_card(item) -> str:
     status = item.status.strip().lower() or "done"
     detail_url = _task_history_detail_url(item)
     return (
-        '<article class="attempt-item task-history-item" role="link" tabindex="0" '
-        f'data-href="{escape(detail_url, quote=True)}" '
-        "onclick=\"if (!event.target.closest('a')) window.location.href=this.dataset.href\" "
-        "onkeydown=\"if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('a')) { event.preventDefault(); window.location.href=this.dataset.href; }\">"
+        '<article class="attempt-item" role="link" tabindex="0" '
+        f'data-history-detail-href="{escape(detail_url, quote=True)}">'
         '<div class="attempt-head">'
         '<div class="attempt-title">'
         f'<a class="attempt-id" href="{escape(detail_url, quote=True)}">'
