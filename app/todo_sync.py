@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from app.dws_client import DwsError
+from app.dws_client import DwsClient, DwsError
 from app.store import AutoReplyStore
 from app.task_models import ProjectPriority, TodoStatus
 from app.todo_completion import close_todo_with_completion_evidence
@@ -285,6 +285,31 @@ def _find_existing_link_with_task_id(store: AutoReplyStore, work_todo_id: int) -
     return None
 
 
+def _is_retryable_dingtalk_todo_error(error: str) -> bool:
+    normalized = error.casefold()
+    return any(
+        code.casefold() in normalized
+        for code in DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES
+    )
+
+
+def _find_retryable_failed_create_link(
+    store: AutoReplyStore,
+    work_todo_id: int,
+) -> Any:
+    links = store.list_work_todo_dingtalk_links(
+        statuses=("failed",),
+        limit=10,
+        work_todo_id=work_todo_id,
+    )
+    for link in links:
+        if link.dingtalk_task_id.strip():
+            continue
+        if _is_retryable_dingtalk_todo_error(link.last_error):
+            return link
+    return None
+
+
 def _refresh_existing_dingtalk_link(
     store: AutoReplyStore,
     dws: Any,
@@ -318,48 +343,29 @@ def _refresh_existing_dingtalk_link(
     return store.get_work_todo_dingtalk_link(link.id)
 
 
-def maybe_create_dingtalk_todo(
+def _create_dingtalk_todo_for_link(
     store: AutoReplyStore,
     dws: Any,
     *,
-    work_todo_id: int,
+    todo: Any,
+    link_id: int,
     now: str,
 ):
-    todo = store.get_work_todo(work_todo_id)
-    if todo is None:
-        return None
-
-    active_link = store.get_active_work_todo_dingtalk_link(work_todo_id)
-    if active_link is not None:
-        return active_link
-
-    existing_link = _find_existing_link_with_task_id(store, work_todo_id)
-    if existing_link is not None:
-        return _refresh_existing_dingtalk_link(store, dws, existing_link, now=now)
-
-    if not _todo_is_eligible(store, todo):
-        return None
-
     project = store.get_work_project(todo.project_id)
     dingtalk_title = _dingtalk_todo_title(todo, project)
     dingtalk_description = _dingtalk_todo_description(todo, project)
     dingtalk_tags = _dingtalk_todo_tags(todo, project)
     dingtalk_participants = _dingtalk_todo_participants(todo, project)
-    link_id = store.create_work_todo_dingtalk_link(
-        work_todo_id=todo.id,
+    store.update_work_todo_dingtalk_link(
+        link_id,
         executor_user_id=todo.owner_user_id,
         executor_name=todo.owner_name,
         title_snapshot=dingtalk_title,
         deadline_at_snapshot=todo.deadline_at,
         priority_snapshot=todo.priority.value,
         status="creating",
+        last_error="",
     )
-    link = store.get_work_todo_dingtalk_link(link_id)
-    if link is None:
-        raise RuntimeError(f"created DingTalk todo link {link_id} was not found")
-    if link.status != "creating" or link.dingtalk_task_id.strip():
-        return link
-
     try:
         create_payload = dws.create_todo_task(
             title=dingtalk_title,
@@ -416,6 +422,63 @@ def maybe_create_dingtalk_todo(
     return store.get_work_todo_dingtalk_link(link_id)
 
 
+def maybe_create_dingtalk_todo(
+    store: AutoReplyStore,
+    dws: Any,
+    *,
+    work_todo_id: int,
+    now: str,
+):
+    todo = store.get_work_todo(work_todo_id)
+    if todo is None:
+        return None
+
+    active_link = store.get_active_work_todo_dingtalk_link(work_todo_id)
+    if active_link is not None:
+        return active_link
+
+    existing_link = _find_existing_link_with_task_id(store, work_todo_id)
+    if existing_link is not None:
+        return _refresh_existing_dingtalk_link(store, dws, existing_link, now=now)
+
+    retryable_create_link = _find_retryable_failed_create_link(store, work_todo_id)
+    if retryable_create_link is not None and _todo_is_eligible(store, todo):
+        return _create_dingtalk_todo_for_link(
+            store,
+            dws,
+            todo=todo,
+            link_id=retryable_create_link.id,
+            now=now,
+        )
+
+    if not _todo_is_eligible(store, todo):
+        return None
+
+    project = store.get_work_project(todo.project_id)
+    dingtalk_title = _dingtalk_todo_title(todo, project)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo.id,
+        executor_user_id=todo.owner_user_id,
+        executor_name=todo.owner_name,
+        title_snapshot=dingtalk_title,
+        deadline_at_snapshot=todo.deadline_at,
+        priority_snapshot=todo.priority.value,
+        status="creating",
+    )
+    link = store.get_work_todo_dingtalk_link(link_id)
+    if link is None:
+        raise RuntimeError(f"created DingTalk todo link {link_id} was not found")
+    if link.status != "creating" or link.dingtalk_task_id.strip():
+        return link
+    return _create_dingtalk_todo_for_link(
+        store,
+        dws,
+        todo=todo,
+        link_id=link_id,
+        now=now,
+    )
+
+
 def pull_dingtalk_todo_statuses(
     store: AutoReplyStore,
     dws: Any,
@@ -451,6 +514,36 @@ def pull_dingtalk_todo_statuses(
         except (DwsError, RuntimeError) as exc:
             store.update_work_todo_dingtalk_link(link.id, last_error=str(exc))
     return closed_count
+
+
+def retry_failed_dingtalk_todo_links(
+    store: AutoReplyStore,
+    dws: Any,
+    *,
+    now: str,
+    limit: int = 20,
+) -> int:
+    recovered = 0
+    links = store.list_work_todo_dingtalk_links(statuses=("failed",), limit=limit)
+    for link in links:
+        if link.dingtalk_task_id.strip():
+            updated = _refresh_existing_dingtalk_link(store, dws, link, now=now)
+        elif _is_retryable_dingtalk_todo_error(link.last_error):
+            todo = store.get_work_todo(link.work_todo_id)
+            if todo is None or not _todo_is_eligible(store, todo):
+                continue
+            updated = _create_dingtalk_todo_for_link(
+                store,
+                dws,
+                todo=todo,
+                link_id=link.id,
+                now=now,
+            )
+        else:
+            continue
+        if updated is not None and updated.status != "failed":
+            recovered += 1
+    return recovered
 
 
 def refresh_dingtalk_todo_before_follow_up(

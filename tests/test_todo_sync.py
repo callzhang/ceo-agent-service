@@ -9,6 +9,7 @@ from app.todo_sync import (
     maybe_create_dingtalk_todo,
     pull_dingtalk_todo_statuses,
     refresh_dingtalk_todo_before_follow_up,
+    retry_failed_dingtalk_todo_links,
     sync_completed_todo_to_dingtalk,
 )
 
@@ -353,6 +354,66 @@ def test_maybe_create_dingtalk_todo_recovers_failed_link_without_duplicate_creat
     assert stored.dingtalk_task_id == "dt-task-1"
     assert stored.status == "active"
     assert stored.last_error == ""
+
+
+def test_maybe_create_dingtalk_todo_retries_token_failed_create_link(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="",
+        status="failed",
+        last_error="code=TOKEN_VERIFIED_FAILED",
+    )
+    dws = FakeTodoDws()
+
+    link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:05:00",
+    )
+
+    assert link.id == link_id
+    assert len(dws.created) == 1
+    assert link.dingtalk_task_id == "dt-task-1"
+    assert link.status == "active"
+    assert link.last_error == ""
+
+
+def test_retry_failed_dingtalk_todo_links_recovers_token_failures(tmp_path):
+    store = _store(tmp_path)
+    _, existing_todo_id = _project_and_todo(store, title="确认验收 ETA")
+    existing_link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=existing_todo_id,
+        dingtalk_task_id="dt-existing",
+        status="failed",
+        last_error="code=TOKEN_VERIFIED_FAILED",
+    )
+    _, create_todo_id = _project_and_todo(store, title="归档验收材料")
+    create_link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=create_todo_id,
+        dingtalk_task_id="",
+        status="failed",
+        last_error="code=TOKEN_VERIFIED_FAILED",
+    )
+    dws = FakeTodoDws()
+    dws.get_payloads["dt-existing"] = {"id": "dt-existing", "done": False}
+
+    recovered = retry_failed_dingtalk_todo_links(
+        store,
+        dws,
+        now="2026-06-27 10:10:00",
+    )
+
+    assert recovered == 2
+    existing_link = store.get_work_todo_dingtalk_link(existing_link_id)
+    create_link = store.get_work_todo_dingtalk_link(create_link_id)
+    assert existing_link.status == "active"
+    assert existing_link.last_error == ""
+    assert create_link.status == "active"
+    assert create_link.dingtalk_task_id == "dt-task-1"
+    assert len(dws.created) == 1
 
 
 def test_maybe_create_dingtalk_todo_keeps_failed_link_when_recovery_get_fails(

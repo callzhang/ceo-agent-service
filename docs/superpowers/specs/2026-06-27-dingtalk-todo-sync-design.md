@@ -218,6 +218,27 @@ formal DingTalk Todo.
   changing internal TODO state.
 - DingTalk task deleted or inaccessible: mark link `failed`; internal TODO
   remains governed by internal evidence and follow-up rules.
+
+## Failed Link Recovery
+
+Daily task maintenance retries failed DingTalk Todo links that can be recovered
+without creating duplicate external tasks:
+
+- Failed links with a stored `dingtalk_task_id` are refreshed with
+  `dws todo task get`. This is read-only and can safely recover a link whose
+  create succeeded but post-create verification failed.
+- Failed links without a `dingtalk_task_id` are retried only when `last_error`
+  contains a DWS token verification error code known to be retryable. The same
+  link row is reused for the new create attempt, so the retry preserves audit
+  history and does not create a second local link.
+- Other failed links remain failed until inspected because the service cannot
+  prove whether an external DingTalk Todo was created.
+
+The Workers page reports these retryable dependency failures separately from
+hard failed queue items. A token-verification failure on
+`work_todo_dingtalk_links` is shown as `Retryable`; terminal reply failures,
+misroutes, manual rejections, and unknown DingTalk Todo failures remain in
+`Failed`.
 - Internal TODO cancelled: mark active link `cancelled`; do not delete the
   DingTalk Todo in the first version.
 - Title or deadline mismatch: record snapshot mismatch in link metadata or a

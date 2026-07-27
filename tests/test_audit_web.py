@@ -5654,6 +5654,20 @@ def test_render_workers_page_shows_service_and_queue_status(
         send_status="failed",
         send_error="send failed",
     )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认客户验收 ETA",
+        owner_user_id="owner-1",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="",
+        status="failed",
+        last_error="code=TOKEN_VERIFIED_FAILED",
+    )
 
     payload = build_worker_status_payload(store)
     html = render_workers_page(store)
@@ -5661,11 +5675,13 @@ def test_render_workers_page_shows_service_and_queue_status(
     assert payload["service"]["state"] == "running"
     assert payload["summary"]["pending"] >= 2
     assert payload["summary"]["failed"] >= 1
+    assert payload["summary"]["retryable"] >= 1
     assert any(queue["name"] == "Work items" for queue in payload["queues"])
     assert any(queue["name"] == "Follow-ups" for queue in payload["queues"])
     assert "Workers" in html
     assert "Queues" in html
     assert "Attention" in html
+    assert "Retryable" in html
     assert "12345" in html
     assert "Work items" in html
     assert "Follow-ups" in html

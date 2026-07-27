@@ -98,7 +98,7 @@ from app.task_noise_backfill import (
     backfill_routine_process_todos,
 )
 from app.todo_completion import enqueue_follow_up_completion_checks
-from app.todo_sync import pull_dingtalk_todo_statuses
+from app.todo_sync import pull_dingtalk_todo_statuses, retry_failed_dingtalk_todo_links
 from app.work_profile import (
     build_initial_profile,
     collect_dingtalk_kb_evidence,
@@ -1364,6 +1364,11 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         dws,
         now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
     )
+    dingtalk_todos_recovered = retry_failed_dingtalk_todo_links(
+        AutoReplyStore(settings.db_path),
+        dws,
+        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    )
     follow_up_completions_checked = check_follow_up_completions_command(
         settings,
         limit=1,
@@ -1375,6 +1380,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         "work_items": work_items,
         "okr_reviews": okr_reviews,
         "dingtalk_todos_closed": dingtalk_todos_closed,
+        "dingtalk_todos_recovered": dingtalk_todos_recovered,
         "follow_up_completions_checked": follow_up_completions_checked,
         "follow_ups": follow_ups,
     }
@@ -1384,6 +1390,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         f"work_items={work_items} "
         f"okr_reviews={okr_reviews} "
         f"dingtalk_todos_closed={dingtalk_todos_closed} "
+        f"dingtalk_todos_recovered={dingtalk_todos_recovered} "
         f"follow_up_completions_checked={follow_up_completions_checked} "
         f"follow_ups={follow_ups}",
         flush=True,

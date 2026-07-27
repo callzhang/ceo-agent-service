@@ -335,6 +335,15 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
     )
     monkeypatch.setattr(
         cli,
+        "retry_failed_dingtalk_todo_links",
+        lambda store, dws, now: calls.append(
+            ("dingtalk_todo_retry", dws.__class__.__name__)
+        )
+        or 8,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli,
         "check_follow_up_completions_command",
         lambda settings, limit=1: calls.append(("completion-check", limit)) or 7,
     )
@@ -349,6 +358,7 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         "work_items": 2,
         "okr_reviews": 5,
         "dingtalk_todos_closed": 4,
+        "dingtalk_todos_recovered": 8,
         "follow_up_completions_checked": 7,
         "follow_ups": 1,
     }
@@ -358,12 +368,14 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("dingtalk_todo_pull", "FakeDwsClient"),
+        ("dingtalk_todo_retry", "FakeDwsClient"),
         ("completion-check", 1),
         ("follow", tmp_path / "worker.sqlite3", False),
     ]
     assert capsys.readouterr().out == (
         "daily-task-maintenance sources=3 oa_approvals=6 work_items=2 "
         "okr_reviews=5 dingtalk_todos_closed=4 "
+        "dingtalk_todos_recovered=8 "
         "follow_up_completions_checked=7 follow_ups=1\n"
     )
 
@@ -472,6 +484,15 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
     )
     monkeypatch.setattr(
         cli,
+        "retry_failed_dingtalk_todo_links",
+        lambda store, dws, now: calls.append(
+            ("dingtalk_todo_retry", dws.__class__.__name__)
+        )
+        or 8,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli,
         "check_follow_up_completions_command",
         lambda settings, limit=1: calls.append(("completion-check", limit)) or 7,
     )
@@ -484,10 +505,12 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
         ("work", db_path),
         ("okr", db_path),
         ("dingtalk_todo_pull", "FakeDwsClient"),
+        ("dingtalk_todo_retry", "FakeDwsClient"),
         ("completion-check", 1),
         ("follow", db_path, False),
     ]
     assert result["dingtalk_todos_closed"] == 4
+    assert result["dingtalk_todos_recovered"] == 8
     assert result["follow_up_completions_checked"] == 7
     assert result["oa_approvals"] == 6
     assert "dingtalk_todos_closed=4" in capsys.readouterr().out

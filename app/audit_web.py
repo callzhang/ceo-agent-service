@@ -494,7 +494,7 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .log-field{min-width:0;padding:8px 9px;border:1px solid var(--hairline-soft);border-radius:7px;background:var(--surface-soft)}
 .log-label{margin-bottom:3px;color:var(--steel);font-size:11px;font-weight:800;line-height:1.25;text-transform:uppercase}
 .log-value{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;color:var(--charcoal);font-size:12px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word}
-.worker-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 12px}
+.worker-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:0 0 12px}
 .worker-card{min-width:0;padding:14px 16px;border:1px solid var(--hairline);border-radius:8px;background:var(--canvas)}
 .worker-card-label{color:var(--steel);font-size:12px;font-weight:800;line-height:1.35;text-transform:uppercase}
 .worker-card-value{margin-top:5px;color:var(--ink);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:20px;font-weight:800;line-height:1.2;overflow-wrap:anywhere}
@@ -1732,6 +1732,7 @@ def build_worker_status_payload(
             "pending": sum(int(queue["pending"]) for queue in queues),
             "processing": sum(int(queue["processing"]) for queue in queues),
             "failed": sum(int(queue["failed"]) for queue in queues),
+            "retryable": sum(int(queue["retryable"]) for queue in queues),
             "attention": len(attention_rows),
         },
     }
@@ -1744,11 +1745,13 @@ def render_workers_page(store: AutoReplyStore) -> str:
     service_ok = bool(service.get("ok")) if isinstance(service, dict) else False
     pid_detail = f"runs {service.get('runs') or '-'}"
     failed_detail = f"attention {summary.get('attention') or 0}"
+    retryable_detail = "waiting for dependency"
     body = (
         "<section class=\"worker-grid\">"
         f"{_worker_metric_card('Service', str(service.get('state') or 'unknown'), str(service.get('detail') or ''), ok=service_ok)}"
         f"{_worker_metric_card('PID', str(service.get('pid') or '-'), pid_detail)}"
         f"{_worker_metric_card('Processing', str(summary.get('processing') or 0), 'all queues')}"
+        f"{_worker_metric_card('Retryable', str(summary.get('retryable') or 0), retryable_detail)}"
         f"{_worker_metric_card('Failed', str(summary.get('failed') or 0), failed_detail, ok=int(summary.get('failed') or 0) == 0)}"
         "</section>"
         "<section class=\"card worker-section compact-card\">"
@@ -1877,6 +1880,8 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
             if not _sqlite_table_exists(db, table):
                 continue
             counts = _queue_status_counts(db, table, status_column)
+            retryable = _queue_retryable_count(db, table, status_column, error_column)
+            raw_failed = _queue_count_for(counts, {"failed", "error"})
             snapshots.append(
                 {
                     "name": name,
@@ -1884,7 +1889,8 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                     "counts": counts,
                     "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
                     "processing": _queue_count_for(counts, {"processing", "sending"}),
-                    "failed": _queue_count_for(counts, {"failed", "error"}),
+                    "failed": max(0, raw_failed - retryable),
+                    "retryable": retryable,
                     "latest_updated_at": _queue_latest_value(db, table, updated_column),
                     "latest_error": _queue_latest_error(db, table, status_column, error_column),
                 }
@@ -1975,6 +1981,42 @@ def _queue_count_for(counts: Mapping[str, int], statuses: set[str]) -> int:
     return sum(int(counts.get(status, 0)) for status in statuses)
 
 
+def _queue_retryable_count(
+    db: sqlite3.Connection,
+    table: str,
+    status_column: str,
+    error_column: str,
+) -> int:
+    if table == "universal_action_executions":
+        row = db.execute(
+            f"""
+            select count(*) as count
+            from {table}
+            where lower({status_column})='failed'
+              and {error_column} like 'memory_backend_unavailable:%'
+            """
+        ).fetchone()
+        return int(row["count"] or 0)
+    if table == "work_todo_dingtalk_links":
+        retryable_codes = tuple(DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES)
+        if not retryable_codes:
+            return 0
+        code_predicate = " or ".join(
+            f"{error_column} like ?" for _ in retryable_codes
+        )
+        row = db.execute(
+            f"""
+            select count(*) as count
+            from {table}
+            where lower({status_column})='failed'
+              and ({code_predicate})
+            """,
+            [f"%{code}%" for code in retryable_codes],
+        ).fetchone()
+        return int(row["count"] or 0)
+    return 0
+
+
 def _queue_latest_value(db: sqlite3.Connection, table: str, column: str) -> str:
     row = db.execute(
         f"select {column} as value from {table} order by {column} desc limit 1"
@@ -2034,6 +2076,7 @@ def _worker_queues_table(queues: object) -> str:
         f"<td>{escape(_status_counts_label(queue.get('counts')))}</td>"
         f"<td>{escape(str(queue.get('pending') or 0))}</td>"
         f"<td>{escape(str(queue.get('processing') or 0))}</td>"
+        f"<td>{escape(str(queue.get('retryable') or 0))}</td>"
         f"<td>{escape(str(queue.get('failed') or 0))}</td>"
         f"<td>{escape(_format_local_time(str(queue.get('latest_updated_at') or '')))}</td>"
         f"<td>{escape(_excerpt(str(queue.get('latest_error') or ''), 160) or '-')}</td>"
@@ -2044,9 +2087,9 @@ def _worker_queues_table(queues: object) -> str:
     return (
         "<table class=\"column-sized-table worker-table\"><thead><tr>"
         "<th>Queue</th><th>Status counts</th><th>Pending</th><th>Processing</th>"
-        "<th>Failed</th><th>Updated</th><th>Latest error</th>"
+        "<th>Retryable</th><th>Failed</th><th>Updated</th><th>Latest error</th>"
         "</tr></thead><tbody>"
-        f"{rows or '<tr><td colspan=\"7\" class=\"muted\">No queues found.</td></tr>'}"
+        f"{rows or '<tr><td colspan=\"8\" class=\"muted\">No queues found.</td></tr>'}"
         "</tbody></table>"
     )
 
