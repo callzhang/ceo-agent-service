@@ -353,9 +353,12 @@
         "completion_evidence": {
           "type": ["object", "null"],
           "additionalProperties": false,
-          "required": ["description", "source", "completed_at"],
+          "required": ["description", "reason", "source", "completed_at"],
           "properties": {
             "description": {
+              "type": "string"
+            },
+            "reason": {
               "type": "string"
             },
             "source": {

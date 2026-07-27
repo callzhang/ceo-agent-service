@@ -594,6 +594,9 @@ def test_process_work_item_accepts_clear_follow_up_completion_reply(tmp_path):
                     "status": "done",
                     "completion_evidence": {
                         "source": "reply_attempt:2001",
+                        "reason": "Alex明确回复客户验收 ETA 已同步完成。",
+                        "description": "Alex明确回复客户验收 ETA 已同步完成。",
+                        "completed_at": "2026-06-27 12:00:00",
                         "summary": "Alex明确回复客户验收 ETA 已同步完成。",
                         "confidence": 0.95,
                     },
@@ -836,6 +839,9 @@ def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
                     "status": "done",
                     "completion_evidence": {
                         "source": "ai_minutes:minutes-1",
+                        "reason": "会议纪要明确 ETA 已发送客户。",
+                        "description": "会议纪要明确 ETA 已发送客户。",
+                        "completed_at": "2026-06-27 12:00:00",
                         "summary": "会议纪要明确 ETA 已发送客户。",
                         "confidence": 0.93,
                     },
@@ -1535,6 +1541,9 @@ def test_apply_decision_does_not_create_dingtalk_todo_for_closed_todo(
                     "status": "done",
                     "completion_evidence": {
                         "source": "ai_minutes:minutes-1",
+                        "reason": "会议纪要明确 ETA 已发送客户。",
+                        "description": "会议纪要明确 ETA 已发送客户。",
+                        "completed_at": "2026-06-27 12:00:00",
                         "summary": "会议纪要明确 ETA 已发送客户。",
                         "confidence": 0.93,
                     },
@@ -1600,6 +1609,9 @@ def test_apply_decision_pushes_completed_todo_to_dingtalk(tmp_path, monkeypatch)
                     "todo_id": todo_id,
                     "completion_evidence": {
                         "source": "reply_attempt:1",
+                        "reason": "已发客户",
+                        "description": "已发客户",
+                        "completed_at": "2026-06-27 12:00:00",
                         "summary": "已发客户",
                     },
                 }
@@ -1676,54 +1688,37 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
         "status": "active",
         "memory_context": _memory_context(),
     }
-    apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item("客户交付"),
-        decision=TaskAgentDecision.model_validate(
-            {
-                "action": "update_project",
-                "project": base_project,
-                "todo_changes": [
-                    {"action": "close", "todo_id": todo_without_evidence_id}
-                ],
-                "follow_up_drafts": [],
-                "follow_up_changes": [],
-                "update_summary": "关闭无 evidence 的 task item。",
-                "merge_reason": "明确完成。",
-                "memory_recall_used": True,
-                "confidence": 1.0,
-            }
-        ),
-        dws=object(),
-        now="2026-06-27 12:00:00",
-    )
-    apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item("客户交付"),
-        decision=TaskAgentDecision.model_validate(
-            {
-                "action": "update_project",
-                "project": base_project,
-                "todo_changes": [
-                    {
-                        "action": "close",
-                        "todo_id": todo_with_empty_evidence_id,
-                        "completion_evidence": {},
-                    }
-                ],
-                "follow_up_drafts": [],
-                "follow_up_changes": [],
-                "update_summary": "关闭空 evidence 的 task item。",
-                "merge_reason": "明确完成。",
-                "memory_recall_used": True,
-                "confidence": 1.0,
-            }
-        ),
-        dws=object(),
-        now="2026-06-27 12:00:00",
-    )
+    for todo_id, evidence in (
+        (todo_without_evidence_id, None),
+        (todo_with_empty_evidence_id, {}),
+    ):
+        payload = {
+            "action": "update_project",
+            "project": base_project,
+            "todo_changes": [
+                {
+                    "action": "close",
+                    "todo_id": todo_id,
+                }
+            ],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "关闭缺少 evidence 的 task item。",
+            "merge_reason": "明确完成。",
+            "memory_recall_used": True,
+            "confidence": 1.0,
+        }
+        if evidence is not None:
+            payload["todo_changes"][0]["completion_evidence"] = evidence
+        with pytest.raises(ValueError, match="completion_evidence"):
+            apply_task_agent_decision(
+                store,
+                summary_input_id=0,
+                work_item=_work_item("客户交付"),
+                decision=TaskAgentDecision.model_validate(payload),
+                dws=object(),
+                now="2026-06-27 12:00:00",
+            )
     apply_task_agent_decision(
         store,
         summary_input_id=0,
@@ -1738,6 +1733,9 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
                         "todo_id": todo_without_dws_id,
                         "completion_evidence": {
                             "source": "reply_attempt:2",
+                            "reason": "客户已确认",
+                            "description": "客户已确认",
+                            "completed_at": "2026-06-27 12:00:00",
                             "summary": "客户已确认",
                         },
                     }
