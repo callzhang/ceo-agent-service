@@ -9,6 +9,7 @@ class WorkItemSourceType(StrEnum):
     AI_MINUTES = "ai_minutes"
     LOCAL_FILE = "local_file"
     MEMORY_RECALL = "memory_recall"
+    FOLLOW_UP_COMPLETION_CHECK = "follow_up_completion_check"
 
 
 class WorkItemSourceKind(StrEnum):
@@ -81,6 +82,7 @@ class FollowUpDraftStatus(StrEnum):
     DRAFT = "draft"
     APPROVED = "approved"
     SENT = "sent"
+    COMPLETED = "completed"
     SKIPPED = "skipped"
     FAILED = "failed"
     CANCELLED = "cancelled"
