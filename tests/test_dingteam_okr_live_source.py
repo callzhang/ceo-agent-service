@@ -40,6 +40,11 @@ def test_page_script_uses_page_api_without_browser_storage_access():
     assert "mergeUpdates(aggregateHistory(histories), aggregateComments(krComments))" in script
     assert "progressUpdatesAggregated: aggregated" in script
     assert "krDetailsUpdatesAggregated: aggregated" in script
+    assert "node.type === 'doc'" in script
+    assert "[文档：" in script
+    assert "node.type === 'image'" in script
+    assert "资源ID：" in script
+    assert "node.type === 'link' && node.url" in script
     assert "sessionstorage" not in script.casefold()
     assert "webpackChunkallinone" not in script
     assert ".catch(" not in script

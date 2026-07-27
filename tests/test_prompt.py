@@ -176,6 +176,9 @@ def test_developer_prompt_documents_agent_envelope_output_protocol():
 
     assert "kind 必须是 reply、okr_review、no_action 或 error" in template
     assert '{"type":"queue_okr_review"}' in template
+    assert "发信人本人的 OKR/KR 进度" in template
+    assert "直接下属、岗位管理者、团队成员或其他第三方" in template
+    assert "OKR 审核流程只会读取发信人本人的 OKR" in template
     assert "目标确认" in template
     assert "不要输出 queue_okr_review" in template
     assert "服务会把退回意见单独发消息给审批申请人" in template

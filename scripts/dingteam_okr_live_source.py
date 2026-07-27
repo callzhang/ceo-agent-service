@@ -340,8 +340,30 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
     const parts = [];
     function visit(node) {{
       if (!node || typeof node !== 'object') return;
-      if (node.type === 'at' && node.atName) parts.push('@' + node.atName);
-      else if (typeof node.text === 'string') parts.push(node.text);
+      if (node.type === 'at' && node.atName) {{
+        parts.push('@' + node.atName);
+        return;
+      }}
+      if (node.type === 'doc') {{
+        const name = node.name || '未命名文档';
+        const url = node.url || '';
+        parts.push(url ? '[文档：' + name + '](' + url + ')' : '[文档：' + name + ']');
+        return;
+      }}
+      if (node.type === 'image') {{
+        const name = node.fileName || '图片';
+        const url = node.url || '';
+        parts.push(url ? '[图片：' + name + '，资源ID：' + url + ']' : '[图片：' + name + ']');
+        return;
+      }}
+      if (node.type === 'link' && node.url) {{
+        const label = Array.isArray(node.children)
+          ? node.children.map(function(child) {{ return child && child.text ? child.text : ''; }}).join('')
+          : '';
+        parts.push('[' + (label || node.url) + '](' + node.url + ')');
+        return;
+      }}
+      if (typeof node.text === 'string') parts.push(node.text);
       if (Array.isArray(node.children)) node.children.forEach(visit);
     }}
     if (Array.isArray(parsed)) parsed.forEach(visit);
