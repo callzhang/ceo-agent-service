@@ -23,13 +23,28 @@ class FakeTodoDws:
         self.done_calls = []
         self.done_error = None
 
-    def create_todo_task(self, *, title, executor_user_id, due, priority):
+    def create_todo_task(
+        self,
+        *,
+        title,
+        executor_user_id,
+        due,
+        priority,
+        description="",
+        tags=None,
+        participants=None,
+        files=None,
+    ):
         self.created.append(
             {
                 "title": title,
                 "executor_user_id": executor_user_id,
                 "due": due,
                 "priority": priority,
+                "description": description,
+                "tags": tags or [],
+                "participants": participants or [],
+                "files": files or [],
             }
         )
         return self.create_payload
@@ -56,9 +71,15 @@ def _project_and_todo(store: AutoReplyStore, **todo_values):
     project_id = store.create_work_project(
         title="客户交付",
         category="projects",
+        tags_json=json.dumps(["客户交付"], ensure_ascii=False),
         status="active",
         priority="P1",
         risk_level="medium",
+        background="客户交付项目需要持续确认验收安排。",
+        related_people_json=json.dumps(
+            [{"user_id": "owner-1", "name": "Alex", "role": "owner"}],
+            ensure_ascii=False,
+        ),
     )
     defaults = {
         "project_id": project_id,
@@ -92,6 +113,19 @@ def test_maybe_create_dingtalk_todo_creates_high_confidence_link(tmp_path):
             "executor_user_id": "owner-1",
             "due": "2026-07-01T18:00:00+08:00",
             "priority": 30,
+            "description": (
+                "项目：客户交付\n"
+                "项目背景：客户交付项目需要持续确认验收安排。\n"
+                "待办：给客户同步验收 ETA\n"
+                "截止时间：2026-07-01 18:00:00\n"
+                "负责人：Alex\n"
+                "优先级：P1"
+            ),
+            "tags": ["客户交付", "projects", "risk:medium", "P1"],
+            "participants": [
+                {"user_id": "owner-1", "name": "Alex", "role": "owner"}
+            ],
+            "files": [],
         }
     ]
     stored = store.get_work_todo_dingtalk_link(link.id)

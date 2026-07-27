@@ -357,6 +357,12 @@ def test_store_migrates_existing_follow_up_drafts_without_nonconstant_defaults(
         }
     assert "updated_at" in columns
     assert "evidence_check_json" in columns
+    assert "title" in columns
+    assert "description" in columns
+    assert "owners_json" in columns
+    assert "tags_json" in columns
+    assert "participants_json" in columns
+    assert "files_json" in columns
 
 
 def test_store_writer_can_commit_while_reader_transaction_is_open(tmp_path: Path):

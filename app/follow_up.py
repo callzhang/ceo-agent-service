@@ -57,6 +57,14 @@ def _json_dict(value: str) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _json_list(value: str) -> list:
+    try:
+        parsed = json.loads(value or "[]")
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
 def _start_of_day(now: str) -> str:
     current = _parse_follow_up_datetime(now) or datetime.now(timezone.utc).replace(
         tzinfo=None
@@ -203,6 +211,20 @@ def _follow_up_message_text(store: AutoReplyStore, draft) -> str:
     project = store.get_work_project(draft.project_id)
     todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
     text = draft.question_text.strip()
+    title = str(getattr(draft, "title", "") or "").strip()
+    description = str(getattr(draft, "description", "") or "").strip()
+    if title or description:
+        parts = []
+        prefix = _source_context_prefix(project, todo).strip()
+        if prefix:
+            parts.append(prefix)
+        if title:
+            parts.append(f"事项：{title}")
+        if description:
+            parts.append(f"背景：{description}")
+        if text:
+            parts.append(f"请确认：{text}")
+        return "\n\n".join(parts).strip()
     if text.startswith("基于"):
         return text
     return f"{_source_context_prefix(project, todo)}{text}".strip()
@@ -388,6 +410,102 @@ def _owner_dingtalk_target(
     ).strip()
 
 
+def _people_owner_candidate(people: list) -> tuple[str, str]:
+    for item in people:
+        if not isinstance(item, dict):
+            continue
+        user_id = str(item.get("user_id") or item.get("userid") or "").strip()
+        name = str(item.get("name") or item.get("nick") or "").strip()
+        if user_id:
+            return user_id, name
+    return "", ""
+
+
+def _project_related_owner_candidate(project) -> tuple[str, str]:
+    if project is None:
+        return "", ""
+    for item in _json_list(project.related_people_json):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").lower()
+        if not any(marker in role for marker in ("owner", "负责人", "执行", "推进")):
+            continue
+        user_id = str(item.get("user_id") or "").strip()
+        name = str(item.get("name") or "").strip()
+        if user_id:
+            return user_id, name
+    return "", ""
+
+
+def _recover_follow_up_owner(store: AutoReplyStore, draft) -> tuple[str, str]:
+    user_id = str(draft.owner_user_id or "").strip()
+    name = str(draft.owner_name or "").strip()
+    if user_id:
+        return user_id, name
+
+    candidate_user_id, candidate_name = _people_owner_candidate(
+        _json_list(draft.owners_json)
+    )
+    if candidate_user_id:
+        store.update_follow_up_draft(
+            draft.id,
+            owner_user_id=candidate_user_id,
+            owner_name=candidate_name,
+        )
+        return candidate_user_id, candidate_name
+
+    todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
+    if todo is not None and todo.owner_user_id.strip():
+        user_id = todo.owner_user_id.strip()
+        name = todo.owner_name.strip()
+        store.update_follow_up_draft(
+            draft.id,
+            owner_user_id=user_id,
+            owner_name=name,
+            owners_json=json.dumps(
+                [{"user_id": user_id, "name": name, "role": "owner"}],
+                ensure_ascii=False,
+            ),
+        )
+        return user_id, name
+
+    project = store.get_work_project(draft.project_id)
+    if project is not None and project.owner_user_id.strip():
+        user_id = project.owner_user_id.strip()
+        name = project.owner_name.strip()
+        store.update_follow_up_draft(
+            draft.id,
+            owner_user_id=user_id,
+            owner_name=name,
+            owners_json=json.dumps(
+                [{"user_id": user_id, "name": name, "role": "owner"}],
+                ensure_ascii=False,
+            ),
+        )
+        return user_id, name
+
+    candidate_user_id, candidate_name = _project_related_owner_candidate(project)
+    if candidate_user_id:
+        store.update_follow_up_draft(
+            draft.id,
+            owner_user_id=candidate_user_id,
+            owner_name=candidate_name,
+            owners_json=json.dumps(
+                [
+                    {
+                        "user_id": candidate_user_id,
+                        "name": candidate_name,
+                        "role": "owner",
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+        )
+        return candidate_user_id, candidate_name
+
+    return "", name
+
+
 def process_due_follow_ups(
     store: AutoReplyStore,
     dws,
@@ -444,15 +562,44 @@ def process_due_follow_ups(
             _skip_completed_follow_up(store, draft, now=now, reason=reason)
             continue
         try:
+            recovered_owner_user_id, recovered_owner_name = _recover_follow_up_owner(
+                store,
+                draft,
+            )
             owner_user_id, open_dingtalk_id, at_name = _owner_dingtalk_target(
                 store,
                 dws,
-                owner_user_id=draft.owner_user_id,
-                fallback_name=draft.owner_name,
+                owner_user_id=recovered_owner_user_id,
+                fallback_name=recovered_owner_name,
             )
             if not owner_user_id:
-                raise ValueError(
-                    f"follow-up owner is not resolvable: {draft.owner_name}"
+                _defer_policy_follow_up(
+                    store,
+                    draft,
+                    now=now,
+                    reason="owner_unresolved",
+                    detail={
+                        "owner_name": recovered_owner_name or draft.owner_name,
+                        "todo_id": draft.todo_id,
+                        "project_id": draft.project_id,
+                    },
+                )
+                continue
+            if draft.owner_user_id.strip() != owner_user_id:
+                store.update_follow_up_draft(
+                    draft.id,
+                    owner_user_id=owner_user_id,
+                    owner_name=at_name or recovered_owner_name,
+                    owners_json=json.dumps(
+                        [
+                            {
+                                "user_id": owner_user_id,
+                                "name": at_name or recovered_owner_name,
+                                "role": "owner",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
                 )
             day_start = _start_of_day(now)
             owner_sent_today = store.count_sent_follow_ups_for_owner_since(

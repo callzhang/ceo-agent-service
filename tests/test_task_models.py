@@ -136,13 +136,28 @@ def test_task_agent_decision_accepts_project_todo_and_follow_up():
                 {
                     "todo_id": None,
                     "todo_ref": "source-links",
+                    "title": "确认来源链接补齐进展",
+                    "description": "基于售前知识库项目，需要确认材料来源链接补齐进展、当前阻塞和下一步。",
                     "owner_user_id": "owner-1",
                     "owner_name": "Alex",
+                    "owners": [
+                        {"name": "Alex", "user_id": "owner-1", "role": "owner"}
+                    ],
                     "target_conversation_id": "cid-1",
                     "target_kind": "group",
                     "question_text": "售前材料来源链接现在补齐到哪一步了？",
                     "scheduled_at": "2026-06-10 09:00:00",
-                    "risk_check": {"owner_in_group": True, "sensitive": False},
+                    "priority": "P1",
+                    "tags": ["售前", "知识库"],
+                    "participants": [
+                        {"name": "Alex", "user_id": "owner-1", "role": "owner"}
+                    ],
+                    "files": [],
+                    "risk_check": {
+                        "owner_in_group": True,
+                        "sensitive": False,
+                        "reason": "普通项目跟进",
+                    },
                 }
             ],
             "update_summary": "新增 P1 跟进项。",

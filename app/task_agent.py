@@ -263,6 +263,8 @@ def build_task_agent_prompt(
 - follow_up_draft.target_kind 只表示实际发送位置：能回到来源群聊就用 group，并且 target_conversation_id 必须填写 DWS 可直接发送的 openConversationId（通常以 cid 开头）；不要填 AI 搜问或业务搜索结果里的普通群号/数字群号。不能确定 openConversationId 但已确定 owner_user_id 时用 direct。不要把“没有群上下文”写成 owner_in_group=false 来阻断发送。
 - risk_check 是结构化输出必填的审计说明。涉及人事、试用期、转正、绩效、薪酬、offer、候选人隐私、客户敏感承诺或财务敏感信息时，必须设置 sensitive=true，并优先使用 direct target。
 - risk_check.owner_in_group 只记录 group target 是否包含 owner；direct target 可填 false 表示不适用，但不能用它阻断发送。
+- 每个 follow_up_draft 都必须是完整任务卡片：title、description、owners、scheduled_at(time)、priority、tags、participants 必填，files 可为空数组。description 必须写完整上下文和背景，说明来源、为什么要跟进、当前已知状态、期望 owner 确认什么，不能只写一句催办。
+- follow_up_draft.owners 必须包含至少一个带 user_id 的 owner，且主 owner 必须同时写入 owner_user_id/owner_name。participants 写相关参与人或事项来源人；没有额外参与人时至少包含 owner。tags 写项目标签、业务线或风险标签。
 - follow_up_draft.question_text 必须包含一句简短来源或依据，例如“基于某群/某会议/某文档提到的事项”，避免让 owner 不知道 AI 为什么突然追问；措辞必须是确认进展，不要像分配新任务。
 - todo_changes.title 必须短，只写 owner 要完成的动作；todo_changes.description 用来写详细上下文，必须说明来源事项、具体对象、交付内容、完成标准和产出用途。不要把这些细节塞进 title。
 - 跟进时间指导：P0 今天跟进；P1 在 3 天内跟进；P2 在上下文或 OKR 暗示需要时本周内跟进。scheduled_at 和 next_follow_up_at 必须落在工作日 09:00-18:00；夜间或周末不要安排发送。
@@ -273,7 +275,7 @@ def build_task_agent_prompt(
 - failure_risk 和 failure_risk_score 必须始终填写；低风险一次性事项通常 action=discard。
 - update_project 必须引用候选或已确认项目 id。
 - todo_changes 的 close/cancel/update 必须引用 todo_id。
-- follow_up_drafts 的 owner_user_id 不能为空，且必须有 todo_id 或 todo_ref。
+- follow_up_drafts 的 owner_user_id 不能为空，且必须有 todo_id 或 todo_ref；title、description、owners、scheduled_at、priority、tags、participants 字段必须完整。
 - follow_up_drafts 不需要人工审批字段；可发送性由 scheduled_at、target_kind、target_conversation_id 和 owner_user_id 决定。
 - follow_up_changes 用于更新已有 follow_up_drafts；必须引用 follow_up_id，且只能在当前 Work Item 明确支持时使用。
 - memory_connector 可用时，非 discard 决策的 memory_recall_used 必须为 true，且 project.memory_context 不能为空。
@@ -634,10 +636,36 @@ def _validate_task_agent_decision(
         if todo_change.action != "create" and todo_change.todo_id is None:
             raise ValueError(f"{todo_change.action} requires todo_id")
     for draft in decision.follow_up_drafts:
+        if not draft.title.strip():
+            raise ValueError("follow_up_draft.title is required")
+        if not draft.description.strip():
+            raise ValueError("follow_up_draft.description is required")
         if not draft.owner_user_id.strip():
             raise ValueError("follow_up_draft.owner_user_id is required")
+        owner_ids = [
+            str(owner.get("user_id") or "").strip()
+            for owner in draft.owners
+            if isinstance(owner, dict)
+        ]
+        if not owner_ids:
+            raise ValueError("follow_up_draft.owners with user_id is required")
+        if draft.owner_user_id.strip() not in owner_ids:
+            raise ValueError("follow_up_draft.owner_user_id must be in owners")
         if draft.todo_id is None and not draft.todo_ref.strip():
             raise ValueError("follow_up_draft requires todo_id or todo_ref")
+        if not draft.scheduled_at.strip():
+            raise ValueError("follow_up_draft.scheduled_at is required")
+        if not str(draft.priority).strip():
+            raise ValueError("follow_up_draft.priority is required")
+        if not draft.tags:
+            raise ValueError("follow_up_draft.tags is required")
+        participant_ids = [
+            str(participant.get("user_id") or "").strip()
+            for participant in draft.participants
+            if isinstance(participant, dict)
+        ]
+        if not participant_ids:
+            raise ValueError("follow_up_draft.participants is required")
     for change in decision.follow_up_changes:
         if change.follow_up_id <= 0:
             raise ValueError("follow_up_change.follow_up_id is required")
@@ -894,11 +922,18 @@ def _create_follow_up_draft(
     return store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
+        title=draft.title,
+        description=draft.description,
         owner_user_id=draft.owner_user_id,
         owner_name=draft.owner_name,
+        owners_json=_json_dumps(draft.owners),
         target_conversation_id=draft.target_conversation_id,
         target_kind=draft.target_kind,
         question_text=draft.question_text,
+        priority=_enum_value(draft.priority),
+        tags_json=_json_dumps(draft.tags),
+        participants_json=_json_dumps(draft.participants),
+        files_json=_json_dumps(draft.files),
         risk_check_json=_json_dumps(draft.risk_check),
         status=_enum_value(draft.status),
         scheduled_at=_normalize_follow_up_time(draft.scheduled_at),

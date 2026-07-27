@@ -292,7 +292,11 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .todo-followup-recipient{min-width:0;color:var(--ink);font-size:12px;font-weight:800;line-height:1.25;overflow-wrap:anywhere;word-break:break-word}
 .todo-followup-status{display:inline-flex;align-items:center;height:20px;padding:0 7px;border:1px solid rgba(55,114,207,.18);border-radius:999px;background:var(--canvas);color:#245aa5;font-size:11px;font-weight:800;line-height:1;white-space:nowrap}
 .todo-followup-time{margin-left:auto;color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.3;white-space:nowrap}
+.todo-followup-description{color:var(--charcoal);font-size:12px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word}
 .todo-followup-message{color:var(--ink);font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
+.todo-followup-meta{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:5px 8px;color:var(--steel);font-size:11px;font-weight:800;line-height:1.3}
+.todo-followup-meta .detail-pill-list{margin:0}
+.todo-followup-meta .detail-pill{font-size:10px;padding:2px 6px}
 .todo-followup-target{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
 .progress-cell{display:grid;gap:5px;min-width:0}
 .progress-meter{height:6px;border-radius:999px;background:var(--surface-soft);overflow:hidden}
@@ -4671,17 +4675,41 @@ def _task_follow_up_child_panel(
 
 def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) -> str:
     scheduled = _format_local_time(draft.scheduled_at) or draft.scheduled_at or "-"
-    owner = draft.owner_name or draft.owner_user_id or "-"
     target = _task_follow_up_target(draft, conversation_titles)
+    title = draft.title.strip() or draft.owner_name or draft.owner_user_id or "Follow-up"
+    description = draft.description.strip()
+    tags = _task_detail_pills(_task_simple_labels(draft.tags_json))
+    owners = _task_detail_pills(_task_people_labels(draft.owners_json))
+    participants = _task_detail_pills(_task_people_labels(draft.participants_json))
+    meta_parts = []
+    if owners != "-":
+        meta_parts.append(f"<span>Owners</span>{owners}")
+    if tags != "-":
+        meta_parts.append(f"<span>Tags</span>{tags}")
+    if participants != "-":
+        meta_parts.append(f"<span>Participants</span>{participants}")
+    meta = (
+        f'<div class="todo-followup-meta">{"".join(meta_parts)}</div>'
+        if meta_parts
+        else ""
+    )
+    description_html = (
+        f"<div class=\"todo-followup-description\">{escape(description)}</div>"
+        if description
+        else ""
+    )
     return (
         f"<li class=\"todo-followup-item\" id=\"follow-up-{draft.id}\">"
         "<div class=\"todo-followup-bubble\">"
         "<div class=\"todo-followup-head\">"
-        f"<span class=\"todo-followup-recipient\">{escape(owner)}</span>"
+        f"<span class=\"todo-followup-recipient\">{escape(title)}</span>"
         f"<span class=\"todo-followup-status\">{escape(draft.status)}</span>"
+        f"<span class=\"todo-followup-status\">{escape(draft.priority or '-')}</span>"
         f"<span class=\"todo-followup-time\">{escape(scheduled)}</span>"
         "</div>"
+        f"{description_html}"
         f"<div class=\"todo-followup-message\">{escape(draft.question_text)}</div>"
+        f"{meta}"
         f"<div class=\"todo-followup-target\">{escape(target)}</div>"
         "</div>"
         "</li>"
@@ -4736,7 +4764,7 @@ def _task_follow_up_rows(
                 todo_link,
                 target,
                 str(draft.status),
-                draft.question_text,
+                draft.title or draft.question_text,
                 _task_json_compact(draft.risk_check_json, "{}"),
                 _task_json_compact(draft.send_result_json, "{}"),
             )

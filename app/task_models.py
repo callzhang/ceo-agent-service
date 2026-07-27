@@ -193,12 +193,19 @@ class TodoChange(BaseModel):
 class FollowUpDraftDecision(BaseModel):
     todo_id: int | None = None
     todo_ref: str = ""
+    title: str
+    description: str
     owner_user_id: str = ""
     owner_name: str = ""
+    owners: list[dict[str, str]] = Field(default_factory=list)
     target_conversation_id: str = ""
     target_kind: Literal["group", "direct"]
     question_text: str
     scheduled_at: str = ""
+    priority: ProjectPriority = ProjectPriority.NONE
+    tags: list[str] = Field(default_factory=list)
+    participants: list[dict[str, str]] = Field(default_factory=list)
+    files: list[dict[str, str]] = Field(default_factory=list)
     risk_check: dict[str, Any] = Field(default_factory=dict)
     status: FollowUpDraftStatus = FollowUpDraftStatus.DRAFT
 
@@ -334,11 +341,18 @@ class FollowUpDraft(BaseModel):
     id: int
     project_id: int
     todo_id: int = 0
+    title: str = ""
+    description: str = ""
     owner_user_id: str = ""
     owner_name: str = ""
+    owners_json: str = "[]"
     target_conversation_id: str = ""
     target_kind: str = ""
     question_text: str = ""
+    priority: str = ""
+    tags_json: str = "[]"
+    participants_json: str = "[]"
+    files_json: str = "[]"
     risk_check_json: str = "{}"
     status: FollowUpDraftStatus
     send_result_json: str = "{}"

@@ -166,6 +166,35 @@ def _memory_context():
     }
 
 
+def _follow_up_draft_payload(**overrides):
+    payload = {
+        "title": "确认项目边界",
+        "description": (
+            "基于售前群提到的售前知识库建设事项，需要确认项目目标、"
+            "当前状态和下一步，避免 owner 不清楚背景。"
+        ),
+        "owner_user_id": "owner-1",
+        "owner_name": "Alex",
+        "owners": [{"user_id": "owner-1", "name": "Alex", "role": "owner"}],
+        "target_conversation_id": "cid-1",
+        "target_kind": "group",
+        "question_text": "项目目标和 owner 是否确认？",
+        "scheduled_at": "2026-06-08 09:00:00",
+        "priority": "P1",
+        "tags": ["售前", "知识库"],
+        "participants": [{"user_id": "owner-1", "name": "Alex", "role": "owner"}],
+        "files": [],
+        "risk_check": {
+            "owner_in_group": True,
+            "sensitive": False,
+            "reason": "普通项目进展确认",
+        },
+        "status": "draft",
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _decision_with_follow_up_change(
     *,
     project_id: int,
@@ -1791,17 +1820,7 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
                 }
             ],
             "follow_up_drafts": [
-                {
-                    "todo_ref": "confirm-project-boundary",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "target_conversation_id": "cid-1",
-                    "target_kind": "group",
-                    "question_text": "项目目标和 owner 是否确认？",
-                    "scheduled_at": "2026-06-08 09:00:00",
-                    "risk_check": {"owner_in_group": True, "sensitive": False},
-                    "status": "draft",
-                }
+                _follow_up_draft_payload(todo_ref="confirm-project-boundary")
             ],
             "follow_up_changes": [],
             "update_summary": "需要追问项目边界。",
@@ -1823,10 +1842,16 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
     assert project_id is not None
     assert drafts[0].project_id == project_id
     assert drafts[0].todo_id == todos[0].id
+    assert drafts[0].title == "确认项目边界"
+    assert "售前群" in drafts[0].description
+    assert json.loads(drafts[0].owners_json)[0]["user_id"] == "owner-1"
+    assert drafts[0].priority == "P1"
+    assert json.loads(drafts[0].tags_json) == ["售前", "知识库"]
     assert drafts[0].question_text == "项目目标和 owner 是否确认？"
     assert json.loads(drafts[0].risk_check_json) == {
         "owner_in_group": True,
         "sensitive": False,
+        "reason": "普通项目进展确认",
     }
 
 
@@ -1855,17 +1880,10 @@ def test_follow_up_draft_scheduled_after_hours_moves_to_next_workday(tmp_path):
                 }
             ],
             "follow_up_drafts": [
-                {
-                    "todo_ref": "confirm-project-boundary",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "target_conversation_id": "cid-1",
-                    "target_kind": "group",
-                    "question_text": "项目目标和 owner 是否确认？",
-                    "scheduled_at": "2026-07-04T21:30:00+08:00",
-                    "risk_check": {"owner_in_group": True, "sensitive": False},
-                    "status": "draft",
-                }
+                _follow_up_draft_payload(
+                    todo_ref="confirm-project-boundary",
+                    scheduled_at="2026-07-04T21:30:00+08:00",
+                )
             ],
             "follow_up_changes": [],
             "update_summary": "需要追问项目边界。",
@@ -1917,17 +1935,7 @@ def test_terminal_todo_does_not_create_follow_up_draft(tmp_path):
             },
             "todo_changes": [],
             "follow_up_drafts": [
-                {
-                    "todo_id": todo_id,
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "target_conversation_id": "cid-1",
-                    "target_kind": "group",
-                    "question_text": "项目目标和 owner 是否确认？",
-                    "scheduled_at": "2026-06-08 09:00:00",
-                    "risk_check": {"owner_in_group": True, "sensitive": False},
-                    "status": "draft",
-                }
+                _follow_up_draft_payload(todo_id=todo_id)
             ],
             "follow_up_changes": [],
             "update_summary": "尝试重复跟进已取消 TODO。",
@@ -1973,17 +1981,31 @@ def test_low_confidence_minutes_speaker_labels_suppress_direct_follow_up(tmp_pat
                 }
             ],
             "follow_up_drafts": [
-                {
-                    "todo_ref": "wangdongcui-business-change",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "刘瑞安",
-                    "target_conversation_id": "",
-                    "target_kind": "direct",
-                    "question_text": "王东翠工商变更目前到哪一步了？",
-                    "scheduled_at": "2026-06-26T10:00:00+08:00",
-                    "risk_check": {"owner_in_group": False, "sensitive": False},
-                    "status": "draft",
-                }
+                _follow_up_draft_payload(
+                    todo_ref="wangdongcui-business-change",
+                    title="确认王东翠工商变更真实 owner",
+                    description=(
+                        "基于 HR 周例会听记，但说话人标签低可信，"
+                        "只能确认真实 owner 和当前状态，不能直接把 speaker 当 owner。"
+                    ),
+                    owner_name="刘瑞安",
+                    owners=[
+                        {"user_id": "owner-1", "name": "刘瑞安", "role": "owner"}
+                    ],
+                    target_conversation_id="",
+                    target_kind="direct",
+                    question_text="王东翠工商变更目前到哪一步了？",
+                    scheduled_at="2026-06-26T10:00:00+08:00",
+                    tags=["HR", "工商变更"],
+                    participants=[
+                        {"user_id": "owner-1", "name": "刘瑞安", "role": "owner"}
+                    ],
+                    risk_check={
+                        "owner_in_group": False,
+                        "sensitive": False,
+                        "reason": "直接确认真实 owner",
+                    },
+                )
             ],
             "follow_up_changes": [],
             "update_summary": "低可信听记只建 TODO，不私聊。",
@@ -2018,16 +2040,7 @@ def test_follow_up_draft_requires_todo_binding(tmp_path):
             },
             "todo_changes": [],
             "follow_up_drafts": [
-                {
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "target_conversation_id": "cid-1",
-                    "target_kind": "group",
-                    "question_text": "项目目标和 owner 是否确认？",
-                    "scheduled_at": "2026-06-08 09:00:00",
-                    "risk_check": {"owner_in_group": True, "sensitive": False},
-                    "status": "draft",
-                }
+                _follow_up_draft_payload()
             ],
             "follow_up_changes": [],
             "update_summary": "需要追问项目边界。",
@@ -2069,17 +2082,7 @@ def test_follow_up_draft_rejects_todo_from_another_project(tmp_path):
             },
             "todo_changes": [],
             "follow_up_drafts": [
-                {
-                    "todo_id": other_todo_id,
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "target_conversation_id": "cid-1",
-                    "target_kind": "group",
-                    "question_text": "项目目标和 owner 是否确认？",
-                    "scheduled_at": "2026-06-08 09:00:00",
-                    "risk_check": {"owner_in_group": True, "sensitive": False},
-                    "status": "draft",
-                }
+                _follow_up_draft_payload(todo_id=other_todo_id)
             ],
             "follow_up_changes": [],
             "update_summary": "需要追问项目边界。",
@@ -2111,16 +2114,20 @@ def test_follow_up_draft_requires_owner_user_id_at_generation(tmp_path):
             },
             "todo_changes": [],
             "follow_up_drafts": [
-                {
-                    "owner_user_id": "",
-                    "owner_name": "Jack He(Yunguang He)",
-                    "target_conversation_id": "cid-henry",
-                    "target_kind": "group",
-                    "question_text": "Henry/BMW 数据挖掘昨天客户沟通结果怎样？",
-                    "scheduled_at": "2026-06-11 09:00:00",
-                    "risk_check": {"owner_in_group": True, "sensitive": False},
-                    "status": "draft",
-                }
+                _follow_up_draft_payload(
+                    title="确认 Henry/BMW 数据挖掘客户沟通结果",
+                    description=(
+                        "基于 Henry/BMW 自动驾驶数据挖掘商机，需要确认昨天客户沟通结果、"
+                        "当前阻塞和下一步安排。"
+                    ),
+                    owner_user_id="",
+                    owner_name="Jack He(Yunguang He)",
+                    owners=[],
+                    target_conversation_id="cid-henry",
+                    question_text="Henry/BMW 数据挖掘昨天客户沟通结果怎样？",
+                    scheduled_at="2026-06-11 09:00:00",
+                    tags=["商机", "BMW"],
+                )
             ],
             "follow_up_changes": [],
             "update_summary": "生成跟进草稿。",

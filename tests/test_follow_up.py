@@ -338,6 +338,54 @@ def test_group_follow_up_resolves_owner_name_before_sending_at_user(tmp_path):
     )
     assert send_result["at_users"] == ["jack-user-1"]
     assert send_result["at_open_dingtalk_ids"] == ["open-jack-1"]
+    sent_draft = store.list_follow_up_drafts(statuses=("sent",))[0]
+    assert sent_draft.owner_user_id == "jack-user-1"
+
+
+def test_due_follow_up_recovers_missing_draft_owner_from_todo(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户交付 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P0",
+    )
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="",
+        owner_name="",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="这个 P0 事项现在结果、阻塞和 ETA 分别是什么？",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 1
+    assert dws.sent[0]["at_users"] == ["owner-1"]
+    sent_draft = store.get_follow_up_draft(draft_id)
+    assert sent_draft is not None
+    assert sent_draft.status == "sent"
+    assert sent_draft.owner_user_id == "owner-1"
+    assert json.loads(sent_draft.owners_json)[0]["user_id"] == "owner-1"
 
 
 def test_due_follow_up_skips_when_todo_completion_evidence_exists(tmp_path):

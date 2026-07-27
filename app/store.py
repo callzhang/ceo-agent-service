@@ -210,8 +210,11 @@ class SentTodoRecord(BaseModel):
     source_id: int
     sent_at: str
     status: str
+    title: str = ""
+    description: str = ""
     owner_user_id: str = ""
     owner_name: str = ""
+    owners_json: str = "[]"
     project_id: int = 0
     project_title: str = ""
     todo_id: int = 0
@@ -220,6 +223,9 @@ class SentTodoRecord(BaseModel):
     original_text: str = ""
     deadline_at: str = ""
     priority: str = ""
+    tags_json: str = "[]"
+    participants_json: str = "[]"
+    files_json: str = "[]"
     target_kind: str = ""
     target_conversation_id: str = ""
     external_id: str = ""
@@ -1025,11 +1031,18 @@ class AutoReplyStore:
                     id integer primary key autoincrement,
                     project_id integer not null,
                     todo_id integer not null default 0,
+                    title text not null default '',
+                    description text not null default '',
                     owner_user_id text not null default '',
                     owner_name text not null default '',
+                    owners_json text not null default '[]',
                     target_conversation_id text not null default '',
                     target_kind text not null default '',
                     question_text text not null default '',
+                    priority text not null default '',
+                    tags_json text not null default '[]',
+                    participants_json text not null default '[]',
+                    files_json text not null default '[]',
                     risk_check_json text not null default '{}',
                     status text not null default 'draft',
                     send_result_json text not null default '{}',
@@ -1279,6 +1292,13 @@ class AutoReplyStore:
                 for row in db.execute("pragma table_info(follow_up_drafts)").fetchall()
             }
             for column, definition in (
+                ("title", "text not null default ''"),
+                ("description", "text not null default ''"),
+                ("owners_json", "text not null default '[]'"),
+                ("priority", "text not null default ''"),
+                ("tags_json", "text not null default '[]'"),
+                ("participants_json", "text not null default '[]'"),
+                ("files_json", "text not null default '[]'"),
                 ("evidence_check_json", "text not null default '{}'"),
                 ("reaction_status", "text not null default ''"),
                 ("reaction_summary", "text not null default ''"),
@@ -7864,11 +7884,18 @@ class AutoReplyStore:
         allowed_columns = {
             "project_id",
             "todo_id",
+            "title",
+            "description",
             "owner_user_id",
             "owner_name",
+            "owners_json",
             "target_conversation_id",
             "target_kind",
             "question_text",
+            "priority",
+            "tags_json",
+            "participants_json",
+            "files_json",
             "risk_check_json",
             "status",
             "send_result_json",
@@ -7913,11 +7940,18 @@ class AutoReplyStore:
         allowed_columns = {
             "project_id",
             "todo_id",
+            "title",
+            "description",
             "owner_user_id",
             "owner_name",
+            "owners_json",
             "target_conversation_id",
             "target_kind",
             "question_text",
+            "priority",
+            "tags_json",
+            "participants_json",
+            "files_json",
             "risk_check_json",
             "status",
             "send_result_json",
@@ -8270,8 +8304,19 @@ class AutoReplyStore:
                         links.id as source_id,
                         coalesce(nullif(links.last_push_at, ''), links.created_at) as sent_at,
                         links.status as status,
+                        coalesce(nullif(todos.title, ''), links.title_snapshot, '') as title,
+                        coalesce(todos.description, '') as description,
                         links.executor_user_id as owner_user_id,
                         links.executor_name as owner_name,
+                        case
+                            when trim(coalesce(links.executor_user_id, '')) != ''
+                            then json_array(json_object(
+                                'user_id', links.executor_user_id,
+                                'name', links.executor_name,
+                                'role', 'owner'
+                            ))
+                            else '[]'
+                        end as owners_json,
                         coalesce(projects.id, 0) as project_id,
                         coalesce(projects.title, '') as project_title,
                         coalesce(todos.id, 0) as todo_id,
@@ -8280,6 +8325,9 @@ class AutoReplyStore:
                         coalesce(nullif(links.title_snapshot, ''), todos.title, '') as original_text,
                         coalesce(nullif(links.deadline_at_snapshot, ''), todos.deadline_at, '') as deadline_at,
                         coalesce(nullif(links.priority_snapshot, ''), todos.priority, '') as priority,
+                        coalesce(projects.tags_json, '[]') as tags_json,
+                        coalesce(projects.related_people_json, '[]') as participants_json,
+                        '[]' as files_json,
                         '' as target_kind,
                         '' as target_conversation_id,
                         links.dingtalk_task_id as external_id,
@@ -8294,8 +8342,11 @@ class AutoReplyStore:
                         drafts.id as source_id,
                         coalesce(nullif(drafts.sent_at, ''), drafts.updated_at, drafts.created_at) as sent_at,
                         drafts.status as status,
+                        coalesce(nullif(drafts.title, ''), todos.title, '') as title,
+                        coalesce(nullif(drafts.description, ''), todos.description, '') as description,
                         drafts.owner_user_id as owner_user_id,
                         drafts.owner_name as owner_name,
+                        coalesce(nullif(drafts.owners_json, ''), '[]') as owners_json,
                         coalesce(projects.id, 0) as project_id,
                         coalesce(projects.title, '') as project_title,
                         coalesce(todos.id, 0) as todo_id,
@@ -8303,7 +8354,10 @@ class AutoReplyStore:
                         coalesce(todos.description, '') as todo_description,
                         drafts.question_text as original_text,
                         coalesce(todos.deadline_at, '') as deadline_at,
-                        coalesce(todos.priority, '') as priority,
+                        coalesce(nullif(drafts.priority, ''), todos.priority, '') as priority,
+                        coalesce(nullif(drafts.tags_json, ''), projects.tags_json, '[]') as tags_json,
+                        coalesce(nullif(drafts.participants_json, ''), projects.related_people_json, '[]') as participants_json,
+                        coalesce(nullif(drafts.files_json, ''), '[]') as files_json,
                         drafts.target_kind as target_kind,
                         drafts.target_conversation_id as target_conversation_id,
                         '' as external_id,

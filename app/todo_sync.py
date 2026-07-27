@@ -138,6 +138,89 @@ def _project_context(project: Any) -> str:
     return f"项目：{title}" if title else ""
 
 
+def _json_list(value: str) -> list:
+    try:
+        parsed = json.loads(value or "[]")
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _dingtalk_todo_description(todo: Any, project: Any = None) -> str:
+    parts: list[str] = []
+    if project is not None:
+        project_title = _normalize_inline_text(str(getattr(project, "title", "") or ""))
+        if project_title:
+            parts.append(f"项目：{project_title}")
+        for label, field in (
+            ("项目背景", "background"),
+            ("当前状态", "current_state"),
+            ("下一步", "next_step"),
+            ("阻塞", "blocker"),
+        ):
+            value = _normalize_inline_text(str(getattr(project, field, "") or ""))
+            if value:
+                parts.append(f"{label}：{value}")
+    for label, field in (
+        ("待办", "title"),
+        ("待办背景", "description"),
+        ("完成标准/确认问题", "follow_up_question"),
+        ("待办阻塞", "blocker"),
+        ("截止时间", "deadline_at"),
+    ):
+        value = _normalize_inline_text(str(getattr(todo, field, "") or ""))
+        if value:
+            parts.append(f"{label}：{value}")
+    owner = _normalize_inline_text(str(getattr(todo, "owner_name", "") or ""))
+    if owner:
+        parts.append(f"负责人：{owner}")
+    priority = _normalize_inline_text(str(getattr(todo, "priority", "") or ""))
+    if priority:
+        parts.append(f"优先级：{priority}")
+    return "\n".join(dict.fromkeys(parts))
+
+
+def _dingtalk_todo_tags(todo: Any, project: Any = None) -> list[str]:
+    tags: list[str] = []
+    if project is not None:
+        tags.extend(str(item).strip() for item in _json_list(project.tags_json))
+        category = str(getattr(project, "category", "") or "").strip()
+        risk_level = str(getattr(project, "risk_level", "") or "").strip()
+        if category:
+            tags.append(category)
+        if risk_level:
+            tags.append(f"risk:{risk_level}")
+    priority = str(getattr(todo, "priority", "") or "").strip()
+    if priority:
+        tags.append(priority)
+    return [tag for tag in dict.fromkeys(tags) if tag]
+
+
+def _dingtalk_todo_participants(todo: Any, project: Any = None) -> list[dict[str, str]]:
+    participants: list[dict[str, str]] = []
+    owner_user_id = str(getattr(todo, "owner_user_id", "") or "").strip()
+    owner_name = str(getattr(todo, "owner_name", "") or "").strip()
+    if owner_user_id:
+        participants.append(
+            {"user_id": owner_user_id, "name": owner_name, "role": "owner"}
+        )
+    if project is not None:
+        for item in _json_list(project.related_people_json):
+            if not isinstance(item, dict):
+                continue
+            user_id = str(item.get("user_id") or "").strip()
+            name = str(item.get("name") or "").strip()
+            role = str(item.get("role") or "").strip()
+            if user_id:
+                participants.append(
+                    {"user_id": user_id, "name": name, "role": role}
+                )
+    unique: dict[str, dict[str, str]] = {}
+    for item in participants:
+        unique.setdefault(item["user_id"], item)
+    return list(unique.values())
+
+
 def _dingtalk_todo_title(todo: Any, project: Any = None) -> str:
     title = _trim_inline_text(todo.title, DINGTALK_TODO_TITLE_LIMIT)
     if not title:
@@ -258,6 +341,9 @@ def maybe_create_dingtalk_todo(
 
     project = store.get_work_project(todo.project_id)
     dingtalk_title = _dingtalk_todo_title(todo, project)
+    dingtalk_description = _dingtalk_todo_description(todo, project)
+    dingtalk_tags = _dingtalk_todo_tags(todo, project)
+    dingtalk_participants = _dingtalk_todo_participants(todo, project)
     link_id = store.create_work_todo_dingtalk_link(
         work_todo_id=todo.id,
         executor_user_id=todo.owner_user_id,
@@ -279,6 +365,10 @@ def maybe_create_dingtalk_todo(
             executor_user_id=todo.owner_user_id,
             due=_deadline_to_iso(todo.deadline_at),
             priority=_priority_to_dingtalk(str(todo.priority)),
+            description=dingtalk_description,
+            tags=dingtalk_tags,
+            participants=dingtalk_participants,
+            files=[],
         )
     except (DwsError, RuntimeError) as exc:
         store.update_work_todo_dingtalk_link(

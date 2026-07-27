@@ -1335,6 +1335,10 @@ class DwsClient:
         executor_user_id: str,
         due: str,
         priority: int,
+        description: str = "",
+        tags: list[str] | tuple[str, ...] = (),
+        participants: list[dict[str, str]] | tuple[dict[str, str], ...] = (),
+        files: list[dict[str, str]] | tuple[dict[str, str], ...] = (),
     ) -> list[str]:
         if not title.strip():
             raise ValueError("DingTalk todo title is required")
@@ -2485,6 +2489,10 @@ class DwsClient:
         executor_user_id: str,
         due: str,
         priority: int,
+        description: str = "",
+        tags: list[str] | tuple[str, ...] = (),
+        participants: list[dict[str, str]] | tuple[dict[str, str], ...] = (),
+        files: list[dict[str, str]] | tuple[dict[str, str], ...] = (),
     ) -> dict[str, Any]:
         payload = self.run_json(
             self.build_todo_create_command(
@@ -2492,6 +2500,10 @@ class DwsClient:
                 executor_user_id=executor_user_id,
                 due=due,
                 priority=priority,
+                description=description,
+                tags=tags,
+                participants=participants,
+                files=files,
             )
         )
         if not isinstance(payload, dict):

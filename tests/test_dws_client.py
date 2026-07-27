@@ -389,6 +389,10 @@ def test_build_todo_create_command():
         executor_user_id="owner-1",
         due="2026-07-01T18:00:00+08:00",
         priority=30,
+        description="项目背景",
+        tags=["客户交付"],
+        participants=[{"user_id": "owner-1", "name": "Alex", "role": "owner"}],
+        files=[],
     ) == [
         "dws",
         "todo",
@@ -464,6 +468,10 @@ def test_todo_task_wrappers_return_dict_payloads():
         executor_user_id="owner-1",
         due="2026-07-01T18:00:00+08:00",
         priority=30,
+        description="项目背景",
+        tags=["客户交付"],
+        participants=[{"user_id": "owner-1", "name": "Alex", "role": "owner"}],
+        files=[],
     ) == {"result": {"taskId": "dt-task-1"}}
     assert client.commands == [
         [

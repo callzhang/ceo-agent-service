@@ -377,12 +377,19 @@
       "required": [
         "todo_id",
         "todo_ref",
+        "title",
+        "description",
         "owner_user_id",
         "owner_name",
+        "owners",
         "target_conversation_id",
         "target_kind",
         "question_text",
         "scheduled_at",
+        "priority",
+        "tags",
+        "participants",
+        "files",
         "risk_check",
         "status"
       ],
@@ -393,12 +400,41 @@
         "todo_ref": {
           "type": "string"
         },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
         "owner_user_id": {
           "type": "string",
           "minLength": 1
         },
         "owner_name": {
           "type": "string"
+        },
+        "owners": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "user_id", "role"],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "user_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string"
+              }
+            }
+          }
         },
         "target_conversation_id": {
           "type": "string"
@@ -412,6 +448,54 @@
         },
         "scheduled_at": {
           "type": "string"
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["P0", "P1", "P2", "none"]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "participants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "user_id", "role"],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "user_id": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "url", "source"],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            }
+          }
         },
         "risk_check": {
           "type": "object",
