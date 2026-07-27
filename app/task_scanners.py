@@ -1,14 +1,18 @@
 import fnmatch
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
+from urllib.parse import quote
 
+from app.dingtalk_models import DingTalkMessage
 from app.store import AutoReplyStore
 from app.task_models import WorkItem
 
 LOCAL_FILE_SCANNER = "local_files"
 AI_MINUTES_SCANNER = "ai_minutes"
+OA_PENDING_SCANNER = "oa_pending"
 DEFAULT_LOCAL_FILE_EXCLUDE_PARTS = {
     "__pycache__",
     ".mypy_cache",
@@ -27,6 +31,10 @@ DEFAULT_LOCAL_FILE_EXCLUDE_PARTS = {
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _scan_now(now: datetime | None = None) -> datetime:
+    return now if now is not None else datetime.now().astimezone()
 
 
 def _matches_any(path: Path, patterns: tuple[str, ...]) -> bool:
@@ -275,6 +283,211 @@ def scan_ai_minutes(
         last_error="",
     )
     return count
+
+
+def scan_pending_oa_approvals(
+    store: AutoReplyStore,
+    dws,
+    *,
+    now: datetime | None = None,
+    page_size: int = 30,
+    max_pages: int = 10,
+    max_new_items: int | None = None,
+) -> int:
+    list_pending = getattr(dws, "list_pending_oa_approvals", None)
+    read_tasks = getattr(dws, "read_oa_approval_tasks", None)
+    if list_pending is None:
+        store.set_daily_scan_state(
+            OA_PENDING_SCANNER,
+            last_success_at="",
+            cursor_json="{}",
+            last_error="dws list_pending_oa_approvals unavailable",
+        )
+        return 0
+    if read_tasks is None:
+        store.set_daily_scan_state(
+            OA_PENDING_SCANNER,
+            last_success_at="",
+            cursor_json="{}",
+            last_error="dws read_oa_approval_tasks unavailable",
+        )
+        return 0
+
+    scan_time = _scan_now(now)
+    scan_date = scan_time.date().isoformat()
+    scan_timestamp = scan_time.strftime("%Y-%m-%d %H:%M:%S")
+    window_start = (scan_time - timedelta(days=7)).isoformat(timespec="seconds")
+    window_end = scan_time.isoformat(timespec="seconds")
+    approvals = []
+    try:
+        for page in range(1, max_pages + 1):
+            page_items = list_pending(
+                page=page,
+                size=page_size,
+                start=window_start,
+                end=window_end,
+            )
+            approvals.extend(page_items)
+            if len(page_items) < page_size:
+                break
+    except Exception as exc:
+        store.set_daily_scan_state(
+            OA_PENDING_SCANNER,
+            last_success_at="",
+            cursor_json="{}",
+            last_error=str(exc),
+        )
+        return 0
+
+    current_user_id = ""
+    get_current_user_id = getattr(dws, "get_current_user_id", None)
+    if get_current_user_id is not None:
+        try:
+            current_user_id = str(get_current_user_id() or "")
+        except Exception:
+            current_user_id = ""
+
+    queued = 0
+    skipped_missing_task_id: list[str] = []
+    seen_process_ids: set[str] = set()
+    queued_process_ids: list[str] = []
+    for approval in approvals:
+        process_instance_id = str(
+            getattr(approval, "process_instance_id", "") or ""
+        ).strip()
+        if not process_instance_id or process_instance_id in seen_process_ids:
+            continue
+        seen_process_ids.add(process_instance_id)
+        if max_new_items is not None and queued >= max_new_items:
+            continue
+        try:
+            tasks_payload = read_tasks(process_instance_id)
+        except Exception:
+            skipped_missing_task_id.append(process_instance_id)
+            continue
+        task_id = _pending_oa_task_id_for_current_user(
+            tasks_payload,
+            current_user_id=current_user_id,
+        )
+        if not task_id:
+            skipped_missing_task_id.append(process_instance_id)
+            continue
+        title = str(getattr(approval, "title", "") or "").strip()
+        process_name = str(getattr(approval, "process_name", "") or "").strip()
+        label = title or process_name or process_instance_id
+        oa_url = (
+            "https://aflow.dingtalk.com/detail?"
+            f"procInstId={quote(process_instance_id)}&taskId={quote(task_id)}"
+        )
+        trigger = DingTalkMessage(
+            open_conversation_id="oa_pending_scan",
+            open_message_id=f"oa-pending:{scan_date}:{process_instance_id}",
+            conversation_title="每日审批待办",
+            single_chat=True,
+            sender_name="Derek OA",
+            message_type="text",
+            create_time=scan_timestamp,
+            content=(
+                "每日审批待办扫描发现待处理审批："
+                f"{label}\n"
+                f"[查看审批]({oa_url})\n"
+                "请按 dingtalk-oa skill 审阅完整审批材料、历史处理记录和当前节点；"
+                "材料不足时评论要求补充，只有规则和证据满足时才执行审批动作。"
+            ),
+            raw_payload={
+                "source": "oa_pending_scan",
+                "processInstanceId": process_instance_id,
+                "taskId": task_id,
+                "processName": process_name,
+                "title": title,
+            },
+        )
+        inserted = store.enqueue_reply_task(
+            conversation_id=trigger.open_conversation_id,
+            conversation_title=trigger.conversation_title,
+            single_chat=trigger.single_chat,
+            trigger_message_id=trigger.open_message_id,
+            trigger_create_time=trigger.create_time,
+            trigger_sender=trigger.sender_name,
+            trigger_text=trigger.content,
+            trigger_message_json=trigger.model_dump_json(),
+            oa_url=oa_url,
+            channel="dingtalk",
+        )
+        if inserted:
+            queued += 1
+            queued_process_ids.append(process_instance_id)
+
+    store.set_daily_scan_state(
+        OA_PENDING_SCANNER,
+        last_success_at=_utc_now(),
+        cursor_json=json.dumps(
+            {
+                "scan_date": scan_date,
+                "window_end": window_end,
+                "window_start": window_start,
+                "seen_process_instance_ids": sorted(seen_process_ids),
+                "queued_process_instance_ids": queued_process_ids,
+                "skipped_missing_task_id_process_instance_ids": skipped_missing_task_id,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        last_error="" if not skipped_missing_task_id else "missing current-user task_id",
+    )
+    return queued
+
+
+def _pending_oa_task_id_for_current_user(
+    payload: Any,
+    *,
+    current_user_id: str = "",
+) -> str:
+    tasks = _oa_task_records(payload)
+    if not tasks:
+        return ""
+    running_for_current_user: list[str] = []
+    running: list[str] = []
+    all_task_ids: list[str] = []
+    for task in tasks:
+        task_id = _oa_task_field(task, ("taskId", "taskid", "task_id", "id"))
+        if not task_id:
+            continue
+        all_task_ids.append(task_id)
+        status = _oa_task_field(task, ("status", "taskStatus", "task_status"))
+        user_id = _oa_task_field(task, ("userId", "userid", "user_id"))
+        is_running = status.upper() == "RUNNING" if status else True
+        if is_running:
+            running.append(task_id)
+        if is_running and current_user_id and user_id == current_user_id:
+            running_for_current_user.append(task_id)
+    for candidates in (running_for_current_user, running, all_task_ids):
+        if candidates:
+            return candidates[0]
+    return ""
+
+
+def _oa_task_records(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        records: list[dict[str, Any]] = []
+        for key in ("tasks", "taskList", "taskIdList"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                records.extend(item for item in nested if isinstance(item, dict))
+        for key in ("result", "data"):
+            records.extend(_oa_task_records(value.get(key)))
+        return records
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _oa_task_field(task: dict[str, Any], names: tuple[str, ...]) -> str:
+    for name in names:
+        value = task.get(name)
+        if value is not None:
+            return str(value).strip()
+    return ""
 
 
 def _list_all_ai_minutes(list_minutes_page) -> list[dict]:

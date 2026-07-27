@@ -262,6 +262,7 @@ def build_parser() -> argparse.ArgumentParser:
         "backfill-routine-process-todos",
         "process-okr-reviews",
         "scan-task-sources",
+        "scan-oa-approvals",
         "process-follow-ups",
         "daily-task-maintenance",
         "channel-doctor",
@@ -1234,6 +1235,28 @@ def scan_task_sources_command(
     return total
 
 
+def scan_oa_approvals_command(
+    settings: WorkerSettings,
+    *,
+    max_new_items: int | None = None,
+) -> int:
+    from app.task_scanners import scan_pending_oa_approvals
+
+    store = AutoReplyStore(settings.db_path)
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+    )
+    queued = scan_pending_oa_approvals(
+        store,
+        dws,
+        max_new_items=max_new_items,
+    )
+    print(f"scan-oa-approvals queued={queued}", flush=True)
+    return queued
+
+
 def process_follow_ups_command(
     settings: WorkerSettings,
     *,
@@ -1265,6 +1288,7 @@ def process_follow_ups_command(
 
 def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     sources = scan_task_sources_command(settings)
+    oa_approvals = scan_oa_approvals_command(settings)
     work_items = process_work_items_command(settings)
     okr_reviews = process_okr_reviews_command(settings)
     dws = DwsClient(
@@ -1280,6 +1304,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
         "sources": sources,
+        "oa_approvals": oa_approvals,
         "work_items": work_items,
         "okr_reviews": okr_reviews,
         "dingtalk_todos_closed": dingtalk_todos_closed,
@@ -1287,7 +1312,8 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     }
     print(
         "daily-task-maintenance "
-        f"sources={sources} work_items={work_items} "
+        f"sources={sources} oa_approvals={oa_approvals} "
+        f"work_items={work_items} "
         f"okr_reviews={okr_reviews} "
         f"dingtalk_todos_closed={dingtalk_todos_closed} "
         f"follow_ups={follow_ups}",
@@ -2415,6 +2441,10 @@ def run_task_maintenance_loop(
                 settings,
                 max_new_items=settings.max_batches,
             )
+            scan_oa_approvals_command(
+                settings,
+                max_new_items=settings.max_batches,
+            )
             process_work_items_command(settings)
             process_okr_reviews_command(settings)
             next_daily_run = now + daily_interval_seconds
@@ -2949,6 +2979,8 @@ def main() -> None:
         process_okr_reviews_command(settings)
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
+    elif args.command == "scan-oa-approvals":
+        scan_oa_approvals_command(settings)
     elif args.command == "process-follow-ups":
         ensure_live_send_allowed(settings)
         process_follow_ups_command(settings)

@@ -1,8 +1,14 @@
 from pathlib import Path
 import os
+from datetime import datetime
 
+from app.dws_client import DwsOaApprovalCandidate
 from app.store import AutoReplyStore
-from app.task_scanners import scan_ai_minutes, scan_local_workspace_files
+from app.task_scanners import (
+    scan_ai_minutes,
+    scan_local_workspace_files,
+    scan_pending_oa_approvals,
+)
 
 
 def test_scan_local_files_only_under_workspace(tmp_path):
@@ -433,3 +439,90 @@ def test_scan_ai_minutes_records_adapter_errors(tmp_path):
     state = store.get_daily_scan_state("ai_minutes")
     assert state is not None
     assert state["last_error"] == "auth expired"
+
+
+def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.pages = []
+            self.task_reads = []
+
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            self.pages.append((page, size, start, end))
+            return [
+                DwsOaApprovalCandidate(
+                    process_instance_id="proc-1",
+                    title="张三提交的录用申请",
+                    process_name="录用申请",
+                )
+            ]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            self.task_reads.append(process_instance_id)
+            return {
+                "result": {
+                    "taskIdList": [
+                        {"taskId": 102648882814},
+                        {"taskId": 102648910080},
+                    ]
+                }
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    queued = scan_pending_oa_approvals(
+        store,
+        dws,
+        now=datetime.fromisoformat("2026-07-27T09:30:00+08:00"),
+    )
+
+    assert queued == 1
+    assert dws.pages == [
+        (
+            1,
+            30,
+            "2026-07-20T09:30:00+08:00",
+            "2026-07-27T09:30:00+08:00",
+        )
+    ]
+    assert dws.task_reads == ["proc-1"]
+    task = store.claim_reply_tasks(limit=1)[0]
+    assert task.conversation_id == "oa_pending_scan"
+    assert task.conversation_title == "每日审批待办"
+    assert task.trigger_message_id == "oa-pending:2026-07-27:proc-1"
+    assert "张三提交的录用申请" in task.trigger_text
+    assert "procInstId=proc-1&taskId=102648882814" in task.oa_url
+    assert '"source":"oa_pending_scan"' in task.trigger_message_json
+
+
+def test_scan_pending_oa_approvals_skips_when_current_task_id_is_missing(tmp_path):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [
+                DwsOaApprovalCandidate(
+                    process_instance_id="proc-1",
+                    title="张三提交的录用申请",
+                    process_name="录用申请",
+                )
+            ]
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": []}}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    queued = scan_pending_oa_approvals(
+        store,
+        FakeDws(),
+        now=datetime.fromisoformat("2026-07-27T09:30:00+08:00"),
+    )
+
+    assert queued == 0
+    assert store.claim_reply_tasks(limit=1) == []
+    state = store.get_daily_scan_state("oa_pending")
+    assert state is not None
+    assert state["last_error"] == "missing current-user task_id"

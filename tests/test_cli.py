@@ -152,6 +152,13 @@ def test_parser_supports_scan_task_sources():
     assert args.workspace == "/tmp/w"
 
 
+def test_parser_supports_scan_oa_approvals():
+    args = build_parser().parse_args(["scan-oa-approvals", "--max-batches", "4"])
+
+    assert args.command == "scan-oa-approvals"
+    assert args.max_batches == 4
+
+
 def test_parser_supports_process_follow_ups():
     args = build_parser().parse_args(["process-follow-ups"])
 
@@ -275,6 +282,11 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
     )
     monkeypatch.setattr(
         cli,
+        "scan_oa_approvals_command",
+        lambda settings: calls.append(("oa-scan", settings.db_path)) or 6,
+    )
+    monkeypatch.setattr(
+        cli,
         "process_work_items_command",
         lambda settings: calls.append(("work", settings.db_path)) or 2,
     )
@@ -308,6 +320,7 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
 
     assert result == {
         "sources": 3,
+        "oa_approvals": 6,
         "work_items": 2,
         "okr_reviews": 5,
         "dingtalk_todos_closed": 4,
@@ -315,13 +328,14 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
     }
     assert calls == [
         ("scan", tmp_path / "worker.sqlite3"),
+        ("oa-scan", tmp_path / "worker.sqlite3"),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("dingtalk_todo_pull", "FakeDwsClient"),
         ("follow", tmp_path / "worker.sqlite3", False),
     ]
     assert capsys.readouterr().out == (
-        "daily-task-maintenance sources=3 work_items=2 "
+        "daily-task-maintenance sources=3 oa_approvals=6 work_items=2 "
         "okr_reviews=5 dingtalk_todos_closed=4 follow_ups=1\n"
     )
 
@@ -338,6 +352,11 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
         cli,
         "scan_task_sources_command",
         lambda settings: calls.append(("scan", settings.db_path)) or 3,
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_oa_approvals_command",
+        lambda settings: calls.append(("oa-scan", settings.db_path)) or 6,
     )
     monkeypatch.setattr(
         cli,
@@ -372,12 +391,14 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
 
     assert calls == [
         ("scan", db_path),
+        ("oa-scan", db_path),
         ("work", db_path),
         ("okr", db_path),
         ("dingtalk_todo_pull", "FakeDwsClient"),
         ("follow", db_path, False),
     ]
     assert result["dingtalk_todos_closed"] == 4
+    assert result["oa_approvals"] == 6
     assert "dingtalk_todos_closed=4" in capsys.readouterr().out
 
 
@@ -4924,6 +4945,11 @@ def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_pat
     )
     monkeypatch.setattr(
         cli,
+        "scan_oa_approvals_command",
+        lambda received, max_new_items=None: calls.append("scan-oa-approvals"),
+    )
+    monkeypatch.setattr(
+        cli,
         "process_follow_ups_command",
         lambda received, refresh_evidence=False, limit=50: calls.append("follow-ups"),
     )
@@ -5003,6 +5029,14 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
     )
     monkeypatch.setattr(
         cli,
+        "scan_oa_approvals_command",
+        lambda received, max_new_items=None: calls.append(
+            ("oa-scan", received.db_path, max_new_items)
+        )
+        or 6,
+    )
+    monkeypatch.setattr(
+        cli,
         "process_okr_reviews_command",
         lambda received: calls.append(("okr", received.db_path)) or 5,
     )
@@ -5034,6 +5068,7 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("scan", tmp_path / "worker.sqlite3", 4),
+        ("oa-scan", tmp_path / "worker.sqlite3", 4),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("follow", tmp_path / "worker.sqlite3", False, 4),
@@ -5061,6 +5096,14 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
         "scan_task_sources_command",
         lambda received, max_new_items=None: calls.append(
             ("scan", received.db_path, max_new_items)
+        )
+        or 0,
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_oa_approvals_command",
+        lambda received, max_new_items=None: calls.append(
+            ("oa-scan", received.db_path, max_new_items)
         )
         or 0,
     )
@@ -5098,6 +5141,7 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("scan", tmp_path / "worker.sqlite3", 4),
+        ("oa-scan", tmp_path / "worker.sqlite3", 4),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("follow", tmp_path / "worker.sqlite3", False, 4),

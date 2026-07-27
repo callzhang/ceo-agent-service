@@ -871,16 +871,29 @@ class DwsClient:
         ]
 
     def build_list_pending_oa_approvals_command(
-        self, page: int = 1, size: int = 30
+        self,
+        page: int = 1,
+        size: int = 30,
+        *,
+        start: str | None = None,
+        end: str | None = None,
     ) -> list[str]:
+        if start is None or end is None:
+            now = datetime.now(tz=DINGTALK_MESSAGE_TIME_ZONE)
+            start = (now - timedelta(days=7)).isoformat(timespec="seconds")
+            end = now.isoformat(timespec="seconds")
         return [
             self.dws_bin,
             "oa",
             "approval",
             "list-pending",
+            "--start",
+            start,
+            "--end",
+            end,
             "--page",
             str(page),
-            "--size",
+            "--limit",
             str(size),
             "--format",
             "json",
@@ -2027,9 +2040,21 @@ class DwsClient:
         )
 
     def list_pending_oa_approvals(
-        self, page: int = 1, size: int = 30
+        self,
+        page: int = 1,
+        size: int = 30,
+        *,
+        start: str | None = None,
+        end: str | None = None,
     ) -> list[DwsOaApprovalCandidate]:
-        payload = self.run_json(self.build_list_pending_oa_approvals_command(page, size))
+        payload = self.run_json(
+            self.build_list_pending_oa_approvals_command(
+                page,
+                size,
+                start=start,
+                end=end,
+            )
+        )
         return self.parse_pending_oa_approvals(payload)
 
     def read_oa_approval_detail(self, process_instance_id: str) -> dict[str, Any]:

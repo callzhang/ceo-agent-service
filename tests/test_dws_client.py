@@ -1937,7 +1937,12 @@ def test_oa_revert_activities_and_revert_task_commands_match_dws_v1_0_52():
 def test_list_pending_oa_approvals_command_and_parser():
     client = DwsClient(dws_bin="dws")
 
-    command = client.build_list_pending_oa_approvals_command(page=2, size=10)
+    command = client.build_list_pending_oa_approvals_command(
+        page=2,
+        size=10,
+        start="2026-07-20T00:00:00+08:00",
+        end="2026-07-27T23:59:59+08:00",
+    )
     approvals = DwsClient.parse_pending_oa_approvals(
         {
             "result": {
@@ -1957,9 +1962,13 @@ def test_list_pending_oa_approvals_command_and_parser():
         "oa",
         "approval",
         "list-pending",
+        "--start",
+        "2026-07-20T00:00:00+08:00",
+        "--end",
+        "2026-07-27T23:59:59+08:00",
         "--page",
         "2",
-        "--size",
+        "--limit",
         "10",
         "--format",
         "json",

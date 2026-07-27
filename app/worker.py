@@ -5546,6 +5546,8 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
     ) -> bool:
+        if self._is_oa_pending_scan_trigger(trigger):
+            return True
         list_messages_by_ids = getattr(self.dws, "list_messages_by_ids", None)
         if list_messages_by_ids is None:
             return True
@@ -5568,6 +5570,8 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
     ) -> tuple[list[DingTalkMessage], list[DingTalkMessage]]:
+        if self._is_oa_pending_scan_trigger(trigger):
+            return [trigger], [trigger]
         context_messages: list[DingTalkMessage] = []
         unread_messages: list[DingTalkMessage] = []
         context_messages = self._read_conversation_messages(
@@ -5590,6 +5594,10 @@ class DingTalkAutoReplyWorker:
             context_messages,
             unread_messages,
         )
+
+    @staticmethod
+    def _is_oa_pending_scan_trigger(trigger: DingTalkMessage) -> bool:
+        return str(trigger.raw_payload.get("source") or "") == "oa_pending_scan"
 
     def _enqueue_reply_task(
         self,
