@@ -33,6 +33,10 @@ class CodexMemoryWriteOutcomeUnknown(RuntimeError):
     pass
 
 
+class CodexMemoryWriteToolFailed(RuntimeError):
+    pass
+
+
 def run_codex_memory_write(
     *,
     workspace: Path,
@@ -173,6 +177,11 @@ def memory_result_from_codex_audit(
     output_text = (
         output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
     )
+    explicit_failure = _explicit_memory_tool_failure(output_text)
+    if explicit_failure:
+        if _looks_like_memory_authorization_error(output_text):
+            raise CodexMemoryWriteAuthorizationRequired(explicit_failure)
+        raise CodexMemoryWriteToolFailed(explicit_failure)
     parsed = AutoReplyStore._parse_memory_write_output(output_text)
     if parsed.get("status") == "failed":
         raise RuntimeError(parsed.get("last_error") or "memory_write failed")
@@ -186,6 +195,23 @@ def memory_result_from_codex_audit(
         processing_status="completed",
         duplicate=False,
     )
+
+
+def _explicit_memory_tool_failure(output: str) -> str:
+    normalized = " ".join(output.split()).casefold()
+    if not normalized.startswith("error executing tool memory_write:"):
+        return ""
+    if any(
+        marker in normalized
+        for marker in (
+            "couldn't connect",
+            "connection refused",
+            "failed to establish connection",
+            "database unavailable",
+        )
+    ):
+        return "memory backend unavailable"
+    return "memory write tool failed"
 
 
 def _looks_like_memory_authorization_error(reason: str) -> bool:

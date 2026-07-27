@@ -78,6 +78,7 @@ from app.leak_check import (
 from app.message_split import split_dingtalk_text
 from app.codex_memory_write import (
     CodexMemoryWriteAuthorizationRequired,
+    CodexMemoryWriteToolFailed,
     MemoryWriteResult,
     run_codex_memory_write,
 )
@@ -3346,6 +3347,26 @@ class DingTalkAutoReplyWorker:
             result = self._memory_write_runner(**payload)
         except CodexMemoryWriteAuthorizationRequired:
             error = "memory_authorization_required"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="blocked",
+                send_error=error,
+            )
+            self.store.mark_universal_memory_action_execution(
+                execution,
+                canonical_payload_json=canonical_payload_json,
+                lease_token=claim.lease_token,
+                status="failed",
+                error=error,
+            )
+            return True
+        except CodexMemoryWriteToolFailed as exc:
+            error = (
+                "memory_backend_unavailable:memory_write_tool_failed; "
+                "retry_when_memory_backend_recovers"
+                if "backend unavailable" in str(exc).casefold()
+                else "memory_write_tool_failed:explicit_tool_error"
+            )
             self.store.update_reply_attempt(
                 attempt_id,
                 send_status="blocked",

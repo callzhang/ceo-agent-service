@@ -8,6 +8,7 @@ import pytest
 
 from app.codex_memory_write import (
     CodexMemoryWriteAuthorizationRequired,
+    CodexMemoryWriteToolFailed,
     MemoryWriteResult,
     run_codex_memory_write,
 )
@@ -251,6 +252,44 @@ def test_codex_mcp_memory_write_runner_write_surfaces_codex_authorization_errors
         )
 
 
+def test_codex_mcp_memory_write_runner_surfaces_explicit_tool_failure(
+    tmp_path: Path,
+):
+    raw = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "mcp_tool_call",
+                        "tool": "memory_write",
+                        "arguments": {
+                            "data": "Durable decision",
+                            "type": "text",
+                            "created_at": "2026-07-20T10:00:00+08:00",
+                        },
+                        "result": (
+                            "Error executing tool memory_write: "
+                            "backend connection refused"
+                        ),
+                    },
+                }
+            ),
+            json.dumps({"status": "attempted"}),
+        ]
+    )
+
+    with pytest.raises(CodexMemoryWriteToolFailed, match="backend unavailable"):
+        run_codex_memory_write(
+            workspace=tmp_path,
+            data="Durable decision",
+            type="text",
+            created_at="2026-07-20T10:00:00+08:00",
+            source_description="source",
+            executor=lambda _command, _prompt: raw,
+        )
+
+
 def test_dependency_status_checks_dws_and_memory_before_planner(tmp_path) -> None:
     runner = FakeMemoryWriteRunner()
     worker = DingTalkAutoReplyWorker(
@@ -354,6 +393,28 @@ def test_memory_timeout_can_resume_only_with_same_frozen_payload(tmp_path) -> No
     attempts = resumed_worker.store.list_reply_attempts(limit=10)
     assert len(attempts) == 1
     assert json.loads(attempts[0].audit_summary)["duplicate"] is True
+
+
+def test_memory_explicit_backend_failure_is_recoverable_blocked(tmp_path) -> None:
+    runner = FakeMemoryWriteRunner(
+        [CodexMemoryWriteToolFailed("memory backend unavailable")]
+    )
+    store, _, execution, worker = build_execution(
+        tmp_path, memory_write_runner=runner
+    )
+
+    assert worker.execute_universal_memory_write(execution) is True
+
+    attempt = store.list_reply_attempts(limit=1)[0]
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == (
+        "memory_backend_unavailable:memory_write_tool_failed; "
+        "retry_when_memory_backend_recovers"
+    )
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
 
 
 def test_memory_unknown_recovery_rejects_tampered_frozen_payload(tmp_path) -> None:
