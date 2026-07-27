@@ -41,6 +41,7 @@ def _project_todo_follow_up(store: AutoReplyStore):
         scheduled_at="2026-06-27 09:00:00",
         status="sent",
         sent_at="2026-06-27 09:05:00",
+        send_result_json=json.dumps({"message_id": "msg-1"}, ensure_ascii=False),
     )
     return project_id, todo_id, follow_up_id
 
@@ -73,6 +74,7 @@ def test_close_todo_completion_evidence_completes_bound_follow_ups(tmp_path):
     follow_up = store.get_follow_up_draft(follow_up_id)
     assert follow_up is not None
     assert follow_up.status == "completed"
+    assert json.loads(follow_up.send_result_json) == {"message_id": "msg-1"}
     check = json.loads(follow_up.evidence_check_json)
     assert check["source"] == "reply_attempt:7"
     assert check["reason"] == "Alex 明确回复验收 ETA 已同步。"
@@ -133,7 +135,9 @@ def test_completion_check_enqueues_one_evidence_work_item(tmp_path):
     assert "completion_check_checked_at" in first_follow_up.evidence_check_json
     assert second_follow_up.evidence_check_json == "{}"
     with store._connect() as db:
-        rows = db.execute("select source_type, source_ref, payload_json from work_summary_inputs").fetchall()
+        rows = db.execute(
+            "select source_type, source_ref, payload_json from work_summary_inputs"
+        ).fetchall()
     assert len(rows) == 1
     assert rows[0]["source_type"] == "follow_up_completion_check"
     assert rows[0]["source_ref"] == f"follow-up:{first_follow_up_id}:2026-06-28"

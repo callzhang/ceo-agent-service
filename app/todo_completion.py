@@ -79,7 +79,6 @@ def complete_follow_ups_for_todo(
             draft.id,
             status="completed",
             evidence_check_json=json.dumps(payload, ensure_ascii=False),
-            send_result_json=json.dumps(payload, ensure_ascii=False),
             suppressed_reason=normalized_evidence["reason"],
         )
         completed += 1

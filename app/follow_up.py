@@ -558,12 +558,6 @@ def process_due_follow_ups(
                 now=now,
             )
             if dingtalk_done:
-                _skip_completed_follow_up(
-                    store,
-                    draft,
-                    now=now,
-                    reason=dingtalk_reason,
-                )
                 continue
         completed, reason = _completion_supported_by_current_evidence(
             store,

@@ -5179,6 +5179,14 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
         )
         or 1,
     )
+    monkeypatch.setattr(
+        cli,
+        "check_follow_up_completions_command",
+        lambda received, limit=1: calls.append(
+            ("completion-check", received.db_path, limit)
+        )
+        or 7,
+    )
 
     def sleep(seconds):
         calls.append(("sleep", seconds))
@@ -5201,6 +5209,7 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
         ("scan", tmp_path / "worker.sqlite3", 4),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
+        ("completion-check", tmp_path / "worker.sqlite3", 1),
         ("oa-scan", tmp_path / "worker.sqlite3", 4),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
@@ -5247,6 +5256,11 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         "process_follow_ups_command",
         lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
     )
+    monkeypatch.setattr(
+        cli,
+        "check_follow_up_completions_command",
+        lambda received, limit=1: calls.append("completion-check"),
+    )
 
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
@@ -5265,6 +5279,7 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         "scan",
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",
+        "completion-check",
         "oa-scan",
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",
@@ -5316,6 +5331,14 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
         )
         or 0,
     )
+    monkeypatch.setattr(
+        cli,
+        "check_follow_up_completions_command",
+        lambda received, limit=1: calls.append(
+            ("completion-check", received.db_path, limit)
+        )
+        or 0,
+    )
 
     def sleep(seconds):
         calls.append(("sleep", seconds))
@@ -5339,6 +5362,7 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
         ("scan", tmp_path / "worker.sqlite3", 4),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
+        ("completion-check", tmp_path / "worker.sqlite3", 1),
         ("oa-scan", tmp_path / "worker.sqlite3", 4),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
@@ -5389,6 +5413,11 @@ def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path
         "process_follow_ups_command",
         lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
     )
+    monkeypatch.setattr(
+        cli,
+        "check_follow_up_completions_command",
+        lambda received, limit=1: calls.append("completion-check"),
+    )
 
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
@@ -5401,7 +5430,15 @@ def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path
             network_ready=lambda: True,
         )
 
-    assert calls == ["work", "okr", "scan", "work", "okr", "follow"]
+    assert calls == [
+        "work",
+        "okr",
+        "scan",
+        "work",
+        "okr",
+        "completion-check",
+        "follow",
+    ]
 
 
 def test_task_maintenance_loop_runs_oa_scan_on_its_own_interval(
@@ -5441,6 +5478,11 @@ def test_task_maintenance_loop_runs_oa_scan_on_its_own_interval(
         cli,
         "process_follow_ups_command",
         lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "check_follow_up_completions_command",
+        lambda received, limit=1: calls.append("completion-check"),
     )
 
     def sleep(seconds):

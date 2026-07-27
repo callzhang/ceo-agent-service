@@ -565,7 +565,9 @@ def test_due_follow_up_skips_when_linked_dingtalk_todo_is_done(tmp_path):
     assert sent == 0
     assert dws.sent == []
     completed = store.list_follow_up_drafts(statuses=("completed",))[0]
-    assert "dingtalk_todo_done" in completed.send_result_json
+    check = json.loads(completed.evidence_check_json)
+    assert check["source"] == "dingtalk_todo:dt-task-1"
+    assert check["reason"] == "DingTalk Todo marked done by owner"
 
 
 def test_due_follow_up_sends_when_linked_dingtalk_todo_is_not_done(tmp_path):

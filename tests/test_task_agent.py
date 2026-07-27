@@ -822,6 +822,17 @@ def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
         status="open",
         priority="P0",
     )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请确认交付 ETA 是否已给客户。",
+        status="sent",
+        sent_at="2026-06-27 09:00:00",
+        send_result_json=json.dumps({"message_id": "msg-1"}, ensure_ascii=False),
+    )
     decision = TaskAgentDecision.model_validate(
         {
             "action": "update_project",
@@ -867,6 +878,13 @@ def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
     todo = store.list_work_todos(project_id=project_id)[0]
     assert todo.status == "done"
     assert "ETA 已发送客户" in todo.completion_evidence_json
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    assert follow_up is not None
+    assert follow_up.status == "completed"
+    assert json.loads(follow_up.send_result_json) == {"message_id": "msg-1"}
+    check = json.loads(follow_up.evidence_check_json)
+    assert check["source"] == "ai_minutes:minutes-1"
+    assert check["reason"] == "会议纪要明确 ETA 已发送客户。"
 
 
 def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_path):
@@ -1639,7 +1657,13 @@ def test_apply_decision_pushes_completed_todo_to_dingtalk(tmp_path, monkeypatch)
             store,
             dws,
             todo_id,
-            {"source": "reply_attempt:1", "summary": "已发客户"},
+            {
+                "source": "reply_attempt:1",
+                "reason": "已发客户",
+                "description": "已发客户",
+                "completed_at": "2026-06-27 12:00:00",
+                "summary": "已发客户",
+            },
             "2026-06-27 12:00:00",
         )
     ]
