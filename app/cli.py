@@ -188,6 +188,9 @@ class WorkerSettings(BaseModel):
     task_work_item_interval_seconds: PositiveInt = 60
     task_daily_interval_seconds: PositiveInt = 86_400
     task_follow_up_interval_seconds: PositiveInt = 3_600
+    oa_pending_scan_enabled: bool = True
+    oa_pending_scan_interval_seconds: PositiveInt = 86_400
+    oa_pending_scan_lookback_days: PositiveInt = 7
     meeting_producer_interval_seconds: PositiveInt = 60
     meeting_consumer_poll_interval_seconds: PositiveInt = 10
     meeting_settle_seconds: PositiveInt = 600
@@ -312,6 +315,37 @@ def build_parser() -> argparse.ArgumentParser:
             type=_non_negative_int,
             default=_optional_non_negative_int_env("CEO_MAX_BATCHES"),
             help="maximum candidate batches to process before exiting this pass",
+        )
+        subparser.add_argument(
+            "--oa-pending-scan-enabled",
+            action=argparse.BooleanOptionalAction,
+            default=_env_bool(
+                "CEO_OA_PENDING_SCAN_ENABLED",
+                defaults.oa_pending_scan_enabled,
+            ),
+            help="enable the DingTalk OA pending approval scanner",
+        )
+        subparser.add_argument(
+            "--oa-pending-scan-interval-seconds",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv(
+                    "CEO_OA_PENDING_SCAN_INTERVAL_SECONDS",
+                    str(defaults.oa_pending_scan_interval_seconds),
+                )
+            ),
+            help="seconds between scheduled DingTalk OA pending approval scans",
+        )
+        subparser.add_argument(
+            "--oa-pending-scan-lookback-days",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv(
+                    "CEO_OA_PENDING_SCAN_LOOKBACK_DAYS",
+                    str(defaults.oa_pending_scan_lookback_days),
+                )
+            ),
+            help="days of DingTalk OA pending approvals to query on each scan",
         )
         subparser.add_argument(
             "--dws-transient-retry-attempts",
@@ -669,6 +703,9 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
             "task_follow_up_interval_seconds",
             WorkerSettings().task_follow_up_interval_seconds,
         ),
+        oa_pending_scan_enabled=args.oa_pending_scan_enabled,
+        oa_pending_scan_interval_seconds=args.oa_pending_scan_interval_seconds,
+        oa_pending_scan_lookback_days=args.oa_pending_scan_lookback_days,
         meeting_producer_interval_seconds=meeting_producer_interval_seconds(),
         meeting_consumer_poll_interval_seconds=meeting_consumer_poll_interval_seconds(),
         meeting_settle_seconds=meeting_settle_seconds(),
@@ -1243,6 +1280,9 @@ def scan_oa_approvals_command(
     from app.task_scanners import scan_pending_oa_approvals
 
     store = AutoReplyStore(settings.db_path)
+    if not settings.oa_pending_scan_enabled:
+        print("scan-oa-approvals disabled", flush=True)
+        return 0
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
         ding_robot_name=settings.ding_robot_name,
@@ -1251,6 +1291,7 @@ def scan_oa_approvals_command(
     queued = scan_pending_oa_approvals(
         store,
         dws,
+        lookback_days=settings.oa_pending_scan_lookback_days,
         max_new_items=max_new_items,
     )
     print(f"scan-oa-approvals queued={queued}", flush=True)
@@ -2421,6 +2462,7 @@ def run_task_maintenance_loop(
 
     now = monotonic()
     next_daily_run = now
+    next_oa_pending_scan_run = now
     next_follow_up_run = now
     while True:
         if not network_ready():
@@ -2437,6 +2479,10 @@ def run_task_maintenance_loop(
                     max_new_items=settings.max_batches,
                 ),
             )
+            run_step("process_work_items", lambda: process_work_items_command(settings))
+            run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
+            next_daily_run = now + daily_interval_seconds
+        if settings.oa_pending_scan_enabled and now >= next_oa_pending_scan_run:
             run_step(
                 "scan_oa_approvals",
                 lambda: scan_oa_approvals_command(
@@ -2446,7 +2492,7 @@ def run_task_maintenance_loop(
             )
             run_step("process_work_items", lambda: process_work_items_command(settings))
             run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
-            next_daily_run = now + daily_interval_seconds
+            next_oa_pending_scan_run = now + settings.oa_pending_scan_interval_seconds
         if now >= next_follow_up_run:
             run_step(
                 "process_follow_ups",

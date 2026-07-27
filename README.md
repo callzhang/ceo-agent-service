@@ -337,6 +337,10 @@ recruiting, sales, finance, admin, HR, other
 
 - 每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费一次 reply worker 写入的 Work Item，默认 60 秒。
 - 每 `CEO_TASK_DAILY_INTERVAL_SECONDS` 秒扫描 AI 听记、本地新增文件、拉取钉钉 Todo 完成状态并处理到期 follow-up，默认 86400 秒。
+- 钉钉 OA 待审批扫描默认开启，由 `CEO_OA_PENDING_SCAN_ENABLED` 控制；扫描间隔由
+  `CEO_OA_PENDING_SCAN_INTERVAL_SECONDS` 控制，默认 86400 秒；每次扫描查询最近
+  `CEO_OA_PENDING_SCAN_LOOKBACK_DAYS` 天的待审批，默认 7 天。扫描只会在审批详情中
+  确认当前登录用户存在 RUNNING 审批节点时入队，避免猜测 task id。
 
 钉钉 Todo 是 owner 执行层，不替代 `/tasks` 里的内部项目管理视图。只有明确 owner、due time、非敏感且未完成的高置信 TODO 会创建钉钉 Todo；Derek 默认不作为执行人加入。内部 `work_todos` 仍是主数据，钉钉 Todo 只同步创建、完成状态拉取和有强证据时的完成推送。发送 follow-up 前会先检查已关联的钉钉 Todo 状态：如果钉钉侧已经完成，系统会关闭内部 TODO 并跳过提醒，避免重复催办。
 
@@ -356,6 +360,9 @@ cd /path/to/ceo-agent-service
 
 # 扫描新增 AI 听记和 CEO_WORKSPACE 下的新增 Markdown/text 文件
 .venv/bin/ceo-agent scan-task-sources
+
+# 扫描当前登录人的钉钉 OA 待审批
+.venv/bin/ceo-agent scan-oa-approvals
 
 # 扫描、处理 Work Item、处理到期 follow-up
 CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-message

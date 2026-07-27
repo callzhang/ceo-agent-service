@@ -290,6 +290,7 @@ def scan_pending_oa_approvals(
     dws,
     *,
     now: datetime | None = None,
+    lookback_days: int = 7,
     page_size: int = 30,
     max_pages: int = 10,
     max_new_items: int | None = None,
@@ -325,7 +326,9 @@ def scan_pending_oa_approvals(
     scan_time = _scan_now(now)
     scan_date = scan_time.date().isoformat()
     scan_timestamp = scan_time.strftime("%Y-%m-%d %H:%M:%S")
-    window_start = (scan_time - timedelta(days=7)).isoformat(timespec="seconds")
+    window_start = (scan_time - timedelta(days=lookback_days)).isoformat(
+        timespec="seconds"
+    )
     window_end = scan_time.isoformat(timespec="seconds")
     approvals = []
     try:

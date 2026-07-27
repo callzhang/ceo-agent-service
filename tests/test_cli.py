@@ -153,10 +153,24 @@ def test_parser_supports_scan_task_sources():
 
 
 def test_parser_supports_scan_oa_approvals():
-    args = build_parser().parse_args(["scan-oa-approvals", "--max-batches", "4"])
+    args = build_parser().parse_args(
+        [
+            "scan-oa-approvals",
+            "--max-batches",
+            "4",
+            "--no-oa-pending-scan-enabled",
+            "--oa-pending-scan-interval-seconds",
+            "7200",
+            "--oa-pending-scan-lookback-days",
+            "3",
+        ]
+    )
 
     assert args.command == "scan-oa-approvals"
     assert args.max_batches == 4
+    assert args.oa_pending_scan_enabled is False
+    assert args.oa_pending_scan_interval_seconds == 7200
+    assert args.oa_pending_scan_lookback_days == 3
 
 
 def test_parser_supports_process_follow_ups():
@@ -338,6 +352,62 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         "daily-task-maintenance sources=3 oa_approvals=6 work_items=2 "
         "okr_reviews=5 dingtalk_todos_closed=4 follow_ups=1\n"
     )
+
+
+def test_scan_oa_approvals_command_honors_enabled_and_lookback(
+    tmp_path, monkeypatch, capsys
+):
+    calls = []
+
+    class FakeDwsClient:
+        pass
+
+    monkeypatch.setattr(cli, "DwsClient", lambda **_: FakeDwsClient())
+    monkeypatch.setattr(
+        "app.task_scanners.scan_pending_oa_approvals",
+        lambda store, dws, **kwargs: calls.append(
+            (store.path, dws.__class__.__name__, kwargs)
+        )
+        or 7,
+    )
+
+    result = cli.scan_oa_approvals_command(
+        WorkerSettings(
+            db_path=tmp_path / "worker.sqlite3",
+            oa_pending_scan_lookback_days=3,
+        ),
+        max_new_items=5,
+    )
+
+    assert result == 7
+    assert calls == [
+        (
+            tmp_path / "worker.sqlite3",
+            "FakeDwsClient",
+            {"lookback_days": 3, "max_new_items": 5},
+        )
+    ]
+    assert capsys.readouterr().out == "scan-oa-approvals queued=7\n"
+
+
+def test_scan_oa_approvals_command_skips_when_disabled(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        cli,
+        "DwsClient",
+        lambda **_: (_ for _ in ()).throw(AssertionError("DWS should not start")),
+    )
+
+    result = cli.scan_oa_approvals_command(
+        WorkerSettings(
+            db_path=tmp_path / "worker.sqlite3",
+            oa_pending_scan_enabled=False,
+        )
+    )
+
+    assert result == 0
+    assert capsys.readouterr().out == "scan-oa-approvals disabled\n"
 
 
 def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, capsys):
@@ -5108,6 +5178,8 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("scan", tmp_path / "worker.sqlite3", 4),
+        ("work", tmp_path / "worker.sqlite3"),
+        ("okr", tmp_path / "worker.sqlite3"),
         ("oa-scan", tmp_path / "worker.sqlite3", 4),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
@@ -5170,6 +5242,8 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",
         "scan",
+        ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
+        "okr",
         "oa-scan",
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",
@@ -5242,6 +5316,8 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("scan", tmp_path / "worker.sqlite3", 4),
+        ("work", tmp_path / "worker.sqlite3"),
+        ("okr", tmp_path / "worker.sqlite3"),
         ("oa-scan", tmp_path / "worker.sqlite3", 4),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
@@ -5255,6 +5331,115 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
         ("follow", tmp_path / "worker.sqlite3", False, 4),
         ("sleep", 31),
     ]
+
+
+def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        oa_pending_scan_enabled=False,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda received: calls.append("work"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_okr_reviews_command",
+        lambda received: calls.append("okr"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda received, max_new_items=None: calls.append("scan"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_oa_approvals_command",
+        lambda received, max_new_items=None: calls.append("oa-scan"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
+    )
+
+    with pytest.raises(StopLoop):
+        run_task_maintenance_loop(
+            settings,
+            work_item_interval_seconds=31,
+            daily_interval_seconds=3600,
+            follow_up_interval_seconds=900,
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+            monotonic=lambda: 10.0,
+            network_ready=lambda: True,
+        )
+
+    assert calls == ["work", "okr", "scan", "work", "okr", "follow"]
+
+
+def test_task_maintenance_loop_runs_oa_scan_on_its_own_interval(
+    monkeypatch, tmp_path
+):
+    calls = []
+    times = iter([0.0, 0.0, 31.0, 61.0])
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        oa_pending_scan_interval_seconds=60,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda received: calls.append("work"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_okr_reviews_command",
+        lambda received: calls.append("okr"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda received, max_new_items=None: calls.append("scan"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_oa_approvals_command",
+        lambda received, max_new_items=None: calls.append("oa-scan"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
+    )
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        if calls.count(("sleep", seconds)) >= 3:
+            raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_task_maintenance_loop(
+            settings,
+            work_item_interval_seconds=31,
+            daily_interval_seconds=3600,
+            follow_up_interval_seconds=900,
+            sleep=sleep,
+            monotonic=lambda: next(times),
+            network_ready=lambda: True,
+        )
+
+    assert calls.count("scan") == 1
+    assert calls.count("oa-scan") == 2
 
 
 def test_meeting_discovery_activation_watermark_is_set_once(tmp_path):
