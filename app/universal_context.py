@@ -365,6 +365,96 @@ def universal_context_sha256(context: UniversalTaskContext) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def parse_universal_context_json(context_json: str) -> UniversalTaskContext:
+    try:
+        data = json.loads(context_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("context_json must contain valid JSON") from exc
+    if not isinstance(data, dict):
+        raise ValueError("context_json must contain a JSON object")
+
+    context_messages = tuple(
+        UniversalContextMessage(
+            sender_name=str(item.get("sender_name") or ""),
+            sender_open_dingtalk_id=item.get("sender_open_dingtalk_id"),
+            sender_user_id=item.get("sender_user_id"),
+            open_message_id=str(item.get("open_message_id") or ""),
+            message_type=item.get("message_type"),
+            create_time=str(item.get("create_time") or ""),
+            content=str(item.get("content") or ""),
+            mentioned_user_ids=tuple(
+                str(user_id)
+                for user_id in item.get("mentioned_user_ids") or ()
+            ),
+            quoted_message_id=item.get("quoted_message_id"),
+            quoted_content=item.get("quoted_content"),
+            raw_payload_json=json.dumps(
+                item.get("raw_payload") or {},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        for item in data.get("context_messages") or ()
+        if isinstance(item, dict)
+    )
+    material_references = tuple(
+        UniversalMaterialReference(
+            kind=str(item.get("kind") or ""),
+            reference=str(item.get("reference") or ""),
+            source_message_id=str(item.get("source_message_id") or ""),
+            source_sender=str(item.get("source_sender") or ""),
+            source_time=str(item.get("source_time") or ""),
+            read_command=str(item.get("read_command") or ""),
+            resolved_content=str(item.get("resolved_content") or ""),
+            resolution_error=str(item.get("resolution_error") or ""),
+        )
+        for item in data.get("material_references") or ()
+        if isinstance(item, dict)
+    )
+    image_sha256s = tuple(str(value) for value in data.get("image_sha256s") or ())
+    image_paths = tuple(f"recovered-image:{value}" for value in image_sha256s)
+
+    context = UniversalTaskContext(
+        task_id=int(data.get("task_id")),
+        conversation_id=str(data.get("conversation_id") or ""),
+        conversation_title=str(data.get("conversation_title") or ""),
+        single_chat=bool(data.get("single_chat")),
+        trigger_message_id=str(data.get("trigger_message_id") or ""),
+        trigger_sender=str(data.get("trigger_sender") or ""),
+        trigger_text=str(data.get("trigger_text") or ""),
+        context_messages=context_messages,
+        required_dependencies=tuple(
+            str(dependency)
+            for dependency in data.get("required_dependencies") or ()
+        ),
+        force_new_decision=bool(data.get("force_new_decision")),
+        dry_run=bool(data.get("dry_run")),
+        execution_generation=str(data.get("execution_generation") or "initial"),
+        trusted_oa_process_instance_id=str(
+            data.get("trusted_oa_process_instance_id") or ""
+        ),
+        trusted_oa_task_id=str(data.get("trusted_oa_task_id") or ""),
+        trusted_mail_mailbox=str(data.get("trusted_mail_mailbox") or ""),
+        trusted_mail_message_id=str(data.get("trusted_mail_message_id") or ""),
+        trusted_mail_subject=str(data.get("trusted_mail_subject") or ""),
+        trusted_calendar_event_id=str(data.get("trusted_calendar_event_id") or ""),
+        trusted_calendar_response_status=str(
+            data.get("trusted_calendar_response_status") or ""
+        ),
+        trusted_calendar_organizer=str(data.get("trusted_calendar_organizer") or ""),
+        trigger_create_time=str(data.get("trigger_create_time") or ""),
+        trusted_document_url=str(data.get("trusted_document_url") or ""),
+        trusted_task_context=str(data.get("trusted_task_context") or ""),
+        image_paths=image_paths,
+        image_sha256s=image_sha256s,
+        material_references=material_references,
+    )
+    if canonical_universal_context_json(context) != context_json:
+        raise ValueError("context_json is not canonical")
+    return context
+
+
 def build_universal_context(
     *,
     conversation: DingTalkConversation,

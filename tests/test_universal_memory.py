@@ -496,6 +496,50 @@ def test_memory_explicit_backend_failure_is_recoverable_blocked(tmp_path) -> Non
     )
 
 
+def test_retryable_memory_action_can_be_restored_from_store(tmp_path) -> None:
+    runner = FakeMemoryWriteRunner(
+        [CodexMemoryWriteToolFailed("memory backend unavailable")]
+    )
+    store, _, execution, worker = build_execution(
+        tmp_path, memory_write_runner=runner
+    )
+    assert worker.execute_universal_memory_write(execution) is True
+
+    restored = store.list_retryable_universal_memory_action_executions(limit=10)
+
+    assert len(restored) == 1
+    assert restored[0].execution_id == execution.execution_id
+    assert restored[0].action == execution.action
+    assert restored[0].context == execution.context
+
+
+def test_retry_failed_universal_memory_writes_recovers_backend_failure(tmp_path) -> None:
+    first_runner = FakeMemoryWriteRunner(
+        [CodexMemoryWriteToolFailed("memory backend unavailable")]
+    )
+    store, _, execution, worker = build_execution(
+        tmp_path, memory_write_runner=first_runner
+    )
+    assert worker.execute_universal_memory_write(execution) is True
+
+    second_runner = FakeMemoryWriteRunner(
+        [MemoryWriteResult("episode-1", "queued", False)]
+    )
+    resumed_worker = DingTalkAutoReplyWorker(
+        store=AutoReplyStore(store.path),
+        dws=object(),
+        codex=object(),
+        memory_write_runner=second_runner,
+    )
+
+    assert resumed_worker.retry_failed_universal_memory_writes(limit=1) == 1
+    assert len(second_runner.calls) == 1
+    assert (
+        resumed_worker.store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+
+
 def test_memory_unknown_recovery_rejects_tampered_frozen_payload(tmp_path) -> None:
     runner = FakeMemoryWriteRunner([TimeoutError("network timeout")])
     store, _, execution, worker = build_execution(tmp_path, memory_write_runner=runner)

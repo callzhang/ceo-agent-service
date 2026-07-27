@@ -36,6 +36,7 @@ from app.history import (
 from app.universal_context import (
     UniversalTaskContext,
     canonical_universal_context_json,
+    parse_universal_context_json,
     universal_context_sha256,
 )
 from app.universal_executor import (
@@ -2815,6 +2816,61 @@ class AutoReplyStore:
             sort_keys=True,
             separators=(",", ":"),
         )
+
+    def list_retryable_universal_memory_action_executions(
+        self,
+        *,
+        limit: int = 1,
+    ) -> list[UniversalActionExecution]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin")
+            rows = db.execute(
+                """
+                select actions.*,
+                       plans.plan_json,
+                       plans.context_json,
+                       plans.execution_generation
+                from universal_action_executions as actions
+                join universal_plan_executions as plans
+                  on plans.execution_scope_id=actions.execution_scope_id
+                where actions.status='failed'
+                  and actions.action_kind='memory_write'
+                  and actions.error like 'memory_backend_unavailable:%'
+                order by actions.updated_at, actions.execution_id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        executions: list[UniversalActionExecution] = []
+        for row in rows:
+            context = parse_universal_context_json(str(row["context_json"]))
+            plan = UniversalPlan.model_validate_json(row["plan_json"], strict=True)
+            plan_execution = UniversalPlanExecution(
+                execution_scope_id=row["execution_scope_id"],
+                execution_generation=row["execution_generation"],
+                plan=plan,
+            )
+            action_index = int(row["action_index"])
+            if action_index < 0 or action_index >= len(plan_execution.plan.actions):
+                raise ValueError("stored universal action index is out of range")
+            execution = build_universal_action_execution(
+                context,
+                plan_execution,
+                plan_execution.plan.actions[action_index],
+                action_index,
+            )
+            if (
+                execution.execution_id != row["execution_id"]
+                or execution.action_hash != row["action_hash"]
+                or canonical_universal_action_json(execution.action)
+                != row["action_json"]
+            ):
+                raise ValueError("stored universal memory action identity mismatch")
+            executions.append(execution)
+        return executions
 
     def count_unresolved_universal_action_executions(self) -> int:
         with self._connect() as db:

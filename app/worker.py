@@ -545,7 +545,7 @@ class DingTalkAutoReplyWorker:
         result: dict[str, DependencyStatus] = {}
         if "dws" in dependencies:
             try:
-                self._ensure_dws_ready_for_codex()
+                auth_status = self._dws_auth_status_for_backup()
             except DwsAuthorizationRequiredError:
                 result["dws"] = DependencyStatus(
                     ready=False,
@@ -558,7 +558,14 @@ class DingTalkAutoReplyWorker:
                     reason="dws_unavailable",
                 )
             else:
-                result["dws"] = DependencyStatus(ready=True)
+                if self._dws_auth_status_is_ready(auth_status):
+                    result["dws"] = DependencyStatus(ready=True)
+                else:
+                    result["dws"] = DependencyStatus(
+                        ready=False,
+                        reason="dws_authorization_required",
+                        authorization_required=True,
+                    )
         if "memory" in dependencies:
             result["memory"] = DependencyStatus(ready=True)
         return result
@@ -3426,6 +3433,18 @@ class DingTalkAutoReplyWorker:
             result_json=receipt_json,
         )
         return True
+
+    def retry_failed_universal_memory_writes(self, *, limit: int = 1) -> int:
+        recovered = 0
+        executions = self.store.list_retryable_universal_memory_action_executions(
+            limit=limit
+        )
+        for execution in executions:
+            if self.execute_universal_memory_write(execution):
+                state = self.store.get_universal_action_execution_state(execution)
+                if state is UniversalActionExecutionState.SUCCEEDED:
+                    recovered += 1
+        return recovered
 
     @staticmethod
     def _universal_memory_payload(

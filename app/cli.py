@@ -1349,6 +1349,18 @@ def check_follow_up_completions_command(
     return checked
 
 
+def retry_universal_memory_writes_command(
+    settings: WorkerSettings,
+    *,
+    limit: int = 1,
+) -> int:
+    recovered = create_worker(settings).retry_failed_universal_memory_writes(
+        limit=limit
+    )
+    print(f"retry-universal-memory-writes recovered={recovered}", flush=True)
+    return recovered
+
+
 def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     sources = scan_task_sources_command(settings)
     oa_approvals = scan_oa_approvals_command(settings)
@@ -1373,6 +1385,10 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         settings,
         limit=1,
     )
+    memory_writes_recovered = retry_universal_memory_writes_command(
+        settings,
+        limit=1,
+    )
     follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
         "sources": sources,
@@ -1382,6 +1398,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         "dingtalk_todos_closed": dingtalk_todos_closed,
         "dingtalk_todos_recovered": dingtalk_todos_recovered,
         "follow_up_completions_checked": follow_up_completions_checked,
+        "memory_writes_recovered": memory_writes_recovered,
         "follow_ups": follow_ups,
     }
     print(
@@ -1392,6 +1409,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         f"dingtalk_todos_closed={dingtalk_todos_closed} "
         f"dingtalk_todos_recovered={dingtalk_todos_recovered} "
         f"follow_up_completions_checked={follow_up_completions_checked} "
+        f"memory_writes_recovered={memory_writes_recovered} "
         f"follow_ups={follow_ups}",
         flush=True,
     )

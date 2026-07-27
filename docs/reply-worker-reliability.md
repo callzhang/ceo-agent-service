@@ -84,6 +84,14 @@ allow the `memory_write` tool for that invocation. The reply worker must not
 create or refresh a separate Memory OAuth client for this path; otherwise the CEO
 service and Codex can diverge on identity and authorization state.
 
+If a universal `memory_write` action fails because the Memory backend is
+temporarily unavailable, the action is marked failed with a retryable
+`memory_backend_unavailable` error. Daily task maintenance restores the original
+universal context and plan from SQLite, reruns only that `memory_write` action,
+and does not replan or resend the chat reply. Recovery is limited to one action
+per daily pass and uses the same stable memory source description, so duplicate
+Memory writes can be detected by the Memory layer.
+
 ## DWS upgrade check
 
 The producer checks for `dws` updates inside the normal CEO system pass, once per
