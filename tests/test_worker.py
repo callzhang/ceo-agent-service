@@ -4020,7 +4020,14 @@ def test_produce_once_uses_recent_context_when_unread_read_fails_for_group_menti
 
     assert queued == 1
     assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_errors() == 1
+    assert worker.store.count_errors() == 0
+    transient_state = json.loads(
+        worker.store.get_service_state(
+            "dws_transient_error_count:read_unread_messages"
+        )
+        or "{}"
+    )
+    assert transient_state["count"] == 1
     assert notifications == []
     assert codex.calls == []
 

@@ -39,6 +39,14 @@ and only writes an `errors` row when the threshold is reached. Message sends,
 calendar responses, approvals, and other write actions are not retried through
 this path.
 
+DWS message reads also treat server error codes ending in `_INVOKE_FAILED` as
+transient dependency failures. This covers infrastructure-side validation or
+gateway invocation changes without coupling recovery to one exact DWS error
+name. The rule applies only to the existing message-read command allowlist. It
+performs bounded immediate retries and preserves the worker's delayed transient
+recovery state after exhaustion; OA actions, sends, and other mutations are not
+replayed by this rule.
+
 DWS JSON commands may print progress text before their final structured result.
 The client uses `robust-json-parser` only to locate complete JSON objects or
 arrays in that mixed stdout. It disables partial extraction, requires the chosen

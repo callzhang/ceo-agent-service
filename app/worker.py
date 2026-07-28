@@ -3981,7 +3981,7 @@ class DingTalkAutoReplyWorker:
         return (
             DingTalkAutoReplyWorker._is_dws_message_read_kind(kind)
             and isinstance(exc, DwsError)
-            and exc.code in DwsClient.MESSAGE_LIST_RETRYABLE_ERROR_CODES
+            and DwsClient.is_message_read_retryable_error_code(exc.code)
         )
 
     @staticmethod

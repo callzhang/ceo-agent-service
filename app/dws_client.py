@@ -254,6 +254,7 @@ class DwsClient:
     DISCOVERY_CACHE_REFRESH_CODES = {"6"}
     DOC_READ_RETRYABLE_ERROR_CODES = {"internalError"}
     MESSAGE_LIST_RETRYABLE_ERROR_CODES = {"SYSTEM_ERROR"}
+    MESSAGE_LIST_RETRYABLE_ERROR_SUFFIXES = ("_INVOKE_FAILED",)
     TOKEN_VERIFIED_RETRYABLE_ERROR_CODES = {"TOKEN_VERIFIED_FAILED"}
     MESSAGE_RETRYABLE_READ_COMMANDS = {
         ("chat", "message", "list"),
@@ -3397,7 +3398,7 @@ class DwsClient:
     def _is_retryable_error(cls, command: list[str], code: str | None) -> bool:
         if code in cls.RETRYABLE_ERROR_CODES:
             return True
-        if code in cls.MESSAGE_LIST_RETRYABLE_ERROR_CODES:
+        if cls.is_message_read_retryable_error_code(code):
             command_path = tuple(command[1:])
             return cls._command_path_matches(
                 command_path,
@@ -3413,6 +3414,14 @@ class DwsClient:
             code in cls.DOC_READ_RETRYABLE_ERROR_CODES
             and len(command) >= 3
             and command[1:3] == ["doc", "read"]
+        )
+
+    @classmethod
+    def is_message_read_retryable_error_code(cls, code: str | None) -> bool:
+        if not code:
+            return False
+        return code in cls.MESSAGE_LIST_RETRYABLE_ERROR_CODES or code.upper().endswith(
+            cls.MESSAGE_LIST_RETRYABLE_ERROR_SUFFIXES
         )
 
     @staticmethod

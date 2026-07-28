@@ -4895,6 +4895,70 @@ def test_run_json_retries_chat_message_list_system_error(monkeypatch):
     assert sleeps == [1.0]
 
 
+def test_run_json_retries_chat_message_list_invoke_failure(monkeypatch):
+    calls = []
+    sleeps = []
+    invoke_failure_payload = (
+        '{"error":{"code":1,'
+        '"server_error_code":"SECURITY_CHECK_INVOKE_FAILED",'
+        '"message":"business error","reason":"business_error"}}'
+    )
+    command = [
+        "dws",
+        "chat",
+        "message",
+        "list-all",
+        "--start",
+        "2026-07-28 15:51:15",
+        "--end",
+        "2026-07-28 19:51:15",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=invoke_failure_payload,
+            )
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
+def test_run_json_does_not_retry_invoke_failure_for_mutating_command(monkeypatch):
+    calls = []
+    invoke_failure_payload = (
+        '{"error":{"code":1,'
+        '"server_error_code":"SECURITY_CHECK_INVOKE_FAILED",'
+        '"message":"business error","reason":"business_error"}}'
+    )
+    command = ["dws", "oa", "process", "approve", "--task-id", "task-1"]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=invoke_failure_payload,
+        )
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError, match="SECURITY_CHECK_INVOKE_FAILED"):
+        DwsClient(transient_retry_attempts=2).run_json(command)
+    assert calls == [command]
+
+
 @pytest.mark.parametrize(
     "command",
     [
