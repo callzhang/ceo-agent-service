@@ -5102,7 +5102,7 @@ class DingTalkAutoReplyWorker:
         return True
 
     def _mark_dws_auth_healthy(self) -> None:
-        state = self._dws_auth_login_state()
+        state = self._monitor_dws_auth_login(self._dws_auth_login_state())
         if state.get("status") == "authenticated":
             return
         self._set_dws_auth_login_state(

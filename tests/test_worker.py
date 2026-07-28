@@ -2126,6 +2126,26 @@ def test_produce_once_marks_dws_auth_healthy_after_success(
     assert state["status"] == "authenticated"
 
 
+def test_mark_dws_auth_healthy_reaps_completed_login_process(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    process = FakeAuthLoginProcess(returncode=0)
+    worker._dws_auth_login_process = process
+    worker.store.set_service_state(
+        DWS_AUTH_LOGIN_STATE_KEY,
+        json.dumps({"status": "running", "pid": process.pid}),
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **kwargs: None)
+
+    worker._mark_dws_auth_healthy()
+
+    assert worker._dws_auth_login_process is None
+    state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
+    assert state["status"] == "authenticated"
+
+
 def test_produce_once_backs_up_dws_auth_after_success(tmp_path: Path, monkeypatch):
     dws = FakeDws([], {})
     worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
