@@ -1,6 +1,5 @@
 from datetime import datetime
 from datetime import timedelta
-from dataclasses import replace
 import importlib
 import json
 from pathlib import Path
@@ -41,14 +40,6 @@ from app.feedback_spike import FeedbackReplyText
 from app.external_retry import ExternalDependencyError
 from app.oa_approval import OaApprovalResult
 from app.store import AutoReplyStore
-from app.universal_consumer import UniversalConsumerOutcome
-from app.universal_executor import UniversalActionExecutionState
-from app.universal_plan import (
-    PlannedAction,
-    PlannedActionKind,
-    UniversalAudit,
-    UniversalPlan,
-)
 from app.worker import (
     DWS_AUTH_LOGIN_STATE_KEY,
     PROCESSING_ACK,
@@ -93,265 +84,13 @@ def fixed_channel_gates(
     }
 
 
-class CanonicalRoutingTestPlanner:
-    """Provide one canonical execution slot for the legacy behavior scenarios."""
-
-    last_session_id = None
-
-    def __init__(self, *args, **kwargs):
-        del args, kwargs
-
-    def plan(self, context, session_id=None):
-        del context, session_id
-        return UniversalPlan(
-            task_kind="worker_test_batch",
-            reason="exercise worker behavior through canonical routing",
-            actions=[
-                PlannedAction(
-                    kind=PlannedActionKind.NO_REPLY,
-                    reason="delegate this test execution to FakeCodex",
-                )
-            ],
-            audit=UniversalAudit(
-                summary="test-only canonical routing adapter",
-                confidence=1.0,
-            ),
-        )
-
-
-class CanonicalBatchTestExecutor:
-    """Adapt a canonical execution to the existing FakeCodex scenario harness."""
-
-    def __init__(self, worker):
-        self.worker = worker
-
-    @staticmethod
-    def _context_message(context, message):
-        return DingTalkMessage(
-            open_conversation_id=context.conversation_id,
-            open_message_id=message.open_message_id,
-            conversation_title=context.conversation_title,
-            single_chat=context.single_chat,
-            sender_name=message.sender_name,
-            sender_open_dingtalk_id=message.sender_open_dingtalk_id,
-            sender_user_id=message.sender_user_id,
-            message_type=message.message_type,
-            create_time=message.create_time,
-            content=message.content,
-            mentioned_user_ids=list(message.mentioned_user_ids),
-            quoted_message_id=message.quoted_message_id,
-            quoted_content=message.quoted_content,
-            raw_payload=json.loads(message.raw_payload_json),
-        )
-
-    def execute(self, execution):
-        claim_state = self.worker.store.claim_universal_action_execution(execution)
-        if claim_state is UniversalActionExecutionState.SUCCEEDED:
-            return True
-        if claim_state is UniversalActionExecutionState.UNKNOWN:
-            raise RuntimeError("test execution has an unknown prior side effect")
-
-        context = execution.context
-        task = self.worker.store.get_reply_task(context.task_id)
-        assert task is not None
-        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-        conversation = DingTalkConversation(
-            open_conversation_id=context.conversation_id,
-            title=context.conversation_title,
-            single_chat=context.single_chat,
-            unread_point=1,
-        )
-        context_messages = [
-            self._context_message(context, message)
-            for message in context.context_messages
-        ]
-        context_messages = [
-            trigger if message.open_message_id == trigger.open_message_id else message
-            for message in context_messages
-        ]
-        if not any(
-            message.open_message_id == trigger.open_message_id
-            for message in context_messages
-        ):
-            context_messages.append(trigger)
-        for index, reference in enumerate(context.material_references, start=1):
-            context_messages.append(
-                DingTalkMessage(
-                    open_conversation_id=context.conversation_id,
-                    open_message_id=f"{trigger.open_message_id}:material:{index}",
-                    conversation_title=context.conversation_title,
-                    single_chat=context.single_chat,
-                    sender_name="CEO系统",
-                    create_time=trigger.create_time,
-                    content=(
-                        "Material references:\n"
-                        f"kind={reference.kind}\n"
-                        f"reference={reference.reference}\n"
-                        f"read_command={reference.read_command or 'none'}"
-                    ),
-                )
-            )
-        calendar_event = None
-        if context.trusted_calendar_event_id:
-            calendar_event = DwsCalendarEvent(
-                event_id=context.trusted_calendar_event_id,
-                organizer=context.trusted_calendar_organizer,
-                self_response_status=context.trusted_calendar_response_status,
-            )
-        if self.worker._handle_oa_approval_if_actionable(
-            conversation,
-            trigger,
-            context_messages,
-            ignore_existing_attempt=context.force_new_decision,
-            oa_url_override=task.oa_url,
-        ):
-            self.worker.store.complete_universal_action_execution(execution)
-            return True
-
-        image_download_errors = []
-        for message in context.context_messages:
-            if not message.open_message_id.endswith(":image-errors"):
-                continue
-            _, _, detail = message.content.partition("：\n")
-            image_download_errors.extend(
-                line.removeprefix("- ")
-                for line in detail.splitlines()
-                if line.strip()
-            )
-        original_collect_image_paths = self.worker._collect_image_paths
-        self.worker._collect_image_paths = lambda *_: (
-            [Path(path) for path in context.image_paths],
-            image_download_errors,
-        )
-        error_count = self.worker.store.count_errors()
-        try:
-            self.worker._process_batch(
-                conversation,
-                [trigger],
-                context_messages,
-                ignore_existing_attempt=(
-                    context.force_new_decision
-                    or calendar_event is not None
-                    or self.worker._should_regenerate_after_processing_failure(
-                        conversation,
-                        trigger,
-                        task,
-                    )
-                ),
-                raise_on_delivery_failure=True,
-                calendar_response_event=calendar_event,
-                allow_duplicate_send=context.force_new_decision,
-                complete_task_id=context.task_id,
-            )
-        except Exception as exc:
-            self.worker.store.mark_universal_action_execution_failed(
-                execution,
-                str(exc),
-            )
-            raise
-        finally:
-            self.worker._collect_image_paths = original_collect_image_paths
-        if self.worker.store.count_errors() > error_count:
-            latest_errors = self.worker.store.list_errors(limit=1)
-            if latest_errors and latest_errors[0].kind == "permission":
-                self.worker.store.mark_universal_action_execution_failed(
-                    execution,
-                    latest_errors[0].detail,
-                )
-                self.worker._canonical_test_nonterminal = True
-                return False
-        self.worker.store.complete_universal_action_execution(execution)
-        return True
-
-
 @pytest.fixture(autouse=True)
-def inject_canonical_worker_dependencies(monkeypatch):
+def inject_ready_default_channel_gates(monkeypatch):
     monkeypatch.setattr(
         worker_module,
         "default_channel_gates",
         lambda **_: fixed_channel_gates(),
     )
-    monkeypatch.setattr(worker_module, "UniversalPlanner", CanonicalRoutingTestPlanner)
-    monkeypatch.setattr(worker_module, "UniversalActionExecutor", CanonicalBatchTestExecutor)
-    worker_types = {
-        DingTalkAutoReplyWorker,
-        worker_module.DingTalkAutoReplyWorker,
-    }
-    for worker_type in worker_types:
-        original_init = worker_type.__init__
-
-        def canonical_test_init(
-            self,
-            *args,
-            original_init=original_init,
-            **kwargs,
-        ):
-            kwargs.setdefault("universal_planner", CanonicalRoutingTestPlanner())
-            original_init(self, *args, **kwargs)
-
-        monkeypatch.setattr(worker_type, "__init__", canonical_test_init)
-        original_universal_consumer = worker_type._universal_consumer
-
-        def canonical_test_consumer(
-            self,
-            planner=None,
-            original_consumer=original_universal_consumer,
-        ):
-            consumer = original_consumer(self, planner)
-            consumer.existing_terminal_attempt = lambda context: False
-            consumer.existing_sent_reply = lambda context: False
-            consumer.executor = CanonicalBatchTestExecutor(self)
-            process = consumer.process
-
-            def canonical_test_process(context):
-                preserve_dry_run = (
-                    context.dry_run
-                    and self.oa_approval_handler is not None
-                    and self._is_oa_approval_message(
-                        DingTalkMessage.model_validate_json(
-                            self.store.get_reply_task(
-                                context.task_id
-                            ).trigger_message_json
-                        )
-                    )
-                )
-                execution_context = (
-                    context if preserve_dry_run else replace(context, dry_run=False)
-                )
-                result = process(execution_context)
-                if getattr(self, "_canonical_test_nonterminal", False):
-                    self._canonical_test_nonterminal = False
-                    result = replace(
-                        result,
-                        completed=False,
-                        reason="permission",
-                        outcome=UniversalConsumerOutcome.DRY_RUN,
-                    )
-                return result
-
-            consumer.process = canonical_test_process
-            return consumer
-
-        monkeypatch.setattr(
-            worker_type,
-            "_universal_consumer",
-            canonical_test_consumer,
-        )
-        system_message_classifier = worker_type._is_system_or_notification_message
-        monkeypatch.setattr(
-            worker_type,
-            "_is_system_or_notification_message",
-            staticmethod(
-                lambda message,
-                *,
-                worker_type=worker_type,
-                classifier=system_message_classifier: (
-                    False
-                    if worker_type._is_calendar_message(message)
-                    else classifier(message)
-                )
-            ),
-        )
 
 
 def fixed_worker_now() -> datetime:
@@ -1547,7 +1286,6 @@ def make_worker(
         now_provider=fixed_worker_now,
         max_task_attempts=max_task_attempts,
         oa_approval_handler=oa_approval_handler,
-        universal_planner=CanonicalRoutingTestPlanner(),
         channel_gates=channel_gates or fixed_channel_gates(),
     )
 
@@ -5847,17 +5585,13 @@ def test_single_chat_rendered_schedule_asks_for_readable_calendar_detail(
     trigger = message("[日程]", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.ASK_CLARIFYING_QUESTION,
-            reply_text="只看到日程卡片，请补充日程详情。",
-            reason="calendar_detail_unreadable",
-        )
+        CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN, reason="不应该调用")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
     assert "只看到日程卡片" in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
@@ -5877,17 +5611,13 @@ def test_non_text_calendar_without_detail_asks_for_readable_calendar_detail(
     trigger = message("日程卡片", single_chat=True, message_type="calendar")
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.ASK_CLARIFYING_QUESTION,
-            reply_text="只看到日程卡片，请补充日程详情。",
-            reason="calendar_detail_unreadable",
-        )
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
     assert "只看到日程卡片" in final_sent(dws)[0][1]
     attempt = worker.store.get_reply_attempt(1)
@@ -6834,17 +6564,13 @@ def test_bare_calendar_card_ignores_sender_pending_invite_changed_too_early(
         "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
     ] = [invite]
     codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.ASK_CLARIFYING_QUESTION,
-            reply_text="只看到日程卡片，请补充日程详情。",
-            reason="calendar_detail_unreadable",
-        )
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
     assert "只看到日程卡片" in final_sent(dws)[0][1]
     assert "过早创建的会议" not in final_sent(dws)[0][1]
@@ -6879,17 +6605,13 @@ def test_bare_calendar_card_does_not_guess_multiple_pending_invites(
         ),
     ]
     codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.ASK_CLARIFYING_QUESTION,
-            reply_text="只看到日程卡片，请补充日程详情。",
-            reason="calendar_detail_unreadable",
-        )
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
     assert "只看到日程卡片" in final_sent(dws)[0][1]
     assert "客户会 A" not in final_sent(dws)[0][1]
@@ -7500,7 +7222,9 @@ def test_calendar_static_review_exposes_minutes_reference_to_agent(
     assert dws.minutes_todo_calls == []
     prompt = codex.calls[0][0]
     assert "不能只接受日历" in prompt
-    assert target_url.split("?", 1)[0] in prompt
+    assert "待读取材料" in prompt
+    assert "类型: dingtalk_minutes" in prompt
+    assert minutes_id in prompt
     signed_reply = "不建议直接推进，建议补充作业后再判断。（by明哥分身）"
     assert dws.calendar_responses == [("invite-1", "accepted")]
     assert dws.doc_comments == []
@@ -7552,6 +7276,8 @@ def test_calendar_document_reference_is_exposed_to_agent_for_reading(
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     assert "不能只接受日历" in prompt
+    assert "待读取材料" in prompt
+    assert "类型: dingtalk_doc" in prompt
     assert doc_url in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
@@ -7870,7 +7596,7 @@ def test_structured_link_card_is_skipped_before_codex(tmp_path: Path, monkeypatc
     assert worker.store.has_seen("msg-1") is True
 
 
-def test_single_chat_alidocs_card_resolves_canonical_material_reference(
+def test_single_chat_alidocs_card_reaches_codex_as_material_reference(
     tmp_path: Path, monkeypatch
 ):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/weekly123?utm_source=im"
@@ -7900,7 +7626,7 @@ def test_single_chat_alidocs_card_resolves_canonical_material_reference(
     worker.run_once()
 
     assert len(codex.calls) == 1
-    assert dws.doc_info_calls == [canonical_doc_url]
+    assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     prompt = codex.calls[0][0]
     assert "待读取材料（由 agent 判断是否读取）:" in prompt
@@ -9302,8 +9028,12 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     worker.run_once()
 
     assert codex.calls == []
-    assert oa_handler.calls == []
-    assert worker.store.get_reply_attempt(1) is None
+    assert len(oa_handler.calls) == 1
+    assert oa_handler.calls[0][3] is False
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "oa_approval"
+    assert attempt.send_status == "dry_run"
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="done") == 0
 
@@ -9716,7 +9446,7 @@ def test_live_send_regenerates_once_when_delivery_text_leaks(
     assert "参考 [1]" not in attempt.final_reply_text
 
 
-def test_dingtalk_material_links_are_resolved_for_canonical_context(
+def test_dingtalk_material_links_are_passed_to_codex_without_worker_reading(
     tmp_path: Path, monkeypatch
 ):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/doc123?utm_source=im"
@@ -9739,7 +9469,7 @@ def test_dingtalk_material_links_are_resolved_for_canonical_context(
 
     worker.run_once()
 
-    assert dws.doc_info_calls == [canonical_doc_url]
+    assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     assert dws.minutes_info_calls == []
     assert len(codex.calls) == 1
@@ -9777,7 +9507,7 @@ def test_lark_doc_link_is_passed_to_codex_as_material_reference(
     assert attempt.send_status == "dry_run"
 
 
-def test_dingtalk_doc_link_is_resolved_for_canonical_context(
+def test_dingtalk_doc_link_is_passed_to_codex_without_worker_read(
     tmp_path: Path, monkeypatch
 ):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/doc123?utm_source=im"
@@ -9791,7 +9521,7 @@ def test_dingtalk_doc_link_is_resolved_for_canonical_context(
 
     worker.run_once()
 
-    assert dws.doc_info_calls == [canonical_doc_url]
+    assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     assert final_sent(dws) == []
     prompt = codex.calls[0][0]
@@ -9804,7 +9534,7 @@ def test_dingtalk_doc_link_is_resolved_for_canonical_context(
     assert attempt.send_status == "dry_run"
 
 
-def test_single_chat_doc_material_no_reply_retries_after_canonical_resolution(
+def test_single_chat_doc_material_no_reply_retries_without_worker_read(
     tmp_path: Path, monkeypatch
 ):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-private?utm_source=im"
@@ -9831,7 +9561,7 @@ def test_single_chat_doc_material_no_reply_retries_after_canonical_resolution(
 
     worker.run_once()
 
-    assert dws.doc_info_calls == [canonical_doc_url]
+    assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     assert len(codex.calls) == 2
     first_prompt = codex.calls[0][0]
@@ -9892,7 +9622,7 @@ def test_single_chat_file_material_no_reply_retries_without_worker_read(
     assert attempt.send_status == "dry_run"
 
 
-def test_single_chat_mixed_minutes_and_doc_material_retries_for_resolved_doc(
+def test_single_chat_mixed_minutes_and_doc_material_retries_for_doc(
     tmp_path: Path, monkeypatch
 ):
     minutes_id = "76327569643331323035353732315f3233333438363436305f30"
@@ -9925,7 +9655,7 @@ def test_single_chat_mixed_minutes_and_doc_material_retries_for_resolved_doc(
     worker.run_once()
 
     assert dws.minutes_info_calls == []
-    assert dws.doc_info_calls == [doc_url]
+    assert dws.doc_info_calls == []
     assert len(codex.calls) == 2
     first_prompt = codex.calls[0][0]
     assert "类型: dingtalk_minutes" in first_prompt
@@ -10003,7 +9733,7 @@ def test_dingtalk_aitable_link_is_passed_to_codex_without_worker_read(
     assert references[0].reference == canonical_url
 
 
-def test_docs_dingtalk_aitable_material_no_reply_retries_after_resolution(
+def test_docs_dingtalk_aitable_material_no_reply_retries_without_worker_read(
     tmp_path: Path, monkeypatch
 ):
     aitable_url = "https://docs.dingtalk.com/i/nodes/base-private?utm_source=im"
@@ -10030,7 +9760,7 @@ def test_docs_dingtalk_aitable_material_no_reply_retries_after_resolution(
 
     worker.run_once()
 
-    assert dws.doc_info_calls == [canonical_url]
+    assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     assert dws.get_aitable_base_calls == []
     assert len(codex.calls) == 2
@@ -10047,7 +9777,7 @@ def test_docs_dingtalk_aitable_material_no_reply_retries_after_resolution(
     assert attempt.send_status == "dry_run"
 
 
-def test_dingtalk_doc_link_in_context_is_resolved_for_canonical_context(
+def test_dingtalk_doc_link_in_context_is_passed_to_codex_without_worker_read(
     tmp_path: Path, monkeypatch
 ):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-in-context?utm_source=im"
@@ -10069,7 +9799,7 @@ def test_dingtalk_doc_link_in_context_is_resolved_for_canonical_context(
 
     worker.run_once()
 
-    assert dws.doc_info_calls == [canonical_doc_url]
+    assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     prompt = codex.calls[0][0]
     assert "待读取材料（由 agent 判断是否读取）:" in prompt
@@ -10573,7 +10303,7 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     assert "resource download unavailable" in image_error.detail
 
 
-def test_dingtalk_doc_read_failure_in_canonical_context_does_not_block_codex(
+def test_dingtalk_doc_read_failure_setup_does_not_block_codex(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -10594,8 +10324,8 @@ def test_dingtalk_doc_read_failure_in_canonical_context_does_not_block_codex(
 
     worker.run_once()
 
-    assert dws.doc_info_calls == [canonical_url]
-    assert dws.read_doc_calls == [canonical_url]
+    assert dws.doc_info_calls == []
+    assert dws.read_doc_calls == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     assert "待读取材料（由 agent 判断是否读取）:" in prompt
@@ -10641,7 +10371,7 @@ def test_minutes_permission_setup_is_passed_to_codex_without_worker_read(
     assert worker.store.list_errors() == []
 
 
-def test_alidocs_permission_failure_is_passed_through_canonical_context(
+def test_alidocs_permission_setup_is_passed_to_codex_without_worker_read(
     tmp_path: Path, monkeypatch
 ):
     url = "https://alidocs.dingtalk.com/i/nodes/XPwkYGxZV3BqnwQ0I3dbwZDlWAgozOKL"
@@ -10658,7 +10388,7 @@ def test_alidocs_permission_failure_is_passed_through_canonical_context(
 
     worker.run_once()
 
-    assert dws.doc_info_calls == [url]
+    assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
@@ -11769,9 +11499,9 @@ def test_rerun_message_looks_up_trigger_by_id_when_recent_context_expired(
 
     assert processed == "msg-1"
     assert dws.recent_message_reads[0] == "cid-1"
-    assert dws.recent_message_reads.count("cid-1") == 3
-    assert dws.unread_message_reads == ["cid-1", "cid-1"]
-    assert dws.messages_by_id_reads == [["msg-1"], ["msg-1"]]
+    assert dws.recent_message_reads.count("cid-1") == 2
+    assert dws.unread_message_reads == ["cid-1"]
+    assert dws.messages_by_id_reads == [["msg-1"]]
     assert len(codex.calls) == 1
     assert final_sent(dws) == [("cid-1", "@周俊杰 改走B方案（by明哥分身）")]
 
