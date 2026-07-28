@@ -6,7 +6,11 @@ from app.agent_context import (
 )
 
 
-def _context(*, materials: tuple[MaterialReference, ...] = ()) -> AgentTaskContext:
+def _context(
+    *,
+    materials: tuple[MaterialReference, ...] = (),
+    trigger_text: str = "请审核这个材料",
+) -> AgentTaskContext:
     return AgentTaskContext(
         task_id=7,
         channel="dingtalk",
@@ -15,7 +19,7 @@ def _context(*, materials: tuple[MaterialReference, ...] = ()) -> AgentTaskConte
         single_chat=False,
         trigger_message_id="mid",
         trigger_sender="ET",
-        trigger_text="请审核这个材料",
+        trigger_text=trigger_text,
         trigger_create_time="2026-07-28 12:00:00",
         messages=(
             AgentContextMessage(
@@ -77,19 +81,45 @@ def test_context_reuses_confirmed_facts_without_reasking():
     assert "预算已经确认" in rendered
 
 
-def test_oa_context_passes_only_raw_ids_and_live_read_commands():
-    context = _context(
+def _oa_context(
+    *,
+    reference: str,
+    read_commands: tuple[str, ...],
+    trigger_text: str = "请审核这个审批",
+) -> AgentTaskContext:
+    return _context(
+        trigger_text=trigger_text,
         materials=(
             MaterialReference(
                 kind="dingtalk_oa",
-                reference="process_instance_id=pid-1; task_id=tid-1",
+                reference=reference,
                 source_message_id="mid",
-                read_commands=(
-                    "dws oa approval detail --instance-id pid-1 --format json",
-                    "dws oa approval task list --instance-id pid-1 --format json",
-                ),
+                read_commands=read_commands,
             ),
         )
+    )
+
+
+def _assert_no_service_oa_resolution_fields(rendered: str) -> None:
+    for field in (
+        "resolved_content",
+        "trusted_target",
+        "applicant_match",
+        "title_match",
+        "form_body",
+        "target_user_id",
+    ):
+        assert field not in rendered
+
+
+def test_oa_complete_form_fields_still_require_live_detail_and_ownership_read():
+    context = _oa_context(
+        reference="process_instance_id=pid-1; task_id=tid-1",
+        read_commands=(
+            "dws oa approval detail --instance-id pid-1 --format json",
+            "dws oa approval task list --instance-id pid-1 --format json",
+        ),
+        trigger_text="申请人 ET；金额 1000；理由 已完整填写；请审核",
     )
 
     rendered = context.render()
@@ -97,38 +127,64 @@ def test_oa_context_passes_only_raw_ids_and_live_read_commands():
     assert "process_instance_id=pid-1" in rendered
     assert "task_id=tid-1" in rendered
     assert "dws oa approval detail" in rendered
+    assert "dws oa approval task list --instance-id pid-1 --format json" in rendered
     assert "query live task ownership" in rendered
     assert "do not select by applicant or title similarity" in rendered
-    assert "form_value" not in rendered.casefold()
-    assert "resolved_content" not in rendered
+    _assert_no_service_oa_resolution_fields(rendered)
 
 
 def test_oa_instance_id_only_still_requires_agent_live_detail_read():
-    rendered = _context(
-        materials=(
-            MaterialReference(
-                kind="dingtalk_oa",
-                reference="process_instance_id=pid-only",
-                source_message_id="mid",
-                read_commands=(
-                    "dws oa approval detail --instance-id pid-only --format json",
-                ),
-            ),
-        )
+    command = "dws oa approval detail --instance-id pid-only --format json"
+    rendered = _oa_context(
+        reference="process_instance_id=pid-only",
+        read_commands=(command,),
     ).render()
 
     assert "process_instance_id=pid-only" in rendered
+    assert command in rendered
     assert "execute the provided read commands" in rendered
     assert "current OA task owner" in rendered
+    _assert_no_service_oa_resolution_fields(rendered)
 
 
-def test_oa_ambiguous_completed_or_foreign_task_forbids_write():
-    rendered = _context().render()
+def test_oa_ambiguous_candidates_require_needs_human_without_write():
+    rendered = _oa_context(
+        reference="pending OA candidates",
+        read_commands=("dws oa approval task list --status pending --format json",),
+    ).render()
 
     assert "multiple OA candidates remain" in rendered
-    assert "already completed" in rendered
-    assert "belongs to another user" in rendered
+    assert "return needs_human" in rendered
     assert "do not execute an approval write" in rendered
+    _assert_no_service_oa_resolution_fields(rendered)
+
+
+def test_oa_completed_task_requires_no_approval_write():
+    rendered = _oa_context(
+        reference="process_instance_id=pid-completed",
+        read_commands=(
+            "dws oa approval detail --instance-id pid-completed --format json",
+        ),
+    ).render()
+
+    assert "already completed" in rendered
+    assert "return no_action" in rendered
+    assert "do not execute an approval write" in rendered
+    _assert_no_service_oa_resolution_fields(rendered)
+
+
+def test_oa_not_current_user_requires_no_approval_write():
+    rendered = _oa_context(
+        reference="process_instance_id=pid-foreign; task_id=tid-foreign",
+        read_commands=(
+            "dws oa approval task list --instance-id pid-foreign --format json",
+        ),
+    ).render()
+
+    assert "belongs to another user" in rendered
+    assert "return needs_human" in rendered
+    assert "do not execute an approval write" in rendered
+    _assert_no_service_oa_resolution_fields(rendered)
 
 
 def test_context_forbids_diagnosis_only_completion_for_execution_requests():

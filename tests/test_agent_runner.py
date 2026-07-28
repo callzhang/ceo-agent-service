@@ -11,6 +11,16 @@ from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.dws_client import DWS_AGENT_CODE_ENV
 
 
+def _developer_instructions(command: list[str]) -> str:
+    for index, value in enumerate(command[:-1]):
+        if value != "-c":
+            continue
+        option = command[index + 1]
+        if option.startswith("developer_instructions="):
+            return option
+    raise AssertionError("developer instructions missing")
+
+
 def _task(store: AutoReplyStore):
     store.enqueue_reply_task(
         channel="dingtalk",
@@ -134,6 +144,29 @@ def test_direct_runner_uses_native_codex_and_never_ignores_user_config(
     assert DWS_AGENT_CODE_ENV not in executor.kwargs[0]["env"]
 
 
+def test_direct_runner_uses_dedicated_direct_agent_instructions(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    executor = RecordingExecutor(_jsonl())
+
+    DirectAgentRunner(store=store, workspace=tmp_path, executor=executor).run(
+        task, _context(task.id)
+    )
+
+    instructions = _developer_instructions(executor.commands[0])
+    assert "Agent owns evidence reads" in instructions
+    assert "direct execution and verification" in instructions
+    assert "Return only one JSON object matching the AgentResult schema" in instructions
+    assert "service-side target assumptions" in instructions
+    assert "authentication login, reset, or logout" in instructions
+    assert "Never expose credentials" in instructions
+    assert "只生成计划" not in instructions
+    assert "system_actions" not in instructions
+    assert "dws_mail_reply" not in instructions
+    assert "service executes actions" not in instructions.casefold()
+
+
 def test_direct_runner_preserves_local_cli_and_codex_environment(
     tmp_path: Path, store: AutoReplyStore, monkeypatch
 ):
@@ -246,6 +279,11 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert "--dangerously-bypass-approvals-and-sandbox" not in executor.commands[0]
     assert "read-only" in executor.prompts[0].casefold()
     assert "external write" in executor.prompts[0].casefold()
+    developer = _developer_instructions(executor.commands[0])
+    assert "Direct Agent" in developer
+    assert "read-only" in developer.casefold()
+    assert "Do not perform any external write" in developer
+    assert "system_actions" not in developer
 
 
 @pytest.mark.parametrize(

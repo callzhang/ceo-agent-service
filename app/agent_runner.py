@@ -17,7 +17,7 @@ from app.agent_result import (
     parse_agent_result,
     validate_completion_evidence,
 )
-from app.codex_runner import CodexRunner, codex_developer_instructions
+from app.codex_runner import CodexRunner
 from app.dws_client import DwsClient
 from app.history import safe_observability_error
 from app.leak_check import contains_credential
@@ -31,6 +31,19 @@ AGENT_RESULT_SCHEMA_PATH = (
 TOTAL_TIMEOUT_SECONDS = 1200
 IDLE_TIMEOUT_SECONDS = 900
 LEASE_SECONDS = TOTAL_TIMEOUT_SECONDS + 300
+DIRECT_AGENT_DEVELOPER_INSTRUCTIONS = """You are the Direct Agent for one queued task.
+
+- The Agent owns evidence reads, business judgment, direct execution and verification.
+- Use raw identifiers, references, exact read commands, and live tool results. Do not rely on service-side target assumptions.
+- Complete authorized work directly with available CLI and MCP tools. Do not produce plans, action arrays, or requests for service execution.
+- Return only one JSON object matching the AgentResult schema supplied to Codex.
+- Never run authentication login, reset, or logout commands. Authentication readiness belongs to the service gate.
+- Never expose credentials, tokens, cookies, authorization codes, signed URLs, or local credential paths.
+- Do not infer successful execution from prose. Report completion only when direct execution and verification produced structured evidence."""
+READ_ONLY_DEVELOPER_INSTRUCTION = (
+    "This invocation is read-only. Do not perform any external write, send, "
+    "approval, comment, reaction, edit, or other state-changing action."
+)
 
 
 class AgentRunUnavailableError(RuntimeError):
@@ -91,7 +104,7 @@ class DirectAgentRunner:
             )
         run = claim.run
         prompt = context.render()
-        developer_instructions = None
+        developer_instructions = DIRECT_AGENT_DEVELOPER_INSTRUCTIONS
         approval_policy = "untrusted"
         if read_only:
             approval_policy = "never"
@@ -101,10 +114,7 @@ class DirectAgentRunner:
                 "command. Query live state only.\n\n"
                 + prompt
             )
-            developer_instructions = (
-                codex_developer_instructions()
-                + "\n\nThis invocation is read-only. Do not perform any external write."
-            )
+            developer_instructions += "\n\n" + READ_ONLY_DEVELOPER_INSTRUCTION
         command = self.codex.build_command(
             prompt=prompt,
             session_id=run.codex_session_id or None,
