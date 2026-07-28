@@ -11,6 +11,20 @@ can restart the whole service.
 Per-conversation read failures are recorded and notified without blocking other
 conversations in the same producer pass.
 
+External dependencies use two retry levels. The call boundary performs a small
+number of immediate retries, then raises a typed external-dependency failure
+instead of flattening it into a generic runtime error. The reply, work-summary,
+and meeting queues preserve that type and schedule a later retry without
+exhausting the business task's attempt limit. This applies to Codex runners and
+to DWS operations that the client has classified as retryable.
+
+Authorization failures remain in the authorization recovery path. Local input,
+target-binding, privacy, schema, and business validation failures remain
+terminal or explicitly blocked. An external write with an unknown result is
+never replayed merely because its transport failed; the service must reconcile
+the existing operation first so retries cannot duplicate a message, approval,
+or other visible side effect.
+
 Short DWS read-path token verification failures are treated like transient read
 failures. The DWS client retries read-only commands such as message reads and
 contact lookups once; if a read still fails with `TOKEN_VERIFIED_FAILED`, the

@@ -22,7 +22,7 @@ from app.codex_runner import (
     memory_connector_config_options,
     passthrough_mcp_server_config_options,
 )
-from app.external_retry import run_external
+from app.external_retry import ExternalDependencyError, run_external
 from app.process_runner import run_process_with_idle_timeout
 
 
@@ -219,6 +219,7 @@ class StructuredCodexRunner:
                 "codex exec",
                 lambda: self.executor(command, prompt, env),
                 max_attempts=3,
+                dependency="codex",
             )
         completed = run_external(
             "codex exec",
@@ -230,12 +231,21 @@ class StructuredCodexRunner:
                 idle_timeout_seconds=self.idle_timeout_seconds,
             ),
             max_attempts=3,
+            dependency="codex",
         )
         if completed.timed_out:
-            raise RuntimeError(completed.timeout_reason or "codex exec timed out")
+            raise ExternalDependencyError(
+                "codex structured agent",
+                RuntimeError(completed.timeout_reason or "codex exec timed out"),
+                dependency="codex",
+            )
         if completed.returncode != 0:
-            raise RuntimeError(
-                _subprocess_failure_reason(completed.stderr, completed.stdout)
+            raise ExternalDependencyError(
+                "codex structured agent",
+                RuntimeError(
+                    _subprocess_failure_reason(completed.stderr, completed.stdout)
+                ),
+                dependency="codex",
             )
         return completed.stdout
 

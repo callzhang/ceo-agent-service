@@ -57,6 +57,10 @@ from app.feedback_policy import (
     requires_feedback_block,
     requires_feedback_reminder,
 )
+from app.external_retry import (
+    ExternalDependencyError,
+    is_external_dependency_error,
+)
 from app.corpus import (
     MEDIA_OR_LINK_PATTERN,
     CorpusRecord,
@@ -5305,6 +5309,26 @@ class DingTalkAutoReplyWorker:
                             conversation=conversation,
                     )
                     continue
+                if is_external_dependency_error(exc):
+                    if (
+                        isinstance(exc, ExternalDependencyError)
+                        and exc.dependency == "codex"
+                    ):
+                        self.store.clear_codex_session(task.conversation_id)
+                    self.store.defer_reply_task(
+                        task.id,
+                        error,
+                        available_at=self._reply_task_retry_available_at(
+                            task.attempts
+                        ),
+                    )
+                    self.store.record_error(
+                        task.conversation_id,
+                        task.trigger_message_id,
+                        "reply_task_external_dependency",
+                        error,
+                    )
+                    continue
                 if error.startswith("codex session locked:"):
                     self.store.defer_reply_task(
                         task.id,
@@ -8964,8 +8988,9 @@ class DingTalkAutoReplyWorker:
             authorization_wait = _is_codex_authorization_wait_reason(send_error)
             if authorization_wait:
                 self.store.clear_codex_session(conversation.open_conversation_id)
-            transient_dependency = send_error.startswith(
-                DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX
+            transient_dependency = (
+                send_error.startswith(DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX)
+                or decision.external_dependency_failed
             )
             self.store.update_reply_attempt(
                 attempt_id,
@@ -8990,6 +9015,12 @@ class DingTalkAutoReplyWorker:
                 raise CodexAuthorizationRequiredError(send_error)
             if critical_info_unavailable and raise_on_delivery_failure:
                 raise CriticalInformationUnavailableError(send_error)
+            if transient_dependency and raise_on_delivery_failure:
+                raise ExternalDependencyError(
+                    "codex reply decision",
+                    RuntimeError(send_error),
+                    dependency="codex",
+                )
             if not raise_on_delivery_failure and not transient_dependency:
                 self._notify(
                     title=f"CEO agent error: {conversation.title}",

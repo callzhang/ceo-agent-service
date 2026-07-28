@@ -59,6 +59,7 @@ class DwsLiveOkrSource:
                 timeout_seconds=self.timeout_seconds,
             ),
             max_attempts=self.max_attempts,
+            dependency="dws",
         )
         if not isinstance(payload, dict):
             raise ValueError("invalid OKR live source payload")
@@ -87,6 +88,7 @@ class DwsAgoalApiOkrSource:
             "dingtalk agoal objective rule periods",
             lambda: self.dws.read_agoal_objective_rule_period_list(objective_rule_id),
             max_attempts=self.max_attempts,
+            dependency="dws",
         )
         period = self._select_period(period_payload, period_label)
         period_id = self._required_string(period, "periodId")
@@ -98,6 +100,7 @@ class DwsAgoalApiOkrSource:
                 period_ids=[period_id],
             ),
             max_attempts=self.max_attempts,
+            dependency="dws",
         )
         objectives = self._extract_list_payload(objectives_payload)
         objective_details = []
@@ -110,6 +113,7 @@ class DwsAgoalApiOkrSource:
                     objective_id
                 ),
                 max_attempts=self.max_attempts,
+                dependency="dws",
             )
             progress = run_external(
                 "dingtalk agoal objective progresses",
@@ -118,6 +122,7 @@ class DwsAgoalApiOkrSource:
                     page_size=self.page_size,
                 ),
                 max_attempts=self.max_attempts,
+                dependency="dws",
             )
             objective_details.append(
                 {"objectiveId": objective_id, "payload": self._unwrap_content(detail)}
@@ -335,6 +340,7 @@ class DwsAgoalApiOkrSource:
             "dingtalk agoal objective rules",
             self.dws.read_agoal_objective_rule_list,
             max_attempts=self.max_attempts,
+            dependency="dws",
         )
         rules = self._extract_list_payload(rules_payload)
         candidates = [

@@ -50,7 +50,11 @@ def append_signature(text: str) -> str:
     return f"{stripped}{SIGNATURE}"
 
 
-def error_agent_envelope_json(reason: str) -> str:
+def error_agent_envelope_json(
+    reason: str,
+    *,
+    external_dependency_failed: bool = False,
+) -> str:
     return json.dumps(
         {
             "kind": "error",
@@ -60,7 +64,11 @@ def error_agent_envelope_json(reason: str) -> str:
                 "sensitivity_kind": "general",
             },
             "system_actions": [],
-            "domain_payload": {},
+            "domain_payload": (
+                {"external_dependency_failed": True}
+                if external_dependency_failed
+                else {}
+            ),
             "audit": {"summary": reason, "documents": [], "confidence": 0},
         },
         ensure_ascii=False,
@@ -76,6 +84,9 @@ def codex_decision_from_envelope(envelope: Any) -> CodexDecision:
             action=CodexAction.STOP_WITH_ERROR,
             reason=parsed.audit.summary,
             audit_summary=parsed.audit.summary,
+            external_dependency_failed=bool(
+                parsed.domain_payload.get("external_dependency_failed", False)
+            ),
         )
     if parsed.user_response.mode == UserResponseMode.NO_REPLY:
         action = CodexAction.NO_REPLY
@@ -761,6 +772,7 @@ class CodexDecisionRunner:
                 action=CodexAction.STOP_WITH_ERROR,
                 reason=reason,
                 audit_summary=reason,
+                external_dependency_failed=True,
             )
         return decision
 
@@ -856,7 +868,8 @@ class CodexDecisionRunner:
             stop_error = error_agent_envelope_json(
                 completed.timeout_reason
                 if completed.timeout_kind == "idle"
-                else f"{CODEX_TIMEOUT_REASON_PREFIX} {self.timeout_seconds} seconds"
+                else f"{CODEX_TIMEOUT_REASON_PREFIX} {self.timeout_seconds} seconds",
+                external_dependency_failed=True,
             )
             if stdout:
                 return f"{stdout}\n{stop_error}"
@@ -870,7 +883,10 @@ class CodexDecisionRunner:
                 except (json.JSONDecodeError, ValidationError):
                     pass
             reason = _subprocess_failure_reason(completed.stderr, stdout)
-            stop_error = error_agent_envelope_json(reason)
+            stop_error = error_agent_envelope_json(
+                reason,
+                external_dependency_failed=True,
+            )
             if stdout:
                 return f"{stdout}\n{stop_error}"
             return stop_error

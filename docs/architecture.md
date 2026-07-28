@@ -63,6 +63,17 @@ DWS 是按操作使用的外部依赖，不是整个服务的启动或运行闸�
 - Memory MCP 为 deferred tool 时，service-owned 子 Codex 可先用 `tool_search` 加载 `memory_connector.memory_write`；审计忽略这一步只读发现，但仍要求最终恰好一个参数完全匹配的 memory_write。已发起工具调用但明确返回后端错误时，记录为可恢复 `blocked`；只有缺少工具回执、无法确认是否写入时才使用 `unknown`。
 - 失败不能伪装为空结果或成功；任务状态、attempt 和错误原因仍必须落库，供恢复和审计使用。
 
+### 外部依赖重试契约
+
+外部依赖失败使用两层恢复，不消耗业务任务的终态尝试次数：
+
+1. 调用层先执行有限次数的短退避重试。`app.external_retry` 在重试耗尽后保留 `ExternalDependencyError` 类型；DWS 在 `DwsError.retryable_external_dependency` 上保留同等信息。
+2. 队列层根据错误类型把 `reply_tasks` 恢复为 `pending`、把 `work_summary_inputs` 保持为 `pending`、把会议分析任务保持为 `retry`，并安排下一次退避。队列不再通过外部服务错误文案判断是否可恢复。
+
+Codex planner、task agent、meeting agent、structured agent，以及允许自动重试的 DWS 只读/幂等命令都必须遵守该契约。权限缺失继续进入授权流程；业务输入、目标绑定、脱敏和 schema 校验失败继续使用终态失败或明确 blocked。
+
+已经发起外部写操作但无法确认结果时，不适用自动重放。该状态必须保持 `unknown` 或隔离失败，先用回执、任务 ID 或查询接口核对；只有确认上次操作失败后才能重新执行，避免重复回复、重复审批或重复写入。
+
 ## 顶层数据流
 
 ```text

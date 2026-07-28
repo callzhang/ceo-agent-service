@@ -10,6 +10,7 @@ from app.dws_client import (
     DwsError,
     DwsUserProfile,
 )
+from app.external_retry import ExternalDependencyError
 from app.meeting_alignment import (
     consume_meeting_alignment_jobs,
     produce_meeting_alignment_jobs,
@@ -790,6 +791,40 @@ def test_consumer_retries_invalid_model_decision(tmp_path):
     assert run.status == "retry"
     assert json.loads(run.error)["kind"] == "meeting_agent"
     assert dws.send_calls == []
+
+
+def test_consumer_keeps_external_agent_failure_retryable_after_limit(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class ExternalFailureRunner:
+        last_session_id = "meeting-external-failure"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str):
+            raise ExternalDependencyError(
+                "codex meeting alignment",
+                RuntimeError("provider temporarily unavailable"),
+                dependency="codex",
+            )
+
+    assert consume_meeting_alignment_jobs(
+        store,
+        dws,
+        ExternalFailureRunner(),
+        now=NOW,
+        limit=1,
+        max_attempts=1,
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.available_at == (NOW + timedelta(minutes=1)).isoformat()
+    [run] = store.list_meeting_alignment_runs(job_id)
+    assert run.status == "retry"
 
 
 def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):

@@ -3137,6 +3137,7 @@ def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
 
 
 def test_task_agent_codex_runner_timeout_raises_reason(tmp_path):
+    from app.external_retry import ExternalDependencyError
     from app.task_agent import TaskAgentCodexRunner
 
     def fake_run(command, **kwargs):
@@ -3152,5 +3153,5 @@ def test_task_agent_codex_runner_timeout_raises_reason(tmp_path):
     runner = TaskAgentCodexRunner(workspace=tmp_path)
     runner._run_process_with_idle_timeout = fake_run
 
-    with pytest.raises(RuntimeError, match="no output for 3 seconds"):
+    with pytest.raises(ExternalDependencyError, match="no output for 3 seconds"):
         runner.decide(prompt="decide")

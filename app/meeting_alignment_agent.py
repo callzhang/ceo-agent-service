@@ -4,7 +4,9 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
+from app.codex_runner import CodexRunner
 from app.config import work_profile_path
+from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import MeetingAlignmentDecision, MeetingSource
 from app.prompt import work_profile_instruction
 from app.store import CodexSessionSearchResult
@@ -74,7 +76,6 @@ class MeetingAlignmentCodexRunner:
             count_codex_session_lines,
             extract_codex_audit_events_from_session,
         )
-        from app.codex_runner import CodexRunner
         from app.process_runner import run_process_with_idle_timeout
 
         self.workspace = workspace
@@ -153,14 +154,23 @@ class MeetingAlignmentCodexRunner:
             idle_timeout_seconds=self.idle_timeout_seconds,
         )
         if completed.timed_out:
-            raise RuntimeError(
-                completed.timeout_reason or "meeting alignment codex timed out"
+            raise ExternalDependencyError(
+                "codex meeting alignment",
+                RuntimeError(
+                    completed.timeout_reason or "meeting alignment codex timed out"
+                ),
+                dependency="codex",
             )
         if completed.returncode != 0:
-            raise RuntimeError(
-                self._subprocess_failure_reason(
-                    completed.stderr, completed.stdout
-                )
+            raise ExternalDependencyError(
+                "codex meeting alignment",
+                RuntimeError(
+                    self._subprocess_failure_reason(
+                        completed.stderr,
+                        completed.stdout,
+                    )
+                ),
+                dependency="codex",
             )
         return completed.stdout
 

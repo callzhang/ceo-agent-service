@@ -68,6 +68,7 @@ from app.feedback_policy import (
     requires_feedback_block,
     requires_feedback_reminder,
 )
+from app.external_retry import is_external_dependency_error
 from app.leak_check import contains_forbidden_leak
 from app.message_split import split_dingtalk_text
 from app.dingtalk_models import CodexAction, DingTalkConversation, DingTalkMessage
@@ -939,7 +940,7 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         except Exception as exc:
             raw_error = str(exc)
             error = _normalize_codex_stop_error_reason(raw_error)
-            if _should_retry_work_summary_input(raw_error, work_input.attempts):
+            if _should_retry_work_summary_input(exc, work_input.attempts):
                 store.schedule_work_summary_input_retry(
                     work_input.id,
                     error,
@@ -956,13 +957,16 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     return processed
 
 
-def _should_retry_work_summary_input(error: str, attempts: int) -> bool:
-    normalized_error = _normalize_codex_stop_error_reason(error)
+def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> bool:
+    if isinstance(error, Exception) and is_external_dependency_error(error):
+        return True
+    error_text = str(error)
+    normalized_error = _normalize_codex_stop_error_reason(error_text)
     if _is_codex_authorization_wait_reason(normalized_error):
         return True
     if attempts >= WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS:
         return False
-    normalized = error.lower()
+    normalized = error_text.lower()
     return any(marker in normalized for marker in WORK_SUMMARY_TRANSIENT_ERROR_MARKERS)
 
 

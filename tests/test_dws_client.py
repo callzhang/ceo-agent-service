@@ -26,6 +26,7 @@ from app.dws_client import (
     DwsMinutesPermissionRequest,
     DwsOaApprovalCandidate,
 )
+from app.external_retry import is_external_dependency_error
 
 TEST_LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -5257,6 +5258,28 @@ def test_run_json_uses_configured_retry_count_and_linear_backoff(monkeypatch):
         ["dws", "probe"],
     ]
     assert sleeps == [0.25, 0.5, 0.75]
+
+
+def test_run_json_preserves_retryable_external_failure_after_local_retries(
+    monkeypatch,
+):
+    calls = []
+    timeout_payload = '{"error":{"category":"discovery","code":6}}'
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        calls.append(command)
+        return SimpleNamespace(returncode=6, stdout="", stderr=timeout_payload)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError, match="exit code 6") as excinfo:
+        DwsClient(transient_retry_attempts=1).run_json(
+            ["dws", "chat", "message", "list"]
+        )
+
+    assert is_external_dependency_error(excinfo.value)
+    assert len(calls) == 3
 
 
 def test_run_json_error_includes_sanitized_command_and_output_previews(monkeypatch):

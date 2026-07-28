@@ -110,6 +110,7 @@ class DwsError(RuntimeError):
         code: str | None = None,
         *,
         required_scopes: list[str] | tuple[str, ...] = (),
+        retryable_external_dependency: bool = False,
     ):
         super().__init__(message)
         self.code = code
@@ -118,6 +119,7 @@ class DwsError(RuntimeError):
             for scope in required_scopes
             if isinstance(scope, str) and scope.strip()
         )
+        self.retryable_external_dependency = retryable_external_dependency
 
     @property
     def needs_authorization(self) -> bool:
@@ -3236,9 +3238,11 @@ class DwsClient:
                     attempt_index += 1
                     remaining_retries -= 1
                     continue
-                raise DwsError(
-                    f"dws command timed out after {command_timeout_seconds} seconds"
-                ) from exc
+                error = DwsError(
+                    f"dws command timed out after {command_timeout_seconds} seconds",
+                    retryable_external_dependency=automatic_retry_allowed,
+                )
+                raise error from exc
             if result.returncode == 0:
                 break
             code = (
@@ -3246,24 +3250,26 @@ class DwsClient:
                 or self._error_code(result.stdout)
                 or self._process_error_code(result.returncode)
             )
-            if (
-                automatic_retry_allowed
-                and self._is_retryable_error(command, code)
-                and remaining_retries > 0
-            ):
+            retryable_error = automatic_retry_allowed and self._is_retryable_error(
+                command,
+                code,
+            )
+            if retryable_error and remaining_retries > 0:
                 if code in self.DISCOVERY_CACHE_REFRESH_CODES:
                     self._refresh_cache()
                 self._sleep_before_retry(attempt_index)
                 attempt_index += 1
                 remaining_retries -= 1
                 continue
-            raise DwsError(
+            error = DwsError(
                 self._format_command_error(command, result, code),
                 code=code,
                 required_scopes=self._pat_required_scopes(
                     result.stderr, result.stdout
                 ),
+                retryable_external_dependency=retryable_error,
             )
+            raise error
         return self._json_from_mixed_stdout(result.stdout)
 
     def run_text(
@@ -3293,9 +3299,11 @@ class DwsClient:
                     attempt_index += 1
                     remaining_retries -= 1
                     continue
-                raise DwsError(
-                    f"dws command timed out after {command_timeout_seconds} seconds"
-                ) from exc
+                error = DwsError(
+                    f"dws command timed out after {command_timeout_seconds} seconds",
+                    retryable_external_dependency=retry_allowed,
+                )
+                raise error from exc
             if result.returncode == 0:
                 return result.stdout.strip()
             code = (
@@ -3303,22 +3311,24 @@ class DwsClient:
                 or self._error_code(result.stdout)
                 or self._process_error_code(result.returncode)
             )
-            if (
-                retry_allowed
-                and self._is_retryable_error(command, code)
-                and remaining_retries > 0
-            ):
+            retryable_error = retry_allowed and self._is_retryable_error(
+                command,
+                code,
+            )
+            if retryable_error and remaining_retries > 0:
                 self._sleep_before_retry(attempt_index)
                 attempt_index += 1
                 remaining_retries -= 1
                 continue
-            raise DwsError(
+            error = DwsError(
                 self._format_command_error(command, result, code),
                 code=code,
                 required_scopes=self._pat_required_scopes(
                     result.stderr, result.stdout
                 ),
+                retryable_external_dependency=retryable_error,
             )
+            raise error
 
     @classmethod
     def _cli_environment(cls) -> dict[str, str]:

@@ -506,6 +506,7 @@ def test_plan_stops_after_one_invalid_repair_attempt(tmp_path):
 
 
 def test_plan_raises_clear_timeout_and_nonzero_process_errors(tmp_path):
+    from app.external_retry import ExternalDependencyError
     from app.universal_planner import UniversalPlanner
 
     planner = UniversalPlanner(workspace=tmp_path)
@@ -522,7 +523,7 @@ def test_plan_raises_clear_timeout_and_nonzero_process_errors(tmp_path):
         )
 
     planner._run_process_with_idle_timeout = timeout_runner
-    with pytest.raises(RuntimeError, match="no output for 900 seconds"):
+    with pytest.raises(ExternalDependencyError, match="no output for 900 seconds"):
         planner.plan(_context())
     assert calls[0][1]["total_timeout_seconds"] == 1200
     assert calls[0][1]["idle_timeout_seconds"] >= 900
@@ -532,7 +533,7 @@ def test_plan_raises_clear_timeout_and_nonzero_process_errors(tmp_path):
         stdout="",
         stderr="codex command failed",
     )
-    with pytest.raises(RuntimeError, match="codex command failed"):
+    with pytest.raises(ExternalDependencyError, match="codex command failed"):
         planner.plan(_context())
 
 

@@ -7,6 +7,35 @@ from typing import TypeVar
 T = TypeVar("T")
 
 
+class ExternalDependencyError(RuntimeError):
+    """An external operation stayed unavailable after its immediate retries."""
+
+    def __init__(
+        self,
+        operation: str,
+        cause: Exception,
+        *,
+        dependency: str = "",
+    ):
+        self.operation = operation
+        self.original_error = cause
+        self.dependency = dependency
+        super().__init__(str(cause) or cause.__class__.__name__)
+
+
+def is_external_dependency_error(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        if isinstance(current, ExternalDependencyError) or bool(
+            getattr(current, "retryable_external_dependency", False)
+        ):
+            return True
+        visited.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
 @dataclass(frozen=True)
 class ExternalAttempt:
     operation: str
@@ -22,6 +51,7 @@ def run_external(
     max_attempts: int = 3,
     delay_seconds: float = 1.0,
     backoff_multiplier: float = 2.0,
+    dependency: str = "",
     sleep: Callable[[float], None] = time.sleep,
     on_failure: Callable[[ExternalAttempt], None] | None = None,
 ) -> T:
@@ -42,6 +72,10 @@ def run_external(
             if on_failure is not None:
                 on_failure(failure)
             if attempt == max_attempts:
-                raise
+                raise ExternalDependencyError(
+                    operation,
+                    exc,
+                    dependency=dependency,
+                ) from exc
             sleep(delay_seconds * (backoff_multiplier ** (attempt - 1)))
     raise AssertionError("unreachable retry loop exit")

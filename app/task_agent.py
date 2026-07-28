@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from app.store import AutoReplyStore, RecentFollowUpCandidate
 from app.codex_runner import memory_connector_config_issue
+from app.external_retry import ExternalDependencyError
 from app.task_models import (
     FollowUpDraftChange,
     FollowUpDraftDecision,
@@ -199,10 +200,23 @@ class TaskAgentCodexRunner:
             idle_timeout_seconds=self.idle_timeout_seconds,
         )
         if completed.timed_out:
-            raise RuntimeError(completed.timeout_reason or "task agent codex timed out")
+            raise ExternalDependencyError(
+                "codex task agent",
+                RuntimeError(
+                    completed.timeout_reason or "task agent codex timed out"
+                ),
+                dependency="codex",
+            )
         if completed.returncode != 0:
-            raise RuntimeError(
-                self._subprocess_failure_reason(completed.stderr, completed.stdout)
+            raise ExternalDependencyError(
+                "codex task agent",
+                RuntimeError(
+                    self._subprocess_failure_reason(
+                        completed.stderr,
+                        completed.stdout,
+                    )
+                ),
+                dependency="codex",
             )
         return completed.stdout
 

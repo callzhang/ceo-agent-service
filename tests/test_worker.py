@@ -32,6 +32,7 @@ from app.dws_client import (
     DwsUserProfile,
 )
 from app.feedback_spike import FeedbackReplyText
+from app.external_retry import ExternalDependencyError
 from app.oa_approval import OaApprovalResult
 from app.store import AutoReplyStore
 from app.worker import (
@@ -946,11 +947,13 @@ class FakeCodex:
 class FailingUniversalPlanner:
     last_session_id = None
 
-    def __init__(self, error: str):
+    def __init__(self, error: str | Exception):
         self.error = error
 
     def plan(self, _context, session_id=None):
         del session_id
+        if isinstance(self.error, Exception):
+            raise self.error
         raise RuntimeError(self.error)
 
 
@@ -5137,6 +5140,48 @@ def test_consume_once_codex_provider_transport_failure_waits_for_recovery(
         notification["title"]
         == "CEO task waiting for Codex provider recovery: Friday"
         for notification in notifications
+    )
+
+
+def test_consume_once_external_dependency_does_not_exhaust_business_attempts(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    worker._injected_universal_planner = FailingUniversalPlanner(
+        ExternalDependencyError(
+            "codex universal planner",
+            RuntimeError("remote context compaction unavailable"),
+            dependency="codex",
+        )
+    )
+    worker.store.upsert_conversation(
+        "cid-1",
+        "Friday",
+        False,
+        "full-codex-session",
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    task = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    assert task.attempts == 0
+    assert task.error == "remote context compaction unavailable"
+    assert worker.store.get_codex_session_id("cid-1") is None
+    assert worker.store.list_errors(limit=1)[0].kind == (
+        "reply_task_external_dependency"
     )
 
 

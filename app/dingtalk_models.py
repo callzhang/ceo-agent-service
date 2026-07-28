@@ -99,3 +99,4 @@ class CodexDecision(BaseModel):
     system_actions: list[dict] = Field(default_factory=list)
     audit_documents: list[dict[str, str]] = Field(default_factory=list)
     audit_summary: str = ""
+    external_dependency_failed: bool = False

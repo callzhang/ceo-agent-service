@@ -1159,6 +1159,7 @@ def test_subprocess_timeout_returns_stop_with_error(tmp_path: Path, monkeypatch)
 
     assert decision.action == CodexAction.STOP_WITH_ERROR
     assert "timed out" in decision.reason
+    assert decision.external_dependency_failed is True
 
 
 def test_subprocess_idle_timeout_returns_stop_with_error(tmp_path: Path, monkeypatch):

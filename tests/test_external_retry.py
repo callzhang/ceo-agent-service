@@ -1,6 +1,6 @@
 import pytest
 
-from app.external_retry import ExternalAttempt, run_external
+from app.external_retry import ExternalAttempt, ExternalDependencyError, run_external
 
 
 def test_run_external_retries_then_returns_value():
@@ -31,23 +31,27 @@ def test_run_external_retries_then_returns_value():
     assert "transient 1" in failures[0].error
 
 
-def test_run_external_reraises_final_error_after_max_attempts():
+def test_run_external_preserves_external_dependency_after_max_attempts():
     failures: list[ExternalAttempt] = []
 
     def operation():
         raise RuntimeError("still down")
 
-    with pytest.raises(RuntimeError, match="still down"):
+    with pytest.raises(ExternalDependencyError, match="still down") as excinfo:
         run_external(
             "codex exec",
             operation,
             max_attempts=2,
             delay_seconds=0,
+            dependency="codex",
             sleep=lambda seconds: None,
             on_failure=failures.append,
         )
 
     assert [failure.attempt for failure in failures] == [1, 2]
+    assert excinfo.value.operation == "codex exec"
+    assert excinfo.value.dependency == "codex"
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
 
 
 def test_run_external_rejects_invalid_attempt_count():

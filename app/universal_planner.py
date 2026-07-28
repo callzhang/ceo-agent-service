@@ -16,6 +16,7 @@ from app.codex_runner import (
     memory_connector_config_options,
     passthrough_mcp_server_config_options,
 )
+from app.external_retry import ExternalDependencyError
 from app.process_runner import run_process_with_idle_timeout
 from app.task_retrieval import tokenize
 from app.universal_context import UniversalTaskContext
@@ -296,11 +297,19 @@ class UniversalPlanner:
         raw = completed.stdout
         self._remember_output(raw)
         if completed.timed_out:
-            raise RuntimeError(
-                completed.timeout_reason or "universal planner codex timed out"
+            raise ExternalDependencyError(
+                "codex universal planner",
+                RuntimeError(
+                    completed.timeout_reason or "universal planner codex timed out"
+                ),
+                dependency="codex",
             )
         if completed.returncode != 0:
-            raise RuntimeError(_subprocess_failure_reason(completed.stderr, raw))
+            raise ExternalDependencyError(
+                "codex universal planner",
+                RuntimeError(_subprocess_failure_reason(completed.stderr, raw)),
+                dependency="codex",
+            )
         return raw
 
     def _remember_output(self, raw: str) -> None:

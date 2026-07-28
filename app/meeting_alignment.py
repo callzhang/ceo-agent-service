@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from app.config import principal_display_name
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
+from app.external_retry import is_external_dependency_error
 from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
     MeetingAlignmentTargetError,
@@ -607,6 +608,7 @@ def _analyze_meeting_job(
             now=now,
             retry_delay=retry_delay,
             max_attempts=max_attempts,
+            external_dependency=isinstance(exc, DwsError),
         )
         return
     except Exception as exc:
@@ -656,7 +658,14 @@ def _analyze_meeting_job(
             runner,
             job_id=job.id,
             decision=None,
-            status="retry" if job.attempts < max_attempts else "failed",
+            status=(
+                "retry"
+                if (
+                    job.attempts < max_attempts
+                    or is_external_dependency_error(exc)
+                )
+                else "failed"
+            ),
             error=error,
         )
         _retry_or_fail(
@@ -667,6 +676,7 @@ def _analyze_meeting_job(
             now=now,
             retry_delay=retry_delay,
             max_attempts=max_attempts,
+            external_dependency=is_external_dependency_error(exc),
         )
         return
     except Exception as exc:
@@ -806,6 +816,7 @@ def _deliver_meeting_job(
             now=now,
             retry_delay=retry_delay,
             max_attempts=max_attempts,
+            external_dependency=isinstance(exc, DwsError),
         )
         return
     except Exception as exc:
@@ -1036,9 +1047,10 @@ def _retry_or_fail(
     retry_delay: timedelta,
     max_attempts: int,
     extra_values: dict[str, object] | None = None,
+    external_dependency: bool = False,
 ) -> None:
     error = _error_json(kind, str(exc))
-    if job.attempts >= max_attempts:
+    if job.attempts >= max_attempts and not external_dependency:
         store.update_meeting_alignment_job(
             job.id,
             status="failed",
