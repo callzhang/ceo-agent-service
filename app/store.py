@@ -2,7 +2,7 @@ import json
 import hashlib
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -353,6 +353,32 @@ class ReplyTask(BaseModel):
     updated_at: str
 
 
+class AgentRun(BaseModel):
+    id: int
+    reply_task_id: int
+    execution_generation: str
+    status: str
+    codex_session_id: str = ""
+    transcript_start_line: int = 0
+    transcript_end_line: int = 0
+    final_result_json: str = ""
+    structured_error_json: str = ""
+    tool_events: list[dict[str, object]] = Field(default_factory=list)
+    side_effect_state: str = "none"
+    lease_owner: str = ""
+    lease_expires_at: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class AgentRunClaim:
+    run: AgentRun
+    claimed: bool
+
+
 class OkrReviewRequest(BaseModel):
     id: int
     conversation_id: str
@@ -426,6 +452,43 @@ def _embedding_score(
     if not left_norm or not right_norm:
         return 0.0
     return dot / (left_norm * right_norm)
+
+
+def _utc_store_time(now: str | datetime | None = None) -> tuple[datetime, str]:
+    if now is None:
+        value = datetime.now(timezone.utc)
+    elif isinstance(now, datetime):
+        value = now
+    elif isinstance(now, str) and now.strip():
+        try:
+            value = datetime.fromisoformat(now.strip().replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("now must be an ISO timestamp") from exc
+    else:
+        raise ValueError("now must be an ISO timestamp or datetime")
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    value = value.replace(microsecond=0)
+    return value, value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _json_object_text(value: object, *, field: str) -> str:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be a JSON object")
+    try:
+        text = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be a JSON object") from exc
+    if not isinstance(json.loads(text), dict):
+        raise ValueError(f"{field} must be a JSON object")
+    return text
 
 
 class AutoReplyStore:
@@ -636,6 +699,33 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_reply_tasks_status
                     on reply_tasks(status, id);
+                create table if not exists agent_runs (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null,
+                    execution_generation text not null,
+                    status text not null default 'pending'
+                        check(status in (
+                            'pending', 'running', 'completed', 'failed', 'unknown'
+                        )),
+                    codex_session_id text not null default '',
+                    transcript_start_line integer not null default 0,
+                    transcript_end_line integer not null default 0,
+                    final_result_json text not null default '',
+                    structured_error_json text not null default '',
+                    tool_events_json text not null default '[]',
+                    side_effect_state text not null default 'none'
+                        check(side_effect_state in ('none', 'confirmed', 'unknown')),
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    started_at text not null default '',
+                    completed_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(reply_task_id, execution_generation),
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                create index if not exists idx_agent_runs_status
+                    on agent_runs(status, updated_at);
                 create table if not exists universal_plan_executions (
                     execution_scope_id text primary key,
                     reply_task_id integer not null,
@@ -1489,6 +1579,36 @@ class AutoReplyStore:
             attempts=row["attempts"],
             locked_at=row["locked_at"],
             error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _agent_run_from_row(row: sqlite3.Row) -> AgentRun:
+        try:
+            tool_events = json.loads(row["tool_events_json"])
+        except json.JSONDecodeError as exc:
+            raise ValueError("agent run tool events are not valid JSON") from exc
+        if not isinstance(tool_events, list) or any(
+            not isinstance(event, dict) for event in tool_events
+        ):
+            raise ValueError("agent run tool events must be JSON objects")
+        return AgentRun(
+            id=row["id"],
+            reply_task_id=row["reply_task_id"],
+            execution_generation=row["execution_generation"],
+            status=row["status"],
+            codex_session_id=row["codex_session_id"],
+            transcript_start_line=row["transcript_start_line"],
+            transcript_end_line=row["transcript_end_line"],
+            final_result_json=row["final_result_json"],
+            structured_error_json=row["structured_error_json"],
+            tool_events=tool_events,
+            side_effect_state=row["side_effect_state"],
+            lease_owner=row["lease_owner"],
+            lease_expires_at=row["lease_expires_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -2459,6 +2579,397 @@ class AutoReplyStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError("universal action execution must be started")
+
+    def get_agent_run(self, run_id: int) -> AgentRun | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(row) if row is not None else None
+
+    def get_agent_run_for_task_generation(
+        self,
+        reply_task_id: int,
+        execution_generation: str,
+    ) -> AgentRun | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select *
+                from agent_runs
+                where reply_task_id=? and execution_generation=?
+                """,
+                (reply_task_id, execution_generation),
+            ).fetchone()
+            return self._agent_run_from_row(row) if row is not None else None
+
+    def claim_agent_run(
+        self,
+        reply_task_id: int,
+        execution_generation: str,
+        *,
+        owner: str,
+        lease_seconds: int = 1800,
+        now: str | datetime | None = None,
+    ) -> AgentRunClaim:
+        if not execution_generation.strip():
+            raise ValueError("execution_generation must be non-empty")
+        if not owner.strip():
+            raise ValueError("owner must be non-empty")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        now_value, now_text = _utc_store_time(now)
+        lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            task = db.execute(
+                "select execution_generation from reply_tasks where id=?",
+                (reply_task_id,),
+            ).fetchone()
+            if task is None:
+                raise ValueError("reply task does not exist")
+            if task["execution_generation"] != execution_generation:
+                raise ValueError("reply task execution generation mismatch")
+            cursor = db.execute(
+                """
+                insert or ignore into agent_runs (
+                    reply_task_id, execution_generation, status,
+                    lease_owner, lease_expires_at, started_at,
+                    created_at, updated_at
+                ) values (?, ?, 'running', ?, ?, ?, ?, ?)
+                """,
+                (
+                    reply_task_id,
+                    execution_generation,
+                    owner,
+                    lease_expires_at,
+                    now_text,
+                    now_text,
+                    now_text,
+                ),
+            )
+            claimed = cursor.rowcount == 1
+            row = db.execute(
+                """
+                select *
+                from agent_runs
+                where reply_task_id=? and execution_generation=?
+                """,
+                (reply_task_id, execution_generation),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("agent run claim did not create a row")
+            if (
+                not claimed
+                and row["status"] == "running"
+                and row["lease_expires_at"] <= now_text
+            ):
+                reclaimed = db.execute(
+                    """
+                    update agent_runs
+                    set lease_owner=?, lease_expires_at=?, updated_at=?
+                    where id=? and status='running' and lease_expires_at<=?
+                    """,
+                    (owner, lease_expires_at, now_text, row["id"], now_text),
+                )
+                claimed = reclaimed.rowcount == 1
+                row = db.execute(
+                    "select * from agent_runs where id=?",
+                    (row["id"],),
+                ).fetchone()
+            return AgentRunClaim(run=self._agent_run_from_row(row), claimed=claimed)
+
+    def renew_agent_run_lease(
+        self,
+        run_id: int,
+        *,
+        owner: str,
+        lease_seconds: int = 1800,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        if not owner.strip():
+            raise ValueError("owner must be non-empty")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        now_value, now_text = _utc_store_time(now)
+        lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("agent run does not exist")
+            if row["status"] != "running":
+                raise ValueError("agent run lease requires running status")
+            if row["lease_owner"] != owner:
+                raise ValueError("agent run lease owner mismatch")
+            db.execute(
+                """
+                update agent_runs
+                set lease_expires_at=?, updated_at=?
+                where id=?
+                """,
+                (lease_expires_at, now_text, run_id),
+            )
+            updated = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(updated)
+
+    def set_agent_run_session(
+        self,
+        run_id: int,
+        codex_session_id: str,
+        *,
+        transcript_start_line: int = 0,
+    ) -> AgentRun:
+        if not codex_session_id.strip():
+            raise ValueError("codex_session_id must be non-empty")
+        if transcript_start_line < 0:
+            raise ValueError("transcript_start_line must not be negative")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("agent run does not exist")
+            if row["status"] != "running":
+                raise ValueError("agent run session requires running status")
+            if row["codex_session_id"]:
+                if row["codex_session_id"] != codex_session_id:
+                    raise ValueError("agent run session cannot be replaced")
+                return self._agent_run_from_row(row)
+            db.execute(
+                """
+                update agent_runs
+                set codex_session_id=?,
+                    transcript_start_line=?,
+                    transcript_end_line=max(transcript_end_line, ?),
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (
+                    codex_session_id,
+                    transcript_start_line,
+                    transcript_start_line,
+                    run_id,
+                ),
+            )
+            updated = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(updated)
+
+    def append_agent_run_event(
+        self,
+        run_id: int,
+        event: dict[str, object],
+    ) -> AgentRun:
+        event_text = _json_object_text(event, field="event")
+        normalized_event = json.loads(event_text)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("agent run does not exist")
+            if row["status"] not in {"running", "unknown"}:
+                raise ValueError("cannot append event to terminal agent run")
+            try:
+                events = json.loads(row["tool_events_json"])
+            except json.JSONDecodeError as exc:
+                raise ValueError("agent run tool events are not valid JSON") from exc
+            if not isinstance(events, list) or any(
+                not isinstance(item, dict) for item in events
+            ):
+                raise ValueError("agent run tool events must be JSON objects")
+            events.append(normalized_event)
+            db.execute(
+                """
+                update agent_runs
+                set tool_events_json=?,
+                    transcript_end_line=transcript_end_line + 1,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (json.dumps(events, ensure_ascii=False, separators=(",", ":")), run_id),
+            )
+            updated = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(updated)
+
+    def _transition_agent_run(
+        self,
+        run_id: int,
+        *,
+        target_status: str,
+        final_result_json: str,
+        structured_error_json: str,
+        side_effect_state: str,
+        transcript_end_line: int | None,
+        now: str | datetime | None,
+    ) -> AgentRun:
+        if side_effect_state not in {"none", "confirmed", "unknown"}:
+            raise ValueError("invalid side_effect_state")
+        if transcript_end_line is not None and transcript_end_line < 0:
+            raise ValueError("transcript_end_line must not be negative")
+        _, now_text = _utc_store_time(now)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("agent run does not exist")
+            end_line = (
+                row["transcript_end_line"]
+                if transcript_end_line is None
+                else transcript_end_line
+            )
+            exact_terminal_write = (
+                row["status"] == target_status
+                and row["final_result_json"] == final_result_json
+                and row["structured_error_json"] == structured_error_json
+                and row["side_effect_state"] == side_effect_state
+                and row["transcript_end_line"] == end_line
+            )
+            if exact_terminal_write:
+                return self._agent_run_from_row(row)
+            if row["status"] == target_status:
+                raise ValueError("conflicting terminal rewrite")
+            if row["status"] == "completed":
+                raise ValueError("cannot transition from completed agent run")
+            allowed = {
+                "running": {"completed", "failed", "unknown"},
+                "unknown": {"completed", "failed"},
+            }
+            if target_status not in allowed.get(row["status"], set()):
+                raise ValueError(
+                    f"invalid agent run transition: {row['status']} -> {target_status}"
+                )
+            completed_at = now_text if target_status in {"completed", "failed"} else ""
+            db.execute(
+                """
+                update agent_runs
+                set status=?, final_result_json=?, structured_error_json=?,
+                    side_effect_state=?, transcript_end_line=?,
+                    lease_owner='', lease_expires_at='', completed_at=?,
+                    updated_at=?
+                where id=?
+                """,
+                (
+                    target_status,
+                    final_result_json,
+                    structured_error_json,
+                    side_effect_state,
+                    end_line,
+                    completed_at,
+                    now_text,
+                    run_id,
+                ),
+            )
+            updated = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(updated)
+
+    def complete_agent_run(
+        self,
+        run_id: int,
+        final_result: dict[str, object],
+        *,
+        side_effect_state: str = "none",
+        transcript_end_line: int | None = None,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        return self._transition_agent_run(
+            run_id,
+            target_status="completed",
+            final_result_json=_json_object_text(
+                final_result,
+                field="final_result",
+            ),
+            structured_error_json="",
+            side_effect_state=side_effect_state,
+            transcript_end_line=transcript_end_line,
+            now=now,
+        )
+
+    def fail_agent_run(
+        self,
+        run_id: int,
+        structured_error: dict[str, object],
+        *,
+        transcript_end_line: int | None = None,
+        side_effect_state: str = "none",
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        return self._transition_agent_run(
+            run_id,
+            target_status="failed",
+            final_result_json="",
+            structured_error_json=_json_object_text(
+                structured_error,
+                field="structured_error",
+            ),
+            side_effect_state=side_effect_state,
+            transcript_end_line=transcript_end_line,
+            now=now,
+        )
+
+    def mark_agent_run_unknown(
+        self,
+        run_id: int,
+        structured_error: dict[str, object],
+        *,
+        transcript_end_line: int | None = None,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        return self._transition_agent_run(
+            run_id,
+            target_status="unknown",
+            final_result_json="",
+            structured_error_json=_json_object_text(
+                structured_error,
+                field="structured_error",
+            ),
+            side_effect_state="unknown",
+            transcript_end_line=transcript_end_line,
+            now=now,
+        )
+
+    def list_unknown_agent_runs(self, *, limit: int = 100) -> list[AgentRun]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from agent_runs
+                where status='unknown'
+                order by updated_at, id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [self._agent_run_from_row(row) for row in rows]
 
     def peek_reply_tasks(
         self,

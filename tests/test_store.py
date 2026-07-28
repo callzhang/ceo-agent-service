@@ -609,6 +609,314 @@ def test_manual_rerun_always_allocates_a_new_execution_generation(tmp_path: Path
     assert first.execution_generation != second.execution_generation
 
 
+def test_agent_run_is_unique_per_task_generation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+
+    first = store.claim_agent_run(task_id, "initial", owner="worker-1")
+    second = store.claim_agent_run(task_id, "initial", owner="worker-2")
+
+    assert first.claimed is True
+    assert second.claimed is False
+    assert second.run.id == first.run.id
+    assert second.run.lease_owner == "worker-1"
+
+
+def test_agent_run_concurrent_claims_choose_exactly_one_owner(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    first_store = AutoReplyStore(db_path)
+    second_store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(first_store)
+    barrier = Barrier(2)
+    results: Queue = Queue()
+
+    def claim(store: AutoReplyStore, owner: str) -> None:
+        try:
+            barrier.wait(timeout=5)
+            results.put((store.claim_agent_run(task_id, "initial", owner=owner), None))
+        except BaseException as exc:
+            results.put((None, exc))
+
+    threads = [
+        Thread(target=claim, args=(first_store, "worker-1")),
+        Thread(target=claim, args=(second_store, "worker-2")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+    outcomes = [results.get_nowait(), results.get_nowait()]
+    errors = [error for _, error in outcomes if error is not None]
+    assert errors == []
+    claims = [claim for claim, _ in outcomes]
+    assert sum(claim.claimed for claim in claims) == 1
+    assert len({claim.run.id for claim in claims}) == 1
+    winner = next(claim for claim in claims if claim.claimed)
+    loser = next(claim for claim in claims if not claim.claimed)
+    assert loser.run.lease_owner == winner.run.lease_owner
+
+
+def test_agent_run_fresh_lease_cannot_be_stolen_but_expired_lease_recovers(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    first = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-1",
+        lease_seconds=1800,
+        now="2026-07-29 00:00:00",
+    )
+    store.set_agent_run_session(first.run.id, "session-1", transcript_start_line=8)
+
+    fresh = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-2",
+        now="2026-07-29 00:29:59",
+    )
+    expired = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-2",
+        now="2026-07-29 00:30:01",
+    )
+
+    assert fresh.claimed is False
+    assert expired.claimed is True
+    assert expired.run.id == first.run.id
+    assert expired.run.codex_session_id == "session-1"
+    assert expired.run.transcript_start_line == 8
+    assert expired.run.lease_owner == "worker-2"
+
+
+def test_agent_run_claim_rejects_generation_not_owned_by_task(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+
+    with pytest.raises(ValueError, match="execution generation mismatch"):
+        store.claim_agent_run(task_id, "other-generation", owner="worker-1")
+
+
+def test_agent_run_lease_renewal_requires_current_owner(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    claim = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-07-29 00:00:00",
+    )
+
+    renewed = store.renew_agent_run_lease(
+        claim.run.id,
+        owner="worker-1",
+        lease_seconds=900,
+        now="2026-07-29 00:10:00",
+    )
+
+    assert renewed.lease_expires_at == "2026-07-29 00:25:00"
+    with pytest.raises(ValueError, match="lease owner mismatch"):
+        store.renew_agent_run_lease(
+            claim.run.id,
+            owner="worker-2",
+            now="2026-07-29 00:11:00",
+        )
+
+
+def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    started = {
+        "type": "item.started",
+        "call_id": "c1",
+        "effect": {"kind": "write", "provider": "dws"},
+    }
+    completed = {
+        "type": "item.completed",
+        "call_id": "c1",
+        "receipt": {"accepted": True},
+    }
+
+    store.append_agent_run_event(run.id, started)
+    store.append_agent_run_event(run.id, completed)
+
+    loaded = store.get_agent_run(run.id)
+    assert loaded is not None
+    assert loaded.tool_events == [started, completed]
+    assert loaded.transcript_end_line == 2
+
+
+def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    first_store = AutoReplyStore(db_path)
+    second_store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(first_store)
+    run = first_store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    barrier = Barrier(2)
+    results: Queue = Queue()
+
+    def append(store: AutoReplyStore, call_id: str) -> None:
+        try:
+            barrier.wait(timeout=5)
+            store.append_agent_run_event(
+                run.id,
+                {"type": "item.completed", "call_id": call_id},
+            )
+            results.put(None)
+        except BaseException as exc:
+            results.put(exc)
+
+    threads = [
+        Thread(target=append, args=(first_store, "c1")),
+        Thread(target=append, args=(second_store, "c2")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+    assert [results.get_nowait(), results.get_nowait()] == [None, None]
+
+    loaded = first_store.get_agent_run(run.id)
+    assert loaded is not None
+    assert len(loaded.tool_events) == 2
+    assert {event["call_id"] for event in loaded.tool_events} == {"c1", "c2"}
+
+
+@pytest.mark.parametrize("event", [[], "event", 1, None])
+def test_agent_run_event_must_be_a_json_object(tmp_path: Path, event):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+
+    with pytest.raises(ValueError, match="event must be a JSON object"):
+        store.append_agent_run_event(run.id, event)
+
+
+def test_agent_run_event_rejects_non_json_object_values(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+
+    with pytest.raises(ValueError, match="event must be a JSON object"):
+        store.append_agent_run_event(run.id, {"value": object()})
+
+
+def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    final_result = {"outcome": "completed", "summary": "sent"}
+
+    completed = store.complete_agent_run(
+        run.id,
+        final_result,
+        side_effect_state="confirmed",
+        transcript_end_line=12,
+    )
+    repeated = store.complete_agent_run(
+        run.id,
+        final_result,
+        side_effect_state="confirmed",
+        transcript_end_line=12,
+    )
+
+    assert completed.status == "completed"
+    assert repeated == completed
+    assert completed.lease_owner == ""
+    assert completed.lease_expires_at == ""
+    with pytest.raises(ValueError, match="conflicting terminal rewrite"):
+        store.complete_agent_run(
+            run.id,
+            {"outcome": "completed", "summary": "different"},
+            side_effect_state="confirmed",
+            transcript_end_line=12,
+        )
+    with pytest.raises(ValueError, match="transition from completed"):
+        store.fail_agent_run(run.id, {"code": "late_failure"})
+    with pytest.raises(ValueError, match="terminal agent run"):
+        store.append_agent_run_event(run.id, {"type": "late"})
+
+
+def test_unknown_agent_run_can_complete_or_fail_but_cannot_return_to_running(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    unknown_error = {"code": "effect_completion_missing", "call_id": "c1"}
+
+    unknown = store.mark_agent_run_unknown(run.id, unknown_error)
+    listed = store.list_unknown_agent_runs()
+    completed = store.complete_agent_run(
+        run.id,
+        {"outcome": "completed", "summary": "effect confirmed"},
+        side_effect_state="confirmed",
+    )
+
+    assert unknown.status == "unknown"
+    assert unknown.side_effect_state == "unknown"
+    assert [item.id for item in listed] == [run.id]
+    assert completed.status == "completed"
+    with pytest.raises(ValueError, match="transition from completed"):
+        store.mark_agent_run_unknown(run.id, unknown_error)
+
+
+def test_failed_agent_run_rejects_conflicting_terminal_rewrite(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    error = {"code": "command_failed", "retryable": True}
+
+    failed = store.fail_agent_run(run.id, error, transcript_end_line=5)
+    repeated = store.fail_agent_run(run.id, error, transcript_end_line=5)
+
+    assert failed == repeated
+    with pytest.raises(ValueError, match="conflicting terminal rewrite"):
+        store.fail_agent_run(
+            run.id,
+            {"code": "different_failure"},
+            transcript_end_line=5,
+        )
+
+
+def test_unknown_agent_run_may_transition_to_failed(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing", "call_id": "c1"},
+    )
+
+    failed = store.fail_agent_run(
+        run.id,
+        {"code": "reconciliation_confirmed_no_effect"},
+    )
+
+    assert failed.status == "failed"
+    assert failed.side_effect_state == "none"
+
+
+def test_get_agent_run_for_task_generation_returns_exact_row(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    claimed = store.claim_agent_run(task_id, "initial", owner="worker-1")
+
+    loaded = store.get_agent_run_for_task_generation(task_id, "initial")
+
+    assert loaded == claimed.run
+    assert store.get_agent_run_for_task_generation(task_id, "missing") is None
+
+
 def test_claim_reply_tasks_marks_tasks_processing_atomically(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
