@@ -943,7 +943,7 @@ def test_concurrent_workers_execute_one_plan(tmp_path, monkeypatch):
     trigger = trigger_message()
     planner = RecordingPlanner(no_reply_plan())
     worker1, _ = make_worker(tmp_path, monkeypatch, trigger=trigger, planner=planner)
-    enqueue(worker1, trigger)
+    task = enqueue(worker1, trigger)
     worker2 = DingTalkAutoReplyWorker(
         store=AutoReplyStore(tmp_path / "worker.sqlite3"),
         dws=FakeDws(trigger),
@@ -952,21 +952,29 @@ def test_concurrent_workers_execute_one_plan(tmp_path, monkeypatch):
         universal_planner=planner,
     )
     barrier = Barrier(2)
-    original_claim = worker1.store.claim_reply_tasks
+    original_claim_1 = worker1.store.claim_reply_task
+    original_claim_2 = worker2.store.claim_reply_task
     lock = Lock()
+    candidate_ids = []
 
-    def synchronized_claim(*args, **kwargs):
-        barrier.wait()
+    def synchronized_claim(original_claim, task_id, *args, **kwargs):
         with lock:
-            return original_claim(*args, **kwargs)
+            candidate_ids.append(task_id)
+        barrier.wait()
+        return original_claim(task_id, *args, **kwargs)
 
-    worker1.store.claim_reply_tasks = synchronized_claim
-    worker2.store.claim_reply_tasks = synchronized_claim
+    worker1.store.claim_reply_task = lambda task_id, *args, **kwargs: synchronized_claim(
+        original_claim_1, task_id, *args, **kwargs
+    )
+    worker2.store.claim_reply_task = lambda task_id, *args, **kwargs: synchronized_claim(
+        original_claim_2, task_id, *args, **kwargs
+    )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda worker: worker.consume_once(max_tasks=1), (worker1, worker2)))
 
     assert sorted(results) == [0, 1]
+    assert candidate_ids == [task.id, task.id]
     assert len(planner.calls) == 1
 
 

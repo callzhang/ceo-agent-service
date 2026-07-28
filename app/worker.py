@@ -5142,9 +5142,15 @@ class DingTalkAutoReplyWorker:
                 message=f"requeued {len(recovered_lock_tasks)} task(s)",
             )
         claimed_tasks = 0
+        scan_now = self._sqlite_timestamp(self._now())
+        max_task_id = self.store.max_pending_reply_task_id(
+            now=scan_now,
+            channel="dingtalk",
+        )
         for pending_task in self._pending_reply_task_candidates(
             page_size=min(max(limit * 4, 50), 200),
-            now=self._sqlite_timestamp(self._now()),
+            now=scan_now,
+            max_id=max_task_id,
         ):
             if claimed_tasks >= limit:
                 break
@@ -5393,8 +5399,10 @@ class DingTalkAutoReplyWorker:
         return processed_tasks
 
     def _pending_reply_task_candidates(
-        self, *, page_size: int, now: str
+        self, *, page_size: int, now: str, max_id: int | None
     ) -> Iterator[ReplyTask]:
+        if max_id is None:
+            return
         after_id: int | None = None
         while True:
             page = self.store.peek_reply_tasks(
@@ -5402,6 +5410,7 @@ class DingTalkAutoReplyWorker:
                 now=now,
                 channel="dingtalk",
                 after_id=after_id,
+                max_id=max_id,
             )
             if not page:
                 return

@@ -684,6 +684,49 @@ def test_peek_reply_tasks_pages_after_id_without_claiming(tmp_path: Path):
     assert store.count_reply_tasks(status="pending") == 3
 
 
+def test_peek_reply_tasks_respects_pending_snapshot_upper_bound(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for index in range(3):
+        store.enqueue_reply_task(
+            conversation_id=f"cid-{index}",
+            conversation_title="Friday",
+            single_chat=False,
+            trigger_message_id=f"msg-{index}",
+            trigger_create_time=f"2026-05-13 18:00:0{index}",
+            trigger_sender="Derek",
+            trigger_text=str(index),
+            trigger_message_json="{}",
+        )
+    max_id = store.max_pending_reply_task_id(
+        now="2026-05-13 18:01:00",
+        channel="dingtalk",
+    )
+    assert max_id is not None
+    store.enqueue_reply_task(
+        conversation_id="cid-new",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-new",
+        trigger_create_time="2026-05-13 18:00:03",
+        trigger_sender="Derek",
+        trigger_text="new",
+        trigger_message_json="{}",
+    )
+
+    snapshot = store.peek_reply_tasks(
+        limit=10,
+        now="2026-05-13 18:01:00",
+        channel="dingtalk",
+        max_id=max_id,
+    )
+
+    assert [task.trigger_message_id for task in snapshot] == [
+        "msg-0",
+        "msg-1",
+        "msg-2",
+    ]
+
+
 def test_claim_reply_task_claims_only_requested_pending_task(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     for index in (1, 2):

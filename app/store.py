@@ -1092,6 +1092,12 @@ class AutoReplyStore:
                         f"alter table reply_tasks add column {column} {definition}"
                     )
             self._migrate_reply_task_channel_identity(db)
+            db.execute(
+                """
+                create index if not exists idx_reply_tasks_channel_status_id
+                    on reply_tasks(channel, status, id)
+                """
+            )
             sent_reply_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(sent_replies)").fetchall()
@@ -2461,6 +2467,7 @@ class AutoReplyStore:
         *,
         channel: str | None = None,
         after_id: int | None = None,
+        max_id: int | None = None,
     ) -> list[ReplyTask]:
         if limit <= 0:
             return []
@@ -2479,6 +2486,9 @@ class AutoReplyStore:
             if after_id is not None:
                 clauses.append("id>?")
                 args.append(after_id)
+            if max_id is not None:
+                clauses.append("id<=?")
+                args.append(max_id)
             args.append(limit)
             rows = db.execute(
                 f"""
@@ -2491,6 +2501,34 @@ class AutoReplyStore:
                 args,
             ).fetchall()
             return [self._reply_task_from_row(row) for row in rows]
+
+    def max_pending_reply_task_id(
+        self,
+        now: str | None = None,
+        *,
+        channel: str | None = None,
+    ) -> int | None:
+        with self._connect() as db:
+            now_expression = "current_timestamp" if now is None else "?"
+            clauses = [
+                "status='pending'",
+                f"(available_at='' or available_at <= {now_expression})",
+            ]
+            args: list[str] = []
+            if now is not None:
+                args.append(now)
+            if channel is not None:
+                clauses.append("channel=?")
+                args.append(channel)
+            row = db.execute(
+                f"""
+                select max(id) as max_id
+                from reply_tasks
+                where {' and '.join(clauses)}
+                """,
+                args,
+            ).fetchone()
+            return row["max_id"] if row is not None else None
 
     def get_reply_task(self, task_id: int) -> ReplyTask | None:
         with self._connect() as db:

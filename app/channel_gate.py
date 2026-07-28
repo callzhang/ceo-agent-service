@@ -118,12 +118,10 @@ class LoginCoordinator:
         store: ServiceStateStore,
         launchers: dict[str, LoginLauncher],
         now: Callable[[], datetime] | None = None,
-        pid_alive: Callable[[int], bool] | None = None,
     ):
         self.store = store
         self.launchers = launchers
         self.now = now or (lambda: datetime.now(timezone.utc))
-        self.pid_alive = pid_alive or _pid_alive
         self._processes: dict[str, LoginProcess] = {}
 
     def handle(self, result: ChannelGateResult) -> LoginHandlingResult:
@@ -141,8 +139,6 @@ class LoginCoordinator:
             }
         elif process is not None:
             pid = process.pid
-        elif pid is not None and self.pid_alive(pid):
-            state = {**state, "status": "running"}
 
         if result.state is ChannelGateState.READY:
             self._write_state(
@@ -166,9 +162,7 @@ class LoginCoordinator:
             self._write_state(result.channel, state)
             return LoginHandlingResult()
 
-        if pid is not None and (
-            process is not None and process.poll() is None or self.pid_alive(pid)
-        ):
+        if process is not None and process.poll() is None:
             self._write_state(
                 result.channel, {**state, "status": "running", "pid": pid}
             )
@@ -833,15 +827,3 @@ def _lark_noninteractive_environment() -> dict[str, str]:
     env.setdefault("CI", "1")
     env.setdefault("NO_COLOR", "1")
     return env
-
-
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True

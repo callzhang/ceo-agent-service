@@ -37,7 +37,6 @@ def test_login_coordinator_starts_one_process_and_suppresses_repeats(tmp_path):
         store=store,
         launchers={"dingtalk": lambda: launches.append("dws") or FakeProcess(41)},
         now=lambda: datetime(2026, 7, 28, 12, tzinfo=timezone.utc),
-        pid_alive=lambda pid: pid == 41,
     )
     gate = ChannelGateResult(
         channel="dingtalk",
@@ -82,7 +81,6 @@ def test_login_coordinator_claims_launch_atomically_across_connections(tmp_path)
             store=AutoReplyStore(database),
             launchers={"dingtalk": launch},
             now=lambda: datetime(2026, 7, 28, 12, tzinfo=timezone.utc),
-            pid_alive=lambda _pid: False,
         )
         return coordinator.handle(gate)
 
@@ -100,6 +98,48 @@ def test_login_coordinator_claims_launch_atomically_across_connections(tmp_path)
     assert sum(result.suppressed for result in results) == 1
 
 
+def test_login_coordinator_does_not_trust_stale_persisted_pid(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "db.sqlite3")
+    store.set_service_state(
+        "channel_login_request:dingtalk",
+        json.dumps(
+            {
+                "status": "running",
+                "reason_code": "live_probe_auth_failed",
+                "started_at": "2026-07-28T10:00:00+00:00",
+                "pid": 41,
+            }
+        ),
+    )
+    launches = []
+    pid_checks = []
+    monkeypatch.setattr(
+        "app.channel_gate.os.kill",
+        lambda pid, signal: pid_checks.append((pid, signal)),
+    )
+    coordinator = LoginCoordinator(
+        store=store,
+        launchers={
+            "dingtalk": lambda: launches.append("dws") or FakeProcess(41)
+        },
+        now=lambda: datetime(2026, 7, 28, 12, 1, tzinfo=timezone.utc),
+    )
+    gate = ChannelGateResult(
+        channel="dingtalk",
+        state=ChannelGateState.NEEDS_LOGIN,
+        reason_code="live_probe_auth_failed",
+    )
+
+    result = coordinator.handle(gate)
+
+    assert result.launched is True
+    assert result.suppressed is False
+    assert launches == ["dws"]
+    assert pid_checks == []
+
+
 def test_login_coordinator_suppresses_failed_process_for_one_hour(tmp_path):
     store = AutoReplyStore(tmp_path / "db.sqlite3")
     current = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
@@ -109,7 +149,6 @@ def test_login_coordinator_suppresses_failed_process_for_one_hour(tmp_path):
         store=store,
         launchers={"dingtalk": lambda: launches.append("dws") or process},
         now=lambda: current,
-        pid_alive=lambda _pid: False,
     )
     gate = ChannelGateResult(
         channel="dingtalk",
@@ -142,7 +181,6 @@ def test_login_coordinator_launch_failure_keeps_suppression_timestamp(tmp_path):
         store=store,
         launchers={"dingtalk": fail_launch},
         now=lambda: current,
-        pid_alive=lambda _pid: False,
     )
     gate = ChannelGateResult(
         channel="dingtalk",
@@ -170,7 +208,6 @@ def test_login_coordinator_ready_preserves_suppression_timestamp(tmp_path):
         store=store,
         launchers={"dingtalk": lambda: launches.append("dws") or FakeProcess(41)},
         now=lambda: now,
-        pid_alive=lambda _pid: False,
     )
     needs_login = ChannelGateResult(
         channel="dingtalk",

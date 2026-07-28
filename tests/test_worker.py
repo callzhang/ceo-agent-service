@@ -4495,6 +4495,65 @@ def test_lark_blocked_task_does_not_block_later_dingtalk_task(tmp_path, monkeypa
     assert lark_gate.calls == 1
 
 
+def test_consume_once_does_not_scan_tasks_inserted_after_pass_snapshot(
+    tmp_path, monkeypatch
+):
+    dingtalk_gate = FixedGate("dingtalk", ChannelGateState.READY)
+    lark_gate = FixedGate("lark", ChannelGateState.UNAVAILABLE)
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    worker = worker_module.DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([], {}),
+        codex=FakeCodex([]),
+        now_provider=fixed_worker_now,
+        channel_gates={"dingtalk": dingtalk_gate, "lark": lark_gate},
+    )
+    initial = message(
+        "https://example.feishu.cn/docx/initial",
+        message_id="msg-initial",
+    )
+    store.enqueue_reply_task(
+        conversation_id=initial.open_conversation_id,
+        conversation_title=initial.conversation_title,
+        single_chat=initial.single_chat,
+        trigger_message_id=initial.open_message_id,
+        trigger_create_time=initial.create_time,
+        trigger_sender=initial.sender_name,
+        trigger_text=initial.content,
+        trigger_message_json=initial.model_dump_json(),
+    )
+    original_peek = store.peek_reply_tasks
+    peek_calls = 0
+
+    def peek_and_insert(*args, **kwargs):
+        nonlocal peek_calls
+        peek_calls += 1
+        if peek_calls > 2:
+            raise AssertionError("consume pass followed tasks inserted after its snapshot")
+        page = original_peek(*args, **kwargs)
+        inserted = message(
+            f"https://example.feishu.cn/docx/inserted-{peek_calls}",
+            message_id=f"msg-inserted-{peek_calls}",
+        )
+        store.enqueue_reply_task(
+            conversation_id=inserted.open_conversation_id,
+            conversation_title=inserted.conversation_title,
+            single_chat=inserted.single_chat,
+            trigger_message_id=inserted.open_message_id,
+            trigger_create_time=inserted.create_time,
+            trigger_sender=inserted.sender_name,
+            trigger_text=inserted.content,
+            trigger_message_json=inserted.model_dump_json(),
+        )
+        return page
+
+    monkeypatch.setattr(store, "peek_reply_tasks", peek_and_insert)
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert peek_calls == 2
+    assert store.count_reply_tasks(status="pending") == 3
+
+
 def test_retired_universal_consumer_flag_is_absent_from_runtime_and_tests():
     repository_root = Path(__file__).resolve().parents[1]
     retired_flag = "CEO_UNIVERSAL_" + "CONSUMER"
