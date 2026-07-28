@@ -9,9 +9,16 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.agent_context import AgentTaskContext
 from app.agent_envelope import AgentEnvelope
+from app.agent_result import AgentError, AgentOutcome, AgentResult, SideEffectState
+from app.agent_runner import DirectAgentRunResult
 import app.worker as worker_module
-from app.codex_decision import CodexDecisionRunner, append_signature
+from app.codex_decision import (
+    CodexDecisionRunner,
+    append_signature,
+    codex_decision_from_envelope,
+)
 from app.channel_gate import (
     ChannelGateResult,
     ChannelGateState,
@@ -35,9 +42,9 @@ from app.dws_client import (
     DwsMinutesPermissionRequest,
     DwsOaApprovalCandidate,
     DwsUserProfile,
+    normalize_message_emoji,
 )
 from app.feedback_spike import FeedbackReplyText
-from app.external_retry import ExternalDependencyError
 from app.oa_approval import OaApprovalResult
 from app.store import AutoReplyStore
 from app.worker import (
@@ -74,6 +81,581 @@ class FixedGate:
         )
 
 
+class FakeDirectAgentRunner:
+    """Model the Agent-owned effects declared by each worker test script."""
+
+    def __init__(self, store: AutoReplyStore, dws: "FakeDws", codex):
+        self.store = store
+        self.dws = dws
+        self.codex = codex
+        self.calls: list[tuple[int, str, AgentTaskContext]] = []
+        self.owner = "worker-test-agent"
+
+    def run(self, task, context, **kwargs) -> DirectAgentRunResult:
+        claim = self.store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            owner=self.owner,
+        )
+        assert claim.claimed
+        run = claim.run
+        self.calls.append((task.id, task.execution_generation, context))
+        prompt = context.render()
+        calendar_event = self._read_calendar_material(task, context)
+        if calendar_event is not None:
+            prompt += (
+                "\n\nLive calendar detail read by Direct Agent\n"
+                + calendar_event.model_dump_json()
+            )
+            conflicts = self._calendar_conflicts(calendar_event)
+            if conflicts:
+                prompt += (
+                    "\n\nLive calendar conflict read by Direct Agent\n"
+                    + json.dumps(
+                        [event.model_dump(mode="json") for event in conflicts],
+                        ensure_ascii=False,
+                    )
+                )
+        decision = self.codex.decide(
+            prompt,
+            run.codex_session_id or None,
+            [],
+        )
+        if not isinstance(decision, CodexDecision):
+            decision = codex_decision_from_envelope(decision)
+        if not run.codex_session_id:
+            session_id = getattr(self.codex, "last_session_id", None)
+            run = self.store.set_agent_run_session(
+                run.id,
+                session_id or f"worker-test-session-{task.id}",
+                owner=self.owner,
+            )
+        events: list[dict[str, object]] = []
+        try:
+            self._execute_agent_effects(
+                task,
+                decision,
+                events,
+                read_only=bool(kwargs.get("read_only")),
+                calendar_event=calendar_event,
+            )
+        except Exception as exc:
+            side_effect_state = (
+                SideEffectState.UNKNOWN if events else SideEffectState.NONE
+            )
+            result = AgentResult(
+                outcome=AgentOutcome.FAILED,
+                summary=decision.reason or str(exc),
+                error=AgentError(
+                    code=str(exc),
+                    retryable=not events,
+                    side_effect_state=side_effect_state,
+                ),
+            )
+            if side_effect_state is SideEffectState.UNKNOWN:
+                run = self.store.mark_agent_run_unknown(
+                    run.id,
+                    result.error.model_dump(mode="json"),
+                    owner=self.owner,
+                    transcript_end_line=len(events),
+                )
+            else:
+                run = self.store.fail_agent_run(
+                    run.id,
+                    result.error.model_dump(mode="json"),
+                    owner=self.owner,
+                    transcript_end_line=len(events),
+                )
+        else:
+            result = self._result_for_decision(decision, bool(events))
+            if result.outcome is AgentOutcome.FAILED:
+                run = self.store.fail_agent_run(
+                    run.id,
+                    result.error.model_dump(mode="json"),
+                    owner=self.owner,
+                    transcript_end_line=len(events),
+                )
+            else:
+                run = self.store.complete_agent_run(
+                    run.id,
+                    result.model_dump(mode="json"),
+                    owner=self.owner,
+                    side_effect_state=("confirmed" if events else "none"),
+                    transcript_end_line=len(events),
+                )
+        return DirectAgentRunResult(
+            run_id=run.id,
+            result=result,
+            transcript_start_line=run.transcript_start_line,
+            transcript_end_line=run.transcript_end_line,
+            events=tuple(events),
+        )
+
+    def _effect(self, events: list[dict[str, object]], call_id: str, callback) -> None:
+        started = {
+            "type": "item.started",
+            "item": {
+                "id": call_id,
+                "type": "mcp_tool_call",
+                "metadata": {"effect": "effectful"},
+            },
+        }
+        run = self.store.get_agent_run_for_task_generation(
+            self.calls[-1][0], self.calls[-1][1]
+        )
+        assert run is not None
+        self.store.append_agent_run_event(
+            run.id,
+            started,
+            owner=self.owner,
+        )
+        events.append(started)
+        result = callback()
+        completed = {
+            **started,
+            "type": "item.completed",
+            "result": result,
+        }
+        self.store.append_agent_run_event(
+            run.id,
+            completed,
+            owner=self.owner,
+        )
+        events.append(completed)
+
+    def _execute_agent_effects(
+        self,
+        task,
+        decision: CodexDecision,
+        events: list[dict[str, object]],
+        *,
+        read_only: bool,
+        calendar_event: DwsCalendarEvent | None,
+    ) -> None:
+        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        if read_only:
+            return
+        has_document_reply = any(
+            str(action.get("type") or "") == "dws_markdown_document_reply"
+            for action in decision.system_actions
+        )
+        for index, action in enumerate(decision.system_actions, start=1):
+            action_type = str(action.get("type") or "")
+            if action_type == "dws_mail_reply":
+                self._effect(
+                    events,
+                    f"mail-{index}",
+                    lambda action=action: self.dws.reply_mail(
+                        str(action.get("mailbox") or ""),
+                        str(action.get("message_id") or ""),
+                        str(action.get("subject") or ""),
+                        str(action.get("content") or ""),
+                    ),
+                )
+            elif action_type == "dws_message_reaction":
+                reaction_type = str(action.get("reaction_type") or "emoji")
+                if reaction_type == "emoji":
+                    self._effect(
+                        events,
+                        f"reaction-{index}",
+                        lambda action=action: self.dws.add_message_emoji(
+                            task.conversation_id,
+                            task.trigger_message_id,
+                            normalize_message_emoji(str(action.get("emoji") or "")),
+                        ),
+                    )
+                else:
+                    created = self.dws.create_message_text_emotion(
+                        text=str(action.get("text") or ""),
+                        emotion_name=str(
+                            action.get("emotion_name") or action.get("text") or ""
+                        ),
+                        background_id=str(action.get("background_id") or "im_bg_5"),
+                    )
+                    self._effect(
+                        events,
+                        f"reaction-{index}",
+                        lambda action=action: self.dws.add_message_text_emotion(
+                            task.conversation_id,
+                            task.trigger_message_id,
+                            text=str(action.get("text") or ""),
+                            emotion_id=str(
+                                action.get("emotion_id")
+                                or created.get("emotionId")
+                                or "emotion-1"
+                            ),
+                            emotion_name=str(action.get("emotion_name") or action.get("text") or ""),
+                            background_id=str(
+                                action.get("background_id")
+                                or created.get("backgroundId")
+                                or "bg-1"
+                            ),
+                        ),
+                    )
+            elif action_type == "dws_oa_approval_action":
+                self._effect(
+                    events,
+                    f"oa-{index}",
+                    lambda action=action: self.dws.execute_oa_approval_action(
+                        str(action.get("process_instance_id") or ""),
+                        str(action.get("task_id") or ""),
+                        str(action.get("action") or ""),
+                        str(action.get("remark") or ""),
+                    ),
+                )
+            elif action_type == "dws_oa_approval_comment":
+                self._effect(
+                    events,
+                    f"oa-comment-{index}",
+                    lambda action=action: self.dws.comment_oa_approval(
+                        str(action.get("process_instance_id") or ""),
+                        str(action.get("text") or ""),
+                    ),
+                )
+            elif action_type == "dws_markdown_document_reply":
+                title = str(action.get("title") or "CEO reply").strip()
+                content = append_signature(decision.reply_text)
+
+                def create_and_send_document() -> None:
+                    document = self.dws.create_markdown_doc(title, content)
+                    result = document.get("result") if isinstance(document, dict) else None
+                    if not isinstance(result, dict):
+                        raise DwsError("document creation returned no result")
+                    url = str(result.get("url") or "").strip()
+                    node_id = str(result.get("nodeId") or "").strip()
+                    if not url or not node_id:
+                        raise DwsError("document creation returned no URL")
+                    editor_ids = [trigger.sender_user_id] if trigger.sender_user_id else []
+                    if editor_ids:
+                        self.dws.add_doc_editor_permission(node_id, editor_ids)
+                    text = append_signature(f"内容我写成了文档：{title}\n{url}")
+                    self.dws.reply_message(
+                        task.conversation_id,
+                        task.trigger_message_id,
+                        trigger.sender_open_dingtalk_id,
+                        text,
+                        at_users=editor_ids,
+                        at_open_dingtalk_ids=(
+                            [trigger.sender_open_dingtalk_id]
+                            if trigger.sender_open_dingtalk_id
+                            else []
+                        ),
+                    )
+
+                self._effect(
+                    events,
+                    f"document-{index}",
+                    create_and_send_document,
+                )
+        if decision.calendar_response_status.value:
+            invite = calendar_event
+            desired_status = decision.calendar_response_status.value
+            current_status = invite.self_response_status if invite is not None else ""
+            if (
+                invite is not None
+                and current_status.casefold() != desired_status.casefold()
+            ):
+                def respond_to_calendar():
+                    try:
+                        result = self.dws.respond_calendar_event(
+                            invite.event_id,
+                            desired_status,
+                        )
+                    except DwsError as exc:
+                        message = str(exc).casefold()
+                        if "organizer" in message:
+                            return {
+                                "success": True,
+                                "noop_reason": "calendar_event_organizer",
+                            }
+                        if "does not exist" in message:
+                            return {
+                                "success": True,
+                                "noop_reason": "calendar_event_missing",
+                            }
+                        raise
+                    if isinstance(result, dict) and result.get("success") is False:
+                        raise DwsError(
+                            str(result.get("message") or "calendar response failed")
+                        )
+                    if invite.event_id in self.dws.calendar_event_details:
+                        verified = self.dws.get_calendar_event(invite.event_id)
+                        if (
+                            verified is None
+                            or verified.self_response_status.casefold()
+                            != desired_status.casefold()
+                        ):
+                            raise DwsError("calendar response verification failed")
+                    return result
+
+                self._effect(
+                    events,
+                    "calendar-response",
+                    respond_to_calendar,
+                )
+        if decision.action in {
+            CodexAction.SEND_REPLY,
+            CodexAction.ASK_CLARIFYING_QUESTION,
+        } and not has_document_reply:
+            reply_text = append_signature(decision.reply_text)
+            if trigger.single_chat:
+                at_users = [trigger.sender_user_id] if trigger.sender_user_id else []
+                at_open_dingtalk_ids: list[str] = []
+            else:
+                at_users = [trigger.sender_user_id] if trigger.sender_user_id else []
+                at_open_dingtalk_ids = (
+                    [trigger.sender_open_dingtalk_id]
+                    if trigger.sender_open_dingtalk_id
+                    else []
+                )
+                if trigger.sender_name and f"@{trigger.sender_name}" not in reply_text:
+                    reply_text = f"@{trigger.sender_name} {reply_text}"
+
+            def send_reply():
+                if trigger.raw_payload.get("ceo_agent_source") == "robot_direct":
+                    sender_user_id = trigger.sender_user_id or self.dws.resolve_message_sender(
+                        trigger
+                    )
+                    return self.dws.send_direct_message_by_bot(sender_user_id, reply_text)
+                return self.dws.reply_message(
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    trigger.sender_open_dingtalk_id,
+                    reply_text,
+                    at_users=at_users,
+                    at_open_dingtalk_ids=at_open_dingtalk_ids,
+                )
+
+            self._effect(
+                events,
+                "dingtalk-reply",
+                send_reply,
+            )
+
+    def _read_calendar_material(
+        self,
+        task,
+        context: AgentTaskContext,
+    ) -> DwsCalendarEvent | None:
+        if not any(material.kind == "dingtalk_calendar" for material in context.materials):
+            return None
+        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        direct = self.dws.calendar_invite_from_message(trigger)
+        if direct is not None:
+            return direct
+        unique: dict[str, DwsCalendarEvent] = {}
+        for events in self.dws.calendar_events.values():
+            for event in events:
+                unique[event.event_id] = event
+        for event_id in tuple(unique):
+            if event_id in self.dws.calendar_event_details:
+                detail = self.dws.get_calendar_event(event_id)
+                if detail is not None:
+                    unique[event_id] = detail
+        candidates = [
+            event
+            for event in unique.values()
+            if event.status.casefold() not in {"cancelled", "canceled"}
+        ]
+        pending = [
+            event
+            for event in candidates
+            if event.self_response_status.casefold()
+            in {"needsaction", "needs_action", "pending", ""}
+        ]
+        if len(pending) == 1:
+            only = pending[0]
+            if only.created_ms:
+                trigger_ms = int(
+                    datetime.strptime(trigger.create_time, "%Y-%m-%d %H:%M:%S")
+                    .replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+                    .timestamp()
+                    * 1000
+                )
+                if abs(only.created_ms - trigger_ms) > 5 * 60 * 1000:
+                    return None
+            return only
+        if pending:
+            trigger_ms = int(
+                datetime.strptime(trigger.create_time, "%Y-%m-%d %H:%M:%S")
+                .replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+                .timestamp()
+                * 1000
+            )
+            timestamped = [event for event in pending if event.created_ms]
+            if timestamped:
+                closest = min(
+                    timestamped,
+                    key=lambda event: abs(event.created_ms - trigger_ms),
+                )
+                if abs(closest.created_ms - trigger_ms) <= 5 * 60 * 1000:
+                    return closest
+            future = [event for event in pending if event.start_time]
+            if future:
+                closest_future = min(future, key=lambda event: event.start_time)
+                start = datetime.fromisoformat(closest_future.start_time)
+                trigger_time = datetime.strptime(
+                    trigger.create_time,
+                    "%Y-%m-%d %H:%M:%S",
+                ).replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+                if start - trigger_time <= timedelta(days=1):
+                    return closest_future
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    def _calendar_conflicts(
+        self,
+        invite: DwsCalendarEvent,
+    ) -> list[DwsCalendarEvent]:
+        conflicts: dict[str, DwsCalendarEvent] = {}
+        for events in self.dws.calendar_events.values():
+            for event in events:
+                if event.event_id == invite.event_id:
+                    continue
+                if event.self_response_status.casefold() == "declined":
+                    continue
+                if event.start_time < invite.end_time and event.end_time > invite.start_time:
+                    conflicts[event.event_id] = event
+        return list(conflicts.values())
+
+    @staticmethod
+    def _result_for_decision(
+        decision: CodexDecision,
+        effectful: bool,
+    ) -> AgentResult:
+        summary = decision.audit_summary or decision.reason or decision.action.value
+        if decision.action is CodexAction.STOP_WITH_ERROR:
+            return AgentResult(
+                outcome=AgentOutcome.FAILED,
+                summary=summary,
+                error=AgentError(code=decision.reason or "agent_failed"),
+            )
+        if decision.action is CodexAction.HANDOFF_TO_HUMAN:
+            return AgentResult(outcome=AgentOutcome.NEEDS_HUMAN, summary=summary)
+        if decision.action is CodexAction.NO_REPLY and not effectful:
+            return AgentResult(outcome=AgentOutcome.NO_ACTION, summary=summary)
+        return AgentResult(
+            outcome=AgentOutcome.COMPLETED,
+            summary=summary,
+            error=AgentError(
+                side_effect_state=(
+                    SideEffectState.CONFIRMED if effectful else SideEffectState.NONE
+                )
+            ),
+        )
+
+
+class FakeAgentResultRunner:
+    """Persist explicit AgentResult scripts without legacy decision translation."""
+
+    def __init__(
+        self,
+        store: AutoReplyStore,
+        scripts: list[
+            tuple[AgentResult, tuple[dict[str, object], ...], str]
+        ],
+    ) -> None:
+        self.store = store
+        self.scripts = list(scripts)
+        self.calls: list[tuple[int, str, AgentTaskContext, str]] = []
+        self.owner = "worker-result-agent"
+
+    def run(self, task, context, **_kwargs) -> DirectAgentRunResult:
+        claim = self.store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            owner=self.owner,
+        )
+        assert claim.claimed
+        run = claim.run
+        result, events, session_id = self.scripts.pop(0)
+        self.calls.append(
+            (task.id, task.execution_generation, context, run.codex_session_id)
+        )
+        if not run.codex_session_id:
+            run = self.store.set_agent_run_session(
+                run.id,
+                session_id,
+                owner=self.owner,
+            )
+        for event in events:
+            run = self.store.append_agent_run_event(
+                run.id,
+                event,
+                owner=self.owner,
+            )
+        if result.error.side_effect_state is SideEffectState.UNKNOWN:
+            run = self.store.mark_agent_run_unknown(
+                run.id,
+                result.error.model_dump(mode="json"),
+                owner=self.owner,
+                transcript_end_line=len(events),
+            )
+        elif result.outcome is AgentOutcome.FAILED:
+            run = self.store.fail_agent_run(
+                run.id,
+                result.error.model_dump(mode="json"),
+                owner=self.owner,
+                transcript_end_line=len(events),
+            )
+        else:
+            run = self.store.complete_agent_run(
+                run.id,
+                result.model_dump(mode="json"),
+                owner=self.owner,
+                side_effect_state=(
+                    "confirmed"
+                    if result.error.side_effect_state is SideEffectState.CONFIRMED
+                    else "none"
+                ),
+                transcript_end_line=len(events),
+            )
+        return DirectAgentRunResult(
+            run_id=run.id,
+            result=result,
+            transcript_start_line=run.transcript_start_line,
+            transcript_end_line=run.transcript_end_line,
+            events=events,
+        )
+
+
+def explicit_agent_result(
+    outcome: AgentOutcome,
+    summary: str,
+    *,
+    code: str = "",
+    retryable: bool = False,
+    authorization_required: bool = False,
+    side_effect_state: SideEffectState = SideEffectState.NONE,
+) -> AgentResult:
+    return AgentResult(
+        outcome=outcome,
+        summary=summary,
+        error=AgentError(
+            code=code,
+            retryable=retryable,
+            authorization_required=authorization_required,
+            side_effect_state=side_effect_state,
+        ),
+    )
+
+
+def effect_events(
+    call_id: str,
+    result: dict[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    started = {
+        "type": "item.started",
+        "item": {
+            "id": call_id,
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    return started, {**started, "type": "item.completed", "result": result}
+
+
 def fixed_channel_gates(
     dingtalk: ChannelGateState = ChannelGateState.READY,
     lark: ChannelGateState = ChannelGateState.READY,
@@ -82,15 +664,6 @@ def fixed_channel_gates(
         "dingtalk": FixedGate("dingtalk", dingtalk),
         "lark": FixedGate("lark", lark),
     }
-
-
-@pytest.fixture(autouse=True)
-def inject_ready_default_channel_gates(monkeypatch):
-    monkeypatch.setattr(
-        worker_module,
-        "default_channel_gates",
-        lambda **_: fixed_channel_gates(),
-    )
 
 
 def fixed_worker_now() -> datetime:
@@ -1266,6 +1839,7 @@ def make_worker(
     oa_approval_handler=None,
     fast_path_unread_backoff: timedelta = timedelta(0),
     channel_gates=None,
+    direct_agent_runner=None,
 ) -> DingTalkAutoReplyWorker:
     monkeypatch.setattr(
         "app.worker.send_macos_notification", lambda **_: None
@@ -1276,6 +1850,11 @@ def make_worker(
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("principal-user-1")
+    direct_agent_runner = direct_agent_runner or FakeDirectAgentRunner(
+        store,
+        dws,
+        codex,
+    )
     return DingTalkAutoReplyWorker(
         store=store,
         dws=dws,
@@ -1287,6 +1866,7 @@ def make_worker(
         max_task_attempts=max_task_attempts,
         oa_approval_handler=oa_approval_handler,
         channel_gates=channel_gates or fixed_channel_gates(),
+        direct_agent_runner=direct_agent_runner,
     )
 
 
@@ -1369,6 +1949,7 @@ def test_legacy_delivery_skips_duplicate_sent_reply(tmp_path: Path, monkeypatch)
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert delivered is True
     assert attempt is not None
+    assert attempt.action == "send_reply"
     assert attempt.send_status == "skipped"
     assert attempt.send_error == "duplicate_sent_reply_for_trigger"
     assert dws.sent == []
@@ -1526,7 +2107,7 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
         "msg-1",
     )
     assert attempt is not None
-    assert attempt.action == CodexAction.ASK_CLARIFYING_QUESTION.value
+    assert attempt.action == "agent_run"
     assert "按 profile 先追问材料" in attempt.audit_summary
 
 
@@ -1913,7 +2494,7 @@ def test_consume_manual_rerun_task_forces_new_decision(tmp_path: Path, monkeypat
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="unused")),
         monkeypatch,
     )
-    worker.store.enqueue_manual_rerun_reply_task(
+    rerun = worker.store.enqueue_manual_rerun_reply_task(
         conversation_id="cid-1",
         conversation_title="Friday",
         single_chat=False,
@@ -1924,33 +2505,12 @@ def test_consume_manual_rerun_task_forces_new_decision(tmp_path: Path, monkeypat
         trigger_message_json=trigger.model_dump_json(),
         attempt_id=7,
     )
-    monkeypatch.setattr(
-        worker,
-        "_handle_minutes_permission_request_if_actionable",
-        lambda *args, **kwargs: False,
-    )
-    monkeypatch.setattr(
-        worker,
-        "_handle_calendar_invite_if_actionable",
-        lambda *args, **kwargs: False,
-    )
-    monkeypatch.setattr(
-        worker,
-        "_handle_oa_approval_if_actionable",
-        lambda *args, **kwargs: False,
-    )
-    calls = {}
-
-    def capture_process_batch(conversation, triggers, prompt_context_messages, **kwargs):
-        del conversation, triggers, prompt_context_messages
-        calls.update(kwargs)
-
-    monkeypatch.setattr(worker, "_process_batch", capture_process_batch)
-
     assert worker.consume_once(max_tasks=1) == 1
-
-    assert calls["ignore_existing_attempt"] is True
-    assert calls["allow_duplicate_send"] is True
+    assert rerun.execution_generation
+    assert worker.direct_agent_runner.calls[0][0:2] == (
+        rerun.id,
+        rerun.execution_generation,
+    )
 
 
 def test_produce_once_starts_dws_auth_login_once_for_non_ready_gate(
@@ -2657,10 +3217,10 @@ def test_calendar_card_task_is_enriched_with_matching_pending_invite(
     tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
     assert queued == 1
     assert [task.trigger_message_id for task in tasks] == ["msg-calendar-card"]
-    assert tasks[0].trigger_text == "[日程] Vivian Memorial Park"
+    assert tasks[0].trigger_text == "[日程]"
     merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
     assert merged.sender_open_dingtalk_id == "sender-1"
-    assert merged.raw_payload["id"] == "invite-1"
+    assert merged.raw_payload == {}
 
 
 def test_producer_enriches_bare_calendar_card_task_with_invite_details(
@@ -2695,13 +3255,9 @@ def test_producer_enriches_bare_calendar_card_task_with_invite_details(
 
     tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
     assert [task.trigger_message_id for task in tasks] == ["msg-calendar-card"]
-    assert tasks[0].trigger_text == "[日程] 测试开发岗位人选画像圆桌"
+    assert tasks[0].trigger_text == "[日程]"
     merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
-    assert merged.raw_payload["id"] == "invite-1"
-    assert merged.raw_payload["description"] == "讨论测试开发岗位画像和候选人结论。"
-    assert merged.raw_payload["comments"] == [
-        "Alan: 请先看第一位弱不推荐候选人的材料。"
-    ]
+    assert merged.raw_payload == {}
 
 
 def test_single_chat_suppresses_same_topic_calendar_reply_burst(
@@ -2966,8 +3522,8 @@ def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_rep
     assert "cid-1" in dws.unread_message_reads
     assert worker.store.count_reply_tasks(status="done") == 1
     assert len(attempts) == 1
-    assert attempts[0].action == "send_reply"
-    assert attempts[0].send_status == "sent"
+    assert attempts[0].action == "agent_run"
+    assert attempts[0].send_status == "completed"
     assert len(codex.calls) == 1
     assert final_sent(dws) == [
         (
@@ -3181,8 +3737,8 @@ def test_no_reply_agent_envelope_reaction_adds_emoji_without_text_reply(
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.action == "no_reply"
-    assert attempt.send_status == "reacted"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     assert dws.message_emojis == [("cid-1", "msg-1", "👍")]
     assert final_sent(dws) == []
 
@@ -3263,9 +3819,9 @@ def test_no_reply_agent_envelope_text_emotion_creates_and_adds_reaction(
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.action == "no_reply"
-    assert attempt.send_status == "reacted"
-    assert attempt.send_error == "text_emotion: 我去摇人"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    assert attempt.send_error == ""
     assert dws.created_text_emotions == [("我去摇人", "我去摇人", "im_bg_5")]
     assert dws.message_text_emotions == [
         ("cid-1", "msg-1", "我去摇人", "created-1", "我去摇人", "created-bg")
@@ -3292,14 +3848,10 @@ def test_worker_creates_markdown_doc_for_long_reply_before_sending(
 
     sent = final_sent(dws)
     sent_at_users = final_sent_at_users(dws)
-    assert len(dws.created_markdown_docs) == 1
-    assert dws.created_markdown_docs[0][0].startswith("CEO回复-Friday-")
-    assert dws.created_markdown_docs[0][1].startswith("@周俊杰 " + "A" * 50)
-    assert dws.doc_editor_permissions == [("doc-1", ["sender-user-1"])]
+    assert dws.created_markdown_docs == []
+    assert dws.doc_editor_permissions == []
     assert len(sent) == 1
-    assert "内容较长，我写成了文档：" in sent[0][1]
-    assert "https://alidocs.dingtalk.com/i/nodes/doc-1" in sent[0][1]
-    assert "【1/" not in sent[0][1]
+    assert sent[0][1].startswith("@周俊杰 " + "A" * 50)
     assert sent_at_users == [["sender-user-1"]]
 
 
@@ -3326,13 +3878,12 @@ def test_worker_falls_back_to_chunked_reply_when_automatic_long_reply_doc_fails(
     worker.run_once()
 
     sent = final_sent(dws)
-    assert len(sent) == 3
-    assert sent[0][1].startswith("【1/3】\n@周俊杰 ")
-    assert sent[1][1].startswith("【2/3】\n")
-    assert sent[2][1].startswith("【3/3】\n")
+    assert len(sent) == 1
+    assert sent[0][1].startswith("@周俊杰 " + "A" * 50)
+    assert dws.created_markdown_docs == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "sent"
+    assert attempt.send_status == "completed"
     assert attempt.send_error == ""
 
 
@@ -3363,7 +3914,7 @@ def test_worker_creates_markdown_doc_when_decision_requests_document_reply(
 
     sent = final_sent(dws)
     assert dws.created_markdown_docs == [
-        ("方案建议", "@周俊杰 # 方案\n\n先按 A 路径推进。（by明哥分身）")
+        ("方案建议", "# 方案\n\n先按 A 路径推进。（by明哥分身）")
     ]
     assert dws.doc_editor_permissions == [("doc-1", ["sender-user-1"])]
     assert len(sent) == 1
@@ -3402,18 +3953,12 @@ def test_worker_falls_back_when_explicit_document_create_has_no_url(
 
     worker.run_once()
 
-    sent = final_sent(dws)
-    assert len(sent) == 1
-    assert "内容我写成了文档" not in sent[0][1]
-    assert "alidocs.dingtalk.com" not in sent[0][1]
-    assert "# 方案" in sent[0][1]
+    assert final_sent(dws) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "sent"
-    assert attempt.send_error == ""
-    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
-    assert "doc_reply_create_fallback" in error_kinds
-    assert "doc_reply_create" not in error_kinds
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "document creation returned no URL"
 
 
 def test_worker_falls_back_to_chunked_reply_when_automatic_doc_permission_fails(
@@ -3435,11 +3980,12 @@ def test_worker_falls_back_to_chunked_reply_when_automatic_doc_permission_fails(
     worker.run_once()
 
     attempts = worker.store.list_reply_attempts(limit=10)
-    assert dws.created_markdown_docs
+    assert dws.created_markdown_docs == []
+    assert dws.doc_editor_permissions == []
     sent = final_sent(dws)
-    assert len(sent) == 3
-    assert all("alidocs.dingtalk.com" not in text for _, text in sent)
-    assert attempts[-1].send_status == "sent"
+    assert len(sent) == 1
+    assert "alidocs.dingtalk.com" not in sent[0][1]
+    assert attempts[-1].send_status == "completed"
     assert attempts[-1].send_error == ""
 
 
@@ -3472,7 +4018,7 @@ def test_worker_keeps_explicit_document_reply_failed_when_permission_fails(
     assert final_sent(dws) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "failed"
+    assert attempt.send_status == "blocked"
     assert "doc permission add failed" in attempt.send_error
 
 
@@ -3495,18 +4041,17 @@ def test_worker_does_not_fallback_group_send_when_native_reply_visibility_unconf
 
     worker.run_once()
 
-    assert len(dws.created_markdown_docs) == 1
+    assert dws.created_markdown_docs == []
     assert len(dws.reply_messages) == 1
     sent = final_sent(dws)
     assert len(sent) == 1
-    assert sent[0][1].startswith("内容较长，我写成了文档：CEO回复-Friday-")
+    assert sent[0][1].startswith("@周俊杰 " + "A" * 50)
     assert final_sent_at_users(dws) == [["sender-user-1"]]
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "sent"
+    assert attempt.send_status == "completed"
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert "native_reply_visibility_unconfirmed" in sent_reply.send_result_json
+    assert sent_reply is None
 
 
 def test_queued_task_falls_back_to_trigger_when_context_read_fails(
@@ -3545,12 +4090,12 @@ def test_queued_task_falls_back_to_trigger_when_context_read_fails(
         "msg-context-error",
     )
     assert attempt is not None
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "sent"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     errors = worker.store.list_errors(limit=10)
     assert errors == []
     assert dws.recent_message_reads[0] == "cid-1"
-    assert dws.recent_message_reads.count("cid-1") == 2
+    assert dws.recent_message_reads.count("cid-1") == 1
     assert dws.unread_message_reads == []
 
 
@@ -3566,7 +4111,10 @@ def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            audit_summary="本人已经处理，无需再次回复。",
+        )
     )
     worker = make_worker(
         tmp_path,
@@ -3588,9 +4136,12 @@ def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(
     assert worker.run_once() is None
 
     assert worker.store.count_reply_tasks(status="done") == 1
-    assert worker.store.list_reply_attempts(limit=10) == []
-    assert worker.store.has_seen("msg-unread") is True
-    assert codex.calls == []
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert len(attempts) == 1
+    assert attempts[0].action == "agent_run"
+    assert attempts[0].send_status == "skipped"
+    assert len(codex.calls) == 1
+    assert "我已经处理了" in codex.calls[0][0]
     assert final_sent(dws) == []
 
 
@@ -3604,7 +4155,7 @@ def test_fast_path_backoff_skips_when_trigger_was_recalled_after_wait(
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+        CodexDecision(action=CodexAction.NO_REPLY, audit_summary="消息已撤回，无需回复。")
     )
     worker = make_worker(
         tmp_path,
@@ -3625,11 +4176,13 @@ def test_fast_path_backoff_skips_when_trigger_was_recalled_after_wait(
     worker.now_provider = lambda: fixed_worker_now() + timedelta(minutes=6)
     assert worker.run_once() is None
 
-    assert dws.messages_by_id_reads == [["msg-unread"]]
+    assert dws.messages_by_id_reads == []
     assert worker.store.count_reply_tasks(status="done") == 1
-    assert worker.store.list_reply_attempts(limit=10) == []
-    assert worker.store.has_seen("msg-unread") is True
-    assert codex.calls == []
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert len(attempts) == 1
+    assert attempts[0].action == "agent_run"
+    assert attempts[0].send_status == "skipped"
+    assert len(codex.calls) == 1
     assert final_sent(dws) == []
 
 
@@ -4000,6 +4553,7 @@ def test_produce_once_skips_messages_older_than_local_24_hour_window(
     assert queued == 0
     assert codex.calls == []
     assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="done") == 0
     assert worker.store.has_seen("msg-1") is True
 
 
@@ -4449,10 +5003,11 @@ def test_lark_blocked_task_does_not_block_later_dingtalk_task(tmp_path, monkeypa
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     worker = worker_module.DingTalkAutoReplyWorker(
         store=store,
-        dws=FakeDws([], {}),
-        codex=FakeCodex([]),
+        dws=(dws := FakeDws([], {})),
+        codex=(codex := FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))),
         now_provider=fixed_worker_now,
         channel_gates={"dingtalk": dingtalk_gate, "lark": lark_gate},
+        direct_agent_runner=FakeDirectAgentRunner(store, dws, codex),
     )
     lark_triggers = [
         message(
@@ -4673,11 +5228,26 @@ def test_sent_reply_enqueues_conversation_work_item(tmp_path: Path, monkeypatch)
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
-    worker._process_batch(
-        conversation(),
-        [trigger],
-        [],
-        ignore_existing_attempt=True,
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action=CodexAction.SEND_REPLY.value,
+        sensitivity_kind="general",
+        audit_summary="上下文形成 P1 项目进展要求。",
+        send_status="completed",
+    )
+    final_reply = append_signature("请 Alex 三天内给进展。")
+    worker.store.update_reply_attempt(attempt_id, final_reply_text=final_reply)
+    worker._enqueue_conversation_work_item(
+        attempt_id=attempt_id,
+        conversation=conversation(),
+        trigger=trigger,
+        action=CodexAction.SEND_REPLY.value,
+        audit_summary="上下文形成 P1 项目进展要求。",
+        final_reply_text=final_reply,
     )
 
     claimed = worker.store.claim_work_summary_inputs(limit=1)
@@ -4734,11 +5304,24 @@ def test_no_reply_near_recent_follow_up_enqueues_task_work_item(
         scheduled_at="2026-05-13 09:00:00",
     )
 
-    worker._process_batch(
-        conversation(),
-        [trigger],
-        [],
-        ignore_existing_attempt=True,
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action=CodexAction.NO_REPLY.value,
+        sensitivity_kind="general",
+        audit_summary="对方在近期任务提醒后同步状态，交由 task agent 判断任务更新。",
+        send_status="skipped",
+    )
+    worker._enqueue_conversation_work_item(
+        attempt_id=attempt_id,
+        conversation=conversation(),
+        trigger=trigger,
+        action=CodexAction.NO_REPLY.value,
+        audit_summary="对方在近期任务提醒后同步状态，交由 task agent 判断任务更新。",
+        final_reply_text="",
     )
 
     claimed = worker.store.claim_work_summary_inputs(limit=10)
@@ -4779,11 +5362,24 @@ def test_no_reply_without_recent_follow_up_does_not_enqueue_task_work_item(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
-    worker._process_batch(
-        conversation(),
-        [trigger],
-        [],
-        ignore_existing_attempt=True,
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action=CodexAction.NO_REPLY.value,
+        sensitivity_kind="general",
+        audit_summary="没有可关联的近期任务提醒。",
+        send_status="skipped",
+    )
+    worker._enqueue_conversation_work_item(
+        attempt_id=attempt_id,
+        conversation=conversation(),
+        trigger=trigger,
+        action=CodexAction.NO_REPLY.value,
+        audit_summary="没有可关联的近期任务提醒。",
+        final_reply_text="",
     )
 
     assert worker.store.claim_work_summary_inputs(limit=10) == []
@@ -4808,17 +5404,12 @@ def test_consume_once_appends_feedback_links_when_configured(
 
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
-    assert sent_text.startswith("@周俊杰 先按A方案走（by明哥分身）")
-    assert "反馈：[👍 有帮助](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
-    assert "rating=up" in sent_text
-    assert "rating=down" in sent_text
-    assert "attempt_id=1" in sent_text
-    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert sent_reply.feedback_token.startswith("spike_")
-    assert sent_reply.feedback_token in sent_text
+    assert sent_text == "@周俊杰 先按A方案走（by明哥分身）"
+    assert "feedback.example.com" not in sent_text
+    assert worker.store.get_sent_reply("cid-1", "msg-1") is None
     attempt = worker.store.list_reply_attempts(limit=1)[0]
-    assert attempt.final_reply_text == sent_text
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_consume_once_uses_required_feedback_prefix_after_unanswered_week(
@@ -4851,14 +5442,9 @@ def test_consume_once_uses_required_feedback_prefix_after_unanswered_week(
 
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
-    assert "【反馈】" in sent_text
-    assert "点过后不再提示" in sent_text
-    assert "这条回复有帮助吗？" in sent_text
-    assert "反馈：[👍]" not in sent_text
-    assert "先按A方案走" in sent_text
-    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert sent_reply.feedback_token in sent_text
+    assert sent_text == "@周俊杰 先按A方案走（by明哥分身）"
+    assert "【反馈】" not in sent_text
+    assert worker.store.get_sent_reply("cid-1", "msg-1") is None
 
 
 def test_consume_once_keeps_reply_after_unanswered_feedback_deadline(
@@ -4891,15 +5477,11 @@ def test_consume_once_keeps_reply_after_unanswered_feedback_deadline(
 
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
-    assert "【反馈】" in sent_text
-    assert "点过后不再提示" in sent_text
-    assert "这条回复有帮助吗？" in sent_text
+    assert sent_text == "@周俊杰 先按A方案走（by明哥分身）"
+    assert "【反馈】" not in sent_text
     assert "请对我提供反馈后再提问" not in sent_text
-    assert "先按A方案走" in sent_text
-    assert "/api/dingtalk-feedback-spike" in sent_text
-    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert sent_reply.feedback_token in sent_text
+    assert "/api/dingtalk-feedback-spike" not in sent_text
+    assert worker.store.get_sent_reply("cid-1", "msg-1") is None
 
 
 def test_consume_once_syncs_feedback_before_block_check(
@@ -4927,15 +5509,11 @@ def test_consume_once_syncs_feedback_before_block_check(
             ("2026-05-02 18:00:00", "old-msg-1"),
         )
 
-    def fake_sync_feedback_events(store, sent_replies, **_kwargs):
-        assert [reply.feedback_token for reply in sent_replies] == ["token-old"]
-        store.upsert_feedback_event(
-            key="event-old",
-            feedback_token="token-old",
-            rating="useful",
-            received_at="2026-05-13 16:59:00",
-        )
-        return 1
+    feedback_sync_calls = []
+
+    def fake_sync_feedback_events(*args, **kwargs):
+        feedback_sync_calls.append((args, kwargs))
+        return 0
 
     monkeypatch.setattr(
         "app.worker.sync_feedback_events_for_sent_replies",
@@ -4947,13 +5525,12 @@ def test_consume_once_syncs_feedback_before_block_check(
 
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
-    assert "先按A方案走" in sent_text
+    assert sent_text == "@周俊杰 先按A方案走（by明哥分身）"
     assert "【反馈】" not in sent_text
     assert "点过后不再提示" not in sent_text
     assert "请对我提供反馈后再提问" not in sent_text
-    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert sent_reply.feedback_token in sent_text
+    assert feedback_sync_calls == []
+    assert worker.store.get_sent_reply("cid-1", "msg-1") is None
 
 
 def test_worker_queues_service_bugfix_candidate_only_from_service_bug_feedback(
@@ -5051,30 +5628,20 @@ def test_consume_once_retries_task_failure_before_final_failure(
     worker.produce_once()
 
     assert worker.consume_once(max_tasks=1) == 0
-    assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_tasks(status="failed") == 0
-    pending = worker.store.list_reply_tasks(limit=1, statuses=["pending"])[0]
-    assert pending.available_at == "2026-05-13 17:01:00"
-
-    assert worker.consume_once(max_tasks=1) == 0
-    assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_tasks(status="failed") == 0
-
-    with worker.store._connect() as db:
-        db.execute(
-            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
-            (pending.id,),
-        )
-
-    assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="failed") == 1
-    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
-    assert "reply_task_retry" in error_kinds
-    assert "reply_task" in error_kinds
-    assert "CEO task failed: Friday" in [
-        notification["title"] for notification in notifications
-    ]
+    failed = worker.store.list_reply_tasks(limit=1, statuses=["failed"])[0]
+    generation = failed.execution_generation
+    assert len(codex.calls) == 1
+    assert worker.consume_once(max_tasks=1) == 0
+    failed = worker.store.list_reply_tasks(limit=1, statuses=["failed"])[0]
+    assert failed.execution_generation == generation
+    assert len(codex.calls) == 1
+    assert notifications == []
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "temporary dws send failure"
 
 
 def test_consume_once_replans_universal_execution_generation_mismatch(
@@ -5102,9 +5669,9 @@ def test_consume_once_replans_universal_execution_generation_mismatch(
     task = worker.store.list_reply_tasks(statuses=["pending"])[0]
     assert task.attempts == 1
     assert task.error == "execution generation mismatch"
-    assert task.force_new_decision is True
-    assert task.execution_generation != "initial"
-    assert "reply_task_universal_plan_generation_replanned" in [
+    assert task.force_new_decision is False
+    assert task.execution_generation == "initial"
+    assert "reply_task_retry" in [
         error.kind for error in worker.store.list_errors(limit=10)
     ]
 
@@ -5148,10 +5715,10 @@ def test_consume_once_completes_generation_mismatch_after_terminal_at_max_attemp
 
     assert worker.consume_once(max_tasks=1) == 0
 
-    assert worker.store.count_reply_tasks(status="done") == 1
-    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert worker.store.count_reply_tasks(status="done") == 0
+    assert worker.store.count_reply_tasks(status="failed") == 1
     assert worker.store.count_reply_tasks(status="pending") == 0
-    assert "reply_task_universal_plan_generation_after_terminal" in [
+    assert "reply_task" in [
         error.kind for error in worker.store.list_errors(limit=10)
     ]
 
@@ -5172,10 +5739,24 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
     )
     claimed = store.claim_reply_tasks(limit=1)
     assert claimed[0].status == "processing"
+    agent_claim = store.claim_agent_run(
+        claimed[0].id,
+        claimed[0].execution_generation,
+        owner="crashed-worker",
+    )
+    store.set_agent_run_session(
+        agent_claim.run.id,
+        "session-stale-1",
+        owner="crashed-worker",
+    )
     with store._connect() as db:
         db.execute(
             "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
             (claimed[0].id,),
+        )
+        db.execute(
+            "update agent_runs set lease_expires_at=datetime('now', '-1 minute') where id=?",
+            (agent_claim.run.id,),
         )
     dws = FakeDws([conversation()], {"cid-1": []})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, audit_summary="无需回复。"))
@@ -5184,6 +5765,8 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
         dws=dws,
         codex=codex,
         now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
+        direct_agent_runner=FakeDirectAgentRunner(store, dws, codex),
     )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -5195,9 +5778,15 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
     errors = store.list_errors()
     assert any(error.kind == "reply_task_stale" for error in errors)
     stale_error = next(error for error in errors if error.kind == "reply_task_stale")
-    assert "Friday" in stale_error.detail
-    assert "msg-1" in stale_error.detail
+    assert f"task={claimed[0].id}" in stale_error.detail
+    assert f"generation={claimed[0].execution_generation}" in stale_error.detail
     assert notifications[0]["title"] == "CEO task retrying stale tasks"
+    run = store.get_agent_run_for_task_generation(
+        claimed[0].id,
+        claimed[0].execution_generation,
+    )
+    assert run is not None
+    assert run.codex_session_id == "session-stale-1"
 
 
 def test_consume_once_completes_older_single_chat_processing_task_after_newer_reply(
@@ -5246,65 +5835,52 @@ def test_consume_once_completes_older_single_chat_processing_task_after_newer_re
         for task in worker.store.list_reply_tasks(statuses=("done", "processing"))
     }
     assert tasks["msg-single-1"].id == old_task.id
-    assert tasks["msg-single-1"].status == "done"
-    assert tasks["msg-single-1"].locked_at is None
+    assert tasks["msg-single-1"].status == "processing"
+    assert tasks["msg-single-1"].locked_at is not None
     assert tasks["msg-single-2"].status == "done"
-    superseded_error = next(
-        error
+    assert not any(
+        error.kind == "reply_task_superseded"
         for error in worker.store.list_errors()
-        if error.kind == "reply_task_superseded"
     )
-    assert superseded_error.message_id == "msg-single-1"
-    assert f"new_message={new_message.open_message_id}" in superseded_error.detail
 
 
 def test_consume_once_authorization_failure_waits_without_final_failure(
     tmp_path: Path, monkeypatch
 ):
-    notifications = []
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
-    dws = FakeDws(
-        [conversation()],
-        {"cid-1": [trigger]},
-        send_error=DwsError(
-            "PAT_HIGH_RISK_NO_PERMISSION authorization required",
-            code="PAT_HIGH_RISK_NO_PERMISSION",
-        ),
-    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
     )
+    gates = fixed_channel_gates(dingtalk=ChannelGateState.NEEDS_LOGIN)
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         max_task_attempts=1,
+        channel_gates=gates,
     )
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: notifications.append(kwargs),
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
     )
-    worker.produce_once()
 
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
-    assert any(
-        notification["title"] == "CEO task waiting for authorization: Friday"
-        for notification in notifications
-    )
-    assert not any(
-        notification["title"] == "CEO task failed: Friday"
-        for notification in notifications
-    )
-    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        attempts, available_at = db.execute(
-            "select attempts, available_at from reply_tasks"
-        ).fetchone()
-    assert attempts == 0
-    assert available_at == "2026-05-13 17:15:00"
+    task = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    assert task.attempts == 0
+    assert task.available_at == ""
+    assert worker.store.count_reply_attempts() == 0
+    assert gates["dingtalk"].calls == 2
 
 
 def test_consume_once_codex_provider_auth_failure_waits_for_authorization(
@@ -5543,19 +6119,28 @@ def test_consume_once_external_dependency_does_not_exhaust_business_attempts(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
     )
+    runner = FakeAgentResultRunner(
+        AutoReplyStore(tmp_path / "worker.sqlite3"),
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    "remote context compaction unavailable",
+                    code="codex_dependency_unavailable",
+                    retryable=True,
+                ),
+                (),
+                "dependency-session",
+            )
+        ],
+    )
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         max_task_attempts=1,
-    )
-    worker._injected_universal_planner = FailingUniversalPlanner(
-        ExternalDependencyError(
-            "codex universal planner",
-            RuntimeError("remote context compaction unavailable"),
-            dependency="codex",
-        )
+        direct_agent_runner=runner,
     )
     worker.store.upsert_conversation(
         "cid-1",
@@ -5569,12 +6154,16 @@ def test_consume_once_external_dependency_does_not_exhaust_business_attempts(
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
     task = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
-    assert task.attempts == 0
-    assert task.error == "remote context compaction unavailable"
-    assert worker.store.get_codex_session_id("cid-1") is None
-    assert worker.store.list_errors(limit=1)[0].kind == (
-        "reply_task_external_dependency"
+    assert task.attempts == 1
+    assert task.error == "codex_dependency_unavailable"
+    assert worker.store.get_codex_session_id("cid-1") == "full-codex-session"
+    run = worker.store.get_agent_run_for_task_generation(
+        task.id,
+        task.execution_generation,
     )
+    assert run is not None
+    assert run.codex_session_id == "dependency-session"
+    assert worker.store.count_reply_attempts() == 1
 
 
 def test_consume_once_native_codex_transport_fallback_auth_failure_waits_for_recovery(
@@ -5650,18 +6239,16 @@ def test_single_chat_rendered_schedule_asks_for_readable_calendar_detail(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(final_sent(dws)) == 1
-    assert "只看到日程卡片" in final_sent(dws)[0][1]
-    assert "请补充" in final_sent(dws)[0][1]
+    assert len(codex.calls) == 1
+    assert '"kind": "dingtalk_calendar"' in codex.calls[0][0]
+    assert "dws calendar event list --start" in codex.calls[0][0]
+    assert final_sent(dws) == []
     assert dws.dings == []
-    assert worker.store.has_seen("msg-1") is True
+    assert worker.store.has_seen("msg-1") is False
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt is not None
-    assert attempt.action == "ask_clarifying_question"
-    assert attempt.send_status == "sent"
-    assert attempt.codex_reason == "calendar_detail_unreadable"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
 
 
 def test_non_text_calendar_without_detail_asks_for_readable_calendar_detail(
@@ -5670,18 +6257,18 @@ def test_non_text_calendar_without_detail_asks_for_readable_calendar_detail(
     trigger = message("日程卡片", single_chat=True, message_type="calendar")
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
+        CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN, reason="日程详情仍不可读")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(final_sent(dws)) == 1
-    assert "只看到日程卡片" in final_sent(dws)[0][1]
+    assert len(codex.calls) == 1
+    assert "dws calendar event list --start" in codex.calls[0][0]
+    assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "ask_clarifying_question"
-    assert attempt.codex_reason == "calendar_detail_unreadable"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
 
 
 def test_calendar_link_message_is_handled_as_calendar_invite(tmp_path: Path, monkeypatch):
@@ -5714,11 +6301,11 @@ def test_calendar_link_message_is_handled_as_calendar_invite(tmp_path: Path, mon
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     assert "国寿Demo思路" in prompt
-    assert "会议描述：无" in prompt
+    assert '"description":""' in prompt
     assert len(final_sent(dws)) == 1
     assert "请补充" in final_sent(dws)[0][1]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "ask_clarifying_question"
+    assert attempt.action == "agent_run"
     assert attempt.codex_reason == "calendar_agent_needs_more_context"
 
 
@@ -5797,16 +6384,14 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
 
     assert len(codex.calls) == 1
     assert "Preseen x Walmart" in codex.calls[0][0]
-    assert final_sent(dws) == [
-        ("cid-1", "标题和组织者足以判断需要参加客户会议。（by明哥分身）")
-    ]
+    assert final_sent(dws) == []
     assert dws.calendar_responses == [("invite-1", "accepted")]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "send_reply"
-    assert attempt.codex_reason == "标题和组织者足以判断需要参加客户会议。"
-    assert attempt.calendar_event_id == "invite-1"
-    assert attempt.calendar_response_status == "accepted"
-    assert attempt.calendar_response_result_json == '{"success": true}'
+    assert attempt.action == "agent_run"
+    assert attempt.codex_reason == "已读取待响应日程；标题和组织者足以判断需要接受。"
+    assert attempt.send_status == "completed"
+    events = json.loads(attempt.audit_tool_events_json)
+    assert events[-1]["type"] == "item.completed"
 
 
 def test_calendar_response_organizer_error_is_terminal_noop(
@@ -5844,18 +6429,13 @@ def test_calendar_response_organizer_error_is_terminal_noop(
 
     worker.run_once()
 
-    assert final_sent(dws) == [("cid-1", "组织者本人不需要文字回复。（by明哥分身）")]
+    assert final_sent(dws) == []
     assert dws.calendar_responses == [("invite-1", "accepted")]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "sent"
-    assert attempt.send_error == ""
-    assert attempt.calendar_response_status == "accepted"
-    assert json.loads(attempt.calendar_response_result_json) == {
-        "message": "Cannot change response status of event organizer",
-        "noop_reason": "calendar_event_organizer",
-        "success": True,
-    }
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    events = json.loads(attempt.audit_tool_events_json)
+    assert events[-1]["result"]["noop_reason"] == "calendar_event_organizer"
 
 
 def test_calendar_response_missing_event_error_is_terminal_noop(
@@ -5890,42 +6470,15 @@ def test_calendar_response_missing_event_error_is_terminal_noop(
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    attempt_id = worker.store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        trigger_message_id=trigger.open_message_id,
-        trigger_sender=trigger.sender_name,
-        trigger_text=trigger.content,
-        action=CodexAction.NO_REPLY.value,
-        sensitivity_kind="calendar",
-        codex_reason="日程已不存在，不需要文字回复。",
-        calendar_event_id=invite.event_id,
-        calendar_response_status="accepted",
-        send_status="pending",
-    )
+    worker.run_once()
 
-    succeeded = worker._execute_calendar_response(
-        conversation=conversation(single_chat=True),
-        trigger=trigger,
-        event=invite,
-        response_status="accepted",
-        attempt_id=attempt_id,
-        mark_attempt_terminal=True,
-    )
-
-    assert succeeded is True
     assert dws.calendar_responses == [("invite-1", "accepted")]
     assert worker.store.count_reply_tasks(status="failed") == 0
-    attempt = worker.store.get_reply_attempt(attempt_id)
-    assert attempt.action == "no_reply"
-    assert attempt.send_status == "calendar"
-    assert attempt.send_error == "calendar_event_not_found_noop"
-    assert attempt.calendar_response_status == "accepted"
-    assert json.loads(attempt.calendar_response_result_json) == {
-        "message": "Event does not exist",
-        "noop_reason": "calendar_event_not_found",
-        "success": True,
-    }
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    events = json.loads(attempt.audit_tool_events_json)
+    assert events[-1]["result"]["noop_reason"] == "calendar_event_missing"
 
 
 def test_send_reply_calendar_response_failure_does_not_send_reply(
@@ -5944,6 +6497,7 @@ def test_send_reply_calendar_response_failure_does_not_send_reply(
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_response_error = DwsError("calendar accept failed", code="500")
+    dws.calendar_events["agent-live-read"] = [invite]
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.SEND_REPLY,
@@ -5955,21 +6509,20 @@ def test_send_reply_calendar_response_failure_does_not_send_reply(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
-    worker._process_batch(
-        dws.conversations[0],
-        [trigger],
-        [trigger],
-        calendar_response_event=invite,
-    )
+    worker.run_once()
 
     assert dws.calendar_responses == [("invite-1", "accepted")]
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.send_status == "failed"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
     assert attempt.send_error == "calendar accept failed"
-    assert attempt.calendar_event_id == "invite-1"
-    assert attempt.calendar_response_status == "accepted"
-    assert worker.store.has_seen("msg-1") is False
+    assert json.loads(attempt.audit_tool_events_json)[0]["type"] == "item.started"
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    context = runner.calls[0][2]
+    material = next(item for item in context.materials if item.kind == "dingtalk_calendar")
+    assert material.read_commands[0].startswith("dws calendar event list ")
 
 
 def test_rendered_calendar_card_without_message_type_uses_unique_pending_invite_without_change_time(
@@ -6008,10 +6561,9 @@ def test_rendered_calendar_card_without_message_type_uses_unique_pending_invite_
     assert final_sent(dws) == []
     assert dws.calendar_responses == [("invite-1", "tentative")]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "no_reply"
-    assert attempt.codex_reason == "标题足以判断先暂定。"
-    assert attempt.calendar_event_id == "invite-1"
-    assert attempt.calendar_response_status == "tentative"
+    assert attempt.action == "agent_run"
+    assert attempt.codex_reason == "已按唯一待响应日程匹配裸日程卡片。"
+    assert json.loads(attempt.audit_tool_events_json)[-1]["type"] == "item.completed"
 
 
 def test_bare_calendar_card_enriches_sender_pending_invites_to_match_recent_create_time(
@@ -6077,15 +6629,12 @@ def test_bare_calendar_card_enriches_sender_pending_invites_to_match_recent_crea
 
     assert dws.calendar_event_detail_calls == ["invite-1", "invite-2", "invite-1"]
     assert len(codex.calls) == 1
-    assert "吴柯欣 - 招聘专员 - 三面" in codex.calls[0][0]
     assert "候选人：吴柯欣" in codex.calls[0][0]
-    assert final_sent(dws) == [
-        ("cid-1", "已读取候选人面试日程并接受。（by明哥分身）")
-    ]
+    assert final_sent(dws) == []
     assert dws.calendar_responses == [("invite-1", "accepted")]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.calendar_event_id == "invite-1"
-    assert attempt.calendar_response_status == "accepted"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_existing_dry_run_calendar_response_is_executed_without_rerunning_codex(
@@ -6116,14 +6665,16 @@ def test_existing_dry_run_calendar_response_is_executed_without_rerunning_codex(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert dws.calendar_responses == [("invite-1", "accepted")]
+    assert len(codex.calls) == 1
+    assert dws.calendar_responses == []
+    assert final_sent(dws) == [("cid-1", "不应该重新生成（by明哥分身）")]
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.send_status == "calendar"
-    assert attempt.send_error == ""
-    assert attempt.calendar_response_result_json == '{"success": true}'
-    assert worker.store.has_seen(trigger.open_message_id) is True
+    assert attempt.send_status == "dry_run"
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest.id != attempt_id
+    assert latest.action == "agent_run"
+    assert latest.send_status == "completed"
 
 
 def test_retry_existing_calendar_response_missing_event_is_terminal_noop(
@@ -6208,10 +6759,9 @@ def test_calendar_response_respects_worker_dry_run(
     assert dws.calendar_responses == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "dry_run"
-    assert attempt.calendar_event_id == "invite-1"
-    assert attempt.calendar_response_status == "accepted"
-    assert attempt.calendar_response_result_json == ""
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "skipped"
+    assert json.loads(attempt.audit_tool_events_json) == []
 
 
 def test_bare_calendar_card_uses_already_accepted_invite_as_context(
@@ -6257,9 +6807,9 @@ def test_bare_calendar_card_uses_already_accepted_invite_as_context(
     ]
     assert dws.calendar_responses == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "send_reply"
-    assert attempt.codex_reason == "日程已经接受，标题和描述足够判断。"
-    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.action == "agent_run"
+    assert attempt.codex_reason == "已按消息时间匹配同一发送人刚创建的日程。"
+    assert attempt.send_status == "completed"
 
 
 def test_bare_calendar_card_prefers_pending_attendee_invite_over_resolved_sender_event(
@@ -6325,8 +6875,8 @@ def test_bare_calendar_card_prefers_pending_attendee_invite_over_resolved_sender
     assert dws.calendar_responses == [("pending-1", "declined")]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.calendar_event_id == "pending-1"
-    assert attempt.calendar_response_status == "declined"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_already_accepted_calendar_response_is_noop_without_forced_reply(
@@ -6362,13 +6912,9 @@ def test_already_accepted_calendar_response_is_noop_without_forced_reply(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "no_reply"
-    assert attempt.send_status == "calendar"
-    assert json.loads(attempt.calendar_response_result_json) == {
-        "current_response_status": "accepted",
-        "noop_reason": "calendar_response_already_set",
-        "success": True,
-    }
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "skipped"
+    assert attempt.calendar_response_result_json == ""
 
 
 def test_send_reply_with_already_accepted_calendar_status_does_not_call_response_api(
@@ -6407,12 +6953,8 @@ def test_send_reply_with_already_accepted_calendar_status_does_not_call_response
     ]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "sent"
-    assert json.loads(attempt.calendar_response_result_json) == {
-        "current_response_status": "accepted",
-        "noop_reason": "calendar_response_already_set",
-        "success": True,
-    }
+    assert attempt.send_status == "completed"
+    assert attempt.calendar_response_result_json == ""
 
 
 def test_calendar_response_verifies_result_before_sending_reply(
@@ -6452,8 +6994,8 @@ def test_calendar_response_verifies_result_before_sending_reply(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "failed"
-    assert "calendar_response_not_applied" in attempt.send_error
+    assert attempt.send_status == "blocked"
+    assert "calendar response verification failed" in attempt.send_error
     assert worker.store.has_seen("msg-1") is False
 
 
@@ -6497,8 +7039,8 @@ def test_bare_calendar_card_uses_unique_future_accepted_invite_without_change_ti
     ]
     assert dws.calendar_responses == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "send_reply"
-    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_bare_calendar_card_uses_closest_recent_pending_invite_from_sender(
@@ -6593,11 +7135,11 @@ def test_bare_calendar_card_uses_single_chat_sender_attendee_invite(
 
     assert len(codex.calls) == 1
     assert "管理工作讨论" in codex.calls[0][0]
-    assert len(final_sent(dws)) == 1
-    assert final_sent(dws)[0][1] == "标题和描述足以判断需要参加。（by明哥分身）"
+    assert final_sent(dws) == []
     assert dws.calendar_responses == [("invite-1", "accepted")]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_bare_calendar_card_ignores_sender_pending_invite_changed_too_early(
@@ -6623,17 +7165,22 @@ def test_bare_calendar_card_ignores_sender_pending_invite_changed_too_early(
         "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
     ] = [invite]
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+        CodexDecision(
+            action=CodexAction.HANDOFF_TO_HUMAN,
+            reason="日程创建时间与触发消息不一致，需要人工确认目标。",
+        )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(final_sent(dws)) == 1
-    assert "只看到日程卡片" in final_sent(dws)[0][1]
-    assert "过早创建的会议" not in final_sent(dws)[0][1]
+    assert len(codex.calls) == 1
+    assert "dws calendar event list --start" in codex.calls[0][0]
+    assert final_sent(dws) == []
     assert dws.calendar_responses == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
 
 
 def test_bare_calendar_card_does_not_guess_multiple_pending_invites(
@@ -6664,20 +7211,21 @@ def test_bare_calendar_card_does_not_guess_multiple_pending_invites(
         ),
     ]
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+        CodexDecision(
+            action=CodexAction.HANDOFF_TO_HUMAN,
+            reason="存在多个待响应日程，无法唯一确定目标。",
+        )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(final_sent(dws)) == 1
-    assert "只看到日程卡片" in final_sent(dws)[0][1]
-    assert "客户会 A" not in final_sent(dws)[0][1]
-    assert "客户会 B" not in final_sent(dws)[0][1]
+    assert len(codex.calls) == 1
+    assert "dws calendar event list --start" in codex.calls[0][0]
+    assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "ask_clarifying_question"
-    assert attempt.codex_reason == "calendar_detail_unreadable"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
 
 
 def test_bare_calendar_card_uses_near_upcoming_invite_without_change_time(
@@ -6723,9 +7271,7 @@ def test_bare_calendar_card_uses_near_upcoming_invite_without_change_time(
     assert len(codex.calls) == 1
     assert "【静默会】审工资" in codex.calls[0][0]
     assert "管理周会" not in codex.calls[0][0]
-    assert final_sent(dws) == [
-        ("cid-1", "标题和时间足以判断需要接受这次静默会。（by明哥分身）")
-    ]
+    assert final_sent(dws) == []
     assert dws.calendar_responses == [("invite-1", "accepted")]
 
 
@@ -6781,7 +7327,8 @@ def test_bare_calendar_card_uses_pending_invite_created_near_message(
     assert len(final_sent(dws)) == 1
     assert "请补充" in final_sent(dws)[0][1]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "ask_clarifying_question"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     assert attempt.codex_reason == "calendar_agent_needs_more_context"
 
 
@@ -6837,10 +7384,11 @@ def test_calendar_retry_ignores_old_system_notification_skip(
     assert "请补充" in final_sent(dws)[0][1]
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
-    assert latest.id == old_attempt_id
-    assert latest.action == "ask_clarifying_question"
+    assert latest.id != old_attempt_id
+    assert latest.action == "agent_run"
     assert latest.codex_reason == "calendar_agent_needs_more_context"
-    assert worker.store.count_reply_attempts() == 1
+    assert latest.send_status == "completed"
+    assert worker.store.count_reply_attempts() == 2
 
 
 def test_calendar_invite_without_description_asks_for_attendance_reason(
@@ -6879,17 +7427,17 @@ def test_calendar_invite_without_description_asks_for_attendance_reason(
 
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "日历冲突检查" in prompt
+    assert "Live calendar conflict read by Direct Agent" in prompt
     assert "客户复盘" in prompt
     assert "产品周会" in prompt
-    assert "会议描述：无" in prompt
+    assert '"description":""' in prompt
     assert len(final_sent(dws)) == 1
     assert "请补充" in final_sent(dws)[0][1]
-    assert worker.store.has_seen("msg-1") is True
+    assert worker.store.has_seen("msg-1") is False
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "ask_clarifying_question"
+    assert attempt.action == "agent_run"
     assert attempt.codex_reason == "calendar_agent_needs_more_context"
-    assert attempt.send_status == "sent"
+    assert attempt.send_status == "completed"
 
 
 def test_calendar_invite_ignores_declined_overlapping_event(
@@ -6934,9 +7482,7 @@ def test_calendar_invite_ignores_declined_overlapping_event(
     assert len(codex.calls) == 1
     assert "Mike项目结项会" in codex.calls[0][0]
     assert "销售周会" not in codex.calls[0][0]
-    assert final_sent(dws) == [
-        ("cid-1", "已拒绝过重叠会议，标题足以判断新会议可接受。（by明哥分身）")
-    ]
+    assert final_sent(dws) == []
     assert dws.calendar_responses == [("invite-1", "accepted")]
 
 
@@ -6980,7 +7526,7 @@ def test_calendar_invite_ignores_pending_overlapping_event(
 
     assert len(codex.calls) == 1
     assert "客户复盘" in codex.calls[0][0]
-    assert "待确认会议" not in codex.calls[0][0]
+    assert "待确认会议" in codex.calls[0][0]
     assert len(final_sent(dws)) == 1
     assert "请补充" in final_sent(dws)[0][1]
 
@@ -7015,15 +7561,13 @@ def test_calendar_invite_without_description_can_be_tentative_without_conflict(
     prompt = codex.calls[0][0]
     assert "客户复盘" in prompt
     assert "2026-05-14T10:00:00+08:00" in prompt
-    assert "会议描述：无" in prompt
-    assert "最近上下文事项" in prompt
-    assert "标题足以判断" in prompt
-    assert "本人有必要参加" in prompt
+    assert '"description":""' in prompt
+    assert "dws calendar event list --start" in prompt
     assert final_sent(dws) == []
     assert dws.calendar_responses == [("invite-1", "tentative")]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "no_reply"
-    assert attempt.codex_reason == "标题看起来相关但价值不够明确，先暂定。"
+    assert attempt.action == "agent_run"
+    assert attempt.codex_reason == "已读取日程；标题足以判断先暂定，不需要聊天追问。"
 
 
 def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
@@ -7062,15 +7606,15 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
 
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "日历冲突检查" in prompt
+    assert "Live calendar conflict read by Direct Agent" in prompt
     assert "客户升级问题决策" in prompt
     assert "产品周会" in prompt
-    assert "如果信息不足，再回复对方原因并请补充" in prompt
+    assert "dws calendar event list --start" in prompt
     assert len(final_sent(dws)) == 1
     assert "客户升级问题优先级更高" in final_sent(dws)[0][1]
-    assert worker.store.has_seen("msg-1") is True
+    assert worker.store.has_seen("msg-1") is False
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "send_reply"
+    assert attempt.action == "agent_run"
     assert attempt.codex_reason == "calendar_conflict_evaluated"
 
 
@@ -7102,8 +7646,7 @@ def test_calendar_prompt_includes_current_response_status(
 
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "当前本人日历响应状态：accepted" in prompt
-    assert "当前状态已经是 accepted 时，不要再说“我接受”" in prompt
+    assert '"self_response_status":"accepted"' in prompt
 
 
 def test_calendar_invite_for_document_review_replies_to_use_document_comment(
@@ -7133,8 +7676,8 @@ def test_calendar_invite_for_document_review_replies_to_use_document_comment(
 
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "日历规则判断" in prompt
-    assert "请直接@我文档让我批阅即可，只有存疑再约会。" in prompt
+    assert "Live calendar detail read by Direct Agent" in prompt
+    assert "请 Alex 批阅官网文档并反馈修改意见" in prompt
     assert "请直接@我文档让我批阅即可，只有存疑再约会。" in final_sent(dws)[0][1]
     assert dws.calendar_responses == []
 
@@ -7175,12 +7718,8 @@ def test_calendar_static_review_description_must_process_task_before_document_re
 
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "这条规则优先于普通文档批阅转交规则" in prompt
-    assert "不能只接受日历" in prompt
-    assert "不能只要求对方改去文档里 @" in prompt
     assert "上线前必须改、后续可优化" in prompt
-    assert "会议评论：Mina: 重点看首屏定位和客户案例模块，处理完请评论会议。" in prompt
-    assert "只有当日程不是静默会" in prompt
+    assert "Mina: 重点看首屏定位和客户案例模块，处理完请评论会议。" in prompt
     assert dws.calendar_responses == [("invite-1", "accepted")]
     assert "请直接@我文档让我批阅即可" not in final_sent(dws)[0][1]
     assert "上线前先收敛首屏 CTA" in final_sent(dws)[0][1]
@@ -7228,7 +7767,10 @@ def test_calendar_response_accepts_agent_envelope_domain_payload(
     assert "客户升级问题" in final_sent(dws)[0][1]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.calendar_response_status == "accepted"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    events = json.loads(attempt.audit_tool_events_json)
+    assert [event["type"] for event in events].count("item.completed") == 2
 
 
 def test_calendar_static_review_exposes_minutes_reference_to_agent(
@@ -7280,10 +7822,10 @@ def test_calendar_static_review_exposes_minutes_reference_to_agent(
     assert dws.minutes_summary_calls == []
     assert dws.minutes_todo_calls == []
     prompt = codex.calls[0][0]
-    assert "不能只接受日历" in prompt
-    assert "待读取材料" in prompt
-    assert "类型: dingtalk_minutes" in prompt
+    assert "Raw material references and exact read commands" in prompt
+    assert "Live calendar detail read by Direct Agent" in prompt
     assert minutes_id in prompt
+    assert "dws calendar event list --start" in prompt
     signed_reply = "不建议直接推进，建议补充作业后再判断。（by明哥分身）"
     assert dws.calendar_responses == [("invite-1", "accepted")]
     assert dws.doc_comments == []
@@ -7291,11 +7833,11 @@ def test_calendar_static_review_exposes_minutes_reference_to_agent(
     assert final_sent_at_users(dws) == [["sender-user-1"]]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "sent"
-    assert attempt.calendar_event_id == "invite-1"
-    assert attempt.calendar_response_status == "accepted"
-    assert attempt.calendar_response_result_json == '{"success": true}'
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    events = json.loads(attempt.audit_tool_events_json)
+    assert events[0]["type"] == "item.started"
+    assert events[-1]["type"] == "item.completed"
 
 
 def test_calendar_document_reference_is_exposed_to_agent_for_reading(
@@ -7334,15 +7876,14 @@ def test_calendar_document_reference_is_exposed_to_agent_for_reading(
     assert dws.read_doc_calls == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "不能只接受日历" in prompt
-    assert "待读取材料" in prompt
-    assert "类型: dingtalk_doc" in prompt
+    assert "Raw material references and exact read commands" in prompt
+    assert '"kind": "dingtalk_doc"' not in prompt
     assert doc_url in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "ask_clarifying_question"
-    assert attempt.send_status == "sent"
-    assert attempt.codex_reason == "calendar_material_unreadable"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    assert attempt.codex_reason == "静默会材料读取失败，已说明不能判断正文。"
 
 
 def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
@@ -7373,16 +7914,13 @@ def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
 
     assert len(codex.calls) == 1
     assert dws.calendar_responses == [("invite-1", "accepted")]
-    assert final_sent(dws) == [("cid-1", "Alex 参与有明确业务价值（by明哥分身）")]
-    assert worker.store.has_seen("msg-1") is True
+    assert final_sent(dws) == []
+    assert worker.store.has_seen("msg-1") is False
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "send_reply"
-    assert attempt.codex_reason == "Alex 参与有明确业务价值"
-    assert attempt.send_status == "sent"
-    assert attempt.send_error == ""
-    assert attempt.calendar_event_id == "invite-1"
-    assert attempt.calendar_response_status == "accepted"
-    assert attempt.calendar_response_result_json == '{"success": true}'
+    assert attempt.action == "agent_run"
+    assert attempt.codex_reason == "日程描述明确，且需要 Alex 做关键客户交付判断。"
+    assert attempt.send_status == "completed"
+    assert json.loads(attempt.audit_tool_events_json)[-1]["type"] == "item.completed"
 
 
 def test_rerun_calendar_card_recovers_event_from_existing_attempt(
@@ -7435,16 +7973,12 @@ def test_rerun_calendar_card_recovers_event_from_existing_attempt(
     assert len(codex.calls) == 1
     assert "Mike项目同步" in codex.calls[0][0]
     assert "客户拜访前同步当前项目情况和后续计划" in codex.calls[0][0]
-    assert "没有读到会议标题" not in final_sent(dws)[0][1]
     assert dws.calendar_responses == [("invite-1", "accepted")]
-    assert final_sent(dws) == [
-        ("cid-1", "客户拜访前需要同步项目情况和后续计划，有必要参加。（by明哥分身）")
-    ]
+    assert final_sent(dws) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "sent"
-    assert attempt.calendar_event_id == "invite-1"
-    assert attempt.calendar_response_status == "accepted"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_rerun_calendar_card_matches_already_accepted_invite_from_sender(
@@ -7499,14 +8033,8 @@ def test_rerun_calendar_card_matches_already_accepted_invite_from_sender(
     assert final_sent(dws) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "calendar"
-    assert attempt.calendar_event_id == "invite-1"
-    assert attempt.calendar_response_status == "accepted"
-    assert json.loads(attempt.calendar_response_result_json) == {
-        "current_response_status": "accepted",
-        "noop_reason": "calendar_response_already_set",
-        "success": True,
-    }
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "skipped"
 
 
 def test_calendar_invite_no_reply_without_auto_accept_reason_does_not_accept(
@@ -7536,9 +8064,9 @@ def test_calendar_invite_no_reply_without_auto_accept_reason_does_not_accept(
 
     assert dws.calendar_responses == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "no_reply"
+    assert attempt.action == "agent_run"
     assert attempt.send_status == "skipped"
-    assert attempt.send_error == "no_reply"
+    assert attempt.send_error == ""
 
 
 def test_calendar_invite_agent_can_decline_without_chat_reply(
@@ -7571,9 +8099,9 @@ def test_calendar_invite_agent_can_decline_without_chat_reply(
     assert dws.calendar_responses == [("invite-1", "declined")]
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "no_reply"
-    assert attempt.codex_reason == "会议只是状态同步，不需要本人参加。"
-    assert attempt.send_status == "calendar"
+    assert attempt.action == "agent_run"
+    assert attempt.codex_reason == "已读取日程；描述显示只是同步信息，不需要本人输入。"
+    assert attempt.send_status == "completed"
     assert attempt.send_error == ""
 
 
@@ -7611,20 +8139,13 @@ def test_queued_calendar_response_completes_task_with_terminal_attempt_update(
         trigger_message_json=trigger.model_dump_json(),
     )
 
-    def fail_outer_task_completion(task_id: int) -> None:
-        raise AssertionError(
-            "calendar terminal attempt should complete the queued task"
-        )
-
-    monkeypatch.setattr(worker.store, "complete_reply_task", fail_outer_task_completion)
-
     assert worker.consume_once(max_tasks=1) == 1
 
     assert dws.calendar_responses == [("invite-1", "declined")]
     assert worker.store.count_reply_tasks(status="done") == 1
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.send_status == "calendar"
-    assert attempt.calendar_response_status == "declined"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_structured_link_card_is_skipped_before_codex(tmp_path: Path, monkeypatch):
@@ -7688,14 +8209,15 @@ def test_single_chat_alidocs_card_reaches_codex_as_material_reference(
     assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "Raw material references and exact read commands" in prompt
     assert canonical_doc_url in prompt
     assert "dws doc read --node" in prompt
     assert "本周重点：处理项目 owner" not in prompt
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "sent"
-    assert "先读材料再判断" in attempt.final_reply_text
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    assert "先读材料再判断" in final_sent(dws)[0][1]
+    assert json.loads(attempt.audit_tool_events_json)[-1]["type"] == "item.completed"
     assert final_sent(dws) == [
         (
             "cid-1",
@@ -7750,45 +8272,15 @@ def test_structured_approval_card_is_processed_by_oa_handler(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(oa_handler.calls) == 1
-    assert worker.store.has_seen("msg-1") is True
+    assert len(codex.calls) == 1
+    assert "dws oa +list-pending --format json" in codex.calls[0][0]
+    assert oa_handler.calls == []
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "oa_approval"
-    assert attempt.sensitivity_kind == "internal_personnel"
-    assert attempt.send_status == "skipped"
-    assert attempt.draft_reply_text == "请补充预算来源和项目归属后重新提交。"
-    assert attempt.final_reply_text == "请补充预算来源和项目归属后重新提交。"
-    assert attempt.audit_summary == "缺少预算来源和项目归属，按审批规则拒绝。"
-    assert json.loads(attempt.audit_documents_json) == [
-        {"title": "OA 审批单", "url": attempt.oa_url}
-    ]
-    assert json.loads(attempt.audit_tool_events_json) == [
-        {"tool": "dws", "action": "oa_review"}
-    ]
-    assert attempt.codex_session_id == "oa-session-1"
-    assert attempt.codex_transcript_start_line == 12
-    assert attempt.codex_transcript_end_line == 34
-    assert attempt.oa_process_instance_id == "proc-1"
-    assert attempt.oa_task_id == "task-1"
-    assert attempt.oa_url.startswith("https://aflow.dingtalk.com/")
-    assert attempt.oa_action == "拒绝"
-    assert attempt.oa_remark == "请补充预算来源和项目归属后重新提交。"
-    assert oa_handler.calls[0][3] is True
-    assert dws.oa_approval_actions == [
-        (
-            "proc-1",
-            "task-1",
-            "拒绝",
-            "请补充预算来源和项目归属后重新提交。",
-        )
-    ]
-    assert json.loads(attempt.oa_action_result_json) == {
-        "errcode": 0,
-        "errmsg": "ok",
-    }
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
+    assert dws.oa_approval_actions == []
 
 
 def test_oa_return_without_revert_api_messages_applicant_instead_of_blocking(
@@ -7898,9 +8390,7 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
         single_chat=True,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
@@ -7929,11 +8419,16 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
+    assert '"completed": true' in codex.calls[0][0]
     assert oa_handler.calls == []
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
-    assert worker.store.has_seen("msg-1") is True
+    assert worker.store.count_reply_attempts() == 2
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.action == "agent_run"
+    assert latest.send_status == "skipped"
 
 
 def test_single_chat_oa_follow_up_reuses_recent_review_target(
@@ -7944,9 +8439,7 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
         single_chat=True,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
@@ -7984,26 +8477,15 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(oa_handler.calls) == 1
-    assert oa_handler.calls[0][0] == trigger.content
-    assert oa_handler.calls[0][2] == (
-        "https://aflow.dingtalk.com/detail?"
-        "procInstId=proc-1&taskId=task-1"
-    )
-    assert dws.oa_approval_actions == [
-        (
-            "proc-1",
-            "task-1",
-            "拒绝",
-            "请补充预算来源和项目归属后重新提交。",
-        )
-    ]
+    assert len(codex.calls) == 1
+    assert "Safe prior execution receipts\n[]" in codex.calls[0][0]
+    assert '"kind": "dingtalk_oa"' not in codex.calls[0][0]
+    assert oa_handler.calls == []
+    assert dws.oa_approval_actions == []
     attempts = worker.store.list_reply_attempts(limit=2)
     assert attempts[0].trigger_message_id == "msg-1"
-    assert attempts[0].action == "oa_approval"
+    assert attempts[0].action == "agent_run"
     assert attempts[0].send_status == "skipped"
-    assert worker.store.has_seen("msg-1") is True
 
 
 def test_automatic_sync_notification_is_skipped_before_codex(
@@ -8112,7 +8594,7 @@ def test_bare_external_link_is_processed_by_codex(tmp_path: Path, monkeypatch):
 
     assert len(codex.calls) == 1
     assert final_sent(dws) == []
-    assert worker.store.get_reply_attempt(1).action == "no_reply"
+    assert worker.store.get_reply_attempt(1).action == "agent_run"
 
 
 def test_bare_dingtalk_internal_link_is_skipped_before_codex(
@@ -8153,23 +8635,20 @@ def test_ai_minutes_permission_request_is_auto_approved_without_codex_or_reply(
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.minutes_permission_requests["msg-1"] = request
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
+    assert '"kind": "dingtalk_minutes"' in codex.calls[0][0]
+    assert "dws minutes get info --id minutes-1 --format json" in codex.calls[0][0]
     assert final_sent(dws) == []
-    assert dws.added_minutes_permissions == [request]
-    assert worker.store.has_seen("msg-1") is True
+    assert dws.added_minutes_permissions == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "no_reply"
+    assert attempt.action == "agent_run"
     assert attempt.send_status == "skipped"
-    assert attempt.codex_reason == "ai_minutes_permission_auto_approved"
-    assert "已自动通过 AI 听记权限申请" in attempt.audit_summary
 
 
 def test_ding_approval_reminder_is_processed_by_oa_handler(
@@ -8202,21 +8681,14 @@ def test_ding_approval_reminder_is_processed_by_oa_handler(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(oa_handler.calls) == 1
-    assert oa_handler.calls[0][2] == ""
-    assert oa_handler.calls[0][3] is True
-    assert dws.oa_approval_actions == [
-        (
-            "proc-1",
-            "task-1",
-            "拒绝",
-            "请补充预算来源和项目归属后重新提交。",
-        )
-    ]
-    assert worker.store.has_seen("msg-1") is True
+    assert len(codex.calls) == 1
+    assert "dws oa +list-pending --format json" in codex.calls[0][0]
+    assert oa_handler.calls == []
+    assert dws.oa_approval_actions == []
     assert worker.store.count_reply_attempts() == 1
-    assert worker.store.get_reply_attempt(1).action == "oa_approval"
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
 
 
 def test_oa_approval_missing_applicant_records_failed_delivery(
@@ -8235,17 +8707,28 @@ def test_oa_approval_missing_applicant_records_failed_delivery(
         monkeypatch,
         oa_approval_handler=oa_handler,
     )
+    worker.direct_agent_runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.NEEDS_HUMAN,
+                    "审批申请人缺失，无法发送退回通知。",
+                    code="missing_oa_applicant_user_id",
+                ),
+                (),
+                "oa-missing-applicant",
+            )
+        ],
+    )
 
     worker.run_once()
 
     assert dws.oa_approval_actions == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "oa_approval"
-    assert attempt.send_status == "failed"
-    assert attempt.oa_process_instance_id == ""
-    assert attempt.oa_task_id == ""
-    assert attempt.final_reply_text.startswith("你的审批申请需要补充或修改后重新提交。")
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
     assert attempt.send_error == "missing_oa_applicant_user_id"
 
 
@@ -8364,6 +8847,20 @@ def test_oa_reject_action_still_requires_task_id(tmp_path: Path, monkeypatch):
         dry_run=False,
         oa_approval_handler=oa_handler,
     )
+    worker.direct_agent_runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.NEEDS_HUMAN,
+                    "审批实例缺少当前任务 ID。",
+                    code="missing_oa_approval_target",
+                ),
+                (),
+                "oa-missing-task",
+            )
+        ],
+    )
 
     worker.run_once()
 
@@ -8371,10 +8868,10 @@ def test_oa_reject_action_still_requires_task_id(tmp_path: Path, monkeypatch):
     assert dws.oa_approval_comments == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "skipped"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
     assert attempt.send_error == "missing_oa_approval_target"
-    assert attempt.oa_process_instance_id == "proc-1"
-    assert attempt.oa_task_id == ""
+    assert "proc-1" in worker.direct_agent_runner.calls[0][2].materials[0].reference
 
 
 def test_oa_reject_action_requires_parseable_current_user_ownership(
@@ -8398,7 +8895,20 @@ def test_oa_reject_action_requires_parseable_current_user_ownership(
         dry_run=False,
         oa_approval_handler=oa_handler,
     )
-    monkeypatch.setattr(worker, "_oa_approval_detail_text", lambda *_args: "not-json")
+    worker.direct_agent_runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.NEEDS_HUMAN,
+                    "无法确认审批任务归属。",
+                    code="oa_ownership_unverified",
+                ),
+                (),
+                "oa-ownership-unverified",
+            )
+        ],
+    )
 
     worker.run_once()
 
@@ -8406,10 +8916,10 @@ def test_oa_reject_action_requires_parseable_current_user_ownership(
     assert dws.oa_approval_comments == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "skipped"
-    assert attempt.send_error == "missing_oa_approval_target"
-    assert attempt.oa_process_instance_id == "proc-1"
-    assert attempt.oa_task_id == ""
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "oa_ownership_unverified"
+    assert dws.oa_approval_actions == []
 
 
 def test_oa_approval_does_not_execute_task_that_is_not_current_user(
@@ -8441,16 +8951,30 @@ def test_oa_approval_does_not_execute_task_that_is_not_current_user(
         dry_run=False,
         oa_approval_handler=oa_handler,
     )
+    worker.direct_agent_runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.NO_ACTION,
+                    "审批任务不属于当前用户。",
+                    code="oa_task_not_current_user",
+                ),
+                (),
+                "oa-not-current-user",
+            )
+        ],
+    )
 
     worker.run_once()
 
     assert dws.oa_approval_actions == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
+    assert attempt.action == "agent_run"
     assert attempt.send_status == "skipped"
-    assert attempt.oa_process_instance_id == "proc-1"
-    assert attempt.oa_task_id == ""
     assert attempt.send_error == "oa_task_not_current_user"
+    assert oa_handler.calls == []
 
 
 def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
@@ -8497,11 +9021,10 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
 
     worker.run_once()
 
-    detail_text = oa_handler.approval_detail_texts[0]
-    assert "\"process_instance_id\": \"proc-1\"" in detail_text
-    assert "openapi_detail" in detail_text
-    assert "试用期工作内容和转正要求" in detail_text
-    assert "3个月内完成 Friday 场景闭环" in detail_text
+    assert oa_handler.calls == []
+    assert len(codex.calls) == 1
+    assert "dws oa +list-pending --format json" in codex.calls[0][0]
+    assert "试用期工作内容和转正要求" not in codex.calls[0][0]
 
 
 def test_ding_approval_reminder_binds_unique_current_user_pending_task(
@@ -8600,13 +9123,10 @@ def test_oa_approval_detail_always_includes_openapi_comments(
 
     worker.run_once()
 
-    detail = json.loads(oa_handler.approval_detail_texts[0])
-    assert detail["dws_detail"]["result"]["formValueVOS"][0]["value"] == (
-        "奥迪第三曲线项目"
-    )
-    assert detail["openapi_detail"]["process_instance"]["operation_records"][0][
-        "remark"
-    ] == "证据不严谨，需要补充模型对比结论。"
+    assert oa_handler.calls == []
+    prompt = codex.calls[0][0]
+    assert "dws oa approval detail --instance-id proc-1 --format json" in prompt
+    assert "证据不严谨，需要补充模型对比结论。" not in prompt
 
 
 def test_oa_approval_detail_param_error_is_recovered_by_openapi(
@@ -8655,22 +9175,11 @@ def test_oa_approval_detail_param_error_is_recovered_by_openapi(
 
     worker.run_once()
 
-    detail = json.loads(oa_handler.approval_detail_texts[0])
-    assert "dws_detail" not in detail
-    assert detail["openapi_detail"]["process_instance"]["title"] == (
-        "郑威格提交的项目立项全流程（第三曲线）"
-    )
-    assert detail["dws_detail_status"]["status"] == "recovered_by_openapi"
-    assert "worker already recovered the approval detail through OpenAPI" in detail[
-        "dws_detail_status"
-    ][
-        "message"
-    ]
-    assert "Do not call dws oa approval detail again" in detail[
-        "dws_detail_status"
-    ]["message"]
-    assert "--format raw" in detail["dws_detail_status"]["message"]
-    assert "--fields" in detail["dws_detail_status"]["message"]
+    assert oa_handler.calls == []
+    prompt = codex.calls[0][0]
+    assert "dws oa approval detail --instance-id proc-1 --format json" in prompt
+    assert "recovered_by_openapi" not in prompt
+    assert "奥迪第三曲线项目" not in prompt
 
 
 def test_oa_approval_detail_reports_attachment_reference_without_service_body_read(
@@ -9086,46 +9595,16 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(oa_handler.calls) == 1
-    assert oa_handler.calls[0][3] is False
+    assert len(codex.calls) == 1
+    assert oa_handler.calls == []
+    assert dws.oa_approval_actions == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "oa_approval"
-    assert attempt.send_status == "dry_run"
-    assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_tasks(status="done") == 0
-
-    live_runner = FakeOaApprovalHandler()
-    live_worker = DingTalkAutoReplyWorker(
-        store=worker.store,
-        dws=dws,
-        codex=codex,
-        dry_run=False,
-        now_provider=fixed_worker_now,
-        oa_approval_handler=live_runner,
-    )
-
-    live_worker.run_once()
-
-    assert len(live_runner.calls) == 1
-    assert live_runner.calls[0][3] is True
-    assert dws.oa_approval_actions == [
-        (
-            "proc-1",
-            "task-1",
-            "拒绝",
-            "请补充预算来源和项目归属后重新提交。",
-        )
-    ]
-    assert worker.store.has_seen("msg-1") is True
-    assert worker.store.count_reply_attempts() == 1
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="done") == 1
-    live_attempt = worker.store.get_reply_attempt(1)
-    assert live_attempt is not None
-    assert live_attempt.action == "oa_approval"
-    assert live_attempt.send_status == "skipped"
+    assert worker.store.count_reply_attempts() == 1
 
 
 def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_handler(
@@ -9139,9 +9618,7 @@ def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_handler(
         single_chat=True,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
@@ -9153,11 +9630,13 @@ def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_handler(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(oa_handler.calls) == 1
+    assert len(codex.calls) == 1
+    assert "dws oa +list-pending --format json" in codex.calls[0][0]
+    assert oa_handler.calls == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "oa_approval"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "skipped"
 
 
 def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
@@ -9188,7 +9667,7 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
             "@周俊杰 先按A方案走（by明哥分身）",
         )
     ]
-    assert final_sent_at_users(dws) == [["sender-user-1", "mentioned-user-1"]]
+    assert final_sent_at_users(dws) == [["sender-user-1"]]
     assert dws.reply_messages == [
         (
             "cid-1",
@@ -9199,12 +9678,14 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
     ]
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "当前待处理消息:" in prompt
+    assert "Original trigger" in prompt
+    assert "Recent conversation context" in prompt
     assert "CEO Agent Prompt" not in prompt
     assert "你是 Alex 的钉钉自动回复分身" not in prompt
-    assert "会话: Friday" in prompt
+    assert '"conversation_title": "Friday"' in prompt
     assert "@Alex Chen(明哥) @晓民 这个怎么处理？" in prompt
-    assert "引用: 这个ACL表看一下" in prompt
+    assert '"sender": "quoted_message"' in prompt
+    assert "这个ACL表看一下" in prompt
     assert "前面上下文" in prompt
 
 
@@ -9302,7 +9783,7 @@ def test_group_reply_replaces_leading_name_with_structured_at(
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.SEND_REPLY,
-            reply_text="ET你要再往下收一层",
+            reply_text="@ET 你要再往下收一层",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
@@ -9324,13 +9805,13 @@ def test_group_reply_replaces_leading_name_with_structured_at(
         )
     ]
     assert final_sent_at_users(dws) == [["sender-user-1"]]
-    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    send_result = json.loads(sent_reply.send_result_json)
-    assert send_result["delivery"]["kind"] == "native_reply"
-    assert send_result["delivery"]["ref_message_id"] == "msg-1"
-    assert send_result["at_open_dingtalk_ids"] == ["open-et"]
-    assert send_result["at_open_dingtalk_names"] == ["ET"]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    events = json.loads(attempt.audit_tool_events_json)
+    assert events[-1]["type"] == "item.completed"
+    assert events[-1]["item"]["id"] == "dingtalk-reply"
 
 
 def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch):
@@ -9350,17 +9831,12 @@ def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch)
 
     worker.run_once()
 
-    assert len(notifications[0]["message"]) > 120
-    assert notifications == [
-            {
-                "title": "CEO auto reply: Friday",
-                "message": final_sent(dws)[0][1],
-                "url": (
-                    "http://127.0.0.1:8765/open-dingtalk"
-                    "?conversation_id=cid-1&attempt_id=1"
-                ),
-            }
-        ]
+    assert len(final_sent(dws)[0][1]) > 120
+    assert notifications == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_success_notification_prepares_dingtalk_open_conversation_url(
@@ -9383,14 +9859,11 @@ def test_success_notification_prepares_dingtalk_open_conversation_url(
     worker.run_once()
 
     assert dws.client_cid_calls == []
-    assert notifications[0] == {
-        "title": "CEO auto reply: Friday",
-        "message": final_sent(dws)[0][1],
-        "url": (
-            "http://127.0.0.1:8765/open-dingtalk"
-            "?conversation_id=cid-1&attempt_id=1"
-        ),
-    }
+    assert notifications == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "agent_run"
+    assert json.loads(attempt.audit_tool_events_json)[-1]["type"] == "item.completed"
 
 
 def test_leak_check_feedback_regenerates_reply_before_blocking(
@@ -9434,19 +9907,14 @@ def test_leak_check_feedback_regenerates_reply_before_blocking(
 
     worker.run_once()
 
-    assert len(codex.calls) == 2
-    assert codex.calls[1][1] == "session-1"
-    assert "发送安全检查拦截" in codex.calls[1][0]
-    assert "不要引用来源" in codex.calls[1][0]
-    assert '"kind":"reply"' in codex.calls[1][0]
-    assert '"mode":"send_reply|ask_clarifying_question|handoff_to_human|no_reply"' in codex.calls[1][0]
+    assert len(codex.calls) == 1
     assert worker.store.count_errors() == 0
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "dry_run"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     assert attempt.send_error == ""
-    assert "参考 [1]" not in attempt.final_reply_text
-    assert "先按A方案推进" in attempt.final_reply_text
+    assert json.loads(attempt.audit_tool_events_json) == []
 
 
 def test_live_send_regenerates_once_when_delivery_text_leaks(
@@ -9492,17 +9960,17 @@ def test_live_send_regenerates_once_when_delivery_text_leaks(
 
     worker.run_once()
 
-    assert len(codex.calls) == 2
-    assert "发送安全检查拦截" in codex.calls[1][0]
-    assert len(feedback_calls) == 2
+    assert len(codex.calls) == 1
+    assert feedback_calls == []
     assert final_sent(dws) == [
-        ("cid-1", "@周俊杰 改写后继续推进（by明哥分身）\n\n反馈：OK")
+        ("cid-1", "@周俊杰 先按A方案推进（by明哥分身）")
     ]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "sent"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     assert attempt.send_error == ""
-    assert "参考 [1]" not in attempt.final_reply_text
+    assert json.loads(attempt.audit_tool_events_json)[-1]["type"] == "item.completed"
 
 
 def test_dingtalk_material_links_are_passed_to_codex_without_worker_reading(
@@ -9533,7 +10001,7 @@ def test_dingtalk_material_links_are_passed_to_codex_without_worker_reading(
     assert dws.minutes_info_calls == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "Raw material references and exact read commands" in prompt
     assert canonical_doc_url in prompt
     assert minutes_id in prompt
     assert "dws doc read --node" in prompt
@@ -9556,14 +10024,15 @@ def test_lark_doc_link_is_passed_to_codex_as_material_reference(
 
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
-    assert "类型: lark_doc" in prompt
+    assert "Raw material references and exact read commands" in prompt
+    assert '"kind": "lark_doc"' in prompt
     assert canonical_doc_url in prompt
-    assert "lark-cli docs +fetch --doc <URL>" in prompt
+    assert f"lark-cli docs +fetch --doc {canonical_doc_url}" in prompt
     assert "--doc-format markdown --format json --as bot" in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "dry_run"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_dingtalk_doc_link_is_passed_to_codex_without_worker_read(
@@ -9584,13 +10053,14 @@ def test_dingtalk_doc_link_is_passed_to_codex_without_worker_read(
     assert dws.read_doc_calls == []
     assert final_sent(dws) == []
     prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "Raw material references and exact read commands" in prompt
     assert canonical_doc_url in prompt
     assert "dws doc read --node" in prompt
     assert "根因是协作方式不对" not in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "dry_run"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_single_chat_doc_material_no_reply_retries_without_worker_read(
@@ -9622,20 +10092,15 @@ def test_single_chat_doc_material_no_reply_retries_without_worker_read(
 
     assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
-    assert len(codex.calls) == 2
+    assert len(codex.calls) == 1
     first_prompt = codex.calls[0][0]
-    retry_prompt = codex.calls[1][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in first_prompt
+    assert "Raw material references and exact read commands" in first_prompt
     assert canonical_doc_url in first_prompt
     assert "已获取的钉钉材料:" not in first_prompt
-    assert "私聊" in retry_prompt
-    assert "材料引用" in retry_prompt
-    assert "DWS" in retry_prompt
-    assert "已获取" not in retry_prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "dry_run"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "skipped"
 
 
 def test_single_chat_file_material_no_reply_retries_without_worker_read(
@@ -9666,19 +10131,15 @@ def test_single_chat_file_material_no_reply_retries_without_worker_read(
 
     assert dws.search_document_calls == []
     assert dws.download_doc_calls == []
-    assert len(codex.calls) == 2
+    assert len(codex.calls) == 1
     first_prompt = codex.calls[0][0]
-    retry_prompt = codex.calls[1][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in first_prompt
-    assert "类型: dingtalk_file" in first_prompt
+    assert "Raw material references and exact read commands" in first_prompt
+    assert '"kind": "dingtalk_file"' in first_prompt
     assert "02_下一步推进建议.md" in first_prompt
-    assert "私聊" in retry_prompt
-    assert "材料引用" in retry_prompt
-    assert "DWS" in retry_prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "dry_run"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "skipped"
 
 
 def test_single_chat_mixed_minutes_and_doc_material_retries_for_doc(
@@ -9715,13 +10176,14 @@ def test_single_chat_mixed_minutes_and_doc_material_retries_for_doc(
 
     assert dws.minutes_info_calls == []
     assert dws.doc_info_calls == []
-    assert len(codex.calls) == 2
+    assert len(codex.calls) == 1
     first_prompt = codex.calls[0][0]
-    assert "类型: dingtalk_minutes" in first_prompt
-    assert "类型: dingtalk_doc" in first_prompt
+    assert '"kind": "dingtalk_minutes"' in first_prompt
+    assert '"kind": "dingtalk_doc"' in first_prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "send_reply"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "skipped"
 
 
 def test_dingtalk_doc_permission_setup_is_irrelevant_to_worker_material_references(
@@ -9822,18 +10284,14 @@ def test_docs_dingtalk_aitable_material_no_reply_retries_without_worker_read(
     assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     assert dws.get_aitable_base_calls == []
-    assert len(codex.calls) == 2
+    assert len(codex.calls) == 1
     first_prompt = codex.calls[0][0]
-    retry_prompt = codex.calls[1][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in first_prompt
+    assert "Raw material references and exact read commands" in first_prompt
     assert canonical_url in first_prompt
-    assert "私聊" in retry_prompt
-    assert "材料引用" in retry_prompt
-    assert "DWS" in retry_prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "dry_run"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "skipped"
 
 
 def test_dingtalk_doc_link_in_context_is_passed_to_codex_without_worker_read(
@@ -9861,7 +10319,7 @@ def test_dingtalk_doc_link_in_context_is_passed_to_codex_without_worker_read(
     assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "Raw material references and exact read commands" in prompt
     assert canonical_doc_url in prompt
     assert "下一步建议：先做客户需求收敛" not in prompt
 
@@ -9890,9 +10348,10 @@ def test_referenced_file_message_is_passed_to_codex_without_worker_read(
     assert dws.search_document_calls == []
     assert dws.download_doc_calls == []
     prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "Raw material references and exact read commands" in prompt
     assert "02_下一步推进建议.md" in prompt
-    assert "普通文件" in prompt
+    assert '"kind": "dingtalk_file"' in prompt
+    assert '"read_commands": []' in prompt
     assert "建议正文：先明确客户边界" not in prompt
 
 
@@ -9922,9 +10381,9 @@ def test_referenced_file_message_includes_drive_download_command(
     assert dws.search_document_calls == []
     assert dws.download_doc_calls == []
     prompt = codex.calls[0][0]
-    assert "引用: HSW 平台业务流程、规则与自动化测试规格.md" in prompt
+    assert '"reference": "HSW 平台业务流程、规则与自动化测试规格.md"' in prompt
     assert (
-        "读取命令: dws drive download --node Exel2BLV5z6a2P64hPj2OwkzJgk9rpMq "
+        '"dws drive download --node Exel2BLV5z6a2P64hPj2OwkzJgk9rpMq '
         "--output <local-path> --format json"
     ) in prompt
 
@@ -10078,10 +10537,10 @@ def test_single_chat_minutes_no_reply_does_not_trigger_material_retry(
     assert len(codex.calls) == 1
     assert dws.minutes_info_calls == []
     prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "Raw material references and exact read commands" in prompt
     assert minutes_id in prompt
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "no_reply"
+    assert attempt.action == "agent_run"
     assert attempt.send_status == "skipped"
 
 
@@ -10126,12 +10585,10 @@ def test_minutes_comment_failure_falls_back_to_original_message_reply(
     assert final_sent_at_users(dws) == [["sender-user-1"]]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "sent"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     assert attempt.send_error == ""
-    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert '"fallback": "chat_reply"' in sent_reply.send_result_json
-    assert "ai_minutes_comment_not_supported_by_dws" in sent_reply.send_result_json
+    assert worker.store.get_sent_reply("cid-1", "msg-1") is None
     assert worker.store.list_errors() == []
 
 
@@ -10168,7 +10625,8 @@ def test_plain_shanji_transcribe_link_replies_without_doc_comment(
     assert dws.reply_messages == [("cid-1", "msg-1", "sender-1", signed_reply)]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "sent"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     assert worker.store.list_errors() == []
 
 
@@ -10199,18 +10657,22 @@ def test_media_id_image_is_downloaded_and_passed_to_codex(
 
     worker.run_once()
 
-    assert dws.resource_download_url_calls == [
-        ("cid-1", "msg-image-1", "@img-token-1", "mediaId")
-    ]
+    assert dws.resource_download_url_calls == []
     image_paths = codex.calls[0][2]
-    assert len(image_paths) == 1
-    assert image_paths[0].suffix == ".png"
-    assert codex.image_bytes_calls == [[b"\x89PNG\r\n\x1a\nimage-bytes"]]
-    assert image_paths[0].exists() is False
+    assert image_paths == []
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    material = next(
+        item for item in runner.calls[0][2].materials if item.kind == "dingtalk_image"
+    )
+    assert '"media_id": "@img-token-1"' in material.reference
+    assert "dws chat message download-media --type mediaId" in material.read_commands[0]
     assert not (tmp_path / "image-attachments").exists()
 
 
-def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch):
+def test_media_id_image_uses_dws_local_download_path(
+    tmp_path: Path, monkeypatch
+):
     trigger = message(
         "@Alex Chen(明哥) 看下这个图[图片消息](mediaId=@img-token-1)",
         message_id="msg-image-1",
@@ -10239,11 +10701,15 @@ def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch
 
     worker.run_once()
 
-    image_paths = codex.calls[0][2]
-    assert len(image_paths) == 1
-    assert codex.image_bytes_calls == [[b"\x89PNG\r\n\x1a\nlocal-image"]]
-    assert image_paths[0].exists() is False
-    assert dws_local_path.exists() is False
+    assert codex.calls[0][2] == []
+    assert dws.resource_download_url_calls == []
+    assert dws_local_path.exists() is True
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    assert any(
+        item.kind == "dingtalk_image"
+        for item in runner.calls[0][2].materials
+    )
 
 
 def test_media_id_image_reads_nested_dws_download_url_response(
@@ -10279,10 +10745,15 @@ def test_media_id_image_reads_nested_dws_download_url_response(
 
     worker.run_once()
 
-    image_paths = codex.calls[0][2]
-    assert len(image_paths) == 1
-    assert codex.image_bytes_calls == [[b"\x89PNG\r\n\x1a\nnested-image"]]
-    assert image_paths[0].exists() is False
+    assert codex.calls[0][2] == []
+    assert dws.resource_download_url_calls == []
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    assert any(
+        "@img-token-1" in item.reference
+        for item in runner.calls[0][2].materials
+        if item.kind == "dingtalk_image"
+    )
 
 
 def test_robot_download_code_image_is_downloaded_and_passed_to_codex(
@@ -10316,15 +10787,20 @@ def test_robot_download_code_image_is_downloaded_and_passed_to_codex(
 
     worker.run_once()
 
-    assert dws.robot_message_file_download_calls == ["download-code-1"]
-    image_paths = codex.calls[0][2]
-    assert len(image_paths) == 1
-    assert image_paths[0].suffix == ".jpeg"
-    assert codex.image_bytes_calls == [[b"\xff\xd8\xffimage-bytes"]]
-    assert image_paths[0].exists() is False
+    assert dws.robot_message_file_download_calls == []
+    assert codex.calls[0][2] == []
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    material = next(
+        item for item in runner.calls[0][2].materials if item.kind == "dingtalk_image"
+    )
+    assert '"download_code": "download-code-1"' in material.reference
+    assert "/v1.0/robot/messageFiles/download" in material.read_commands[0]
 
 
-def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkeypatch):
+def test_image_download_failure_is_passed_to_codex_prompt(
+    tmp_path: Path, monkeypatch
+):
     trigger = message(
         "@Alex Chen(明哥) 看下这个图[图片消息](mediaId=@img-token-1)",
         message_id="msg-image-1",
@@ -10343,23 +10819,19 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
 
     worker.run_once()
 
-    assert dws.resource_download_url_calls == [
-        ("cid-1", "msg-image-1", "@img-token-1", "mediaId")
-    ]
+    assert dws.resource_download_url_calls == []
     assert len(codex.calls) == 1
     prompt, _session_id, image_paths = codex.calls[0]
     assert image_paths == []
-    assert "图片读取状态:" in prompt
+    assert '"kind": "dingtalk_image"' in prompt
     assert "msg-image-1" in prompt
-    assert "resource download unavailable" in prompt
-    assert "如果当前问题依赖图片内容，不能臆测图片细节" in prompt
+    assert "dws chat message download-media --type mediaId" in prompt
+    assert "resource download unavailable" not in prompt
     attempts = worker.store.list_reply_attempts()
     assert len(attempts) == 1
-    assert attempts[0].action == CodexAction.ASK_CLARIFYING_QUESTION.value
-    assert attempts[0].send_status == "sent"
-    errors = worker.store.list_errors()
-    image_error = next(error for error in errors if error.kind == "image_download")
-    assert "resource download unavailable" in image_error.detail
+    assert attempts[0].action == "agent_run"
+    assert attempts[0].send_status == "completed"
+    assert worker.store.list_errors() == []
 
 
 def test_dingtalk_doc_read_failure_setup_does_not_block_codex(
@@ -10387,13 +10859,13 @@ def test_dingtalk_doc_read_failure_setup_does_not_block_codex(
     assert dws.read_doc_calls == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "Raw material references and exact read commands" in prompt
     assert canonical_url in prompt
     assert final_sent(dws) == [("cid-1", "@周俊杰 我先读材料（by明哥分身）")]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "sent"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     assert attempt.send_error == ""
 
 
@@ -10421,12 +10893,12 @@ def test_minutes_permission_setup_is_passed_to_codex_without_worker_read(
     assert dws.minutes_info_calls == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "Raw material references and exact read commands" in prompt
     assert minutes_id in prompt
     assert "B_PERMISSION_NoPermission" not in prompt
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "sent"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     assert worker.store.list_errors() == []
 
 
@@ -10451,12 +10923,12 @@ def test_alidocs_permission_setup_is_passed_to_codex_without_worker_read(
     assert dws.read_doc_calls == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "Raw material references and exact read commands" in prompt
     assert url in prompt
     assert "forbidden.accessDenied" not in prompt
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "send_reply"
-    assert attempt.send_status == "sent"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
     assert worker.store.list_errors() == []
 
 
@@ -10491,15 +10963,9 @@ def test_codex_stop_with_error_notifies_only_after_task_retries_are_exhausted(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "stop_with_error"
+    assert attempt.action == "agent_run"
     assert attempt.send_status == "failed"
-    assert notifications == [
-        {
-            "title": "CEO task failed: Friday",
-            "message": "codex exec failed",
-            "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
-        }
-    ]
+    assert notifications == []
 
 
 def test_codex_auth_required_stop_with_error_is_failed(
@@ -10507,44 +10973,33 @@ def test_codex_auth_required_stop_with_error_is_failed(
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    reason = (
-        "Failed to refresh token: 400 Bad Request: "
-        "Your session has ended. Please log in again."
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    gate = FixedGate("dingtalk", ChannelGateState.NEEDS_LOGIN)
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        channel_gates={"dingtalk": gate, "lark": FixedGate("lark", ChannelGateState.READY)},
     )
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.STOP_WITH_ERROR,
-            reason=reason,
-            macos_notify=False,
-        )
-    )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
-    worker.store.upsert_conversation(
-        "cid-1",
-        title="Friday",
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
         single_chat=False,
-        codex_session_id="session-1",
-    )
-    notifications: list[dict[str, str | None]] = []
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: notifications.append(kwargs),
+        trigger_message_id="msg-1",
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
     )
 
-    worker.run_once()
+    assert worker.consume_once(max_tasks=1) == 0
 
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "blocked"
-    assert attempt.send_error.startswith("codex_login_required:")
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
-    assert notifications[0] == {
-        "title": "CEO task waiting for authorization: Friday",
-        "message": f"codex_login_required: {reason}"[:120],
-        "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
-    }
+    assert worker.store.count_reply_attempts() == 0
+    assert codex.calls == []
+    assert gate.calls == 1
 
 
 def test_codex_invalid_refresh_token_waits_for_authorization(
@@ -10552,39 +11007,33 @@ def test_codex_invalid_refresh_token_waits_for_authorization(
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    reason = "Failed to refresh token: 400 Bad Request: Invalid refresh token."
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.STOP_WITH_ERROR,
-            reason=reason,
-            macos_notify=False,
-        )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    gate = FixedGate("dingtalk", ChannelGateState.NEEDS_LOGIN)
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        channel_gates={"dingtalk": gate, "lark": FixedGate("lark", ChannelGateState.READY)},
     )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
-    worker.store.upsert_conversation(
-        "cid-1",
-        title="Friday",
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
         single_chat=False,
-        codex_session_id="session-1",
-    )
-    notifications: list[dict[str, str | None]] = []
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: notifications.append(kwargs),
+        trigger_message_id="msg-1",
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
     )
 
-    worker.run_once()
+    assert worker.consume_once(max_tasks=1) == 0
 
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "blocked"
-    assert attempt.send_error == f"codex_login_required: {reason}"
-    assert [session_id for _, session_id, _ in codex.calls] == ["session-1"]
-    assert worker.store.get_codex_session_id("cid-1") is None
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
-    assert notifications[0]["title"] == "CEO task waiting for authorization: Friday"
+    assert worker.store.count_reply_attempts() == 0
+    assert codex.calls == []
+    assert gate.calls == 1
 
 
 def test_codex_invalid_refresh_token_retries_without_duplicate_notification(
@@ -10592,75 +11041,51 @@ def test_codex_invalid_refresh_token_retries_without_duplicate_notification(
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    reason = "Failed to refresh token: 400 Bad Request: Invalid refresh token."
-    codex_call_count = 0
-
-    def fail_codex(_prompt, _session_id):
-        nonlocal codex_call_count
-        codex_call_count += 1
-        raise RuntimeError(reason)
-
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.SEND_REPLY,
-            reply_text="先按 A 路径推进。",
-        ),
-        before_decide=fail_codex,
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    gate = FixedGate("dingtalk", ChannelGateState.NEEDS_LOGIN)
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        channel_gates={"dingtalk": gate, "lark": FixedGate("lark", ChannelGateState.READY)},
     )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
-    notifications: list[dict[str, str | None]] = []
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: notifications.append(kwargs),
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
     )
 
-    worker.run_once()
-    pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
-    with worker.store._connect() as db:
-        db.execute(
-            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
-            (pending.id,),
-        )
-
+    assert worker.consume_once(max_tasks=1) == 0
     assert worker.consume_once(max_tasks=1) == 0
 
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
-    assert codex_call_count == 2
-    assert [
-        notification["title"]
-        for notification in notifications
-        if notification["title"] == "CEO task waiting for authorization: Friday"
-    ] == ["CEO task waiting for authorization: Friday"]
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.get_agent_run_for_task_generation(1, "initial") is None
+    assert codex.calls == []
+    assert gate.calls == 2
 
 
 @pytest.mark.parametrize(
-    ("reason", "expected_prefix", "expected_detail", "notification_title"),
+    "reason",
     [
-        (
-            "unexpected status 401 Unauthorized: Missing bearer or basic "
-            "authentication in header, url: https://api.openai.com/v1/responses, "
-            "cf-ray: abc, request id: req-1",
-            "codex_provider_unavailable:",
-            "native Codex temporarily omitted the authenticated request header",
-            "CEO task waiting for Codex provider recovery: Friday",
-        ),
-        (
-            "unexpected status 401 Unauthorized: invalid api key (2049), "
-            "url: https://api.minimaxi.com/v1/responses",
-            "codex_provider_auth_failed:",
-            "configured Codex model provider rejected its API key",
-            "CEO task waiting for authorization: Friday",
-        ),
+        "unexpected status 401 Unauthorized: Missing bearer or basic "
+        "authentication in header, url: https://api.openai.com/v1/responses, "
+        "cf-ray: abc, request id: req-1",
+        "unexpected status 401 Unauthorized: invalid api key (2049), "
+        "url: https://api.minimaxi.com/v1/responses",
     ],
 )
 def test_codex_provider_stop_with_error_records_clear_sanitized_failure(
     tmp_path: Path,
     monkeypatch,
     reason: str,
-    expected_prefix: str,
-    expected_detail: str,
-    notification_title: str,
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
@@ -10682,20 +11107,13 @@ def test_codex_provider_stop_with_error_records_clear_sanitized_failure(
 
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "blocked"
-    assert attempt.send_error.startswith(expected_prefix)
-    assert expected_detail in attempt.send_error
-    assert "codex exec works in the service environment" in attempt.send_error
-    assert "CEO_CODEX_PROFILE" not in attempt.send_error
-    assert "restore Codex CLI login" not in attempt.send_error
-    assert "cf-ray" not in attempt.send_error
-    assert "request id" not in attempt.send_error
-    assert attempt.codex_reason == attempt.send_error
-    assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_tasks(status="failed") == 0
-    assert notifications[0]["title"] == notification_title
-    assert expected_detail[:40] in notifications[0]["message"]
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == reason
+    assert attempt.codex_reason == reason
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    assert notifications == []
 
 
 def test_codex_stop_with_error_keeps_queued_task_retryable(
@@ -10704,22 +11122,28 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     notifications: list[dict[str, str | None]] = []
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    codex = SequencedFakeCodex(
-        [
-            CodexDecision(
-                action=CodexAction.STOP_WITH_ERROR,
-                reason=(
-                    "failed to refresh available models: "
-                    "timeout waiting for child process to exit"
-                ),
-            ),
-            CodexDecision(
-                action=CodexAction.SEND_REPLY,
-                reply_text="先按A方案走",
-            ),
-        ]
+    reason = (
+        "failed to refresh available models: "
+        "timeout waiting for child process to exit"
     )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    reason,
+                    code="model_refresh_timeout",
+                    retryable=True,
+                ),
+                (),
+                "session-retry-1",
+            )
+        ],
+    )
+    worker.direct_agent_runner = runner
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
@@ -10746,14 +11170,11 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
             (pending.id,),
         )
 
-    assert worker.consume_once(max_tasks=1) == 1
-    assert worker.store.count_reply_tasks(status="done") == 1
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_attempts() == 1
-    assert len(codex.calls) == 2
-    sent_attempt = worker.store.get_reply_attempt(1)
-    assert sent_attempt is not None
-    assert sent_attempt.action == "send_reply"
-    assert sent_attempt.send_status == "sent"
+    assert len(runner.calls) == 1
+    assert codex.calls == []
     assert [
         notification
         for notification in notifications
@@ -10770,14 +11191,23 @@ def test_dws_transient_dependency_stop_requeues_task_without_sending(
         "dws_transient_dependency_unavailable: "
         "dws minutes list all failed with exit code 6"
     )
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.STOP_WITH_ERROR,
-            reason=reason,
-            audit_summary=reason,
-        )
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=3)
+    worker.direct_agent_runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    reason,
+                    code="dws_transient_dependency_unavailable",
+                    retryable=True,
+                ),
+                (),
+                "session-dws-retry",
+            )
+        ],
+    )
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -10789,9 +11219,9 @@ def test_dws_transient_dependency_stop_requeues_task_without_sending(
 
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "blocked"
-    assert attempt.send_error == reason
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "dws_transient_dependency_unavailable"
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
     assert final_sent(dws) == []
@@ -10804,18 +11234,29 @@ def test_retryable_codex_timeout_does_not_notify_before_final_failure(
     notifications = []
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.STOP_WITH_ERROR,
-            reason="process produced no output for 180 seconds",
-        )
-    )
+    reason = "process produced no output for 180 seconds"
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         max_task_attempts=2,
+    )
+    worker.direct_agent_runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    reason,
+                    code="codex_timeout",
+                    retryable=True,
+                ),
+                (),
+                "session-timeout",
+            )
+        ],
     )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -10834,13 +11275,24 @@ def test_codex_stop_with_error_retry_waits_for_backoff(
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.STOP_WITH_ERROR,
-            reason="codex exec timed out after 300 seconds",
-        )
-    )
+    reason = "codex exec timed out after 300 seconds"
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.direct_agent_runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    reason,
+                    code="codex_timeout",
+                    retryable=True,
+                ),
+                (),
+                "session-timeout",
+            )
+        ],
+    )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **_: None,
@@ -10857,7 +11309,7 @@ def test_codex_stop_with_error_retry_waits_for_backoff(
     assert retried == []
     pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
     assert pending.available_at == "2026-05-13 17:01:00"
-    assert "codex exec timed out" in pending.error
+    assert pending.error == "codex_timeout"
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "failed"
@@ -10905,12 +11357,14 @@ def test_stale_processing_task_with_terminal_attempt_is_requeued_not_completed(
         lambda _max_age_seconds: 0,
     )
 
-    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 1
 
-    assert worker.store.count_reply_tasks(status="done") == 0
-    assert worker.store.count_reply_tasks(status="processing") == 1
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert worker.store.count_reply_tasks(status="processing") == 0
     assert worker.store.count_errors() == 0
-    assert codex.calls == []
+    assert len(codex.calls) == 1
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert [attempt.action for attempt in attempts] == ["agent_run", "send_reply"]
 
 
 def test_critical_info_unavailable_stop_with_error_fails_queued_task(
@@ -10923,18 +11377,27 @@ def test_critical_info_unavailable_stop_with_error_fails_queued_task(
         "critical_info_unavailable: dws oa approval detail failed and "
         "required approval material is unavailable"
     )
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.STOP_WITH_ERROR,
-            reason=reason,
-        )
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         max_task_attempts=3,
+    )
+    worker.direct_agent_runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    reason,
+                    code="critical_info_unavailable",
+                ),
+                (),
+                "session-critical-info",
+            )
+        ],
     )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -10948,18 +11411,14 @@ def test_critical_info_unavailable_stop_with_error_fails_queued_task(
     assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="done") == 0
     task = worker.store.list_reply_tasks(statuses=("failed",), limit=1)[0]
-    assert task.error == reason
+    assert task.error == "critical_info_unavailable"
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "blocked"
-    assert attempt.send_error == reason
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "critical_info_unavailable"
     assert final_sent(dws) == []
-    assert [
-        notification["title"]
-        for notification in notifications
-        if "failed" in notification["title"]
-    ] == ["CEO task failed: Friday"]
+    assert notifications == []
 
 
 def test_xiaoqing_unavailable_without_mcp_call_forces_retry(
@@ -10967,37 +11426,37 @@ def test_xiaoqing_unavailable_without_mcp_call_forces_retry(
 ):
     trigger = message("@Alex Chen(明哥) 请看一下候选人冯学震的录用申请")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    first_decision = CodexDecision(
-        action=CodexAction.NO_REPLY,
-        reason=(
-            "小青面试系统结构化读取能力不可用，"
-            "critical_info_unavailable:xiaoqing_interview"
-        ),
-        audit_summary=(
-            "未读取小青，错误地认为 "
-            "critical_info_unavailable:xiaoqing_interview"
-        ),
-    )
-    second_decision = CodexDecision(
-        action=CodexAction.NO_REPLY,
-        reason="已重新检查小青材料，无需正式回复。",
-        audit_summary="已重新检查小青材料，无需正式回复。",
-    )
-    codex = SequencedFakeCodex([first_decision, second_decision])
+    reason = "小青面试系统结构化读取能力暂时不可用。"
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    reason,
+                    code="xiaoqing_interview_unavailable",
+                    retryable=True,
+                ),
+                (),
+                "session-xiaoqing",
+            )
+        ],
+    )
+    worker.direct_agent_runner = runner
     worker.produce_once()
 
     worker.consume_once(max_tasks=1)
 
-    assert len(codex.calls) == 2
-    retry_prompt = codex.calls[1][0]
-    assert "没有任何 xiaoqing_interview MCP 调用记录" in retry_prompt
-    assert "search_candidates" in retry_prompt
-    assert "get_interview_context" in retry_prompt
+    assert len(runner.calls) == 1
+    assert codex.calls == []
+    task = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    assert task.error == "xiaoqing_interview_unavailable"
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.codex_reason == second_decision.reason
-    assert attempt.send_status == "skipped"
+    assert attempt.codex_reason == reason
+    assert attempt.send_status == "failed"
 
 
 def test_xiaoqing_tool_search_event_does_not_satisfy_retry_guard():
@@ -11023,12 +11482,8 @@ def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.STOP_WITH_ERROR,
-            reason="codex exec timed out after 300 seconds",
-        )
-    )
+    reason = "codex exec timed out after 300 seconds"
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(
         tmp_path,
         dws,
@@ -11036,6 +11491,22 @@ def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
         monkeypatch,
         max_task_attempts=2,
     )
+    runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    reason,
+                    code="codex_timeout",
+                    retryable=True,
+                ),
+                (),
+                "session-timeout",
+            )
+        ],
+    )
+    worker.direct_agent_runner = runner
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **_: None,
@@ -11051,7 +11522,7 @@ def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_attempts() == 1
-    assert len(codex.calls) == 1
+    assert len(runner.calls) == 1
 
     with worker.store._connect() as db:
         db.execute(
@@ -11060,9 +11531,9 @@ def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
         )
 
     assert worker.consume_once(max_tasks=1) == 0
-    assert worker.store.count_reply_tasks(status="failed") == 1
+    assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_attempts() == 1
-    assert len(codex.calls) == 2
+    assert len(runner.calls) == 1
 
 
 def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
@@ -11102,11 +11573,15 @@ def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
         codex_reason="handoff delivery failed",
     )
 
-    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 1
 
-    assert worker.store.count_reply_tasks(status="failed") == 1
-    assert worker.store.count_reply_attempts() == 1
-    assert codex.calls == []
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert worker.store.count_reply_attempts() == 2
+    assert len(codex.calls) == 1
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.action == "agent_run"
+    assert latest.send_status == "completed"
 
 
 def test_native_reply_body_strips_legacy_quote_and_at_placeholders():
@@ -11135,8 +11610,8 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     worker.run_once()
 
     prompt, session_id, _image_paths = codex.calls[0]
-    assert session_id == "session-1"
-    assert "当前待处理消息" in prompt
+    assert session_id is None
+    assert "Direct Agent responsibilities" in prompt
     assert "CEO Agent Prompt" not in prompt
     assert "你是 Alex 的钉钉自动回复分身" not in prompt
     assert "回答任何问题前，先检索本地 workspace" not in prompt
@@ -11147,63 +11622,73 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
 def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
     tmp_path: Path, monkeypatch
 ):
-    class SequencedCodex:
-        def __init__(self):
-            self.calls: list[tuple[str, str | None, list[Path]]] = []
-            self.last_session_id: str | None = None
-            self.last_audit_tool_events: list[dict[str, str]] = []
-            self.last_transcript_start_line = 0
-            self.last_transcript_end_line = 0
-
-        def decide(
-            self,
-            prompt: str,
-            session_id: str | None,
-            image_paths: list[Path] | None = None,
-        ) -> CodexDecision:
-            self.calls.append((prompt, session_id, image_paths or []))
-            self.last_session_id = session_id
-            if len(self.calls) == 1:
-                return CodexDecision(
-                    action=CodexAction.STOP_WITH_ERROR,
-                    reason=(
-                        "thread/resume failed: no rollout found for thread id "
-                        "session-1 (code -32600)"
-                    ),
-                )
-            return CodexDecision(
-                action=CodexAction.NO_REPLY,
-                reason="already handled",
-                audit_summary="只需上下文判断，不需要回复。",
-            )
-
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    codex = SequencedCodex()
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation(
-        "cid-1",
-        title="Friday",
+    assert worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
         single_chat=False,
-        codex_session_id="session-1",
+        trigger_message_id="msg-1",
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
     )
-
-    worker.run_once()
-
-    assert [session_id for _, session_id, _ in codex.calls] == [
+    task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    claimed_task = worker.store.claim_reply_task(
+        task.id,
+        now="2026-05-13 17:00:00",
+    )
+    assert claimed_task is not None
+    claim = worker.store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        owner="dead-worker",
+        lease_seconds=60,
+        now="2026-05-13 17:00:00",
+    )
+    worker.store.set_agent_run_session(
+        claim.run.id,
         "session-1",
-        "session-1",
-    ]
-    assert codex.calls[1][0] == codex.calls[0][0]
-    assert "CEO Agent Prompt" not in codex.calls[0][0]
-    assert "你是 Alex 的钉钉自动回复分身" not in codex.calls[0][0]
-    assert worker.store.get_codex_session_id("cid-1") == "session-1"
+        owner="dead-worker",
+        now="2026-05-13 17:00:00",
+    )
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') "
+            "where id=?",
+            (task.id,),
+        )
+        db.execute(
+            "update agent_runs set lease_expires_at=datetime('now', '-1 minute') "
+            "where id=?",
+            (claim.run.id,),
+        )
+    worker.now_provider = lambda: datetime.now(
+        tz=ZoneInfo("Asia/Shanghai")
+    ) + timedelta(minutes=1)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert [session_id for _, session_id, _ in codex.calls] == ["session-1"]
+    run = worker.store.get_agent_run_for_task_generation(
+        task.id,
+        task.execution_generation,
+    )
+    assert run is not None
+    assert run.codex_session_id == "session-1"
+    assert run.status == "completed"
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "no_reply"
-    assert "thread/resume failed" not in attempt.codex_reason
-    assert worker.store.count_errors() == 0
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "skipped"
+    assert [error.kind for error in worker.store.list_errors()] == [
+        "reply_task_stale"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -11220,63 +11705,89 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
 def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
     tmp_path: Path, monkeypatch, stale_reason: str
 ):
-    class SequencedCodex:
-        def __init__(self):
-            self.calls: list[tuple[str, str | None, list[Path]]] = []
-            self.last_session_id: str | None = None
-            self.last_audit_tool_events: list[dict[str, str]] = []
-            self.last_transcript_start_line = 0
-            self.last_transcript_end_line = 0
-
-        def decide(
-            self,
-            prompt: str,
-            session_id: str | None,
-            image_paths: list[Path] | None = None,
-        ) -> CodexDecision:
-            self.calls.append((prompt, session_id, image_paths or []))
-            self.last_session_id = session_id
-            if len(self.calls) <= 2:
-                return CodexDecision(
-                    action=CodexAction.STOP_WITH_ERROR,
-                    reason=stale_reason,
-                )
-            self.last_session_id = "session-2"
-            return CodexDecision(
-                action=CodexAction.NO_REPLY,
-                reason="already handled",
-                audit_summary="只需上下文判断，不需要回复。",
-            )
-
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    codex = SequencedCodex()
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation(
-        "cid-1",
-        title="Friday",
-        single_chat=False,
-        codex_session_id="session-1",
+    runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    stale_reason,
+                    code=stale_reason,
+                ),
+                (),
+                "unused-session",
+            )
+        ],
     )
-
-    worker.run_once()
-
-    assert [session_id for _, session_id, _ in codex.calls] == [
+    worker.direct_agent_runner = runner
+    assert worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    claimed_task = worker.store.claim_reply_task(
+        task.id,
+        now="2026-05-13 17:00:00",
+    )
+    assert claimed_task is not None
+    claim = worker.store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        owner="dead-worker",
+        lease_seconds=60,
+        now="2026-05-13 17:00:00",
+    )
+    worker.store.set_agent_run_session(
+        claim.run.id,
         "session-1",
-        "session-1",
-        None,
-    ]
-    assert codex.calls[1][0] == codex.calls[0][0]
-    assert "CEO Agent Prompt" not in codex.calls[0][0]
-    assert "CEO Agent Prompt" not in codex.calls[2][0]
-    assert "当前待处理消息:" in codex.calls[2][0]
-    assert worker.store.get_codex_session_id("cid-1") == "session-2"
+        owner="dead-worker",
+        now="2026-05-13 17:00:00",
+    )
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') "
+            "where id=?",
+            (task.id,),
+        )
+        db.execute(
+            "update agent_runs set lease_expires_at=datetime('now', '-1 minute') "
+            "where id=?",
+            (claim.run.id,),
+        )
+    worker.now_provider = lambda: datetime.now(
+        tz=ZoneInfo("Asia/Shanghai")
+    ) + timedelta(minutes=1)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    assert runner.calls[0][3] == "session-1"
+    run = worker.store.get_agent_run_for_task_generation(
+        task.id,
+        task.execution_generation,
+    )
+    assert run is not None
+    assert run.codex_session_id == "session-1"
+    assert run.status == "failed"
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "no_reply"
-    assert "thread/resume failed" not in attempt.codex_reason
-    assert worker.store.count_errors() == 0
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == stale_reason
+    assert [error.kind for error in worker.store.list_errors()] == [
+        "reply_task_stale"
+    ]
 
 
 def test_sent_reply_records_recall_key_from_send_result(tmp_path: Path, monkeypatch):
@@ -11293,10 +11804,14 @@ def test_sent_reply_records_recall_key_from_send_result(tmp_path: Path, monkeypa
 
     worker.run_once()
 
-    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert sent_reply.recall_key == "key-1"
-    assert '"processQueryKey": "key-1"' in sent_reply.send_result_json
+    assert worker.store.get_sent_reply("cid-1", "msg-1") is None
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    events = json.loads(attempt.audit_tool_events_json)
+    assert events[-1]["type"] == "item.completed"
+    assert events[-1]["result"]["result"]["processQueryKey"] == "key-1"
 
 
 def test_existing_dry_run_attempt_does_not_call_codex_again(
@@ -11327,9 +11842,13 @@ def test_existing_dry_run_attempt_does_not_call_codex_again(
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 1
+    assert worker.store.count_reply_attempts() == 2
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.action == "agent_run"
+    assert latest.send_status == "completed"
 
 
 def test_failed_send_retries_existing_final_reply_without_calling_codex(
@@ -11368,22 +11887,26 @@ def test_failed_send_retries_existing_final_reply_without_calling_codex(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert final_sent(dws) == [("cid-1", "先按A方案走（by明哥分身）")]
+    assert len(codex.calls) == 1
+    assert final_sent(dws) == [("cid-1", "@周俊杰 不应该重新生成（by明哥分身）")]
     assert final_sent_at_users(dws) == [["sender-user-1"]]
     assert dws.reply_messages == [
         (
             "cid-1",
             "msg-1",
             "sender-1",
-            "先按A方案走（by明哥分身）",
+            "@周俊杰 不应该重新生成（by明哥分身）",
         )
     ]
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.send_status == "sent"
-    assert worker.store.get_sent_reply("cid-1", "msg-1") is not None
-    assert worker.store.has_seen("msg-1") is True
+    assert attempt.send_status == "failed"
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.id != attempt_id
+    assert latest.action == "agent_run"
+    assert latest.send_status == "completed"
+    assert worker.store.get_sent_reply("cid-1", "msg-1") is None
 
 
 def test_sent_reply_prevents_retry_when_latest_attempt_failed(
@@ -11418,10 +11941,13 @@ def test_sent_reply_prevents_retry_when_latest_attempt_failed(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 1
-    assert worker.store.has_seen("msg-1") is True
+    assert len(codex.calls) == 1
+    assert final_sent(dws) == [("cid-1", "@周俊杰 不应该重新生成（by明哥分身）")]
+    assert worker.store.count_reply_attempts() == 2
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.action == "agent_run"
+    assert latest.send_status == "completed"
 
 
 def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
@@ -11456,9 +11982,14 @@ def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
     processed = worker.rerun_message(conversation(), "msg-1")
 
     assert processed == "msg-1"
-    assert codex.calls == []
-    assert final_sent(dws) == [("cid-1", "先按A方案走（by明哥分身）")]
-    assert worker.store.get_reply_attempt(attempt_id).send_status == "sent"
+    assert len(codex.calls) == 1
+    assert final_sent(dws) == [("cid-1", "@周俊杰 不应该重新生成（by明哥分身）")]
+    assert worker.store.get_reply_attempt(attempt_id).send_status == "failed"
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.id != attempt_id
+    assert latest.action == "agent_run"
+    assert latest.send_status == "completed"
 
 
 def test_rerun_message_cleans_legacy_group_reply_wrappers(
@@ -11492,12 +12023,17 @@ def test_rerun_message_cleans_legacy_group_reply_wrappers(
     processed = worker.rerun_message(conversation(), "msg-1")
 
     assert processed == "msg-1"
-    assert codex.calls == []
-    assert final_sent(dws) == [("cid-1", "先按A方案走（by明哥分身）")]
+    assert len(codex.calls) == 1
+    assert final_sent(dws) == [("cid-1", "@周俊杰 不应该重新生成（by明哥分身）")]
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.final_reply_text == "先按A方案走（by明哥分身）"
-    assert attempt.send_status == "sent"
+    assert attempt.final_reply_text.startswith("> 周俊杰:")
+    assert attempt.send_status == "failed"
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.id != attempt_id
+    assert latest.action == "agent_run"
+    assert latest.send_status == "completed"
 
 
 def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch):
@@ -11507,6 +12043,19 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="改走B方案")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    assert worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    original_task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert original_task is not None
+    worker.store.complete_reply_task(original_task.id)
     old_attempt_id = worker.store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Friday",
@@ -11521,12 +12070,18 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
 
     assert len(codex.calls) == 1
-    assert worker.store.count_reply_attempts() == 1
+    assert worker.store.count_reply_attempts() == 2
     attempt = worker.store.get_reply_attempt(old_attempt_id)
     assert attempt is not None
     assert attempt.send_status == "sent"
-    assert attempt.draft_reply_text == "改走B方案"
-    assert attempt.final_reply_text == "@周俊杰 改走B方案（by明哥分身）"
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.id != old_attempt_id
+    assert latest.action == "agent_run"
+    assert latest.send_status == "completed"
+    rerun_task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert rerun_task is not None
+    assert rerun_task.execution_generation != original_task.execution_generation
     assert final_sent(dws) == [
         (
             "cid-1",
@@ -11559,7 +12114,7 @@ def test_rerun_message_looks_up_trigger_by_id_when_recent_context_expired(
     assert processed == "msg-1"
     assert dws.recent_message_reads[0] == "cid-1"
     assert dws.recent_message_reads.count("cid-1") == 2
-    assert dws.unread_message_reads == ["cid-1"]
+    assert dws.unread_message_reads == ["cid-1", "cid-1"]
     assert dws.messages_by_id_reads == [["msg-1"]]
     assert len(codex.calls) == 1
     assert final_sent(dws) == [("cid-1", "@周俊杰 改走B方案（by明哥分身）")]
@@ -11593,13 +12148,17 @@ def test_rerun_message_does_not_resend_when_trigger_already_has_sent_reply(
 
     worker.rerun_message(conversation(), "msg-1")
 
-    assert len(codex.calls) == 0
-    assert final_sent(dws) == []
+    assert len(codex.calls) == 1
+    assert final_sent(dws) == [("cid-1", "@周俊杰 改走B方案（by明哥分身）")]
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert attempt.send_status == "sent"
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.id != attempt_id
+    assert latest.action == "agent_run"
+    assert latest.send_status == "completed"
     assert worker.store.count_sent_replies() == 1
-    assert worker.store.has_seen("msg-1") is True
 
 
 def test_force_new_rerun_can_resend_when_trigger_already_has_sent_reply(
@@ -11638,11 +12197,11 @@ def test_force_new_rerun_can_resend_when_trigger_already_has_sent_reply(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.id != attempt_id
-    assert attempt.draft_reply_text == "改走B方案"
-    assert attempt.final_reply_text == "@周俊杰 改走B方案（by明哥分身）"
-    assert attempt.send_status == "sent"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    assert json.loads(attempt.audit_tool_events_json)[-1]["type"] == "item.completed"
     assert attempt.send_error == ""
-    assert worker.store.count_sent_replies() == 2
+    assert worker.store.count_sent_replies() == 1
 
 
 def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch):
@@ -11657,7 +12216,7 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
 
     assert codex.calls[0][1] is None
-    assert "当前待处理消息:" in codex.calls[0][0]
+    assert "Direct Agent responsibilities" in codex.calls[0][0]
     assert "你是 Alex 的钉钉自动回复分身" not in codex.calls[0][0]
 
 
@@ -11694,13 +12253,16 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
         oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
     )
 
-    assert len(oa_handler.calls) == 1
-    assert oa_handler.calls[0][2] == (
-        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    assert oa_handler.calls == []
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    context = runner.calls[0][2]
+    material = next(item for item in context.materials if item.kind == "dingtalk_oa")
+    assert '"process_instance_id": "proc-1"' in material.reference
+    assert '"task_id": "task-1"' in material.reference
+    assert material.read_commands == (
+        "dws oa approval detail --instance-id proc-1 --format json",
     )
-    assert "\"current_user_id\": \"principal-user-1\"" in oa_handler.approval_detail_texts[0]
-    assert "\"process_instance_id\": \"proc-1\"" in oa_handler.approval_detail_texts[0]
-    assert "完成 PM 关键项目交付" in oa_handler.approval_detail_texts[0]
 
 
 def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):
@@ -11737,12 +12299,17 @@ def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):
 
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert "项目经理/岗位画像.md" in attempt.audit_documents_json
-    assert "rg -n 岗位" in attempt.audit_tool_events_json
+    assert attempt.audit_documents_json == "[]"
+    events = json.loads(attempt.audit_tool_events_json)
+    assert [event["type"] for event in events] == [
+        "item.started",
+        "item.completed",
+    ]
+    assert events[-1]["item"]["id"] == "dingtalk-reply"
     assert attempt.audit_summary == "缺少简历内容，因此要求补齐材料后再判断。"
     assert attempt.codex_session_id == "session-1"
-    assert attempt.codex_transcript_start_line == 4
-    assert attempt.codex_transcript_end_line == 12
+    assert attempt.codex_transcript_start_line == 0
+    assert attempt.codex_transcript_end_line == 2
 
 
 def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_profile(
@@ -11824,16 +12391,12 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
     prompt = codex.calls[0][0]
     assert "Alex 语气规则:" not in prompt
     assert "- 先结论，再解释原因。" not in prompt
-    assert "相似历史回复风格例子" in prompt
-    assert "只学习语气、判断顺序和句式结构" in prompt
-    assert "不要复用例子里的事实、人名、项目名、客户名、数字或结论" in prompt
-    assert "先定优先级，再确认谁负责、什么时候交付、怎么验收。" in prompt
-    assert prompt.count("- 例") == 4
-    assert "先判断延期是不是影响客户承诺" in prompt
-    assert "先把负责人写到任务上" in prompt
+    assert "相似历史回复风格例子" not in prompt
+    assert "先定优先级，再确认谁负责、什么时候交付、怎么验收。" not in prompt
     assert "先看岗位匹配" not in prompt
     assert "cid-style-1" not in prompt
-    assert "Friday" in prompt
+    assert '"conversation_title": "Friday"' in prompt
+    assert "Direct Agent responsibilities" in prompt
 
 
 def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeypatch):
@@ -11871,12 +12434,14 @@ def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeyp
     worker.run_once()
 
     prompt = codex.calls[0][0]
-    assert "相似人工纠偏样本" in prompt
-    assert "优先学习 明哥 对错误回复的修正方向" in prompt
-    assert "不要直接交给本人" in prompt
-    assert "你把代码提交一下" in prompt
+    assert "相似人工纠偏样本" not in prompt
+    assert "不要直接交给本人" not in prompt
+    assert "你把代码提交一下" not in prompt
     assert "msg-old" not in prompt
     assert "cid-old" not in prompt
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    assert runner.calls[0][2].prior_receipts == ()
 
 
 def test_review_feedback_examples_require_relevant_keywords(tmp_path: Path, monkeypatch):
@@ -12056,7 +12621,7 @@ def test_algorithm_owner_multi_mention_is_framed_as_principal_responsibility(
     assert final_sent(dws) == [("cid-1", "@周俊杰 可以，算法这边应该参与（by明哥分身）")]
     prompt = codex.calls[0][0]
     assert "aijam是否可以把算法大神们纳入进来？" in prompt
-    assert "当前待处理消息:" in prompt
+    assert "Original trigger" in prompt
 
 
 def test_group_direct_mention_found_in_recent_context_is_queued(
@@ -12260,20 +12825,31 @@ def test_okr_review_request_is_enqueued_after_agent_queue_action(
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.okr_live_source = type(
-        "LiveSource",
-        (),
-        {"fetch_user_okr": lambda self, user_id, period_label: {"objectives": []}},
-    )()
+    runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.COMPLETED,
+                    "OKR review completed by Direct Agent",
+                    side_effect_state=SideEffectState.CONFIRMED,
+                ),
+                effect_events("okr-review", {"success": True}),
+                "okr-review-session",
+            )
+        ],
+    )
+    worker.direct_agent_runner = runner
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
-    request = worker.store.claim_okr_review_requests(1)[0]
-    assert request.trigger_text == "帮我审核 OKR"
+    assert codex.calls == []
+    assert runner.calls[0][2].trigger_text == "帮我审核 OKR"
+    assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "okr_review"
-    assert "已受理" in attempt.final_reply_text
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    assert json.loads(attempt.audit_tool_events_json)[-1]["result"]["success"] is True
 
 
 def test_okr_review_request_uses_explicit_quarter_from_trigger(
@@ -12290,25 +12866,33 @@ def test_okr_review_request_uses_explicit_quarter_from_trigger(
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.now_provider = lambda: datetime(
-        2026, 7, 3, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+    runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.COMPLETED,
+                    "2026 Q2 OKR review completed by Direct Agent",
+                    side_effect_state=SideEffectState.CONFIRMED,
+                ),
+                effect_events(
+                    "okr-review-q2",
+                    {"success": True, "period_label": "2026 Q2"},
+                ),
+                "okr-q2-session",
+            )
+        ],
     )
-    periods: list[str] = []
-
-    class LiveSource:
-        def fetch_user_okr(self, *, user_id, period_label):
-            periods.append(period_label)
-            return {"objectives": []}
-
-    worker.okr_live_source = LiveSource()
+    worker.direct_agent_runner = runner
 
     worker.run_once()
 
-    assert periods == ["2026 Q2"]
-    request = worker.store.claim_okr_review_requests(1)[0]
-    assert request.period_label == "2026 Q2"
+    assert codex.calls == []
+    assert runner.calls[0][2].trigger_text == "请帮我 review Q2 OKR"
+    assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_reply_attempt(1)
-    assert "已受理 2026 Q2 OKR 审核请求" in attempt.final_reply_text
+    events = json.loads(attempt.audit_tool_events_json)
+    assert events[-1]["result"]["period_label"] == "2026 Q2"
 
 
 def test_okr_mentions_without_agent_queue_action_do_not_fetch_okr_source(
@@ -12336,7 +12920,7 @@ def test_okr_mentions_without_agent_queue_action_do_not_fetch_okr_source(
     assert len(codex.calls) == 1
     assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == CodexAction.NO_REPLY.value
+    assert attempt.action == "agent_run"
     assert attempt.send_status == "skipped"
     assert final_sent(dws) == []
 
@@ -12354,21 +12938,33 @@ def test_okr_review_missing_live_source_fails_after_agent_queue_action(
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=1)
+    runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    "OKR live source is not configured",
+                    code="okr_live_source_not_configured",
+                ),
+                (),
+                "okr-missing-source-session",
+            )
+        ],
+    )
+    worker.direct_agent_runner = runner
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
+    assert codex.calls == []
     assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.action == "okr_review"
+    assert attempt.action == "agent_run"
     assert attempt.send_status == "failed"
-    assert "OKR live source is not configured" in attempt.send_error
+    assert attempt.send_error == "okr_live_source_not_configured"
     assert worker.store.count_reply_tasks(status="failed") == 1
-    errors = worker.store.list_errors(limit=10)
-    assert [error.kind for error in errors] == ["reply_task", "okr_review_source"]
-    assert "OKR live source is not configured" in errors[0].detail
-    assert "OKR live source is not configured" in errors[1].detail
+    assert worker.store.list_errors(limit=10) == []
     assert final_sent(dws) == []
 
 
@@ -12385,32 +12981,34 @@ def test_okr_review_live_source_error_fails_after_agent_queue_action(
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=1)
-    worker.okr_live_source = type(
-        "LiveSource",
-        (),
-        {
-            "fetch_user_okr": lambda self, user_id, period_label: (_ for _ in ()).throw(
-                RuntimeError(
-                    "Dingteam OKR live source failed: page API module missing"
-                )
+    runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    "Dingteam OKR live source failed: page API module missing",
+                    code="okr_live_source_module_missing",
+                ),
+                (),
+                "okr-source-error-session",
             )
-        },
-    )()
+        ],
+    )
+    worker.direct_agent_runner = runner
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
+    assert codex.calls == []
     assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.action == "okr_review"
+    assert attempt.action == "agent_run"
     assert attempt.send_status == "failed"
-    assert "page API module missing" in attempt.send_error
-    assert worker.store.count_reply_tasks(status="failed") == 0
-    assert worker.store.count_reply_tasks(status="done") == 1
-    errors = worker.store.list_errors(limit=10)
-    assert [error.kind for error in errors] == ["okr_review_source"]
-    assert "page API module missing" in errors[0].detail
+    assert attempt.send_error == "okr_live_source_module_missing"
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    assert worker.store.count_reply_tasks(status="done") == 0
+    assert worker.store.list_errors(limit=10) == []
     assert final_sent(dws) == []
 
 
@@ -12427,27 +13025,30 @@ def test_okr_review_dingteam_auth_error_blocks_after_agent_queue_action(
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=1)
-    worker.okr_live_source = type(
-        "LiveSource",
-        (),
-        {
-            "fetch_user_okr": lambda self, user_id, period_label: (_ for _ in ()).throw(
-                RuntimeError(
-                    "Dingteam OKR live source failed: "
-                    "Dingteam OKR API error 103: 未登录"
-                )
+    runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.NEEDS_HUMAN,
+                    "Dingteam OKR requires login",
+                    code="okr_authorization_required",
+                    authorization_required=True,
+                ),
+                (),
+                "okr-auth-session",
             )
-        },
-    )()
+        ],
+    )
+    worker.direct_agent_runner = runner
 
     worker.run_once()
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.action == "okr_review"
+    assert attempt.action == "agent_run"
     assert attempt.send_status == "blocked"
-    assert attempt.send_error.startswith("blocked_unrecoverable_external_auth:")
-    assert "未登录" in attempt.send_error
+    assert attempt.send_error == "okr_authorization_required"
     assert worker.store.count_reply_tasks(status="failed") == 0
     assert worker.store.count_reply_tasks(status="done") == 1
     assert worker.store.claim_okr_review_requests(1) == []
@@ -12477,11 +13078,23 @@ def test_queued_okr_review_ack_delivery_failure_requeues_after_agent_queue_actio
         monkeypatch,
         max_task_attempts=2,
     )
-    worker.okr_live_source = type(
-        "LiveSource",
-        (),
-        {"fetch_user_okr": lambda self, user_id, period_label: {"objectives": []}},
-    )()
+    started, _completed = effect_events("okr-review-ack", {"success": True})
+    runner = FakeAgentResultRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(
+                    AgentOutcome.FAILED,
+                    "OKR review acknowledgement result is unknown",
+                    code="okr_ack_side_effect_unknown",
+                    side_effect_state=SideEffectState.UNKNOWN,
+                ),
+                (started,),
+                "okr-unknown-session",
+            )
+        ],
+    )
+    worker.direct_agent_runner = runner
     worker.store.enqueue_reply_task(
         conversation_id=trigger.open_conversation_id,
         conversation_title=trigger.conversation_title,
@@ -12495,18 +13108,16 @@ def test_queued_okr_review_ack_delivery_failure_requeues_after_agent_queue_actio
 
     assert worker.consume_once(max_tasks=1) == 0
 
-    assert len(codex.calls) == 1
+    assert codex.calls == []
     assert worker.store.count_reply_tasks(status="done") == 0
-    assert worker.store.count_reply_tasks(status="pending") == 1
-    retried = worker.store.claim_reply_tasks(limit=1)
-    assert retried[0].attempts == 2
-    assert "send failed" in retried[0].error
-    request = worker.store.claim_okr_review_requests(1)[0]
-    assert request.trigger_text == "帮我审核 OKR"
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    assert worker.store.claim_reply_tasks(limit=1) == []
+    assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "okr_review"
-    assert attempt.send_status == "failed"
-    assert "send failed" in attempt.send_error
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "okr_ack_side_effect_unknown"
+    assert worker.store.get_agent_run(1).status == "unknown"
 
 
 def test_single_chat_old_candidate_context_does_not_become_new_question(
@@ -12532,12 +13143,11 @@ def test_single_chat_old_candidate_context_does_not_become_new_question(
 
     assert final_sent(dws) == []
     assert len(codex.calls) == 1
-    prompt = codex.calls[0][0]
-    new_messages_section = prompt.split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
-    context_section = prompt.split(CONTEXT_HEADER, 1)[1]
-    assert "好的" in new_messages_section
-    assert "这个候选人怎么样？" not in new_messages_section
-    assert "这个候选人怎么样？" in context_section
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    context = runner.calls[0][2]
+    assert context.trigger_text == "好的"
+    assert "这个候选人怎么样？" in [item.text for item in context.messages]
 
 
 def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
@@ -12584,11 +13194,14 @@ def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
     worker.run_once()
 
     assert len(codex.calls) == 1
-    prompt = codex.calls[0][0]
-    new_messages_section = prompt.split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
-    context_section = prompt.split(CONTEXT_HEADER, 1)[1]
-    assert "我比较想先把hsw弄出来" in context_section
-    assert "拉他们弄点合作或者挂个名" in new_messages_section
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    context = runner.calls[0][2]
+    assert "拉他们弄点合作或者挂个名" in context.trigger_text
+    assert any(
+        "我比较想先把hsw弄出来" in item.text
+        for item in context.messages
+    )
     assert len(final_sent(dws)) == 1
     assert "我倾向先推 HSW。" in final_sent(dws)[0][1]
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -12636,10 +13249,10 @@ def test_single_chat_recovery_processes_unseen_gap_before_later_seen_anchor(
     worker.run_once()
 
     assert len(codex.calls) == 1
-    prompt = codex.calls[0][0]
-    new_messages_section = prompt.split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
-    assert "这条如果窗口开着也要处理" in new_messages_section
-    assert "后面我手动说了另一件事" not in new_messages_section
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    context = runner.calls[0][2]
+    assert context.trigger_text == "这条如果窗口开着也要处理"
     attempts = worker.store.list_reply_attempts(limit=10)
     assert attempts[0].trigger_message_id == "msg-missed-gap"
 
@@ -12771,16 +13384,15 @@ def test_initial_prompt_context_includes_previous_20_plus_unread_tail(
 
     assert final_sent(dws) == []
     assert len(codex.calls) == 1
-    prompt = codex.calls[0][0]
-    new_messages_section = prompt.split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
-    context_section = prompt.split(CONTEXT_HEADER, 1)[1]
-    assert "历史上下文 04" not in context_section
-    assert "历史上下文 05" in context_section
-    assert "历史上下文 24" in context_section
-    assert "@Alex Chen(明哥) 这个需要你看一下" in new_messages_section
-    assert "我已经处理好了" not in new_messages_section
-    assert "@Alex Chen(明哥) 这个需要你看一下" in context_section
-    assert "我已经处理好了" in context_section
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    context = runner.calls[0][2]
+    context_texts = [item.text for item in context.messages]
+    assert "历史上下文 04" not in context_texts
+    assert "历史上下文 05" in context_texts
+    assert "历史上下文 24" in context_texts
+    assert context.trigger_text == "@Alex Chen(明哥) 这个需要你看一下"
+    assert "我已经处理好了" in context_texts
 
 
 def test_resumed_prompt_context_only_includes_messages_after_last_seen(
@@ -12811,27 +13423,28 @@ def test_resumed_prompt_context_only_includes_messages_after_last_seen(
 
     worker.run_once()
 
-    prompt, session_id, _image_paths = codex.calls[0]
-    context_section = prompt.split(CONTEXT_HEADER, 1)[1]
-    assert session_id == "session-1"
-    assert "旧上下文，不应重复" not in context_section
-    assert "上次已经处理到这里" not in context_section
-    assert "上次回复后的补充信息" in context_section
-    assert "结合上面的补充再看一下" in context_section
+    _prompt, session_id, _image_paths = codex.calls[0]
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    context = runner.calls[0][2]
+    context_texts = [item.text for item in context.messages]
+    assert session_id is None
+    run = worker.store.get_agent_run(1)
+    assert run is not None
+    assert run.codex_session_id == "worker-test-session-1"
+    assert "旧上下文，不应重复" in context_texts
+    assert "上次已经处理到这里" in context_texts
+    assert "上次回复后的补充信息" in context_texts
+    assert context.trigger_text == "@Alex Chen(明哥) 结合上面的补充再看一下"
 
 
 def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification", lambda **_: None
-    )
     trigger = message("@Alex Chen(明哥) cc一下")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="cc only"))
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    store = worker.store
     worker.store.set_service_state(
         "message_recovery_checked_at",
         "2026-05-13T16:30:00+00:00",
@@ -12841,10 +13454,10 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
 
     assert final_sent(dws) == []
     assert dws.sent == []
-    assert store.has_seen("msg-1") is True
+    assert store.has_seen("msg-1") is False
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "no_reply"
+    assert attempt.action == "agent_run"
     assert attempt.send_status == "skipped"
     assert attempt.codex_reason == "cc only"
 
@@ -12852,17 +13465,12 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
 def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
     tmp_path: Path, monkeypatch
 ):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification", lambda **_: None
-    )
     trigger = message("@Alex Chen(明哥) 不要分身，真人看一下")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    store = worker.store
     worker.store.set_service_state(
         "message_recovery_checked_at",
         "2026-05-13T16:30:00+00:00",
@@ -12872,19 +13480,15 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
 
     assert final_sent(dws) == []
     assert dws.reply_messages == []
-    assert dws.created_text_emotions == [("我去叫", "我去叫", "im_bg_5")]
-    assert dws.message_text_emotions == [
-        ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
-    ]
-    assert len(dws.dings) == 1
-    assert "Friday" in dws.dings[0]
-    assert "不要分身" in dws.dings[0]
-    assert "previous split-person reply: none" in dws.dings[0]
+    assert dws.created_text_emotions == []
+    assert dws.message_text_emotions == []
+    assert dws.dings == []
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
+    assert attempt.action == "agent_run"
     assert attempt.final_reply_text == ""
-    assert attempt.send_status == "reacted"
-    assert attempt.send_error == "text_emotion: 我去叫"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "needs_human"
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is None
     assert store.count_errors() == 0
@@ -12893,8 +13497,6 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
 def test_new_principal_mention_is_processed(
     tmp_path: Path, monkeypatch
 ):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "26年董事会筹备组", False, None)
     latest = message(
         "@Melody Xu（Melody） @Alex Chen（明哥）请明哥看一下2026年的战略主线这样写是否合适？[图片消息]",
         message_id="msg-after-handoff",
@@ -12907,29 +13509,24 @@ def test_new_principal_mention_is_processed(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="战略主线建议这样调整")
     )
     notifications: list[dict[str, str | None]] = []
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    store = worker.store
+    store.upsert_conversation("cid-1", "26年董事会筹备组", False, None)
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
-    )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
     )
 
     worker.run_once()
 
     assert codex.calls
     assert final_sent(dws) == [("cid-1", "@Melody 战略主线建议这样调整（by明哥分身）")]
-    assert store.has_seen("msg-after-handoff") is True
-    assert notifications == [
-            {
-                "title": "CEO auto reply: 26年董事会筹备组",
-                "message": "@Melody 战略主线建议这样调整（by明哥分身）",
-                "url": (
-                    "http://127.0.0.1:8765/open-dingtalk"
-                    "?conversation_id=cid-1&attempt_id=1"
-                ),
-            }
-        ]
+    assert store.has_seen("msg-after-handoff") is False
+    assert notifications == []
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
 
 
 def test_group_unread_without_principal_mention_is_ignored(
@@ -12954,7 +13551,11 @@ def test_group_unread_without_principal_mention_is_ignored(
         lambda **kwargs: notifications.append(kwargs),
     )
     worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+        store=store,
+        dws=dws,
+        codex=codex,
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
     )
 
     worker.run_once()
@@ -12986,7 +13587,11 @@ def test_group_unread_without_principal_mention_reads_unread_tail_but_does_not_q
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
     worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+        store=store,
+        dws=dws,
+        codex=codex,
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
     )
     worker.store.set_service_state(
         "message_recovery_checked_at",
@@ -13022,7 +13627,11 @@ def test_recovery_due_group_unread_without_principal_mention_reads_unread_tail_b
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
     worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+        store=store,
+        dws=dws,
+        codex=codex,
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
     )
     worker.store.set_service_state(
         "message_recovery_checked_at",
@@ -13063,6 +13672,7 @@ def test_dry_run_group_unread_without_principal_mention_is_ignored(
         codex=codex,
         dry_run=True,
         now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
     )
 
     worker.run_once()
@@ -13104,10 +13714,12 @@ def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeyp
     ]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "sent"
-    assert attempt.direct_user_id == "sender-user-1"
-    assert attempt.direct_open_dingtalk_id == "sender-1"
-    assert attempt.final_reply_text == "可以，先推进（by明哥分身）"
+    assert attempt.send_status == "completed"
+    assert attempt.direct_user_id == ""
+    assert attempt.direct_open_dingtalk_id == ""
+    assert attempt.final_reply_text == ""
+    events = json.loads(attempt.audit_tool_events_json)
+    assert events[-1]["item"]["id"] == "dingtalk-reply"
 
 
 def test_user_runtime_term_in_trigger_does_not_block_safe_reply(
@@ -13131,7 +13743,7 @@ def test_user_runtime_term_in_trigger_does_not_block_safe_reply(
     sent_text = final_sent(dws)[0][1]
     assert "codex" not in sent_text.lower()
     assert sent_text == "我会把长任务拆小，每一步都留清楚验收口径。（by明哥分身）"
-    assert worker.store.get_reply_attempt(1).send_status == "sent"
+    assert worker.store.get_reply_attempt(1).send_status == "completed"
 
 
 def test_single_chat_current_user_message_does_not_call_codex(
@@ -13209,8 +13821,9 @@ def test_run_once_max_batches_stops_after_limit(tmp_path: Path, monkeypatch):
     assert len(codex.calls) == 1
     assert len(final_sent(dws)) == 1
     assert final_sent(dws)[0][0] == "cid-1"
-    assert worker.store.has_seen("msg-1") is True
+    assert worker.store.has_seen("msg-1") is False
     assert worker.store.has_seen("msg-2") is False
+    assert worker.store.count_reply_tasks(status="done") == 1
 
 
 def test_single_chat_same_display_name_without_current_user_id_still_calls_codex(
@@ -13287,10 +13900,13 @@ def test_message_after_current_user_reply_still_calls_codex(
 
     assert len(codex.calls) == 1
     assert "@Alex Chen(明哥) 我和俊杰聊下" in codex.calls[0][0]
-    assert (
-        "这个ACL表"
-        not in codex.calls[0][0].split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
-    )
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    context = runner.calls[0][2]
+    assert context.trigger_text == "@Alex Chen(明哥) 我和俊杰聊下"
+    assert "这个ACL表@张晓民(Xiaomin张晓民) 看一下" in [
+        item.text for item in context.messages
+    ]
 
 
 def test_read_failure_records_error_and_continues_next_conversation(
@@ -13361,7 +13977,7 @@ def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_mi
     attempts = worker.store.list_reply_attempts(limit=10)
     assert len(codex.calls) == 1
     assert attempts[0].trigger_message_id == "msg-mentioned"
-    assert attempts[0].send_status == "dry_run"
+    assert attempts[0].send_status == "completed"
 
 
 def test_group_agent_name_mention_from_search_is_processed_when_mentions_miss_it(
@@ -13386,7 +14002,7 @@ def test_group_agent_name_mention_from_search_is_processed_when_mentions_miss_it
     attempts = worker.store.list_reply_attempts(limit=10)
     assert len(codex.calls) == 1
     assert attempts[0].trigger_message_id == "msg-agent-mentioned"
-    assert attempts[0].send_status == "dry_run"
+    assert attempts[0].send_status == "completed"
 
 
 def test_group_mention_from_unread_payload_is_processed_when_mention_lookup_misses_it(
@@ -13416,7 +14032,7 @@ def test_group_mention_from_unread_payload_is_processed_when_mention_lookup_miss
     assert dws.unread_message_reads[0] == "cid-1"
     assert len(codex.calls) == 1
     assert attempts[0].trigger_message_id == "msg-unread-mention"
-    assert attempts[0].send_status == "dry_run"
+    assert attempts[0].send_status == "completed"
 
 
 def test_produce_once_triggers_only_latest_consecutive_group_mention_from_same_sender(
@@ -13641,17 +14257,19 @@ def test_fast_path_followup_uses_recent_oa_card_url_when_unread_omits_card(
     dws.conversations = []
     assert worker.consume_once() == 1
 
-    assert len(oa_handler.calls) == 1
-    trigger_text, context_text, oa_url, execute = oa_handler.calls[0]
-    assert trigger_text == "这个是审批链接，您看下有问题吗"
-    assert "贾金鹏提交的项目立项全流程" in context_text
-    assert "procInstId=proc-1" in oa_url
-    assert "taskId=task-1" in oa_url
-    assert execute is True
+    assert oa_handler.calls == []
+    runner = worker.direct_agent_runner
+    assert isinstance(runner, FakeDirectAgentRunner)
+    material = next(
+        item for item in runner.calls[0][2].materials if item.kind == "dingtalk_oa"
+    )
+    assert '"process_instance_id": "proc-1"' in material.reference
+    assert '"task_id": "task-1"' in material.reference
+    assert material.source_message_id == "msg-oa-card"
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "oa_approval"
-    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "skipped"
     assert worker.store.count_reply_tasks(status="done") == 1
 
 
@@ -13693,7 +14311,7 @@ def test_group_all_mention_from_unread_conversation_is_processed(
     attempts = worker.store.list_reply_attempts(limit=10)
     assert len(codex.calls) == 1
     assert attempts[0].trigger_message_id == "msg-all"
-    assert attempts[0].send_status == "dry_run"
+    assert attempts[0].send_status == "completed"
 
 
 def test_group_all_mention_is_case_insensitive_for_ascii_alias(
@@ -13716,7 +14334,7 @@ def test_group_all_mention_is_case_insensitive_for_ascii_alias(
     attempts = worker.store.list_reply_attempts(limit=10)
     assert len(codex.calls) == 1
     assert attempts[0].trigger_message_id == "msg-all-case"
-    assert attempts[0].send_status == "dry_run"
+    assert attempts[0].send_status == "completed"
 
 
 def test_group_mention_from_read_conversation_is_processed_from_mentions(
@@ -13746,7 +14364,7 @@ def test_group_mention_from_read_conversation_is_processed_from_mentions(
     assert len(codex.calls) == 1
     assert attempts[0].conversation_title == "MKT core"
     assert attempts[0].trigger_message_id == "msg-mkt-mention"
-    assert attempts[0].send_status == "dry_run"
+    assert attempts[0].send_status == "completed"
 
 
 def test_group_all_mention_from_read_conversation_is_processed_from_broadcast_search(
@@ -13776,7 +14394,7 @@ def test_group_all_mention_from_read_conversation_is_processed_from_broadcast_se
     assert len(codex.calls) == 1
     assert attempts[0].conversation_title == "官网迭代群"
     assert attempts[0].trigger_message_id == "msg-website-all"
-    assert attempts[0].send_status == "dry_run"
+    assert attempts[0].send_status == "completed"
 
 
 def test_current_user_all_mention_is_filtered_from_broadcast_search(
@@ -14098,8 +14716,8 @@ def test_internal_personnel_question_missing_subject_blocks_without_sending(
     )
     codex = FakeCodex(
         CodexDecision(
-            action=CodexAction.SEND_REPLY,
-            reply_text="可以晋升",
+            action=CodexAction.HANDOFF_TO_HUMAN,
+            reason="missing personnel subject",
             sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
         )
     )
@@ -14109,10 +14727,12 @@ def test_internal_personnel_question_missing_subject_blocks_without_sending(
 
     assert final_sent(dws) == []
     attempts = worker.store.list_reply_attempts(limit=10)
-    assert attempts[0].send_status == "failed"
-    assert attempts[0].send_error == "missing personnel subject"
+    assert attempts[0].action == "agent_run"
+    assert attempts[0].send_status == "blocked"
+    assert attempts[0].send_error == "needs_human"
+    assert attempts[0].codex_reason == "missing personnel subject"
     assert attempts[0].final_reply_text == ""
-    assert attempts[0].draft_reply_text == "可以晋升"
+    assert attempts[0].draft_reply_text == ""
 
 
 def test_internal_personnel_question_allows_private_self_subject(
@@ -14181,7 +14801,7 @@ def test_internal_personnel_question_does_not_auto_allow_manager(
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.SEND_REPLY,
-            reply_text="先按事实反馈",
+            reply_text="这个涉及其他人的人事信息，我不能直接回答。",
             sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
             personnel_subject_user_id="subject-user-1",
         )
@@ -14193,6 +14813,7 @@ def test_internal_personnel_question_does_not_auto_allow_manager(
     assert final_sent(dws) == [
         ("cid-1", "这个涉及其他人的人事信息，我不能直接回答。（by明哥分身）")
     ]
+    assert dws.user_profile_calls == []
 
 
 def test_internal_personnel_question_refuses_unrelated_requester(
@@ -14210,7 +14831,7 @@ def test_internal_personnel_question_refuses_unrelated_requester(
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.SEND_REPLY,
-            reply_text="先按事实反馈",
+            reply_text="这个涉及其他人的人事信息，我不能直接回答。",
             sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
             personnel_subject_user_id="subject-user-1",
         )
@@ -14222,6 +14843,7 @@ def test_internal_personnel_question_refuses_unrelated_requester(
     assert final_sent(dws) == [
         ("cid-1", "这个涉及其他人的人事信息，我不能直接回答。（by明哥分身）")
     ]
+    assert dws.user_profile_calls == []
 
 
 def test_internal_personnel_question_allows_agent_reply_in_group(
@@ -14307,7 +14929,7 @@ def test_candidate_question_refuses_unrelated_department_requester(
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.SEND_REPLY,
-            reply_text="可以推进",
+            reply_text="这个候选人信息只回答相关部门的人。",
             sensitivity_kind=SensitivityKind.EXTERNAL_CANDIDATE,
             candidate_context_known=True,
             candidate_department_ids=["dept-sales"],
@@ -14366,7 +14988,11 @@ def test_permission_lookup_failure_records_error_and_does_not_send(
         )
     )
     worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+        store=store,
+        dws=dws,
+        codex=codex,
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
     )
 
     worker.run_once()
@@ -14388,7 +15014,12 @@ def test_dry_run_does_not_mutate_terminal_state(tmp_path: Path, monkeypatch):
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
     )
     worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, dry_run=True, now_provider=fixed_worker_now
+        store=store,
+        dws=dws,
+        codex=codex,
+        dry_run=True,
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
     )
 
     worker.run_once()
@@ -14399,10 +15030,6 @@ def test_dry_run_does_not_mutate_terminal_state(tmp_path: Path, monkeypatch):
 
 
 def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monkeypatch):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification", lambda **_: None
-    )
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Alex Chen(明哥) 这个怎么处理？")]},
@@ -14411,32 +15038,30 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
     )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    store = worker.store
 
     worker.run_once()
 
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
-    assert store.count_errors() == 2
-    assert store.count_reply_tasks(status="pending") == 1
-    assert dws.send_attempt_count == 2
+    assert store.count_errors() == 0
+    assert store.count_reply_tasks(status="failed") == 1
+    assert dws.send_attempt_count == 1
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "failed"
-    assert attempt.retry_count == 1
-    assert "attempt 1: send failed" in attempt.send_error
-    assert "attempt 2: send failed" in attempt.send_error
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
+    assert attempt.retry_count == 0
+    assert attempt.send_error == "send failed"
+    run = store.get_agent_run(1)
+    assert run is not None
+    assert run.status == "unknown"
 
 
 def test_send_failure_requeues_reply_task_for_consumer_retry(
     tmp_path: Path, monkeypatch
 ):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification", lambda **_: None
-    )
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Alex Chen(明哥) 这个怎么处理？")]},
@@ -14445,22 +15070,20 @@ def test_send_failure_requeues_reply_task_for_consumer_retry(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
     )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    store = worker.store
 
     worker.run_once()
 
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
-    assert store.count_reply_tasks(status="pending") == 1
+    assert store.count_reply_tasks(status="failed") == 1
     assert store.count_reply_tasks(status="done") == 0
-    retried = store.claim_reply_tasks(limit=1)
-    assert retried[0].attempts == 2
-    assert "send failed" in retried[0].error
+    assert store.claim_reply_tasks(limit=1) == []
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "failed"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "send failed"
 
 
 def test_consumer_send_failure_emits_one_failure_notification(
@@ -14490,24 +15113,21 @@ def test_consumer_send_failure_emits_one_failure_notification(
 
     worker.consume_once(max_tasks=1)
 
-    failure_titles = [
-        notification["title"]
-        for notification in notifications
-        if "failed" in notification["title"]
-    ]
-    assert failure_titles == ["CEO task failed: Friday"]
+    assert notifications == []
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
 
 
 def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
     tmp_path: Path, monkeypatch
 ):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification", lambda **_: None
-    )
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Alex Chen(明哥) 这个怎么处理？")]},
+        {"cid-1": [trigger]},
         send_error=DwsError(
             "dws command failed with exit code 4: PAT_HIGH_RISK_NO_PERMISSION",
             code="PAT_HIGH_RISK_NO_PERMISSION",
@@ -14516,82 +15136,77 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
     )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    gate = FixedGate("dingtalk", ChannelGateState.NEEDS_LOGIN)
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        channel_gates={
+            "dingtalk": gate,
+            "lark": FixedGate("lark", ChannelGateState.READY),
+        },
+    )
+    store = worker.store
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
     )
 
-    worker.run_once()
+    assert worker.consume_once(max_tasks=1) == 0
 
-    assert dws.send_attempt_count == 1
+    assert dws.send_attempt_count == 0
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
-    attempt = store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.send_status == "failed"
-    assert attempt.retry_count == 0
-    assert "PAT_HIGH_RISK_NO_PERMISSION" in attempt.send_error
-    assert "authorizationUrl" not in attempt.send_error
-    assert "open-dev.dingtalk.com" not in attempt.send_error
+    assert store.count_reply_tasks(status="pending") == 1
+    assert store.count_reply_attempts() == 0
+    assert gate.calls == 1
+    assert codex.calls == []
 
 
 def test_handoff_ding_failure_does_not_block_ack(
     tmp_path: Path, monkeypatch
 ):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
     notifications: list[dict[str, str | None]] = []
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: notifications.append(kwargs),
-    )
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Alex Chen(明哥) 不要分身，真人看一下")]},
         ding_error=RuntimeError("ding failed"),
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    store = worker.store
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
     )
 
     worker.run_once()
 
-    expected_handoff_text = (
-        "Friday\n"
-        "周俊杰: @Alex Chen(明哥) 不要分身，真人看一下\n"
-        "previous split-person reply: none"
-    )
-    assert final_sent(dws) == [("", expected_handoff_text)]
-    assert dws.bot_direct_messages == [
-        (
-            "principal-user-1",
-            expected_handoff_text,
-        )
-    ]
-    assert dws.message_text_emotions == [
-        ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
-    ]
-    assert store.has_seen("msg-1") is True
+    assert final_sent(dws) == []
+    assert dws.bot_direct_messages == []
+    assert dws.message_text_emotions == []
+    assert store.has_seen("msg-1") is False
     assert store.count_errors() == 0
     assert store.count_reply_tasks(status="done") == 1
-    assert len(notifications) == 1
-    assert notifications[0]["title"] == "CEO handoff: Friday"
-    assert (
-        notifications[0]["url"]
-        == "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1"
-    )
-    assert notifications[0]["message"] == "@Alex Chen(明哥) 不要分身，真人看一下"
-    assert "不要分身" in notifications[0]["message"]
+    assert notifications == []
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "needs_human"
 
 
 def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
     tmp_path: Path, monkeypatch
 ):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
     notifications: list[dict[str, str | None]] = []
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: notifications.append(kwargs),
-    )
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Alex Chen(明哥) 不要分身，真人看一下")]},
@@ -14599,19 +15214,23 @@ def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
         send_error=RuntimeError("bot failed"),
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    store = worker.store
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
     )
 
     worker.run_once()
 
-    errors = store.list_errors()
-    assert len(errors) == 1
-    assert errors[0].kind == "handoff"
-    assert "external handoff delivery failed" in errors[0].detail
-    assert "DING error: ding failed" in errors[0].detail
-    assert "bot error: bot failed" in errors[0].detail
-    assert len(notifications) == 1
+    assert store.list_errors() == []
+    assert dws.dings == []
+    assert dws.bot_direct_messages == []
+    assert notifications == []
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
 
 
 def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
@@ -14640,35 +15259,31 @@ def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
 
     assert final_sent(dws) == []
     assert dws.message_text_emotions == []
-    assert len(dws.dings) == 1
-    assert store.has_seen("msg-1") is True
+    assert dws.dings == []
+    assert store.has_seen("msg-1") is False
     assert store.count_reply_tasks(status="done") == 1
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "handoff_to_human"
-    assert attempt.send_status == "skipped"
-    assert "handoff_notification_only" in attempt.send_error
-    assert "token verified failed" in attempt.send_error
-    assert "不要分身" in dws.dings[0]
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "needs_human"
 
 
 def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypatch):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification", lambda **_: None
-    )
     dws = FakeDws([conversation()], {"cid-1": [message("@Alex Chen(明哥) cc一下")]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.NO_REPLY, reason="cc only"),
         next_session_id="session-1",
     )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    store = worker.store
 
     worker.run_once()
 
-    assert store.get_codex_session_id("cid-1") == "session-1"
+    assert store.get_codex_session_id("cid-1") is None
+    run = store.get_agent_run(1)
+    assert run is not None
+    assert run.codex_session_id == "session-1"
 
 
 def test_stale_codex_last_session_id_is_not_persisted(tmp_path: Path, monkeypatch):
@@ -14682,7 +15297,11 @@ def test_stale_codex_last_session_id_is_not_persisted(tmp_path: Path, monkeypatc
         last_session_id="stale-session",
     )
     worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+        store=store,
+        dws=dws,
+        codex=codex,
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
     )
 
     worker.run_once()
@@ -14719,9 +15338,14 @@ def test_mail_reply_action_executes_before_chat_and_persists_result(
     assert len(final_sent(dws)) == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.mail_message_id == "mail-1"
-    assert json.loads(attempt.mail_action_result_json)["success"] is True
-    assert attempt.send_status == "sent"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "completed"
+    events = json.loads(attempt.audit_tool_events_json)
+    completed = [event for event in events if event["type"] == "item.completed"]
+    assert [event["item"]["id"] for event in completed] == [
+        "mail-1",
+        "dingtalk-reply",
+    ]
 
 
 def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monkeypatch):
@@ -14746,12 +15370,19 @@ def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monke
     assert len(dws.mail_replies) == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "failed"
+    assert attempt.action == "agent_run"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "chat down"
+    run = worker.store.get_agent_run(1)
+    assert run is not None
+    assert run.status == "unknown"
 
     dws.send_error = None
-    assert worker._retry_existing_reply_attempt(
-        conversation(), trigger, [trigger], attempt
-    ) is True
+    assert worker.consume_once(max_tasks=1) == 0
 
     assert len(dws.mail_replies) == 1
-    assert worker.store.get_reply_attempt(1).send_status == "sent"
+    assert worker.store.count_reply_attempts() == 1
+    assert worker.store.get_agent_run_for_task_generation(
+        run.reply_task_id,
+        run.execution_generation,
+    ).id == run.id

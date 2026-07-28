@@ -933,6 +933,50 @@ def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
     assert [event["call_id"] for event in appended.tool_events] == ["recovered"]
 
 
+def test_expired_agent_run_with_incomplete_effect_cannot_be_reclaimed(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    first = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-a",
+        lease_seconds=60,
+        now="2026-07-29 00:00:00",
+    )
+    store.set_agent_run_session(
+        first.run.id,
+        "session-1",
+        owner="worker-a",
+        now="2026-07-29 00:00:01",
+    )
+    store.append_agent_run_event(
+        first.run.id,
+        {
+            "type": "item.started",
+            "item": {
+                "id": "write-1",
+                "type": "mcp_tool_call",
+                "metadata": {"effect": "effectful"},
+            },
+        },
+        owner="worker-a",
+        now="2026-07-29 00:00:02",
+    )
+
+    reclaim = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-b",
+        now="2026-07-29 00:02:00",
+    )
+
+    assert reclaim.claimed is False
+    assert reclaim.run.lease_owner == "worker-a"
+    assert reclaim.run.side_effect_state == "unknown"
+
+
 def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
@@ -955,6 +999,68 @@ def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
     assert loaded is not None
     assert loaded.tool_events == [started, completed]
     assert loaded.transcript_end_line == 2
+
+
+def test_agent_run_effect_state_tracks_structured_call_lifecycle(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    started = {
+        "type": "item.started",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    completed = {
+        "type": "item.completed",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+
+    unknown = store.append_agent_run_event(run.id, started, owner="worker-1")
+    confirmed = store.append_agent_run_event(run.id, completed, owner="worker-1")
+
+    assert unknown.side_effect_state == "unknown"
+    assert confirmed.side_effect_state == "confirmed"
+
+
+def test_safe_persisted_receipt_closes_started_agent_effect(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    started = {
+        "type": "item.started",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    receipt = {
+        "type": "item.completed",
+        "item": {
+            "id": "receipt-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "read_only"},
+            "result": {
+                "receipt_id": "receipt-1",
+                "operation_id": "write-1",
+                "completed": True,
+                "persisted": True,
+                "safe_to_confirm": True,
+            },
+        },
+    }
+
+    store.append_agent_run_event(run.id, started, owner="worker-1")
+    confirmed = store.append_agent_run_event(run.id, receipt, owner="worker-1")
+
+    assert confirmed.side_effect_state == "confirmed"
 
 
 def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):

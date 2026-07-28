@@ -148,6 +148,48 @@ def test_direct_runner_uses_native_codex_and_never_ignores_user_config(
     assert DWS_AGENT_CODE_ENV not in executor.kwargs[0]["env"]
 
 
+def test_failed_agent_result_persists_failed_run(tmp_path: Path, store: AutoReplyStore):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-1"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": json.dumps(
+                            {
+                                "outcome": "failed",
+                                "summary": "材料暂时不可用。",
+                                "error": {
+                                    "code": "material_unavailable",
+                                    "retryable": True,
+                                    "authorization_required": False,
+                                    "side_effect_state": "none",
+                                },
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
+    run = store.get_agent_run(result.run_id)
+    assert run is not None
+    assert run.status == "failed"
+    assert json.loads(run.structured_error_json)["code"] == "material_unavailable"
+
+
 def test_direct_runner_uses_dedicated_direct_agent_instructions(
     tmp_path: Path, store: AutoReplyStore
 ):

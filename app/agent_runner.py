@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from app.agent_context import AgentTaskContext
 from app.agent_result import (
+    AgentOutcome,
     AgentResult,
     EffectEventStatus,
     EffectKind,
@@ -284,6 +285,15 @@ class DirectAgentRunner:
                 transcript_end_line=len(events),
                 now=now,
             )
+        elif result.outcome is AgentOutcome.FAILED:
+            self.store.fail_agent_run(
+                run.id,
+                result.error.model_dump(mode="json"),
+                owner=self.owner,
+                side_effect_state=evidence_state.value,
+                transcript_end_line=len(events),
+                now=now,
+            )
         else:
             self.store.complete_agent_run(
                 run.id,
@@ -550,6 +560,22 @@ def _receipt(payload: dict[str, object]) -> ExecutionReceipt | None:
     if receipt is None or receipt.operation_id != operation_id:
         return None
     return receipt
+
+
+def structured_execution_evidence(
+    events: tuple[dict[str, object], ...] | list[dict[str, object]],
+) -> tuple[tuple[ToolEffectEvent, ...], tuple[ExecutionReceipt, ...]]:
+    """Extract only trusted effect metadata and receipts from persisted events."""
+    effect_events: list[ToolEffectEvent] = []
+    receipts: list[ExecutionReceipt] = []
+    for event in events:
+        effect_event = _effect_event(event)
+        if effect_event is not None:
+            effect_events.append(effect_event)
+        receipt = _receipt(event)
+        if receipt is not None:
+            receipts.append(receipt)
+    return tuple(effect_events), tuple(receipts)
 
 
 def _first_valid_receipt(sources: list[object]) -> ExecutionReceipt | None:

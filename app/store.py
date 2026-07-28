@@ -383,6 +383,71 @@ class AgentRunLeaseLostError(RuntimeError):
     pass
 
 
+def _persisted_agent_effect_state(events: list[dict[str, object]]) -> str:
+    started: set[str] = set()
+    completed: set[str] = set()
+    for event in events:
+        event_type = event.get("type")
+        item = event.get("item")
+        if event_type not in {"item.started", "item.completed"} or not isinstance(
+            item, dict
+        ):
+            continue
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict) or metadata.get("effect") != "effectful":
+            continue
+        call_id = item.get("call_id") or item.get("id")
+        if not isinstance(call_id, str) or not call_id.strip():
+            continue
+        if event_type == "item.started":
+            started.add(call_id)
+        else:
+            completed.add(call_id)
+    completed.update(_persisted_agent_receipt_ids(events))
+    if started - completed:
+        return "unknown"
+    if completed:
+        return "confirmed"
+    return "none"
+
+
+def _persisted_agent_receipt_ids(value: object) -> set[str]:
+    receipt_ids: set[str] = set()
+    if isinstance(value, list):
+        for item in value:
+            receipt_ids.update(_persisted_agent_receipt_ids(item))
+        return receipt_ids
+    if not isinstance(value, dict):
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return receipt_ids
+            if isinstance(parsed, dict | list):
+                return _persisted_agent_receipt_ids(parsed)
+        return receipt_ids
+    if frozenset(value) == {
+        "receipt_id",
+        "operation_id",
+        "completed",
+        "persisted",
+        "safe_to_confirm",
+    }:
+        operation_id = value.get("operation_id")
+        if (
+            isinstance(operation_id, str)
+            and operation_id.strip()
+            and value.get("completed") is True
+            and value.get("persisted") is True
+            and value.get("safe_to_confirm") is True
+        ):
+            receipt_ids.add(operation_id)
+        return receipt_ids
+    for item in value.values():
+        receipt_ids.update(_persisted_agent_receipt_ids(item))
+    return receipt_ids
+
+
 class OkrReviewRequest(BaseModel):
     id: int
     conversation_id: str
@@ -2680,6 +2745,7 @@ class AutoReplyStore:
                 not claimed
                 and row["status"] == "running"
                 and bool(row["codex_session_id"])
+                and row["side_effect_state"] != "unknown"
                 and row["lease_expires_at"] <= now_text
             ):
                 reclaimed = db.execute(
@@ -2687,7 +2753,9 @@ class AutoReplyStore:
                     update agent_runs
                     set lease_owner=?, lease_expires_at=?, updated_at=?
                     where id=? and status='running'
-                      and codex_session_id<>'' and lease_expires_at<=?
+                      and codex_session_id<>''
+                      and side_effect_state<>'unknown'
+                      and lease_expires_at<=?
                     """,
                     (owner, lease_expires_at, now_text, row["id"], now_text),
                 )
@@ -2835,10 +2903,12 @@ class AutoReplyStore:
             ):
                 raise ValueError("agent run tool events must be JSON objects")
             events.append(normalized_event)
+            side_effect_state = _persisted_agent_effect_state(events)
             cursor = db.execute(
                 """
                 update agent_runs
                 set tool_events_json=?,
+                    side_effect_state=?,
                     transcript_end_line=transcript_end_line + 1,
                     updated_at=?
                 where id=? and status='running' and lease_owner=?
@@ -2846,6 +2916,7 @@ class AutoReplyStore:
                 """,
                 (
                     json.dumps(events, ensure_ascii=False, separators=(",", ":")),
+                    side_effect_state,
                     now_text,
                     run_id,
                     owner,
@@ -3083,6 +3154,71 @@ class AutoReplyStore:
             transcript_end_line=transcript_end_line,
             now=now,
         )
+
+    def mark_expired_agent_run_unknown(
+        self,
+        run_id: int,
+        structured_error: dict[str, object],
+        *,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        """Move an expired run with an incomplete effect into reconciliation."""
+        error_json = _json_object_text(structured_error, field="structured_error")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            cursor = db.execute(
+                """
+                update agent_runs
+                set status='unknown',
+                    structured_error_json=?,
+                    side_effect_state='unknown',
+                    lease_owner='',
+                    lease_expires_at='',
+                    updated_at=?
+                where id=? and status='running'
+                  and side_effect_state='unknown'
+                  and lease_expires_at<=?
+                """,
+                (error_json, now_text, run_id, now_text),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("expired agent run is not eligible for reconciliation")
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(row)
+
+    def fail_expired_agent_run(
+        self,
+        run_id: int,
+        structured_error: dict[str, object],
+        *,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        error_json = _json_object_text(structured_error, field="structured_error")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            cursor = db.execute(
+                """
+                update agent_runs
+                set status='failed',
+                    structured_error_json=?,
+                    lease_owner='',
+                    lease_expires_at='',
+                    completed_at=?,
+                    updated_at=?
+                where id=? and status='running'
+                  and side_effect_state='none'
+                  and lease_expires_at<=?
+                """,
+                (error_json, now_text, now_text, run_id, now_text),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("expired agent run is not a definite failure")
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(row)
 
     def complete_unknown_agent_run(
         self,
