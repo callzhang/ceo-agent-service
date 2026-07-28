@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "AgentError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "default": "",
+          "title": "Code",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "authorization_required": {
+          "default": false,
+          "title": "Authorization Required",
+          "type": "boolean"
+        },
+        "side_effect_state": {
+          "$ref": "#/$defs/SideEffectState",
+          "default": "none"
+        }
+      },
+      "title": "AgentError",
+      "type": "object"
+    },
+    "AgentOutcome": {
+      "enum": [
+        "completed",
+        "no_action",
+        "needs_human",
+        "failed"
+      ],
+      "title": "AgentOutcome",
+      "type": "string"
+    },
+    "SideEffectState": {
+      "enum": [
+        "none",
+        "confirmed",
+        "unknown"
+      ],
+      "title": "SideEffectState",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "$ref": "#/$defs/AgentOutcome"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "error": {
+      "$ref": "#/$defs/AgentError"
+    }
+  },
+  "required": [
+    "outcome",
+    "summary"
+  ],
+  "title": "AgentResult",
+  "type": "object"
+}

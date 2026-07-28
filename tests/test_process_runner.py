@@ -37,3 +37,72 @@ def test_process_runner_keeps_process_alive_when_output_continues():
     assert result.timed_out is False
     assert result.returncode == 0
     assert result.stdout.splitlines() == ["first", "second"]
+
+
+def test_process_runner_emits_complete_stdout_lines():
+    lines = []
+
+    result = run_process_with_idle_timeout(
+        [sys.executable, "-c", "print('one'); print('two')"],
+        prompt="",
+        env=None,
+        total_timeout_seconds=5,
+        idle_timeout_seconds=5,
+        on_stdout_line=lines.append,
+    )
+
+    assert result.returncode == 0
+    assert lines == ["one", "two"]
+
+
+def test_process_runner_preserves_split_multibyte_stdout_for_callback():
+    lines = []
+    script = (
+        "import os, sys, time; "
+        "data='你好'.encode(); "
+        "os.write(sys.stdout.fileno(), data[:1]); "
+        "time.sleep(0.1); "
+        "os.write(sys.stdout.fileno(), data[1:] + b'\\n')"
+    )
+
+    result = run_process_with_idle_timeout(
+        [sys.executable, "-c", script],
+        prompt="",
+        env=None,
+        total_timeout_seconds=5,
+        idle_timeout_seconds=5,
+        on_stdout_line=lines.append,
+    )
+
+    assert result.stdout == "你好"
+    assert lines == ["你好"]
+
+
+def test_process_runner_flushes_final_nonnewline_stdout_line():
+    lines = []
+
+    result = run_process_with_idle_timeout(
+        [sys.executable, "-c", "print('tail', end='')"],
+        prompt="",
+        env=None,
+        total_timeout_seconds=5,
+        idle_timeout_seconds=5,
+        on_stdout_line=lines.append,
+    )
+
+    assert result.stdout == "tail"
+    assert lines == ["tail"]
+
+
+def test_process_runner_without_callback_preserves_existing_result_shape():
+    result = run_process_with_idle_timeout(
+        [sys.executable, "-c", "print('unchanged')"],
+        prompt="",
+        env=None,
+        total_timeout_seconds=5,
+        idle_timeout_seconds=5,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "unchanged"
+    assert result.stderr == ""

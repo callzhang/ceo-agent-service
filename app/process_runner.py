@@ -1,9 +1,11 @@
+import codecs
 import os
 import selectors
 import signal
 import subprocess
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 PROCESS_TOTAL_TIMEOUT_REASON_PREFIX = "process timed out after "
 PROCESS_IDLE_TIMEOUT_REASON_PREFIX = "process produced no output for "
@@ -27,11 +29,14 @@ def run_process_with_idle_timeout(
     env: dict[str, str] | None,
     total_timeout_seconds: float,
     idle_timeout_seconds: float,
+    on_stdout_line: Callable[[str], None] | None = None,
 ) -> ProcessRunResult:
     started_at = time.monotonic()
     last_output_at = started_at
     stdout_chunks: list[bytes] = []
     stderr_chunks: list[bytes] = []
+    stdout_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    stdout_line_buffer = ""
     process = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -82,6 +87,12 @@ def run_process_with_idle_timeout(
                 chunk = os.read(key.fd, 4096)
                 if chunk:
                     key.data.append(chunk)
+                    if on_stdout_line is not None and key.data is stdout_chunks:
+                        decoded = stdout_decoder.decode(chunk)
+                        stdout_line_buffer = _emit_stdout_lines(
+                            stdout_line_buffer + decoded,
+                            on_stdout_line,
+                        )
                     last_output_at = time.monotonic()
                 else:
                     selector.unregister(key.fileobj)
@@ -92,6 +103,11 @@ def run_process_with_idle_timeout(
             _terminate_process_group(process)
             returncode = process.wait(timeout=5)
 
+    if on_stdout_line is not None:
+        stdout_line_buffer += stdout_decoder.decode(b"", final=True)
+        if stdout_line_buffer:
+            on_stdout_line(stdout_line_buffer.removesuffix("\r"))
+
     return ProcessRunResult(
         returncode=returncode,
         stdout=b"".join(stdout_chunks).decode(errors="replace").strip(),
@@ -100,6 +116,16 @@ def run_process_with_idle_timeout(
         timeout_kind=timeout_kind,
         timeout_reason=timeout_reason,
     )
+
+
+def _emit_stdout_lines(
+    buffered_text: str,
+    callback: Callable[[str], None],
+) -> str:
+    while "\n" in buffered_text:
+        line, buffered_text = buffered_text.split("\n", 1)
+        callback(line.removesuffix("\r"))
+    return buffered_text
 
 
 def _terminate_process_group(process: subprocess.Popen) -> None:
