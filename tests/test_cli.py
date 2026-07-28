@@ -146,6 +146,50 @@ def test_parser_supports_channel_doctor():
     assert args.command == "channel-doctor"
 
 
+def test_channel_doctor_reports_typed_gate_results(monkeypatch, capsys):
+    from app.channel_gate import ChannelGateResult, ChannelGateState
+    from app.cli import channel_doctor_command
+
+    monkeypatch.setattr(
+        "app.channel_gate.DwsChannelGate.check",
+        lambda self: ChannelGateResult(
+            channel="dingtalk",
+            state=ChannelGateState.READY,
+            reason_code="ready",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.channel_gate.LarkChannelGate.check",
+        lambda self: ChannelGateResult(
+            channel="lark",
+            state=ChannelGateState.NEEDS_LOGIN,
+            reason_code="status_auth_invalid",
+        ),
+    )
+
+    report = channel_doctor_command()
+
+    assert report == {
+        "channels": [
+            {
+                "channel": "dingtalk",
+                "state": "ready",
+                "reason_code": "ready",
+                "detail": "",
+                "commands": [],
+            },
+            {
+                "channel": "lark",
+                "state": "needs_login",
+                "reason_code": "status_auth_invalid",
+                "detail": "",
+                "commands": [],
+            },
+        ]
+    }
+    assert '"state": "needs_login"' in capsys.readouterr().out
+
+
 def test_parser_supports_scan_task_sources():
     args = build_parser().parse_args(["scan-task-sources", "--workspace", "/tmp/w"])
 

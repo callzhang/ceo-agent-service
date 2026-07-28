@@ -2929,24 +2929,25 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
 
 
 def test_render_config_page_shows_channel_doctor(monkeypatch):
-    from app.channels.models import ChannelDoctorStatus
+    from app.channel_gate import ChannelGateResult, ChannelGateState
 
     monkeypatch.setattr(
-        "app.channels.DingTalkCliAdapter.doctor",
-        lambda self: ChannelDoctorStatus(
+        "app.channel_gate.DwsChannelGate.check",
+        lambda self: ChannelGateResult(
             channel="dingtalk",
-            status="ready",
-            reason="dws ready",
-            command=["dws", "doctor"],
+            state=ChannelGateState.READY,
+            reason_code="ready",
+            commands=(("dws", "auth", "status"),),
         ),
     )
     monkeypatch.setattr(
-        "app.channels.FeishuCliAdapter.doctor",
-        lambda self: ChannelDoctorStatus(
-            channel="feishu",
-            status="blocked",
-            reason="lark command not found",
-            command=["lark", "--help"],
+        "app.channel_gate.LarkChannelGate.check",
+        lambda self: ChannelGateResult(
+            channel="lark",
+            state=ChannelGateState.BLOCKED,
+            reason_code="executable_missing",
+            detail="lark-cli command not found",
+            commands=(("lark-cli", "auth", "status"),),
         ),
     )
 
@@ -2954,8 +2955,9 @@ def test_render_config_page_shows_channel_doctor(monkeypatch):
 
     assert "Channel doctor" in html
     assert "dingtalk" in html
-    assert "feishu" in html
-    assert "lark command not found" in html
+    assert "lark" in html
+    assert "executable_missing" in html
+    assert "lark-cli command not found" in html
 
 
 def test_handle_system_config_post_saves_runtime_params_to_env_file(

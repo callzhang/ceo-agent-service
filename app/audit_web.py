@@ -2233,16 +2233,17 @@ def _render_wechat_config(store: AutoReplyStore) -> str:
 
 
 def _render_channel_config() -> str:
-    from app.channels import DingTalkCliAdapter, FeishuCliAdapter
+    from app.channel_gate import DwsChannelGate, LarkChannelGate
 
-    statuses = [DingTalkCliAdapter().doctor(), FeishuCliAdapter().doctor()]
+    statuses = [DwsChannelGate().check(), LarkChannelGate().check()]
     rows = "".join(
         "<tr>"
         f"<td>{escape(status.channel)}</td>"
-        f"<td><span class=\"setup-step-status setup-status-{escape(status.status)}\">"
-        f"{escape(status.status)}</span></td>"
-        f"<td>{escape(status.reason)}</td>"
-        f"<td><code>{escape(' '.join(status.command))}</code></td>"
+        f"<td><span class=\"setup-step-status setup-status-{escape(status.state.value)}\">"
+        f"{escape(status.state.value)}</span></td>"
+        f"<td>{escape(status.reason_code)}"
+        f"{_channel_gate_detail_html(status.detail)}</td>"
+        f"<td><code>{escape(' ; '.join(' '.join(command) for command in status.commands))}</code></td>"
         "</tr>"
         for status in statuses
     )
@@ -2256,6 +2257,12 @@ def _render_channel_config() -> str:
         "</table>"
         "</section>"
     )
+
+
+def _channel_gate_detail_html(detail: str) -> str:
+    if not detail:
+        return ""
+    return '<br><span class="muted">' + escape(detail) + "</span>"
 
 
 def _system_config_rows() -> list[tuple[str, str, str]]:
