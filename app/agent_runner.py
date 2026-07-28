@@ -49,7 +49,7 @@ READ_ONLY_DEVELOPER_INSTRUCTION = (
 _NATIVE_READ_ONLY_ITEM_TYPES = frozenset(
     {"tool_search", "tool_search_call", "web_search", "web_search_call"}
 )
-_NATIVE_EFFECTFUL_ITEM_TYPES = frozenset(
+_NATIVE_CLASSIFIABLE_ITEM_TYPES = frozenset(
     {
         "command_execution",
         "dynamic_tool_call",
@@ -416,7 +416,7 @@ def _redact_command(command: str) -> str:
     try:
         parts = shlex.split(command)
     except ValueError:
-        return safe_observability_error(command, limit=2000)
+        return _REDACTED
     return " ".join(shlex.join(_redact_argv(parts)).split())[:2000]
 
 
@@ -489,33 +489,70 @@ def _native_effect_kind(
 ) -> EffectKind | None:
     if item_type in _NATIVE_READ_ONLY_ITEM_TYPES:
         return EffectKind.READ_ONLY
-    if item_type not in _NATIVE_EFFECTFUL_ITEM_TYPES and not item_type.endswith(
+    if item_type not in _NATIVE_CLASSIFIABLE_ITEM_TYPES and not item_type.endswith(
         "_tool_call"
     ):
         return None
-    if _has_structured_read_only_annotation(item):
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict):
+        effect = metadata.get("effect")
+        if effect in {EffectKind.READ_ONLY.value, EffectKind.EFFECTFUL.value}:
+            return EffectKind(effect)
+    for annotations in _annotation_candidates(item, metadata):
+        effect = _mcp_annotation_effect(annotations)
+        if effect is not None:
+            return effect
+    return None
+
+
+def _annotation_candidates(
+    item: dict[str, object], metadata: object
+) -> tuple[dict[str, object], ...]:
+    candidates: list[dict[str, object]] = []
+    for candidate in (
+        item.get("annotations"),
+        metadata,
+        metadata.get("annotations") if isinstance(metadata, dict) else None,
+    ):
+        if isinstance(candidate, dict):
+            candidates.append(candidate)
+    return tuple(candidates)
+
+
+def _mcp_annotation_effect(annotations: dict[str, object]) -> EffectKind | None:
+    read_only = annotations.get("readOnlyHint")
+    destructive = annotations.get("destructiveHint")
+    if read_only is True and destructive is not True:
         return EffectKind.READ_ONLY
-    return EffectKind.EFFECTFUL
-
-
-def _has_structured_read_only_annotation(item: dict[str, object]) -> bool:
-    for candidate in (item.get("metadata"), item.get("annotations")):
-        if isinstance(candidate, dict) and candidate.get("read_only") is True:
-            return True
-    return False
+    if destructive is True and read_only is not True:
+        return EffectKind.EFFECTFUL
+    return None
 
 
 def _receipt(payload: dict[str, object]) -> ExecutionReceipt | None:
-    sources: list[object] = []
+    top_level_sources: list[object] = []
     if frozenset(payload) == _RECEIPT_KEYS:
-        sources.append(payload)
+        top_level_sources.append(payload)
     if "receipt" in payload:
-        sources.append(payload["receipt"])
+        top_level_sources.append(payload["receipt"])
+    receipt = _first_valid_receipt(top_level_sources)
+    if receipt is not None:
+        return receipt
+
     item = payload.get("item")
-    if isinstance(item, dict):
-        for key in ("result", "output"):
-            if key in item:
-                sources.append(item[key])
+    if not isinstance(item, dict):
+        return None
+    operation_id = item.get("call_id") or item.get("id")
+    if not isinstance(operation_id, str) or not operation_id.strip():
+        return None
+    sources = [item[key] for key in ("result", "output") if key in item]
+    receipt = _first_valid_receipt(sources)
+    if receipt is None or receipt.operation_id != operation_id:
+        return None
+    return receipt
+
+
+def _first_valid_receipt(sources: list[object]) -> ExecutionReceipt | None:
     for source in sources:
         for candidate in _structured_receipt_candidates(source):
             try:

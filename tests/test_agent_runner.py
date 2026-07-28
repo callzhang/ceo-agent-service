@@ -53,6 +53,31 @@ def _context(task_id: int) -> AgentTaskContext:
     )
 
 
+def _result_line(*, side_effect_state: str = "none") -> str:
+    return json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": json.dumps(
+                    {
+                        "outcome": "completed",
+                        "summary": "修复已执行并验证。",
+                        "error": {
+                            "code": "",
+                            "retryable": False,
+                            "authorization_required": False,
+                            "side_effect_state": side_effect_state,
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
 def _jsonl(*, session_id: str = "session-1") -> str:
     return "\n".join(
         (
@@ -67,28 +92,7 @@ def _jsonl(*, session_id: str = "session-1") -> str:
                     },
                 }
             ),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "type": "agent_message",
-                        "text": json.dumps(
-                            {
-                                "outcome": "completed",
-                                "summary": "修复已执行并验证。",
-                                "error": {
-                                    "code": "",
-                                    "retryable": False,
-                                    "authorization_required": False,
-                                    "side_effect_state": "none",
-                                },
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                },
-                ensure_ascii=False,
-            ),
+            _result_line(),
         )
     )
 
@@ -421,6 +425,7 @@ def test_corrupt_stream_after_effect_start_marks_run_unknown(
                         "id": "write-1",
                         "type": "command_execution",
                         "command": "dws chat message send --conversation cid --text hello",
+                        "metadata": {"effect": "effectful"},
                     },
                 }
             ),
@@ -550,19 +555,20 @@ def test_persisted_events_recursively_redact_sensitive_keys_and_arguments(
 
 
 @pytest.mark.parametrize(
-    "item_type",
+    ("item_type", "detail"),
     (
-        "command_execution",
-        "mcp_tool_call",
-        "function_call",
-        "tool_call",
-        "dynamic_tool_call",
+        ("command_execution", {"command": "dws doc read --node-id node-1"}),
+        ("mcp_tool_call", {"tool": "memory_recall"}),
+        ("mcp_tool_call", {"tool": "exa_search"}),
+        ("command_execution", {"command": "arbitrary write command"}),
+        ("mcp_tool_call", {"tool": "memory_write"}),
     ),
 )
-def test_completed_native_effectful_items_confirm_observed_side_effect(
+def test_unannotated_native_reads_and_writes_do_not_confirm_completion(
     tmp_path: Path,
     store: AutoReplyStore,
     item_type: str,
+    detail: dict[str, str],
 ):
     task = _task(store)
     output = "\n".join(
@@ -570,32 +576,42 @@ def test_completed_native_effectful_items_confirm_observed_side_effect(
             json.dumps(
                 {
                     "type": "item.started",
-                    "item": {"id": "native-call-1", "type": item_type},
+                    "item": {
+                        "id": "native-call-1",
+                        "type": item_type,
+                        **detail,
+                    },
                 }
             ),
             json.dumps(
                 {
                     "type": "item.completed",
-                    "item": {"id": "native-call-1", "type": item_type},
+                    "item": {
+                        "id": "native-call-1",
+                        "type": item_type,
+                        **detail,
+                    },
                 }
             ),
-            _jsonl().splitlines()[-1],
+            _result_line(side_effect_state="confirmed"),
         )
     )
 
-    result = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-    ).run(task, _context(task.id))
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
 
-    persisted = store.get_agent_run(result.run_id)
-    assert result.result.error.side_effect_state.value == "none"
-    assert persisted.status == "completed"
-    assert persisted.side_effect_state == "confirmed"
+    persisted = store.get_agent_run_for_task_generation(
+        task.id, task.execution_generation
+    )
+    assert persisted.status == "failed"
+    assert persisted.side_effect_state == "none"
 
 
-def test_native_mcp_lifecycle_uses_item_id_when_call_id_is_missing(
+def test_unannotated_native_event_does_not_upgrade_successful_none_result(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
@@ -606,10 +622,8 @@ def test_native_mcp_lifecycle_uses_item_id_when_call_id_is_missing(
                     "type": "item.started",
                     "item": {
                         "id": "mcp-item-1",
-                        "type": "mcp_tool_call",
-                        "server": "memory_connector",
-                        "tool": "memory_write",
-                        "arguments": {"data": "safe summary"},
+                        "type": "command_execution",
+                        "command": "arbitrary write command",
                     },
                 }
             ),
@@ -618,10 +632,8 @@ def test_native_mcp_lifecycle_uses_item_id_when_call_id_is_missing(
                     "type": "item.completed",
                     "item": {
                         "id": "mcp-item-1",
-                        "type": "mcp_tool_call",
-                        "server": "memory_connector",
-                        "tool": "memory_write",
-                        "result": {"ok": True},
+                        "type": "command_execution",
+                        "command": "arbitrary write command",
                     },
                 }
             ),
@@ -635,7 +647,7 @@ def test_native_mcp_lifecycle_uses_item_id_when_call_id_is_missing(
         executor=RecordingExecutor(output),
     ).run(task, _context(task.id))
 
-    assert store.get_agent_run(run.run_id).side_effect_state == "confirmed"
+    assert store.get_agent_run(run.run_id).side_effect_state == "none"
 
 
 def test_completed_native_web_search_is_read_only_evidence(
@@ -652,8 +664,17 @@ def test_completed_native_web_search_is_read_only_evidence(
     assert store.get_agent_run(run.run_id).side_effect_state == "none"
 
 
-def test_native_structured_read_only_annotation_overrides_conservative_default(
-    tmp_path: Path, store: AutoReplyStore
+@pytest.mark.parametrize(
+    "classification",
+    (
+        {"metadata": {"effect": "read_only"}},
+        {"annotations": {"readOnlyHint": True}},
+    ),
+)
+def test_trusted_read_only_metadata_does_not_confirm_completion(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    classification: dict[str, dict[str, object]],
 ):
     task = _task(store)
     output = "\n".join(
@@ -663,12 +684,59 @@ def test_native_structured_read_only_annotation_overrides_conservative_default(
                     "type": "item.completed",
                     "item": {
                         "id": "annotated-read-1",
-                        "type": "command_execution",
-                        "metadata": {"read_only": True},
+                        "type": "mcp_tool_call",
+                        **classification,
                     },
                 }
             ),
-            _jsonl().splitlines()[-1],
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
+
+
+@pytest.mark.parametrize(
+    "classification",
+    (
+        {"metadata": {"effect": "effectful"}},
+        {"annotations": {"destructiveHint": True}},
+    ),
+)
+def test_trusted_effectful_lifecycle_confirms_completion(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    classification: dict[str, dict[str, object]],
+):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "annotated-write-1",
+                        "type": "mcp_tool_call",
+                        **classification,
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "annotated-write-1",
+                        "type": "mcp_tool_call",
+                        **classification,
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
         )
     )
 
@@ -678,7 +746,7 @@ def test_native_structured_read_only_annotation_overrides_conservative_default(
         executor=RecordingExecutor(output),
     ).run(task, _context(task.id))
 
-    assert store.get_agent_run(run.run_id).side_effect_state == "none"
+    assert store.get_agent_run(run.run_id).side_effect_state == "confirmed"
 
 
 def test_exact_nested_native_receipt_confirms_completion_without_tool_lifecycle(
@@ -698,24 +766,13 @@ def test_exact_nested_native_receipt_confirms_completion_without_tool_lifecycle(
                 {
                     "type": "item.completed",
                     "item": {
-                        "id": "agent-read-1",
-                        "type": "agent_message",
+                        "id": "operation-1",
+                        "type": "command_execution",
                         "result": {"receipt": receipt},
-                        "text": json.dumps(
-                            {
-                                "outcome": "completed",
-                                "summary": "verified",
-                                "error": {
-                                    "code": "",
-                                    "retryable": False,
-                                    "authorization_required": False,
-                                    "side_effect_state": "confirmed",
-                                },
-                            }
-                        ),
                     },
                 }
             ),
+            _result_line(side_effect_state="confirmed"),
         )
     )
 
@@ -726,6 +783,87 @@ def test_exact_nested_native_receipt_confirms_completion_without_tool_lifecycle(
     ).run(task, _context(task.id))
 
     assert store.get_agent_run(run.run_id).side_effect_state == "confirmed"
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    (
+        {
+            "receipt_id": "receipt-1",
+            "operation_id": "different-operation",
+            "completed": True,
+            "persisted": True,
+            "safe_to_confirm": True,
+        },
+        {
+            "receipt_id": "receipt-1",
+            "operation_id": "operation-1",
+            "completed": True,
+            "persisted": True,
+        },
+    ),
+)
+def test_mismatched_or_partial_native_receipt_does_not_confirm_completion(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    receipt: dict[str, object],
+):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "operation-1",
+                        "type": "mcp_tool_call",
+                        "result": {"receipt": receipt},
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
+
+
+def test_malformed_command_is_replaced_whole_before_persistence(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    password = "ordinary-password"
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "malformed-command-1",
+                        "type": "command_execution",
+                        "command": f"tool --password {password} 'unterminated",
+                    },
+                }
+            ),
+            _result_line(),
+        )
+    )
+
+    run = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
+    persisted = store.get_agent_run(run.run_id)
+    command = persisted.tool_events[0]["item"]["command"]
+    assert command == "[REDACTED]"
+    assert password not in json.dumps(persisted.tool_events)
 
 
 def test_receipt_like_prose_is_not_completion_evidence(
