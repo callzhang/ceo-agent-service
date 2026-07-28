@@ -318,7 +318,7 @@ def test_universal_stop_with_error_records_terminal_failure_without_replanning(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "failed"
+    assert attempt.send_status == "blocked"
     assert worker.store.get_universal_action_execution_state(execution).value == "succeeded"
     assert worker.store.has_seen("msg-1") is False
     persisted_task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
