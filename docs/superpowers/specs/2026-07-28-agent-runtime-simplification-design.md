@@ -28,6 +28,16 @@ external side effect may have an unknown outcome.
   includes prior successful side effects and requires live external-state
   inspection before repeating an effectful command. The service does not
   intercept or rewrite raw CLI commands.
+- Confirmed facts in the trigger, recent context, material reads, and prior
+  receipts remain accepted evidence. The Agent must not ask the user to provide
+  them again unless it identifies a concrete contradiction or a failed read.
+- OA evidence and targets are resolved by the Agent through live DWS reads. The
+  service provides raw process/task IDs, references, and exact read commands;
+  it never recovers an approval target by applicant/title matching or pre-reads
+  the approval body.
+- Diagnosis is not completion. When the user requests a repair or other
+  effectful operation, the Agent must execute and verify it or return
+  `needs_human`/`failed`; a diagnosis-only summary is not a completed result.
 
 ## Removed Architecture
 
@@ -135,6 +145,27 @@ The Agent returns one minimal final result:
 The result contains no action list, target schema, dependency list, confidence
 score, or service control action.
 
+### Completion Evidence
+
+The final result and the persisted JSONL events form one completion contract:
+
+- `completed` with `side_effect_state=confirmed` requires at least one matching
+  completed effectful tool event or a persisted execution receipt;
+- an explicit repair or write request cannot be completed by a read-only
+  diagnosis, recommendation, or promise of later work;
+- a completed tool event is evidence of execution, not proof that arbitrary
+  business content was correct; the Agent must still perform the requested
+  verification and summarize the observed result;
+- if an effectful call started but completion evidence is missing, the run is
+  `unknown` and enters read-only reconciliation;
+- if no effect started and execution cannot proceed, the Agent returns
+  `needs_human` or `failed` with a concrete reason.
+
+The service may reject a structurally inconsistent result, such as
+`completed + confirmed` without a completed effect event, because that violates
+the runtime result contract. It does not reinterpret the business decision or
+invent a replacement action.
+
 ### Run Store
 
 Replace the two universal execution tables with one `agent_runs` row per
@@ -224,6 +255,25 @@ These rules are supplied to the Agent. The service enforces only secret
 redaction in persisted and externally rendered audit data; it does not enforce
 business target selection.
 
+### Evidence Reuse And OA Reads
+
+Before asking for clarification, the Agent must use the evidence already
+available to it:
+
+- preserve and acknowledge confirmed facts instead of requesting the same
+  values again;
+- execute the provided OA detail, document, file, or other material read
+  commands before claiming that the material is unavailable;
+- when an OA trigger has a process/task ID, query its live detail and current
+  task ownership before acting;
+- when an OA trigger has no unique ID, use live read/search commands to identify
+  a unique current task; applicant/title similarity alone is not sufficient;
+- when multiple candidates remain, the task is already completed, or the task
+  does not belong to the current user, do not execute an approval action.
+
+These are Agent instructions and acceptance tests, not new service-side target
+binding, material pre-reading, or compatibility fallback logic.
+
 ## UI and Observability
 
 History shows the user-facing outcome, summary, channel, status, generated or
@@ -267,6 +317,13 @@ Focused tests must prove:
 - malformed final JSON is normalized once by the local parser without another
   Agent invocation or any repeated tool call;
 - direct CLI tool events and safe receipts reach History;
+- confirmed facts in context are acknowledged and are not requested again;
+- OA tasks with complete form data are read by the Agent before clarification;
+- OA target ambiguity, completed tasks, and non-current-user tasks do not
+  produce approval writes;
+- diagnosis-only output cannot complete an explicit repair/write request;
+- `completed + confirmed` without a completed effect event or receipt is
+  rejected as an inconsistent result;
 - definite failures retry, while unknown side effects reconcile before rerun;
 - a corrected action with changed content is not blocked by an old success;
 - Universal classes, tables, hashes, target normalization, auth archives, and

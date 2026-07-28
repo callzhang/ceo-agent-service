@@ -68,6 +68,34 @@ This is one subsystem: queued CEO tasks from channel discovery through Agent exe
 - `app/channels/enqueue.py`
 - `tests/test_channels.py`
 
+## Accepted Spec Change: Feedback-Derived Completion Rules
+
+This plan incorporates three production-feedback requirements before Task 3
+begins. They refine the single-Agent contract; they do not add a second runtime,
+restore Universal modules, or create service-side business fallbacks.
+
+1. **Reuse confirmed evidence.** The Agent acknowledges facts already present in
+   the trigger, recent context, material reads, or prior receipts and asks only
+   for information that is genuinely missing or contradictory. Tests use
+   generic evidence, not hard-coded business values or keywords.
+2. **Read OA evidence in the Agent.** The service passes raw process/task IDs,
+   references, and exact DWS read commands. The Agent performs live detail and
+   ownership checks before acting. The service must not recover targets by
+   applicant/title matching, pre-read form bodies, or add compatibility
+   fallbacks.
+3. **Diagnosis is not completion.** An explicit repair/write request is complete
+   only after execution and verification. `completed + confirmed` requires a
+   persisted completed effectful tool event or execution receipt. Missing
+   completion evidence is `unknown`; inability to execute without a started
+   effect is `needs_human` or `failed`.
+
+Implementation ownership:
+
+- Task 3 defines the completion-evidence contract.
+- Task 5 renders evidence-reuse and Agent-owned OA-read instructions.
+- Task 6 enforces result/event consistency and end-to-end behavior.
+- Task 7 reconciles uncertain effects without replay.
+
 ### Task 1: Typed DWS And Lark Gates
 
 **Files:**
@@ -289,6 +317,12 @@ def test_process_runner_emits_complete_stdout_lines(tmp_path):
     )
     assert result.returncode == 0
     assert lines == ["one", "two"]
+
+
+def test_completed_confirmed_requires_completed_effect_evidence():
+    result = completed_result(side_effect_state="confirmed")
+    with pytest.raises(InconsistentAgentResultError):
+        validate_completion_evidence(result, events=[])
 ```
 
 - [ ] **Step 2: Run and verify both APIs are absent**
@@ -332,6 +366,11 @@ class AgentResult(BaseModel):
 
 Create the matching JSON Schema with `additionalProperties: false` at every object level.
 
+Add local completion-evidence validation. `completed + confirmed` is valid only
+when persisted JSONL contains a matching completed effectful tool event or a
+safe execution receipt. This is structural runtime validation, not service-side
+business judgment. Do not call Codex again to repair an inconsistent result.
+
 - [ ] **Step 4: Add incremental line delivery without changing existing callers**
 
 Add `on_stdout_line: Callable[[str], None] | None = None` to `run_process_with_idle_timeout()`. Use `codecs.getincrementaldecoder("utf-8")(errors="replace")` so multibyte characters split across reads remain valid. Maintain a text buffer; call the callback only for newline-terminated lines, flush the final non-empty line after process exit, and still return the full original stdout.
@@ -341,6 +380,7 @@ Add `on_stdout_line: Callable[[str], None] | None = None` to `run_process_with_i
 Run: `pytest tests/test_agent_result.py tests/test_process_runner.py -q`
 
 Expected: PASS, including malformed JSON rejection without a second Agent call.
+The suite must also reject `completed + confirmed` without completion evidence.
 
 - [ ] **Step 6: Commit the result contract**
 
@@ -476,6 +516,28 @@ def test_context_contains_only_the_agreed_business_rules():
     assert "Never expose credentials" in rendered
     assert "confidence" not in rendered
     assert "trusted target" not in rendered.casefold()
+
+
+def test_context_requires_reuse_of_confirmed_facts_without_reasking():
+    rendered = context_with_confirmed_fact("confirmed metric value").render()
+    assert "do not ask the user to provide confirmed facts again" in rendered
+
+
+def test_oa_context_requires_live_reads_and_forbids_target_guessing():
+    rendered = oa_context(
+        process_id="pid-1",
+        task_id="tid-1",
+        read_commands=("dws oa approval detail --instance-id pid-1 --format json",),
+    ).render()
+    assert "dws oa approval detail" in rendered
+    assert "query live task ownership" in rendered
+    assert "do not select by applicant or title similarity" in rendered
+
+
+def test_context_forbids_diagnosis_only_completion_for_execution_requests():
+    rendered = execution_request_context("repair and verify the service").render()
+    assert "execute and verify" in rendered
+    assert "diagnosis-only" in rendered
 ```
 
 - [ ] **Step 2: Write failing runner tests for native config and incremental events**
@@ -533,6 +595,16 @@ class AgentTaskContext:
 ```
 
 Render original trigger, recent messages, raw IDs, material links/file IDs, exact read commands, and safe prior receipt summaries. The prompt must state that the Agent owns evidence reading, target choice, business judgment, and execution; it must query live state before repeating a prior side effect; it must never run auth login/reset/logout; and it must follow OA/personnel/secret rules. Do not include `resolved_content`, trusted-target fields, hashes, dependencies, confidence, or action schemas.
+
+The prompt must also require the Agent to:
+
+- reuse and acknowledge confirmed facts instead of requesting them again;
+- execute provided material-read commands before claiming evidence is missing;
+- query live OA detail and current task ownership before approval work;
+- avoid approval writes when candidates are ambiguous, the task is completed,
+  or the task belongs to another user;
+- execute and verify explicit repair/write requests instead of returning a
+  diagnosis-only completion.
 
 - [ ] **Step 5: Implement one direct native Codex run**
 
@@ -615,6 +687,31 @@ def test_stale_processing_task_resumes_same_generation_and_session(worker):
     worker.consume_once(max_tasks=1)
     assert worker.direct_agent_runner.resume_session_ids == ["session-1"]
     assert worker.direct_agent_runner.generations == ["g1"]
+
+
+def test_completed_confirmed_with_read_only_events_does_not_complete_task(worker):
+    task = enqueue_reply_task(worker.store)
+    worker.direct_agent_runner.result = completed_result(
+        "已定位问题。",
+        side_effect_state="confirmed",
+        events=[tool_completed("read-1")],
+    )
+    worker.consume_once(max_tasks=1)
+    assert worker.store.get_reply_task(task.id).status != "completed"
+
+
+@pytest.mark.parametrize("oa_state", [
+    "complete_form",
+    "instance_id_only",
+    "ambiguous_candidates",
+    "task_completed",
+    "task_not_current_user",
+])
+def test_oa_runtime_uses_live_agent_reads_and_safe_terminal_state(
+    worker, oa_state
+):
+    result = run_oa_scenario(worker, oa_state)
+    assert result.matches_expected_safe_outcome(oa_state)
 ```
 
 - [ ] **Step 2: Run the tests and confirm the Universal path is still called**
@@ -651,6 +748,19 @@ Map terminal results as follows:
 | any result + unknown | unknown | failed, owned by reconciliation scan | blocked |
 
 Use `action="agent_run"`, `codex_reason=summary`, `audit_summary=summary`, the run's Codex session/transcript fields, and safe tool events. Do not infer or rewrite the Agent outcome from target, confidence, dependency, or older attempt status.
+
+Before applying the result mapping, validate result/event consistency:
+
+- `completed + confirmed` without a completed effectful event or receipt is an
+  inconsistent result and must not complete the task;
+- a completed read-only event cannot satisfy `side_effect_state=confirmed`;
+- an effectful start without completion maps to `unknown` and Task 7;
+- no started effect plus an execution blocker maps to the Agent's explicit
+  `needs_human` or `failed` result.
+
+This check uses only structured result fields, tool-event effect metadata, and
+persisted execution receipts. It must not infer intent from user text or add
+keyword routing, target validation, or a replacement service-side planner.
 
 - [ ] **Step 4: Remove automatic generation-mismatch replanning and trigger-only suppression**
 
@@ -709,6 +819,16 @@ def test_reconciliation_rotates_generation_only_after_confirmed_no_effect(worker
     task = worker.store.get_reply_task(unknown.reply_task_id)
     assert task.status == "pending"
     assert task.execution_generation != unknown.execution_generation
+
+
+def test_completed_oa_task_reconciles_without_replaying_old_action(worker):
+    unknown = seed_unknown_oa_run(worker.store)
+    worker.reconciliation_runner.result = completed_result(
+        "当前用户节点已完成；不再执行旧审批动作。"
+    )
+    worker.reconcile_unknown_agent_runs()
+    assert worker.store.get_agent_run(unknown.id).status == "completed"
+    assert worker.reconciliation_runner.effectful_calls == []
 ```
 
 - [ ] **Step 2: Verify unknown calls are currently replayable**
@@ -990,6 +1110,11 @@ Expected: branch push succeeds after all live verification and backlog work comp
 - [ ] One task generation owns exactly one Agent run.
 - [ ] Native `codex exec` preserves user CLI and MCP configuration.
 - [ ] The Agent reads materials and executes CLI/MCP work directly.
+- [ ] Confirmed facts are acknowledged and are not requested again without a concrete contradiction or failed read.
+- [ ] OA form/detail evidence is read by the Agent before clarification or action; applicant/title similarity never becomes a service-bound target.
+- [ ] Ambiguous, completed, and non-current-user OA tasks produce no approval write.
+- [ ] Diagnosis-only output cannot complete an explicit repair/write request.
+- [ ] `completed + confirmed` has a persisted completed effectful event or execution receipt.
 - [ ] The service does not bind targets, pre-read business bodies, or dispatch action arrays.
 - [ ] Corrected reruns may change content, target, and operation.
 - [ ] Incomplete writes become `unknown` and reconcile read-only before replay.
