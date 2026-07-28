@@ -8,7 +8,7 @@ from threading import Barrier, Event, Thread
 
 import pytest
 
-from app.store import AutoReplyStore
+from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.universal_context import (
     UniversalContextMessage,
     UniversalTaskContext,
@@ -670,7 +670,13 @@ def test_agent_run_fresh_lease_cannot_be_stolen_but_expired_lease_recovers(
         lease_seconds=1800,
         now="2026-07-29 00:00:00",
     )
-    store.set_agent_run_session(first.run.id, "session-1", transcript_start_line=8)
+    store.set_agent_run_session(
+        first.run.id,
+        "session-1",
+        owner="worker-1",
+        transcript_start_line=8,
+        now="2026-07-29 00:01:00",
+    )
 
     fresh = store.claim_agent_run(
         task_id,
@@ -744,12 +750,185 @@ def test_agent_run_lease_renewal_requires_current_owner(tmp_path: Path):
     )
 
     assert renewed.lease_expires_at == "2026-07-29 00:25:00"
-    with pytest.raises(ValueError, match="lease owner mismatch"):
+    with pytest.raises(AgentRunLeaseLostError, match="agent run lease lost"):
         store.renew_agent_run_lease(
             claim.run.id,
             owner="worker-2",
             now="2026-07-29 00:11:00",
         )
+
+
+def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    first = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-a",
+        now="2026-07-29 00:00:00",
+    )
+    store.set_agent_run_session(
+        first.run.id,
+        "session-1",
+        owner="worker-a",
+        now="2026-07-29 00:01:00",
+    )
+    reclaimed = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-b",
+        now="2026-07-29 00:30:01",
+    )
+    assert reclaimed.claimed is True
+    before = store.get_agent_run(first.run.id)
+    assert before is not None
+
+    stale_mutations = [
+        lambda: store.set_agent_run_session(
+            first.run.id,
+            "session-1",
+            owner="worker-a",
+            now="2026-07-29 00:30:02",
+        ),
+        lambda: store.append_agent_run_event(
+            first.run.id,
+            {"type": "item.started", "call_id": "stale"},
+            owner="worker-a",
+            now="2026-07-29 00:30:02",
+        ),
+        lambda: store.complete_agent_run(
+            first.run.id,
+            {"outcome": "completed", "summary": "stale"},
+            owner="worker-a",
+            now="2026-07-29 00:30:02",
+        ),
+        lambda: store.fail_agent_run(
+            first.run.id,
+            {"code": "stale"},
+            owner="worker-a",
+            now="2026-07-29 00:30:02",
+        ),
+        lambda: store.mark_agent_run_unknown(
+            first.run.id,
+            {"code": "stale"},
+            owner="worker-a",
+            now="2026-07-29 00:30:02",
+        ),
+        lambda: store.renew_agent_run_lease(
+            first.run.id,
+            owner="worker-a",
+            now="2026-07-29 00:30:02",
+        ),
+    ]
+    for mutate in stale_mutations:
+        with pytest.raises(AgentRunLeaseLostError, match="agent run lease lost"):
+            mutate()
+        assert store.get_agent_run(first.run.id) == before
+
+    store.set_agent_run_session(
+        first.run.id,
+        "session-1",
+        owner="worker-b",
+        now="2026-07-29 00:30:02",
+    )
+    store.append_agent_run_event(
+        first.run.id,
+        {"type": "item.completed", "call_id": "owned"},
+        owner="worker-b",
+        now="2026-07-29 00:30:02",
+    )
+    renewed = store.renew_agent_run_lease(
+        first.run.id,
+        owner="worker-b",
+        now="2026-07-29 00:31:00",
+    )
+    completed = store.complete_agent_run(
+        first.run.id,
+        {"outcome": "completed", "summary": "owned"},
+        owner="worker-b",
+        now="2026-07-29 00:31:01",
+    )
+
+    assert renewed.lease_owner == "worker-b"
+    assert completed.status == "completed"
+    assert [event["call_id"] for event in completed.tool_events] == ["owned"]
+
+
+def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    first = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-a",
+        now="2026-07-29 00:00:00",
+    )
+    store.set_agent_run_session(
+        first.run.id,
+        "session-1",
+        owner="worker-a",
+        now="2026-07-29 00:01:00",
+    )
+
+    before = store.get_agent_run(first.run.id)
+    assert before is not None
+    expired_mutations = [
+        lambda: store.set_agent_run_session(
+            first.run.id,
+            "session-1",
+            owner="worker-a",
+            now="2026-07-29 00:30:01",
+        ),
+        lambda: store.append_agent_run_event(
+            first.run.id,
+            {"type": "item.started", "call_id": "blocked"},
+            owner="worker-a",
+            now="2026-07-29 00:30:01",
+        ),
+        lambda: store.complete_agent_run(
+            first.run.id,
+            {"outcome": "completed", "summary": "expired"},
+            owner="worker-a",
+            now="2026-07-29 00:30:01",
+        ),
+        lambda: store.fail_agent_run(
+            first.run.id,
+            {"code": "expired"},
+            owner="worker-a",
+            now="2026-07-29 00:30:01",
+        ),
+        lambda: store.mark_agent_run_unknown(
+            first.run.id,
+            {"code": "expired"},
+            owner="worker-a",
+            now="2026-07-29 00:30:01",
+        ),
+        lambda: store.renew_agent_run_lease(
+            first.run.id,
+            owner="worker-a",
+            now="2026-07-29 00:30:01",
+        ),
+    ]
+    for mutate in expired_mutations:
+        with pytest.raises(AgentRunLeaseLostError, match="agent run lease lost"):
+            mutate()
+        assert store.get_agent_run(first.run.id) == before
+
+    recovered = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-b",
+        now="2026-07-29 00:30:02",
+    )
+    appended = store.append_agent_run_event(
+        first.run.id,
+        {"type": "item.started", "call_id": "recovered"},
+        owner="worker-b",
+        now="2026-07-29 00:30:03",
+    )
+
+    assert recovered.claimed is True
+    assert [event["call_id"] for event in appended.tool_events] == ["recovered"]
 
 
 def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
@@ -767,8 +946,8 @@ def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
         "receipt": {"accepted": True},
     }
 
-    store.append_agent_run_event(run.id, started)
-    store.append_agent_run_event(run.id, completed)
+    store.append_agent_run_event(run.id, started, owner="worker-1")
+    store.append_agent_run_event(run.id, completed, owner="worker-1")
 
     loaded = store.get_agent_run(run.id)
     assert loaded is not None
@@ -791,6 +970,7 @@ def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):
             store.append_agent_run_event(
                 run.id,
                 {"type": "item.completed", "call_id": call_id},
+                owner="worker-1",
             )
             results.put(None)
         except BaseException as exc:
@@ -821,7 +1001,7 @@ def test_agent_run_event_must_be_a_json_object(tmp_path: Path, event):
     run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
 
     with pytest.raises(ValueError, match="event must be a JSON object"):
-        store.append_agent_run_event(run.id, event)
+        store.append_agent_run_event(run.id, event, owner="worker-1")
 
 
 def test_agent_run_event_rejects_non_json_object_values(tmp_path: Path):
@@ -830,7 +1010,11 @@ def test_agent_run_event_rejects_non_json_object_values(tmp_path: Path):
     run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
 
     with pytest.raises(ValueError, match="event must be a JSON object"):
-        store.append_agent_run_event(run.id, {"value": object()})
+        store.append_agent_run_event(
+            run.id,
+            {"value": object()},
+            owner="worker-1",
+        )
 
 
 def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
@@ -844,12 +1028,14 @@ def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
     completed = store.complete_agent_run(
         run.id,
         final_result,
+        owner="worker-1",
         side_effect_state="confirmed",
         transcript_end_line=12,
     )
     repeated = store.complete_agent_run(
         run.id,
         final_result,
+        owner="worker-1",
         side_effect_state="confirmed",
         transcript_end_line=12,
     )
@@ -862,13 +1048,22 @@ def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
         store.complete_agent_run(
             run.id,
             {"outcome": "completed", "summary": "different"},
+            owner="worker-1",
             side_effect_state="confirmed",
             transcript_end_line=12,
         )
     with pytest.raises(ValueError, match="transition from completed"):
-        store.fail_agent_run(run.id, {"code": "late_failure"})
+        store.fail_agent_run(
+            run.id,
+            {"code": "late_failure"},
+            owner="worker-1",
+        )
     with pytest.raises(ValueError, match="terminal agent run"):
-        store.append_agent_run_event(run.id, {"type": "late"})
+        store.append_agent_run_event(
+            run.id,
+            {"type": "late"},
+            owner="worker-1",
+        )
 
 
 def test_unknown_agent_run_can_complete_or_fail_but_cannot_return_to_running(
@@ -879,9 +1074,13 @@ def test_unknown_agent_run_can_complete_or_fail_but_cannot_return_to_running(
     run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
     unknown_error = {"code": "effect_completion_missing", "call_id": "c1"}
 
-    unknown = store.mark_agent_run_unknown(run.id, unknown_error)
+    unknown = store.mark_agent_run_unknown(
+        run.id,
+        unknown_error,
+        owner="worker-1",
+    )
     listed = store.list_unknown_agent_runs()
-    completed = store.complete_agent_run(
+    completed = store.complete_unknown_agent_run(
         run.id,
         {"outcome": "completed", "summary": "effect confirmed"},
         side_effect_state="confirmed",
@@ -892,7 +1091,35 @@ def test_unknown_agent_run_can_complete_or_fail_but_cannot_return_to_running(
     assert [item.id for item in listed] == [run.id]
     assert completed.status == "completed"
     with pytest.raises(ValueError, match="transition from completed"):
-        store.mark_agent_run_unknown(run.id, unknown_error)
+        store.mark_agent_run_unknown(
+            run.id,
+            unknown_error,
+            owner="worker-1",
+        )
+
+
+def test_unknown_agent_run_uses_explicit_reconciliation_event_path(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing", "call_id": "c1"},
+        owner="worker-1",
+    )
+
+    with pytest.raises(ValueError, match="terminal agent run"):
+        store.append_agent_run_event(
+            run.id,
+            {"type": "reconciliation.completed", "call_id": "r1"},
+            owner="worker-1",
+        )
+    appended = store.append_unknown_agent_run_event(
+        run.id,
+        {"type": "reconciliation.completed", "call_id": "r1"},
+    )
+
+    assert [event["call_id"] for event in appended.tool_events] == ["r1"]
 
 
 def test_failed_agent_run_rejects_conflicting_terminal_rewrite(tmp_path: Path):
@@ -901,14 +1128,25 @@ def test_failed_agent_run_rejects_conflicting_terminal_rewrite(tmp_path: Path):
     run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
     error = {"code": "command_failed", "retryable": True}
 
-    failed = store.fail_agent_run(run.id, error, transcript_end_line=5)
-    repeated = store.fail_agent_run(run.id, error, transcript_end_line=5)
+    failed = store.fail_agent_run(
+        run.id,
+        error,
+        owner="worker-1",
+        transcript_end_line=5,
+    )
+    repeated = store.fail_agent_run(
+        run.id,
+        error,
+        owner="worker-1",
+        transcript_end_line=5,
+    )
 
     assert failed == repeated
     with pytest.raises(ValueError, match="conflicting terminal rewrite"):
         store.fail_agent_run(
             run.id,
             {"code": "different_failure"},
+            owner="worker-1",
             transcript_end_line=5,
         )
 
@@ -920,9 +1158,10 @@ def test_unknown_agent_run_may_transition_to_failed(tmp_path: Path):
     store.mark_agent_run_unknown(
         run.id,
         {"code": "effect_completion_missing", "call_id": "c1"},
+        owner="worker-1",
     )
 
-    failed = store.fail_agent_run(
+    failed = store.fail_unknown_agent_run(
         run.id,
         {"code": "reconciliation_confirmed_no_effect"},
     )
