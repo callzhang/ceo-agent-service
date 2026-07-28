@@ -5141,25 +5141,27 @@ class DingTalkAutoReplyWorker:
                 title="CEO task retrying Codex session locks",
                 message=f"requeued {len(recovered_lock_tasks)} task(s)",
             )
-        for _ in range(limit):
-            pending_tasks = self.store.peek_reply_tasks(
-                1,
-                now=self._sqlite_timestamp(self._now()),
-                channel="dingtalk",
-            )
-            if not pending_tasks:
+        candidate_limit = max(limit, min(limit * 4, 200))
+        pending_tasks = self.store.peek_reply_tasks(
+            candidate_limit,
+            now=self._sqlite_timestamp(self._now()),
+            channel="dingtalk",
+        )
+        claimed_tasks = 0
+        for pending_task in pending_tasks:
+            if claimed_tasks >= limit:
                 break
-            pending_task = pending_tasks[0]
             if not self._required_channels_ready(
                 self.required_channels_for_task(pending_task)
             ):
-                break
+                continue
             task = self.store.claim_reply_task(
                 pending_task.id,
                 now=self._sqlite_timestamp(self._now()),
             )
             if task is None:
                 continue
+            claimed_tasks += 1
             conversation = DingTalkConversation(
                 open_conversation_id=task.conversation_id,
                 title=task.conversation_title,
@@ -5533,6 +5535,49 @@ class DingTalkAutoReplyWorker:
             ignore_existing_attempt=task.force_new_decision,
             raise_on_delivery_failure=True,
         ):
+            return True
+        if (
+            os.getenv("CEO_UNIVERSAL_CONSUMER", "1") == "0"
+            and self._injected_universal_planner is None
+        ):
+            if self._handle_calendar_invite_if_actionable(
+                conversation,
+                trigger,
+                prompt_context_messages,
+                ignore_existing_attempt=task.force_new_decision,
+                include_resolved_calendar_invites=task.force_new_decision,
+                allow_duplicate_send=task.force_new_decision,
+                raise_on_delivery_failure=True,
+                complete_task_id=task.id,
+            ):
+                return True
+            if self._handle_oa_approval_if_actionable(
+                conversation,
+                trigger,
+                prompt_context_messages,
+                ignore_existing_attempt=task.force_new_decision,
+                oa_url_override=task.oa_url,
+            ):
+                return not self.dry_run
+            if self._is_system_or_notification_message(trigger):
+                self._record_system_or_notification_skip(conversation, trigger)
+                self._mark_seen([trigger])
+                return True
+            self._process_batch(
+                conversation,
+                [trigger],
+                prompt_context_messages,
+                ignore_existing_attempt=(
+                    task.force_new_decision
+                    or self._should_regenerate_after_processing_failure(
+                        conversation,
+                        trigger,
+                        task,
+                    )
+                ),
+                allow_duplicate_send=task.force_new_decision,
+                raise_on_delivery_failure=True,
+            )
             return True
         if self._is_system_or_notification_message(trigger):
             self._record_system_or_notification_skip(conversation, trigger)
@@ -6112,6 +6157,45 @@ class DingTalkAutoReplyWorker:
         if trigger.is_recalled():
             self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
             self._mark_seen([trigger])
+            return trigger.open_message_id
+        if (
+            os.getenv("CEO_UNIVERSAL_CONSUMER", "1") == "0"
+            and self._injected_universal_planner is None
+        ):
+            if self._handle_minutes_permission_request_if_actionable(
+                conversation,
+                trigger,
+                ignore_existing_attempt=force_new_decision,
+            ):
+                return trigger.open_message_id
+            if self._handle_calendar_invite_if_actionable(
+                conversation,
+                trigger,
+                prompt_context_messages,
+                ignore_existing_attempt=force_new_decision,
+                include_resolved_calendar_invites=force_new_decision,
+                allow_duplicate_send=force_new_decision,
+            ):
+                return trigger.open_message_id
+            if self._handle_oa_approval_if_actionable(
+                conversation,
+                trigger,
+                prompt_context_messages,
+                ignore_existing_attempt=force_new_decision,
+                oa_url_override=oa_url,
+            ):
+                return trigger.open_message_id
+            if self._is_system_or_notification_message(trigger):
+                self._record_system_or_notification_skip(conversation, trigger)
+                self._mark_seen([trigger])
+                return trigger.open_message_id
+            self._process_batch(
+                conversation,
+                [trigger],
+                prompt_context_messages,
+                ignore_existing_attempt=force_new_decision,
+                allow_duplicate_send=force_new_decision,
+            )
             return trigger.open_message_id
         if force_new_decision:
             task = self.store.enqueue_manual_rerun_reply_task(

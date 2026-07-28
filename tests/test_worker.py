@@ -97,81 +97,6 @@ def fixed_worker_now() -> datetime:
     return datetime(2026, 5, 13, 10, 0, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
 
 
-class LegacyBehaviorTestWorker(DingTalkAutoReplyWorker):
-    """Keep legacy worker assertions isolated from universal-consumer coverage."""
-
-    def _process_queued_task(self, conversation, task) -> bool:
-        if self._injected_universal_planner is not None:
-            return super()._process_queued_task(conversation, task)
-        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-        if not self._queued_trigger_is_still_actionable(conversation, trigger):
-            self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
-            self._mark_seen([trigger])
-            return True
-        context_messages, prompt_context_messages = (
-            self._queued_task_prompt_context_messages(conversation, trigger)
-        )
-        if (
-            task.error == worker_module.FAST_PATH_UNREAD_BACKOFF_TASK_ERROR
-            and self._has_current_user_reply_after_trigger(context_messages, trigger)
-        ):
-            self._record_current_user_replied_during_backoff_skip(
-                conversation,
-                trigger,
-            )
-            self._mark_seen([trigger])
-            return True
-        if self._handle_minutes_permission_request_if_actionable(
-            conversation,
-            trigger,
-            ignore_existing_attempt=task.force_new_decision,
-            raise_on_delivery_failure=True,
-        ):
-            return True
-        if self._handle_calendar_invite_if_actionable(
-            conversation,
-            trigger,
-            prompt_context_messages,
-            ignore_existing_attempt=task.force_new_decision,
-            include_resolved_calendar_invites=task.force_new_decision,
-            allow_duplicate_send=task.force_new_decision,
-            raise_on_delivery_failure=True,
-            complete_task_id=task.id,
-        ):
-            return True
-        if self._handle_oa_approval_if_actionable(
-            conversation,
-            trigger,
-            prompt_context_messages,
-            ignore_existing_attempt=task.force_new_decision,
-            oa_url_override=task.oa_url,
-        ):
-            return not self.dry_run
-        if self._is_system_or_notification_message(trigger):
-            self._record_system_or_notification_skip(conversation, trigger)
-            self._mark_seen([trigger])
-            return True
-        self._process_batch(
-            conversation,
-            [trigger],
-            prompt_context_messages,
-            ignore_existing_attempt=(
-                task.force_new_decision
-                or self._should_regenerate_after_processing_failure(
-                    conversation,
-                    trigger,
-                    task,
-                )
-            ),
-            allow_duplicate_send=task.force_new_decision,
-            raise_on_delivery_failure=True,
-        )
-        return True
-
-
-DingTalkAutoReplyWorker = LegacyBehaviorTestWorker
-
-
 def test_worker_recovery_runtime_config_reads_environment(monkeypatch):
     monkeypatch.setenv("MESSAGE_RECOVERY_INTERVAL", "15m")
     monkeypatch.setenv("FAST_PATH_UNREAD_BACKOFF", "2m")
@@ -1352,7 +1277,7 @@ def make_worker(
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("principal-user-1")
-    return LegacyBehaviorTestWorker(
+    return DingTalkAutoReplyWorker(
         store=store,
         dws=dws,
         codex=codex,
@@ -4515,6 +4440,53 @@ def test_lark_non_ready_keeps_referencing_task_pending_and_checks_each_gate_once
     assert task is not None
     assert task.status == "pending"
     assert task.attempts == 0
+    assert dingtalk_gate.calls == 1
+    assert lark_gate.calls == 1
+
+
+def test_lark_blocked_task_does_not_block_later_dingtalk_task(tmp_path, monkeypatch):
+    dingtalk_gate = FixedGate("dingtalk", ChannelGateState.READY)
+    lark_gate = FixedGate("lark", ChannelGateState.UNAVAILABLE)
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    worker = worker_module.DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([], {}),
+        codex=FakeCodex([]),
+        now_provider=fixed_worker_now,
+        channel_gates={"dingtalk": dingtalk_gate, "lark": lark_gate},
+    )
+    lark_trigger = message(
+        "https://example.feishu.cn/docx/abc 这份文档怎么处理？",
+        message_id="msg-lark",
+    )
+    dingtalk_trigger = message(
+        "系统通知",
+        message_id="msg-dingtalk",
+        message_type="system",
+    )
+    for trigger in (lark_trigger, dingtalk_trigger):
+        store.enqueue_reply_task(
+            conversation_id=trigger.open_conversation_id,
+            conversation_title=trigger.conversation_title,
+            single_chat=trigger.single_chat,
+            trigger_message_id=trigger.open_message_id,
+            trigger_create_time=trigger.create_time,
+            trigger_sender=trigger.sender_name,
+            trigger_text=trigger.content,
+            trigger_message_json=trigger.model_dump_json(),
+        )
+    blocked_id, processable_id = [task.id for task in store.peek_reply_tasks(limit=2)]
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    blocked = store.get_reply_task(blocked_id)
+    processable = store.get_reply_task(processable_id)
+    assert blocked is not None
+    assert blocked.status == "pending"
+    assert blocked.attempts == 0
+    assert processable is not None
+    assert processable.status == "done"
+    assert processable.attempts == 1
     assert dingtalk_gate.calls == 1
     assert lark_gate.calls == 1
 
@@ -11509,9 +11481,9 @@ def test_rerun_message_looks_up_trigger_by_id_when_recent_context_expired(
 
     assert processed == "msg-1"
     assert dws.recent_message_reads[0] == "cid-1"
-    assert dws.recent_message_reads.count("cid-1") == 3
-    assert dws.unread_message_reads == ["cid-1", "cid-1"]
-    assert dws.messages_by_id_reads == [["msg-1"], ["msg-1"]]
+    assert dws.recent_message_reads.count("cid-1") == 2
+    assert dws.unread_message_reads == ["cid-1"]
+    assert dws.messages_by_id_reads == [["msg-1"]]
     assert len(codex.calls) == 1
     assert final_sent(dws) == [("cid-1", "@周俊杰 改走B方案（by明哥分身）")]
 

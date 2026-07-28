@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Protocol
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
@@ -67,6 +68,24 @@ class ServiceStateStore(Protocol):
     def get_service_state(self, key: str) -> str | None: ...
 
     def set_service_state(self, key: str, value: str) -> None: ...
+
+    def claim_channel_login_request(
+        self,
+        *,
+        channel: str,
+        reason_code: str,
+        now: datetime,
+        suppression_seconds: int,
+        reservation_owner: str,
+    ) -> tuple[bool, dict[str, object]]: ...
+
+    def update_claimed_channel_login_request(
+        self,
+        *,
+        channel: str,
+        reservation_owner: str,
+        state: dict[str, object],
+    ) -> bool: ...
 
 
 class LoginProcess(Protocol):
@@ -158,40 +177,46 @@ class LoginCoordinator:
             self._write_state(result.channel, state)
             return LoginHandlingResult(suppressed=True, pid=pid)
 
-        started_at = now.isoformat()
+        reservation_owner = uuid4().hex
+        claimed, state = self.store.claim_channel_login_request(
+            channel=result.channel,
+            reason_code=result.reason_code,
+            now=now,
+            suppression_seconds=int(self.SUPPRESSION.total_seconds()),
+            reservation_owner=reservation_owner,
+        )
+        if not claimed:
+            reserved_pid = state.get("pid")
+            return LoginHandlingResult(
+                suppressed=True,
+                pid=reserved_pid if isinstance(reserved_pid, int) else None,
+            )
+
         launcher = self.launchers.get(result.channel)
         if launcher is None:
-            self._write_state(
-                result.channel,
-                {
-                    **state,
-                    "status": "unavailable",
-                    "started_at": started_at,
-                },
+            self.store.update_claimed_channel_login_request(
+                channel=result.channel,
+                reservation_owner=reservation_owner,
+                state={"status": "unavailable"},
             )
             return LoginHandlingResult()
         try:
             process = launcher()
         except Exception:
-            self._write_state(
-                result.channel,
-                {
-                    **state,
+            self.store.update_claimed_channel_login_request(
+                channel=result.channel,
+                reservation_owner=reservation_owner,
+                state={
                     "status": "failed",
-                    "started_at": started_at,
                     "exited_at": now.isoformat(),
                 },
             )
             return LoginHandlingResult()
         self._processes[result.channel] = process
-        self._write_state(
-            result.channel,
-            {
-                **state,
-                "status": "running",
-                "started_at": started_at,
-                "pid": process.pid,
-            },
+        self.store.update_claimed_channel_login_request(
+            channel=result.channel,
+            reservation_owner=reservation_owner,
+            state={"status": "running", "pid": process.pid},
         )
         return LoginHandlingResult(launched=True, pid=process.pid)
 
@@ -485,7 +510,7 @@ def start_lark_auth_login(binary: str = "lark-cli") -> subprocess.Popen[str]:
         [binary, "auth", "login"],
         text=True,
         start_new_session=True,
-        env=_lark_noninteractive_environment(),
+        env=os.environ.copy(),
     )
 
 

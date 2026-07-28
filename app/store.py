@@ -2,7 +2,7 @@ import json
 import hashlib
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -838,6 +838,11 @@ class AutoReplyStore:
                     key text primary key,
                     value text not null,
                     updated_at text not null default current_timestamp
+                );
+                create table if not exists channel_login_reservations (
+                    channel text primary key,
+                    reservation_owner text not null,
+                    reserved_at text not null
                 );
                 create table if not exists setup_wizard_steps (
                     step_id text primary key,
@@ -8814,6 +8819,162 @@ class AutoReplyStore:
                 """,
                 (key, value),
             )
+
+    def claim_channel_login_request(
+        self,
+        *,
+        channel: str,
+        reason_code: str,
+        now: datetime,
+        suppression_seconds: int,
+        reservation_owner: str,
+    ) -> tuple[bool, dict[str, object]]:
+        now_utc = now.astimezone(timezone.utc)
+        key = f"channel_login_request:{channel}"
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select value from service_state where key=?",
+                (key,),
+            ).fetchone()
+            state = self._channel_login_state(row["value"] if row else None)
+            reservation = db.execute(
+                """
+                select reservation_owner, reserved_at
+                from channel_login_reservations
+                where channel=?
+                """,
+                (channel,),
+            ).fetchone()
+            started_at = state.get("started_at")
+            if self._channel_login_timestamp_is_recent(
+                started_at,
+                now_utc,
+                suppression_seconds,
+            ) or (
+                reservation is not None
+                and self._channel_login_timestamp_is_recent(
+                    reservation["reserved_at"],
+                    now_utc,
+                    suppression_seconds,
+                )
+            ):
+                return False, state
+
+            reserved_state = {
+                **{
+                    field: value
+                    for field, value in state.items()
+                    if field not in {"pid", "exited_at"}
+                },
+                "status": "starting",
+                "reason_code": reason_code,
+                "started_at": now_utc.isoformat(),
+                "checked_at": now_utc.isoformat(),
+            }
+            db.execute(
+                """
+                insert into channel_login_reservations (
+                    channel, reservation_owner, reserved_at
+                ) values (?, ?, ?)
+                on conflict(channel) do update set
+                    reservation_owner=excluded.reservation_owner,
+                    reserved_at=excluded.reserved_at
+                """,
+                (channel, reservation_owner, now_utc.isoformat()),
+            )
+            self._set_service_state_in_transaction(db, key, reserved_state)
+            return True, reserved_state
+
+    def update_claimed_channel_login_request(
+        self,
+        *,
+        channel: str,
+        reservation_owner: str,
+        state: dict[str, object],
+    ) -> bool:
+        key = f"channel_login_request:{channel}"
+        with self._connect() as db:
+            db.execute("begin immediate")
+            reservation = db.execute(
+                """
+                select reservation_owner
+                from channel_login_reservations
+                where channel=?
+                """,
+                (channel,),
+            ).fetchone()
+            if (
+                reservation is None
+                or reservation["reservation_owner"] != reservation_owner
+            ):
+                return False
+            row = db.execute(
+                "select value from service_state where key=?",
+                (key,),
+            ).fetchone()
+            current = self._channel_login_state(row["value"] if row else None)
+            self._set_service_state_in_transaction(db, key, {**current, **state})
+            db.execute(
+                "delete from channel_login_reservations where channel=?",
+                (channel,),
+            )
+            return True
+
+    @staticmethod
+    def _channel_login_state(raw: str | None) -> dict[str, object]:
+        if not raw:
+            return {}
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _channel_login_timestamp_is_recent(
+        value: object,
+        now: datetime,
+        suppression_seconds: int,
+    ) -> bool:
+        if not isinstance(value, str):
+            return False
+        try:
+            timestamp = datetime.fromisoformat(value)
+        except ValueError:
+            return False
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        age_seconds = (now - timestamp.astimezone(timezone.utc)).total_seconds()
+        return 0 <= age_seconds < suppression_seconds
+
+    @staticmethod
+    def _set_service_state_in_transaction(
+        db: sqlite3.Connection,
+        key: str,
+        state: dict[str, object],
+    ) -> None:
+        safe_fields = {
+            "status",
+            "reason_code",
+            "started_at",
+            "checked_at",
+            "exited_at",
+            "pid",
+        }
+        safe_state = {
+            field: value for field, value in state.items() if field in safe_fields
+        }
+        db.execute(
+            """
+            insert into service_state (key, value, updated_at)
+            values (?, ?, current_timestamp)
+            on conflict(key) do update set
+                value=excluded.value,
+                updated_at=current_timestamp
+            """,
+            (key, json.dumps(safe_state, ensure_ascii=False, sort_keys=True)),
+        )
 
     def get_service_state(self, key: str) -> str | None:
         with self._connect() as db:

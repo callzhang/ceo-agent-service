@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, Lock
 
 import pytest
 
@@ -14,6 +16,7 @@ from app.channel_gate import (
     DwsChannelGate,
     LarkChannelGate,
     LoginCoordinator,
+    start_lark_auth_login,
 )
 from app.store import AutoReplyStore
 
@@ -50,6 +53,53 @@ def test_login_coordinator_starts_one_process_and_suppresses_repeats(tmp_path):
     assert launches == ["dws"]
 
 
+def test_login_coordinator_claims_launch_atomically_across_connections(tmp_path):
+    database = tmp_path / "db.sqlite3"
+    AutoReplyStore(database)
+    launch_lock = Lock()
+    first_launch_entered = Event()
+    release_first_launch = Event()
+    launches = 0
+
+    def launch():
+        nonlocal launches
+        with launch_lock:
+            launches += 1
+            launch_number = launches
+        if launch_number == 1:
+            first_launch_entered.set()
+            assert release_first_launch.wait(timeout=5)
+        return FakeProcess(41)
+
+    gate = ChannelGateResult(
+        channel="dingtalk",
+        state=ChannelGateState.NEEDS_LOGIN,
+        reason_code="live_probe_auth_failed",
+    )
+
+    def handle():
+        coordinator = LoginCoordinator(
+            store=AutoReplyStore(database),
+            launchers={"dingtalk": launch},
+            now=lambda: datetime(2026, 7, 28, 12, tzinfo=timezone.utc),
+            pid_alive=lambda _pid: False,
+        )
+        return coordinator.handle(gate)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(handle)
+        assert first_launch_entered.wait(timeout=5)
+        second = executor.submit(handle)
+        second_result = second.result(timeout=5)
+        release_first_launch.set()
+        first_result = first.result(timeout=5)
+    results = [first_result, second_result]
+
+    assert launches == 1
+    assert sum(result.launched for result in results) == 1
+    assert sum(result.suppressed for result in results) == 1
+
+
 def test_login_coordinator_suppresses_failed_process_for_one_hour(tmp_path):
     store = AutoReplyStore(tmp_path / "db.sqlite3")
     current = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
@@ -76,6 +126,40 @@ def test_login_coordinator_suppresses_failed_process_for_one_hour(tmp_path):
     current += timedelta(minutes=2)
     assert coordinator.handle(gate).launched is True
     assert launches == ["dws", "dws"]
+
+
+def test_login_coordinator_launch_failure_keeps_suppression_timestamp(tmp_path):
+    store = AutoReplyStore(tmp_path / "db.sqlite3")
+    current = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
+    launches = 0
+
+    def fail_launch():
+        nonlocal launches
+        launches += 1
+        raise RuntimeError("login process failed")
+
+    coordinator = LoginCoordinator(
+        store=store,
+        launchers={"dingtalk": fail_launch},
+        now=lambda: current,
+        pid_alive=lambda _pid: False,
+    )
+    gate = ChannelGateResult(
+        channel="dingtalk",
+        state=ChannelGateState.NEEDS_LOGIN,
+        reason_code="live_probe_auth_failed",
+    )
+
+    assert coordinator.handle(gate).launched is False
+    current += timedelta(minutes=30)
+    assert coordinator.handle(gate).suppressed is True
+
+    state = json.loads(
+        store.get_service_state("channel_login_request:dingtalk") or "{}"
+    )
+    assert state["status"] == "failed"
+    assert state["started_at"] == "2026-07-28T12:00:00+00:00"
+    assert launches == 1
 
 
 def test_login_coordinator_ready_preserves_suppression_timestamp(tmp_path):
@@ -128,6 +212,36 @@ def test_login_coordinator_blocked_does_not_launch(tmp_path):
 
     assert result.launched is False
     assert launches == []
+
+
+@pytest.mark.parametrize("existing_ci", [None, "upstream-ci"])
+def test_lark_auth_login_preserves_normal_environment(
+    monkeypatch, existing_ci: str | None
+):
+    monkeypatch.setenv("HOME", "/Users/tester")
+    monkeypatch.setenv("NORMAL_LOCAL_VARIABLE", "preserved")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    if existing_ci is None:
+        monkeypatch.delenv("CI", raising=False)
+    else:
+        monkeypatch.setenv("CI", existing_ci)
+    calls = []
+
+    def fake_popen(command, **kwargs):
+        calls.append((command, kwargs))
+        return FakeProcess(42)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    start_lark_auth_login()
+
+    command, kwargs = calls[0]
+    assert command == ["lark-cli", "auth", "login"]
+    assert kwargs["env"]["HOME"] == "/Users/tester"
+    assert kwargs["env"]["NORMAL_LOCAL_VARIABLE"] == "preserved"
+    assert kwargs["env"].get("CI") == existing_ci
+    assert "NO_COLOR" not in kwargs["env"]
+    assert kwargs["start_new_session"] is True
 
 
 def completed(

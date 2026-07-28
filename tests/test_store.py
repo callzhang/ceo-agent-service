@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from queue import Queue
 import sqlite3
@@ -3588,3 +3589,44 @@ def test_sent_reply_exists_matches_exact_conversation_and_trigger(tmp_path: Path
     assert store.sent_reply_exists("cid-1", "msg-1") is True
     assert store.sent_reply_exists("cid-1", "msg-other") is False
     assert store.sent_reply_exists("cid-other", "msg-1") is False
+
+
+def test_channel_login_claim_requires_owner_to_finalize_and_persists_safe_state(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    now = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
+
+    claimed, reserved = store.claim_channel_login_request(
+        channel="dingtalk",
+        reason_code="live_probe_auth_failed",
+        now=now,
+        suppression_seconds=3600,
+        reservation_owner="owner-1",
+    )
+
+    assert claimed is True
+    assert reserved["status"] == "starting"
+    assert (
+        store.update_claimed_channel_login_request(
+            channel="dingtalk",
+            reservation_owner="owner-2",
+            state={"status": "running", "pid": 99},
+        )
+        is False
+    )
+    assert store.update_claimed_channel_login_request(
+        channel="dingtalk",
+        reservation_owner="owner-1",
+        state={"status": "failed", "exited_at": now.isoformat()},
+    )
+    state = json.loads(
+        store.get_service_state("channel_login_request:dingtalk") or "{}"
+    )
+    assert state == {
+        "checked_at": now.isoformat(),
+        "exited_at": now.isoformat(),
+        "reason_code": "live_probe_auth_failed",
+        "started_at": now.isoformat(),
+        "status": "failed",
+    }
