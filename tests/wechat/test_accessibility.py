@@ -3,7 +3,8 @@ import pytest
 from app.store import AutoReplyStore
 from app.wechat.accessibility import (
     AccessibilityResult, MacWechatAccessibility, WechatSender, _open_target,
-    _attribute_text_matches, _text_evidence_matches, _walk_accessibility_tree,
+    _attribute_text_matches, _screen_is_locked, _text_evidence_matches,
+    _walk_accessibility_tree,
     reconcile_incomplete_deliveries,
 )
 from app.wechat.models import WechatReplyScope
@@ -224,6 +225,13 @@ def test_walk_accessibility_tree_skips_self_referential_children():
     assert list(
         _walk_accessibility_tree(root, lambda element: children[element])
     ) == [root, session_row, preview]
+
+
+def test_screen_lock_detection_handles_missing_and_numeric_values():
+    assert _screen_is_locked({"CGSSessionScreenIsLocked": 1})
+    assert not _screen_is_locked({"CGSSessionScreenIsLocked": 0})
+    assert not _screen_is_locked({})
+    assert not _screen_is_locked(None)
 
 
 def test_open_target_returns_none_when_navigation_controls_are_missing():

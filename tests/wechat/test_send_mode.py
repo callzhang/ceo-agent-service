@@ -67,6 +67,25 @@ def test_auto_mode_sends(tmp_path):
     assert sender.sent == [1]
 
 
+def test_auto_mode_holds_delivery_while_sender_session_is_locked(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery = _seed(store)
+
+    class Runner:
+        @staticmethod
+        def preflight():
+            return "screen_locked"
+
+    sender = FakeSender()
+    sender.runner = Runner()
+
+    assert service.process_ready_wechat_deliveries(
+        store, sender, mode="auto", sender_enabled=True
+    ) == 0
+    assert sender.sent == []
+    assert store.get_wechat_delivery_for_task(delivery.task_id).status == "ready_to_send"
+
+
 def test_auto_mode_verifies_exact_direct_target_before_send(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3"); _seed(store, binding="unverified")
 

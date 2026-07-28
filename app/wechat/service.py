@@ -142,11 +142,24 @@ def _scope_for_delivery(store, delivery):
     )
 
 
+def _sender_is_ready(sender) -> bool:
+    runner = getattr(sender, "runner", None)
+    preflight = getattr(runner, "preflight", None)
+    if preflight is None:
+        return True
+    try:
+        return preflight() == "ready"
+    except Exception:
+        return False
+
+
 def process_ready_wechat_deliveries(store, sender, *, mode: str, sender_enabled: bool) -> int:
     """Auto mode + sender enabled: send every ready_to_send delivery. Confirm mode
     (or sender disabled): send nothing — hold them for explicit approval. Returns
     the number sent."""
     if not sender_enabled or mode != "auto":
+        return 0
+    if not _sender_is_ready(sender):
         return 0
     sent = 0
     for delivery in pending_wechat_deliveries(store):
@@ -181,6 +194,8 @@ def approve_wechat_delivery(store, sender, delivery_id: int) -> str:
     )
     if delivery is None:
         raise ValueError(f"no pending delivery {delivery_id}")
+    if not _sender_is_ready(sender):
+        raise RuntimeError("WeChat sender is temporarily unavailable")
     scope = _scope_for_delivery(store, delivery)
     if scope is None:
         raise ValueError("no reply scope for delivery target")

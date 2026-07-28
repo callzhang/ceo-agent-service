@@ -121,6 +121,12 @@ def _walk_accessibility_tree(root, children, *, max_depth: int = 12):
     yield from visit(root, 0)
 
 
+def _screen_is_locked(session_state) -> bool:
+    if not session_state:
+        return False
+    return bool(session_state.get("CGSSessionScreenIsLocked", False))
+
+
 def _open_target(
     target_label, *, first, click, type_fn, settle, sleep, search_query=None,
     find_all=None, subtree_has_text=None, expected_recent_text=None,
@@ -339,6 +345,8 @@ class MacWechatAccessibility:
             return "pyobjc_unavailable"
         if not AXIsProcessTrusted():
             return "accessibility_not_trusted"
+        if _screen_is_locked(Quartz.CGSessionCopyCurrentDictionary()):
+            return "screen_locked"
         pid = self._wechat_pid()
         if not pid:
             return "wechat_not_running"
