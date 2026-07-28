@@ -513,6 +513,36 @@ def test_retryable_memory_action_can_be_restored_from_store(tmp_path) -> None:
     assert restored[0].context == execution.context
 
 
+def test_retryable_memory_scan_recovers_only_expired_started_lease(tmp_path) -> None:
+    runner = FakeMemoryWriteRunner(
+        [CodexMemoryWriteToolFailed("memory backend unavailable")]
+    )
+    store, _, execution, worker = build_execution(
+        tmp_path, memory_write_runner=runner
+    )
+    assert worker.execute_universal_memory_write(execution) is True
+
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """
+            update universal_action_executions
+            set status='started', lease_expires_at='2999-01-01 00:00:00'
+            """
+        )
+    assert store.list_retryable_universal_memory_action_executions(limit=10) == []
+
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """
+            update universal_action_executions
+            set lease_expires_at='2000-01-01 00:00:00'
+            """
+        )
+    restored = store.list_retryable_universal_memory_action_executions(limit=10)
+
+    assert [item.execution_id for item in restored] == [execution.execution_id]
+
+
 def test_retry_failed_universal_memory_writes_recovers_backend_failure(tmp_path) -> None:
     first_runner = FakeMemoryWriteRunner(
         [CodexMemoryWriteToolFailed("memory backend unavailable")]

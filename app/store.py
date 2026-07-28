@@ -2837,9 +2837,18 @@ class AutoReplyStore:
                 from universal_action_executions as actions
                 join universal_plan_executions as plans
                   on plans.execution_scope_id=actions.execution_scope_id
-                where actions.status='failed'
-                  and actions.action_kind='memory_write'
-                  and actions.error like 'memory_backend_unavailable:%'
+                where actions.action_kind='memory_write'
+                  and (
+                      (
+                          actions.status='failed'
+                          and actions.error like 'memory_backend_unavailable:%'
+                      )
+                      or (
+                          actions.status='started'
+                          and actions.lease_expires_at != ''
+                          and datetime(actions.lease_expires_at) <= current_timestamp
+                      )
+                  )
                 order by actions.updated_at, actions.execution_id
                 limit ?
                 """,

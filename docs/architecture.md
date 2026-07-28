@@ -254,6 +254,7 @@ SQLite 是系统事实源。主要表按职责分组：
 
 - 外部可见动作必须先有本地记录。
 - 重复消息靠唯一键和 sent reply 记录抑制。
+- `memory_write` 使用持久化 lease；恢复扫描只接管已过期的 `started` 和明确后端失败动作，不抢占仍有效的执行。
 - recoverable blocked/failed 不能被当作完成。
 - 确定不可恢复的 blocked 必须写清楚原因，避免每轮重复修复。
 
