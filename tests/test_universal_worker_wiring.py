@@ -317,6 +317,68 @@ def test_universal_route_is_default(tmp_path, monkeypatch):
     assert legacy_calls == []
 
 
+def test_universal_retry_reuses_persisted_context_when_live_evidence_changes(
+    tmp_path,
+    monkeypatch,
+):
+    planner = RecordingPlanner(no_reply_plan())
+    worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
+    task = enqueue(worker, trigger)
+    prior = trigger_message(
+        content="日历卡片尚未生成会议信息",
+        raw_payload={"calendar": {"conference": None}},
+    ).model_copy(update={"open_message_id": "msg-prior"})
+    persisted_context = build_universal_context(
+        conversation=conversation(),
+        trigger=trigger,
+        context_messages=[prior, trigger],
+        task_id=task.id,
+        force_new_decision=False,
+        dry_run=False,
+    )
+    worker.store.create_universal_plan_execution(
+        persisted_context,
+        no_reply_plan(),
+    )
+    enriched_prior = prior.model_copy(
+        update={
+            "content": "日历卡片已生成会议信息",
+            "raw_payload": {"calendar": {"conference": {"id": "meeting-1"}}},
+        }
+    )
+    enrichment_calls = []
+    monkeypatch.setattr(
+        worker,
+        "_calendar_invite_context",
+        lambda *_args, **_kwargs: enrichment_calls.append("calendar"),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_collect_image_paths",
+        lambda *_args, **_kwargs: (enrichment_calls.append("images") or [], []),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_trusted_task_context_for_universal",
+        lambda *_args, **_kwargs: enrichment_calls.append("tasks") or "",
+    )
+
+    assert worker._process_universal_queued_task(
+        conversation(),
+        task,
+        trigger,
+        [enriched_prior, trigger],
+        [enriched_prior, trigger],
+    ) is True
+
+    assert planner.calls == []
+    assert enrichment_calls == []
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == PlannedActionKind.NO_REPLY.value
+    assert attempt.send_status == "skipped"
+
+
 def test_universal_context_resolves_missing_trigger_sender_user_id(
     tmp_path, monkeypatch
 ):

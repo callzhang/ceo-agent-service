@@ -731,6 +731,14 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage],
         prompt_context_messages: list[DingTalkMessage],
     ) -> bool:
+        persisted_context = self.store.load_universal_plan_context(
+            task.id,
+            task.execution_generation,
+        )
+        if persisted_context is not None:
+            result = self._universal_consumer().process(persisted_context)
+            return self._map_universal_consumer_result(result, trigger)
+
         effective_oa_url = task.oa_url.strip()
         if not effective_oa_url and self._is_oa_approval_message(trigger):
             effective_oa_url = self._trusted_pending_oa_url(trigger)

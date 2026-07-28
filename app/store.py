@@ -1883,6 +1883,37 @@ class AutoReplyStore:
             )
             return self._normalize_universal_plan_execution_targets(db, row, context)
 
+    def load_universal_plan_context(
+        self,
+        task_id: int,
+        execution_generation: str,
+    ) -> UniversalTaskContext | None:
+        with self._connect() as db:
+            task = self._validate_reply_task_generation(
+                db,
+                task_id,
+                execution_generation,
+            )
+            row = db.execute(
+                """
+                select context_json, context_hash
+                from universal_plan_executions
+                where reply_task_id=? and execution_generation=?
+                """,
+                (task_id, execution_generation),
+            ).fetchone()
+            if row is None:
+                return None
+            context_json = str(row["context_json"] or "")
+            context_hash = str(row["context_hash"] or "")
+            if not context_json or not context_hash:
+                raise ValueError("legacy plan context missing")
+            if hashlib.sha256(context_json.encode("utf-8")).hexdigest() != context_hash:
+                raise ValueError("context identity mismatch")
+            context = parse_universal_context_json(context_json)
+            self._validate_context_matches_reply_task(task, context)
+            return context
+
     def create_universal_plan_execution(
         self,
         context: UniversalTaskContext,
