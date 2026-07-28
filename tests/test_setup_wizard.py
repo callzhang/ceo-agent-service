@@ -416,9 +416,8 @@ def test_check_dry_run_reports_unresolved_universal_action(tmp_path: Path):
                 reply_task_id,
                 execution_generation,
                 plan_json,
-                context_hash,
                 context_json
-            ) values ('scope-1', ?, 'initial', '{}', 'hash-1', '{}')
+            ) values ('scope-1', ?, 'initial', '{}', '{}')
             """,
             (task.id,),
         )

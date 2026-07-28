@@ -1,4 +1,3 @@
-import hashlib
 import json
 from dataclasses import replace
 
@@ -12,7 +11,6 @@ from app.universal_context import (
     UniversalTaskContext,
     build_universal_context,
     canonical_universal_context_json,
-    universal_context_sha256,
 )
 
 
@@ -226,7 +224,7 @@ def test_dws_is_required_for_dingtalk_context() -> None:
     assert build_context([]).required_dependencies == ("dws",)
 
 
-def test_trigger_create_time_is_explicit_and_part_of_context_identity() -> None:
+def test_trigger_create_time_is_explicit_and_serialized() -> None:
     context = build_context([])
 
     assert context.trigger_create_time == "2026-07-20 10:00:00"
@@ -234,7 +232,6 @@ def test_trigger_create_time_is_explicit_and_part_of_context_identity() -> None:
     assert canonical_universal_context_json(changed) != canonical_universal_context_json(
         context
     )
-    assert universal_context_sha256(changed) != universal_context_sha256(context)
 
 
 def test_build_derives_trusted_oa_target_from_trigger_payload() -> None:
@@ -321,7 +318,7 @@ def test_conflicting_trusted_oa_sources_fail_closed() -> None:
     assert context.trusted_oa_task_id == ""
 
 
-def test_trusted_oa_target_changes_canonical_identity() -> None:
+def test_trusted_oa_target_is_serialized() -> None:
     context = build_context([])
     trusted = replace(
         context,
@@ -329,7 +326,9 @@ def test_trusted_oa_target_changes_canonical_identity() -> None:
         trusted_oa_task_id="task-1",
     )
 
-    assert universal_context_sha256(trusted) != universal_context_sha256(context)
+    assert canonical_universal_context_json(
+        trusted
+    ) != canonical_universal_context_json(context)
 
 
 def test_build_binds_trusted_document_url_from_trigger_payload() -> None:
@@ -428,7 +427,7 @@ def test_build_derives_trusted_calendar_target_and_status_from_trigger_payload()
     assert context.trusted_calendar_organizer == "Mina"
 
 
-def test_trusted_mail_and_calendar_targets_change_canonical_identity() -> None:
+def test_trusted_mail_and_calendar_targets_are_serialized() -> None:
     context = build_context([])
     trusted_mail = replace(
         context,
@@ -443,11 +442,15 @@ def test_trusted_mail_and_calendar_targets_change_canonical_identity() -> None:
         trusted_calendar_organizer="Mina",
     )
 
-    assert universal_context_sha256(trusted_mail) != universal_context_sha256(context)
-    assert universal_context_sha256(trusted_calendar) != universal_context_sha256(context)
+    assert canonical_universal_context_json(
+        trusted_mail
+    ) != canonical_universal_context_json(context)
+    assert canonical_universal_context_json(
+        trusted_calendar
+    ) != canonical_universal_context_json(context)
 
 
-def test_trusted_task_context_is_rendered_and_changes_canonical_identity() -> None:
+def test_trusted_task_context_is_rendered_and_serialized() -> None:
     context = build_context([])
     trusted = replace(
         context,
@@ -458,7 +461,9 @@ def test_trusted_task_context_is_rendered_and_changes_canonical_identity() -> No
 
     assert "Trusted task details: " in rendered
     assert "技术部招聘" in rendered
-    assert universal_context_sha256(trusted) != universal_context_sha256(context)
+    assert canonical_universal_context_json(
+        trusted
+    ) != canonical_universal_context_json(context)
 
 
 def test_build_normalizes_numeric_mail_and_calendar_ids_from_real_nested_payloads() -> None:
@@ -608,13 +613,10 @@ def test_canonical_context_json_covers_every_field_with_stable_order() -> None:
         sort_keys=True,
         separators=(",", ":"),
     )
-    assert universal_context_sha256(context) == hashlib.sha256(
-        canonical.encode("utf-8")
-    ).hexdigest()
     assert canonical_universal_context_json(replace(context)) == canonical
 
 
-def test_material_references_are_part_of_universal_context_hash() -> None:
+def test_material_references_are_part_of_canonical_context() -> None:
     base = UniversalTaskContext(
         task_id=42,
         conversation_id="conversation-1",
@@ -664,10 +666,12 @@ def test_material_references_are_part_of_universal_context_hash() -> None:
             "resolution_error": "",
         }
     ]
-    assert universal_context_sha256(base) != universal_context_sha256(with_reference)
+    assert canonical_universal_context_json(
+        base
+    ) != canonical_universal_context_json(with_reference)
 
 
-def test_canonical_context_identity_preserves_message_and_dependency_order() -> None:
+def test_canonical_context_preserves_message_and_dependency_order() -> None:
     context = build_context([make_message("prior-1", "Alex", "Earlier message.")])
     reversed_messages = replace(
         context,
@@ -678,15 +682,15 @@ def test_canonical_context_identity_preserves_message_and_dependency_order() -> 
         required_dependencies=("memory", "dws"),
     )
 
-    assert universal_context_sha256(reversed_messages) != universal_context_sha256(
-        context
-    )
-    assert universal_context_sha256(reordered_dependencies) != universal_context_sha256(
-        context
-    )
+    assert canonical_universal_context_json(
+        reversed_messages
+    ) != canonical_universal_context_json(context)
+    assert canonical_universal_context_json(
+        reordered_dependencies
+    ) != canonical_universal_context_json(context)
 
 
-def test_canonical_context_identity_covers_delivery_metadata() -> None:
+def test_canonical_context_covers_delivery_metadata() -> None:
     context = build_context([])
     trigger = context.context_messages[-1]
     changed_sender_identity = replace(
@@ -700,12 +704,12 @@ def test_canonical_context_identity_covers_delivery_metadata() -> None:
         context_messages=(replace(trigger, raw_payload_json='{"source":"task"}'),),
     )
 
-    assert universal_context_sha256(changed_sender_identity) != universal_context_sha256(
-        context
-    )
-    assert universal_context_sha256(changed_raw_payload) != universal_context_sha256(
-        context
-    )
+    assert canonical_universal_context_json(
+        changed_sender_identity
+    ) != canonical_universal_context_json(context)
+    assert canonical_universal_context_json(
+        changed_raw_payload
+    ) != canonical_universal_context_json(context)
 
 
 def test_canonical_context_json_rejects_non_strict_field_types() -> None:

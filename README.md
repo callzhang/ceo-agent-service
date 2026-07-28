@@ -50,9 +50,9 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 
 `blocked` 只表示缺少权限、依赖、材料或安全条件，后续条件恢复后仍应进入修复/恢复口径。确定不可恢复的阻塞必须写入 `send_status=blocked` 且 `send_error` 以 `blocked_unrecoverable_` 开头；这类记录在审计页显示为 terminal blocked，不再作为待修复 backlog。
 
-当同一 `conversation_id + trigger_message_id` 已经产生更新的 terminal attempt（例如 `sent`、`skipped`、`commented`、`blocked`）或 `sent_replies` 记录时，后续恢复流程遇到 Universal Plan 上下文身份漂移应收敛旧 `reply_tasks` 为 `done`，避免已经处理过的消息在最大重试次数后再次显示为 failed。
+同一 Universal Plan 的 `execution_generation` 固定使用首次规划时持久化的完整 `context_json` 快照；动作重试不会重新读取可能变化的日历卡片、材料正文或任务检索结果，也不使用上下文 hash 比较外部世界是否变化。只有显式创建新的 execution generation 时，服务才重新收集证据并请求 agent 生成新 plan。
 
-同一 Universal Plan 的 `execution_generation` 固定使用首次规划时持久化的完整上下文；动作重试不会重新读取可能变化的日历卡片、材料正文或任务检索结果。只有显式创建新的 execution generation 时，服务才重新收集证据并请求 agent 生成新 plan。
+执行安全由明确边界保证：reply task 与 execution generation 必须匹配，动作必须来自持久化 plan，发送或审批目标必须与持久化上下文一致，同一动作由 `execution_id` 和 `action_hash` 做幂等保护。
 
 重复发送保护命中已有 `sent_replies` 时，新的发送 attempt 记为 `skipped`，不记为 `blocked`，也不写入 service error；这表示同一触发消息已处理完成，只是跳过了重复投递。
 

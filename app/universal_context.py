@@ -1,4 +1,3 @@
-import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -358,11 +357,6 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
-
-
-def universal_context_sha256(context: UniversalTaskContext) -> str:
-    canonical = canonical_universal_context_json(context)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def parse_universal_context_json(context_json: str) -> UniversalTaskContext:

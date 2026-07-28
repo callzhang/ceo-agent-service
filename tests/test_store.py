@@ -1,4 +1,3 @@
-import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -13,7 +12,6 @@ from app.universal_context import (
     UniversalContextMessage,
     UniversalTaskContext,
     canonical_universal_context_json,
-    universal_context_sha256,
 )
 from app.universal_executor import (
     UniversalActionExecution,
@@ -2579,9 +2577,9 @@ def test_universal_plan_execution_get_or_create_keeps_first_snapshot(tmp_path: P
     assert loaded == first
     with sqlite3.connect(db_path) as db:
         row = db.execute(
-            "select plan_json, context_hash, context_json from universal_plan_executions"
+            "select plan_json, context_json from universal_plan_executions"
         ).fetchone()
-    plan_json, context_hash, context_json = row
+    plan_json, context_json = row
     assert plan_json == json.dumps(
         first_plan.model_dump(mode="json"),
         ensure_ascii=False,
@@ -2589,7 +2587,6 @@ def test_universal_plan_execution_get_or_create_keeps_first_snapshot(tmp_path: P
         separators=(",", ":"),
     )
     assert context_json == canonical_universal_context_json(context)
-    assert context_hash == universal_context_sha256(context)
 
 
 def test_load_universal_plan_execution_upgrades_missing_reply_target(
@@ -2702,143 +2699,6 @@ def test_single_chat_trigger_replacement_rotates_universal_execution_generation(
     assert new_plan.execution_generation == replaced.execution_generation
 
 
-def test_universal_old_active_plan_context_without_capability_fields_resumes_narrowly(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(task_id)
-    created = store.create_universal_plan_execution(context, _universal_plan())
-    old_context = json.loads(canonical_universal_context_json(context))
-    for field_name in (
-        "trusted_mail_mailbox",
-        "trusted_mail_message_id",
-        "trusted_mail_subject",
-        "trusted_calendar_event_id",
-        "trusted_calendar_response_status",
-        "trusted_calendar_organizer",
-    ):
-        old_context.pop(field_name)
-    old_context_json = json.dumps(
-        old_context,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    old_context_hash = hashlib.sha256(old_context_json.encode()).hexdigest()
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update universal_plan_executions set context_json=?, context_hash=?",
-            (old_context_json, old_context_hash),
-        )
-
-    loaded = store.load_universal_plan_execution(context)
-    repeated = store.create_universal_plan_execution(
-        context,
-        _universal_plan(reason="Must not replace the active plan"),
-    )
-    assert loaded == created
-    assert repeated == created
-    action = build_universal_action_execution(
-        context,
-        loaded,
-        loaded.plan.actions[0],
-        0,
-    )
-    assert store.claim_universal_action_execution(action) is UniversalActionExecutionState.NOT_STARTED
-
-
-def test_universal_old_active_plan_context_compatibility_rejects_new_non_default_target(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(task_id)
-    store.create_universal_plan_execution(context, _universal_plan())
-    old_context = json.loads(canonical_universal_context_json(context))
-    old_context.pop("trusted_mail_message_id")
-    old_context_json = json.dumps(
-        old_context,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update universal_plan_executions set context_json=?, context_hash=?",
-            (
-                old_context_json,
-                hashlib.sha256(old_context_json.encode()).hexdigest(),
-            ),
-        )
-
-    with pytest.raises(ValueError, match="context identity mismatch"):
-        store.load_universal_plan_execution(
-            replace(context, trusted_mail_message_id="new-mail-id")
-        )
-@pytest.mark.parametrize("legacy_value", [None, ""])
-def test_active_plan_upgrades_only_missing_trigger_create_time_once(
-    tmp_path: Path,
-    legacy_value: str | None,
-) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(task_id)
-    created = store.create_universal_plan_execution(context, _universal_plan())
-    legacy = json.loads(canonical_universal_context_json(context))
-    if legacy_value is None:
-        legacy.pop("trigger_create_time")
-    else:
-        legacy["trigger_create_time"] = legacy_value
-    legacy_json = json.dumps(
-        legacy, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
-    legacy_hash = hashlib.sha256(legacy_json.encode()).hexdigest()
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update universal_plan_executions set context_json=?, context_hash=?",
-            (legacy_json, legacy_hash),
-        )
-
-    loaded = store.load_universal_plan_execution(context)
-
-    assert loaded == created
-    with sqlite3.connect(store.path) as db:
-        upgraded = db.execute(
-            "select context_json, context_hash from universal_plan_executions"
-        ).fetchone()
-    assert upgraded == (
-        canonical_universal_context_json(context),
-        universal_context_sha256(context),
-    )
-
-
-def test_active_plan_trigger_time_compatibility_rejects_other_context_drift(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(task_id)
-    store.create_universal_plan_execution(context, _universal_plan())
-    legacy = json.loads(canonical_universal_context_json(context))
-    legacy.pop("trigger_create_time")
-    legacy["dry_run"] = True
-    legacy_json = json.dumps(
-        legacy, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
-    legacy_hash = hashlib.sha256(legacy_json.encode()).hexdigest()
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update universal_plan_executions set context_json=?, context_hash=?",
-            (legacy_json, legacy_hash),
-        )
-
-    with pytest.raises(ValueError, match="context identity mismatch"):
-        store.load_universal_plan_execution(context)
-
-
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -2861,7 +2721,7 @@ def test_active_plan_trigger_time_compatibility_rejects_other_context_drift(
     ],
     ids=["message-order", "message-field", "dependencies", "dry-run"],
 )
-def test_universal_plan_execution_rejects_context_drift_on_load_and_create(
+def test_universal_plan_execution_reuses_stored_snapshot_when_live_context_drifts(
     tmp_path: Path,
     mutate,
 ):
@@ -2875,16 +2735,17 @@ def test_universal_plan_execution_rejects_context_drift_on_load_and_create(
         ),
         required_dependencies=("dws", "memory"),
     )
-    store.create_universal_plan_execution(context, _universal_plan())
+    created = store.create_universal_plan_execution(context, _universal_plan())
     drifted = mutate(context)
 
-    with pytest.raises(ValueError, match="context identity mismatch"):
-        store.load_universal_plan_execution(drifted)
-    with pytest.raises(ValueError, match="context identity mismatch"):
-        store.create_universal_plan_execution(
-            drifted,
-            _universal_plan(reason="Drifted context must not reuse scope"),
-        )
+    assert store.load_universal_plan_execution(drifted) == created
+    assert store.create_universal_plan_execution(
+        drifted,
+        _universal_plan(reason="Live context must not replace the stored plan"),
+    ) == created
+    assert store.load_universal_plan_context(
+        task_id, context.execution_generation
+    ) == context
 
 
 def test_universal_plan_execution_round_trip_is_deep_copied(tmp_path: Path):
@@ -2903,6 +2764,82 @@ def test_universal_plan_execution_round_trip_is_deep_copied(tmp_path: Path):
     assert loaded is not None
     assert loaded.plan.reason == "Handle the task"
     assert loaded.plan.actions[0].payload["data"] == "Remember the result."
+
+
+def test_universal_plan_schema_does_not_store_context_hash(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with store._connect() as db:
+        columns = {
+            row["name"]
+            for row in db.execute(
+                "pragma table_info(universal_plan_executions)"
+            ).fetchall()
+        }
+
+    assert "context_json" in columns
+    assert "context_hash" not in columns
+
+
+def test_store_removes_legacy_context_hash_without_losing_plan_data(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.executescript(
+            """
+            create table universal_plan_executions (
+                execution_scope_id text primary key,
+                reply_task_id integer not null,
+                execution_generation text not null,
+                plan_json text not null,
+                context_hash text not null default '',
+                context_json text not null default '',
+                status text not null default 'active',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                unique(reply_task_id, execution_generation)
+            );
+            insert into universal_plan_executions (
+                execution_scope_id,
+                reply_task_id,
+                execution_generation,
+                plan_json,
+                context_hash,
+                context_json
+            ) values (
+                'scope-1',
+                7,
+                'generation-1',
+                '{"plan":"preserved"}',
+                'obsolete',
+                '{"context":"preserved"}'
+            );
+            """
+        )
+
+    store = AutoReplyStore(db_path)
+
+    with store._connect() as db:
+        columns = {
+            row["name"]
+            for row in db.execute(
+                "pragma table_info(universal_plan_executions)"
+            ).fetchall()
+        }
+        row = db.execute(
+            """
+            select execution_scope_id, plan_json, context_json
+            from universal_plan_executions
+            """
+        ).fetchone()
+
+    assert "context_hash" not in columns
+    assert dict(row) == {
+        "execution_scope_id": "scope-1",
+        "plan_json": '{"plan":"preserved"}',
+        "context_json": '{"context":"preserved"}',
+    }
 
 
 def test_universal_plan_execution_uses_new_scope_for_new_generation(tmp_path: Path):
@@ -3126,7 +3063,7 @@ def test_universal_plan_execution_strictly_parses_persisted_plan(tmp_path: Path)
         store.load_universal_plan_execution(context)
 
 
-def test_store_migrates_legacy_plan_context_columns_and_fails_closed(
+def test_store_adds_missing_plan_context_column_and_fails_closed(
     tmp_path: Path,
 ):
     db_path = tmp_path / "worker.sqlite3"
@@ -3203,17 +3140,16 @@ def test_store_migrates_legacy_plan_context_columns_and_fails_closed(
         }
         row = db.execute(
             """
-            select context_hash, context_json
+            select context_json
             from universal_plan_executions where execution_scope_id='legacy-scope'
             """
         ).fetchone()
-    assert columns["context_hash"]["notnull"] == 1
-    assert columns["context_hash"]["dflt_value"] == "''"
+    assert "context_hash" not in columns
     assert columns["context_json"]["notnull"] == 1
     assert columns["context_json"]["dflt_value"] == "''"
-    assert dict(row) == {"context_hash": "", "context_json": ""}
+    assert dict(row) == {"context_json": ""}
 
-    with pytest.raises(ValueError, match="legacy plan context missing"):
+    with pytest.raises(ValueError, match="plan context missing"):
         store.load_universal_plan_execution(context)
 
     plan_execution = UniversalPlanExecution("legacy-scope", "initial", plan)
@@ -3223,7 +3159,7 @@ def test_store_migrates_legacy_plan_context_columns_and_fails_closed(
         plan_execution.plan.actions[0],
         0,
     )
-    with pytest.raises(ValueError, match="legacy plan context missing"):
+    with pytest.raises(ValueError, match="plan context missing"):
         store.claim_universal_action_execution(execution)
 
 
@@ -3335,17 +3271,18 @@ def test_get_universal_action_state_reads_one_sqlite_snapshot(
     continue_read = Event()
     results: Queue[UniversalActionExecutionState] = Queue()
     errors: Queue[BaseException] = Queue()
-    original_validate = reader._validate_plan_context_identity
+    original_read_context = reader._universal_context_from_plan_row
 
-    def pause_after_plan_read(row, context_json, context_hash) -> None:
-        original_validate(row, context_json, context_hash)
+    def pause_after_plan_read(row):
+        context = original_read_context(row)
         first_read_done.set()
         if not continue_read.wait(timeout=5):
             raise TimeoutError("action snapshot test did not resume")
+        return context
 
     monkeypatch.setattr(
         reader,
-        "_validate_plan_context_identity",
+        "_universal_context_from_plan_row",
         pause_after_plan_read,
     )
 
@@ -3515,7 +3452,7 @@ def test_universal_action_rejects_bound_context_drift(tmp_path: Path, mutate):
         0,
     )
 
-    with pytest.raises(ValueError, match="context identity mismatch"):
+    with pytest.raises(ValueError, match="action context mismatch"):
         store.get_universal_action_execution_state(
             replace(execution, context=mutate(context))
         )

@@ -5298,13 +5298,7 @@ class DingTalkAutoReplyWorker:
                         error,
                     )
                     continue
-                if (
-                    error
-                    in {
-                        "context identity mismatch",
-                        "execution generation mismatch",
-                    }
-                ):
+                if error == "execution generation mismatch":
                     if self._trigger_has_terminal_result(
                         task.conversation_id,
                         task.trigger_message_id,
@@ -5313,7 +5307,7 @@ class DingTalkAutoReplyWorker:
                         self.store.record_error(
                             task.conversation_id,
                             task.trigger_message_id,
-                            "reply_task_universal_plan_identity_after_terminal",
+                            "reply_task_universal_plan_generation_after_terminal",
                             error,
                         )
                         continue
@@ -5342,7 +5336,7 @@ class DingTalkAutoReplyWorker:
                     self.store.record_error(
                         task.conversation_id,
                         task.trigger_message_id,
-                        "reply_task_universal_plan_identity_replanned",
+                        "reply_task_universal_plan_generation_replanned",
                         error,
                     )
                     continue

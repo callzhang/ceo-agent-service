@@ -5808,9 +5808,8 @@ def test_run_service_reconciles_resolved_universal_action_failures_on_startup(
                 reply_task_id,
                 execution_generation,
                 plan_json,
-                context_hash,
                 context_json
-            ) values ('scope-1', ?, 'initial', '{}', 'hash-1', '{}')
+            ) values ('scope-1', ?, 'initial', '{}', '{}')
             """,
             (task.id,),
         )
