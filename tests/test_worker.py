@@ -1,12 +1,10 @@
 from datetime import datetime
 from datetime import timedelta
-from io import BytesIO
 import importlib
 import json
 from pathlib import Path
 import shlex
 import sqlite3
-import zipfile
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -14,7 +12,13 @@ import pytest
 from app.agent_envelope import AgentEnvelope
 import app.worker as worker_module
 from app.codex_decision import CodexDecisionRunner, append_signature
-from app.channel_gate import ChannelGateResult, ChannelGateState
+from app.channel_gate import (
+    ChannelGateResult,
+    ChannelGateState,
+    DwsChannelGate,
+    LarkChannelGate,
+    default_channel_gates,
+)
 from app.corpus import CorpusRecord
 from app.dingtalk_models import (
     CodexAction,
@@ -40,7 +44,6 @@ from app.worker import (
     DWS_AUTH_LOGIN_STATE_KEY,
     PROCESSING_ACK,
     DingTalkAutoReplyWorker,
-    DwsAuthorizationRequiredError,
 )
 
 
@@ -71,28 +74,102 @@ class FixedGate:
         )
 
 
-class FakeDwsGate:
-    channel_name = "dingtalk"
+def fixed_channel_gates(
+    dingtalk: ChannelGateState = ChannelGateState.READY,
+    lark: ChannelGateState = ChannelGateState.READY,
+) -> dict[str, FixedGate]:
+    return {
+        "dingtalk": FixedGate("dingtalk", dingtalk),
+        "lark": FixedGate("lark", lark),
+    }
 
-    def __init__(self, dws):
-        self.dws = dws
 
-    def check(self) -> ChannelGateResult:
-        status = self.dws.auth_status()
-        ready = all(
-            status.get(field) is True
-            for field in ("authenticated", "token_valid", "refresh_token_valid")
-        )
-        state = ChannelGateState.READY if ready else ChannelGateState.NEEDS_LOGIN
-        return ChannelGateResult(
-            channel="dingtalk",
-            state=state,
-            reason_code=state.value,
-        )
+@pytest.fixture(autouse=True)
+def inject_ready_default_channel_gates(monkeypatch):
+    monkeypatch.setattr(
+        worker_module,
+        "default_channel_gates",
+        lambda **_: fixed_channel_gates(),
+    )
 
 
 def fixed_worker_now() -> datetime:
     return datetime(2026, 5, 13, 10, 0, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+
+class LegacyBehaviorTestWorker(DingTalkAutoReplyWorker):
+    """Keep legacy worker assertions isolated from universal-consumer coverage."""
+
+    def _process_queued_task(self, conversation, task) -> bool:
+        if self._injected_universal_planner is not None:
+            return super()._process_queued_task(conversation, task)
+        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        if not self._queued_trigger_is_still_actionable(conversation, trigger):
+            self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
+            self._mark_seen([trigger])
+            return True
+        context_messages, prompt_context_messages = (
+            self._queued_task_prompt_context_messages(conversation, trigger)
+        )
+        if (
+            task.error == worker_module.FAST_PATH_UNREAD_BACKOFF_TASK_ERROR
+            and self._has_current_user_reply_after_trigger(context_messages, trigger)
+        ):
+            self._record_current_user_replied_during_backoff_skip(
+                conversation,
+                trigger,
+            )
+            self._mark_seen([trigger])
+            return True
+        if self._handle_minutes_permission_request_if_actionable(
+            conversation,
+            trigger,
+            ignore_existing_attempt=task.force_new_decision,
+            raise_on_delivery_failure=True,
+        ):
+            return True
+        if self._handle_calendar_invite_if_actionable(
+            conversation,
+            trigger,
+            prompt_context_messages,
+            ignore_existing_attempt=task.force_new_decision,
+            include_resolved_calendar_invites=task.force_new_decision,
+            allow_duplicate_send=task.force_new_decision,
+            raise_on_delivery_failure=True,
+            complete_task_id=task.id,
+        ):
+            return True
+        if self._handle_oa_approval_if_actionable(
+            conversation,
+            trigger,
+            prompt_context_messages,
+            ignore_existing_attempt=task.force_new_decision,
+            oa_url_override=task.oa_url,
+        ):
+            return not self.dry_run
+        if self._is_system_or_notification_message(trigger):
+            self._record_system_or_notification_skip(conversation, trigger)
+            self._mark_seen([trigger])
+            return True
+        self._process_batch(
+            conversation,
+            [trigger],
+            prompt_context_messages,
+            ignore_existing_attempt=(
+                task.force_new_decision
+                or self._should_regenerate_after_processing_failure(
+                    conversation,
+                    trigger,
+                    task,
+                )
+            ),
+            allow_duplicate_send=task.force_new_decision,
+            raise_on_delivery_failure=True,
+        )
+        return True
+
+
+DingTalkAutoReplyWorker = LegacyBehaviorTestWorker
 
 
 def test_worker_recovery_runtime_config_reads_environment(monkeypatch):
@@ -1275,7 +1352,7 @@ def make_worker(
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("principal-user-1")
-    return DingTalkAutoReplyWorker(
+    return LegacyBehaviorTestWorker(
         store=store,
         dws=dws,
         codex=codex,
@@ -1285,12 +1362,21 @@ def make_worker(
         now_provider=fixed_worker_now,
         max_task_attempts=max_task_attempts,
         oa_approval_handler=oa_approval_handler,
-        channel_gates=channel_gates
-        or {
-            "dingtalk": FakeDwsGate(dws),
-            "lark": FixedGate("lark", ChannelGateState.READY),
-        },
+        channel_gates=channel_gates or fixed_channel_gates(),
     )
+
+
+def test_worker_defaults_to_real_channel_gates(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(worker_module, "default_channel_gates", default_channel_gates)
+    worker = worker_module.DingTalkAutoReplyWorker(
+        store=AutoReplyStore(tmp_path / "worker.sqlite3"),
+        dws=FakeDws([], {}),
+        codex=FakeCodex([]),
+    )
+
+    assert isinstance(worker.channel_gates["dingtalk"], DwsChannelGate)
+    assert isinstance(worker.channel_gates["lark"], LarkChannelGate)
 
 
 def test_notification_url_includes_attempt_id(tmp_path, monkeypatch):
@@ -1943,7 +2029,7 @@ def test_consume_manual_rerun_task_forces_new_decision(tmp_path: Path, monkeypat
     assert calls["allow_duplicate_send"] is True
 
 
-def test_produce_once_starts_dws_auth_login_once_for_login_error(
+def test_produce_once_starts_dws_auth_login_once_for_non_ready_gate(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -1954,7 +2040,13 @@ def test_produce_once_starts_dws_auth_login_once_for_login_error(
         "refresh_token_valid": False,
     }
     codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
-    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        channel_gates=fixed_channel_gates(ChannelGateState.NEEDS_LOGIN),
+    )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
@@ -1976,7 +2068,7 @@ def test_produce_once_starts_dws_auth_login_once_for_login_error(
     assert codex.calls == []
 
 
-def test_produce_once_uses_auth_status_for_unclassified_dws_failure(
+def test_produce_once_uses_non_ready_gate_for_unclassified_dws_failure(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -1993,7 +2085,13 @@ def test_produce_once_uses_auth_status_for_unclassified_dws_failure(
         "token_valid": False,
         "refresh_token_valid": False,
     }
-    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex([]),
+        monkeypatch,
+        channel_gates=fixed_channel_gates(ChannelGateState.NEEDS_LOGIN),
+    )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
@@ -2002,7 +2100,7 @@ def test_produce_once_uses_auth_status_for_unclassified_dws_failure(
     assert worker.produce_once() == 0
     assert worker.produce_once() == 0
 
-    assert dws.auth_status_calls >= 1
+    assert dws.auth_status_calls == 0
     assert dws.auth_login_starts == 1
     assert worker.store.count_errors() == 0
     assert notifications == []
@@ -2040,7 +2138,7 @@ def test_produce_once_does_not_start_dws_auth_login_when_auth_status_is_valid(
     assert notifications == []
 
 
-def test_consume_once_checks_dws_auth_before_starting_codex(
+def test_consume_once_checks_dws_gate_before_starting_codex(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -2053,17 +2151,23 @@ def test_consume_once_checks_dws_auth_before_starting_codex(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        channel_gates=fixed_channel_gates(ChannelGateState.NEEDS_LOGIN),
+    )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
 
-    with pytest.raises(DwsAuthorizationRequiredError):
+    with pytest.raises(worker_module.DwsAuthorizationRequiredError):
         worker._ensure_dws_ready_for_codex()
 
     assert codex.calls == []
-    assert dws.auth_status_calls >= 1
+    assert dws.auth_status_calls == 0
     assert dws.auth_login_starts == 1
     state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
     assert state["status"] == "running"
@@ -2086,6 +2190,7 @@ def test_produce_once_restarts_stale_persisted_dws_auth_login(
         dws,
         FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到")),
         monkeypatch,
+        channel_gates=fixed_channel_gates(ChannelGateState.NEEDS_LOGIN),
     )
     worker.store.set_service_state(
         DWS_AUTH_LOGIN_STATE_KEY,
@@ -2120,6 +2225,7 @@ def test_produce_once_does_not_start_second_dws_auth_login_for_recent_request(
         dws,
         FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到")),
         monkeypatch,
+        channel_gates=fixed_channel_gates(ChannelGateState.NEEDS_LOGIN),
     )
     worker.store.set_service_state(
         DWS_AUTH_LOGIN_STATE_KEY,
@@ -2161,6 +2267,7 @@ def test_produce_once_restarts_dws_auth_login_after_previous_terminal_state(
         dws,
         FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到")),
         monkeypatch,
+        channel_gates=fixed_channel_gates(ChannelGateState.NEEDS_LOGIN),
     )
     worker.store.set_service_state(
         DWS_AUTH_LOGIN_STATE_KEY,
@@ -7075,7 +7182,7 @@ def test_calendar_response_accepts_agent_envelope_domain_payload(
     assert attempt.calendar_response_status == "accepted"
 
 
-def test_calendar_static_review_reads_minutes_accepts_and_comments_material(
+def test_calendar_static_review_exposes_minutes_reference_to_agent(
     tmp_path: Path, monkeypatch
 ):
     minutes_id = "76327569643331323035353732315f3233333438363436305f30"
@@ -7120,14 +7227,14 @@ def test_calendar_static_review_reads_minutes_accepts_and_comments_material(
 
     worker.run_once()
 
-    assert dws.minutes_info_calls == [minutes_id]
-    assert dws.minutes_summary_calls == [minutes_id]
-    assert dws.minutes_todo_calls == [minutes_id]
+    assert dws.minutes_info_calls == []
+    assert dws.minutes_summary_calls == []
+    assert dws.minutes_todo_calls == []
     prompt = codex.calls[0][0]
     assert "不能只接受日历" in prompt
-    assert "AI 听记材料:" in prompt
-    assert "候选人测试开发基础较完整" in prompt
-    assert "Alex 给出是否推进录用的处理结论" in prompt
+    assert "待读取材料" in prompt
+    assert "类型: dingtalk_minutes" in prompt
+    assert minutes_id in prompt
     signed_reply = "不建议直接推进，建议补充作业后再判断。（by明哥分身）"
     assert dws.calendar_responses == [("invite-1", "accepted")]
     assert dws.doc_comments == []
@@ -7142,7 +7249,7 @@ def test_calendar_static_review_reads_minutes_accepts_and_comments_material(
     assert attempt.calendar_response_result_json == '{"success": true}'
 
 
-def test_calendar_material_read_failure_is_passed_to_codex(
+def test_calendar_document_reference_is_exposed_to_agent_for_reading(
     tmp_path: Path, monkeypatch
 ):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/no-access"
@@ -7174,15 +7281,14 @@ def test_calendar_material_read_failure_is_passed_to_codex(
 
     worker.run_once()
 
-    assert dws.doc_info_calls == [doc_url]
+    assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     assert "不能只接受日历" in prompt
-    assert "已获取的钉钉材料:" in prompt
-    assert "材料读取失败" in prompt
-    assert "不能臆测材料内容" in prompt
-    assert "forbidden.accessDenied" in prompt
+    assert "待读取材料" in prompt
+    assert "类型: dingtalk_doc" in prompt
+    assert doc_url in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "ask_clarifying_question"
@@ -8064,7 +8170,7 @@ def test_ding_approval_reminder_is_processed_by_oa_handler(
     assert worker.store.get_reply_attempt(1).action == "oa_approval"
 
 
-def test_oa_approval_missing_target_records_review_without_executing_action(
+def test_oa_approval_missing_applicant_records_failed_delivery(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("[Ding]刘瑞安提醒您审批他的录用申请", single_chat=True)
@@ -8087,11 +8193,11 @@ def test_oa_approval_missing_target_records_review_without_executing_action(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "oa_approval"
-    assert attempt.send_status == "skipped"
+    assert attempt.send_status == "failed"
     assert attempt.oa_process_instance_id == ""
     assert attempt.oa_task_id == ""
-    assert attempt.final_reply_text == "材料不足，暂不执行审批动作。"
-    assert attempt.send_error == "missing_oa_approval_target"
+    assert attempt.final_reply_text.startswith("你的审批申请需要补充或修改后重新提交。")
+    assert attempt.send_error == "missing_oa_applicant_user_id"
 
 
 def test_oa_approval_uses_worker_url_target_when_agent_omits_identifiers(
@@ -8847,6 +8953,7 @@ def test_oa_approval_is_not_discovered_when_dws_gate_needs_login(
         codex,
         monkeypatch,
         oa_approval_handler=oa_handler,
+        channel_gates=fixed_channel_gates(ChannelGateState.NEEDS_LOGIN),
     )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -10479,23 +10586,32 @@ def test_codex_invalid_refresh_token_retries_without_duplicate_notification(
 
 
 @pytest.mark.parametrize(
-    ("reason", "expected_detail"),
+    ("reason", "expected_prefix", "expected_detail", "notification_title"),
     [
         (
             "unexpected status 401 Unauthorized: Missing bearer or basic "
             "authentication in header, url: https://api.openai.com/v1/responses, "
             "cf-ray: abc, request id: req-1",
-            "OpenAI Responses API was called without a bearer/basic auth header",
+            "codex_provider_unavailable:",
+            "native Codex temporarily omitted the authenticated request header",
+            "CEO task waiting for Codex provider recovery: Friday",
         ),
         (
             "unexpected status 401 Unauthorized: invalid api key (2049), "
             "url: https://api.minimaxi.com/v1/responses",
+            "codex_provider_auth_failed:",
             "configured Codex model provider rejected its API key",
+            "CEO task waiting for authorization: Friday",
         ),
     ],
 )
-def test_codex_provider_auth_stop_with_error_records_clear_sanitized_failure(
-    tmp_path: Path, monkeypatch, reason: str, expected_detail: str
+def test_codex_provider_stop_with_error_records_clear_sanitized_failure(
+    tmp_path: Path,
+    monkeypatch,
+    reason: str,
+    expected_prefix: str,
+    expected_detail: str,
+    notification_title: str,
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
@@ -10519,10 +10635,9 @@ def test_codex_provider_auth_stop_with_error_records_clear_sanitized_failure(
     assert attempt is not None
     assert attempt.action == "stop_with_error"
     assert attempt.send_status == "blocked"
-    assert attempt.send_error.startswith("codex_provider_auth_failed:")
+    assert attempt.send_error.startswith(expected_prefix)
     assert expected_detail in attempt.send_error
-    assert "native codex exec selected a Responses API model provider" in attempt.send_error
-    assert "verify codex exec works in the service environment" in attempt.send_error
+    assert "codex exec works in the service environment" in attempt.send_error
     assert "CEO_CODEX_PROFILE" not in attempt.send_error
     assert "restore Codex CLI login" not in attempt.send_error
     assert "cf-ray" not in attempt.send_error
@@ -10530,7 +10645,7 @@ def test_codex_provider_auth_stop_with_error_records_clear_sanitized_failure(
     assert attempt.codex_reason == attempt.send_error
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
-    assert notifications[0]["title"] == "CEO task waiting for authorization: Friday"
+    assert notifications[0]["title"] == notification_title
     assert expected_detail[:40] in notifications[0]["message"]
 
 
@@ -11394,9 +11509,9 @@ def test_rerun_message_looks_up_trigger_by_id_when_recent_context_expired(
 
     assert processed == "msg-1"
     assert dws.recent_message_reads[0] == "cid-1"
-    assert dws.recent_message_reads.count("cid-1") == 2
-    assert dws.unread_message_reads == ["cid-1"]
-    assert dws.messages_by_id_reads == [["msg-1"]]
+    assert dws.recent_message_reads.count("cid-1") == 3
+    assert dws.unread_message_reads == ["cid-1", "cid-1"]
+    assert dws.messages_by_id_reads == [["msg-1"], ["msg-1"]]
     assert len(codex.calls) == 1
     assert final_sent(dws) == [("cid-1", "@周俊杰 改走B方案（by明哥分身）")]
 
