@@ -732,6 +732,8 @@ class DingTalkAutoReplyWorker:
         prompt_context_messages: list[DingTalkMessage],
     ) -> bool:
         effective_oa_url = task.oa_url.strip()
+        if not effective_oa_url and self._is_oa_approval_message(trigger):
+            effective_oa_url = self._trusted_pending_oa_url(trigger)
         if not effective_oa_url and not self._is_oa_approval_message(trigger):
             effective_oa_url = self._oa_context_url_override(
                 conversation,
@@ -7086,6 +7088,48 @@ class DingTalkAutoReplyWorker:
                 best_score = score
                 best_process_instance_id = candidate.process_instance_id
         return best_process_instance_id if best_score else ""
+
+    def _trusted_pending_oa_url(self, trigger: DingTalkMessage) -> str:
+        process_instance_id = self._find_pending_oa_process_instance_id(trigger)
+        if not process_instance_id:
+            return ""
+        try:
+            current_user_id = str(self.dws.get_current_user_id() or "").strip()
+        except Exception:
+            return ""
+        if not current_user_id:
+            return ""
+
+        payloads: list[dict[str, Any]] = []
+        for reader_name in (
+            "read_oa_approval_tasks",
+            "read_oa_approval_detail",
+            "read_oa_process_instance_openapi",
+        ):
+            reader = getattr(self.dws, reader_name, None)
+            if not callable(reader):
+                continue
+            try:
+                payload = reader(process_instance_id)
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                payloads.append(payload)
+
+        task_ids = {
+            self._universal_oa_task_id(task)
+            for task in self._universal_oa_dicts(payloads)
+            if self._universal_oa_task_owner(task) == current_user_id
+            and self._universal_oa_task_status(task) == "RUNNING"
+            and self._universal_oa_task_id(task)
+        }
+        if len(task_ids) != 1:
+            return ""
+        task_id = next(iter(task_ids))
+        return (
+            "https://aflow.dingtalk.com/detail?"
+            f"procInstId={quote(process_instance_id)}&taskId={quote(task_id)}"
+        )
 
     @staticmethod
     def _oa_matching_units(text: str) -> set[str]:

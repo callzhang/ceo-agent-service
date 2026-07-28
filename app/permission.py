@@ -56,6 +56,11 @@ class PermissionGate:
                 action=PermissionAction.ERROR,
                 reason=f"requester identity unavailable: {exc}",
             )
+        try:
+            if self.dws.is_hr_user(requester_user_id):
+                return PermissionResult(action=PermissionAction.ALLOW)
+        except Exception:
+            pass
         if not decision.personnel_subject_user_id:
             return PermissionResult(
                 action=PermissionAction.ERROR,
@@ -66,11 +71,6 @@ class PermissionGate:
             and requester_user_id == decision.personnel_subject_user_id
         ):
             return PermissionResult(action=PermissionAction.ALLOW)
-        try:
-            if self.dws.is_hr_user(requester_user_id):
-                return PermissionResult(action=PermissionAction.ALLOW)
-        except Exception:
-            pass
         subject_error = self._invalid_internal_personnel_subject_reason(
             decision.personnel_subject_user_id
         )

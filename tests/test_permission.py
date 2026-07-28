@@ -96,7 +96,7 @@ def test_internal_personnel_hr_private_requester_can_receive_other_person_reply(
     assert result.action == PermissionAction.ALLOW
 
 
-def test_internal_personnel_hr_private_requester_still_needs_subject():
+def test_internal_personnel_hr_private_requester_can_review_multiple_subjects():
     class Dws:
         def resolve_message_sender(self, message):
             return message.sender_user_id
@@ -112,8 +112,8 @@ def test_internal_personnel_hr_private_requester_still_needs_subject():
         trigger(),
     )
 
-    assert result.action == PermissionAction.ERROR
-    assert result.reason == "missing personnel subject"
+    assert result.action == PermissionAction.ALLOW
+    assert result.reason == ""
     assert result.reply_text == ""
 
 

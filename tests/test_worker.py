@@ -7966,6 +7966,42 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
     assert "3个月内完成 Friday 场景闭环" in detail_text
 
 
+def test_ding_approval_reminder_binds_unique_current_user_pending_task(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[Ding]刘瑞安提醒您审批他的录用申请", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.pending_oa_approvals = [
+        DwsOaApprovalCandidate(
+            process_instance_id="proc-1",
+            title="刘瑞安提交的录用申请",
+            process_name="录用申请",
+        )
+    ]
+    dws.oa_approval_tasks["proc-1"] = {
+        "result": {
+            "tasks": [
+                {
+                    "taskId": "task-1",
+                    "taskStatus": "RUNNING",
+                    "userId": "principal-user-1",
+                }
+            ]
+        }
+    }
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+
+    oa_url = worker._trusted_pending_oa_url(trigger)
+
+    assert "procInstId=proc-1" in oa_url
+    assert "taskId=task-1" in oa_url
+
+
 def test_oa_approval_detail_always_includes_openapi_comments(
     tmp_path: Path, monkeypatch
 ):
