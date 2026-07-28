@@ -82,6 +82,7 @@ from app.codex_memory_write import (
     MemoryWriteResult,
     run_codex_memory_write,
 )
+from app.codex_runner import selected_codex_model_provider
 from app.notification import (
     dingtalk_conversation_notification_url,
     send_macos_notification,
@@ -280,10 +281,16 @@ def _is_codex_provider_transport_error(reason: str) -> bool:
     normalized = reason.lower()
     if "/v1/responses" not in normalized:
         return False
+    native_missing_auth_header = (
+        "unexpected status 401 unauthorized" in normalized
+        and "missing bearer or basic authentication" in normalized
+        and selected_codex_model_provider() == "openai"
+    )
     return (
         "stream disconnected before completion" in normalized
         or "error sending request" in normalized
         or "process produced no output" in normalized
+        or native_missing_auth_header
     )
 
 
@@ -291,6 +298,8 @@ def _codex_provider_transport_error(reason: str) -> str:
     normalized = reason.lower()
     if "process produced no output" in normalized:
         detail = "Codex provider request produced no output before the idle timeout"
+    elif "missing bearer or basic authentication" in normalized:
+        detail = "native Codex temporarily omitted the authenticated request header"
     else:
         detail = "Codex provider request disconnected before completion"
     return (
@@ -5257,6 +5266,9 @@ class DingTalkAutoReplyWorker:
                 if self._is_authorization_error(
                     exc
                 ) or _is_codex_authorization_wait_reason(authorization_wait_error):
+                    provider_recovery = authorization_wait_error.startswith(
+                        CODEX_PROVIDER_UNAVAILABLE_PREFIX
+                    )
                     notify_authorization_wait = (
                         task.error.strip() != authorization_wait_error
                     )
@@ -5265,20 +5277,30 @@ class DingTalkAutoReplyWorker:
                     self.store.defer_reply_task_for_authorization(
                         task.id,
                         authorization_wait_error,
-                        available_at=self._reply_task_authorization_available_at(),
+                        available_at=(
+                            self._reply_task_retry_available_at(task.attempts)
+                            if provider_recovery
+                            else self._reply_task_authorization_available_at()
+                        ),
                     )
                     self.store.record_error(
                         task.conversation_id,
                         task.trigger_message_id,
-                        "reply_task_authorization",
+                        (
+                            "reply_task_provider_recovery"
+                            if provider_recovery
+                            else "reply_task_authorization"
+                        ),
                         authorization_wait_error,
                     )
                     if notify_authorization_wait:
+                        notification_prefix = (
+                            "CEO task waiting for Codex provider recovery: "
+                            if provider_recovery
+                            else "CEO task waiting for authorization: "
+                        )
                         self._notify(
-                            title=(
-                                "CEO task waiting for authorization: "
-                                f"{task.conversation_title}"
-                            ),
+                            title=notification_prefix + task.conversation_title,
                             message=authorization_wait_error[:120],
                             conversation=conversation,
                     )

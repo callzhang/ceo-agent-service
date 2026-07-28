@@ -943,6 +943,17 @@ class FakeCodex:
         return self.decision
 
 
+class FailingUniversalPlanner:
+    last_session_id = None
+
+    def __init__(self, error: str):
+        self.error = error
+
+    def plan(self, _context, session_id=None):
+        del session_id
+        raise RuntimeError(self.error)
+
+
 class FakeEnvelopeCodex:
     def __init__(self, envelope):
         self.envelope = envelope
@@ -4925,6 +4936,10 @@ def test_consume_once_codex_provider_auth_failure_waits_for_authorization(
         monkeypatch,
         max_task_attempts=3,
     )
+    worker._injected_universal_planner = FailingUniversalPlanner(
+        "unexpected status 401 Unauthorized: invalid api key, "
+        "url: https://api.example.invalid/v1/responses"
+    )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
@@ -4951,6 +4966,77 @@ def test_consume_once_codex_provider_auth_failure_waits_for_authorization(
     )
 
 
+def test_consume_once_native_codex_missing_auth_header_waits_for_provider_recovery(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+
+    def fail_codex(_prompt, _session_id):
+        raise RuntimeError(
+            "unexpected status 401 Unauthorized: Missing bearer or basic "
+            "authentication in header, url: "
+            "https://api.openai.com/v1/responses"
+        )
+
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走"),
+        before_decide=fail_codex,
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=3,
+    )
+
+    worker._injected_universal_planner = FailingUniversalPlanner(
+        "unexpected status 401 Unauthorized: Missing bearer or basic "
+        "authentication in header, url: "
+        "https://api.openai.com/v1/responses"
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        attempts, error, available_at = db.execute(
+            "select attempts, error, available_at from reply_tasks"
+        ).fetchone()
+    assert attempts == 0
+    assert error.startswith("codex_provider_unavailable:")
+    assert "omitted the authenticated request header" in error
+    assert available_at == "2026-05-13 17:01:00"
+    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
+    assert "reply_task_provider_recovery" in error_kinds
+    assert "reply_task_authorization" not in error_kinds
+    assert any(
+        notification["title"]
+        == "CEO task waiting for Codex provider recovery: Friday"
+        for notification in notifications
+    )
+
+
+def test_explicit_codex_provider_missing_auth_header_still_requires_authorization(
+    monkeypatch,
+):
+    monkeypatch.setenv("CEO_CODEX_MODEL_PROVIDER", "custom-responses")
+
+    normalized = worker_module._normalize_codex_stop_error_reason(
+        "unexpected status 401 Unauthorized: Missing bearer or basic "
+        "authentication in header, url: https://api.example.invalid/v1/responses"
+    )
+
+    assert normalized.startswith("codex_provider_auth_failed:")
+
+
 def test_consume_once_chatgpt_codex_forbidden_waits_for_authorization(
     tmp_path: Path, monkeypatch
 ):
@@ -4974,6 +5060,11 @@ def test_consume_once_chatgpt_codex_forbidden_waits_for_authorization(
         codex,
         monkeypatch,
         max_task_attempts=3,
+    )
+    worker._injected_universal_planner = FailingUniversalPlanner(
+        "unexpected status 403 Forbidden: <html>blocked</html>, "
+        "url: https://chatgpt.com/backend-api/codex/responses, "
+        "cf-ray: a17c9a26aeb585e3-HKG"
     )
     monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
     worker.produce_once()
@@ -5018,6 +5109,10 @@ def test_consume_once_codex_provider_transport_failure_waits_for_recovery(
         monkeypatch,
         max_task_attempts=3,
     )
+    worker._injected_universal_planner = FailingUniversalPlanner(
+        "stream disconnected before completion: error sending request "
+        "for url (https://api.openai.com/v1/responses)"
+    )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
@@ -5034,12 +5129,13 @@ def test_consume_once_codex_provider_transport_failure_waits_for_recovery(
     assert attempts == 0
     assert error.startswith("codex_provider_unavailable:")
     assert "disconnected before completion" in error
-    assert available_at == "2026-05-13 17:15:00"
+    assert available_at == "2026-05-13 17:01:00"
     error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
-    assert "reply_task_authorization" in error_kinds
-    assert "reply_task_retry" not in error_kinds
+    assert "reply_task_provider_recovery" in error_kinds
+    assert "reply_task_authorization" not in error_kinds
     assert any(
-        notification["title"] == "CEO task waiting for authorization: Friday"
+        notification["title"]
+        == "CEO task waiting for Codex provider recovery: Friday"
         for notification in notifications
     )
 
@@ -5069,6 +5165,12 @@ def test_consume_once_native_codex_transport_fallback_auth_failure_waits_for_rec
         monkeypatch,
         max_task_attempts=3,
     )
+    worker._injected_universal_planner = FailingUniversalPlanner(
+        "stream disconnected before completion: native codex exec transport "
+        "fallback ended with unexpected status 401 Unauthorized: Missing "
+        "bearer or basic authentication in header, url: "
+        "https://api.openai.com/v1/responses"
+    )
     monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
     worker.produce_once()
 
@@ -5076,7 +5178,7 @@ def test_consume_once_native_codex_transport_fallback_auth_failure_waits_for_rec
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
         error = db.execute("select error from reply_tasks").fetchone()[0]
     assert error.startswith("codex_provider_unavailable:")
-    assert "disconnected before completion" in error
+    assert "omitted the authenticated request header" in error
 
 
 def test_unresolvable_non_candidate_sender_does_not_block_conversation(

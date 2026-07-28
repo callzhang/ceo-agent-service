@@ -1303,7 +1303,7 @@ def test_process_work_items_command_backoffs_transient_codex_failure(
     assert row["available_at"] > ""
 
 
-def test_process_work_items_command_backoffs_codex_auth_failure(
+def test_process_work_items_command_backoffs_native_codex_missing_auth_header(
     tmp_path,
     monkeypatch,
     capsys,
@@ -1363,11 +1363,10 @@ def test_process_work_items_command_backoffs_codex_auth_failure(
         ).fetchone()
     assert row["status"] == "pending"
     assert row["attempts"] == 1
-    assert row["error"].startswith("codex_provider_auth_failed:")
-    assert "OpenAI Responses API was called without a bearer/basic auth header" in row[
+    assert row["error"].startswith("codex_provider_unavailable:")
+    assert "native Codex temporarily omitted the authenticated request header" in row[
         "error"
     ]
-    assert "native codex exec selected a Responses API model provider" in row["error"]
     assert "restore Codex CLI login" not in row["error"]
     assert "request id" not in row["error"]
     assert row["available_at"] > ""
@@ -1376,7 +1375,7 @@ def test_process_work_items_command_backoffs_codex_auth_failure(
     assert recorded.detail == row["error"]
 
 
-def test_process_work_items_command_keeps_codex_auth_failure_pending_after_limit(
+def test_process_work_items_command_keeps_native_missing_header_pending_after_limit(
     tmp_path,
     monkeypatch,
     capsys,
@@ -1441,7 +1440,7 @@ def test_process_work_items_command_keeps_codex_auth_failure_pending_after_limit
         ).fetchone()
     assert row["status"] == "pending"
     assert row["attempts"] == 4
-    assert row["error"].startswith("codex_provider_auth_failed:")
+    assert row["error"].startswith("codex_provider_unavailable:")
     assert row["available_at"] > ""
 
 

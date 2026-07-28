@@ -156,6 +156,16 @@ def _codex_config() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def selected_codex_model_provider() -> str:
+    provider = os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
+    if provider:
+        return provider
+    configured = _codex_config().get("model_provider")
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip()
+    return "openai"
+
+
 def _parse_export_env_file(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
