@@ -47,6 +47,7 @@ from app.store import AutoReplyStore
 from app.universal_context import UniversalTaskContext
 from app.universal_executor import build_universal_action_execution
 from app.universal_plan import PlannedAction, PlannedActionKind, UniversalAudit, UniversalPlan
+from app.wechat.models import WechatMessage
 
 
 def task_script_json(html: str, element_id: str):
@@ -4863,6 +4864,66 @@ def test_handle_rerun_attempt_post_requeues_task_and_redirects(tmp_path: Path):
     trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
     assert trigger.open_message_id == "msg-1"
     assert trigger.content == "@Alex Chen 这个怎么处理？"
+
+
+def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    trigger = WechatMessage(
+        account_id="acct-1",
+        conversation_id="melody115",
+        message_id="wx-1",
+        sender_id="melody115",
+        sender_display_name="Melody",
+        conversation_type="direct",
+        direction="inbound",
+        sent_at="2026-07-28T14:00:00+08:00",
+        kind="text",
+        text="最新问题",
+        source_version="4.1.10",
+    )
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id=trigger.conversation_id,
+        conversation_title="Melody",
+        single_chat=True,
+        trigger_message_id=trigger.message_id,
+        trigger_create_time=trigger.sent_at,
+        trigger_sender=trigger.sender_display_name,
+        trigger_text=trigger.text,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    attempt_id = store.record_reply_attempt(
+        channel="wechat",
+        conversation_id=trigger.conversation_id,
+        conversation_title="Melody",
+        trigger_message_id=trigger.message_id,
+        trigger_sender=trigger.sender_display_name,
+        trigger_text=trigger.text,
+        action="send_reply",
+        sensitivity_kind="normal",
+        send_status="failed",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="failed",
+        send_error="target_binding_unverified",
+    )
+
+    status, headers, html = handle_rerun_attempt_post(store, attempt_id)
+
+    assert status == 303
+    assert headers["Location"] == f"/attempts/{attempt_id}"
+    assert html == ""
+    task = store.get_reply_task_for_message(
+        trigger.conversation_id, trigger.message_id, channel="wechat",
+    )
+    assert task is not None
+    assert task.channel == "wechat"
+    assert task.status == "pending"
+    assert task.force_new_decision is True
+    assert WechatMessage.model_validate_json(task.trigger_message_json) == trigger
 
 
 def test_handle_rerun_attempt_post_replaces_invalid_legacy_task_json(

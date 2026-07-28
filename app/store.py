@@ -1564,6 +1564,7 @@ class AutoReplyStore:
         trigger_message_json: str,
         oa_url: str = "",
         attempt_id: int = 0,
+        channel: str = "dingtalk",
     ) -> ReplyTask:
         execution_generation = uuid4().hex
         with self._connect() as db:
@@ -1588,7 +1589,7 @@ class AutoReplyStore:
                     locked_at,
                     error
                 )
-                values ('dingtalk', ?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, 'pending', null, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, 'pending', null, ?)
                 on conflict(channel, conversation_id, trigger_message_id) do update set
                     conversation_title=excluded.conversation_title,
                     single_chat=excluded.single_chat,
@@ -1607,6 +1608,7 @@ class AutoReplyStore:
                     updated_at=current_timestamp
                 """,
                 (
+                    channel,
                     conversation_id,
                     conversation_title,
                     int(single_chat),
@@ -1625,10 +1627,10 @@ class AutoReplyStore:
                 """
                 select *
                 from reply_tasks
-                where channel='dingtalk'
+                where channel=?
                   and conversation_id=? and trigger_message_id=?
                 """,
-                (conversation_id, trigger_message_id),
+                (channel, conversation_id, trigger_message_id),
             ).fetchone()
             if row is None:
                 raise RuntimeError("manual rerun reply task was not persisted")

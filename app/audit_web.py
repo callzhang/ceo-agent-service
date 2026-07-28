@@ -91,6 +91,7 @@ from app.dingtalk_models import (
     DingTalkMessage,
     SensitivityKind,
 )
+from app.wechat.models import WechatMessage
 from app.dws_client import DwsClient
 from app.feedback_spike import (
     FeedbackLinkContext,
@@ -6403,8 +6404,14 @@ def handle_rerun_attempt_post(
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
+    channel = attempt.channel or "dingtalk"
+    existing_task = store.get_reply_task_for_message(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+        channel=channel,
+    )
     conversation_record = store.get_conversation(attempt.conversation_id)
-    if conversation_record is None:
+    if conversation_record is None and existing_task is None:
         return (
             404,
             {},
@@ -6413,15 +6420,32 @@ def handle_rerun_attempt_post(
                 f"<p>Conversation not found: {escape(attempt.conversation_id)}</p>",
             ),
         )
-    existing_task = store.get_reply_task_for_message(
-        attempt.conversation_id,
-        attempt.trigger_message_id,
-    )
     if existing_task is not None and _is_valid_rerun_trigger_json(
-        existing_task.trigger_message_json
+        existing_task.trigger_message_json,
+        channel=channel,
     ):
         trigger_message_json = existing_task.trigger_message_json
         trigger_create_time = existing_task.trigger_create_time
+        conversation_title = existing_task.conversation_title
+        single_chat = existing_task.single_chat
+    elif channel == "wechat":
+        return (
+            409,
+            {},
+            render_page(
+                "WeChat trigger unavailable",
+                "<p>WeChat trigger payload is unavailable; rerun was not queued.</p>",
+            ),
+        )
+    elif conversation_record is None:
+        return (
+            404,
+            {},
+            render_page(
+                "Conversation not found",
+                f"<p>Conversation not found: {escape(attempt.conversation_id)}</p>",
+            ),
+        )
     else:
         trigger_message = DingTalkMessage(
             open_conversation_id=attempt.conversation_id,
@@ -6434,10 +6458,12 @@ def handle_rerun_attempt_post(
         )
         trigger_message_json = trigger_message.model_dump_json()
         trigger_create_time = trigger_message.create_time
+        conversation_title = conversation_record.title
+        single_chat = conversation_record.single_chat
     store.enqueue_manual_rerun_reply_task(
         conversation_id=attempt.conversation_id,
-        conversation_title=conversation_record.title,
-        single_chat=conversation_record.single_chat,
+        conversation_title=conversation_title,
+        single_chat=single_chat,
         trigger_message_id=attempt.trigger_message_id,
         trigger_create_time=trigger_create_time,
         trigger_sender=attempt.trigger_sender,
@@ -6445,13 +6471,19 @@ def handle_rerun_attempt_post(
         trigger_message_json=trigger_message_json,
         oa_url=attempt.oa_url,
         attempt_id=attempt.id,
+        channel=channel,
     )
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
 
 
-def _is_valid_rerun_trigger_json(trigger_message_json: str) -> bool:
+def _is_valid_rerun_trigger_json(
+    trigger_message_json: str, *, channel: str = "dingtalk",
+) -> bool:
     try:
-        DingTalkMessage.model_validate_json(trigger_message_json)
+        if channel == "wechat":
+            WechatMessage.model_validate_json(trigger_message_json)
+        else:
+            DingTalkMessage.model_validate_json(trigger_message_json)
     except ValueError:
         return False
     return True
