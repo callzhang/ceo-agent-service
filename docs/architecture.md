@@ -255,7 +255,7 @@ SQLite 是系统事实源。主要表按职责分组：
 
 - 外部可见动作必须先有本地记录。
 - 重复消息靠唯一键和 sent reply 记录抑制。
-- `memory_write` 使用持久化 lease；恢复扫描只接管已过期的 `started`、明确后端失败和结果未知动作，不抢占仍有效的执行；未知结果沿同一冻结 payload 幂等重试。
+- `memory_write` 使用持久化 lease；恢复扫描只接管已过期的 `started`、明确后端失败、旧版本遗留的 `blocked + memory_backend_unavailable` 和结果未知动作，不抢占仍有效的执行，也不放开其他业务 blocked；未知结果沿同一冻结 payload 幂等重试。
 - recoverable blocked/failed 不能被当作完成。
 - 确定不可恢复的 blocked 必须写清楚原因，避免每轮重复修复。
 

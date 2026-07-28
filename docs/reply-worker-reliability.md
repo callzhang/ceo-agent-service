@@ -91,6 +91,9 @@ universal context and plan from SQLite, reruns only that `memory_write` action,
 and does not replan or resend the chat reply. Recovery is limited to one action
 per daily pass and uses the same stable memory source description, so duplicate
 Memory writes can be detected by the Memory layer.
+Legacy action rows recorded as `blocked` are also recoverable only when their
+error starts with `memory_backend_unavailable:`; other blocked actions remain
+ineligible for automatic execution.
 
 ## DWS upgrade check
 

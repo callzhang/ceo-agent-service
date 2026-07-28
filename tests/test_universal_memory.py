@@ -583,6 +583,43 @@ def test_retry_failed_universal_memory_writes_recovers_backend_failure(tmp_path)
     )
 
 
+def test_retry_recovers_legacy_blocked_memory_backend_failure(tmp_path) -> None:
+    first_runner = FakeMemoryWriteRunner(
+        [CodexMemoryWriteToolFailed("memory backend unavailable")]
+    )
+    store, _, execution, worker = build_execution(
+        tmp_path, memory_write_runner=first_runner
+    )
+    assert worker.execute_universal_memory_write(execution) is True
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """
+            update universal_action_executions
+            set status='blocked', error=?
+            """,
+            (
+                "memory_backend_unavailable:neo4j_connection_refused; "
+                "memory_write_not_confirmed; "
+                "retry_when_memory_backend_recovers",
+            ),
+        )
+
+    resumed_worker = DingTalkAutoReplyWorker(
+        store=AutoReplyStore(store.path),
+        dws=object(),
+        codex=object(),
+        memory_write_runner=FakeMemoryWriteRunner(
+            [MemoryWriteResult("episode-1", "queued", False)]
+        ),
+    )
+
+    assert resumed_worker.retry_failed_universal_memory_writes(limit=1) == 1
+    assert (
+        resumed_worker.store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+
+
 def test_memory_unknown_recovery_rejects_tampered_frozen_payload(tmp_path) -> None:
     runner = FakeMemoryWriteRunner([TimeoutError("network timeout")])
     store, _, execution, worker = build_execution(tmp_path, memory_write_runner=runner)

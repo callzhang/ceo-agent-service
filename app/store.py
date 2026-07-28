@@ -2242,7 +2242,16 @@ class AutoReplyStore:
                     UniversalActionExecutionState.UNKNOWN
                 )
             previous_status = row["status"]
-            if previous_status not in {"started", "unknown", "failed"}:
+            retryable_legacy_blocked = (
+                previous_status == "blocked"
+                and str(row["error"] or "").startswith(
+                    "memory_backend_unavailable:"
+                )
+            )
+            if (
+                previous_status not in {"started", "unknown", "failed"}
+                and not retryable_legacy_blocked
+            ):
                 return UniversalMemoryActionClaim(
                     UniversalActionExecutionState.UNKNOWN
                 )
@@ -2882,6 +2891,10 @@ class AutoReplyStore:
                       or (
                           actions.status='unknown'
                           and actions.error like 'memory_write_outcome_unknown:%'
+                      )
+                      or (
+                          actions.status='blocked'
+                          and actions.error like 'memory_backend_unavailable:%'
                       )
                   )
                 order by actions.updated_at, actions.execution_id
