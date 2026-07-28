@@ -6,7 +6,128 @@ from pathlib import Path
 
 import pytest
 
-from app.channel_gate import ChannelGateState, DwsChannelGate, LarkChannelGate
+from datetime import datetime, timedelta, timezone
+
+from app.channel_gate import (
+    ChannelGateResult,
+    ChannelGateState,
+    DwsChannelGate,
+    LarkChannelGate,
+    LoginCoordinator,
+)
+from app.store import AutoReplyStore
+
+
+class FakeProcess:
+    def __init__(self, pid: int, returncode: int | None = None):
+        self.pid = pid
+        self.returncode = returncode
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+
+def test_login_coordinator_starts_one_process_and_suppresses_repeats(tmp_path):
+    store = AutoReplyStore(tmp_path / "db.sqlite3")
+    launches = []
+    coordinator = LoginCoordinator(
+        store=store,
+        launchers={"dingtalk": lambda: launches.append("dws") or FakeProcess(41)},
+        now=lambda: datetime(2026, 7, 28, 12, tzinfo=timezone.utc),
+        pid_alive=lambda pid: pid == 41,
+    )
+    gate = ChannelGateResult(
+        channel="dingtalk",
+        state=ChannelGateState.NEEDS_LOGIN,
+        reason_code="live_probe_auth_failed",
+    )
+
+    assert coordinator.handle(gate).launched is True
+    reused = coordinator.handle(gate)
+
+    assert reused.suppressed is True
+    assert reused.pid == 41
+    assert launches == ["dws"]
+
+
+def test_login_coordinator_suppresses_failed_process_for_one_hour(tmp_path):
+    store = AutoReplyStore(tmp_path / "db.sqlite3")
+    current = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
+    launches = []
+    process = FakeProcess(41)
+    coordinator = LoginCoordinator(
+        store=store,
+        launchers={"dingtalk": lambda: launches.append("dws") or process},
+        now=lambda: current,
+        pid_alive=lambda _pid: False,
+    )
+    gate = ChannelGateResult(
+        channel="dingtalk",
+        state=ChannelGateState.NEEDS_LOGIN,
+        reason_code="live_probe_auth_failed",
+    )
+    assert coordinator.handle(gate).launched is True
+    process.returncode = 1
+
+    current += timedelta(minutes=59)
+    assert coordinator.handle(gate).suppressed is True
+    assert launches == ["dws"]
+
+    current += timedelta(minutes=2)
+    assert coordinator.handle(gate).launched is True
+    assert launches == ["dws", "dws"]
+
+
+def test_login_coordinator_ready_preserves_suppression_timestamp(tmp_path):
+    store = AutoReplyStore(tmp_path / "db.sqlite3")
+    now = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
+    launches = []
+    coordinator = LoginCoordinator(
+        store=store,
+        launchers={"dingtalk": lambda: launches.append("dws") or FakeProcess(41)},
+        now=lambda: now,
+        pid_alive=lambda _pid: False,
+    )
+    needs_login = ChannelGateResult(
+        channel="dingtalk",
+        state=ChannelGateState.NEEDS_LOGIN,
+        reason_code="live_probe_auth_failed",
+    )
+    assert coordinator.handle(needs_login).launched is True
+    before = store.get_service_state("channel_login_request:dingtalk")
+
+    ready = ChannelGateResult(
+        channel="dingtalk",
+        state=ChannelGateState.READY,
+        reason_code="ready",
+    )
+    assert coordinator.handle(ready).launched is False
+    after = store.get_service_state("channel_login_request:dingtalk")
+
+    assert '"status": "healthy"' in after
+    assert '"started_at": "2026-07-28T12:00:00+00:00"' in after
+    assert before is not None
+    assert launches == ["dws"]
+
+
+def test_login_coordinator_blocked_does_not_launch(tmp_path):
+    store = AutoReplyStore(tmp_path / "db.sqlite3")
+    launches = []
+    coordinator = LoginCoordinator(
+        store=store,
+        launchers={"lark": lambda: launches.append("lark") or FakeProcess(42)},
+    )
+
+    result = coordinator.handle(
+        ChannelGateResult(
+            channel="lark",
+            state=ChannelGateState.BLOCKED,
+            reason_code="configuration_missing",
+        )
+    )
+
+    assert result.launched is False
+    assert launches == []
 
 
 def completed(

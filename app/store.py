@@ -2449,6 +2449,75 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise ValueError("universal action execution must be started")
 
+    def peek_reply_tasks(
+        self, limit: int, now: str | None = None, *, channel: str | None = None
+    ) -> list[ReplyTask]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            now_expression = "current_timestamp" if now is None else "?"
+            clauses = [
+                "status='pending'",
+                f"(available_at='' or available_at <= {now_expression})",
+            ]
+            args: list[str | int] = []
+            if now is not None:
+                args.append(now)
+            if channel is not None:
+                clauses.append("channel=?")
+                args.append(channel)
+            args.append(limit)
+            rows = db.execute(
+                f"""
+                select *
+                from reply_tasks
+                where {' and '.join(clauses)}
+                order by id
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in rows]
+
+    def get_reply_task(self, task_id: int) -> ReplyTask | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from reply_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            return self._reply_task_from_row(row) if row is not None else None
+
+    def claim_reply_task(
+        self, task_id: int, now: str | None = None
+    ) -> ReplyTask | None:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            now_expression = "current_timestamp" if now is None else "?"
+            args: list[str | int] = [task_id]
+            if now is not None:
+                args.append(now)
+            cursor = db.execute(
+                f"""
+                update reply_tasks
+                set status='processing',
+                    attempts=attempts + 1,
+                    locked_at=current_timestamp,
+                    available_at='',
+                    updated_at=current_timestamp
+                where id=?
+                  and status='pending'
+                  and (available_at='' or available_at <= {now_expression})
+                """,
+                args,
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = db.execute(
+                "select * from reply_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            return self._reply_task_from_row(row)
+
     def claim_reply_tasks(
         self, limit: int, now: str | None = None, *, channel: str = "dingtalk"
     ) -> list[ReplyTask]:

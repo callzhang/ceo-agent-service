@@ -24,6 +24,14 @@ from app.codex_decision import (
     append_signature,
     codex_decision_from_envelope,
 )
+from app.channel_gate import (
+    ChannelGate,
+    ChannelGateResult,
+    ChannelGateState,
+    LoginCoordinator,
+    default_channel_gates,
+    start_lark_auth_login,
+)
 from app.config import (
     agent_mention_aliases,
     assistant_signature,
@@ -408,7 +416,7 @@ ROBOT_DIRECT_MESSAGE_LOOKBACK = env_duration(
     "CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK",
     timedelta(hours=4),
 )
-DWS_AUTH_LOGIN_STATE_KEY = "dws_auth_login"
+DWS_AUTH_LOGIN_STATE_KEY = "channel_login_request:dingtalk"
 DWS_AUTH_BACKUP_STATE_KEY = "dws_auth_backup"
 DWS_AUTH_BACKUP_INTERVAL = env_duration(
     "CEO_DWS_AUTH_BACKUP_INTERVAL",
@@ -421,7 +429,6 @@ DWS_AUTH_BACKUP_STATUS_FIELDS = (
     "expires_at",
     "refresh_expires_at",
 )
-DWS_AUTH_LOGIN_REQUEST_SUPPRESSION_WINDOW = timedelta(hours=1)
 DWS_PAT_AUTHORIZATION_STATE_KEY = "dws_pat_authorization"
 DWS_PAT_AUTHORIZATION_REQUEST_SUPPRESSION_WINDOW = timedelta(hours=1)
 DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
@@ -527,6 +534,8 @@ class DingTalkAutoReplyWorker:
         memory_write_runner: Callable[..., MemoryWriteResult] | None = None,
         universal_planner=None,
         universal_dependency_status_provider=None,
+        channel_gates: dict[str, ChannelGate] | None = None,
+        login_coordinator: LoginCoordinator | None = None,
     ):
         self.store = store
         self.dws = dws
@@ -547,7 +556,18 @@ class DingTalkAutoReplyWorker:
         self._universal_dependency_status_provider = (
             universal_dependency_status_provider or self.universal_dependency_status
         )
-        self._dws_auth_login_process = None
+        self.channel_gates = channel_gates or default_channel_gates(
+            dws_binary=str(getattr(dws, "dws_bin", "dws"))
+        )
+        self.login_coordinator = login_coordinator or LoginCoordinator(
+            store=store,
+            launchers={
+                "dingtalk": lambda: getattr(self.dws, "dws", self.dws).start_auth_login(),
+                "lark": start_lark_auth_login,
+            },
+            now=lambda: self._now().astimezone(timezone.utc),
+        )
+        self._pass_channel_results: dict[str, ChannelGateResult] = {}
 
     def universal_dependency_status(
         self,
@@ -4056,8 +4076,83 @@ class DingTalkAutoReplyWorker:
             default=default,
         )
 
+    def _channel_result(self, channel: str) -> ChannelGateResult:
+        cached = self._pass_channel_results.get(channel)
+        if cached is not None:
+            return cached
+        gate = self.channel_gates.get(channel)
+        result = (
+            gate.check()
+            if gate is not None
+            else ChannelGateResult(
+                channel=channel,
+                state=ChannelGateState.BLOCKED,
+                reason_code="gate_not_configured",
+            )
+        )
+        self._pass_channel_results[channel] = result
+        self.store.set_service_state(
+            f"channel_gate:{channel}",
+            json.dumps(
+                {
+                    "status": result.state.value,
+                    "reason_code": result.reason_code,
+                    "checked_at": self._now().astimezone(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+        self.login_coordinator.handle(result)
+        return result
+
+    def _required_channels_ready(self, channels: set[str]) -> bool:
+        results = [self._channel_result(channel) for channel in sorted(channels)]
+        return all(result.state is ChannelGateState.READY for result in results)
+
+    @staticmethod
+    def required_channels_for_task(task: ReplyTask) -> set[str]:
+        channels = {task.channel}
+        try:
+            payload = json.loads(task.trigger_message_json)
+        except (json.JSONDecodeError, TypeError):
+            payload = None
+        references = [task.oa_url]
+        references.extend(DingTalkAutoReplyWorker._task_reference_strings(payload))
+        for value in references:
+            for token in value.split():
+                candidate = token.strip("()[]{}<>\"',.;，。；：")
+                host = (urlsplit(candidate).hostname or "").casefold()
+                if DingTalkAutoReplyWorker._host_matches(
+                    host, ("dingtalk.com", "alidocs.com")
+                ):
+                    channels.add("dingtalk")
+                if DingTalkAutoReplyWorker._host_matches(
+                    host, ("feishu.cn", "larksuite.com", "larkoffice.com")
+                ):
+                    channels.add("lark")
+        return channels
+
+    @staticmethod
+    def _task_reference_strings(value: object):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for nested in value.values():
+                yield from DingTalkAutoReplyWorker._task_reference_strings(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from DingTalkAutoReplyWorker._task_reference_strings(nested)
+
+    @staticmethod
+    def _host_matches(host: str, suffixes: tuple[str, ...]) -> bool:
+        return any(host == suffix or host.endswith(f".{suffix}") for suffix in suffixes)
+
     def produce_once(self, max_tasks: int | None = None) -> int:
         if max_tasks == 0:
+            return 0
+        self._pass_channel_results = {}
+        if not self._required_channels_ready({"dingtalk"}):
             return 0
         self._maybe_upgrade_dws_once_per_day()
         self._maybe_refresh_org_cache_once_per_week()
@@ -4642,22 +4737,6 @@ class DingTalkAutoReplyWorker:
     def _is_dws_login_error(exc: Exception) -> bool:
         return isinstance(exc, DwsError) and exc.needs_login
 
-    def _dws_auth_login_state(self) -> dict[str, Any]:
-        raw = self.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY)
-        if not raw:
-            return {}
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        return payload if isinstance(payload, dict) else {}
-
-    def _set_dws_auth_login_state(self, state: dict[str, Any]) -> None:
-        self.store.set_service_state(
-            DWS_AUTH_LOGIN_STATE_KEY,
-            json.dumps(state, ensure_ascii=False, sort_keys=True),
-        )
-
     def _dws_pat_authorization_state(self) -> dict[str, Any]:
         raw = self.store.get_service_state(DWS_PAT_AUTHORIZATION_STATE_KEY)
         if not raw:
@@ -4726,30 +4805,9 @@ class DingTalkAutoReplyWorker:
         )
 
     def _ensure_dws_ready_for_codex(self) -> None:
-        auth_status = self._dws_auth_status_for_backup()
-        if self._dws_auth_status_is_ready(auth_status):
-            self._set_dws_auth_login_state(
-                {
-                    "status": "authenticated",
-                    "checked_at": self._now().astimezone(timezone.utc).isoformat(),
-                    **self._dws_auth_backup_status_fields(auth_status),
-                }
-            )
+        if self._channel_result("dingtalk").state is ChannelGateState.READY:
             return
-        status_fields = self._dws_auth_backup_status_fields(auth_status)
         reason = "DWS auth status is not ready for noninteractive Codex execution"
-        login_requested = self._ensure_dws_auth_login(
-            DwsError(reason, code="2"),
-        )
-        if not login_requested:
-            self._set_dws_auth_login_state(
-                {
-                    "status": "blocked",
-                    "reason": reason,
-                    "checked_at": self._now().astimezone(timezone.utc).isoformat(),
-                    **status_fields,
-                }
-            )
         raise DwsAuthorizationRequiredError(reason)
 
     def _dws_auth_backup_due(
@@ -4883,72 +4941,6 @@ class DingTalkAutoReplyWorker:
         self._maybe_backup_dws_auth()
         return result
 
-    def _monitor_dws_auth_login(self, state: dict[str, Any]) -> dict[str, Any]:
-        process = self._dws_auth_login_process
-        if process is None:
-            if state.get("status") == "running" and not self._dws_auth_login_pid_alive(
-                state
-            ):
-                state = {
-                    **state,
-                    "status": "stale",
-                    "error": "dws auth login process is no longer running",
-                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
-                }
-                self._set_dws_auth_login_state(state)
-            return state
-        exit_code = process.poll()
-        if exit_code is None:
-            if state.get("status") != "running":
-                state = {
-                    **state,
-                    "status": "running",
-                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
-                }
-                self._set_dws_auth_login_state(state)
-            return state
-        self._dws_auth_login_process = None
-        status = "completed" if exit_code == 0 else "failed"
-        state = {
-            **state,
-            "status": status,
-            "exit_code": exit_code,
-            "updated_at": self._now().astimezone(timezone.utc).isoformat(),
-        }
-        self._set_dws_auth_login_state(state)
-        self._notify(
-            title=f"CEO DWS auth login {status}",
-            message=f"dws auth login exited with code {exit_code}",
-        )
-        return state
-
-    @staticmethod
-    def _dws_auth_login_pid_alive(state: dict[str, Any]) -> bool:
-        pid = state.get("pid")
-        if not isinstance(pid, int) or pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
-
-    def _dws_auth_login_request_is_recent(self, state: dict[str, Any]) -> bool:
-        if state.get("status") not in {"running", "stale", "failed"}:
-            return False
-        if not isinstance(state.get("pid"), int):
-            return False
-        started_at = state.get("started_at")
-        if not isinstance(started_at, str):
-            return False
-        started = self._parse_service_state_datetime(started_at)
-        if started is None:
-            return False
-        age = self._now().astimezone(timezone.utc) - started.astimezone(timezone.utc)
-        return timedelta(0) <= age < DWS_AUTH_LOGIN_REQUEST_SUPPRESSION_WINDOW
-
     def _dws_pat_authorization_request_is_recent(
         self, state: dict[str, Any], scopes: tuple[str, ...]
     ) -> bool:
@@ -5053,63 +5045,22 @@ class DingTalkAutoReplyWorker:
         return True
 
     def _ensure_dws_auth_login(self, exc: Exception) -> bool:
-        state = self._monitor_dws_auth_login(self._dws_auth_login_state())
-        if state.get("status") == "running" or self._dws_auth_login_request_is_recent(
-            state
-        ):
-            return True
-        auth_status = self._dws_auth_status_for_backup()
-        if self._dws_auth_status_is_ready(auth_status):
-            self._set_dws_auth_login_state(
-                {
-                    "status": "authenticated",
-                    "reason": str(exc),
-                    "checked_at": self._now().astimezone(timezone.utc).isoformat(),
-                    **self._dws_auth_backup_status_fields(auth_status),
-                }
-            )
-            return True
-        try:
-            process = self.dws.start_auth_login()
-        except Exception as start_exc:
-            self.store.record_error(None, None, "dws_auth_login", str(start_exc))
-            self._set_dws_auth_login_state(
-                {
-                    "status": "failed",
-                    "reason": str(exc),
-                    "error": str(start_exc),
-                    "started_at": self._now().astimezone(timezone.utc).isoformat(),
-                }
-            )
-            self._notify(
-                title="CEO DWS auth login failed",
-                message=str(start_exc)[:120],
-            )
-            return False
-        self._dws_auth_login_process = process
-        self._set_dws_auth_login_state(
-            {
-                "status": "running",
-                "pid": process.pid,
-                "reason": str(exc),
-                "started_at": self._now().astimezone(timezone.utc).isoformat(),
-            }
+        del exc
+        result = self._channel_result("dingtalk")
+        handled = self.login_coordinator.handle(result)
+        return (
+            result.state is ChannelGateState.READY
+            or handled.launched
+            or handled.suppressed
         )
-        self._notify(
-            title="CEO DWS auth login required",
-            message="Started dws auth login. Please complete DingTalk login.",
-        )
-        return True
 
     def _mark_dws_auth_healthy(self) -> None:
-        state = self._monitor_dws_auth_login(self._dws_auth_login_state())
-        if state.get("status") == "authenticated":
-            return
-        self._set_dws_auth_login_state(
-            {
-                "status": "authenticated",
-                "checked_at": self._now().astimezone(timezone.utc).isoformat(),
-            }
+        self.login_coordinator.handle(
+            ChannelGateResult(
+                channel="dingtalk",
+                state=ChannelGateState.READY,
+                reason_code="ready",
+            )
         )
 
     def _skip_messages_outside_recent_window(
@@ -5145,6 +5096,7 @@ class DingTalkAutoReplyWorker:
     def consume_once(self, max_tasks: int | None = None) -> int:
         if max_tasks == 0:
             return 0
+        self._pass_channel_results = {}
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
         stale_tasks = self.store.list_stale_processing_reply_tasks(
@@ -5190,13 +5142,24 @@ class DingTalkAutoReplyWorker:
                 message=f"requeued {len(recovered_lock_tasks)} task(s)",
             )
         for _ in range(limit):
-            claimed_tasks = self.store.claim_reply_tasks(
+            pending_tasks = self.store.peek_reply_tasks(
                 1,
                 now=self._sqlite_timestamp(self._now()),
+                channel="dingtalk",
             )
-            if not claimed_tasks:
+            if not pending_tasks:
                 break
-            task = claimed_tasks[0]
+            pending_task = pending_tasks[0]
+            if not self._required_channels_ready(
+                self.required_channels_for_task(pending_task)
+            ):
+                break
+            task = self.store.claim_reply_task(
+                pending_task.id,
+                now=self._sqlite_timestamp(self._now()),
+            )
+            if task is None:
+                continue
             conversation = DingTalkConversation(
                 open_conversation_id=task.conversation_id,
                 title=task.conversation_title,

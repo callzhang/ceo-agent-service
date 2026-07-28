@@ -14,6 +14,7 @@ import pytest
 from app.agent_envelope import AgentEnvelope
 import app.worker as worker_module
 from app.codex_decision import CodexDecisionRunner, append_signature
+from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.corpus import CorpusRecord
 from app.dingtalk_models import (
     CodexAction,
@@ -53,6 +54,41 @@ class FakeAuthLoginProcess:
 
     def poll(self) -> int | None:
         return self.returncode
+
+
+class FixedGate:
+    def __init__(self, channel: str, state: ChannelGateState):
+        self.channel_name = channel
+        self.state = state
+        self.calls = 0
+
+    def check(self) -> ChannelGateResult:
+        self.calls += 1
+        return ChannelGateResult(
+            channel=self.channel_name,
+            state=self.state,
+            reason_code=self.state.value,
+        )
+
+
+class FakeDwsGate:
+    channel_name = "dingtalk"
+
+    def __init__(self, dws):
+        self.dws = dws
+
+    def check(self) -> ChannelGateResult:
+        status = self.dws.auth_status()
+        ready = all(
+            status.get(field) is True
+            for field in ("authenticated", "token_valid", "refresh_token_valid")
+        )
+        state = ChannelGateState.READY if ready else ChannelGateState.NEEDS_LOGIN
+        return ChannelGateResult(
+            channel="dingtalk",
+            state=state,
+            reason_code=state.value,
+        )
 
 
 def fixed_worker_now() -> datetime:
@@ -1227,6 +1263,7 @@ def make_worker(
     max_task_attempts: int = 3,
     oa_approval_handler=None,
     fast_path_unread_backoff: timedelta = timedelta(0),
+    channel_gates=None,
 ) -> DingTalkAutoReplyWorker:
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "0")
     monkeypatch.setattr(
@@ -1248,6 +1285,11 @@ def make_worker(
         now_provider=fixed_worker_now,
         max_task_attempts=max_task_attempts,
         oa_approval_handler=oa_approval_handler,
+        channel_gates=channel_gates
+        or {
+            "dingtalk": FakeDwsGate(dws),
+            "lark": FixedGate("lark", ChannelGateState.READY),
+        },
     )
 
 
@@ -1489,6 +1531,54 @@ def test_group_without_principal_mention_does_not_call_codex_or_send(
 
     assert codex.calls == []
     assert final_sent(dws) == []
+
+
+def test_producer_does_not_call_dws_when_gate_is_not_ready(tmp_path, monkeypatch):
+    dws = FakeDws([], {})
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex([]),
+        monkeypatch,
+        channel_gates={
+            "dingtalk": FixedGate("dingtalk", ChannelGateState.NEEDS_LOGIN),
+            "lark": FixedGate("lark", ChannelGateState.READY),
+        },
+    )
+
+    assert worker.produce_once() == 0
+    assert dws.list_unread_calls == 0
+    assert dws.upgrade_check_calls == 0
+    assert dws.auth_login_starts == 1
+
+
+def test_required_channels_for_task_detects_referenced_channel_capabilities(
+    tmp_path, monkeypatch
+):
+    worker = make_worker(tmp_path, FakeDws([], {}), FakeCodex([]), monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Derek",
+        trigger_text="read the referenced docs",
+        trigger_message_json=json.dumps(
+            {
+                "content": "https://example.feishu.cn/docx/abc",
+                "quoted_content": "https://alidocs.dingtalk.com/i/nodes/xyz",
+            }
+        ),
+        channel="custom",
+    )
+    task = worker.store.peek_reply_tasks(limit=1, channel="custom")[0]
+
+    assert worker.required_channels_for_task(task) == {
+        "custom",
+        "dingtalk",
+        "lark",
+    }
 
 
 def test_produce_once_records_list_unread_failure_without_crashing(
@@ -1882,13 +1972,7 @@ def test_produce_once_starts_dws_auth_login_once_for_login_error(
         for notification in notifications
         if notification["title"] == "CEO DWS auth login required"
     ]
-    assert auth_notifications == [
-        {
-            "title": "CEO DWS auth login required",
-            "message": "Started dws auth login. Please complete DingTalk login.",
-            "url": None,
-        }
-    ]
+    assert auth_notifications == []
     assert codex.calls == []
 
 
@@ -1921,9 +2005,7 @@ def test_produce_once_uses_auth_status_for_unclassified_dws_failure(
     assert dws.auth_status_calls >= 1
     assert dws.auth_login_starts == 1
     assert worker.store.count_errors() == 0
-    assert [item["title"] for item in notifications] == [
-        "CEO DWS auth login required"
-    ]
+    assert notifications == []
 
 
 def test_produce_once_does_not_start_dws_auth_login_when_auth_status_is_valid(
@@ -1952,9 +2034,9 @@ def test_produce_once_does_not_start_dws_auth_login_when_auth_status_is_valid(
     assert dws.auth_status_calls >= 1
     assert dws.auth_login_starts == 0
     state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
-    assert state["status"] == "authenticated"
-    assert state["token_valid"] is True
-    assert state["refresh_token_valid"] is True
+    assert state["status"] == "healthy"
+    assert "token_valid" not in state
+    assert "refresh_token_valid" not in state
     assert notifications == []
 
 
@@ -1986,13 +2068,7 @@ def test_consume_once_checks_dws_auth_before_starting_codex(
     state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
     assert state["status"] == "running"
     assert state["pid"] == 1234
-    assert notifications == [
-        {
-            "title": "CEO DWS auth login required",
-            "message": "Started dws auth login. Please complete DingTalk login.",
-            "url": None,
-        }
-    ]
+    assert notifications == []
 
 
 def test_produce_once_restarts_stale_persisted_dws_auth_login(
@@ -2026,10 +2102,7 @@ def test_produce_once_restarts_stale_persisted_dws_auth_login(
     state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
     assert state["status"] == "running"
     assert state["pid"] == 1234
-    assert any(
-        notification["title"] == "CEO DWS auth login required"
-        for notification in notifications
-    )
+    assert notifications == []
 
 
 def test_produce_once_does_not_start_second_dws_auth_login_for_recent_request(
@@ -2067,7 +2140,7 @@ def test_produce_once_does_not_start_second_dws_auth_login_for_recent_request(
 
     assert dws.auth_login_starts == 0
     state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
-    assert state["status"] == "stale"
+    assert state["status"] == "running"
     assert state["pid"] == 99999999
     assert notifications == []
 
@@ -2104,10 +2177,7 @@ def test_produce_once_restarts_dws_auth_login_after_previous_terminal_state(
     state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
     assert state["status"] == "running"
     assert state["pid"] == 1234
-    assert any(
-        notification["title"] == "CEO DWS auth login required"
-        for notification in notifications
-    )
+    assert notifications == []
 
 
 def test_produce_once_marks_dws_auth_healthy_after_success(
@@ -2123,27 +2193,31 @@ def test_produce_once_marks_dws_auth_healthy_after_success(
     assert worker.produce_once() == 0
 
     state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
-    assert state["status"] == "authenticated"
+    assert state["status"] == "healthy"
 
 
-def test_mark_dws_auth_healthy_reaps_completed_login_process(
+def test_mark_dws_auth_healthy_records_safe_coordinator_state(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws([], {})
     worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
-    process = FakeAuthLoginProcess(returncode=0)
-    worker._dws_auth_login_process = process
     worker.store.set_service_state(
         DWS_AUTH_LOGIN_STATE_KEY,
-        json.dumps({"status": "running", "pid": process.pid}),
+        json.dumps(
+            {
+                "status": "running",
+                "pid": 1234,
+                "started_at": "2026-05-13T16:00:00+00:00",
+            }
+        ),
     )
     monkeypatch.setattr("app.worker.send_macos_notification", lambda **kwargs: None)
 
     worker._mark_dws_auth_healthy()
 
-    assert worker._dws_auth_login_process is None
     state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
-    assert state["status"] == "authenticated"
+    assert state["status"] == "healthy"
+    assert state["started_at"] == "2026-05-13T16:00:00+00:00"
 
 
 def test_produce_once_backs_up_dws_auth_after_success(tmp_path: Path, monkeypatch):
@@ -2291,7 +2365,7 @@ def test_produce_once_restores_dws_auth_backup_before_login(
         for notification in notifications
     )
     login_state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
-    assert login_state["status"] == "authenticated"
+    assert login_state["status"] == "healthy"
     backup_state = json.loads(worker.store.get_service_state("dws_auth_backup"))
     assert backup_state["status"] == "backed_up"
     assert "restored_at" in backup_state
@@ -4267,6 +4341,107 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
     assert processed == 1
     assert worker.store.count_reply_tasks(status="done") == 1
     assert final_sent(dws) == [("cid-1", "@周俊杰 先按A方案走（by明哥分身）")]
+
+
+def test_consumer_does_not_claim_task_when_required_gate_is_not_ready(
+    tmp_path, monkeypatch
+):
+    worker = make_worker(
+        tmp_path,
+        FakeDws([], {}),
+        FakeCodex([]),
+        monkeypatch,
+        channel_gates={
+            "dingtalk": FixedGate("dingtalk", ChannelGateState.UNAVAILABLE),
+            "lark": FixedGate("lark", ChannelGateState.READY),
+        },
+    )
+    trigger = message("@Alex Chen 看一下")
+    worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    task_id = worker.store.peek_reply_tasks(limit=1)[0].id
+
+    assert worker.consume_once() == 0
+
+    task = worker.store.get_reply_task(task_id)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+
+
+def test_lark_non_ready_keeps_referencing_task_pending_and_checks_each_gate_once(
+    tmp_path, monkeypatch
+):
+    trigger = message("https://example.feishu.cn/docx/abc 这份文档怎么处理？")
+    dingtalk_gate = FixedGate("dingtalk", ChannelGateState.READY)
+    lark_gate = FixedGate("lark", ChannelGateState.UNAVAILABLE)
+    worker = make_worker(
+        tmp_path,
+        FakeDws([], {}),
+        FakeCodex([]),
+        monkeypatch,
+        channel_gates={"dingtalk": dingtalk_gate, "lark": lark_gate},
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    task_id = worker.store.peek_reply_tasks(limit=1)[0].id
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    task = worker.store.get_reply_task(task_id)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+    assert dingtalk_gate.calls == 1
+    assert lark_gate.calls == 1
+
+
+def test_lark_non_ready_is_not_checked_for_dingtalk_only_task(tmp_path, monkeypatch):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dingtalk_gate = FixedGate("dingtalk", ChannelGateState.READY)
+    lark_gate = FixedGate("lark", ChannelGateState.UNAVAILABLE)
+    worker = make_worker(
+        tmp_path,
+        FakeDws([], {}),
+        FakeCodex([]),
+        monkeypatch,
+        channel_gates={"dingtalk": dingtalk_gate, "lark": lark_gate},
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    task_id = worker.store.peek_reply_tasks(limit=1)[0].id
+
+    worker.consume_once(max_tasks=1)
+
+    task = worker.store.get_reply_task(task_id)
+    assert task is not None
+    assert task.attempts == 1
+    assert dingtalk_gate.calls == 1
+    assert lark_gate.calls == 0
 
 
 def test_consume_once_claims_one_reply_task_at_a_time(
@@ -8645,7 +8820,7 @@ def test_oa_approval_detail_extracts_alidocs_reference_from_json_string_value(
     ]
 
 
-def test_oa_approval_detail_login_error_is_reported_as_tool_issue(
+def test_oa_approval_is_not_discovered_when_dws_gate_needs_login(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -8680,17 +8855,10 @@ def test_oa_approval_detail_login_error_is_reported_as_tool_issue(
 
     worker.run_once()
 
-    detail = json.loads(oa_handler.approval_detail_texts[0])
-    assert detail["tool_status"] == "dws_login_required"
-    assert detail["tool_issue"] == "DWS 未登录或登录态失效，当前不是审批材料缺失。"
-    assert detail["dws_detail"]["error_kind"] == "dws_login_required"
-    assert "not authenticated" in detail["dws_detail"]["message"]
+    assert dws.list_unread_calls == 0
     assert dws.auth_login_starts == 1
-    assert {
-        "title": "CEO DWS auth login required",
-        "message": "Started dws auth login. Please complete DingTalk login.",
-        "url": None,
-    } in notifications
+    assert oa_handler.approval_detail_texts == []
+    assert notifications == []
 
 
 def test_oa_approval_detail_reports_quota_block_when_openapi_fallback_is_exhausted(
@@ -10178,7 +10346,7 @@ def test_codex_stop_with_error_notifies_only_after_task_retries_are_exhausted(
     ]
 
 
-def test_codex_login_required_stop_with_error_is_failed(
+def test_codex_auth_required_stop_with_error_is_failed(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
@@ -12082,7 +12250,7 @@ def test_okr_review_live_source_error_fails_after_agent_queue_action(
     assert final_sent(dws) == []
 
 
-def test_okr_review_dingteam_login_error_blocks_after_agent_queue_action(
+def test_okr_review_dingteam_auth_error_blocks_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
@@ -13990,7 +14158,7 @@ def test_candidate_question_refuses_unrelated_department_requester(
     ]
 
 
-def test_candidate_question_allows_group_reply_without_sender_department_gate(
+def test_candidate_question_allows_group_reply_without_sender_department_check(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(

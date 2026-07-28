@@ -95,9 +95,6 @@ class CachedDwsClient:
     def upgrade(self):
         return self.dws.upgrade()
 
-    def start_auth_login(self):
-        return self.dws.start_auth_login()
-
     def start_pat_authorization(self, scopes: list[str]):
         return self.dws.start_pat_authorization(scopes)
 

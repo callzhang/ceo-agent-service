@@ -633,6 +633,55 @@ def test_claim_reply_tasks_marks_tasks_processing_atomically(tmp_path: Path):
     assert store.count_reply_tasks(status="processing") == 1
 
 
+def test_peek_reply_tasks_does_not_claim_or_increment_attempts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Derek",
+        trigger_text="read this",
+        trigger_message_json="{}",
+    )
+
+    peeked = store.peek_reply_tasks(limit=1, now="2026-05-13 18:01:00")
+    task_id = peeked[0].id
+
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+
+
+def test_claim_reply_task_claims_only_requested_pending_task(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for index in (1, 2):
+        store.enqueue_reply_task(
+            conversation_id=f"cid-{index}",
+            conversation_title="Friday",
+            single_chat=False,
+            trigger_message_id=f"msg-{index}",
+            trigger_create_time=f"2026-05-13 18:00:0{index}",
+            trigger_sender="Derek",
+            trigger_text=str(index),
+            trigger_message_json="{}",
+        )
+    first, second = store.peek_reply_tasks(limit=2, now="2026-05-13 18:01:00")
+
+    claimed = store.claim_reply_task(second.id, now="2026-05-13 18:01:00")
+
+    assert claimed is not None
+    assert claimed.id == second.id
+    assert claimed.status == "processing"
+    assert claimed.attempts == 1
+    unchanged = store.get_reply_task(first.id)
+    assert unchanged is not None
+    assert unchanged.status == "pending"
+    assert unchanged.attempts == 0
+
+
 def test_claim_reply_tasks_waits_until_available_at(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

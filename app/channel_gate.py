@@ -5,6 +5,8 @@ import json
 import os
 import subprocess
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Protocol
 
@@ -13,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from app.dws_client import dws_noninteractive_environment
 
 CliRunner = Callable[..., subprocess.CompletedProcess[str]]
+LoginLauncher = Callable[[], "LoginProcess"]
 
 AUTH_ERROR_TYPES = frozenset({"auth", "authentication", "token", "refresh"})
 AUTH_ERROR_SUBTYPES = frozenset(
@@ -58,6 +61,179 @@ class ChannelGate(Protocol):
     channel_name: str
 
     def check(self) -> ChannelGateResult: ...
+
+
+class ServiceStateStore(Protocol):
+    def get_service_state(self, key: str) -> str | None: ...
+
+    def set_service_state(self, key: str, value: str) -> None: ...
+
+
+class LoginProcess(Protocol):
+    pid: int
+
+    def poll(self) -> int | None: ...
+
+
+@dataclass(frozen=True)
+class LoginHandlingResult:
+    launched: bool = False
+    suppressed: bool = False
+    pid: int | None = None
+
+
+class LoginCoordinator:
+    SUPPRESSION = timedelta(hours=1)
+    _SAFE_FIELDS = (
+        "status",
+        "reason_code",
+        "started_at",
+        "checked_at",
+        "exited_at",
+        "pid",
+    )
+
+    def __init__(
+        self,
+        *,
+        store: ServiceStateStore,
+        launchers: dict[str, LoginLauncher],
+        now: Callable[[], datetime] | None = None,
+        pid_alive: Callable[[int], bool] | None = None,
+    ):
+        self.store = store
+        self.launchers = launchers
+        self.now = now or (lambda: datetime.now(timezone.utc))
+        self.pid_alive = pid_alive or _pid_alive
+        self._processes: dict[str, LoginProcess] = {}
+
+    def handle(self, result: ChannelGateResult) -> LoginHandlingResult:
+        now = self._utc_now()
+        state = self._state(result.channel)
+        process = self._processes.get(result.channel)
+        pid = state.get("pid") if isinstance(state.get("pid"), int) else None
+
+        if process is not None and process.poll() is not None:
+            self._processes.pop(result.channel, None)
+            state = {
+                **state,
+                "status": "exited",
+                "exited_at": now.isoformat(),
+            }
+        elif process is not None:
+            pid = process.pid
+        elif pid is not None and self.pid_alive(pid):
+            state = {**state, "status": "running"}
+
+        if result.state is ChannelGateState.READY:
+            self._write_state(
+                result.channel,
+                {
+                    **state,
+                    "status": "healthy",
+                    "reason_code": result.reason_code,
+                    "checked_at": now.isoformat(),
+                },
+            )
+            return LoginHandlingResult()
+
+        state = {
+            **state,
+            "reason_code": result.reason_code,
+            "checked_at": now.isoformat(),
+        }
+        if result.state is not ChannelGateState.NEEDS_LOGIN:
+            state["status"] = result.state.value
+            self._write_state(result.channel, state)
+            return LoginHandlingResult()
+
+        if pid is not None and (
+            process is not None and process.poll() is None or self.pid_alive(pid)
+        ):
+            self._write_state(
+                result.channel, {**state, "status": "running", "pid": pid}
+            )
+            return LoginHandlingResult(suppressed=True, pid=pid)
+        if self._within_suppression(state, now):
+            self._write_state(result.channel, state)
+            return LoginHandlingResult(suppressed=True, pid=pid)
+
+        started_at = now.isoformat()
+        launcher = self.launchers.get(result.channel)
+        if launcher is None:
+            self._write_state(
+                result.channel,
+                {
+                    **state,
+                    "status": "unavailable",
+                    "started_at": started_at,
+                },
+            )
+            return LoginHandlingResult()
+        try:
+            process = launcher()
+        except Exception:
+            self._write_state(
+                result.channel,
+                {
+                    **state,
+                    "status": "failed",
+                    "started_at": started_at,
+                    "exited_at": now.isoformat(),
+                },
+            )
+            return LoginHandlingResult()
+        self._processes[result.channel] = process
+        self._write_state(
+            result.channel,
+            {
+                **state,
+                "status": "running",
+                "started_at": started_at,
+                "pid": process.pid,
+            },
+        )
+        return LoginHandlingResult(launched=True, pid=process.pid)
+
+    def _state(self, channel: str) -> dict[str, object]:
+        raw = self.store.get_service_state(self._key(channel))
+        if not raw:
+            return {}
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _write_state(self, channel: str, state: dict[str, object]) -> None:
+        safe = {field: state[field] for field in self._SAFE_FIELDS if field in state}
+        self.store.set_service_state(
+            self._key(channel),
+            json.dumps(safe, ensure_ascii=False, sort_keys=True),
+        )
+
+    def _within_suppression(self, state: dict[str, object], now: datetime) -> bool:
+        started_at = state.get("started_at")
+        if not isinstance(started_at, str):
+            return False
+        try:
+            started = datetime.fromisoformat(started_at)
+        except ValueError:
+            return False
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        age = now - started.astimezone(timezone.utc)
+        return timedelta(0) <= age < self.SUPPRESSION
+
+    def _utc_now(self) -> datetime:
+        now = self.now()
+        if now.tzinfo is None:
+            now = now.astimezone()
+        return now.astimezone(timezone.utc)
+
+    @staticmethod
+    def _key(channel: str) -> str:
+        return f"channel_login_request:{channel}"
 
 
 class DwsChannelGate:
@@ -292,6 +468,25 @@ class LarkChannelGate:
                 detail=_safe_detail(probe.stdout, probe.stderr),
             )
         return _result(self.channel_name, ChannelGateState.READY, "ready", commands)
+
+
+def default_channel_gates(
+    *, dws_binary: str = "dws", lark_binary: str = "lark-cli"
+) -> dict[str, ChannelGate]:
+    gates: tuple[ChannelGate, ...] = (
+        DwsChannelGate(binary=dws_binary),
+        LarkChannelGate(binary=lark_binary),
+    )
+    return {gate.channel_name: gate for gate in gates}
+
+
+def start_lark_auth_login(binary: str = "lark-cli") -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [binary, "auth", "login"],
+        text=True,
+        start_new_session=True,
+        env=_lark_noninteractive_environment(),
+    )
 
 
 def _run_command(
@@ -613,3 +808,15 @@ def _lark_noninteractive_environment() -> dict[str, str]:
     env.setdefault("CI", "1")
     env.setdefault("NO_COLOR", "1")
     return env
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True

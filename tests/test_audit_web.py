@@ -2928,8 +2928,23 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "保存位置" in system_section
 
 
-def test_render_config_page_shows_channel_doctor(monkeypatch):
+def test_render_config_page_shows_channel_doctor(tmp_path, monkeypatch):
     from app.channel_gate import ChannelGateResult, ChannelGateState
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.set_service_state(
+        "channel_login_request:lark",
+        json.dumps(
+            {
+                "status": "running",
+                "reason_code": "status_auth_invalid",
+                "started_at": "2026-07-28T12:00:00+00:00",
+                "pid": 4242,
+                "token": "must-not-render",
+                "path": "/private/auth",
+            }
+        ),
+    )
 
     monkeypatch.setattr(
         "app.channel_gate.DwsChannelGate.check",
@@ -2951,13 +2966,21 @@ def test_render_config_page_shows_channel_doctor(monkeypatch):
         ),
     )
 
-    html = render_config_page(active_tab="channels")
+    html = render_config_page(
+        active_tab="channels",
+        db_path=tmp_path / "worker.sqlite3",
+    )
 
     assert "Channel doctor" in html
     assert "dingtalk" in html
     assert "lark" in html
     assert "executable_missing" in html
     assert "lark-cli command not found" in html
+    assert "2026-07-28T12:00:00+00:00" in html
+    assert "4242" not in html
+    assert "must-not-render" not in html
+    assert "/private/auth" not in html
+    assert "<th>Probe</th>" not in html
 
 
 def test_handle_system_config_post_saves_runtime_params_to_env_file(

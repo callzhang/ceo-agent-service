@@ -1483,11 +1483,11 @@ def doctor_mcp_command(
 
 
 def channel_doctor_command() -> dict[str, object]:
-    from app.channel_gate import DwsChannelGate, LarkChannelGate
+    from app.channel_gate import default_channel_gates
 
     statuses = [
-        DwsChannelGate().check().model_dump(mode="json"),
-        LarkChannelGate().check().model_dump(mode="json"),
+        gate.check().model_dump(mode="json")
+        for gate in default_channel_gates().values()
     ]
     report: dict[str, object] = {"channels": statuses}
     print(json.dumps(report, ensure_ascii=False), flush=True)

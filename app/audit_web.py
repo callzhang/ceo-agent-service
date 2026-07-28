@@ -2138,7 +2138,8 @@ def render_config_page(
     elif active_tab == "system":
         content = _render_system_config(db_path=db_path)
     elif active_tab == "channels":
-        content = _render_channel_config()
+        store_path = db_path or _configured_worker_db_path()
+        content = _render_channel_config(AutoReplyStore(store_path))
     elif active_tab == "wechat":
         store_path = db_path or _configured_worker_db_path()
         content = _render_wechat_config(AutoReplyStore(store_path))
@@ -2232,10 +2233,10 @@ def _render_wechat_config(store: AutoReplyStore) -> str:
     )
 
 
-def _render_channel_config() -> str:
-    from app.channel_gate import DwsChannelGate, LarkChannelGate
+def _render_channel_config(store: AutoReplyStore) -> str:
+    from app.channel_gate import default_channel_gates
 
-    statuses = [DwsChannelGate().check(), LarkChannelGate().check()]
+    statuses = [gate.check() for gate in default_channel_gates().values()]
     rows = "".join(
         "<tr>"
         f"<td>{escape(status.channel)}</td>"
@@ -2243,7 +2244,7 @@ def _render_channel_config() -> str:
         f"{escape(status.state.value)}</span></td>"
         f"<td>{escape(status.reason_code)}"
         f"{_channel_gate_detail_html(status.detail)}</td>"
-        f"<td><code>{escape(' ; '.join(' '.join(command) for command in status.commands))}</code></td>"
+        f"<td>{_safe_channel_login_state_html(store, status.channel)}</td>"
         "</tr>"
         for status in statuses
     )
@@ -2252,11 +2253,26 @@ def _render_channel_config() -> str:
         "<h2>Channel doctor</h2>"
         '<p class="muted">Reusable reply channels and their local CLI readiness.</p>'
         '<table class="column-sized-table">'
-        "<thead><tr><th>Channel</th><th>Status</th><th>Reason</th><th>Probe</th></tr></thead>"
+        "<thead><tr><th>Channel</th><th>Status</th><th>Reason</th><th>Login</th></tr></thead>"
         f"<tbody>{rows}</tbody>"
         "</table>"
         "</section>"
     )
+
+
+def _safe_channel_login_state_html(store: AutoReplyStore, channel: str) -> str:
+    raw = store.get_service_state(f"channel_login_request:{channel}")
+    if not raw:
+        return '<span class="muted">not requested</span>'
+    try:
+        state = json.loads(raw)
+    except json.JSONDecodeError:
+        return '<span class="muted">unknown</span>'
+    if not isinstance(state, dict):
+        return '<span class="muted">unknown</span>'
+    safe_fields = ("status", "reason_code", "started_at", "checked_at", "exited_at")
+    values = [str(state[field]) for field in safe_fields if state.get(field)]
+    return escape(" | ".join(values)) if values else '<span class="muted">unknown</span>'
 
 
 def _channel_gate_detail_html(detail: str) -> str:
