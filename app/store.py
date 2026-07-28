@@ -2608,6 +2608,15 @@ class AutoReplyStore:
             ).fetchone()
             return self._agent_run_from_row(row) if row is not None else None
 
+    @contextmanager
+    def _agent_run_write_transaction(
+        self,
+        now: str | datetime | None,
+    ) -> Iterator[tuple[sqlite3.Connection, tuple[datetime, str]]]:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            yield db, _utc_store_time(now)
+
     def claim_agent_run(
         self,
         reply_task_id: int,
@@ -2623,12 +2632,13 @@ class AutoReplyStore:
             raise ValueError("owner must be non-empty")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
-        now_value, now_text = _utc_store_time(now)
-        lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._agent_run_write_transaction(now) as (
+            db,
+            (now_value, now_text),
+        ):
+            lease_expires_at = (
+                now_value + timedelta(seconds=lease_seconds)
+            ).strftime("%Y-%m-%d %H:%M:%S")
             task = db.execute(
                 "select execution_generation from reply_tasks where id=?",
                 (reply_task_id,),
@@ -2700,12 +2710,13 @@ class AutoReplyStore:
             raise ValueError("owner must be non-empty")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
-        now_value, now_text = _utc_store_time(now)
-        lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._agent_run_write_transaction(now) as (
+            db,
+            (now_value, now_text),
+        ):
+            lease_expires_at = (
+                now_value + timedelta(seconds=lease_seconds)
+            ).strftime("%Y-%m-%d %H:%M:%S")
             cursor = db.execute(
                 """
                 update agent_runs
@@ -2746,9 +2757,7 @@ class AutoReplyStore:
             raise ValueError("owner must be non-empty")
         if transcript_start_line < 0:
             raise ValueError("transcript_start_line must not be negative")
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
                 """
                 update agent_runs
@@ -2808,9 +2817,7 @@ class AutoReplyStore:
             raise ValueError("owner must be non-empty")
         event_text = _json_object_text(event, field="event")
         normalized_event = json.loads(event_text)
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
                 "select * from agent_runs where id=?",
                 (run_id,),
@@ -2862,9 +2869,7 @@ class AutoReplyStore:
     ) -> AgentRun:
         event_text = _json_object_text(event, field="event")
         normalized_event = json.loads(event_text)
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
                 "select * from agent_runs where id=?",
                 (run_id,),
@@ -2925,9 +2930,7 @@ class AutoReplyStore:
             raise ValueError("invalid side_effect_state")
         if transcript_end_line is not None and transcript_end_line < 0:
             raise ValueError("transcript_end_line must not be negative")
-        _, now_text = _utc_store_time(now)
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
                 "select * from agent_runs where id=?",
                 (run_id,),

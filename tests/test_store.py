@@ -5,9 +5,11 @@ from pathlib import Path
 from queue import Queue
 import sqlite3
 from threading import Barrier, Event, Thread
+import time
 
 import pytest
 
+import app.store as store_module
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.universal_context import (
     UniversalContextMessage,
@@ -992,6 +994,74 @@ def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):
     assert loaded is not None
     assert len(loaded.tool_events) == 2
     assert {event["call_id"] for event in loaded.tool_events} == {"c1", "c2"}
+
+
+def test_append_rechecks_default_time_after_waiting_for_write_lock(
+    tmp_path: Path,
+    monkeypatch,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-1",
+        lease_seconds=2,
+    ).run
+    original_utc_store_time = store_module._utc_store_time
+    clock_called = Event()
+
+    def observed_utc_store_time(now=None):
+        if now is None:
+            clock_called.set()
+        return original_utc_store_time(now)
+
+    monkeypatch.setattr(store_module, "_utc_store_time", observed_utc_store_time)
+    lock_db = sqlite3.connect(db_path, timeout=5)
+    lock_db.execute("begin immediate")
+    started = Event()
+    outcomes: Queue = Queue()
+
+    def append() -> None:
+        started.set()
+        try:
+            result = store.append_agent_run_event(
+                run.id,
+                {"type": "item.started", "call_id": "expired-while-waiting"},
+                owner="worker-1",
+            )
+            outcomes.put(result)
+        except BaseException as exc:
+            outcomes.put(exc)
+
+    thread = Thread(target=append)
+    thread.start()
+    try:
+        assert started.wait(timeout=2)
+        clock_called_before_release = clock_called.wait(timeout=0.2)
+        expires_at = datetime.strptime(
+            run.lease_expires_at,
+            "%Y-%m-%d %H:%M:%S",
+        ).replace(tzinfo=timezone.utc)
+        wait_seconds = max(
+            0.0,
+            (expires_at - datetime.now(timezone.utc)).total_seconds(),
+        ) + 0.2
+        assert wait_seconds < 3
+        time.sleep(wait_seconds)
+    finally:
+        lock_db.rollback()
+        lock_db.close()
+        thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert clock_called_before_release is False
+    outcome = outcomes.get_nowait()
+    assert isinstance(outcome, AgentRunLeaseLostError)
+    loaded = store.get_agent_run(run.id)
+    assert loaded is not None
+    assert loaded.tool_events == []
 
 
 @pytest.mark.parametrize("event", [[], "event", 1, None])
