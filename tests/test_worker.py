@@ -1267,7 +1267,6 @@ def make_worker(
     fast_path_unread_backoff: timedelta = timedelta(0),
     channel_gates=None,
 ) -> DingTalkAutoReplyWorker:
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "0")
     monkeypatch.setattr(
         "app.worker.send_macos_notification", lambda **_: None
     )
@@ -4455,16 +4454,19 @@ def test_lark_blocked_task_does_not_block_later_dingtalk_task(tmp_path, monkeypa
         now_provider=fixed_worker_now,
         channel_gates={"dingtalk": dingtalk_gate, "lark": lark_gate},
     )
-    lark_trigger = message(
-        "https://example.feishu.cn/docx/abc 这份文档怎么处理？",
-        message_id="msg-lark",
-    )
+    lark_triggers = [
+        message(
+            f"https://example.feishu.cn/docx/{index} 这份文档怎么处理？",
+            message_id=f"msg-lark-{index}",
+        )
+        for index in range(201)
+    ]
     dingtalk_trigger = message(
         "系统通知",
         message_id="msg-dingtalk",
         message_type="system",
     )
-    for trigger in (lark_trigger, dingtalk_trigger):
+    for trigger in (*lark_triggers, dingtalk_trigger):
         store.enqueue_reply_task(
             conversation_id=trigger.open_conversation_id,
             conversation_title=trigger.conversation_title,
@@ -4475,20 +4477,36 @@ def test_lark_blocked_task_does_not_block_later_dingtalk_task(tmp_path, monkeypa
             trigger_text=trigger.content,
             trigger_message_json=trigger.model_dump_json(),
         )
-    blocked_id, processable_id = [task.id for task in store.peek_reply_tasks(limit=2)]
+    all_tasks = store.peek_reply_tasks(limit=202)
+    blocked_ids = [task.id for task in all_tasks[:-1]]
+    processable_id = all_tasks[-1].id
 
     assert worker.consume_once(max_tasks=1) == 1
 
-    blocked = store.get_reply_task(blocked_id)
     processable = store.get_reply_task(processable_id)
-    assert blocked is not None
-    assert blocked.status == "pending"
-    assert blocked.attempts == 0
+    blocked = [store.get_reply_task(task_id) for task_id in blocked_ids]
+    assert all(task is not None for task in blocked)
+    assert all(task.status == "pending" for task in blocked if task is not None)
+    assert all(task.attempts == 0 for task in blocked if task is not None)
     assert processable is not None
     assert processable.status == "done"
     assert processable.attempts == 1
     assert dingtalk_gate.calls == 1
     assert lark_gate.calls == 1
+
+
+def test_retired_universal_consumer_flag_is_absent_from_runtime_and_tests():
+    repository_root = Path(__file__).resolve().parents[1]
+    retired_flag = "CEO_UNIVERSAL_" + "CONSUMER"
+
+    occurrences = [
+        path
+        for root in (repository_root / "app", repository_root / "tests")
+        for path in root.rglob("*.py")
+        if retired_flag in path.read_text()
+    ]
+
+    assert occurrences == []
 
 
 def test_lark_non_ready_is_not_checked_for_dingtalk_only_task(tmp_path, monkeypatch):

@@ -8,7 +8,7 @@ import shutil
 import time
 import urllib.request
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -5141,14 +5141,11 @@ class DingTalkAutoReplyWorker:
                 title="CEO task retrying Codex session locks",
                 message=f"requeued {len(recovered_lock_tasks)} task(s)",
             )
-        candidate_limit = max(limit, min(limit * 4, 200))
-        pending_tasks = self.store.peek_reply_tasks(
-            candidate_limit,
-            now=self._sqlite_timestamp(self._now()),
-            channel="dingtalk",
-        )
         claimed_tasks = 0
-        for pending_task in pending_tasks:
+        for pending_task in self._pending_reply_task_candidates(
+            page_size=min(max(limit * 4, 50), 200),
+            now=self._sqlite_timestamp(self._now()),
+        ):
             if claimed_tasks >= limit:
                 break
             if not self._required_channels_ready(
@@ -5395,6 +5392,22 @@ class DingTalkAutoReplyWorker:
                 self.store.defer_reply_task(task.id, "dry_run")
         return processed_tasks
 
+    def _pending_reply_task_candidates(
+        self, *, page_size: int, now: str
+    ) -> Iterator[ReplyTask]:
+        after_id: int | None = None
+        while True:
+            page = self.store.peek_reply_tasks(
+                page_size,
+                now=now,
+                channel="dingtalk",
+                after_id=after_id,
+            )
+            if not page:
+                return
+            yield from page
+            after_id = page[-1].id
+
     def _reply_task_retry_available_at(self, attempts: int) -> str:
         delay_seconds = min(
             REPLY_TASK_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempts - 1, 0)),
@@ -5535,49 +5548,6 @@ class DingTalkAutoReplyWorker:
             ignore_existing_attempt=task.force_new_decision,
             raise_on_delivery_failure=True,
         ):
-            return True
-        if (
-            os.getenv("CEO_UNIVERSAL_CONSUMER", "1") == "0"
-            and self._injected_universal_planner is None
-        ):
-            if self._handle_calendar_invite_if_actionable(
-                conversation,
-                trigger,
-                prompt_context_messages,
-                ignore_existing_attempt=task.force_new_decision,
-                include_resolved_calendar_invites=task.force_new_decision,
-                allow_duplicate_send=task.force_new_decision,
-                raise_on_delivery_failure=True,
-                complete_task_id=task.id,
-            ):
-                return True
-            if self._handle_oa_approval_if_actionable(
-                conversation,
-                trigger,
-                prompt_context_messages,
-                ignore_existing_attempt=task.force_new_decision,
-                oa_url_override=task.oa_url,
-            ):
-                return not self.dry_run
-            if self._is_system_or_notification_message(trigger):
-                self._record_system_or_notification_skip(conversation, trigger)
-                self._mark_seen([trigger])
-                return True
-            self._process_batch(
-                conversation,
-                [trigger],
-                prompt_context_messages,
-                ignore_existing_attempt=(
-                    task.force_new_decision
-                    or self._should_regenerate_after_processing_failure(
-                        conversation,
-                        trigger,
-                        task,
-                    )
-                ),
-                allow_duplicate_send=task.force_new_decision,
-                raise_on_delivery_failure=True,
-            )
             return True
         if self._is_system_or_notification_message(trigger):
             self._record_system_or_notification_skip(conversation, trigger)
@@ -6157,45 +6127,6 @@ class DingTalkAutoReplyWorker:
         if trigger.is_recalled():
             self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
             self._mark_seen([trigger])
-            return trigger.open_message_id
-        if (
-            os.getenv("CEO_UNIVERSAL_CONSUMER", "1") == "0"
-            and self._injected_universal_planner is None
-        ):
-            if self._handle_minutes_permission_request_if_actionable(
-                conversation,
-                trigger,
-                ignore_existing_attempt=force_new_decision,
-            ):
-                return trigger.open_message_id
-            if self._handle_calendar_invite_if_actionable(
-                conversation,
-                trigger,
-                prompt_context_messages,
-                ignore_existing_attempt=force_new_decision,
-                include_resolved_calendar_invites=force_new_decision,
-                allow_duplicate_send=force_new_decision,
-            ):
-                return trigger.open_message_id
-            if self._handle_oa_approval_if_actionable(
-                conversation,
-                trigger,
-                prompt_context_messages,
-                ignore_existing_attempt=force_new_decision,
-                oa_url_override=oa_url,
-            ):
-                return trigger.open_message_id
-            if self._is_system_or_notification_message(trigger):
-                self._record_system_or_notification_skip(conversation, trigger)
-                self._mark_seen([trigger])
-                return trigger.open_message_id
-            self._process_batch(
-                conversation,
-                [trigger],
-                prompt_context_messages,
-                ignore_existing_attempt=force_new_decision,
-                allow_duplicate_send=force_new_decision,
-            )
             return trigger.open_message_id
         if force_new_decision:
             task = self.store.enqueue_manual_rerun_reply_task(

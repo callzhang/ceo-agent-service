@@ -2455,7 +2455,12 @@ class AutoReplyStore:
                 raise ValueError("universal action execution must be started")
 
     def peek_reply_tasks(
-        self, limit: int, now: str | None = None, *, channel: str | None = None
+        self,
+        limit: int,
+        now: str | None = None,
+        *,
+        channel: str | None = None,
+        after_id: int | None = None,
     ) -> list[ReplyTask]:
         if limit <= 0:
             return []
@@ -2471,6 +2476,9 @@ class AutoReplyStore:
             if channel is not None:
                 clauses.append("channel=?")
                 args.append(channel)
+            if after_id is not None:
+                clauses.append("id>?")
+                args.append(after_id)
             args.append(limit)
             rows = db.execute(
                 f"""

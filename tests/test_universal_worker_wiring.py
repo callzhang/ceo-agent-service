@@ -20,7 +20,6 @@ from app.universal_plan import (
     UniversalAudit,
     UniversalPlan,
 )
-from app.universal_validator import DependencyStatus
 from app.worker import DingTalkAutoReplyWorker
 
 
@@ -283,8 +282,7 @@ def enqueue(worker, trigger, *, force_new_decision=False, generation="initial", 
     return worker.store.list_reply_tasks(limit=1)[0]
 
 
-def test_explicit_flag_off_still_uses_universal_route(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "0")
+def test_worker_uses_universal_route(tmp_path, monkeypatch):
     planner = RecordingPlanner(no_reply_plan())
     worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
     task = enqueue(worker, trigger)
@@ -300,7 +298,6 @@ def test_explicit_flag_off_still_uses_universal_route(tmp_path, monkeypatch):
 
 
 def test_universal_route_is_default(tmp_path, monkeypatch):
-    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
     planner = RecordingPlanner(no_reply_plan())
     worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
     task = enqueue(worker, trigger)
@@ -382,7 +379,6 @@ def test_universal_retry_reuses_persisted_context_when_live_evidence_changes(
 def test_universal_context_resolves_missing_trigger_sender_user_id(
     tmp_path, monkeypatch
 ):
-    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
     trigger = trigger_message().model_copy(update={"sender_user_id": None})
     planner = RecordingPlanner(no_reply_plan())
     worker, trigger = make_worker(
@@ -406,7 +402,6 @@ def test_consume_completes_task_when_generation_mismatch_follows_terminal_result
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
     worker, trigger = make_worker(tmp_path, monkeypatch)
     enqueue(worker, trigger)
 
@@ -453,7 +448,6 @@ def test_consume_completes_task_when_generation_mismatch_follows_terminal_result
 
 
 def test_rerun_message_uses_universal_route_by_default(tmp_path, monkeypatch):
-    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
     planner = RecordingPlanner(reply_plan_without_target())
     worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
     legacy_calls = []
@@ -486,7 +480,6 @@ def test_rerun_message_uses_universal_route_by_default(tmp_path, monkeypatch):
 def test_rerun_message_without_force_does_not_duplicate_sent_reply(
     tmp_path, monkeypatch
 ):
-    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
     planner = RecordingPlanner(reply_plan_without_target())
     worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
     worker.store.upsert_conversation("cid-1", "测试群", False, None)
@@ -519,7 +512,6 @@ def test_rerun_message_without_force_does_not_duplicate_sent_reply(
 
 
 def test_dws_auth_blocks_before_planner_without_starting_login(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(no_reply_plan())
     worker, trigger = make_worker(
         tmp_path, monkeypatch, planner=planner, dws_ready=False
@@ -536,7 +528,6 @@ def test_dws_auth_blocks_before_planner_without_starting_login(tmp_path, monkeyp
 
 
 def test_memory_unavailable_does_not_block_memory_unrelated_plan(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(no_reply_plan())
     memory = FailingMemoryWriteRunner()
     worker, trigger = make_worker(
@@ -552,7 +543,6 @@ def test_memory_unavailable_does_not_block_memory_unrelated_plan(tmp_path, monke
 def test_memory_write_authorization_failure_does_not_block_reply_task(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(reply_then_memory_plan(dependencies=("dws",)))
     memory = FailingMemoryWriteRunner()
     worker, trigger = make_worker(
@@ -579,7 +569,6 @@ def test_memory_write_authorization_failure_does_not_block_reply_task(
 def test_universal_reply_plan_missing_target_uses_current_trigger(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(reply_plan_without_target())
     worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
     task = enqueue(worker, trigger)
@@ -611,7 +600,6 @@ def test_universal_reply_plan_missing_target_uses_current_trigger(
 
 
 def test_worker_builds_trusted_context_and_force_generation(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     raw_payload = {
         "mail": {"mailbox": "hr@example.com", "messageId": 42, "subject": "候选人"},
         "calendar": {"eventId": 84, "selfResponseStatus": "tentative"},
@@ -652,7 +640,6 @@ def test_worker_binds_coalesced_oa_card_before_resolving_trigger_sender(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     oa_url = (
         "https://aflow.dingtalk.com/dingtalk/pc/query/pchomepage.htm"
         "?procInstId=proc-1&taskId=task-1"
@@ -723,7 +710,6 @@ def test_worker_binds_coalesced_oa_card_before_resolving_trigger_sender(
 
 
 def test_worker_reuses_existing_native_codex_session(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(no_reply_plan())
     planner.last_session_id = None
     worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
@@ -739,7 +725,6 @@ def test_universal_stale_codex_resume_clears_session_and_retries_fresh(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
 
     class StaleThenFreshPlanner(RecordingPlanner):
         def __init__(self):
@@ -773,7 +758,6 @@ def test_universal_stale_codex_resume_clears_session_and_retries_fresh(
 
 
 def test_planner_exception_persists_new_native_codex_session(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
 
     class FailingPlanner(RecordingPlanner):
         def plan(self, context, session_id=None):
@@ -824,7 +808,6 @@ def test_default_universal_planner_uses_native_codex_runner_and_15_minute_floor(
 
 
 def test_active_plan_resumes_memory_after_reply_was_sent(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(reply_then_memory_plan())
     memory = RecordingMemoryWriteRunner()
     worker, trigger = make_worker(
@@ -858,7 +841,6 @@ def test_active_plan_resumes_memory_after_reply_was_sent(tmp_path, monkeypatch):
 
 
 def test_dry_run_is_deferred_without_authorization_label(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     worker, trigger = make_worker(tmp_path, monkeypatch, dry_run=True)
     task = enqueue(worker, trigger)
 
@@ -871,7 +853,6 @@ def test_dry_run_is_deferred_without_authorization_label(tmp_path, monkeypatch):
 
 
 def test_unknown_action_fails_persistently_without_replanning(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(no_reply_plan())
     worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
     task = enqueue(worker, trigger)
@@ -910,7 +891,6 @@ def test_unknown_action_fails_persistently_without_replanning(tmp_path, monkeypa
 def test_universal_outcome_mapping(
     tmp_path, monkeypatch, outcome, completed, expected_status
 ):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     worker, trigger = make_worker(tmp_path, monkeypatch)
     task = enqueue(worker, trigger)
 
@@ -932,7 +912,6 @@ def test_universal_outcome_mapping(
 def test_unrecoverable_validation_block_records_attempt_and_completes_task(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     worker, trigger = make_worker(tmp_path, monkeypatch)
     task = enqueue(worker, trigger)
 
@@ -961,7 +940,6 @@ def test_unrecoverable_validation_block_records_attempt_and_completes_task(
 
 
 def test_concurrent_workers_execute_one_plan(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     trigger = trigger_message()
     planner = RecordingPlanner(no_reply_plan())
     worker1, _ = make_worker(tmp_path, monkeypatch, trigger=trigger, planner=planner)
@@ -993,7 +971,6 @@ def test_concurrent_workers_execute_one_plan(tmp_path, monkeypatch):
 
 
 def test_same_conversation_tasks_cannot_plan_concurrently(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     first_started = Event()
     release_first = Event()
 
@@ -1051,8 +1028,7 @@ def test_same_conversation_tasks_cannot_plan_concurrently(tmp_path, monkeypatch)
     assert len(planner.calls) == 1
 
 
-def test_flag_off_still_keeps_universal_leak_check_order(tmp_path, monkeypatch):
-    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "0")
+def test_worker_keeps_universal_leak_check_order(tmp_path, monkeypatch):
     worker, trigger = make_worker(tmp_path, monkeypatch)
     updates = []
     delivered = []

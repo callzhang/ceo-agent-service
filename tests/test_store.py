@@ -656,6 +656,34 @@ def test_peek_reply_tasks_does_not_claim_or_increment_attempts(tmp_path: Path):
     assert task.attempts == 0
 
 
+def test_peek_reply_tasks_pages_after_id_without_claiming(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for index in range(3):
+        store.enqueue_reply_task(
+            conversation_id=f"cid-{index}",
+            conversation_title="Friday",
+            single_chat=False,
+            trigger_message_id=f"msg-{index}",
+            trigger_create_time=f"2026-05-13 18:00:0{index}",
+            trigger_sender="Derek",
+            trigger_text=str(index),
+            trigger_message_json="{}",
+        )
+
+    first_page = store.peek_reply_tasks(
+        limit=2, now="2026-05-13 18:01:00"
+    )
+    second_page = store.peek_reply_tasks(
+        limit=2,
+        now="2026-05-13 18:01:00",
+        after_id=first_page[-1].id,
+    )
+
+    assert [task.trigger_message_id for task in first_page] == ["msg-0", "msg-1"]
+    assert [task.trigger_message_id for task in second_page] == ["msg-2"]
+    assert store.count_reply_tasks(status="pending") == 3
+
+
 def test_claim_reply_task_claims_only_requested_pending_task(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     for index in (1, 2):

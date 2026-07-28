@@ -13,7 +13,6 @@ from app.store import AutoReplyStore
 from app.universal_context import build_universal_context
 from app.universal_executor import (
     UniversalActionExecutor,
-    UniversalActionExecutionState,
     UniversalPlanExecution,
     build_universal_action_execution,
 )
@@ -125,7 +124,6 @@ def message(*, content="请处理", message_type=None, raw_payload=None):
 
 
 def make_worker(tmp_path, monkeypatch, trigger, planner):
-    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("principal-user-1")
     dws = FakeDws(trigger)
