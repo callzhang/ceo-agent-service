@@ -3,7 +3,8 @@ import pytest
 from app.store import AutoReplyStore
 from app.wechat.accessibility import (
     AccessibilityResult, MacWechatAccessibility, WechatSender, _open_target,
-    _text_evidence_matches, reconcile_incomplete_deliveries,
+    _attribute_text_matches, _text_evidence_matches,
+    reconcile_incomplete_deliveries,
 )
 from app.wechat.models import WechatReplyScope
 
@@ -194,6 +195,20 @@ def test_text_evidence_match_allows_ui_prefix_and_long_truncation():
         expected,
     )
     assert not _text_evidence_matches("嗯，我知道了", "嗯")
+
+
+def test_attribute_text_match_checks_nonstandard_wechat_preview_attribute():
+    values = {
+        "AXTitle": "Melody",
+        "AXCustomPreview": "14:11 阿美战投你见过窦轩了？他说他当时在另外一个机构，2022年和你聊过",
+    }
+
+    assert _attribute_text_matches(
+        lambda _element, attribute: values.get(attribute),
+        lambda _element: list(values),
+        object(),
+        "阿美战投你见过窦轩了？他说他当时在另外一个机构，2022年和你聊过",
+    )
 
 
 def test_open_target_returns_none_when_navigation_controls_are_missing():

@@ -80,6 +80,22 @@ def _text_evidence_matches(candidate: str, expected: str) -> bool:
     )
 
 
+def _attribute_text_matches(g, attribute_names, element, expected: str) -> bool:
+    names = {"AXTitle", "AXValue", "AXDescription"}
+    try:
+        names.update(str(name) for name in (attribute_names(element) or []))
+    except Exception:
+        pass
+    for attribute in names:
+        try:
+            value = g(element, attribute)
+        except Exception:
+            continue
+        if isinstance(value, str) and _text_evidence_matches(value, expected):
+            return True
+    return False
+
+
 def _open_target(
     target_label, *, first, click, type_fn, settle, sleep, search_query=None,
     find_all=None, subtree_has_text=None, expected_recent_text=None,
@@ -376,14 +392,15 @@ class MacWechatAccessibility:
             needle = expected.strip()
             if not needle:
                 return False
+            from ApplicationServices import AXUIElementCopyAttributeNames
+
+            def attribute_names(element):
+                err, names = AXUIElementCopyAttributeNames(element, None)
+                return names if err == 0 else []
+
             for el in walk(root):
-                for attribute in ("AXTitle", "AXValue", "AXDescription"):
-                    value = g(el, attribute)
-                    if (
-                        isinstance(value, str)
-                        and _text_evidence_matches(value, needle)
-                    ):
-                        return True
+                if _attribute_text_matches(g, attribute_names, el, needle):
+                    return True
             return False
 
         def center(el):
@@ -513,14 +530,15 @@ class MacWechatAccessibility:
             needle = expected.strip()
             if not needle:
                 return False
+            from ApplicationServices import AXUIElementCopyAttributeNames
+
+            def attribute_names(element):
+                err, names = AXUIElementCopyAttributeNames(element, None)
+                return names if err == 0 else []
+
             for el in walk(root):
-                for attribute in ("AXTitle", "AXValue", "AXDescription"):
-                    value = g(el, attribute)
-                    if (
-                        isinstance(value, str)
-                        and _text_evidence_matches(value, needle)
-                    ):
-                        return True
+                if _attribute_text_matches(g, attribute_names, el, needle):
+                    return True
             return False
 
         def click(el, n=1):
