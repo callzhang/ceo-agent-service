@@ -301,8 +301,6 @@ def memory_connector_config_options() -> list[str]:
     token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
     if not url:
         return []
-    config_env = _memory_connector_env_from_config(_codex_home() / "config.toml")
-    configured_token = config_env.get(MEMORY_CONNECTOR_API_KEY_ENV)
     if not token:
         return []
     env_http_headers: dict[str, str] = {}
@@ -412,8 +410,20 @@ class CodexRunner:
         self.workspace = workspace
         self.codex_bin = codex_bin
 
-    def build_env(self) -> dict[str, str]:
-        env = dws_noninteractive_environment({**os.environ, **_memory_connector_env()})
+    def build_env(
+        self,
+        *,
+        preserve_local_cli_auth: bool = False,
+    ) -> dict[str, str]:
+        base_env = {**os.environ, **_memory_connector_env()}
+        env = (
+            base_env
+            if preserve_local_cli_auth
+            else dws_noninteractive_environment(base_env)
+        )
+        if preserve_local_cli_auth:
+            env.pop("DINGTALK_DWS_AGENTCODE", None)
+            env.pop("CEO_DWS_AGENT_CODE", None)
         for key in DWS_CLI_AUTH_ENV_KEYS:
             env.pop(key, None)
         env.pop("MEMORY_CONNECTOR_USER_ID", None)
@@ -426,7 +436,16 @@ class CodexRunner:
         image_paths: list[Path] | None = None,
         output_schema_path: Path | None = None,
         ignore_user_config: bool = False,
+        approval_policy: str = "untrusted",
+        developer_instructions: str | None = None,
+        use_approval_bypass: bool = True,
+        preserve_native_model_config: bool = False,
     ) -> list[str]:
+        if approval_policy not in {"untrusted", "never"}:
+            raise ValueError("unsupported approval policy")
+        effective_approval_bypass = (
+            use_approval_bypass and approval_policy != "never"
+        )
         image_options: list[str] = []
         for image_path in image_paths or []:
             image_options.extend(["--image", str(image_path)])
@@ -437,7 +456,13 @@ class CodexRunner:
         )
         common_options = [
             "--json",
-            *codex_model_config_options(ignore_user_config=ignore_user_config),
+            *(
+                []
+                if preserve_native_model_config
+                else codex_model_config_options(
+                    ignore_user_config=ignore_user_config
+                )
+            ),
             *(["--ignore-user-config"] if ignore_user_config else []),
             "--ignore-rules",
             "--disable",
@@ -445,11 +470,17 @@ class CodexRunner:
             *memory_connector_config_options(),
             *passthrough_mcp_server_config_options(),
             "-c",
-            'approval_policy="untrusted"',
+            _config_string("approval_policy", approval_policy),
+            *(
+                ["-c", 'approvals_reviewer="auto_review"']
+                if approval_policy == "untrusted"
+                else []
+            ),
             "-c",
-            'approvals_reviewer="auto_review"',
-            "-c",
-            _config_string("developer_instructions", codex_developer_instructions()),
+            _config_string(
+                "developer_instructions",
+                developer_instructions or codex_developer_instructions(),
+            ),
             "-c",
             'model_reasoning_summary="concise"',
             "-c",
@@ -465,7 +496,11 @@ class CodexRunner:
                 "exec",
                 "resume",
                 *common_options,
-                CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+                *(
+                    [CODEX_BYPASS_APPROVALS_AND_SANDBOX]
+                    if effective_approval_bypass
+                    else []
+                ),
                 *(
                     ["--output-schema", str(output_schema_path)]
                     if output_schema_path is not None
@@ -479,7 +514,11 @@ class CodexRunner:
             self.codex_bin,
             "exec",
             *common_options,
-            CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+            *(
+                [CODEX_BYPASS_APPROVALS_AND_SANDBOX]
+                if effective_approval_bypass
+                else []
+            ),
             *schema_options,
             *image_options,
             "--cd",

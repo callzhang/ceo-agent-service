@@ -119,6 +119,50 @@ def test_codex_command_reuses_user_config_by_default(tmp_path: Path):
     assert disabled_features == ["hooks"]
 
 
+def test_codex_command_supports_strict_read_only_policy(tmp_path: Path):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        approval_policy="never",
+        developer_instructions="Read-only invocation. Do not write.",
+    )
+
+    assert 'approval_policy="never"' in command
+    assert 'approval_policy="untrusted"' not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert "Read-only invocation. Do not write." in _developer_instructions_arg(command)
+
+
+def test_codex_command_read_only_resume_preserves_native_user_config(tmp_path: Path):
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="hello",
+        session_id="session-1",
+        approval_policy="never",
+    )
+
+    assert command[:3] == ["codex", "exec", "resume"]
+    assert "--ignore-user-config" not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+
+
+def test_codex_command_can_preserve_native_model_config(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("CEO_CODEX_MODEL", "codex-MiniMax-M2.7")
+    monkeypatch.setenv("CEO_CODEX_MODEL_PROVIDER", "minimax")
+
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="hello",
+        session_id=None,
+        preserve_native_model_config=True,
+    )
+
+    command_text = " ".join(command)
+    assert "MiniMax" not in command_text
+    assert "minimax" not in command_text
+    assert "model_provider" not in command_text
+
+
 def test_codex_command_exposes_default_passthrough_mcps_from_codex_config(
     tmp_path: Path, monkeypatch
 ):
@@ -425,6 +469,19 @@ def test_codex_runner_env_forces_dws_host_owned_pat_without_browser(
     env = runner.build_env()
 
     assert env[DWS_AGENT_CODE_ENV] == "ceo-agent-service"
+
+
+def test_codex_runner_can_preserve_native_local_cli_auth_environment(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("LARK_CLI_AUTH_HOME", "/safe/lark-auth")
+    monkeypatch.setenv(DWS_AGENT_CODE_ENV, "legacy-agent-code")
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    env = runner.build_env(preserve_local_cli_auth=True)
+
+    assert env["LARK_CLI_AUTH_HOME"] == "/safe/lark-auth"
+    assert DWS_AGENT_CODE_ENV not in env
 
 
 def test_codex_runner_env_loads_memory_connector_from_codex_config(
