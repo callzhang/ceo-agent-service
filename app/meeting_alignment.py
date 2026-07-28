@@ -1206,12 +1206,17 @@ def _list_all_minutes(
     next_token = ""
     seen_tokens: set[str] = set()
     for _ in range(DISCOVERY_PAGE_LIMIT):
-        page = dws.list_minutes_page(
-            limit=DISCOVERY_PAGE_SIZE,
-            cursor=next_token,
-            start=start,
-            end=end,
-        )
+        try:
+            page = dws.list_minutes_page(
+                limit=DISCOVERY_PAGE_SIZE,
+                cursor=next_token,
+                start=start,
+                end=end,
+            )
+        except DwsError:
+            if items and next_token:
+                return items
+            raise
         page_items = page.get("items") or []
         items.extend(item for item in page_items if isinstance(item, dict))
         has_more, next_token = _validate_pagination(

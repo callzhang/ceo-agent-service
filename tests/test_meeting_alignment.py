@@ -1218,6 +1218,32 @@ def test_producer_stops_on_repeated_pagination_cursor(
     assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
 
 
+def test_minutes_pagination_keeps_verified_pages_when_later_cursor_fails():
+    meeting = ended_meeting()
+
+    class CursorFailsDws:
+        def __init__(self):
+            self.calls = []
+
+        def list_minutes_page(self, *, limit, cursor, start, end):
+            self.calls.append(cursor)
+            if cursor:
+                raise DwsError("cursor business error")
+            return {
+                "items": [meeting],
+                "has_more": True,
+                "next_token": "unstable-cursor",
+            }
+
+    dws = CursorFailsDws()
+
+    assert meeting_alignment._list_all_minutes(
+        dws, start="2026-07-07T00:00:00+08:00",
+        end="2026-07-14T00:00:00+08:00",
+    ) == [meeting]
+    assert dws.calls == ["", "unstable-cursor"]
+
+
 @pytest.mark.parametrize("pages_attribute", ["minutes_pages", "calendar_pages"])
 def test_producer_rejects_terminal_page_with_continuation_cursor(
     tmp_path, pages_attribute
