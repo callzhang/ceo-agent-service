@@ -84,22 +84,47 @@ def test_parse_agent_result_accepts_message_fields(payload, expected):
 
 def test_agent_result_forbids_extra_fields_at_every_model_level():
     with pytest.raises(ValidationError):
-        AgentResult.model_validate(
-            {
-                "outcome": "completed",
-                "summary": "done",
-                "unexpected": True,
-            }
+        AgentResult.model_validate_json(
+            json.dumps(
+                {
+                    "outcome": "completed",
+                    "summary": "done",
+                    "unexpected": True,
+                }
+            )
         )
 
     with pytest.raises(ValidationError):
-        AgentResult.model_validate(
-            {
-                "outcome": "completed",
-                "summary": "done",
-                "error": {"unexpected": True},
-            }
+        AgentResult.model_validate_json(
+            json.dumps(
+                {
+                    "outcome": "completed",
+                    "summary": "done",
+                    "error": {"unexpected": True},
+                }
+            )
         )
+
+
+@pytest.mark.parametrize(
+    ("path", "wrong_value"),
+    [
+        (("outcome",), 1),
+        (("summary",), 123),
+        (("error", "retryable"), "false"),
+        (("error", "authorization_required"), 0),
+        (("error", "side_effect_state"), False),
+    ],
+)
+def test_agent_result_rejects_wrong_runtime_types(path, wrong_value):
+    payload = json.loads(_result_json())
+    target = payload
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = wrong_value
+
+    with pytest.raises(ResultParseError):
+        parse_agent_result(json.dumps({"message": json.dumps(payload)}))
 
 
 @pytest.mark.parametrize("raw", ["not json", json.dumps({"message": "not json"})])
@@ -132,6 +157,34 @@ def test_parse_agent_result_selects_latest_jsonl_agent_result():
     )
 
     assert parse_agent_result(raw).summary == "new"
+
+
+def test_parse_agent_result_rejects_latest_malformed_candidate():
+    raw = "\n".join(
+        [
+            json.dumps({"message": _result_json(summary="old valid")}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": "not json"},
+                }
+            ),
+        ]
+    )
+
+    with pytest.raises(ResultParseError):
+        parse_agent_result(raw)
+
+
+def test_parse_agent_result_skips_later_non_agent_message_event():
+    raw = "\n".join(
+        [
+            json.dumps({"message": _result_json(summary="agent result")}),
+            json.dumps({"type": "error", "message": "transport failed"}),
+        ]
+    )
+
+    assert parse_agent_result(raw).summary == "agent result"
 
 
 def test_committed_schema_matches_model_and_forbids_all_object_extras():
@@ -187,6 +240,7 @@ def test_completed_effectful_event_confirms_completion():
 def test_safe_persisted_completed_receipt_confirms_completion():
     receipt = ExecutionReceipt(
         receipt_id="receipt-1",
+        operation_id="write-1",
         completed=True,
         persisted=True,
         safe_to_confirm=True,
@@ -211,6 +265,95 @@ def test_effectful_started_without_completion_cannot_confirm_completion():
         validate_completion_evidence(_completed_confirmed(), events=[event])
 
     assert exc_info.value.evidence_state is SideEffectState.UNKNOWN
+
+
+def test_completed_different_operation_does_not_mask_incomplete_effect():
+    events = [
+        ToolEffectEvent(
+            event_id="write-incomplete",
+            effect=EffectKind.EFFECTFUL,
+            status=EffectEventStatus.STARTED,
+        ),
+        ToolEffectEvent(
+            event_id="write-complete",
+            effect=EffectKind.EFFECTFUL,
+            status=EffectEventStatus.COMPLETED,
+        ),
+    ]
+
+    with pytest.raises(InconsistentAgentResultError) as exc_info:
+        validate_completion_evidence(_completed_confirmed(), events=events)
+
+    assert exc_info.value.evidence_state is SideEffectState.UNKNOWN
+
+
+def test_receipt_for_different_operation_does_not_mask_incomplete_effect():
+    event = ToolEffectEvent(
+        event_id="write-incomplete",
+        effect=EffectKind.EFFECTFUL,
+        status=EffectEventStatus.STARTED,
+    )
+    receipt = ExecutionReceipt(
+        receipt_id="receipt-1",
+        operation_id="write-complete",
+        completed=True,
+        persisted=True,
+        safe_to_confirm=True,
+    )
+
+    with pytest.raises(InconsistentAgentResultError) as exc_info:
+        validate_completion_evidence(
+            _completed_confirmed(), events=[event], receipts=[receipt]
+        )
+
+    assert exc_info.value.evidence_state is SideEffectState.UNKNOWN
+
+
+def test_matching_receipt_completes_started_operation():
+    event = ToolEffectEvent(
+        event_id="write-1",
+        effect=EffectKind.EFFECTFUL,
+        status=EffectEventStatus.STARTED,
+    )
+    receipt = ExecutionReceipt(
+        receipt_id="receipt-1",
+        operation_id="write-1",
+        completed=True,
+        persisted=True,
+        safe_to_confirm=True,
+    )
+
+    assert (
+        validate_completion_evidence(
+            _completed_confirmed(), events=[event], receipts=[receipt]
+        )
+        is SideEffectState.CONFIRMED
+    )
+
+
+def test_duplicate_out_of_order_events_correlate_by_operation_id():
+    events = [
+        ToolEffectEvent(
+            event_id="write-1",
+            effect=EffectKind.EFFECTFUL,
+            status=EffectEventStatus.COMPLETED,
+        ),
+        ToolEffectEvent(
+            event_id="write-1",
+            effect=EffectKind.EFFECTFUL,
+            status=EffectEventStatus.STARTED,
+        ),
+        ToolEffectEvent(
+            event_id="write-1",
+            effect=EffectKind.EFFECTFUL,
+            status=EffectEventStatus.STARTED,
+        ),
+    ]
+
+    assert (
+        validate_completion_evidence(_completed_confirmed(), events=events)
+        is SideEffectState.CONFIRMED
+    )
 
 
 def test_completion_validation_never_infers_evidence_from_summary_text():

@@ -19,7 +19,7 @@ class SideEffectState(StrEnum):
 
 
 class AgentError(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     code: str = ""
     retryable: bool = False
@@ -28,7 +28,7 @@ class AgentError(BaseModel):
 
 
 class AgentResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     outcome: AgentOutcome
     summary: str = Field(min_length=1)
@@ -46,7 +46,7 @@ class EffectEventStatus(StrEnum):
 
 
 class ToolEffectEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     event_id: str = Field(min_length=1)
     effect: EffectKind
@@ -54,9 +54,10 @@ class ToolEffectEvent(BaseModel):
 
 
 class ExecutionReceipt(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     receipt_id: str = Field(min_length=1)
+    operation_id: str = Field(min_length=1)
     completed: bool
     persisted: bool
     safe_to_confirm: bool
@@ -77,19 +78,17 @@ class InconsistentAgentResultError(ValueError):
 
 def parse_agent_result(raw: str) -> AgentResult:
     payloads = _parse_jsonl_payloads(raw)
-    validation_error: ValidationError | None = None
     for payload in reversed(payloads):
-        for candidate in _agent_message_candidates(payload):
-            try:
-                result_payload = json.loads(_normalize_result_text(candidate))
-                return AgentResult.model_validate(result_payload)
-            except (json.JSONDecodeError, ResultParseError):
-                continue
-            except ValidationError as exc:
-                validation_error = exc
-                continue
-    if validation_error is not None:
-        raise ResultParseError("agent result does not match the strict schema") from validation_error
+        candidate = _agent_message_candidate(payload)
+        if candidate is None:
+            continue
+        try:
+            normalized = _normalize_result_text(candidate)
+            return AgentResult.model_validate_json(normalized)
+        except (ResultParseError, ValidationError) as exc:
+            raise ResultParseError(
+                "latest agent result candidate is malformed or does not match the strict schema"
+            ) from exc
     raise ResultParseError("no valid AgentResult JSON found in Codex JSONL")
 
 
@@ -116,21 +115,31 @@ def _completion_evidence_state(
 ) -> SideEffectState:
     event_list = tuple(events)
     receipt_list = tuple(receipts)
-    if any(
-        event.effect is EffectKind.EFFECTFUL
-        and event.status is EffectEventStatus.COMPLETED
+    effectful_started = {
+        event.event_id
         for event in event_list
-    ) or any(
-        receipt.completed and receipt.persisted and receipt.safe_to_confirm
-        for receipt in receipt_list
-    ):
-        return SideEffectState.CONFIRMED
-    if any(
-        event.effect is EffectKind.EFFECTFUL
+        if event.effect is EffectKind.EFFECTFUL
         and event.status is EffectEventStatus.STARTED
+    }
+    effectful_completed = {
+        event.event_id
         for event in event_list
-    ):
+        if event.effect is EffectKind.EFFECTFUL
+        and event.status is EffectEventStatus.COMPLETED
+    }
+    receipt_completed = {
+        receipt.operation_id
+        for receipt in receipt_list
+        if receipt.completed and receipt.persisted and receipt.safe_to_confirm
+    }
+    completed_operations = effectful_completed | receipt_completed
+
+    # Lifecycle evidence is set-based: duplicates and event order do not matter.
+    # Every started effect must close under the same stable operation ID.
+    if effectful_started - completed_operations:
         return SideEffectState.UNKNOWN
+    if completed_operations:
+        return SideEffectState.CONFIRMED
     return SideEffectState.NONE
 
 
@@ -146,19 +155,21 @@ def _parse_jsonl_payloads(raw: str) -> list[dict]:
     return payloads
 
 
-def _agent_message_candidates(payload: dict) -> tuple[str, ...]:
-    candidates = []
+def _agent_message_candidate(payload: dict) -> str | None:
     item = payload.get("item")
     if isinstance(item, dict) and item.get("type") == "agent_message":
         for key in ("text", "message"):
             candidate = item.get(key)
             if isinstance(candidate, str):
-                candidates.append(candidate)
-    for key in ("message", "last_agent_message"):
-        candidate = payload.get(key)
-        if isinstance(candidate, str):
-            candidates.append(candidate)
-    return tuple(candidates)
+                return candidate
+    last_agent_message = payload.get("last_agent_message")
+    if isinstance(last_agent_message, str):
+        return last_agent_message
+    message = payload.get("message")
+    payload_type = payload.get("type")
+    if isinstance(message, str) and payload_type in (None, "agent_message", "task_complete"):
+        return message
+    return None
 
 
 def _normalize_result_text(text: str) -> str:
