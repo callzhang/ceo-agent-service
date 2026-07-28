@@ -301,6 +301,19 @@ def _classify_failure(
             commands,
             detail=detail,
         )
+    if error_type in {"network", "provider", "timeout", "unavailable"}:
+        reason_code = (
+            f"{phase}_unavailable"
+            if error_type == "unavailable"
+            else f"{phase}_{error_type}_unavailable"
+        )
+        return _result(
+            channel,
+            ChannelGateState.UNAVAILABLE,
+            reason_code,
+            commands,
+            detail=detail,
+        )
     if (
         error_type in {"auth", "authentication", "token", "refresh"}
         or error_subtype
@@ -317,14 +330,6 @@ def _classify_failure(
             channel,
             ChannelGateState.NEEDS_LOGIN,
             f"{phase}_auth_failed",
-            commands,
-            detail=detail,
-        )
-    if error_type in {"network", "provider", "timeout"}:
-        return _result(
-            channel,
-            ChannelGateState.UNAVAILABLE,
-            f"{phase}_{error_type}_unavailable",
             commands,
             detail=detail,
         )

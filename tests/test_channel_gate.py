@@ -159,6 +159,39 @@ def test_gate_classifies_timeout_as_unavailable():
     assert result.reason_code == "status_timeout"
 
 
+def test_dws_gate_prefers_structured_provider_failure_over_auth_returncode():
+    runner = ScriptedRunner(
+        [
+            completed(
+                4,
+                "",
+                '{"error":{"type":"provider","code":"PROVIDER_UNAVAILABLE"}}',
+            )
+        ]
+    )
+
+    result = DwsChannelGate(runner=runner).check()
+
+    assert result.state is ChannelGateState.UNAVAILABLE
+    assert result.reason_code == "status_provider_unavailable"
+
+
+def test_lark_gate_prefers_structured_network_failure_over_auth_returncode():
+    runner = ScriptedRunner(
+        [
+            completed(
+                4,
+                '{"ok":false,"error":{"type":"network","code":"NETWORK_UNAVAILABLE"}}',
+            )
+        ]
+    )
+
+    result = LarkChannelGate(runner=runner).check()
+
+    assert result.state is ChannelGateState.UNAVAILABLE
+    assert result.reason_code == "status_network_unavailable"
+
+
 def test_gate_classifies_structured_network_failure_as_unavailable():
     runner = ScriptedRunner(
         [
