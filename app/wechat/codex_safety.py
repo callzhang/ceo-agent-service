@@ -89,8 +89,10 @@ def has_any_tool_event(raw: str) -> bool:
     return False
 
 
-def configured_transport_server_names(command: list[str]) -> tuple[str, ...]:
-    """Find servers with an actual URL/command, never names from default allowlists."""
+def configured_transport_server_names(
+    command: list[str], *, include_all_configured: bool = False
+) -> tuple[str, ...]:
+    """Find MCP transports relevant to the requested isolation boundary."""
     from app.codex_runner import _codex_config, _passthrough_mcp_server_names
 
     names: set[str] = set()
@@ -101,42 +103,72 @@ def configured_transport_server_names(command: list[str]) -> tuple[str, ...]:
         for name, server in servers.items():
             if not isinstance(name, str) or not isinstance(server, dict):
                 continue
-            if name in passthrough_names and any(
+            if any(
                 isinstance(server.get(key), str) and server[key].strip()
                 for key in ("url", "command")
             ):
-                names.add(name)
                 explicitly_configured_names.add(name)
+                if include_all_configured or name in passthrough_names:
+                    names.add(name)
     for index, value in enumerate(command[:-1]):
         if value != "-c" or index + 1 >= len(command):
             continue
         match = _TRANSPORT_OPTION.match(command[index + 1])
         if match:
             name = match.group(1)
-            # CodexRunner injects the default Exa transport even when the user
-            # did not configure it. Keep that shared retrieval capability
-            # available; only an explicitly configured Exa server participates
-            # in workflow-local MCP isolation.
-            if name != "exa" or name in explicitly_configured_names:
+            if (
+                include_all_configured
+                or name != "exa"
+                or name in explicitly_configured_names
+            ):
                 names.add(name)
     return tuple(sorted(names))
 
 
 def disable_configured_mcp_servers(
     command: list[str], *, except_names: frozenset[str] = frozenset(),
+    include_all_configured: bool = False,
 ) -> None:
-    for name in configured_transport_server_names(command):
+    for name in configured_transport_server_names(
+        command, include_all_configured=include_all_configured
+    ):
         if name not in except_names:
-            command[-1:-1] = ["-c", f"mcp_servers.{name}.enabled=false"]
+            _insert_command_options(
+                command, ["-c", f"mcp_servers.{name}.enabled=false"]
+            )
 
 
 def make_read_only_without_tools(command: list[str]) -> None:
     """Constrain extraction to read-only Codex with no MCP, web, or other tools."""
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
-    disable_configured_mcp_servers(command)
-    command[-1:-1] = [
-        "--sandbox", "read-only",
-        "-c", "tools.enabled_tools=[]",
-        "-c", 'web_search="disabled"',
-    ]
+    _remove_config_options(
+        command,
+        prefixes=("approval_policy=", "approvals_reviewer="),
+    )
+    disable_configured_mcp_servers(command, include_all_configured=True)
+    _insert_command_options(
+        command,
+        [
+            "--sandbox", "read-only",
+            "-c", 'approval_policy="never"',
+            "-c", "tools.enabled_tools=[]",
+            "-c", 'web_search="disabled"',
+        ],
+    )
+
+
+def _insert_command_options(command: list[str], options: list[str]) -> None:
+    prompt_index = len(command) - 1
+    if command[1:3] == ["exec", "resume"]:
+        prompt_index -= 1
+    command[prompt_index:prompt_index] = options
+
+
+def _remove_config_options(command: list[str], *, prefixes: tuple[str, ...]) -> None:
+    index = 0
+    while index + 1 < len(command):
+        if command[index] == "-c" and command[index + 1].startswith(prefixes):
+            del command[index : index + 2]
+            continue
+        index += 1

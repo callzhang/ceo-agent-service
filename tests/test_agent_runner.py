@@ -62,8 +62,8 @@ def _jsonl(*, session_id: str = "session-1") -> str:
                     "type": "item.completed",
                     "item": {
                         "id": "read-1",
-                        "type": "command_execution",
-                        "effect": "read_only",
+                        "type": "web_search_call",
+                        "query": "current service status",
                     },
                 }
             ),
@@ -265,8 +265,29 @@ def test_direct_runner_persists_each_jsonl_event_before_final_parse(
 
 
 def test_read_only_run_uses_never_policy_and_no_write_instruction(
-    tmp_path: Path, store: AutoReplyStore
+    tmp_path: Path, store: AutoReplyStore, monkeypatch
 ):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            (
+                "[mcp_servers.exa]",
+                'url = "https://exa.example/mcp"',
+                "",
+                "[mcp_servers.passthrough]",
+                'command = "passthrough-mcp"',
+                "",
+                "[mcp_servers.user_config_only]",
+                'url = "https://other.example/mcp"',
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp")
+    monkeypatch.setenv("CONNECTOR_API_KEY", "opaque-memory-value")
+    monkeypatch.setenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", "exa,passthrough")
     task = _task(store)
     executor = RecordingExecutor(_jsonl())
 
@@ -277,6 +298,13 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     command_text = " ".join(executor.commands[0])
     assert 'approval_policy="never"' in command_text
     assert "--dangerously-bypass-approvals-and-sandbox" not in executor.commands[0]
+    assert "--sandbox read-only" in command_text
+    assert "tools.enabled_tools=[]" in executor.commands[0]
+    assert 'web_search="disabled"' in executor.commands[0]
+    assert "mcp_servers.memory_connector.enabled=false" in executor.commands[0]
+    assert "mcp_servers.exa.enabled=false" in executor.commands[0]
+    assert "mcp_servers.passthrough.enabled=false" in executor.commands[0]
+    assert "mcp_servers.user_config_only.enabled=false" in executor.commands[0]
     assert "read-only" in executor.prompts[0].casefold()
     assert "external write" in executor.prompts[0].casefold()
     developer = _developer_instructions(executor.commands[0])
@@ -284,6 +312,52 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert "read-only" in developer.casefold()
     assert "Do not perform any external write" in developer
     assert "system_actions" not in developer
+
+
+def test_read_only_resume_places_all_safety_options_before_session_id(
+    tmp_path: Path, store: AutoReplyStore, monkeypatch
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    task = _task(store)
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        owner="seed",
+        lease_seconds=1,
+        now="2026-07-29 00:00:00",
+    )
+    store.set_agent_run_session(
+        claim.run.id,
+        "existing-session",
+        owner="seed",
+        now="2026-07-29 00:00:00",
+    )
+    executor = RecordingExecutor(_jsonl(session_id="existing-session"))
+
+    DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=executor,
+        owner="read-only-worker",
+    ).run(
+        task,
+        _context(task.id),
+        read_only=True,
+        now="2026-07-29 00:00:02",
+    )
+
+    command = executor.commands[0]
+    session_index = command.index("existing-session")
+    assert command[-2:] == ["existing-session", "-"]
+    assert command.index("--sandbox") < session_index
+    assert command.index("tools.enabled_tools=[]") < session_index
+    assert command.index('web_search="disabled"') < session_index
+    assert command.index("mcp_servers.exa.enabled=false") < session_index
+    assert 'approval_policy="untrusted"' not in command
+    assert 'approvals_reviewer="auto_review"' not in command
 
 
 @pytest.mark.parametrize(
@@ -346,7 +420,7 @@ def test_corrupt_stream_after_effect_start_marks_run_unknown(
                     "item": {
                         "id": "write-1",
                         "type": "command_execution",
-                        "effect": "effectful",
+                        "command": "dws chat message send --conversation cid --text hello",
                     },
                 }
             ),
@@ -400,6 +474,309 @@ def test_persisted_events_redact_secret_values(
         task.id, task.execution_generation
     )
     assert secret not in json.dumps(persisted.tool_events)
+
+
+def test_persisted_events_recursively_redact_sensitive_keys_and_arguments(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    secret = "ordinary-looking-value"
+    output = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "raw-thread-value"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "call-1",
+                        "call_id": "audit-call-1",
+                        "type": "mcp_tool_call",
+                        "tool": "safe_tool_name",
+                        "status": "completed",
+                        "headers": {
+                            "Authorization": secret,
+                            "x-api-key": {"nested": secret},
+                            "Cookie": [secret],
+                        },
+                        "arguments": {
+                            "access-token": secret,
+                            "client_secret": [secret],
+                            "safe_argument": "visible-value",
+                        },
+                        "result": {
+                            "refresh_token": {"value": secret},
+                            "session-id": "raw-session-value",
+                        },
+                        "command": (
+                            f"tool --bearer {secret} --signed-url={secret} "
+                            "--safe visible-value"
+                        ),
+                        "argv": [
+                            "tool",
+                            "--password",
+                            secret,
+                            f"--api-key={secret}",
+                            "--safe",
+                            "visible-value",
+                        ],
+                    },
+                }
+            ),
+            _jsonl().splitlines()[-1],
+        )
+    )
+
+    DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
+    persisted = store.get_agent_run_for_task_generation(
+        task.id, task.execution_generation
+    )
+    serialized = json.dumps(persisted.tool_events)
+    assert secret not in serialized
+    assert "raw-thread-value" not in serialized
+    assert "raw-session-value" not in serialized
+    event = persisted.tool_events[1]["item"]
+    assert event["call_id"] == "audit-call-1"
+    assert event["type"] == "mcp_tool_call"
+    assert event["tool"] == "safe_tool_name"
+    assert event["status"] == "completed"
+    assert event["arguments"]["safe_argument"] == "visible-value"
+    assert "visible-value" in event["command"]
+    assert "visible-value" in event["argv"]
+
+
+@pytest.mark.parametrize(
+    "item_type",
+    (
+        "command_execution",
+        "mcp_tool_call",
+        "function_call",
+        "tool_call",
+        "dynamic_tool_call",
+    ),
+)
+def test_completed_native_effectful_items_confirm_observed_side_effect(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    item_type: str,
+):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {"id": "native-call-1", "type": item_type},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"id": "native-call-1", "type": item_type},
+                }
+            ),
+            _jsonl().splitlines()[-1],
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
+    persisted = store.get_agent_run(result.run_id)
+    assert result.result.error.side_effect_state.value == "none"
+    assert persisted.status == "completed"
+    assert persisted.side_effect_state == "confirmed"
+
+
+def test_native_mcp_lifecycle_uses_item_id_when_call_id_is_missing(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "mcp-item-1",
+                        "type": "mcp_tool_call",
+                        "server": "memory_connector",
+                        "tool": "memory_write",
+                        "arguments": {"data": "safe summary"},
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "mcp-item-1",
+                        "type": "mcp_tool_call",
+                        "server": "memory_connector",
+                        "tool": "memory_write",
+                        "result": {"ok": True},
+                    },
+                }
+            ),
+            _jsonl().splitlines()[-1],
+        )
+    )
+
+    run = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
+    assert store.get_agent_run(run.run_id).side_effect_state == "confirmed"
+
+
+def test_completed_native_web_search_is_read_only_evidence(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+
+    run = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(_jsonl()),
+    ).run(task, _context(task.id))
+
+    assert store.get_agent_run(run.run_id).side_effect_state == "none"
+
+
+def test_native_structured_read_only_annotation_overrides_conservative_default(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "annotated-read-1",
+                        "type": "command_execution",
+                        "metadata": {"read_only": True},
+                    },
+                }
+            ),
+            _jsonl().splitlines()[-1],
+        )
+    )
+
+    run = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
+    assert store.get_agent_run(run.run_id).side_effect_state == "none"
+
+
+def test_exact_nested_native_receipt_confirms_completion_without_tool_lifecycle(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    receipt = {
+        "receipt_id": "receipt-1",
+        "operation_id": "operation-1",
+        "completed": True,
+        "persisted": True,
+        "safe_to_confirm": True,
+    }
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "agent-read-1",
+                        "type": "agent_message",
+                        "result": {"receipt": receipt},
+                        "text": json.dumps(
+                            {
+                                "outcome": "completed",
+                                "summary": "verified",
+                                "error": {
+                                    "code": "",
+                                    "retryable": False,
+                                    "authorization_required": False,
+                                    "side_effect_state": "confirmed",
+                                },
+                            }
+                        ),
+                    },
+                }
+            ),
+        )
+    )
+
+    run = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
+    assert store.get_agent_run(run.run_id).side_effect_state == "confirmed"
+
+
+def test_receipt_like_prose_is_not_completion_evidence(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    receipt_like_summary = json.dumps(
+        {
+            "receipt_id": "receipt-1",
+            "operation_id": "operation-1",
+            "completed": True,
+            "persisted": True,
+            "safe_to_confirm": True,
+        }
+    )
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "message-1",
+                        "type": "agent_message",
+                        "output": (
+                            "receipt: receipt-1 operation_id=operation-1 "
+                            "completed=true persisted=true safe_to_confirm=true"
+                        ),
+                        "text": json.dumps(
+                            {
+                                "outcome": "completed",
+                                "summary": receipt_like_summary,
+                                "error": {
+                                    "code": "",
+                                    "retryable": False,
+                                    "authorization_required": False,
+                                    "side_effect_state": "confirmed",
+                                },
+                            }
+                        ),
+                    },
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
 
 
 def test_agent_prompt_never_instructs_auth_commands(

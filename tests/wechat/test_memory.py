@@ -864,8 +864,8 @@ def test_extraction_filters_sensitive_input_and_runs_read_only_without_tools(
     assert "tools.enabled_tools=[]" in captured["command"]
     assert 'web_search="disabled"' in captured["command"]
     assert "mcp_servers.xiaoqing_interview.enabled=false" in captured["command"]
-    assert "mcp_servers.exa.enabled=false" not in captured["command"]
-    assert "mcp_servers.github.enabled=false" not in captured["command"]
+    assert "mcp_servers.exa.enabled=false" in captured["command"]
+    assert "mcp_servers.github.enabled=false" in captured["command"]
 
 
 def test_extraction_fails_closed_if_codex_emits_any_tool_call(tmp_path):

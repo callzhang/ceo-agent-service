@@ -3,6 +3,7 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.parse import parse_qsl, urlsplit
 from uuid import uuid4
 
 from app.agent_context import AgentTaskContext
@@ -23,6 +24,7 @@ from app.history import safe_observability_error
 from app.leak_check import contains_credential
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRunLeaseLostError, AutoReplyStore, ReplyTask
+from app.wechat.codex_safety import make_read_only_without_tools
 
 
 AGENT_RESULT_SCHEMA_PATH = (
@@ -44,6 +46,42 @@ READ_ONLY_DEVELOPER_INSTRUCTION = (
     "This invocation is read-only. Do not perform any external write, send, "
     "approval, comment, reaction, edit, or other state-changing action."
 )
+_NATIVE_READ_ONLY_ITEM_TYPES = frozenset(
+    {"tool_search", "tool_search_call", "web_search", "web_search_call"}
+)
+_NATIVE_EFFECTFUL_ITEM_TYPES = frozenset(
+    {
+        "command_execution",
+        "dynamic_tool_call",
+        "function_call",
+        "mcp_tool_call",
+        "tool_call",
+    }
+)
+_SENSITIVE_KEY_NAMES = frozenset(
+    {
+        "authorization",
+        "bearer",
+        "cookie",
+        "password",
+        "secret",
+        "signature",
+        "signedurl",
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "idtoken",
+        "apikey",
+        "clientsecret",
+        "privatekey",
+        "webhook",
+    }
+)
+_SESSION_KEY_NAMES = frozenset({"sessionid", "threadid"})
+_COMMAND_KEY_NAMES = frozenset({"argv", "cmd", "command"})
+_STRUCTURED_TEXT_KEY_NAMES = frozenset({"arguments", "output", "result"})
+_RECEIPT_KEYS = frozenset(ExecutionReceipt.model_fields)
+_REDACTED = "[REDACTED]"
 
 
 class AgentRunUnavailableError(RuntimeError):
@@ -124,6 +162,8 @@ class DirectAgentRunner:
             use_approval_bypass=False,
             preserve_native_model_config=True,
         )
+        if read_only:
+            make_read_only_without_tools(command)
         events: list[dict[str, object]] = []
         effect_events: list[ToolEffectEvent] = []
         receipts: list[ExecutionReceipt] = []
@@ -302,24 +342,74 @@ def _session_id(payload: dict[str, object]) -> str:
 
 
 def _safe_event(payload: dict[str, object]) -> dict[str, object]:
-    def sanitize(value: object, *, key: str = "") -> object:
-        if key in {"thread_id", "session_id"}:
-            return "[stored separately]"
-        if isinstance(value, str):
-            return (
-                _redact_command(value)
-                if key in {"command", "cmd"}
-                else safe_observability_error(value, limit=2000)
-            )
-        if isinstance(value, list):
-            return [sanitize(item) for item in value]
-        if isinstance(value, dict):
-            return {str(item_key): sanitize(item, key=str(item_key)) for item_key, item in value.items()}
-        if value is None or isinstance(value, bool | int | float):
-            return value
-        return safe_observability_error(str(value), limit=2000)
+    return {
+        str(key): _sanitize_event_value(value, key=str(key))
+        for key, value in payload.items()
+    }
 
-    return {str(key): sanitize(value, key=str(key)) for key, value in payload.items()}
+
+def _sanitize_event_value(value: object, *, key: str = "") -> object:
+    normalized_key = _normalized_key(key)
+    if normalized_key in _SESSION_KEY_NAMES:
+        return "[stored separately]"
+    if _is_sensitive_key(normalized_key):
+        return _REDACTED
+    if isinstance(value, dict):
+        return {
+            str(item_key): _sanitize_event_value(item, key=str(item_key))
+            for item_key, item in value.items()
+        }
+    if isinstance(value, list):
+        if normalized_key in _COMMAND_KEY_NAMES and all(
+            isinstance(item, str) for item in value
+        ):
+            return _redact_argv(value)
+        return [_sanitize_event_value(item) for item in value]
+    if isinstance(value, str):
+        if normalized_key in _COMMAND_KEY_NAMES:
+            return _redact_command(value)
+        if normalized_key in _STRUCTURED_TEXT_KEY_NAMES:
+            structured = _sanitize_json_text(value)
+            if structured is not None:
+                return structured
+        if _is_signed_url(value):
+            return _REDACTED
+        return safe_observability_error(value, limit=2000)
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    return safe_observability_error(str(value), limit=2000)
+
+
+def _normalized_key(key: str) -> str:
+    return "".join(character for character in key.casefold() if character.isalnum())
+
+
+def _is_sensitive_key(normalized_key: str) -> bool:
+    if normalized_key in _SENSITIVE_KEY_NAMES:
+        return True
+    if normalized_key.startswith("x") and normalized_key[1:] in _SENSITIVE_KEY_NAMES:
+        return True
+    return (
+        normalized_key.endswith("token")
+        or normalized_key.endswith("password")
+        or normalized_key.endswith("secret")
+        or normalized_key.endswith("cookie")
+        or normalized_key.endswith("authorization")
+        or normalized_key.endswith("apikey")
+        or normalized_key.endswith("signedurl")
+        or normalized_key.endswith("signature")
+    )
+
+
+def _sanitize_json_text(value: str) -> str | None:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict | list):
+        return None
+    sanitized = _sanitize_event_value(parsed)
+    return json.dumps(sanitized, ensure_ascii=False, separators=(",", ":"))
 
 
 def _redact_command(command: str) -> str:
@@ -327,6 +417,10 @@ def _redact_command(command: str) -> str:
         parts = shlex.split(command)
     except ValueError:
         return safe_observability_error(command, limit=2000)
+    return " ".join(shlex.join(_redact_argv(parts)).split())[:2000]
+
+
+def _redact_argv(parts: list[str]) -> list[str]:
     sanitized: list[str] = []
     redact_next = False
     for part in parts:
@@ -334,18 +428,35 @@ def _redact_command(command: str) -> str:
             sanitized.append("[REDACTED]")
             redact_next = False
             continue
-        flag, separator, _value = part.partition("=")
-        if (
-            flag in DwsClient.SENSITIVE_COMMAND_FLAGS
-            or contains_credential(f"{flag}=placeholder")
+        flag, separator, value = part.partition("=")
+        normalized_flag = _normalized_key(flag.lstrip("-"))
+        if flag in DwsClient.SENSITIVE_COMMAND_FLAGS or _is_sensitive_key(
+            normalized_flag
         ):
             sanitized.append(
-                f"{flag}=[REDACTED]" if separator else flag
+                f"{flag}={_REDACTED}" if separator else flag
             )
             redact_next = not separator
+        elif (separator and _is_signed_url(value)) or _is_signed_url(part):
+            sanitized.append(_REDACTED)
+        elif contains_credential(part):
+            sanitized.append(_REDACTED)
         else:
             sanitized.append(part)
-    return safe_observability_error(shlex.join(sanitized), limit=2000)
+    return sanitized
+
+
+def _is_signed_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.query:
+        return False
+    return any(
+        _is_sensitive_key(_normalized_key(name))
+        for name, _value in parse_qsl(parsed.query, keep_blank_values=True)
+    )
 
 
 def _effect_event(payload: dict[str, object]) -> ToolEffectEvent | None:
@@ -355,18 +466,16 @@ def _effect_event(payload: dict[str, object]) -> ToolEffectEvent | None:
     item = payload.get("item")
     if not isinstance(item, dict):
         return None
-    effect = item.get("effect")
-    metadata = item.get("metadata")
-    if effect is None and isinstance(metadata, dict):
-        effect = metadata.get("effect")
-    if effect not in {"read_only", "effectful"}:
+    item_type = str(item.get("type") or "").strip().casefold()
+    effect = _native_effect_kind(item_type, item)
+    if effect is None:
         return None
     call_id = item.get("call_id") or item.get("id")
     if not isinstance(call_id, str) or not call_id.strip():
         return None
     return ToolEffectEvent(
         call_id=call_id,
-        effect=EffectKind(effect),
+        effect=effect,
         status=(
             EffectEventStatus.STARTED
             if event_type == "item.started"
@@ -375,14 +484,67 @@ def _effect_event(payload: dict[str, object]) -> ToolEffectEvent | None:
     )
 
 
+def _native_effect_kind(
+    item_type: str, item: dict[str, object]
+) -> EffectKind | None:
+    if item_type in _NATIVE_READ_ONLY_ITEM_TYPES:
+        return EffectKind.READ_ONLY
+    if item_type not in _NATIVE_EFFECTFUL_ITEM_TYPES and not item_type.endswith(
+        "_tool_call"
+    ):
+        return None
+    if _has_structured_read_only_annotation(item):
+        return EffectKind.READ_ONLY
+    return EffectKind.EFFECTFUL
+
+
+def _has_structured_read_only_annotation(item: dict[str, object]) -> bool:
+    for candidate in (item.get("metadata"), item.get("annotations")):
+        if isinstance(candidate, dict) and candidate.get("read_only") is True:
+            return True
+    return False
+
+
 def _receipt(payload: dict[str, object]) -> ExecutionReceipt | None:
-    candidate = payload.get("receipt")
-    if not isinstance(candidate, dict):
-        return None
-    try:
-        return ExecutionReceipt.model_validate(candidate)
-    except ValueError:
-        return None
+    sources: list[object] = []
+    if frozenset(payload) == _RECEIPT_KEYS:
+        sources.append(payload)
+    if "receipt" in payload:
+        sources.append(payload["receipt"])
+    item = payload.get("item")
+    if isinstance(item, dict):
+        for key in ("result", "output"):
+            if key in item:
+                sources.append(item[key])
+    for source in sources:
+        for candidate in _structured_receipt_candidates(source):
+            try:
+                return ExecutionReceipt.model_validate(candidate)
+            except ValueError:
+                continue
+    return None
+
+
+def _structured_receipt_candidates(value: object):
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return
+        if isinstance(parsed, dict | list):
+            yield from _structured_receipt_candidates(parsed)
+        return
+    if isinstance(value, list):
+        for item in value:
+            yield from _structured_receipt_candidates(item)
+        return
+    if not isinstance(value, dict):
+        return
+    if frozenset(value) == _RECEIPT_KEYS:
+        yield value
+        return
+    for nested in value.values():
+        yield from _structured_receipt_candidates(nested)
 
 
 def _evidence_state(
