@@ -543,6 +543,19 @@ def test_retryable_memory_scan_recovers_only_expired_started_lease(tmp_path) -> 
     assert [item.execution_id for item in restored] == [execution.execution_id]
 
 
+def test_retryable_memory_scan_includes_unknown_outcome(tmp_path) -> None:
+    store, _, execution, worker = build_execution(
+        tmp_path,
+        memory_write_runner=FakeMemoryWriteRunner([TimeoutError("timeout")]),
+    )
+    with pytest.raises(TimeoutError):
+        worker.execute_universal_memory_write(execution)
+
+    restored = store.list_retryable_universal_memory_action_executions(limit=10)
+
+    assert [item.execution_id for item in restored] == [execution.execution_id]
+
+
 def test_retry_failed_universal_memory_writes_recovers_backend_failure(tmp_path) -> None:
     first_runner = FakeMemoryWriteRunner(
         [CodexMemoryWriteToolFailed("memory backend unavailable")]

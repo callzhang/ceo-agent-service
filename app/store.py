@@ -2848,6 +2848,10 @@ class AutoReplyStore:
                           and actions.lease_expires_at != ''
                           and datetime(actions.lease_expires_at) <= current_timestamp
                       )
+                      or (
+                          actions.status='unknown'
+                          and actions.error like 'memory_write_outcome_unknown:%'
+                      )
                   )
                 order by actions.updated_at, actions.execution_id
                 limit ?
