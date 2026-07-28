@@ -225,6 +225,8 @@ def test_codex_mcp_memory_write_runner_inherits_codex_mcp_for_memory_write(
     ]
     assert len(developer_options) == 1
     assert "service-owned Memory write" in developer_options[0]
+    assert "tool_search" in developer_options[0]
+    assert "tool_search" in captured["prompt"]
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_write"]' in captured[
         "command"
     ]

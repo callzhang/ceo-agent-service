@@ -52,10 +52,13 @@ def run_codex_memory_write(
     del source_description
     runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
     prompt = (
-        "必须且只能调用一次 memory_write MCP 工具。"
+        "如果 memory_write 未直接可用，先调用 tool_search 查询并加载 "
+        "memory_connector memory_write；tool_search 只能用于这次工具发现。"
+        "随后必须且只能调用一次 memory_write MCP 工具。"
         "arguments 必须严格等于输入 JSON 中的 data、type、created_at 三个字段；"
         "不得传 user_id、graph_id、graph_ids、source_description、额外证据或任何其他字段。"
-        "调用后只输出 {\"status\":\"attempted\"}。\n"
+        "除 tool_search 和这一次 memory_write 外不得调用其他工具。"
+        "只有 memory_write 调用完成后才能输出 {\"status\":\"attempted\"}。\n"
         + json.dumps(
             {"data": data, "type": type, "created_at": created_at},
             ensure_ascii=False,
@@ -74,10 +77,15 @@ def run_codex_memory_write(
             "developer_instructions",
             (
                 "You are executing a service-owned Memory write. "
+                "If memory_write is deferred or not directly available, use "
+                "tool_search only to discover and load "
+                "memory_connector.memory_write. "
                 "Call exactly one memory_connector.memory_write tool with "
                 "the exact user-provided data, type, and created_at fields. "
-                "Do not call any other tool. Do not add user_id, graph_id, "
+                "Do not call any tool other than tool_search for discovery "
+                "and that one memory_write. Do not add user_id, graph_id, "
                 "graph_ids, source_description, evidence, or any extra field. "
+                "Do not report attempted unless memory_write completed. "
                 'After the tool call, output exactly {"status":"attempted"}.'
             ),
         ),

@@ -60,7 +60,7 @@ DWS 是按操作使用的外部依赖，不是整个服务的启动或运行闸�
 - producer、consumer 和 meeting 循环在单轮边界隔离异常；失败写入 `errors`，下一轮继续。
 - task-maintenance 按工作事项、OKR、任务扫描、OA 扫描和 follow-up 分步骤隔离；一个步骤失败不阻断同轮其他步骤。
 - 发送等有副作用的命令只有具备幂等键时才允许自动重试，避免重复发送。
-- Memory MCP 已发起工具调用但明确返回后端错误时，记录为可恢复 `blocked`；只有缺少工具回执、无法确认是否写入时才使用 `unknown`。
+- Memory MCP 为 deferred tool 时，service-owned 子 Codex 可先用 `tool_search` 加载 `memory_connector.memory_write`；审计忽略这一步只读发现，但仍要求最终恰好一个参数完全匹配的 memory_write。已发起工具调用但明确返回后端错误时，记录为可恢复 `blocked`；只有缺少工具回执、无法确认是否写入时才使用 `unknown`。
 - 失败不能伪装为空结果或成功；任务状态、attempt 和错误原因仍必须落库，供恢复和审计使用。
 
 ## 顶层数据流

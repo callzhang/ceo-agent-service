@@ -83,6 +83,10 @@ configuration and plugin login state, but its prompt and command-line config onl
 allow the `memory_write` tool for that invocation. The reply worker must not
 create or refresh a separate Memory OAuth client for this path; otherwise the CEO
 service and Codex can diverge on identity and authorization state.
+When Codex exposes MCP tools through deferred discovery, the child may call
+`tool_search` only to load `memory_connector.memory_write`. Audit ignores that
+read-only discovery event but still requires exactly one matching memory write
+receipt before recording success.
 
 If a universal `memory_write` action fails because the Memory backend is
 temporarily unavailable, the action is marked failed with a retryable
