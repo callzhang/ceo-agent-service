@@ -237,6 +237,11 @@ pending.
   `service.approve_wechat_delivery`/`reject_wechat_delivery`). In **auto** mode the
   `wechat-sender` loop sends them (only when `CEO_WECHAT_SENDER_ENABLED=1`). This is
   the primary guard against a wrong/awkward send.
+- **New inbound context supersedes stale unsent drafts.** Creating a delivery for
+  a newer trigger in the same account and conversation atomically marks older
+  `ready_to_send`, `failed`, or `send_unknown` deliveries as `superseded`; their
+  attempts become `skipped`. Sent, sending, and explicitly rejected deliveries
+  remain unchanged.
 - **Wrong-target detection is layered, not instant.** Immediate check = the AX
   binding (`chat_input_field.AXTitle == target`, twice); duplicates it cannot tell
   apart, so those rely on `binding_status=="verified"` (fail-closed). A **DB check

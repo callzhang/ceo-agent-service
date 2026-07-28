@@ -3387,6 +3387,44 @@ class AutoReplyStore:
         evidence: dict[str, str] | None = None,
     ) -> int:
         with self._connect() as db:
+            superseded_error = (
+                f"superseded_by_newer_wechat_trigger:{reply_task_id}"
+            )
+            older_deliveries = db.execute(
+                """
+                select id
+                from wechat_deliveries
+                where reply_task_id!=?
+                  and account_id=?
+                  and target_type=?
+                  and target_id=?
+                  and conversation_id=?
+                  and status in ('ready_to_send', 'failed', 'send_unknown')
+                  and error!='user_rejected'
+                """,
+                (
+                    reply_task_id,
+                    account_id,
+                    target_type,
+                    target_id,
+                    conversation_id,
+                ),
+            ).fetchall()
+            for older in older_deliveries:
+                db.execute(
+                    """
+                    update wechat_deliveries
+                    set status='superseded', error=?, updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (superseded_error, older["id"]),
+                )
+                self._sync_wechat_delivery_reply_attempt(
+                    db,
+                    delivery_id=older["id"],
+                    delivery_status="superseded",
+                    error=superseded_error,
+                )
             db.execute(
                 """
                 insert into wechat_deliveries (
@@ -3494,6 +3532,8 @@ class AutoReplyStore:
             return "pending", reason or f"wechat_delivery_{status}"
         if status == "sent":
             return "sent", reason
+        if status == "superseded":
+            return "skipped", reason or status
         if status == "failed" and reason == "user_rejected":
             return "skipped", reason
         if status in {"failed", "send_unknown"}:

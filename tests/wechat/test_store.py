@@ -160,6 +160,54 @@ def test_recreating_pre_action_failed_delivery_makes_it_retryable(tmp_path):
     assert delivery.reply_text == "second"
 
 
+def test_new_delivery_supersedes_older_unsent_delivery_for_same_conversation(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    for task_id, message_id in ((1, "m1"), (2, "m2")):
+        store.enqueue_reply_task(
+            channel="wechat",
+            conversation_id="u1",
+            conversation_title="Alex",
+            single_chat=True,
+            trigger_message_id=message_id,
+            trigger_create_time=f"2026-07-28T10:0{task_id}:00",
+            trigger_sender="Alex",
+            trigger_text=f"message {task_id}",
+        )
+        store.record_reply_attempt(
+            conversation_id="u1",
+            conversation_title="Alex",
+            trigger_message_id=message_id,
+            trigger_sender="Alex",
+            trigger_text=f"message {task_id}",
+            action="send_reply",
+            sensitivity_kind="normal",
+            send_status="pending",
+            channel="wechat",
+        )
+        store.create_wechat_delivery(
+            reply_task_id=task_id,
+            account_id="acct-1",
+            target_type="direct",
+            target_id="u1",
+            conversation_id="u1",
+            reply_text=f"reply {task_id}",
+        )
+
+    old_delivery = store.get_wechat_delivery_for_task(1)
+    new_delivery = store.get_wechat_delivery_for_task(2)
+    old_attempt = store.get_latest_reply_attempt_for_trigger("u1", "m1")
+    new_attempt = store.get_latest_reply_attempt_for_trigger("u1", "m2")
+
+    assert old_delivery.status == "superseded"
+    assert old_delivery.error == "superseded_by_newer_wechat_trigger:2"
+    assert old_attempt.send_status == "skipped"
+    assert old_attempt.send_error == "superseded_by_newer_wechat_trigger:2"
+    assert new_delivery.status == "ready_to_send"
+    assert new_attempt.send_status == "pending"
+
+
 def test_replacing_enabled_scope_does_not_clear_its_watermark(tmp_path):
     store = _store(tmp_path)
     scope = WechatReplyScope(

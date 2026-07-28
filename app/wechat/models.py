@@ -90,7 +90,7 @@ class WechatDelivery(BaseModel):
     conversation_id: str = ""
     reply_text: str
     status: Literal[
-        "ready_to_send", "sending", "sent", "send_unknown", "failed"
+        "ready_to_send", "sending", "sent", "send_unknown", "failed", "superseded"
     ] = "ready_to_send"
     evidence: dict[str, str] = Field(default_factory=dict)
     error: str = ""

@@ -231,7 +231,8 @@ AI 听记分页在首屏失败时整轮失败并重试；已读取至少一页�
 
 Accessibility 树遍历按元素去重；微信返回自引用或父子循环节点时不会耗尽深度预算，真实会话列表仍可被扫描。
 锁屏或 Sender preflight 临时不可用时不消费 `ready_to_send` delivery；消息保持待发送，图形会话恢复后由后续循环继续处理。
-因此，旧消息已被更新消息覆盖、会话不在最近列表或同名项无法唯一确认时，delivery 会保持未发送，等待重新生成或人工确认。
+同一账号和会话生成新 delivery 时，旧的 `ready_to_send`、`failed` 或 `send_unknown` delivery 会原子转为 `superseded`，对应 attempt 显示为 `skipped`；已发送、正在发送或用户明确拒绝的记录不受影响。
+因此，会话不在最近列表或同名项无法唯一确认时，当前 delivery 会保持未发送，等待重新生成或人工确认；新 trigger 到达后不会继续发送已过时的旧回复。
 History 的“重新生成”会保留微信 channel 和原始 `WechatMessage`；不会把微信任务转换成钉钉任务。
 
 ## 本地状态库
