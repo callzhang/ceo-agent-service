@@ -2665,13 +2665,15 @@ class AutoReplyStore:
             if (
                 not claimed
                 and row["status"] == "running"
+                and bool(row["codex_session_id"])
                 and row["lease_expires_at"] <= now_text
             ):
                 reclaimed = db.execute(
                     """
                     update agent_runs
                     set lease_owner=?, lease_expires_at=?, updated_at=?
-                    where id=? and status='running' and lease_expires_at<=?
+                    where id=? and status='running'
+                      and codex_session_id<>'' and lease_expires_at<=?
                     """,
                     (owner, lease_expires_at, now_text, row["id"], now_text),
                 )

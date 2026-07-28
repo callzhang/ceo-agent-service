@@ -693,6 +693,31 @@ def test_agent_run_fresh_lease_cannot_be_stolen_but_expired_lease_recovers(
     assert expired.run.lease_owner == "worker-2"
 
 
+def test_expired_sessionless_agent_run_cannot_be_reclaimed(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    first = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-1",
+        lease_seconds=1800,
+        now="2026-07-29 00:00:00",
+    )
+
+    expired = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-2",
+        now="2026-07-29 00:30:01",
+    )
+
+    assert expired.claimed is False
+    assert expired.run.id == first.run.id
+    assert expired.run.codex_session_id == ""
+    assert expired.run.lease_owner == "worker-1"
+    assert expired.run.lease_expires_at == first.run.lease_expires_at
+
+
 def test_agent_run_claim_rejects_generation_not_owned_by_task(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
