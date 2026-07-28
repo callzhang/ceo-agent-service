@@ -3,7 +3,7 @@ import pytest
 from app.store import AutoReplyStore
 from app.wechat.accessibility import (
     AccessibilityResult, MacWechatAccessibility, WechatSender, _open_target,
-    _attribute_text_matches, _text_evidence_matches,
+    _attribute_text_matches, _text_evidence_matches, _walk_accessibility_tree,
     reconcile_incomplete_deliveries,
 )
 from app.wechat.models import WechatReplyScope
@@ -209,6 +209,21 @@ def test_attribute_text_match_checks_nonstandard_wechat_preview_attribute():
         object(),
         "阿美战投你见过窦轩了？他说他当时在另外一个机构，2022年和你聊过",
     )
+
+
+def test_walk_accessibility_tree_skips_self_referential_children():
+    root = object()
+    session_row = object()
+    preview = object()
+    children = {
+        root: [root, session_row],
+        session_row: [preview],
+        preview: [],
+    }
+
+    assert list(
+        _walk_accessibility_tree(root, lambda element: children[element])
+    ) == [root, session_row, preview]
 
 
 def test_open_target_returns_none_when_navigation_controls_are_missing():

@@ -96,6 +96,31 @@ def _attribute_text_matches(g, attribute_names, element, expected: str) -> bool:
     return False
 
 
+def _walk_accessibility_tree(root, children, *, max_depth: int = 12):
+    """Traverse an AX tree once even when the provider exposes parent/self cycles."""
+    seen = set()
+    seen_unhashable_ids = set()
+
+    def visit(element, depth):
+        try:
+            if element in seen:
+                return
+            seen.add(element)
+        except TypeError:
+            identity = id(element)
+            if identity in seen_unhashable_ids:
+                return
+            seen_unhashable_ids.add(identity)
+
+        yield element
+        if depth >= max_depth:
+            return
+        for child in children(element) or []:
+            yield from visit(child, depth + 1)
+
+    yield from visit(root, 0)
+
+
 def _open_target(
     target_label, *, first, click, type_fn, settle, sleep, search_query=None,
     find_all=None, subtree_has_text=None, expected_recent_text=None,
@@ -359,11 +384,10 @@ class MacWechatAccessibility:
             err, val = get_attr(el, attr, None)
             return val if err == 0 else None
 
-        def walk(el, depth=0):
-            yield el
-            if depth < 12:
-                for c in (g(el, "AXChildren") or []):
-                    yield from walk(c, depth + 1)
+        def walk(el):
+            yield from _walk_accessibility_tree(
+                el, lambda child: g(child, "AXChildren"), max_depth=12,
+            )
 
         def first(role=None, id_eq=None, title_contains=None):
             for el in walk(app):
@@ -497,11 +521,10 @@ class MacWechatAccessibility:
             err, val = get_attr(el, attr, None)
             return val if err == 0 else None
 
-        def walk(el, depth=0):
-            yield el
-            if depth < 12:
-                for c in (g(el, "AXChildren") or []):
-                    yield from walk(c, depth + 1)
+        def walk(el):
+            yield from _walk_accessibility_tree(
+                el, lambda child: g(child, "AXChildren"), max_depth=12,
+            )
 
         def first(role=None, id_eq=None, title_contains=None):
             for el in walk(app):
@@ -603,11 +626,10 @@ class MacWechatAccessibility:
             err, val = get_attr(el, attr, None)
             return val if err == 0 else None
 
-        def walk(el, depth=0):
-            yield el
-            if depth < 14:
-                for c in (g(el, "AXChildren") or []):
-                    yield from walk(c, depth + 1)
+        def walk(el):
+            yield from _walk_accessibility_tree(
+                el, lambda child: g(child, "AXChildren"), max_depth=14,
+            )
 
         prev_app = self._frontmost_app()
         try:
