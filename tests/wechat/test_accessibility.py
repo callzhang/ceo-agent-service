@@ -3,7 +3,7 @@ import pytest
 from app.store import AutoReplyStore
 from app.wechat.accessibility import (
     AccessibilityResult, MacWechatAccessibility, WechatSender, _open_target,
-    reconcile_incomplete_deliveries,
+    _text_evidence_matches, reconcile_incomplete_deliveries,
 )
 from app.wechat.models import WechatReplyScope
 
@@ -180,6 +180,20 @@ def test_open_target_does_not_search_when_recent_message_is_not_in_sidebar():
 
     assert opened is None
     assert searched == []
+
+
+def test_text_evidence_match_allows_ui_prefix_and_long_truncation():
+    expected = "阿美战投你见过窦轩了？他说他当时在另外一个机构，2022年和你聊过"
+
+    assert _text_evidence_matches(
+        f"14:11 未读 {expected}",
+        expected,
+    )
+    assert _text_evidence_matches(
+        f"{expected[:20]}…",
+        expected,
+    )
+    assert not _text_evidence_matches("嗯，我知道了", "嗯")
 
 
 def test_open_target_returns_none_when_navigation_controls_are_missing():

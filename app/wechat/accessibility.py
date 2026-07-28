@@ -63,6 +63,23 @@ def _poll_value(probe, *, sleep, attempts=20, interval=0.2):
     return None
 
 
+def _text_evidence_matches(candidate: str, expected: str) -> bool:
+    candidate_text = " ".join(candidate.split()).rstrip("…").strip()
+    expected_text = " ".join(expected.split()).strip()
+    if not candidate_text or not expected_text:
+        return False
+    if candidate_text == expected_text:
+        return True
+    minimum_partial_length = 12
+    return (
+        len(expected_text) >= minimum_partial_length
+        and expected_text in candidate_text
+    ) or (
+        len(candidate_text) >= minimum_partial_length
+        and candidate_text in expected_text
+    )
+
+
 def _open_target(
     target_label, *, first, click, type_fn, settle, sleep, search_query=None,
     find_all=None, subtree_has_text=None, expected_recent_text=None,
@@ -362,7 +379,10 @@ class MacWechatAccessibility:
             for el in walk(root):
                 for attribute in ("AXTitle", "AXValue", "AXDescription"):
                     value = g(el, attribute)
-                    if isinstance(value, str) and value.strip() == needle:
+                    if (
+                        isinstance(value, str)
+                        and _text_evidence_matches(value, needle)
+                    ):
                         return True
             return False
 
@@ -496,7 +516,10 @@ class MacWechatAccessibility:
             for el in walk(root):
                 for attribute in ("AXTitle", "AXValue", "AXDescription"):
                     value = g(el, attribute)
-                    if isinstance(value, str) and value.strip() == needle:
+                    if (
+                        isinstance(value, str)
+                        and _text_evidence_matches(value, needle)
+                    ):
                         return True
             return False
 
