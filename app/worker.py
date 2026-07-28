@@ -3884,7 +3884,14 @@ class DingTalkAutoReplyWorker:
             if raise_authorization and self._is_authorization_error(exc):
                 raise
             pat_authorization_requested = False
-            if self._is_dws_login_error(exc):
+            auth_status = None
+            is_login_error = self._is_dws_login_error(exc)
+            if not is_login_error:
+                auth_status = self._dws_auth_status_for_backup()
+                is_login_error = bool(auth_status) and not self._dws_auth_status_is_ready(
+                    auth_status
+                )
+            if is_login_error:
                 restored_result = self._restore_dws_auth_backup_and_retry(
                     kind,
                     call,

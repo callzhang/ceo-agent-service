@@ -42,7 +42,12 @@ def backup_database_if_due(
 def prune_database_backups(backup_dir: Path, *, today: date) -> list[Path]:
     dated_paths: list[tuple[int, Path]] = []
     for path in backup_dir.glob("auto-reply-*.sqlite3"):
-        backup_date = date.fromisoformat(path.stem.removeprefix("auto-reply-"))
+        try:
+            backup_date = date.fromisoformat(
+                path.stem.removeprefix("auto-reply-")
+            )
+        except ValueError:
+            continue
         dated_paths.append(((today - backup_date).days, path))
 
     keep: set[Path] = {

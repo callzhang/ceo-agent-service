@@ -1892,6 +1892,40 @@ def test_produce_once_starts_dws_auth_login_once_for_login_error(
     assert codex.calls == []
 
 
+def test_produce_once_uses_auth_status_for_unclassified_dws_failure(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    dws = FakeDws(
+        [],
+        {},
+        list_error=DwsError(
+            "dws command failed while resolving the access token",
+            code="5",
+        ),
+    )
+    dws.auth_status_response = {
+        "authenticated": False,
+        "token_valid": False,
+        "refresh_token_valid": False,
+    }
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    assert worker.produce_once() == 0
+    assert worker.produce_once() == 0
+
+    assert dws.auth_status_calls >= 1
+    assert dws.auth_login_starts == 1
+    assert worker.store.count_errors() == 0
+    assert [item["title"] for item in notifications] == [
+        "CEO DWS auth login required"
+    ]
+
+
 def test_produce_once_does_not_start_dws_auth_login_when_auth_status_is_valid(
     tmp_path: Path, monkeypatch
 ):

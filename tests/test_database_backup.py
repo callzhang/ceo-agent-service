@@ -52,6 +52,22 @@ def test_backup_retention_keeps_daily_three_day_window_and_7_14_day_points(
     assert remaining_ages == [0, 1, 2, 3, 7, 14]
 
 
+def test_backup_retention_ignores_non_daily_backup_names(tmp_path: Path):
+    assert hasattr(cli, "prune_database_backups")
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    manual_backup = backup_dir / "auto-reply-before-recovery.sqlite3"
+    manual_backup.touch()
+
+    deleted = cli.prune_database_backups(
+        backup_dir,
+        today=date(2026, 7, 23),
+    )
+
+    assert deleted == []
+    assert manual_backup.exists()
+
+
 def test_database_backup_loop_checks_hourly(tmp_path: Path, monkeypatch):
     assert hasattr(cli, "run_database_backup_loop")
     calls: list[Path | int] = []

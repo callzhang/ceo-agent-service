@@ -25,6 +25,12 @@ never replayed merely because its transport failed; the service must reconcile
 the existing operation first so retries cannot duplicate a message, approval,
 or other visible side effect.
 
+When a DWS failure does not carry a recognized login error code, the worker
+checks the structured `dws auth status` response before classifying the failure.
+An explicitly unhealthy token state enters the existing auth-backup restore and
+interactive login flow; an unavailable auth-status check remains an ordinary
+dependency failure and does not guess that login is required.
+
 Short DWS read-path token verification failures are treated like transient read
 failures. The DWS client retries read-only commands such as message reads and
 contact lookups once; if a read still fails with `TOKEN_VERIFIED_FAILED`, the
