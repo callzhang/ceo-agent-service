@@ -13,8 +13,13 @@ class FakeRunner:
         self.calls = []
         self.result = result or AccessibilityResult(True, True, "fp-1")
 
-    def send(self, target_label, reply_text, *, search_query=None):
-        self.calls.append((target_label, reply_text, search_query))
+    def send(
+        self, target_label, reply_text, *, search_query=None,
+        expected_recent_text=None,
+    ):
+        self.calls.append(
+            (target_label, reply_text, search_query, expected_recent_text)
+        )
         return self.result
 
 
@@ -35,6 +40,7 @@ def _seed_delivery(store):
     store.create_wechat_delivery(
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u9", conversation_id="u9", reply_text="收到",
+        evidence={"trigger_text": "hi"},
     )
     return store.get_wechat_delivery_for_task(1)
 
@@ -61,7 +67,7 @@ def test_verified_binding_sends(store):
     delivery = _seed_delivery(store)
     outcome = sender.send(delivery, _scope("verified"))
     assert outcome.status == "sent"
-    assert runner.calls == [("Alex", "收到", None)]
+    assert runner.calls == [("Alex", "收到", None, "hi")]
 
 
 def test_verified_binding_uses_persisted_unique_navigation_query(store):
@@ -75,7 +81,7 @@ def test_verified_binding_uses_persisted_unique_navigation_query(store):
     outcome = sender.send(delivery, scope)
 
     assert outcome.status == "sent"
-    assert runner.calls == [("Alex", "收到", "melody115")]
+    assert runner.calls == [("Alex", "收到", "melody115", "hi")]
 
 
 def test_post_action_ambiguity_becomes_send_unknown(store):
@@ -112,6 +118,7 @@ def test_open_target_waits_for_async_composer_after_session_click():
     opened = _open_target(
         "文件传输助手",
         first=first,
+        find_all=lambda **_kwargs: [row],
         click=lambda element, n=1: clicked.append((element, n)),
         type_fn=lambda _text: None,
         settle=0,
@@ -120,6 +127,59 @@ def test_open_target_waits_for_async_composer_after_session_click():
 
     assert opened is composer
     assert clicked == [(row, 1)]
+
+
+def test_open_target_selects_unique_sidebar_row_by_recent_message():
+    wrong_row = object()
+    expected_row = object()
+    composer = object()
+    clicked = []
+
+    def first(*, role=None, id_eq=None, title_contains=None):
+        if id_eq == "chat_input_field":
+            return composer
+        return None
+
+    def find_all(*, role=None, id_eq=None, title_contains=None):
+        if id_eq == "session_item_Melody":
+            return [wrong_row, expected_row]
+        return []
+
+    opened = _open_target(
+        "Melody",
+        first=first,
+        find_all=find_all,
+        subtree_has_text=lambda row, text: (
+            row is expected_row and text == "那他为啥问我要材料呢"
+        ),
+        click=lambda element, n=1: clicked.append((element, n)),
+        type_fn=lambda _text: None,
+        settle=0,
+        sleep=lambda _seconds: None,
+        expected_recent_text="那他为啥问我要材料呢",
+    )
+
+    assert opened is composer
+    assert clicked == [(expected_row, 1)]
+
+
+def test_open_target_does_not_search_when_recent_message_is_not_in_sidebar():
+    searched = []
+
+    opened = _open_target(
+        "Melody",
+        first=lambda **_kwargs: None,
+        find_all=lambda **_kwargs: [],
+        subtree_has_text=lambda _row, _text: False,
+        click=lambda _element, n=1: None,
+        type_fn=searched.append,
+        settle=0,
+        sleep=lambda _seconds: None,
+        expected_recent_text="latest inbound",
+    )
+
+    assert opened is None
+    assert searched == []
 
 
 def test_open_target_returns_none_when_navigation_controls_are_missing():

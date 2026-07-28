@@ -697,7 +697,7 @@ def test_codex_extraction_runner_parses_batch_envelope_and_forbids_write(tmp_pat
     assert [item.statement for item in result] == ["durable fact"]
     assert "不会提供 memory_write" in captured["prompt"]
     assert "wechat_memory_candidates.schema.json" in " ".join(captured["command"])
-    assert "mcp_servers.memory_connector.enabled=false" in captured["command"]
+    assert "tools.enabled_tools=[]" in captured["command"]
 
 
 def test_codex_extraction_parses_live_item_completed_agent_message(tmp_path):
@@ -864,7 +864,6 @@ def test_extraction_filters_sensitive_input_and_runs_read_only_without_tools(
     assert "tools.enabled_tools=[]" in captured["command"]
     assert 'web_search="disabled"' in captured["command"]
     assert "mcp_servers.xiaoqing_interview.enabled=false" in captured["command"]
-    assert "mcp_servers.memory_connector.enabled=false" in captured["command"]
     assert "mcp_servers.exa.enabled=false" not in captured["command"]
     assert "mcp_servers.github.enabled=false" not in captured["command"]
 

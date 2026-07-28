@@ -3378,7 +3378,22 @@ class AutoReplyStore:
                     reply_task_id, account_id, target_type, target_id,
                     conversation_id, reply_text, evidence_json
                 ) values (?, ?, ?, ?, ?, ?, ?)
-                on conflict(reply_task_id) do nothing
+                on conflict(reply_task_id) do update set
+                    account_id=excluded.account_id,
+                    target_type=excluded.target_type,
+                    target_id=excluded.target_id,
+                    conversation_id=excluded.conversation_id,
+                    reply_text=excluded.reply_text,
+                    status='ready_to_send',
+                    evidence_json=excluded.evidence_json,
+                    error='',
+                    updated_at=current_timestamp
+                where wechat_deliveries.status='failed'
+                  and wechat_deliveries.action_started_at=''
+                  and wechat_deliveries.error in (
+                    'target_binding_unverified',
+                    'action_not_performed'
+                  )
                 """,
                 (
                     reply_task_id, account_id, target_type, target_id,

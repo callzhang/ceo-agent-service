@@ -121,6 +121,45 @@ def test_reply_task_identity_is_isolated_by_channel(tmp_path):
     ).channel == "wechat"
 
 
+def test_recreating_pre_action_failed_delivery_makes_it_retryable(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="u1",
+        conversation_title="Alex",
+        single_chat=True,
+        trigger_message_id="m1",
+        trigger_create_time="2026-07-28T10:00:00",
+        trigger_sender="Alex",
+        trigger_text="hi",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1,
+        account_id="acct-1",
+        target_type="direct",
+        target_id="u1",
+        conversation_id="u1",
+        reply_text="first",
+    )
+    store.set_wechat_delivery_status(
+        delivery_id, "failed", error="target_binding_unverified"
+    )
+
+    store.create_wechat_delivery(
+        reply_task_id=1,
+        account_id="acct-1",
+        target_type="direct",
+        target_id="u1",
+        conversation_id="u1",
+        reply_text="second",
+    )
+
+    delivery = store.get_wechat_delivery_for_task(1)
+    assert delivery.status == "ready_to_send"
+    assert delivery.error == ""
+    assert delivery.reply_text == "second"
+
+
 def test_replacing_enabled_scope_does_not_clear_its_watermark(tmp_path):
     store = _store(tmp_path)
     scope = WechatReplyScope(

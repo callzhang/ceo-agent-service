@@ -54,6 +54,11 @@ class WechatSenderRpcService:
                 search_query=(
                     _bounded_text(params, "search_query", maximum=512) or None
                 ),
+                expected_recent_text=(
+                    _bounded_text(
+                        params, "expected_recent_text", maximum=10_000,
+                    ) or None
+                ),
             )
         if method == "send":
             result = self.runner.send(
@@ -61,6 +66,11 @@ class WechatSenderRpcService:
                 _bounded_text(params, "reply_text", maximum=10_000, required=True),
                 search_query=(
                     _bounded_text(params, "search_query", maximum=512) or None
+                ),
+                expected_recent_text=(
+                    _bounded_text(
+                        params, "expected_recent_text", maximum=10_000,
+                    ) or None
                 ),
             )
             return asdict(result)
@@ -192,20 +202,24 @@ class WechatSenderClient:
 
     def open_and_identify(
         self, target_label: str, *, search_query: str | None = None,
+        expected_recent_text: str | None = None,
     ) -> str:
         result = self._request("open_and_identify", {
             "target_label": target_label,
             "search_query": search_query or "",
+            "expected_recent_text": expected_recent_text or "",
         })
         return result if isinstance(result, str) else ""
 
     def send(
         self, target_label: str, reply_text: str, *, search_query: str | None = None,
+        expected_recent_text: str | None = None,
     ) -> AccessibilityResult:
         return AccessibilityResult(**self._request("send", {
             "target_label": target_label,
             "reply_text": reply_text,
             "search_query": search_query or "",
+            "expected_recent_text": expected_recent_text or "",
         }))
 
     def recall_last_outbound(self, text: str) -> bool:

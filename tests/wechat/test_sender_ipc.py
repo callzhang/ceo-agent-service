@@ -30,12 +30,23 @@ class FakeAccessibility:
         self.calls.append(("request_accessibility",))
         return "ready"
 
-    def open_and_identify(self, target_label, *, search_query=None):
-        self.calls.append(("open_and_identify", target_label, search_query))
+    def open_and_identify(
+        self, target_label, *, search_query=None, expected_recent_text=None,
+    ):
+        self.calls.append((
+            "open_and_identify", target_label, search_query,
+            expected_recent_text,
+        ))
         return target_label
 
-    def send(self, target_label, reply_text, *, search_query=None):
-        self.calls.append(("send", target_label, reply_text, search_query))
+    def send(
+        self, target_label, reply_text, *, search_query=None,
+        expected_recent_text=None,
+    ):
+        self.calls.append((
+            "send", target_label, reply_text, search_query,
+            expected_recent_text,
+        ))
         return AccessibilityResult(True, True, "fp-1")
 
     def recall_last_outbound(self, text):
@@ -55,10 +66,13 @@ def test_sender_rpc_exposes_only_bounded_accessibility_operations():
     assert service.dispatch("preflight", {}) == "ready"
     assert service.dispatch("request_accessibility", {}) == "ready"
     assert service.dispatch("open_and_identify", {
-        "target_label": "Melody", "search_query": "melody115",
+        "target_label": "Melody",
+        "expected_recent_text": "那他为啥问我要材料呢",
     }) == "Melody"
     assert service.dispatch("send", {
-        "target_label": "Melody", "search_query": "melody115", "reply_text": "收到",
+        "target_label": "Melody",
+        "expected_recent_text": "那他为啥问我要材料呢",
+        "reply_text": "收到",
     }) == {
         "action_performed": True,
         "visible_confirmation": True,
@@ -87,8 +101,13 @@ def test_sender_client_round_trip_over_owner_only_socket():
         assert client.health()["status"] == "ready"
         assert client.preflight() == "ready"
         assert client.request_accessibility() == "ready"
-        assert client.open_and_identify("Melody", search_query="melody115") == "Melody"
-        result = client.send("Melody", "收到", search_query="melody115")
+        assert client.open_and_identify(
+            "Melody", expected_recent_text="那他为啥问我要材料呢",
+        ) == "Melody"
+        result = client.send(
+            "Melody", "收到",
+            expected_recent_text="那他为啥问我要材料呢",
+        )
         assert result == AccessibilityResult(True, True, "fp-1")
         assert client.recall_last_outbound("收到") is True
         assert socket_path.stat().st_mode & 0o777 == 0o600

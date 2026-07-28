@@ -65,17 +65,29 @@ def _poll_value(probe, *, sleep, attempts=20, interval=0.2):
 
 def _open_target(
     target_label, *, first, click, type_fn, settle, sleep, search_query=None,
+    find_all=None, subtree_has_text=None, expected_recent_text=None,
 ):
     """Open a chat: prefer the sidebar row (session_item_<name>, present for recent
     conversations incl. groups — no typing, reliable, and opens named groups whose
     composer title is exactly the group name), else fall back to search. Groups do
     NOT get a ``search_item_function_`` result (that prefix is functions only)."""
     navigation_query = search_query or target_label
-    row = (
-        first(id_eq=f"session_item_{target_label}")
-        if navigation_query == target_label
-        else None
-    )
+    row = None
+    if expected_recent_text:
+        rows = (
+            find_all(id_eq=f"session_item_{target_label}")
+            if find_all is not None else []
+        )
+        matching = [
+            candidate for candidate in rows
+            if subtree_has_text is not None
+            and subtree_has_text(candidate, expected_recent_text)
+        ]
+        if len(matching) != 1:
+            return None
+        row = matching[0]
+    elif navigation_query == target_label:
+        row = first(id_eq=f"session_item_{target_label}")
     if row is not None:
         click(row)
         composer = _poll_value(
@@ -84,6 +96,10 @@ def _open_target(
         )
         if composer is not None:
             return composer
+    # A direct-chat evidence match must come from the recent-session row. Search
+    # results expose duplicate display names without a stable target identifier.
+    if expected_recent_text:
+        return None
     # not in the sidebar -> search (below)
     search = first(role="AXTextArea", title_contains="搜索")
     if search is None:
@@ -124,6 +140,7 @@ class WechatSender:
             scope.display_name,
             delivery.reply_text,
             search_query=scope.binding_evidence.get("navigation_query") or None,
+            expected_recent_text=delivery.evidence.get("trigger_text") or None,
         )
 
         if result.action_performed and result.visible_confirmation:
@@ -287,6 +304,7 @@ class MacWechatAccessibility:
 
     def send(
         self, target_label: str, reply_text: str, *, search_query: str | None = None,
+        expected_recent_text: str | None = None,
     ) -> AccessibilityResult:
         """Compose via pure AX (AXValue), send via a key posted to WeChat's pid.
 
@@ -324,6 +342,29 @@ class MacWechatAccessibility:
                     continue
                 return el
             return None
+
+        def find_all(role=None, id_eq=None, title_contains=None):
+            matches = []
+            for el in walk(app):
+                if role and g(el, "AXRole") != role:
+                    continue
+                if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:
+                    continue
+                if title_contains and title_contains not in (g(el, "AXTitle") or ""):
+                    continue
+                matches.append(el)
+            return matches
+
+        def subtree_has_text(root, expected):
+            needle = expected.strip()
+            if not needle:
+                return False
+            for el in walk(root):
+                for attribute in ("AXTitle", "AXValue", "AXDescription"):
+                    value = g(el, attribute)
+                    if isinstance(value, str) and value.strip() == needle:
+                        return True
+            return False
 
         def center(el):
             from ApplicationServices import AXValueGetValue, kAXValueCGPointType, kAXValueCGSizeType
@@ -369,6 +410,9 @@ class MacWechatAccessibility:
                 target_label, first=first, click=click,
                 type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep,
                 search_query=search_query,
+                find_all=find_all,
+                subtree_has_text=subtree_has_text,
+                expected_recent_text=expected_recent_text,
             )
             if composer is None:
                 return AccessibilityResult(False, False)
@@ -399,6 +443,7 @@ class MacWechatAccessibility:
 
     def open_and_identify(
         self, target_label: str, *, search_query: str | None = None,
+        expected_recent_text: str | None = None,
     ) -> str:
         """Open the target via search and return the visible composer title (the
         opened chat's display name), WITHOUT composing or sending. Used by binding
@@ -432,6 +477,29 @@ class MacWechatAccessibility:
                 return el
             return None
 
+        def find_all(role=None, id_eq=None, title_contains=None):
+            matches = []
+            for el in walk(app):
+                if role and g(el, "AXRole") != role:
+                    continue
+                if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:
+                    continue
+                if title_contains and title_contains not in (g(el, "AXTitle") or ""):
+                    continue
+                matches.append(el)
+            return matches
+
+        def subtree_has_text(root, expected):
+            needle = expected.strip()
+            if not needle:
+                return False
+            for el in walk(root):
+                for attribute in ("AXTitle", "AXValue", "AXDescription"):
+                    value = g(el, attribute)
+                    if isinstance(value, str) and value.strip() == needle:
+                        return True
+            return False
+
         def click(el, n=1):
             from ApplicationServices import AXValueGetValue, kAXValueCGPointType, kAXValueCGSizeType
             pos, size = g(el, "AXPosition"), g(el, "AXSize")
@@ -462,6 +530,9 @@ class MacWechatAccessibility:
                 target_label, first=first, click=click,
                 type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep,
                 search_query=search_query,
+                find_all=find_all,
+                subtree_has_text=subtree_has_text,
+                expected_recent_text=expected_recent_text,
             )
             if composer is None:
                 return ""

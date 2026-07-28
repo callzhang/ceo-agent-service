@@ -7,6 +7,8 @@ Recovery runs before sender startup and turns orphaned ``sending`` rows into
 """
 from __future__ import annotations
 
+import hashlib
+
 from app.wechat.models import WechatAccount
 
 PRODUCER_THREAD = "ceo-agent-service-wechat-producer"
@@ -151,6 +153,21 @@ def process_ready_wechat_deliveries(store, sender, *, mode: str, sender_enabled:
         scope = _scope_for_delivery(store, delivery)
         if scope is None:
             continue
+        if (
+            scope.target_type == "direct"
+            and scope.binding_status == "unverified"
+            and getattr(sender, "runner", None) is not None
+        ):
+            verify_wechat_binding(
+                store,
+                scope,
+                runner=sender.runner,
+                is_unique=True,
+                expected_recent_text=delivery.evidence.get("trigger_text") or "",
+            )
+            scope = _scope_for_delivery(store, delivery)
+            if scope is None:
+                continue
         sender.send(delivery, scope)
         sent += 1
     return sent
@@ -175,7 +192,9 @@ def reject_wechat_delivery(store, delivery_id: int) -> None:
     store.set_wechat_delivery_status(delivery_id, "failed", error="user_rejected")
 
 
-def verify_wechat_binding(store, scope, *, runner, is_unique: bool) -> str:
+def verify_wechat_binding(
+    store, scope, *, runner, is_unique: bool, expected_recent_text: str = "",
+) -> str:
     """Real (non-asserted) binding verification. Sets binding_status to:
       - ``verified`` iff the display name maps to EXACTLY this conversation in the
         DB (is_unique) AND opening it in WeChat shows that same name (UI title);
@@ -185,14 +204,14 @@ def verify_wechat_binding(store, scope, *, runner, is_unique: bool) -> str:
     new status."""
     from app.wechat.accessibility import target_fingerprint
 
-    navigation_query = (
-        scope.target_id if scope.target_type == "direct" else scope.display_name
-    )
+    navigation_query = scope.display_name if scope.target_type == "group" else ""
     ui_title = ""
     try:
         ui_title = (
             runner.open_and_identify(
-                scope.display_name, search_query=navigation_query,
+                scope.display_name,
+                search_query=navigation_query or None,
+                expected_recent_text=expected_recent_text or None,
             )
             if runner is not None else ""
         )
@@ -200,7 +219,9 @@ def verify_wechat_binding(store, scope, *, runner, is_unique: bool) -> str:
         ui_title = ""
     ui_match = bool(ui_title) and ui_title == scope.display_name
 
-    if scope.target_type == "group" and not is_unique:
+    if scope.target_type == "direct" and not expected_recent_text.strip():
+        status = "unverified"
+    elif scope.target_type == "group" and not is_unique:
         status = "conflict"
     elif ui_match:
         status = "verified"
@@ -209,11 +230,19 @@ def verify_wechat_binding(store, scope, *, runner, is_unique: bool) -> str:
 
     fingerprint = target_fingerprint(scope.account_id, scope.target_type, scope.target_id, ui_title)
     evidence = {
-        "basis": "db_unique_name+ui_title_match",
+        "basis": (
+            "sidebar_recent_text+ui_title_match"
+            if scope.target_type == "direct"
+            else "db_unique_name+ui_title_match"
+        ),
         "db_unique": str(is_unique),
         "ui_title_match": str(ui_match),
         "fingerprint": fingerprint,
         "navigation_query": navigation_query,
+        "recent_text_sha256": (
+            hashlib.sha256(expected_recent_text.encode("utf-8")).hexdigest()
+            if expected_recent_text else ""
+        ),
     }
     scopes = store.list_wechat_reply_scopes(scope.account_id)
     updated = [

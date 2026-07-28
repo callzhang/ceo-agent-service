@@ -53,6 +53,7 @@ def test_send_reply_creates_ready_delivery(fake_codex, consumer, store):
     assert delivery is not None
     assert delivery.status == "ready_to_send"
     assert delivery.reply_text == "收到，我下午给你结论。"
+    assert delivery.evidence["trigger_text"] == "下午能给结论吗"
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "pending"

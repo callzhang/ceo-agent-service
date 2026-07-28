@@ -113,7 +113,11 @@ class WechatReplyConsumer:
                 target_id=trigger.conversation_id,
                 conversation_id=trigger.conversation_id,
                 reply_text=text,
-                evidence={"reason": decision.reason, "audit_summary": decision.audit_summary},
+                evidence={
+                    "reason": decision.reason,
+                    "audit_summary": decision.audit_summary,
+                    "trigger_text": trigger.text,
+                },
             )
             self.store.complete_reply_task(task.id)
         elif decision.action in (CodexAction.NO_REPLY, CodexAction.HANDOFF_TO_HUMAN):

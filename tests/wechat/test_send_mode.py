@@ -15,7 +15,8 @@ def _seed(store, *, binding="verified", task_id=1):
         trigger_create_time="2026-07-18T10:00:00", trigger_sender="Alex", trigger_text="hi")
     store.create_wechat_delivery(
         reply_task_id=task_id, account_id="acct-1", target_type="direct",
-        target_id="u9", conversation_id="u9", reply_text="收到")
+        target_id="u9", conversation_id="u9", reply_text="收到",
+        evidence={"trigger_text": "hi"})
     return store.get_wechat_delivery_for_task(task_id)
 
 
@@ -64,6 +65,38 @@ def test_auto_mode_sends(tmp_path):
     sender = FakeSender()
     assert service.process_ready_wechat_deliveries(store, sender, mode="auto", sender_enabled=True) == 1
     assert sender.sent == [1]
+
+
+def test_auto_mode_verifies_exact_direct_target_before_send(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3"); _seed(store, binding="unverified")
+
+    class Runner:
+        def open_and_identify(
+            self, label, *, search_query=None, expected_recent_text=None,
+        ):
+            assert (label, search_query, expected_recent_text) == (
+                "Alex", None, "hi",
+            )
+            return "Alex"
+
+    class Sender(FakeSender):
+        def __init__(self):
+            super().__init__()
+            self.runner = Runner()
+
+        def send(self, delivery, scope):
+            assert scope.binding_status == "verified"
+            return super().send(delivery, scope)
+
+    sender = Sender()
+
+    assert service.process_ready_wechat_deliveries(
+        store, sender, mode="auto", sender_enabled=True
+    ) == 1
+    assert sender.sent == [1]
+    assert store.get_wechat_reply_scope(
+        "acct-1", "direct", "u9"
+    ).binding_status == "verified"
 
 
 def test_approve_sends_specific_pending(tmp_path):
@@ -139,8 +172,10 @@ class _IdRunner:
         self.title = title
         self.calls = []
 
-    def open_and_identify(self, label, *, search_query=None):
-        self.calls.append((label, search_query))
+    def open_and_identify(
+        self, label, *, search_query=None, expected_recent_text=None,
+    ):
+        self.calls.append((label, search_query, expected_recent_text))
         return self.title
 
 
@@ -175,9 +210,11 @@ def test_verify_duplicate_direct_name_by_unique_target_id(tmp_path):
 
     status = service.verify_wechat_binding(
         store, scope, runner=runner, is_unique=False,
+        expected_recent_text="latest inbound",
     )
 
     assert status == "verified"
-    assert runner.calls == [("Melody", "melody115")]
+    assert runner.calls == [("Melody", None, "latest inbound")]
     persisted = store.get_wechat_reply_scope("a", "direct", "melody115")
-    assert persisted.binding_evidence["navigation_query"] == "melody115"
+    assert persisted.binding_evidence["recent_text_sha256"]
+    assert "latest inbound" not in str(persisted.binding_evidence)
