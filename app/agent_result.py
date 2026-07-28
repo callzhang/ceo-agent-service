@@ -48,7 +48,7 @@ class EffectEventStatus(StrEnum):
 class ToolEffectEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    event_id: str = Field(min_length=1)
+    call_id: str = Field(min_length=1)
     effect: EffectKind
     status: EffectEventStatus
 
@@ -116,13 +116,13 @@ def _completion_evidence_state(
     event_list = tuple(events)
     receipt_list = tuple(receipts)
     effectful_started = {
-        event.event_id
+        event.call_id
         for event in event_list
         if event.effect is EffectKind.EFFECTFUL
         and event.status is EffectEventStatus.STARTED
     }
     effectful_completed = {
-        event.event_id
+        event.call_id
         for event in event_list
         if event.effect is EffectKind.EFFECTFUL
         and event.status is EffectEventStatus.COMPLETED
@@ -145,11 +145,19 @@ def _completion_evidence_state(
 
 def _parse_jsonl_payloads(raw: str) -> list[dict]:
     payloads = []
-    for line in raw.splitlines():
+    seen_json_record = False
+    for line_number, line in enumerate(raw.splitlines(), start=1):
+        if not line.strip():
+            continue
         try:
             payload = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            if seen_json_record:
+                raise ResultParseError(
+                    f"Codex JSONL record is malformed at line {line_number}"
+                ) from exc
             continue
+        seen_json_record = True
         if isinstance(payload, dict):
             payloads.append(payload)
     return payloads

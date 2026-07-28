@@ -176,6 +176,29 @@ def test_parse_agent_result_rejects_latest_malformed_candidate():
         parse_agent_result(raw)
 
 
+def test_parse_agent_result_rejects_truncated_record_after_valid_result():
+    raw = "\n".join(
+        [
+            json.dumps({"message": _result_json(summary="old valid")}),
+            '{"type":"item.completed","item":',
+        ]
+    )
+
+    with pytest.raises(ResultParseError, match="JSONL record is malformed"):
+        parse_agent_result(raw)
+
+
+def test_parse_agent_result_ignores_malformed_leading_noise():
+    raw = "\n".join(
+        [
+            "Codex CLI startup notice: checking configuration",
+            json.dumps({"message": _result_json(summary="valid result")}),
+        ]
+    )
+
+    assert parse_agent_result(raw).summary == "valid result"
+
+
 def test_parse_agent_result_skips_later_non_agent_message_event():
     raw = "\n".join(
         [
@@ -208,6 +231,21 @@ def test_committed_schema_matches_model_and_forbids_all_object_extras():
     assert all(node.get("additionalProperties") is False for node in object_nodes)
 
 
+def test_tool_effect_event_schema_uses_call_id_as_lifecycle_key():
+    schema = ToolEffectEvent.model_json_schema()
+
+    assert "call_id" in schema["properties"]
+    assert "event_id" not in schema["properties"]
+    with pytest.raises(ValidationError):
+        ToolEffectEvent.model_validate(
+            {
+                "event_id": "event-record-1",
+                "effect": "effectful",
+                "status": "started",
+            }
+        )
+
+
 def test_completed_confirmed_with_no_evidence_is_rejected():
     with pytest.raises(InconsistentAgentResultError):
         validate_completion_evidence(_completed_confirmed(), events=[])
@@ -215,7 +253,7 @@ def test_completed_confirmed_with_no_evidence_is_rejected():
 
 def test_read_only_completed_event_does_not_confirm_completion():
     event = ToolEffectEvent(
-        event_id="read-1",
+        call_id="read-1",
         effect=EffectKind.READ_ONLY,
         status=EffectEventStatus.COMPLETED,
     )
@@ -226,7 +264,7 @@ def test_read_only_completed_event_does_not_confirm_completion():
 
 def test_completed_effectful_event_confirms_completion():
     event = ToolEffectEvent(
-        event_id="write-1",
+        call_id="write-1",
         effect=EffectKind.EFFECTFUL,
         status=EffectEventStatus.COMPLETED,
     )
@@ -256,7 +294,7 @@ def test_safe_persisted_completed_receipt_confirms_completion():
 
 def test_effectful_started_without_completion_cannot_confirm_completion():
     event = ToolEffectEvent(
-        event_id="write-1",
+        call_id="write-1",
         effect=EffectKind.EFFECTFUL,
         status=EffectEventStatus.STARTED,
     )
@@ -270,12 +308,12 @@ def test_effectful_started_without_completion_cannot_confirm_completion():
 def test_completed_different_operation_does_not_mask_incomplete_effect():
     events = [
         ToolEffectEvent(
-            event_id="write-incomplete",
+            call_id="write-incomplete",
             effect=EffectKind.EFFECTFUL,
             status=EffectEventStatus.STARTED,
         ),
         ToolEffectEvent(
-            event_id="write-complete",
+            call_id="write-complete",
             effect=EffectKind.EFFECTFUL,
             status=EffectEventStatus.COMPLETED,
         ),
@@ -289,7 +327,7 @@ def test_completed_different_operation_does_not_mask_incomplete_effect():
 
 def test_receipt_for_different_operation_does_not_mask_incomplete_effect():
     event = ToolEffectEvent(
-        event_id="write-incomplete",
+        call_id="write-incomplete",
         effect=EffectKind.EFFECTFUL,
         status=EffectEventStatus.STARTED,
     )
@@ -311,7 +349,7 @@ def test_receipt_for_different_operation_does_not_mask_incomplete_effect():
 
 def test_matching_receipt_completes_started_operation():
     event = ToolEffectEvent(
-        event_id="write-1",
+        call_id="write-1",
         effect=EffectKind.EFFECTFUL,
         status=EffectEventStatus.STARTED,
     )
@@ -331,20 +369,20 @@ def test_matching_receipt_completes_started_operation():
     )
 
 
-def test_duplicate_out_of_order_events_correlate_by_operation_id():
+def test_realistic_lifecycle_events_correlate_by_call_id():
     events = [
         ToolEffectEvent(
-            event_id="write-1",
+            call_id="write-1",
             effect=EffectKind.EFFECTFUL,
             status=EffectEventStatus.COMPLETED,
         ),
         ToolEffectEvent(
-            event_id="write-1",
+            call_id="write-1",
             effect=EffectKind.EFFECTFUL,
             status=EffectEventStatus.STARTED,
         ),
         ToolEffectEvent(
-            event_id="write-1",
+            call_id="write-1",
             effect=EffectKind.EFFECTFUL,
             status=EffectEventStatus.STARTED,
         ),

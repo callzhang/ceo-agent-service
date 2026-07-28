@@ -1,4 +1,8 @@
+import os
 import sys
+import time
+
+import pytest
 
 from app.process_runner import run_process_with_idle_timeout
 
@@ -90,6 +94,56 @@ def test_process_runner_flushes_final_nonnewline_stdout_line():
         on_stdout_line=lines.append,
     )
 
+    assert result.stdout == "tail"
+    assert lines == ["tail"]
+
+
+def test_process_runner_callback_error_terminates_child_and_propagates():
+    child_pids = []
+
+    def reject_line(line: str) -> None:
+        child_pids.append(int(line))
+        raise RuntimeError("event persistence failed")
+
+    started_at = time.monotonic()
+    with pytest.raises(RuntimeError, match="event persistence failed"):
+        run_process_with_idle_timeout(
+            [
+                sys.executable,
+                "-c",
+                "import os, time; print(os.getpid(), flush=True); time.sleep(30)",
+            ],
+            prompt="",
+            env=None,
+            total_timeout_seconds=30,
+            idle_timeout_seconds=30,
+            on_stdout_line=reject_line,
+        )
+
+    assert time.monotonic() - started_at < 3
+    assert len(child_pids) == 1
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pids[0], 0)
+
+
+def test_process_runner_timeout_flushes_partial_stdout_line_once():
+    lines = []
+
+    result = run_process_with_idle_timeout(
+        [
+            sys.executable,
+            "-c",
+            "import sys, time; sys.stdout.write('tail'); sys.stdout.flush(); time.sleep(30)",
+        ],
+        prompt="",
+        env=None,
+        total_timeout_seconds=30,
+        idle_timeout_seconds=0.2,
+        on_stdout_line=lines.append,
+    )
+
+    assert result.timed_out is True
+    assert result.timeout_kind == "idle"
     assert result.stdout == "tail"
     assert lines == ["tail"]
 
