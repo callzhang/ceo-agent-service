@@ -1,6 +1,9 @@
 from datetime import datetime
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import app.agent_runner as agent_runner_module
 from app.agent_result import EffectKind
 from app.agent_runner import DirectAgentRunner, NativeCliMetadataClassifier
 from app.channel_gate import ChannelGateResult, ChannelGateState
@@ -230,6 +233,7 @@ def _direct_agent_pipeline(
     *,
     fixture_name: str,
     command_paths: tuple[str, ...],
+    native_cli_classifier: NativeCliMetadataClassifier | None = None,
 ):
     store = AutoReplyStore(tmp_path / "direct-agent.sqlite3")
     trigger = DingTalkMessage(
@@ -260,11 +264,14 @@ def _direct_agent_pipeline(
             Path(__file__).parents[1] / "fixtures" / "codex_exec" / fixture_name
         ),
         owner="local-pipeline-agent",
-        native_cli_classifier=NativeCliMetadataClassifier(
-            reviewed_effects={
-                ("dws", command_path): EffectKind.EFFECTFUL
-                for command_path in command_paths
-            }
+        native_cli_classifier=(
+            native_cli_classifier
+            or NativeCliMetadataClassifier(
+                reviewed_effects={
+                    ("dws", command_path): EffectKind.EFFECTFUL
+                    for command_path in command_paths
+                }
+            )
         ),
     )
     worker = DingTalkAutoReplyWorker(
@@ -296,6 +303,55 @@ def test_direct_agent_local_pipeline_send_uses_jsonl_and_persisted_receipt(tmp_p
     assert [(item.operation_id, item.command_path) for item in store.list_agent_execution_receipts(run.id)] == [
         ("effect-1", "chat message send")
     ]
+
+
+def test_direct_agent_pipeline_discovers_dws_effect_from_production_metadata(
+    tmp_path,
+    monkeypatch,
+):
+    calls: list[tuple[str, ...]] = []
+
+    def schema_metadata(command, **_kwargs):
+        calls.append(tuple(command))
+        assert command == ["dws", "schema", "--all", "--compact", "--format", "json"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "products": [
+                        {
+                            "tools": [
+                                {
+                                    "cli_path": "chat message send",
+                                    "effect": "write",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+    agent_runner_module._load_reviewed_dws_effects.cache_clear()
+    monkeypatch.setattr(agent_runner_module.subprocess, "run", schema_metadata)
+    worker, store = _direct_agent_pipeline(
+        tmp_path,
+        fixture_name="dingtalk_send.jsonl",
+        command_paths=(),
+        native_cli_classifier=NativeCliMetadataClassifier(),
+    )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    run = store.get_agent_run_for_task_generation(task.id, "g1")
+    assert calls == [("dws", "schema", "--all", "--compact", "--format", "json")]
+    assert [
+        (item.operation_id, item.command_path)
+        for item in store.list_agent_execution_receipts(run.id)
+    ] == [("effect-1", "chat message send")]
+    agent_runner_module._load_reviewed_dws_effects.cache_clear()
 
 
 def test_direct_agent_local_pipeline_handoff_reaction_and_ding_use_jsonl_receipts(

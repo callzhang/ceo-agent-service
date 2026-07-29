@@ -8,6 +8,7 @@ from app.agent_context import AgentTaskContext
 from app.agent_result import AgentOutcome, EffectKind
 from app.agent_runner import (
     AGENT_RESULT_SCHEMA_PATH,
+    DEFAULT_MCP_EFFECTS_PATH,
     DirectAgentRunner,
     McpToolEffectRegistry,
     NativeCliMetadataClassifier,
@@ -211,39 +212,12 @@ def test_production_shaped_mcp_write_creates_correlated_receipt(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
-    arguments = {"data": "durable fact", "type": "text"}
-    output = "\n".join(
-        (
-            json.dumps(
-                {
-                    "type": "item.started",
-                    "item": {
-                        "id": "mcp-write-1",
-                        "type": "mcp_tool_call",
-                        "server": "memory_connector",
-                        "tool": "memory_write",
-                        "arguments": arguments,
-                        "status": "in_progress",
-                    },
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "id": "mcp-write-1",
-                        "type": "mcp_tool_call",
-                        "server": "memory_connector",
-                        "tool": "memory_write",
-                        "arguments": arguments,
-                        "result": {"content": [{"type": "text", "text": "ok"}]},
-                        "status": "completed",
-                    },
-                }
-            ),
-            _result_line(side_effect_state="confirmed"),
-        )
-    )
+    output = (
+        Path(__file__).parent
+        / "fixtures"
+        / "codex_exec"
+        / "mcp_write_success.jsonl"
+    ).read_text(encoding="utf-8")
     registry = McpToolEffectRegistry(
         {("memory_connector", "memory_write"): EffectKind.EFFECTFUL}
     )
@@ -262,6 +236,38 @@ def test_production_shaped_mcp_write_creates_correlated_receipt(
     assert receipts[0].cli == "mcp:memory_connector"
     assert receipts[0].command_path == "memory_write"
     assert result.result.outcome is AgentOutcome.COMPLETED
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ("mcp_write_error_direct.jsonl", "mcp_write_error_nested.jsonl"),
+)
+def test_production_shaped_mcp_error_never_creates_receipt(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    fixture_name: str,
+):
+    task = _task(store)
+    output = (
+        Path(__file__).parent / "fixtures" / "codex_exec" / fixture_name
+    ).read_text(encoding="utf-8")
+    registry = McpToolEffectRegistry(
+        {("memory_connector", "memory_write"): EffectKind.EFFECTFUL}
+    )
+
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+            mcp_effect_registry=registry,
+            owner="worker-1",
+        ).run(task, _context(task.id))
+
+    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
+    assert run is not None
+    assert store.list_agent_execution_receipts(run.id) == []
+    assert run.side_effect_state == "none"
 
 
 def test_production_shaped_mcp_read_cannot_confirm_completion(
@@ -373,6 +379,50 @@ def test_mcp_registry_loads_only_exact_reviewed_capabilities(tmp_path: Path):
     ) is None
 
 
+def test_default_mcp_registry_covers_installed_xiaoqing_capabilities():
+    registry = McpToolEffectRegistry.from_path(DEFAULT_MCP_EFFECTS_PATH)
+    expected = {
+        "search_candidates": EffectKind.READ_ONLY,
+        "get_dashboard_stats": EffectKind.READ_ONLY,
+        "get_interview_context": EffectKind.READ_ONLY,
+        "download_attachment": EffectKind.READ_ONLY,
+        "list_candidate_interviews": EffectKind.READ_ONLY,
+        "upload_interview_result": EffectKind.EFFECTFUL,
+    }
+
+    for tool, effect in expected.items():
+        classified = registry.classify(
+            {
+                "type": "mcp_tool_call",
+                "server": "xiaoqing_interview",
+                "tool": tool,
+                "arguments": {"dry_run": False},
+            }
+        )
+        assert classified is not None
+        assert classified.effect is effect
+
+    dry_run = registry.classify(
+        {
+            "type": "mcp_tool_call",
+            "server": "xiaoqing_interview",
+            "tool": "upload_interview_result",
+            "arguments": {"dry_run": True},
+        }
+    )
+    assert dry_run is not None
+    assert dry_run.effect is EffectKind.READ_ONLY
+
+    assert registry.classify(
+        {
+            "type": "mcp_tool_call",
+            "server": "xiaoqing_interview",
+            "tool": "unreviewed_tool",
+            "arguments": {},
+        }
+    ) is None
+
+
 def test_direct_runner_uses_dedicated_direct_agent_instructions(
     tmp_path: Path, store: AutoReplyStore
 ):
@@ -465,7 +515,7 @@ def test_direct_runner_resumes_only_the_claimed_run_session(
     assert "existing-session" in command
 
 
-def test_resumed_run_validates_final_result_against_persisted_effect_evidence(
+def test_expired_run_with_persisted_completed_effect_is_not_resumed_writable(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
@@ -505,17 +555,19 @@ def test_resumed_run_validates_final_result_against_persisted_effect_evidence(
         )
     )
 
-    result = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-        owner="worker-2",
-    ).run(task, _context(task.id), now="2026-07-29 00:00:02")
+    executor = RecordingExecutor(output)
+    with pytest.raises(RuntimeError, match="not available"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+            owner="worker-2",
+        ).run(task, _context(task.id), now="2026-07-29 00:00:02")
 
-    assert result.result.error.side_effect_state.value == "confirmed"
-    persisted = store.get_agent_run(result.run_id)
-    assert persisted is not None and persisted.status == "completed"
-    assert persisted.side_effect_state == "confirmed"
+    persisted = store.get_agent_run(claim.run.id)
+    assert executor.commands == []
+    assert persisted is not None and persisted.status == "unknown"
+    assert persisted.side_effect_state == "unknown"
 
 
 def test_native_dws_completed_write_creates_trusted_persisted_receipt(
@@ -1155,6 +1207,7 @@ def test_persisted_native_event_redacts_message_text_but_keeps_receipt_digest(
 ):
     task = _task(store)
     message = "private-message-4827"
+    command_output = "private-command-output-9912"
     command = f"dws chat message send --group cid --text '{message}' --yes"
     output = "\n".join(
         (
@@ -1167,6 +1220,7 @@ def test_persisted_native_event_redacts_message_text_but_keeps_receipt_digest(
                         "command": command,
                         "exit_code": 0,
                         "status": "completed",
+                        "aggregated_output": command_output,
                     },
                 }
             ),
@@ -1188,6 +1242,7 @@ def test_persisted_native_event_redacts_message_text_but_keeps_receipt_digest(
     persisted = store.get_agent_run(result.run_id)
     serialized = json.dumps(persisted.tool_events, ensure_ascii=False)
     assert message not in serialized
+    assert command_output not in serialized
     receipts = store.list_agent_execution_receipts(result.run_id)
     assert len(receipts) == 1
     assert len(receipts[0].command_digest) == 64
@@ -1506,9 +1561,88 @@ def test_persisted_events_recursively_redact_sensitive_keys_and_arguments(
     assert event["type"] == "mcp_tool_call"
     assert event["tool"] == "safe_tool_name"
     assert event["status"] == "completed"
-    assert event["arguments"]["safe_argument"] == "visible-value"
-    assert "visible-value" in event["command"]
-    assert "visible-value" in event["argv"]
+    assert "arguments" not in event
+    assert "result" not in event
+    assert "command" not in event
+    assert "argv" not in event
+
+
+def test_persisted_mcp_event_omits_business_arguments_and_results(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    private_values = (
+        "candidate-private-text",
+        "interview-feedback-body",
+        "document-original-body",
+        "tool-private-output",
+    )
+    arguments = {
+        "data": private_values[0],
+        "feedback_summary": private_values[1],
+        "document": {"body": private_values[2]},
+    }
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "mcp-private-1",
+                        "type": "mcp_tool_call",
+                        "server": "xiaoqing_interview",
+                        "tool": "upload_interview_result",
+                        "arguments": arguments,
+                        "status": "in_progress",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "mcp-private-1",
+                        "type": "mcp_tool_call",
+                        "server": "xiaoqing_interview",
+                        "tool": "upload_interview_result",
+                        "arguments": arguments,
+                        "result": {
+                            "isError": False,
+                            "content": [{"type": "text", "text": private_values[3]}],
+                        },
+                        "status": "completed",
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        owner="worker-1",
+    ).run(task, _context(task.id))
+
+    persisted = store.get_agent_run(result.run_id)
+    assert persisted is not None
+    serialized = json.dumps(persisted.tool_events, ensure_ascii=False)
+    assert all(value not in serialized for value in private_values)
+    mcp_events = [
+        event
+        for event in persisted.tool_events
+        if isinstance(event.get("item"), dict)
+        and event["item"].get("type") == "mcp_tool_call"
+    ]
+    assert mcp_events
+    for event in mcp_events:
+        item = event["item"]
+        assert "arguments" not in item
+        assert "result" not in item
+        assert item["id"] == "mcp-private-1"
+        assert item["server"] == "xiaoqing_interview"
+        assert item["tool"] == "upload_interview_result"
 
 
 @pytest.mark.parametrize(

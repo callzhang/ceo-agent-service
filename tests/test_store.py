@@ -988,6 +988,59 @@ def test_expired_agent_run_with_incomplete_effect_cannot_be_reclaimed(
     assert reclaim.run.side_effect_state == "unknown"
 
 
+@pytest.mark.parametrize(
+    ("cli", "command_path"),
+    (
+        ("dws", "chat message send"),
+        ("mcp:xiaoqing_interview", "upload_interview_result"),
+    ),
+)
+def test_expired_agent_run_with_confirmed_receipt_enters_reconciliation_without_replay(
+    tmp_path: Path,
+    cli: str,
+    command_path: str,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    first = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-a",
+        lease_seconds=60,
+        now="2026-07-29 00:00:00",
+    )
+    store.set_agent_run_session(
+        first.run.id,
+        "session-1",
+        owner="worker-a",
+        now="2026-07-29 00:00:01",
+    )
+    store.record_agent_execution_receipt(
+        first.run.id,
+        receipt_id=f"receipt-{cli}",
+        operation_id="write-1",
+        cli=cli,
+        command_path=command_path,
+        command_digest="digest",
+        exit_code=0,
+        owner="worker-a",
+        now="2026-07-29 00:00:02",
+    )
+
+    reclaim = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-b",
+        now="2026-07-29 00:02:00",
+    )
+
+    assert reclaim.claimed is False
+    assert reclaim.run.status == "unknown"
+    assert reclaim.run.side_effect_state == "unknown"
+    assert reclaim.run.lease_owner == ""
+    assert store.list_agent_execution_receipts(first.run.id)[0].operation_id == "write-1"
+
+
 def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

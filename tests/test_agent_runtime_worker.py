@@ -209,6 +209,7 @@ class ScriptedDirectAgentRunner:
                 run.id,
                 script.result.error.model_dump(mode="json"),
                 owner=self.owner,
+                side_effect_state=("confirmed" if script.receipts else "none"),
                 transcript_end_line=len(script.events),
                 now=NOW,
             )
@@ -751,6 +752,44 @@ def test_retryable_failure_stops_at_worker_attempt_limit(tmp_path: Path):
 
     assert len(runner.calls) == 2
     assert worker.store.get_reply_task(task_id).status == "failed"
+
+
+def test_retryable_failure_with_confirmed_receipt_is_terminal_and_never_requeued(
+    tmp_path: Path,
+):
+    trigger = _message("请发送回复")
+    worker, runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [
+            ScriptedRun(
+                _result(
+                    AgentOutcome.FAILED,
+                    summary="发送已确认，但最终结果写入失败。",
+                    retryable=True,
+                    code="result_persistence_failed",
+                    side_effect_state=SideEffectState.CONFIRMED,
+                ),
+                receipts=(_receipt("send-confirmed"),),
+            )
+        ],
+    )
+    task_id = _enqueue(worker.store, trigger)
+
+    worker.consume_once(max_tasks=1)
+
+    task = worker.store.get_reply_task(task_id)
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert task is not None and task.status == "failed"
+    assert attempt is not None and attempt.send_status == "failed"
+    assert "confirmed" in attempt.send_error
+    assert len(runner.calls) == 1
+    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    assert run is not None and run.side_effect_state == "confirmed"
+    assert [
+        receipt.operation_id
+        for receipt in worker.store.list_agent_execution_receipts(run.id)
+    ] == ["send-confirmed"]
 
 
 def test_completed_confirmed_without_effectful_evidence_is_rejected(tmp_path: Path):

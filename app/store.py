@@ -2989,6 +2989,47 @@ class AutoReplyStore:
             ).fetchone()
             if row is None:
                 raise RuntimeError("agent run claim did not create a row")
+            has_completed_receipt = db.execute(
+                """
+                select 1
+                from agent_execution_receipts
+                where agent_run_id=? and completed=1 and persisted=1
+                  and safe_to_confirm=1
+                limit 1
+                """,
+                (row["id"],),
+            ).fetchone() is not None
+            if (
+                not claimed
+                and row["status"] == "running"
+                and row["lease_expires_at"] <= now_text
+                and (
+                    row["side_effect_state"] == "confirmed"
+                    or has_completed_receipt
+                )
+            ):
+                db.execute(
+                    """
+                    update agent_runs
+                    set status='unknown', side_effect_state='unknown',
+                        structured_error_json=?, lease_owner='',
+                        lease_expires_at='', updated_at=?
+                    where id=? and status='running' and lease_expires_at<=?
+                    """,
+                    (
+                        json.dumps(
+                            {"code": "confirmed_effect_requires_reconciliation"},
+                            separators=(",", ":"),
+                        ),
+                        now_text,
+                        row["id"],
+                        now_text,
+                    ),
+                )
+                row = db.execute(
+                    "select * from agent_runs where id=?",
+                    (row["id"],),
+                ).fetchone()
             if (
                 not claimed
                 and row["status"] == "running"

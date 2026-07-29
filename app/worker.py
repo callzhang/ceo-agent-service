@@ -5988,8 +5988,15 @@ class DingTalkAutoReplyWorker:
             send_error = send_error or "needs_human"
         else:
             send_status = "failed"
-            task_status = "pending" if result.error.retryable else "failed"
-            send_error = send_error or "agent_failed"
+            if evidence_state is SideEffectState.CONFIRMED:
+                task_status = "failed"
+                send_error = (
+                    "agent_failed_after_confirmed_effect:"
+                    f"{send_error or 'agent_failed'}"
+                )
+            else:
+                task_status = "pending" if result.error.retryable else "failed"
+                send_error = send_error or "agent_failed"
 
         self._record_agent_attempt(
             task,

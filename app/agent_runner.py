@@ -146,8 +146,11 @@ class McpToolEffectRegistry:
     def __init__(
         self,
         effects: dict[tuple[str, str], EffectKind],
+        *,
+        dry_run_arguments: dict[tuple[str, str], str] | None = None,
     ) -> None:
         self._effects = dict(effects)
+        self._dry_run_arguments = dict(dry_run_arguments or {})
 
     @classmethod
     def from_path(cls, path: Path) -> "McpToolEffectRegistry":
@@ -158,6 +161,7 @@ class McpToolEffectRegistry:
         if not isinstance(tools, list):
             raise ValueError("MCP effect registry must contain a tools list")
         effects: dict[tuple[str, str], EffectKind] = {}
+        dry_run_arguments: dict[tuple[str, str], str] = {}
         for item in tools:
             if not isinstance(item, dict):
                 raise ValueError("MCP effect registry tools must be objects")
@@ -175,7 +179,16 @@ class McpToolEffectRegistry:
             if key in effects and effects[key] is not parsed_effect:
                 raise ValueError("MCP effect registry contains a conflicting tool")
             effects[key] = parsed_effect
-        return cls(effects)
+            dry_run_argument = item.get("dry_run_argument")
+            if dry_run_argument is not None:
+                if (
+                    parsed_effect is not EffectKind.EFFECTFUL
+                    or not isinstance(dry_run_argument, str)
+                    or not dry_run_argument.strip()
+                ):
+                    raise ValueError("MCP effect registry dry-run argument is invalid")
+                dry_run_arguments[key] = dry_run_argument.strip()
+        return cls(effects, dry_run_arguments=dry_run_arguments)
 
     @classmethod
     def default(cls) -> "McpToolEffectRegistry":
@@ -193,6 +206,14 @@ class McpToolEffectRegistry:
         if effect is None:
             return None
         arguments = item.get("arguments")
+        dry_run_argument = self._dry_run_arguments.get((server, tool))
+        if (
+            effect is EffectKind.EFFECTFUL
+            and dry_run_argument
+            and isinstance(arguments, dict)
+            and arguments.get(dry_run_argument) is True
+        ):
+            effect = EffectKind.READ_ONLY
         canonical = json.dumps(
             {"server": server, "tool": tool, "arguments": arguments},
             ensure_ascii=False,
@@ -873,7 +894,31 @@ def _mcp_call_completed(payload: dict[str, object]) -> bool:
     if payload.get("type") != "item.completed":
         return False
     item = payload.get("item")
-    return isinstance(item, dict) and item.get("status") == "completed"
+    if not isinstance(item, dict) or item.get("status") != "completed":
+        return False
+    result = item.get("result")
+    return _mcp_result_explicitly_succeeded(result)
+
+
+def _mcp_result_explicitly_succeeded(value: object) -> bool:
+    """Accept a completed MCP write only when its result explicitly says no error."""
+    current = value
+    error_flags: list[bool] = []
+    for _depth in range(4):
+        if isinstance(current, str):
+            try:
+                current = json.loads(current)
+            except json.JSONDecodeError:
+                return False
+        if not isinstance(current, dict):
+            break
+        flag = current.get("isError")
+        if isinstance(flag, bool):
+            error_flags.append(flag)
+        if "result" not in current:
+            break
+        current = current["result"]
+    return bool(error_flags) and not any(error_flags)
 
 
 def _execution_receipts_for_run(
@@ -929,10 +974,7 @@ def _safe_event(
     completion_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     completion_payload = completion_payload or payload
-    safe_event = {
-        str(key): _sanitize_event_value(value, key=str(key))
-        for key, value in payload.items()
-    }
+    safe_event = _minimal_safe_execution_event(payload)
     item = safe_event.get("item")
     if (
         native_command is None
@@ -965,6 +1007,8 @@ def _safe_event(
         ):
             safe_event["type"] = "item.failed"
     if mcp_call is not None and isinstance(item, dict):
+        item["server"] = mcp_call.server
+        item["tool"] = mcp_call.tool
         metadata = item.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
@@ -984,6 +1028,42 @@ def _safe_event(
         ):
             safe_event["type"] = "item.failed"
     return safe_event
+
+
+def _minimal_safe_execution_event(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return {
+            str(key): _sanitize_event_value(value, key=str(key))
+            for key, value in payload.items()
+        }
+    item_type = str(item.get("type") or "")
+    if item_type == "mcp_tool_call":
+        safe_item: dict[str, object] = {"type": item_type}
+        for key in ("id", "call_id", "server", "tool", "status"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                safe_item[key] = safe_observability_error(value, limit=200)
+        return {"type": str(payload.get("type") or ""), "item": safe_item}
+    if item_type == "command_execution":
+        safe_item = {"type": item_type}
+        for key in ("id", "call_id", "status"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                safe_item[key] = safe_observability_error(value, limit=200)
+        if isinstance(item.get("exit_code"), int):
+            safe_item["exit_code"] = item["exit_code"]
+        for key in _COMMAND_KEY_NAMES:
+            if key in item:
+                safe_item[key] = _sanitize_event_value(item[key], key=key)
+                break
+        return {"type": str(payload.get("type") or ""), "item": safe_item}
+    return {
+        str(key): _sanitize_event_value(value, key=str(key))
+        for key, value in payload.items()
+    }
 
 
 def _sanitize_event_value(value: object, *, key: str = "") -> object:

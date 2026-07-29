@@ -30,6 +30,37 @@
       "server": "memory_connector",
       "tool": "document_upload",
       "effect": "effectful"
+    },
+    {
+      "server": "xiaoqing_interview",
+      "tool": "search_candidates",
+      "effect": "read_only"
+    },
+    {
+      "server": "xiaoqing_interview",
+      "tool": "get_dashboard_stats",
+      "effect": "read_only"
+    },
+    {
+      "server": "xiaoqing_interview",
+      "tool": "get_interview_context",
+      "effect": "read_only"
+    },
+    {
+      "server": "xiaoqing_interview",
+      "tool": "download_attachment",
+      "effect": "read_only"
+    },
+    {
+      "server": "xiaoqing_interview",
+      "tool": "list_candidate_interviews",
+      "effect": "read_only"
+    },
+    {
+      "server": "xiaoqing_interview",
+      "tool": "upload_interview_result",
+      "effect": "effectful",
+      "dry_run_argument": "dry_run"
     }
   ]
 }
