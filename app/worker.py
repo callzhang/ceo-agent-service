@@ -6300,6 +6300,7 @@ class DingTalkAutoReplyWorker:
             self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
             self._mark_seen([trigger])
             return trigger.open_message_id
+        trigger = self._restore_richer_rerun_trigger(trigger)
         if force_new_decision:
             task = self.store.enqueue_manual_rerun_reply_task(
                 conversation_id=conversation.open_conversation_id,
@@ -6334,6 +6335,46 @@ class DingTalkAutoReplyWorker:
         if processed and not self.store.reply_task_is_done(task.id):
             self.store.complete_reply_task(task.id)
         return trigger.open_message_id
+
+    def _restore_richer_rerun_trigger(
+        self,
+        trigger: DingTalkMessage,
+    ) -> DingTalkMessage:
+        if trigger.content.strip() != "[互动卡片]":
+            return trigger
+
+        persisted_task = self.store.get_reply_task_for_message(
+            trigger.open_conversation_id,
+            trigger.open_message_id,
+        )
+        if persisted_task is not None:
+            try:
+                persisted_message = DingTalkMessage.model_validate_json(
+                    persisted_task.trigger_message_json
+                )
+            except (ValueError, TypeError):
+                persisted_message = None
+            if (
+                persisted_message is not None
+                and persisted_message.open_message_id == trigger.open_message_id
+                and persisted_message.content.strip() != "[互动卡片]"
+            ):
+                return persisted_message
+
+        attempt = self.store.get_latest_reply_attempt_for_trigger(
+            trigger.open_conversation_id,
+            trigger.open_message_id,
+        )
+        if attempt is None or attempt.trigger_text.strip() in {"", "[互动卡片]"}:
+            return trigger
+        raw_payload = dict(trigger.raw_payload)
+        raw_payload["content"] = attempt.trigger_text
+        return trigger.model_copy(
+            update={
+                "content": attempt.trigger_text,
+                "raw_payload": raw_payload,
+            }
+        )
 
     def _lookup_rerun_message_by_id(
         self,

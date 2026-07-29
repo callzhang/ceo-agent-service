@@ -136,6 +136,8 @@ SQLite 审计 + 外部系统结果
 7. Executor 发送回复、追问、handoff、OA 操作、日程动作、文档动作、reaction 或 memory write。
 8. 结果写入 `reply_attempts`、`sent_replies`、`universal_plan_executions`、`universal_action_executions`。
 
+历史重跑时，DWS 可能只返回退化的 `[互动卡片]` 占位文本。服务会在同一 message ID 范围内优先恢复任务或既有 attempt 中保存的完整触发内容，再创建新的执行 generation，避免把无内容卡片错误关联到更早的会话主题。
+
 ## Universal Consumer
 
 Universal Consumer 把“决策”和“副作用”分离：

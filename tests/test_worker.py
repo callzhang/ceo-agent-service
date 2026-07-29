@@ -7117,6 +7117,49 @@ def test_rerun_calendar_card_recovers_event_from_existing_attempt(
     assert attempt.calendar_response_status == "accepted"
 
 
+def test_rerun_interactive_card_recovers_richer_trigger_from_existing_attempt(
+    tmp_path: Path, monkeypatch
+):
+    live_trigger = message("[互动卡片]", single_chat=True)
+    rich_trigger_text = (
+        "这是什么意思来着？\n"
+        "https://n.dingtalk.com/dingding/dd-todo/detail/index.html?"
+        "taskId=todo-1"
+    )
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [live_trigger]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    captured_tasks = []
+    monkeypatch.setattr(
+        worker,
+        "_process_queued_task",
+        lambda _conversation, task: captured_tasks.append(task) or True,
+    )
+    worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id=live_trigger.open_message_id,
+        trigger_sender=live_trigger.sender_name,
+        trigger_text=rich_trigger_text,
+        action="ask_clarifying_question",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+
+    worker.rerun_message(
+        conversation(single_chat=True),
+        live_trigger.open_message_id,
+        force_new_decision=True,
+    )
+
+    task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    assert task.trigger_text == rich_trigger_text
+    assert captured_tasks[0].trigger_text == rich_trigger_text
+
+
 def test_rerun_calendar_card_matches_already_accepted_invite_from_sender(
     tmp_path: Path, monkeypatch
 ):
