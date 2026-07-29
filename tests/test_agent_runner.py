@@ -208,15 +208,22 @@ def test_failed_agent_result_persists_failed_run(tmp_path: Path, store: AutoRepl
     assert json.loads(run.structured_error_json)["code"] == "material_unavailable"
 
 
+@pytest.mark.parametrize(
+    ("fixture_name", "operation_id"),
+    (
+        ("mcp_write_success.jsonl", "mcp-write-1"),
+        ("mcp_write_success_without_is_error.jsonl", "mcp-write-2"),
+    ),
+)
 def test_production_shaped_mcp_write_creates_correlated_receipt(
-    tmp_path: Path, store: AutoReplyStore
+    tmp_path: Path,
+    store: AutoReplyStore,
+    fixture_name: str,
+    operation_id: str,
 ):
     task = _task(store)
     output = (
-        Path(__file__).parent
-        / "fixtures"
-        / "codex_exec"
-        / "mcp_write_success.jsonl"
+        Path(__file__).parent / "fixtures" / "codex_exec" / fixture_name
     ).read_text(encoding="utf-8")
     registry = McpToolEffectRegistry(
         {("memory_connector", "memory_write"): EffectKind.EFFECTFUL}
@@ -232,7 +239,7 @@ def test_production_shaped_mcp_write_creates_correlated_receipt(
 
     receipts = store.list_agent_execution_receipts(result.run_id)
     assert len(receipts) == 1
-    assert receipts[0].operation_id == "mcp-write-1"
+    assert receipts[0].operation_id == operation_id
     assert receipts[0].cli == "mcp:memory_connector"
     assert receipts[0].command_path == "memory_write"
     assert result.result.outcome is AgentOutcome.COMPLETED

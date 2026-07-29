@@ -901,24 +901,26 @@ def _mcp_call_completed(payload: dict[str, object]) -> bool:
 
 
 def _mcp_result_explicitly_succeeded(value: object) -> bool:
-    """Accept a completed MCP write only when its result explicitly says no error."""
-    current = value
-    error_flags: list[bool] = []
-    for _depth in range(4):
-        if isinstance(current, str):
-            try:
-                current = json.loads(current)
-            except json.JSONDecodeError:
-                return False
-        if not isinstance(current, dict):
-            break
-        flag = current.get("isError")
-        if isinstance(flag, bool):
-            error_flags.append(flag)
-        if "result" not in current:
-            break
-        current = current["result"]
-    return bool(error_flags) and not any(error_flags)
+    """Accept a non-empty MCP result unless any nested layer reports an error."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(value, dict) or not value:
+        return False
+
+    def has_error(current: object) -> bool:
+        if isinstance(current, dict):
+            flag = current.get("isError")
+            if flag is True or ("isError" in current and not isinstance(flag, bool)):
+                return True
+            return any(has_error(nested) for nested in current.values())
+        if isinstance(current, list):
+            return any(has_error(nested) for nested in current)
+        return False
+
+    return not has_error(value)
 
 
 def _execution_receipts_for_run(

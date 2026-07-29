@@ -1,0 +1,3 @@
+{"type":"item.started","item":{"id":"mcp-write-2","type":"mcp_tool_call","server":"memory_connector","tool":"memory_write","arguments":{"data":"private"},"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"mcp-write-2","type":"mcp_tool_call","server":"memory_connector","tool":"memory_write","arguments":{"data":"private"},"result":{"content":[{"type":"text","text":"ok"}],"structured_content":{"status":"stored"}},"status":"completed"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"{\"outcome\":\"completed\",\"summary\":\"write completed\",\"error\":{\"code\":\"\",\"retryable\":false,\"authorization_required\":false,\"side_effect_state\":\"confirmed\"}}"}}
