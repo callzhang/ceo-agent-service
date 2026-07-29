@@ -6866,6 +6866,7 @@ class AutoReplyStore:
         feedback = reviewer_feedback.strip()
         suggestion = suggested_reply_text.strip()
         with self._connect() as db:
+            db.execute("begin immediate")
             existing = db.execute(
                 """
                 select attempts.id as attempt_id, tasks.*

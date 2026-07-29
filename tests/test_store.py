@@ -474,6 +474,97 @@ def test_reviewed_reply_and_rerun_roll_back_together(tmp_path: Path) -> None:
     assert task is not None and task.manual_rerun_attempt_id == 0
 
 
+def test_reviewed_reply_rerun_is_idempotent_across_concurrent_connections(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.enqueue_reply_task(
+        conversation_id="cid-concurrent-review",
+        conversation_title="Review",
+        single_chat=False,
+        trigger_message_id="msg-concurrent-review",
+        trigger_create_time="2026-07-29 10:00:00",
+        trigger_sender="ET",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    barrier = Barrier(12)
+    results: Queue = Queue()
+
+    def enqueue_review() -> None:
+        thread_store = AutoReplyStore(db_path)
+        try:
+            barrier.wait(timeout=5)
+            results.put(
+                thread_store.record_reviewed_reply_rerun(
+                    conversation_id="cid-concurrent-review",
+                    conversation_title="Review",
+                    single_chat=False,
+                    trigger_message_id="msg-concurrent-review",
+                    trigger_create_time="2026-07-29 10:00:00",
+                    trigger_sender="ET",
+                    trigger_text="请处理",
+                    trigger_message_json="{}",
+                    suggested_reply_text="建议内容",
+                    reviewer_feedback="审核意见",
+                )
+            )
+        except Exception as exc:  # pragma: no cover - surfaced below
+            results.put(exc)
+
+    threads = [Thread(target=enqueue_review) for _ in range(12)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    outcomes = [results.get_nowait() for _ in threads]
+    errors = [outcome for outcome in outcomes if isinstance(outcome, Exception)]
+    assert errors == []
+    attempt_ids = {outcome[0] for outcome in outcomes}
+    generations = {outcome[1].execution_generation for outcome in outcomes}
+    assert len(attempt_ids) == 1
+    assert len(generations) == 1
+
+    matching_attempts = [
+        attempt
+        for attempt in store.list_reply_attempts(limit=20)
+        if attempt.codex_reason == "reviewed_message_reply"
+    ]
+    assert [attempt.id for attempt in matching_attempts] == list(attempt_ids)
+
+
+def test_reviewed_reply_rerun_allows_changed_feedback_to_rotate_generation(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    common = {
+        "conversation_id": "cid-revised-review",
+        "conversation_title": "Review",
+        "single_chat": False,
+        "trigger_message_id": "msg-revised-review",
+        "trigger_create_time": "2026-07-29 10:00:00",
+        "trigger_sender": "ET",
+        "trigger_text": "请处理",
+        "trigger_message_json": "{}",
+        "suggested_reply_text": "建议内容",
+    }
+
+    first_attempt_id, first_task = store.record_reviewed_reply_rerun(
+        **common,
+        reviewer_feedback="审核意见",
+    )
+    revised_attempt_id, revised_task = store.record_reviewed_reply_rerun(
+        **common,
+        reviewer_feedback="补充后的审核意见",
+    )
+
+    assert revised_attempt_id != first_attempt_id
+    assert revised_task.id == first_task.id
+    assert revised_task.execution_generation != first_task.execution_generation
+
+
 def test_agent_run_is_unique_per_task_generation(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
