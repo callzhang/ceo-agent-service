@@ -221,14 +221,7 @@ class CodexWeeklyOkrAgent:
                 json.dumps(filtered_payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            source_hash = hashlib.sha256(
-                json.dumps(
-                    manager_payload["liveOkr"],
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest()
+            source_hash = _analysis_source_hash(manager_payload["liveOkr"])
             manager_cache_key = hashlib.sha256(
                 manager.user_id.encode("utf-8")
             ).hexdigest()[:16]
@@ -692,7 +685,7 @@ def build_weekly_okr_prompt(
 
 任务：
 1. 读取实时文件中每位管理者的 `processed.objectives`、`processed.okrRows`、KR 数值进度、进度历史和评论/进展。不能只看进度百分比。
-2. 必须对实时文件中的每一个 KR 返回且只返回一条 kr_reviews；objective_title 和 kr_title 必须逐字复制实时源，程序以两者的唯一组合绑定系统 KR，kr_id 仅作辅助字段。系统百分比和自述只作为线索，综合评论/进展、独立证据、目标承诺、实际效果和完成时间，按技能中的 0/20/40/60/80/100 校准规则给出 base_score 和应用时间折扣后的 score。不得用系统进度直接换算评分。
+2. 必须按实时文件中的原始顺序，对每一个 KR 返回且只返回一条 kr_reviews；objective_title 和 kr_title 尽量逐字复制实时源，程序以顺序和标题共同绑定系统 KR，kr_id 仅作辅助字段。系统百分比和自述只作为线索，综合评论/进展、独立证据、目标承诺、实际效果和完成时间，按技能中的 0/20/40/60/80/100 校准规则给出 base_score 和应用时间折扣后的 score。不得用系统进度直接换算评分。
 3. 使用 memory_recall 以及 DWS 的文档、知识库、AI听记、群聊、日志、待办、日历等只读能力寻找独立证据。文档型产出必须找到并读取正文；只找到标题按未找到处理。无法独立访问的业务系统若进展给出明确数字，可作为工作事实，但要写清审计缺口。
 4. 将 KR 语义分类为业务OKR、领导力或文化价值观。业务/GTM、产品、工程类分别应用技能中的效果证据门槛；多项承诺逐项评价；先按结果质量给基础分，再按 DDL 应用时间折扣。
 5. 使用当前钉钉通讯录 title 作为职级授权来源，确认专业贡献者、经理、总监、VP、CXO；无法可靠确认则写职级待确认。管理者按四个领导力维度分别评分；专业贡献者只有在系统明确分配领导力考核时才返回四维候选分，且候选分不进入专业贡献者最终公式。所有人按三个文化价值观维度分别评分。80+ 必须有超出标准的具体案例，90+ 必须有相应榜样范围证据，低于 70 必须写明未满足行为或反面案例。不要用业务得分替代领导力或文化得分。
@@ -1215,6 +1208,12 @@ def _bind_kr_reviews_to_live_rows(
     review: ManagerReportAnalysis,
     expected_rows: dict[str, dict[str, Any]],
 ) -> None:
+    expected_ids = list(expected_rows)
+    if len(review.kr_reviews) != len(expected_ids):
+        raise ValueError(
+            f"weekly OKR KR row count mismatch for {review.name}: "
+            f"expected={len(expected_ids)}, actual={len(review.kr_reviews)}"
+        )
     ids_by_titles: dict[tuple[str, str], list[str]] = {}
     for kr_id, row in expected_rows.items():
         key = (
@@ -1222,18 +1221,30 @@ def _bind_kr_reviews_to_live_rows(
             _normalized_title(row.get("krTitle")),
         )
         ids_by_titles.setdefault(key, []).append(kr_id)
-    for item in review.kr_reviews:
+    resolved_ids: dict[int, str] = {}
+    for index, item in enumerate(review.kr_reviews):
         key = (
             _normalized_title(item.objective_title),
             _normalized_title(item.kr_title),
         )
         matches = ids_by_titles.get(key, [])
-        if len(matches) != 1:
-            raise ValueError(
-                f"weekly OKR title mapping mismatch for {review.name}: "
-                f"objective={item.objective_title!r}, kr={item.kr_title!r}"
-            )
-        item.kr_id = matches[0]
+        if len(matches) == 1:
+            resolved_ids[index] = matches[0]
+    if len(set(resolved_ids.values())) != len(resolved_ids):
+        raise ValueError(f"weekly OKR analysis contains duplicate KR titles for {review.name}")
+    if len(expected_ids) > 1 and not resolved_ids:
+        raise ValueError(f"weekly OKR analysis has no title anchors for {review.name}")
+    displaced = [
+        (index, kr_id)
+        for index, kr_id in resolved_ids.items()
+        if expected_ids[index] != kr_id
+    ]
+    if displaced:
+        raise ValueError(
+            f"weekly OKR KR order mismatch for {review.name}: displaced={displaced}"
+        )
+    for index, item in enumerate(review.kr_reviews):
+        item.kr_id = expected_ids[index]
 
 
 def _normalized_title(value: object) -> str:
@@ -1451,6 +1462,17 @@ def _coefficient_text(value: float | None) -> str:
 
 def _unique_strings(items) -> list[str]:
     return list(dict.fromkeys(str(item) for item in items if str(item).strip()))
+
+
+def _analysis_source_hash(live_okr: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            live_okr.get("processed"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _nested_list(payload: object, key: str) -> list[dict[str, Any]]:

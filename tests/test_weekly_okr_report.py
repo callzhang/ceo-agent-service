@@ -521,6 +521,13 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
     assert [review.name for review in analysis.manager_reviews] == ["甲", "乙"]
     assert all(review.kr_reviews[0].kr_id == "kr-1" for review in analysis.manager_reviews)
 
+    refreshed_source = json.loads(source_path.read_text(encoding="utf-8"))
+    for item in refreshed_source["managers"]:
+        item["liveOkr"]["source"]["fetchedAt"] = "2026-07-30T04:00:00+08:00"
+    source_path.write_text(
+        json.dumps(refreshed_source, ensure_ascii=False),
+        encoding="utf-8",
+    )
     cached = CodexWeeklyOkrAgent(
         workspace=tmp_path,
         executor=executor,
@@ -556,8 +563,8 @@ def _weekly_payload_for(name):
                 "kr_reviews": [
                     {
                         "kr_id": "wrong-model-id",
-                        "objective_title": "O1",
-                        "kr_title": "KR1",
+                        "objective_title": "O1（模型改写）",
+                        "kr_title": "KR1（模型改写）",
                         "category": "业务OKR",
                         "system_progress": "系统 50%",
                         "independent_evidence": "已读取交付文档",
