@@ -373,6 +373,21 @@ class AgentRun(BaseModel):
     updated_at: str
 
 
+class AgentExecutionReceipt(BaseModel):
+    id: int
+    agent_run_id: int
+    receipt_id: str
+    operation_id: str
+    cli: str
+    command_path: str
+    command_digest: str
+    exit_code: int
+    completed: bool
+    persisted: bool
+    safe_to_confirm: bool
+    created_at: str
+
+
 @dataclass(frozen=True)
 class AgentRunClaim:
     run: AgentRun
@@ -795,6 +810,24 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_agent_runs_status
                     on agent_runs(status, updated_at);
+                create table if not exists agent_execution_receipts (
+                    id integer primary key autoincrement,
+                    agent_run_id integer not null,
+                    receipt_id text not null,
+                    operation_id text not null,
+                    cli text not null,
+                    command_path text not null,
+                    command_digest text not null,
+                    exit_code integer not null,
+                    completed integer not null,
+                    persisted integer not null,
+                    safe_to_confirm integer not null,
+                    created_at text not null default current_timestamp,
+                    unique(agent_run_id, operation_id),
+                    foreign key(agent_run_id) references agent_runs(id)
+                );
+                create index if not exists idx_agent_execution_receipts_run
+                    on agent_execution_receipts(agent_run_id, id);
                 create table if not exists universal_plan_executions (
                     execution_scope_id text primary key,
                     reply_task_id integer not null,
@@ -2673,6 +2706,95 @@ class AutoReplyStore:
             ).fetchone()
             return self._agent_run_from_row(row) if row is not None else None
 
+    def record_agent_execution_receipt(
+        self,
+        run_id: int,
+        *,
+        receipt_id: str,
+        operation_id: str,
+        cli: str,
+        command_path: str,
+        command_digest: str,
+        exit_code: int,
+        now: str | datetime | None = None,
+    ) -> AgentExecutionReceipt:
+        if not all(
+            value.strip()
+            for value in (
+                receipt_id,
+                operation_id,
+                cli,
+                command_path,
+                command_digest,
+            )
+        ):
+            raise ValueError("execution receipt identity must be non-empty")
+        if exit_code != 0:
+            raise ValueError("only successful executions can produce receipts")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            run = db.execute(
+                "select status from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            if run is None:
+                raise ValueError("agent run does not exist")
+            if run["status"] != "running":
+                raise ValueError("execution receipt requires running agent run")
+            db.execute(
+                """
+                insert or ignore into agent_execution_receipts (
+                    agent_run_id, receipt_id, operation_id, cli,
+                    command_path, command_digest, exit_code,
+                    completed, persisted, safe_to_confirm, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, 1, 1, 1, ?)
+                """,
+                (
+                    run_id,
+                    receipt_id,
+                    operation_id,
+                    cli,
+                    command_path,
+                    command_digest,
+                    exit_code,
+                    now_text,
+                ),
+            )
+            row = db.execute(
+                """
+                select * from agent_execution_receipts
+                where agent_run_id=? and operation_id=?
+                """,
+                (run_id, operation_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("execution receipt was not persisted")
+            if (
+                row["receipt_id"] != receipt_id
+                or row["cli"] != cli
+                or row["command_path"] != command_path
+                or row["command_digest"] != command_digest
+                or row["exit_code"] != exit_code
+            ):
+                raise ValueError("conflicting execution receipt")
+            return AgentExecutionReceipt.model_validate(dict(row))
+
+    def list_agent_execution_receipts(
+        self,
+        run_id: int,
+    ) -> list[AgentExecutionReceipt]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from agent_execution_receipts
+                where agent_run_id=?
+                order by id
+                """,
+                (run_id,),
+            ).fetchall()
+            return [
+                AgentExecutionReceipt.model_validate(dict(row)) for row in rows
+            ]
+
     @contextmanager
     def _agent_run_write_transaction(
         self,
@@ -2764,6 +2886,34 @@ class AutoReplyStore:
                     "select * from agent_runs where id=?",
                     (row["id"],),
                 ).fetchone()
+            if not claimed and row["status"] == "failed":
+                try:
+                    structured_error = json.loads(row["structured_error_json"])
+                except json.JSONDecodeError:
+                    structured_error = {}
+                retryable = (
+                    isinstance(structured_error, dict)
+                    and structured_error.get("retryable") is True
+                    and row["side_effect_state"] == "none"
+                )
+                if retryable:
+                    reclaimed = db.execute(
+                        """
+                        update agent_runs
+                        set status='running', lease_owner=?, lease_expires_at=?,
+                            transcript_start_line=transcript_end_line,
+                            final_result_json='', structured_error_json='',
+                            completed_at='', updated_at=?
+                        where id=? and status='failed'
+                          and side_effect_state='none'
+                        """,
+                        (owner, lease_expires_at, now_text, row["id"]),
+                    )
+                    claimed = reclaimed.rowcount == 1
+                    row = db.execute(
+                        "select * from agent_runs where id=?",
+                        (row["id"],),
+                    ).fetchone()
             return AgentRunClaim(run=self._agent_run_from_row(row), claimed=claimed)
 
     def renew_agent_run_lease(

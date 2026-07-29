@@ -105,6 +105,11 @@ def validate_completion_evidence(
         and evidence_state is not SideEffectState.CONFIRMED
     ):
         raise InconsistentAgentResultError(evidence_state)
+    if (
+        result.outcome is AgentOutcome.NO_ACTION
+        and evidence_state is SideEffectState.CONFIRMED
+    ):
+        raise InconsistentAgentResultError(evidence_state)
     return evidence_state
 
 

@@ -282,6 +282,210 @@ def test_direct_runner_resumes_only_the_claimed_run_session(
     assert "existing-session" in command
 
 
+def test_resumed_run_validates_final_result_against_persisted_effect_evidence(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        owner="seed",
+        lease_seconds=1,
+        now="2026-07-29 00:00:00",
+    )
+    store.set_agent_run_session(
+        claim.run.id,
+        "existing-session",
+        owner="seed",
+        now="2026-07-29 00:00:00",
+    )
+    for event_type in ("item.started", "item.completed"):
+        store.append_agent_run_event(
+            claim.run.id,
+            {
+                "type": event_type,
+                "item": {
+                    "id": "write-1",
+                    "type": "mcp_tool_call",
+                    "metadata": {"effect": "effectful"},
+                },
+            },
+            owner="seed",
+            now="2026-07-29 00:00:00",
+        )
+    output = "\n".join(
+        (
+            json.dumps(
+                {"type": "thread.started", "thread_id": "existing-session"}
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        owner="worker-2",
+    ).run(task, _context(task.id), now="2026-07-29 00:00:02")
+
+    assert result.result.error.side_effect_state.value == "confirmed"
+    persisted = store.get_agent_run(result.run_id)
+    assert persisted is not None and persisted.status == "completed"
+    assert persisted.side_effect_state == "confirmed"
+
+
+def test_native_dws_completed_write_creates_trusted_persisted_receipt(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-1"}),
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "native-send-1",
+                        "type": "command_execution",
+                        "command": (
+                            "dws chat message send --group cid --text hello "
+                            "--format json --yes"
+                        ),
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "native-send-1",
+                        "type": "command_execution",
+                        "command": (
+                            "dws chat message send --group cid --text hello "
+                            "--format json --yes"
+                        ),
+                        "exit_code": 0,
+                        "status": "completed",
+                        "aggregated_output": '{"success":true}',
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
+    receipts = store.list_agent_execution_receipts(result.run_id)
+    assert len(receipts) == 1
+    assert receipts[0].operation_id == "native-send-1"
+    assert receipts[0].completed is True
+    assert receipts[0].persisted is True
+    assert receipts[0].safe_to_confirm is True
+
+
+def test_native_lark_completed_write_creates_trusted_persisted_receipt(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    command = (
+        "lark-cli im +messages-send --chat-id oc_1 --text hello "
+        "--idempotency-key task-1"
+    )
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "native-lark-send-1",
+                        "type": "command_execution",
+                        "command": command,
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "native-lark-send-1",
+                        "type": "command_execution",
+                        "command": command,
+                        "exit_code": 0,
+                        "status": "completed",
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
+    receipts = store.list_agent_execution_receipts(result.run_id)
+    assert [(item.cli, item.command_path) for item in receipts] == [
+        ("lark-cli", "im +messages-send")
+    ]
+
+
+def test_failed_native_write_is_unknown_and_has_no_success_receipt(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    command = (
+        "dws chat message send --group cid --text hello --format json --yes"
+    )
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "native-send-1",
+                        "type": "command_execution",
+                        "command": command,
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "native-send-1",
+                        "type": "command_execution",
+                        "command": command,
+                        "exit_code": 1,
+                        "status": "failed",
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
+
+    run = store.get_agent_run_for_task_generation(
+        task.id, task.execution_generation
+    )
+    assert run is not None and run.status == "unknown"
+    assert store.list_agent_execution_receipts(run.id) == []
+
+
 def test_direct_runner_persists_each_jsonl_event_before_final_parse(
     tmp_path: Path, store: AutoReplyStore
 ):
@@ -791,7 +995,7 @@ def test_trusted_effectful_lifecycle_confirms_completion(
     assert store.get_agent_run(run.run_id).side_effect_state == "confirmed"
 
 
-def test_exact_nested_native_receipt_confirms_completion_without_tool_lifecycle(
+def test_command_output_cannot_inject_a_trusted_execution_receipt(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
@@ -818,13 +1022,12 @@ def test_exact_nested_native_receipt_confirms_completion_without_tool_lifecycle(
         )
     )
 
-    run = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-    ).run(task, _context(task.id))
-
-    assert store.get_agent_run(run.run_id).side_effect_state == "confirmed"
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
 
 
 @pytest.mark.parametrize(

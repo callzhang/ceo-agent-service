@@ -292,6 +292,23 @@ def test_safe_persisted_completed_receipt_confirms_completion():
     )
 
 
+def test_no_action_rejects_completed_side_effect_receipt():
+    receipt = ExecutionReceipt(
+        receipt_id="receipt-1",
+        operation_id="operation-1",
+        completed=True,
+        persisted=True,
+        safe_to_confirm=True,
+    )
+    result = AgentResult(
+        outcome=AgentOutcome.NO_ACTION,
+        summary="无需动作。",
+    )
+
+    with pytest.raises(InconsistentAgentResultError):
+        validate_completion_evidence(result, events=[], receipts=[receipt])
+
+
 def test_effectful_started_without_completion_cannot_confirm_completion():
     event = ToolEffectEvent(
         call_id="write-1",

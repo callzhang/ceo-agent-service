@@ -28,6 +28,7 @@ from app.agent_result import (
     AgentError,
     AgentOutcome,
     AgentResult,
+    ExecutionReceipt,
     InconsistentAgentResultError,
     SideEffectState,
     validate_completion_evidence,
@@ -5289,8 +5290,26 @@ class DingTalkAutoReplyWorker:
                 )
                 continue
             if run.status == "failed":
-                self.store.fail_reply_task(task.id, "agent_run_failed")
-                self._record_agent_runtime_failure_attempt(task, "agent_run_failed")
+                try:
+                    structured_error = json.loads(run.structured_error_json or "{}")
+                except json.JSONDecodeError:
+                    structured_error = {}
+                retryable = (
+                    isinstance(structured_error, dict)
+                    and structured_error.get("retryable") is True
+                    and run.side_effect_state == "none"
+                )
+                error = str(structured_error.get("code") or "agent_run_failed")
+                if retryable and task.attempts < self.max_task_attempts:
+                    self.store.requeue_reply_task(
+                        task.id,
+                        error,
+                        available_at=self._reply_task_retry_available_at(task.attempts),
+                    )
+                    recovered += 1
+                    continue
+                self.store.fail_reply_task(task.id, error)
+                self._record_agent_runtime_failure_attempt(task, error)
                 continue
             if run.status != "running":
                 self.store.fail_reply_task(task.id, f"invalid_agent_run_state:{run.status}")
@@ -5540,12 +5559,23 @@ class DingTalkAutoReplyWorker:
                 )
                 return False
             if existing_run.status == "failed":
-                self.store.requeue_reply_task(
-                    task.id,
-                    "agent_run_failed",
-                    available_at=self._reply_task_retry_available_at(task.attempts),
+                try:
+                    structured_error = json.loads(
+                        existing_run.structured_error_json or "{}"
+                    )
+                except json.JSONDecodeError:
+                    structured_error = {}
+                retryable = (
+                    isinstance(structured_error, dict)
+                    and structured_error.get("retryable") is True
+                    and existing_run.side_effect_state == "none"
                 )
-                return False
+                if not retryable or task.attempts > self.max_task_attempts:
+                    self.store.fail_reply_task(
+                        task.id,
+                        str(structured_error.get("code") or "agent_run_failed"),
+                    )
+                    return False
             if (
                 existing_run.status == "running"
                 and existing_run.lease_expires_at
@@ -5887,7 +5917,29 @@ class DingTalkAutoReplyWorker:
         task: ReplyTask,
         run_result: DirectAgentRunResult,
     ) -> bool:
-        effect_events, receipts = structured_execution_evidence(run_result.events)
+        persisted_run = self.store.get_agent_run(run_result.run_id)
+        if persisted_run is None:
+            raise RuntimeError("agent run was not persisted")
+        effect_events, embedded_receipts = structured_execution_evidence(
+            persisted_run.tool_events
+        )
+        persisted_receipts = tuple(
+            ExecutionReceipt(
+                receipt_id=receipt.receipt_id,
+                operation_id=receipt.operation_id,
+                completed=receipt.completed,
+                persisted=receipt.persisted,
+                safe_to_confirm=receipt.safe_to_confirm,
+            )
+            for receipt in self.store.list_agent_execution_receipts(
+                run_result.run_id
+            )
+        )
+        receipts = (
+            *embedded_receipts,
+            *persisted_receipts,
+            *run_result.receipts,
+        )
         try:
             evidence_state = validate_completion_evidence(
                 run_result.result,
@@ -5945,11 +5997,14 @@ class DingTalkAutoReplyWorker:
             self.store.complete_reply_task(task.id)
             return True
         if task_status == "pending":
-            self.store.requeue_reply_task(
-                task.id,
-                send_error,
-                available_at=self._reply_task_retry_available_at(task.attempts),
-            )
+            if task.attempts < self.max_task_attempts:
+                self.store.requeue_reply_task(
+                    task.id,
+                    send_error,
+                    available_at=self._reply_task_retry_available_at(task.attempts),
+                )
+            else:
+                self.store.fail_reply_task(task.id, send_error)
             return False
         self.store.fail_reply_task(task.id, send_error)
         return False

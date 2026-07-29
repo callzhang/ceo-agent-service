@@ -1,5 +1,7 @@
 import json
+import hashlib
 import shlex
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -100,6 +102,110 @@ class DirectAgentRunResult:
     transcript_start_line: int
     transcript_end_line: int
     events: tuple[dict[str, object], ...]
+    receipts: tuple[ExecutionReceipt, ...] = ()
+
+
+@dataclass(frozen=True)
+class NativeCliCommand:
+    cli: str
+    command_path: str
+    argv: tuple[str, ...]
+    effect: EffectKind
+    command_digest: str
+
+
+class NativeCliMetadataClassifier:
+    """Classify native CLI commands from their installed reviewed metadata."""
+
+    def __init__(self) -> None:
+        self._cache: dict[tuple[str, ...], NativeCliCommand | None] = {}
+
+    def classify(self, item: dict[str, object]) -> NativeCliCommand | None:
+        argv = _native_command_argv(item)
+        if argv is None or "--dry-run" in argv:
+            return None
+        cached = self._cache.get(argv)
+        if cached is not None or argv in self._cache:
+            return cached
+        cli = Path(argv[0]).name
+        if cli == "dws":
+            classified = self._classify_dws(argv)
+        elif cli == "lark-cli":
+            classified = self._classify_lark(argv)
+        else:
+            classified = None
+        self._cache[argv] = classified
+        return classified
+
+    def _classify_dws(self, argv: tuple[str, ...]) -> NativeCliCommand | None:
+        for command_path in _command_path_candidates(argv[1:]):
+            try:
+                process = subprocess.run(
+                    [
+                        argv[0],
+                        "schema",
+                        "--cli-path",
+                        command_path,
+                        "--compact",
+                        "--format",
+                        "json",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return None
+            if process.returncode != 0:
+                continue
+            try:
+                metadata = json.loads(process.stdout)
+            except json.JSONDecodeError:
+                continue
+            effect = metadata.get("effect") if isinstance(metadata, dict) else None
+            if effect not in {"read", "write"}:
+                continue
+            return _classified_native_command(
+                "dws",
+                command_path,
+                argv,
+                EffectKind.READ_ONLY if effect == "read" else EffectKind.EFFECTFUL,
+            )
+        return None
+
+    def _classify_lark(self, argv: tuple[str, ...]) -> NativeCliCommand | None:
+        for command_path in _command_path_candidates(argv[1:]):
+            try:
+                process = subprocess.run(
+                    [argv[0], *command_path.split(), "--help"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return None
+            if process.returncode != 0:
+                continue
+            risk = ""
+            for line in (process.stdout + "\n" + process.stderr).splitlines():
+                if line.strip().casefold().startswith("risk:"):
+                    risk = line.split(":", 1)[1].strip().casefold()
+                    break
+            if risk not in {"read", "write", "high-risk-write"}:
+                continue
+            return _classified_native_command(
+                "lark-cli",
+                command_path,
+                argv,
+                (
+                    EffectKind.READ_ONLY
+                    if risk == "read"
+                    else EffectKind.EFFECTFUL
+                ),
+            )
+        return None
 
 
 ProcessExecutor = Callable[..., ProcessRunResult]
@@ -114,11 +220,15 @@ class DirectAgentRunner:
         codex_bin: str = "codex",
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
+        native_cli_classifier: NativeCliMetadataClassifier | None = None,
     ) -> None:
         self.store = store
         self.codex = CodexRunner(workspace=workspace, codex_bin=codex_bin)
         self.executor = executor or run_process_with_idle_timeout
         self.owner = owner or f"direct-agent-{uuid4().hex}"
+        self.native_cli_classifier = (
+            native_cli_classifier or NativeCliMetadataClassifier()
+        )
 
     def run(
         self,
@@ -166,8 +276,6 @@ class DirectAgentRunner:
         if read_only:
             make_read_only_without_tools(command)
         events: list[dict[str, object]] = []
-        effect_events: list[ToolEffectEvent] = []
-        receipts: list[ExecutionReceipt] = []
         saw_json = False
 
         def persist_line(line: str) -> None:
@@ -192,7 +300,11 @@ class DirectAgentRunner:
                     transcript_start_line=run.transcript_start_line,
                     now=now,
                 )
-            safe_event = _safe_event(payload)
+            native_command = _native_cli_command(
+                payload,
+                self.native_cli_classifier,
+            )
+            safe_event = _safe_event(payload, native_command=native_command)
             self.store.append_agent_run_event(
                 run.id,
                 safe_event,
@@ -200,12 +312,23 @@ class DirectAgentRunner:
                 now=now,
             )
             events.append(safe_event)
-            effect_event = _effect_event(payload)
-            if effect_event is not None:
-                effect_events.append(effect_event)
-            receipt = _receipt(payload)
-            if receipt is not None:
-                receipts.append(receipt)
+            if (
+                native_command is not None
+                and native_command.effect is EffectKind.EFFECTFUL
+                and _native_command_completed(payload)
+            ):
+                call_id = _native_call_id(payload)
+                if call_id:
+                    self.store.record_agent_execution_receipt(
+                        run.id,
+                        receipt_id=f"native-cli:{run.id}:{call_id}",
+                        operation_id=call_id,
+                        cli=native_command.cli,
+                        command_path=native_command.command_path,
+                        command_digest=native_command.command_digest,
+                        exit_code=0,
+                        now=now,
+                    )
 
         try:
             process = self.executor(
@@ -222,9 +345,6 @@ class DirectAgentRunner:
             self._record_failure(
                 run.id,
                 "codex_stream_invalid",
-                events=effect_events,
-                receipts=receipts,
-                transcript_end_line=len(events),
                 now=now,
             )
             raise RuntimeError("codex_stream_invalid") from exc
@@ -232,9 +352,6 @@ class DirectAgentRunner:
             self._record_failure(
                 run.id,
                 "codex_process_failed",
-                events=effect_events,
-                receipts=receipts,
-                transcript_end_line=len(events),
                 now=now,
             )
             raise RuntimeError("codex_process_failed") from exc
@@ -243,9 +360,6 @@ class DirectAgentRunner:
             self._record_failure(
                 run.id,
                 "codex_process_timeout",
-                events=effect_events,
-                receipts=receipts,
-                transcript_end_line=len(events),
                 now=now,
             )
             raise RuntimeError("codex_process_timeout")
@@ -253,26 +367,28 @@ class DirectAgentRunner:
             self._record_failure(
                 run.id,
                 "codex_process_failed",
-                events=effect_events,
-                receipts=receipts,
-                transcript_end_line=len(events),
                 now=now,
             )
             raise RuntimeError("codex_process_failed")
+        persisted = self.store.get_agent_run(run.id)
+        if persisted is None:
+            raise RuntimeError("agent run was not persisted")
+        all_effect_events, embedded_receipts = structured_execution_evidence(
+            persisted.tool_events
+        )
+        persisted_receipts = _execution_receipts_for_run(self.store, run.id)
+        all_receipts = (*embedded_receipts, *persisted_receipts)
         try:
             result = parse_agent_result(process.stdout)
             evidence_state = validate_completion_evidence(
                 result,
-                events=effect_events,
-                receipts=receipts,
+                events=all_effect_events,
+                receipts=all_receipts,
             )
         except (ResultParseError, ValueError) as exc:
             self._record_failure(
                 run.id,
                 "codex_result_invalid",
-                events=effect_events,
-                receipts=receipts,
-                transcript_end_line=len(events),
                 now=now,
             )
             raise RuntimeError("codex_result_invalid") from exc
@@ -282,7 +398,7 @@ class DirectAgentRunner:
                 run.id,
                 {"code": "agent_side_effect_unknown"},
                 owner=self.owner,
-                transcript_end_line=len(events),
+                transcript_end_line=persisted.transcript_end_line,
                 now=now,
             )
         elif result.outcome is AgentOutcome.FAILED:
@@ -291,7 +407,7 @@ class DirectAgentRunner:
                 result.error.model_dump(mode="json"),
                 owner=self.owner,
                 side_effect_state=evidence_state.value,
-                transcript_end_line=len(events),
+                transcript_end_line=persisted.transcript_end_line,
                 now=now,
             )
         else:
@@ -300,15 +416,19 @@ class DirectAgentRunner:
                 result.model_dump(mode="json"),
                 owner=self.owner,
                 side_effect_state=evidence_state.value,
-                transcript_end_line=len(events),
+                transcript_end_line=persisted.transcript_end_line,
                 now=now,
             )
+        completed_run = self.store.get_agent_run(run.id)
+        if completed_run is None:
+            raise RuntimeError("agent run was not persisted")
         return DirectAgentRunResult(
             run_id=run.id,
             result=result,
             transcript_start_line=run.transcript_start_line,
-            transcript_end_line=len(events),
-            events=tuple(events),
+            transcript_end_line=completed_run.transcript_end_line,
+            events=tuple(completed_run.tool_events),
+            receipts=tuple(all_receipts),
         )
 
     def _record_failure(
@@ -316,18 +436,25 @@ class DirectAgentRunner:
         run_id: int,
         code: str,
         *,
-        events: list[ToolEffectEvent],
-        receipts: list[ExecutionReceipt],
-        transcript_end_line: int,
         now: str | None,
     ) -> None:
-        evidence_state = _evidence_state(events, receipts)
+        persisted = self.store.get_agent_run(run_id)
+        if persisted is None:
+            raise RuntimeError("agent run was not persisted")
+        events, embedded_receipts = structured_execution_evidence(
+            persisted.tool_events
+        )
+        receipts = (
+            *embedded_receipts,
+            *_execution_receipts_for_run(self.store, run_id),
+        )
+        evidence_state = _evidence_state(list(events), list(receipts))
         if evidence_state is SideEffectState.UNKNOWN:
             self.store.mark_agent_run_unknown(
                 run_id,
                 {"code": code},
                 owner=self.owner,
-                transcript_end_line=transcript_end_line,
+                transcript_end_line=persisted.transcript_end_line,
                 now=now,
             )
             return
@@ -335,7 +462,7 @@ class DirectAgentRunner:
             run_id,
             {"code": code},
             owner=self.owner,
-            transcript_end_line=transcript_end_line,
+            transcript_end_line=persisted.transcript_end_line,
             side_effect_state=evidence_state.value,
             now=now,
         )
@@ -351,11 +478,139 @@ def _session_id(payload: dict[str, object]) -> str:
     return ""
 
 
-def _safe_event(payload: dict[str, object]) -> dict[str, object]:
-    return {
+def _native_command_argv(item: dict[str, object]) -> tuple[str, ...] | None:
+    raw_command = item.get("argv") or item.get("command")
+    if isinstance(raw_command, list) and all(
+        isinstance(part, str) for part in raw_command
+    ):
+        argv = tuple(raw_command)
+    elif isinstance(raw_command, str):
+        if any(token in raw_command for token in ("\n", ";", "|", "&&", ">", "<")):
+            return None
+        try:
+            argv = tuple(shlex.split(raw_command))
+        except ValueError:
+            return None
+    else:
+        return None
+    if not argv:
+        return None
+    executable = Path(argv[0]).name
+    if executable in {"bash", "sh", "zsh"}:
+        for flag in ("-lc", "-c"):
+            if flag in argv:
+                index = argv.index(flag)
+                if index + 1 < len(argv):
+                    return _native_command_argv({"command": argv[index + 1]})
+        return None
+    if executable not in {"dws", "lark-cli"}:
+        return None
+    return argv
+
+
+def _command_path_candidates(argv: tuple[str, ...]) -> tuple[str, ...]:
+    command_tokens: list[str] = []
+    for token in argv:
+        if token.startswith("-"):
+            break
+        command_tokens.append(token)
+    return tuple(
+        " ".join(command_tokens[:length])
+        for length in range(len(command_tokens), 0, -1)
+    )
+
+
+def _classified_native_command(
+    cli: str,
+    command_path: str,
+    argv: tuple[str, ...],
+    effect: EffectKind,
+) -> NativeCliCommand:
+    normalized = shlex.join(argv)
+    return NativeCliCommand(
+        cli=cli,
+        command_path=command_path,
+        argv=argv,
+        effect=effect,
+        command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+    )
+
+
+def _native_cli_command(
+    payload: dict[str, object],
+    classifier: NativeCliMetadataClassifier,
+) -> NativeCliCommand | None:
+    if payload.get("type") not in {"item.started", "item.completed"}:
+        return None
+    item = payload.get("item")
+    if not isinstance(item, dict) or item.get("type") != "command_execution":
+        return None
+    return classifier.classify(item)
+
+
+def _native_call_id(payload: dict[str, object]) -> str:
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return ""
+    call_id = item.get("call_id") or item.get("id")
+    return call_id.strip() if isinstance(call_id, str) else ""
+
+
+def _native_command_completed(payload: dict[str, object]) -> bool:
+    if payload.get("type") != "item.completed":
+        return False
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return False
+    return item.get("exit_code") == 0 and item.get("status") == "completed"
+
+
+def _execution_receipts_for_run(
+    store: AutoReplyStore,
+    run_id: int,
+) -> tuple[ExecutionReceipt, ...]:
+    return tuple(
+        ExecutionReceipt(
+            receipt_id=receipt.receipt_id,
+            operation_id=receipt.operation_id,
+            completed=receipt.completed,
+            persisted=receipt.persisted,
+            safe_to_confirm=receipt.safe_to_confirm,
+        )
+        for receipt in store.list_agent_execution_receipts(run_id)
+    )
+
+
+def _safe_event(
+    payload: dict[str, object],
+    *,
+    native_command: NativeCliCommand | None = None,
+) -> dict[str, object]:
+    safe_event = {
         str(key): _sanitize_event_value(value, key=str(key))
         for key, value in payload.items()
     }
+    item = safe_event.get("item")
+    if native_command is not None and isinstance(item, dict):
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            item["metadata"] = metadata
+        metadata.update(
+            {
+                "effect": native_command.effect.value,
+                "native_cli": native_command.cli,
+                "operation": native_command.command_path,
+                "command_digest": native_command.command_digest,
+            }
+        )
+        if (
+            safe_event.get("type") == "item.completed"
+            and native_command.effect is EffectKind.EFFECTFUL
+            and not _native_command_completed(payload)
+        ):
+            safe_event["type"] = "item.failed"
+    return safe_event
 
 
 def _sanitize_event_value(value: object, *, key: str = "") -> object:
@@ -540,17 +795,10 @@ def _mcp_annotation_effect(annotations: dict[str, object]) -> EffectKind | None:
 
 
 def _receipt(payload: dict[str, object]) -> ExecutionReceipt | None:
-    top_level_sources: list[object] = []
-    if frozenset(payload) == _RECEIPT_KEYS:
-        top_level_sources.append(payload)
-    if "receipt" in payload:
-        top_level_sources.append(payload["receipt"])
-    receipt = _first_valid_receipt(top_level_sources)
-    if receipt is not None:
-        return receipt
-
     item = payload.get("item")
     if not isinstance(item, dict):
+        return None
+    if item.get("type") == "command_execution":
         return None
     operation_id = item.get("call_id") or item.get("id")
     if not isinstance(operation_id, str) or not operation_id.strip():

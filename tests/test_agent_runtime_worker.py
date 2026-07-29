@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -111,6 +112,28 @@ class ScriptedRun:
     result: AgentResult
     events: tuple[dict[str, object], ...] = ()
     session_id: str = "session-1"
+    receipts: tuple["PersistedCommandReceipt", ...] = ()
+
+
+@dataclass(frozen=True)
+class PersistedCommandReceipt:
+    operation_id: str
+    command_digest: str
+    cli: str = "dws"
+    command_path: str = "chat message send"
+
+
+def _receipt(
+    operation_id: str,
+    *,
+    command_digest: str = "a" * 64,
+    command_path: str = "chat message send",
+) -> PersistedCommandReceipt:
+    return PersistedCommandReceipt(
+        operation_id=operation_id,
+        command_digest=command_digest,
+        command_path=command_path,
+    )
 
 
 class ScriptedDirectAgentRunner:
@@ -151,6 +174,17 @@ class ScriptedDirectAgentRunner:
                 owner=self.owner,
                 now=NOW,
             )
+        for receipt in script.receipts:
+            self.store.record_agent_execution_receipt(
+                run.id,
+                receipt_id=f"native:{receipt.operation_id}:{receipt.command_digest}",
+                operation_id=receipt.operation_id,
+                cli=receipt.cli,
+                command_path=receipt.command_path,
+                command_digest=receipt.command_digest,
+                exit_code=0,
+                now=NOW,
+            )
         if script.result.error.side_effect_state is SideEffectState.UNKNOWN:
             self.store.mark_agent_run_unknown(
                 run.id,
@@ -170,7 +204,8 @@ class ScriptedDirectAgentRunner:
         else:
             evidence_state = (
                 "confirmed"
-                if any(
+                if script.receipts
+                or any(
                     event.get("type") == "item.completed"
                     and isinstance(event.get("item"), dict)
                     and event["item"].get("metadata") == {"effect": "effectful"}
@@ -192,6 +227,103 @@ class ScriptedDirectAgentRunner:
             transcript_start_line=run.transcript_start_line,
             transcript_end_line=len(script.events),
             events=script.events,
+        )
+
+
+class LiveOaDirectAgentRunner:
+    def __init__(self, store: AutoReplyStore, live_output: dict[str, object]) -> None:
+        self.store = store
+        self.live_output = live_output
+        self.calls: list[AgentTaskContext] = []
+        self.read_commands: list[str] = []
+        self.write_commands: list[str] = []
+        self.owner = "live-oa-agent"
+
+    def run(self, task, context, **_kwargs) -> DirectAgentRunResult:
+        claim = self.store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            owner=self.owner,
+            now=NOW,
+        )
+        assert claim.claimed
+        run = claim.run
+        if not run.codex_session_id:
+            run = self.store.set_agent_run_session(
+                run.id,
+                "session-live-oa",
+                owner=self.owner,
+                now=NOW,
+            )
+        self.calls.append(context)
+        oa_material = next(item for item in context.materials if item.kind == "dingtalk_oa")
+        for index, command in enumerate(oa_material.read_commands):
+            self.read_commands.append(command)
+            run = self.store.append_agent_run_event(
+                run.id,
+                _read_event(f"oa-read-{index}"),
+                owner=self.owner,
+                now=NOW,
+            )
+
+        tasks = self.live_output.get("tasks")
+        live_tasks = tasks if isinstance(tasks, list) else []
+        if len(live_tasks) != 1:
+            result = _result(
+                AgentOutcome.NEEDS_HUMAN,
+                summary="Live OA detail has more than one candidate task.",
+                code="oa_target_ambiguous",
+            )
+        else:
+            live_task = live_tasks[0] if isinstance(live_tasks[0], dict) else {}
+            status = str(live_task.get("status") or "").lower()
+            if status == "completed":
+                result = _result(
+                    AgentOutcome.NO_ACTION,
+                    summary="Live OA task is already completed.",
+                )
+            elif live_task.get("current_user") is not True:
+                result = _result(
+                    AgentOutcome.NEEDS_HUMAN,
+                    summary="Live OA task does not belong to the current user.",
+                    code="oa_task_not_current_user",
+                )
+            else:
+                task_id = str(live_task.get("task_id") or "")
+                command = f"dws oa approval execute --task-id {task_id} --action agree --format json"
+                self.write_commands.append(command)
+                digest = hashlib.sha256(command.encode("utf-8")).hexdigest()
+                self.store.record_agent_execution_receipt(
+                    run.id,
+                    receipt_id=f"native:oa-write:{digest}",
+                    operation_id="oa-write",
+                    cli="dws",
+                    command_path="oa approval execute",
+                    command_digest=digest,
+                    exit_code=0,
+                    now=NOW,
+                )
+                result = _result(
+                    summary="Live OA task was reviewed and completed.",
+                    side_effect_state=SideEffectState.CONFIRMED,
+                )
+
+        run = self.store.complete_agent_run(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=self.owner,
+            side_effect_state=(
+                "confirmed" if self.write_commands else "none"
+            ),
+            transcript_end_line=len(run.tool_events),
+            now=NOW,
+        )
+        return DirectAgentRunResult(
+            run_id=run.id,
+            result=result,
+            transcript_start_line=run.transcript_start_line,
+            transcript_end_line=run.transcript_end_line,
+            events=tuple(run.tool_events),
         )
 
 
@@ -274,7 +406,7 @@ def test_queued_task_runs_agent_once_and_records_completed_attempt(tmp_path: Pat
                     summary="已回复并确认发送成功。",
                     side_effect_state=SideEffectState.CONFIRMED,
                 ),
-                (_effect_event("send-1", "started"), _effect_event("send-1", "completed")),
+                receipts=(_receipt("send-1"),),
             )
         ],
     )
@@ -367,6 +499,80 @@ def test_agent_result_maps_to_task_and_attempt(
         assert "permission_missing" in attempt.send_error
 
 
+def test_retryable_failure_reuses_generation_and_session_then_succeeds(
+    tmp_path: Path,
+):
+    trigger = _message("请读取材料后完成回复")
+    worker, runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [
+            ScriptedRun(
+                _result(
+                    AgentOutcome.FAILED,
+                    summary="临时读取失败。",
+                    retryable=True,
+                    code="temporary_read_failure",
+                ),
+                session_id="session-retry",
+            ),
+            ScriptedRun(
+                _result(AgentOutcome.NO_ACTION, summary="已完成复核，无需回复。"),
+                session_id="unused",
+            ),
+        ],
+    )
+    task_id = _enqueue(worker.store, trigger)
+
+    worker.consume_once(max_tasks=1)
+    first = worker.store.get_reply_task(task_id)
+    assert first is not None and first.status == "pending"
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set available_at='' where id=?",
+            (task_id,),
+        )
+
+    worker.consume_once(max_tasks=1)
+
+    assert len(runner.calls) == 2
+    assert [generation for _task, generation, _context in runner.calls] == [
+        "g1",
+        "g1",
+    ]
+    assert runner.resume_session_ids == ["session-retry"]
+    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    assert run is not None and run.status == "completed"
+    assert worker.store.get_reply_task(task_id).status == "done"
+
+
+def test_retryable_failure_stops_at_worker_attempt_limit(tmp_path: Path):
+    trigger = _message("请读取材料后完成回复")
+    scripts = [
+        ScriptedRun(
+            _result(
+                AgentOutcome.FAILED,
+                summary="临时读取失败。",
+                retryable=True,
+                code="temporary_read_failure",
+            ),
+            session_id="session-retry",
+        )
+        for _ in range(3)
+    ]
+    worker, runner, _dws = _worker(tmp_path, [trigger], scripts)
+    worker.max_task_attempts = 2
+    task_id = _enqueue(worker.store, trigger)
+
+    worker.consume_once(max_tasks=1)
+    with worker.store._connect() as db:
+        db.execute("update reply_tasks set available_at='' where id=?", (task_id,))
+    worker.consume_once(max_tasks=1)
+
+    assert len(runner.calls) == 2
+    assert worker.store.get_reply_task(task_id).status == "failed"
+
+
 def test_completed_confirmed_without_effectful_evidence_is_rejected(tmp_path: Path):
     trigger = _message("请修复服务")
     worker, _runner, _dws = _worker(
@@ -388,6 +594,58 @@ def test_completed_confirmed_without_effectful_evidence_is_rejected(tmp_path: Pa
     assert attempt is not None
     assert attempt.send_status == "failed"
     assert "completion_evidence" in attempt.send_error
+
+
+def test_diagnosis_only_for_requested_execution_is_blocked_by_agent_result(
+    tmp_path: Path,
+):
+    trigger = _message("请执行修复并验证")
+    worker, _runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [
+            ScriptedRun(
+                _result(
+                    AgentOutcome.NEEDS_HUMAN,
+                    summary="已定位问题，但当前没有执行权限。",
+                    code="execution_not_performed",
+                ),
+                (_read_event("diagnosis-read"),),
+            )
+        ],
+    )
+    task_id = _enqueue(worker.store, trigger)
+
+    worker.consume_once(max_tasks=1)
+
+    assert worker.store.get_reply_task(task_id).status == "done"
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "execution_not_performed"
+
+
+def test_no_action_with_persisted_effect_receipt_is_rejected(tmp_path: Path):
+    trigger = _message("请检查是否需要处理")
+    worker, _runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [
+            ScriptedRun(
+                _result(AgentOutcome.NO_ACTION, summary="无需动作。"),
+                receipts=(_receipt("unexpected-write"),),
+            )
+        ],
+    )
+    task_id = _enqueue(worker.store, trigger)
+
+    worker.consume_once(max_tasks=1)
+
+    assert worker.store.get_reply_task(task_id).status == "failed"
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "completion_evidence_inconsistent"
 
 
 def test_incomplete_effect_is_unknown_and_never_replayed(tmp_path: Path):
@@ -420,11 +678,24 @@ def test_incomplete_effect_is_unknown_and_never_replayed(tmp_path: Path):
 
 
 def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path):
-    trigger = _message("请发送第一版")
+    trigger = _message("请给目标 A 发送第一版")
     worker, runner, _dws = _worker(
         tmp_path,
         [trigger],
-        [ScriptedRun(_result(AgentOutcome.NO_ACTION)), ScriptedRun(_result(AgentOutcome.NO_ACTION))],
+        [
+            ScriptedRun(
+                _result(side_effect_state=SideEffectState.CONFIRMED),
+                receipts=(
+                    _receipt("send-a", command_digest="a" * 64),
+                ),
+            ),
+            ScriptedRun(
+                _result(side_effect_state=SideEffectState.CONFIRMED),
+                receipts=(
+                    _receipt("send-b", command_digest="b" * 64),
+                ),
+            ),
+        ],
     )
     first_id = _enqueue(worker.store, trigger)
     assert worker.consume_once(max_tasks=1) == 1
@@ -437,10 +708,20 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
         trigger_message_id="msg-1",
         trigger_create_time=trigger.create_time,
         trigger_sender=trigger.sender_name,
-        trigger_text="请发送修订版",
-        trigger_message_json=trigger.model_copy(update={"content": "请发送修订版"}).model_dump_json(),
+        trigger_text="请改为给目标 B 发送修订版",
+        trigger_message_json=trigger.model_copy(
+            update={"content": "请改为给目标 B 发送修订版"}
+        ).model_dump_json(),
         attempt_id=1,
     )
+    assert worker.consume_once(max_tasks=1) == 1
+
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='pending', available_at='', locked_at='' "
+            "where id=?",
+            (first_id,),
+        )
     assert worker.consume_once(max_tasks=1) == 1
 
     assert rerun.execution_generation != first_generation
@@ -448,6 +729,25 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
         first_generation,
         rerun.execution_generation,
     ]
+    assert runner.calls[0][2].trigger_text == "请给目标 A 发送第一版"
+    assert runner.calls[1][2].trigger_text == "请改为给目标 B 发送修订版"
+    first_run = worker.store.get_agent_run_for_task_generation(
+        first_id,
+        first_generation,
+    )
+    second_run = worker.store.get_agent_run_for_task_generation(
+        first_id,
+        rerun.execution_generation,
+    )
+    assert first_run is not None and second_run is not None
+    assert [
+        receipt.operation_id
+        for receipt in worker.store.list_agent_execution_receipts(first_run.id)
+    ] == ["send-a"]
+    assert [
+        receipt.operation_id
+        for receipt in worker.store.list_agent_execution_receipts(second_run.id)
+    ] == ["send-b"]
 
 
 def test_completed_generation_is_not_executed_again(tmp_path: Path):
@@ -509,6 +809,58 @@ def test_stale_processing_resumes_same_generation_and_session(tmp_path: Path):
     assert worker.store.get_reply_task(task_id).status == "done"
 
 
+def test_stale_retryable_failed_run_resumes_same_generation_and_session(
+    tmp_path: Path,
+):
+    trigger = _message("请读取材料后完成回复")
+    worker, runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [ScriptedRun(_result(AgentOutcome.NO_ACTION), session_id="unused")],
+    )
+    task_id = _enqueue(worker.store, trigger)
+    task = worker.store.claim_reply_task(task_id, now="2026-07-28 07:00:00")
+    assert task is not None
+    claim = worker.store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        owner="dead-worker",
+        lease_seconds=60,
+        now="2026-07-28 07:00:00",
+    )
+    worker.store.set_agent_run_session(
+        claim.run.id,
+        "session-retry-after-restart",
+        owner="dead-worker",
+        now="2026-07-28 07:00:00",
+    )
+    worker.store.fail_agent_run(
+        claim.run.id,
+        {"code": "temporary_read_failure", "retryable": True},
+        owner="dead-worker",
+        now="2026-07-28 07:00:01",
+    )
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
+            (task.id,),
+        )
+
+    assert worker.consume_once(max_tasks=1) == 0
+    recovered_task = worker.store.get_reply_task(task_id)
+    assert recovered_task is not None and recovered_task.status == "pending"
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set available_at='' where id=?",
+            (task.id,),
+        )
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert runner.resume_session_ids == ["session-retry-after-restart"]
+    assert [generation for _task, generation, _context in runner.calls] == ["g1"]
+    assert worker.store.get_reply_task(task_id).status == "done"
+
+
 def test_stale_processing_with_incomplete_effect_becomes_unknown_without_rerun(
     tmp_path: Path,
 ):
@@ -557,22 +909,23 @@ def test_stale_processing_with_incomplete_effect_becomes_unknown_without_rerun(
 
 
 def test_context_reuses_confirmed_fact_and_does_not_pre_read_material(tmp_path: Path):
-    context_fact = _message("预算上限已经确认是15%。", message_id="msg-fact")
+    context_fact = _message("交付窗口已经确认是第二个工作日。", message_id="msg-fact")
     trigger = _message(
-        "请基于已确认预算更新方案 https://alidocs.dingtalk.com/i/nodes/abc",
+        "请基于已确认事实更新方案 https://alidocs.dingtalk.com/i/nodes/abc",
         message_id="msg-2",
     )
     worker, runner, dws = _worker(
         tmp_path,
         [context_fact, trigger],
-        [ScriptedRun(_result(AgentOutcome.NO_ACTION, summary="已复用预算事实。"))],
+        [ScriptedRun(_result(AgentOutcome.NO_ACTION, summary="已复用上下文事实。"))],
     )
     _enqueue(worker.store, trigger)
 
     worker.consume_once(max_tasks=1)
 
     context = runner.calls[0][2]
-    assert any("15%" in message.text for message in context.messages)
+    assert any("第二个工作日" in message.text for message in context.messages)
+    assert "15%" not in context.render()
     assert any("dws doc" in command for material in context.materials for command in material.read_commands)
     assert dws.forbidden_material_reads == []
 
@@ -606,70 +959,82 @@ def test_calendar_context_passes_raw_event_id_and_exact_live_read_command(
 
 
 @pytest.mark.parametrize(
-    ("oa_state", "outcome", "effectful"),
+    ("oa_state", "raw_payload", "live_output", "attempt_status", "effectful"),
     [
-        ("complete_form", AgentOutcome.COMPLETED, True),
-        ("instance_id_only", AgentOutcome.COMPLETED, True),
-        ("ambiguous_candidates", AgentOutcome.NEEDS_HUMAN, False),
-        ("task_completed", AgentOutcome.NO_ACTION, False),
-        ("task_not_current_user", AgentOutcome.NEEDS_HUMAN, False),
+        (
+            "complete_form",
+            {"processInstanceId": "proc-1", "taskId": "task-1"},
+            {"tasks": [{"task_id": "task-1", "status": "running", "current_user": True}]},
+            "completed",
+            True,
+        ),
+        (
+            "instance_id_only",
+            {"processInstanceId": "proc-1"},
+            {"tasks": [{"task_id": "task-live", "status": "running", "current_user": True}]},
+            "completed",
+            True,
+        ),
+        (
+            "ambiguous_candidates",
+            {"processInstanceId": "proc-1"},
+            {
+                "tasks": [
+                    {"task_id": "task-a", "status": "running", "current_user": True},
+                    {"task_id": "task-b", "status": "running", "current_user": True},
+                ]
+            },
+            "blocked",
+            False,
+        ),
+        (
+            "task_completed",
+            {"processInstanceId": "proc-1"},
+            {"tasks": [{"task_id": "task-1", "status": "completed", "current_user": True}]},
+            "skipped",
+            False,
+        ),
+        (
+            "task_not_current_user",
+            {"processInstanceId": "proc-1"},
+            {"tasks": [{"task_id": "task-1", "status": "running", "current_user": False}]},
+            "blocked",
+            False,
+        ),
     ],
 )
-def test_oa_runtime_passes_live_read_commands_and_safe_agent_outcome(
+def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
     tmp_path: Path,
     oa_state: str,
-    outcome: AgentOutcome,
+    raw_payload: dict[str, object],
+    live_output: dict[str, object],
+    attempt_status: str,
     effectful: bool,
 ):
     trigger = _message(
         "请审核这个审批",
-        raw_payload={
-            "oa_state": oa_state,
-            "processInstanceId": "proc-1",
-            **({"taskId": "task-1"} if oa_state == "complete_form" else {}),
-        },
+        raw_payload=raw_payload,
     )
-    events = (_read_event("oa-detail"),)
-    side_effect = SideEffectState.NONE
-    if effectful:
-        events += (_effect_event("oa-write", "started"), _effect_event("oa-write", "completed"))
-        side_effect = SideEffectState.CONFIRMED
-    worker, runner, dws = _worker(
-        tmp_path,
-        [trigger],
-        [
-            ScriptedRun(
-                _result(
-                    outcome,
-                    summary=f"OA scenario: {oa_state}",
-                    code=("oa_target_ambiguous" if outcome is AgentOutcome.NEEDS_HUMAN else ""),
-                    side_effect_state=side_effect,
-                ),
-                events,
-            )
-        ],
-    )
+    worker, _scripted_runner, dws = _worker(tmp_path, [trigger], [])
+    runner = LiveOaDirectAgentRunner(worker.store, live_output)
+    worker.direct_agent_runner = runner
     _enqueue(worker.store, trigger)
 
     worker.consume_once(max_tasks=1)
 
-    context = runner.calls[0][2]
+    context = runner.calls[0]
     commands = [command for material in context.materials for command in material.read_commands]
     assert "proc-1" in " ".join(commands)
     assert any("dws oa approval detail" in command for command in commands)
+    assert runner.read_commands == commands
     assert dws.forbidden_material_reads == []
-    task_id = runner.calls[0][0]
+    task_id = context.task_id
     run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
     assert run is not None
-    effectful_events = [
-        event
-        for event in run.tool_events
-        if isinstance(event.get("item"), dict)
-        and event["item"].get("metadata") == {"effect": "effectful"}
-    ]
-    assert bool(effectful_events) is effectful
+    assert bool(runner.write_commands) is effectful
+    assert bool(worker.store.list_agent_execution_receipts(run.id)) is effectful
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == ("completed" if effectful else (
-        "skipped" if outcome is AgentOutcome.NO_ACTION else "blocked"
-    ))
+    assert attempt.send_status == attempt_status
+    if oa_state == "instance_id_only":
+        assert "task-live" in runner.write_commands[0]
