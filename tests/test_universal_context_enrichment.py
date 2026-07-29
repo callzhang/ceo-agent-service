@@ -127,12 +127,16 @@ def reply_task(trigger: DingTalkMessage, *, oa_url: str = "") -> ReplyTask:
 def make_worker(tmp_path: Path) -> DingTalkAutoReplyWorker:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("principal-user-1")
-    return DingTalkAutoReplyWorker(
+    worker = DingTalkAutoReplyWorker(
         store=store,
         dws=FakeDws(),
         codex=FakeLegacyCodex(),
         now_provider=fixed_now,
     )
+    worker.store.load_universal_plan_context = (  # type: ignore[method-assign]
+        lambda *_: None
+    )
+    return worker
 
 
 def no_reply_plan(*, reason: str = "无需回复") -> UniversalPlan:
@@ -334,6 +338,82 @@ def test_universal_worker_freezes_oa_follow_up_target_from_existing_resolvers(
     assert context.trusted_oa_task_id == "task-follow-up"
     assert calls["context"] == 1
     assert calls["attempt"] == (1 if resolver == "attempt" else 0)
+
+
+def test_universal_worker_reuses_explicitly_quoted_oa_target_for_group_follow_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = make_worker(tmp_path)
+    previous = message(
+        "就是这条审批单据",
+        message_id="msg-card-reference",
+    ).model_copy(
+        update={
+            "create_time": "2026-07-21 09:50:00",
+            "quoted_message_id": "msg-approval-card",
+            "quoted_content": (
+                "[撤销]宇航提交的员工请假\n"
+                "https://aflow.dingtalk.com/detail?"
+                "procInstId=proc-group-follow-up&taskId=task-group-follow-up"
+            ),
+        }
+    )
+    trigger = message("直接审批就行").model_copy(
+        update={"create_time": "2026-07-21 09:55:00"}
+    )
+    consumer = CapturingConsumer()
+    monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
+    monkeypatch.setattr(worker, "_oa_approval_detail_text", lambda *_: "OA详情")
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
+
+    worker._process_universal_queued_task(
+        conversation(single_chat=False),
+        reply_task(trigger),
+        trigger,
+        [previous, trigger],
+        [previous, trigger],
+    )
+
+    context = consumer.contexts[0]
+    assert context.trusted_oa_process_instance_id == "proc-group-follow-up"
+    assert context.trusted_oa_task_id == "task-group-follow-up"
+
+
+def test_group_oa_follow_up_does_not_skip_newer_same_sender_message(
+    tmp_path: Path,
+) -> None:
+    worker = make_worker(tmp_path)
+    approval = message(
+        "就是这条审批单据",
+        message_id="msg-card-reference",
+    ).model_copy(
+        update={
+            "create_time": "2026-07-21 09:45:00",
+            "quoted_message_id": "msg-approval-card",
+            "quoted_content": (
+                "[撤销]宇航提交的员工请假\n"
+                "https://aflow.dingtalk.com/detail?"
+                "procInstId=proc-stale&taskId=task-stale"
+            ),
+        }
+    )
+    unrelated = message("另外同步一个无关事项", message_id="msg-unrelated").model_copy(
+        update={"create_time": "2026-07-21 09:50:00"}
+    )
+    trigger = message("收到").model_copy(
+        update={"create_time": "2026-07-21 09:55:00"}
+    )
+
+    assert (
+        worker._oa_context_url_override(
+            conversation(single_chat=False),
+            trigger,
+            [approval, unrelated, trigger],
+        )
+        == ""
+    )
 
 
 def test_universal_reply_new_messages_contains_only_trigger() -> None:

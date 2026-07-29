@@ -165,6 +165,7 @@ CALENDAR_ORGANIZER_RESPONSE_ERROR = "Cannot change response status of event orga
 CALENDAR_EVENT_NOT_FOUND_ERROR = "Event does not exist"
 CALENDAR_BURST_REPLY_SUPPRESSION_WINDOW = timedelta(minutes=30)
 OA_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=14)
+OA_GROUP_FOLLOW_UP_CONTEXT_WINDOW = timedelta(minutes=30)
 DWS_TRANSIENT_ERROR_STATE_PREFIX = "dws_transient_error_count:"
 DWS_TRANSIENT_NOTIFY_THRESHOLD = 3
 T = TypeVar("T")
@@ -6823,15 +6824,17 @@ class DingTalkAutoReplyWorker:
         trigger: DingTalkMessage,
         context_messages: list[DingTalkMessage],
     ) -> str:
-        if not conversation.single_chat:
-            return ""
         trigger_time = self._message_create_time_as_instant(trigger)
         trigger_sender = self._message_sender_key(trigger)
-        candidates = []
+        candidates: list[tuple[datetime, str]] = []
+        same_sender_messages: list[tuple[datetime, DingTalkMessage]] = []
+        context_window = (
+            OA_FOLLOW_UP_CONTEXT_WINDOW
+            if conversation.single_chat
+            else OA_GROUP_FOLLOW_UP_CONTEXT_WINDOW
+        )
         for message in context_messages:
             if message.open_message_id == trigger.open_message_id:
-                continue
-            if not self._is_oa_approval_message(message):
                 continue
             if self._is_current_user_message_for_candidate_filter(message):
                 continue
@@ -6840,14 +6843,34 @@ class DingTalkAutoReplyWorker:
             message_time = self._message_create_time_as_instant(message)
             if message_time > trigger_time:
                 continue
-            if trigger_time - message_time > OA_FOLLOW_UP_CONTEXT_WINDOW:
+            if trigger_time - message_time > context_window:
                 continue
-            oa_url = extract_oa_url(message.content)
-            if oa_url:
-                candidates.append((message_time, oa_url))
+            same_sender_messages.append((message_time, message))
+
+        if not same_sender_messages:
+            return ""
+
+        if not conversation.single_chat:
+            _, latest_message = max(same_sender_messages, key=lambda item: item[0])
+            urls = self._oa_urls_from_message(latest_message)
+            return next(iter(urls)) if len(urls) == 1 else ""
+
+        for message_time, message in same_sender_messages:
+            urls = self._oa_urls_from_message(message)
+            if len(urls) == 1:
+                candidates.append((message_time, next(iter(urls))))
         if not candidates:
             return ""
         return max(candidates, key=lambda item: item[0])[1]
+
+    @staticmethod
+    def _oa_urls_from_message(message: DingTalkMessage) -> set[str]:
+        urls: set[str] = set()
+        for text in (message.content, message.quoted_content or ""):
+            oa_url = extract_oa_url(text)
+            if oa_url:
+                urls.add(oa_url)
+        return urls
 
     def _oa_follow_up_url_override(
         self,

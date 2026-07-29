@@ -330,6 +330,15 @@ uses that card's OA URL as the approval target. This keeps `OA card -> please
 review this link` sequences on the OA handler path even when the unread read only
 returns the final follow-up message.
 
+Group-chat OA follow-ups use a narrower trust boundary. The consumer may reuse
+an OA URL from the same sender's immediately preceding message only when that
+message contains or explicitly quotes exactly one approval target and is no more
+than 30 minutes old. A newer same-sender message without an approval target, an
+ambiguous target set, a different sender, or an older card prevents inheritance.
+This lets `quoted approval card -> approval instruction` reach the Universal
+planner with frozen trusted IDs without allowing stale group approvals to leak
+into unrelated messages.
+
 The OA target is bound before the trigger sender is enriched from
 `open_dingtalk_id` to `user_id`. Recent message cards may still carry only the
 open DingTalk identity, so enriching one side first must not prevent the worker
