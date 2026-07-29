@@ -103,7 +103,6 @@ from app.feedback_events import (
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
 from app.meeting_alignment_models import MeetingAlignmentRun
-from app.history import UniversalExecutionObservation
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
@@ -1872,7 +1871,6 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         ("OKR reviews", "okr_review_requests", "status", "updated_at", "error"),
         ("Memory writes", "memory_write_events", "status", "updated_at", "last_error"),
         ("DingTalk Todos", "work_todo_dingtalk_links", "status", "updated_at", "last_error"),
-        ("Universal actions", "universal_action_executions", "status", "updated_at", "error"),
         ("WeChat deliveries", "wechat_deliveries", "status", "updated_at", "error"),
     ]
     snapshots: list[dict[str, object]] = []
@@ -1988,16 +1986,6 @@ def _queue_retryable_count(
     status_column: str,
     error_column: str,
 ) -> int:
-    if table == "universal_action_executions":
-        row = db.execute(
-            f"""
-            select count(*) as count
-            from {table}
-            where lower({status_column})='failed'
-              and {error_column} like 'memory_backend_unavailable:%'
-            """
-        ).fetchone()
-        return int(row["count"] or 0)
     if table == "work_todo_dingtalk_links":
         retryable_codes = tuple(DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES)
         if not retryable_codes:
@@ -3710,7 +3698,6 @@ def render_attempt_list(
             f"{_attempt_text_line('问', attempt.trigger_text, 260)}"
             f"{_attempt_reply_line(attempt)}"
             "</div>"
-            f"{_universal_history_observability(history_item)}"
             f"{_attempt_feedback_summary(feedback_events, sent_reply)}"
             f"{foot_section}"
             "</article>"
@@ -5527,7 +5514,6 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
     codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
         attempt.conversation_id
     )
-    universal_observation = store.get_universal_execution_observability(attempt_id)
     later_attempt = _later_attempt_for_display(store, attempt)
     return 200, render_page(
         f"Attempt #{attempt.id}",
@@ -5536,7 +5522,6 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             sent_reply,
             codex_session_id,
             feedback_events,
-            universal_observation,
             later_attempt,
         ),
         active_nav="history",
@@ -7194,7 +7179,6 @@ def _attempt_detail_body(
     sent_reply: SentReply | None,
     codex_session_id: str | None,
     feedback_events: list[FeedbackEvent],
-    universal_observation: UniversalExecutionObservation | None = None,
     later_attempt: ReplyAttempt | None = None,
 ) -> str:
     fields = [
@@ -7234,124 +7218,11 @@ def _attempt_detail_body(
             f"{_context_only_info_card(attempt)}"
             f"{_oa_metadata_card(attempt)}"
             f"{_calendar_metadata_card(attempt)}"
-            f"{_universal_execution_card(universal_observation)}"
             f"{_text_card('Audit summary', attempt.audit_summary)}"
             f"{_audit_tool_uses_card(attempt)}"
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
         ),
     )
-
-
-def _universal_history_observability(item) -> str:
-    if item.planner_kind != "universal":
-        return ""
-    blocker = (
-        f'<span class="attempt-warning">'
-        f'{escape(_display_universal_blocker(item.blocking_dependency))}</span>'
-        if item.blocking_dependency
-        else ""
-    )
-    actions = "".join(
-        f'<span class="pill status-action {_action_state_class(_visible_universal_action_status(action))}">'
-        f'{escape(_display_universal_action_kind(action.kind))} · '
-        f'{escape(_display_action_state(_visible_universal_action_status(action)))}</span>'
-        + (
-            f'<span class="attempt-warning">'
-            f'{escape(_display_universal_error(action.error))}</span>'
-            if action.error
-            else ""
-        )
-        for action in item.planned_actions
-    )
-    if not blocker and not actions:
-        return ""
-    return f'<div class="attempt-foot">{blocker}{actions}</div>'
-
-
-def _universal_execution_card(
-    observation: UniversalExecutionObservation | None,
-) -> str:
-    if observation is None:
-        return ""
-    rows = ""
-    if observation.blocking_dependency:
-        rows = (
-            f'<div class="muted">阻塞原因</div>'
-            f'<div>{escape(_display_universal_blocker(observation.blocking_dependency))}</div>'
-        )
-    action_rows = "".join(
-        '<div class="attempt-detail-cell">'
-        f'<div class="attempt-detail-label">Action {action.index + 1}</div>'
-        f'<div class="attempt-detail-value">'
-        f'{escape(_display_universal_action_kind(action.kind))} · '
-        f'{escape(_display_action_state(_visible_universal_action_status(action)))}</div>'
-        + (
-            f'<div class="attempt-warning">{escape(_display_universal_error(action.error))}</div>'
-            if action.error
-            else ""
-        )
-        + '</div>'
-        for action in observation.actions
-    )
-    if not rows and not action_rows:
-        return ""
-    rows_html = f'<div class="grid">{rows}</div>' if rows else ""
-    return (
-        '<section class="card compact-card"><h2>自动处理明细</h2>'
-        f'{rows_html}'
-        f'<div class="attempt-detail-grid">{action_rows}</div>'
-        '</section>'
-    )
-
-
-def _visible_universal_action_status(action) -> str:
-    if action.status.strip().lower() != "succeeded":
-        return action.status
-    terminal_outcomes = {
-        "no_reply": "skipped",
-        "handoff_to_human": "skipped",
-        "blocked": "blocked",
-        "stop_with_error": "blocked",
-    }
-    return terminal_outcomes.get(action.kind, action.status)
-
-
-def _display_universal_action_kind(value: str) -> str:
-    labels = {
-        "send_reply": "回复",
-        "ask_clarifying_question": "追问",
-        "mail_reply": "邮件回复",
-        "calendar_response": "日程处理",
-        "oa_approval": "审批处理",
-        "dws_markdown_document_reply": "文档回复",
-        "dws_message_reaction": "表情反馈",
-        "queue_okr_review": "OKR 评审",
-        "memory_write": "记录到记忆",
-        "no_reply": "无需回复",
-        "handoff_to_human": "转人工",
-        "blocked": "等待处理",
-        "stop_with_error": "处理受阻",
-    }
-    return labels.get(value, "自动处理")
-
-
-def _display_universal_blocker(value: str) -> str:
-    labels = {
-        "memory": "记忆服务需要授权",
-        "dws": "钉钉需要授权",
-        "mail": "邮件需要授权",
-        "calendar": "日历需要授权",
-    }
-    return labels.get(value, f"依赖不可用：{value}")
-
-
-def _display_universal_error(value: str) -> str:
-    labels = {
-        "memory_authorization_required": "记忆服务需要授权",
-        "memory_connector_not_configured": "记忆服务未配置",
-        "dws_authorization_required": "钉钉需要授权",
-    }
-    return labels.get(value, value)
 
 
 def _agent_detail_body(

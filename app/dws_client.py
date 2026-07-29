@@ -384,29 +384,6 @@ class DwsClient:
             "json",
         ]
 
-    def build_auth_export_command(self, output_path: Path) -> list[str]:
-        return [
-            self.dws_bin,
-            "auth",
-            "export",
-            "-o",
-            str(output_path),
-            "--format",
-            "json",
-        ]
-
-    def build_auth_import_command(self, input_path: Path) -> list[str]:
-        return [
-            self.dws_bin,
-            "auth",
-            "import",
-            "-i",
-            str(input_path),
-            "--force",
-            "--format",
-            "json",
-        ]
-
     def build_auth_status_command(self) -> list[str]:
         return [self.dws_bin, "auth", "status", "--format", "json"]
 
@@ -1724,18 +1701,6 @@ class DwsClient:
             start_new_session=True,
             env=self._pat_authorization_environment(),
         )
-
-    def export_auth_archive(self, output_path: Path) -> None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = output_path.with_name(f".{output_path.name}.tmp")
-        if temp_path.exists():
-            temp_path.unlink()
-        self.run_text(self.build_auth_export_command(temp_path))
-        os.chmod(temp_path, 0o600)
-        temp_path.replace(output_path)
-
-    def import_auth_archive(self, input_path: Path) -> None:
-        self.run_text(self.build_auth_import_command(input_path))
 
     def auth_status(self) -> dict[str, Any]:
         payload = self.run_json(self.build_auth_status_command())

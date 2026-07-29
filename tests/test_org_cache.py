@@ -280,19 +280,11 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
     assert cached.is_current_user_message(message(sender_user_id="principal-user")) is True
 
 
-def test_cached_dws_client_delegates_auth_archives(tmp_path):
+def test_cached_dws_client_delegates_auth_status_and_pat_authorization(tmp_path):
     class FakeDws:
         def __init__(self):
-            self.export_paths = []
-            self.import_paths = []
             self.auth_status_calls = 0
             self.pat_scopes = []
-
-        def export_auth_archive(self, output_path):
-            self.export_paths.append(output_path)
-
-        def import_auth_archive(self, input_path):
-            self.import_paths.append(input_path)
 
         def auth_status(self):
             self.auth_status_calls += 1
@@ -305,15 +297,9 @@ def test_cached_dws_client_delegates_auth_archives(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     fake = FakeDws()
     cached = CachedDwsClient(fake, CachedOrgDirectory(store))
-    archive_path = tmp_path / "dws-auth.tar.gz"
-
-    cached.export_auth_archive(archive_path)
-    cached.import_auth_archive(archive_path)
     auth_status = cached.auth_status()
     process = cached.start_pat_authorization(["chat.message:list"])
 
-    assert fake.export_paths == [archive_path]
-    assert fake.import_paths == [archive_path]
     assert fake.auth_status_calls == 1
     assert auth_status == {"authenticated": True}
     assert fake.pat_scopes == [["chat.message:list"]]

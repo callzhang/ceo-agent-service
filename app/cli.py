@@ -1353,18 +1353,6 @@ def check_follow_up_completions_command(
     return checked
 
 
-def retry_universal_memory_writes_command(
-    settings: WorkerSettings,
-    *,
-    limit: int = 1,
-) -> int:
-    recovered = create_worker(settings).retry_failed_universal_memory_writes(
-        limit=limit
-    )
-    print(f"retry-universal-memory-writes recovered={recovered}", flush=True)
-    return recovered
-
-
 def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     sources = scan_task_sources_command(settings)
     oa_approvals = scan_oa_approvals_command(settings)
@@ -1389,10 +1377,6 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         settings,
         limit=1,
     )
-    memory_writes_recovered = retry_universal_memory_writes_command(
-        settings,
-        limit=1,
-    )
     follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
         "sources": sources,
@@ -1402,7 +1386,6 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         "dingtalk_todos_closed": dingtalk_todos_closed,
         "dingtalk_todos_recovered": dingtalk_todos_recovered,
         "follow_up_completions_checked": follow_up_completions_checked,
-        "memory_writes_recovered": memory_writes_recovered,
         "follow_ups": follow_ups,
     }
     print(
@@ -1413,7 +1396,6 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         f"dingtalk_todos_closed={dingtalk_todos_closed} "
         f"dingtalk_todos_recovered={dingtalk_todos_recovered} "
         f"follow_up_completions_checked={follow_up_completions_checked} "
-        f"memory_writes_recovered={memory_writes_recovered} "
         f"follow_ups={follow_ups}",
         flush=True,
     )
@@ -2681,7 +2663,6 @@ def run_service(
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_processing_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
-    _recover_resolved_universal_action_failures_on_service_start(settings)
     _recover_okr_review_requests_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
     doctor_mcp_command(
@@ -2805,13 +2786,6 @@ def _recover_processing_work_summary_inputs_on_service_start(
     store = AutoReplyStore(settings.db_path)
     recovered_inputs = store.reset_processing_work_summary_inputs()
     return len(recovered_inputs)
-
-
-def _recover_resolved_universal_action_failures_on_service_start(
-    settings: WorkerSettings,
-) -> int:
-    store = AutoReplyStore(settings.db_path)
-    return store.reconcile_resolved_universal_action_failures()
 
 
 def _recover_okr_review_requests_on_service_start(settings: WorkerSettings) -> int:

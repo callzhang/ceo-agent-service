@@ -1,5 +1,5 @@
 import json
-from dataclasses import replace
+import importlib.util
 from datetime import datetime, timezone
 from pathlib import Path
 from queue import Queue
@@ -11,23 +11,6 @@ import pytest
 
 import app.store as store_module
 from app.store import AgentRunLeaseLostError, AutoReplyStore
-from app.universal_context import (
-    UniversalContextMessage,
-    UniversalTaskContext,
-    canonical_universal_context_json,
-)
-from app.universal_executor import (
-    UniversalActionExecution,
-    UniversalActionExecutionState,
-    UniversalPlanExecution,
-    build_universal_action_execution,
-)
-from app.universal_plan import (
-    PlannedAction,
-    PlannedActionKind,
-    UniversalAudit,
-    UniversalPlan,
-)
 
 
 def _enqueue_universal_reply_task(
@@ -47,172 +30,6 @@ def _enqueue_universal_reply_task(
     )
     assert inserted is True
     return store.claim_reply_tasks(limit=1)[0].id
-
-
-def _universal_plan(*, reason: str = "Handle the task") -> UniversalPlan:
-    return UniversalPlan(
-        task_kind="message_handling",
-        reason=reason,
-        actions=[
-            PlannedAction(
-                kind=PlannedActionKind.MEMORY_WRITE,
-                reason="Remember the result",
-                target={"b": "2", "a": "1"},
-                payload={"data": "Remember the result.", "type": "text"},
-            )
-        ],
-        audit=UniversalAudit(summary="Persist execution", confidence=0.9),
-    )
-
-
-def _reply_plan_without_target() -> UniversalPlan:
-    return UniversalPlan(
-        task_kind="message_reply",
-        reason="Reply to the current trigger",
-        actions=[
-            PlannedAction(
-                kind=PlannedActionKind.SEND_REPLY,
-                reason="Send the reply",
-                sensitivity_kind="general",
-                payload={"text": "Done"},
-            )
-        ],
-        audit=UniversalAudit(summary="Reply is needed", confidence=0.9),
-    )
-
-
-def _universal_context(
-    task_id: int,
-    *,
-    execution_generation: str = "initial",
-    trigger_text: str = "Handle this task",
-    trigger_create_time: str = "2026-07-20 10:00:00",
-    context_messages: tuple[UniversalContextMessage, ...] = (),
-    required_dependencies: tuple[str, ...] = ("dws",),
-    force_new_decision: bool = False,
-    dry_run: bool = False,
-) -> UniversalTaskContext:
-    return UniversalTaskContext(
-        task_id=task_id,
-        conversation_id="cid-universal",
-        conversation_title="Universal",
-        single_chat=False,
-        trigger_message_id="msg-universal",
-        trigger_sender="Derek",
-        trigger_text=trigger_text,
-        context_messages=context_messages,
-        required_dependencies=required_dependencies,
-        force_new_decision=force_new_decision,
-        dry_run=dry_run,
-        execution_generation=execution_generation,
-        trigger_create_time=trigger_create_time,
-    )
-
-
-def test_universal_plan_rejects_trigger_create_time_not_bound_to_reply_task(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    context = replace(
-        _universal_context(task_id),
-        trigger_create_time="2026-07-20 11:00:00",
-    )
-
-    with pytest.raises(ValueError, match="task context mismatch"):
-        store.create_universal_plan_execution(context, _universal_plan())
-
-
-def test_universal_execution_observability_is_read_only_and_redacted(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(task_id)
-    plan = UniversalPlan(
-        task_kind="document_review",
-        reason="Review the linked document",
-        dependencies=["memory"],
-        actions=[
-            PlannedAction(
-                kind=PlannedActionKind.SEND_REPLY,
-                reason="Return the review",
-                sensitivity_kind="general",
-                target={"conversation_id": "cid-universal"},
-                payload={"text": "SENSITIVE_PAYLOAD_SENTINEL"},
-            ),
-            PlannedAction(
-                kind=PlannedActionKind.MEMORY_WRITE,
-                reason="Remember the durable decision",
-                payload={"data": "Durable product decision.", "type": "text"},
-            ),
-        ],
-        audit=UniversalAudit(summary="Review and remember", confidence=0.9),
-    )
-    plan_execution = store.create_universal_plan_execution(context, plan)
-    reply_execution = build_universal_action_execution(
-        context, plan_execution, plan_execution.plan.actions[0], 0
-    )
-    assert store.claim_universal_action_execution(reply_execution).value == "not_started"
-    attempt_id = store.record_universal_reply_attempt(
-        reply_execution,
-        conversation_id=context.conversation_id,
-        conversation_title=context.conversation_title,
-        trigger_message_id=context.trigger_message_id,
-        trigger_sender=context.trigger_sender,
-        trigger_text=context.trigger_text,
-        action="send_reply",
-        sensitivity_kind="general",
-        send_status="sent",
-    )
-    store.complete_universal_action_execution(reply_execution, attempt_id=attempt_id)
-    memory_execution = build_universal_action_execution(
-        context, plan_execution, plan_execution.plan.actions[1], 1
-    )
-    assert store.claim_universal_action_execution(memory_execution).value == "not_started"
-    store.mark_universal_action_execution_failed(
-        memory_execution, "memory service unavailable"
-    )
-    store.defer_reply_task(task_id, "memory_unavailable")
-
-    observation = store.get_universal_execution_observability(attempt_id)
-
-    assert observation is not None
-    assert observation.planner_kind == "universal"
-    assert observation.capability == "document_review"
-    assert observation.dependencies == ["dws", "memory"]
-    assert observation.blocking_dependency == "memory"
-    assert [(action.kind, action.status, action.error) for action in observation.actions] == [
-        ("send_reply", "succeeded", ""),
-        ("memory_write", "failed", "memory service unavailable"),
-    ]
-    serialized = json.dumps(observation.model_dump(mode="json"), ensure_ascii=False)
-    assert "SENSITIVE_PAYLOAD_SENTINEL" not in serialized
-    assert "payload" not in serialized
-    assert "target" not in serialized
-    assert "plan_json" not in serialized
-
-
-def _universal_action_execution(
-    store: AutoReplyStore,
-    task_id: int,
-    *,
-    execution_generation: str = "initial",
-) -> UniversalActionExecution:
-    context = _universal_context(
-        task_id,
-        execution_generation=execution_generation,
-    )
-    plan_execution = store.create_universal_plan_execution(
-        context,
-        _universal_plan(),
-    )
-    return build_universal_action_execution(
-        context,
-        plan_execution,
-        plan_execution.plan.actions[0],
-        0,
-    )
 
 
 def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
@@ -2289,121 +2106,6 @@ def test_reset_processing_reply_tasks_requeues_all_processing_on_startup(
     assert reclaimed[0].attempts == 2
 
 
-def test_reconcile_resolved_universal_action_failure_uses_terminal_attempt(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-    assert (
-        store.claim_universal_action_execution(execution)
-        is UniversalActionExecutionState.NOT_STARTED
-    )
-    attempt_id = store.record_universal_reply_attempt(
-        execution,
-        conversation_id=execution.context.conversation_id,
-        conversation_title=execution.context.conversation_title,
-        trigger_message_id=execution.context.trigger_message_id,
-        trigger_sender=execution.context.trigger_sender,
-        trigger_text=execution.context.trigger_text,
-        action=execution.action.kind.value,
-        sensitivity_kind=execution.action.sensitivity_kind or "general",
-        send_status="pending",
-    )
-    store.mark_universal_action_execution_failed(execution, "transient failure")
-    store.update_reply_attempt(
-        attempt_id,
-        send_status="calendar",
-        send_error="calendar_event_not_found_noop",
-        calendar_response_result_json=json.dumps(
-            {"noop_reason": "calendar_event_not_found", "success": True}
-        ),
-    )
-
-    assert store.reconcile_resolved_universal_action_failures() == 1
-
-    assert (
-        store.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.SUCCEEDED
-    )
-    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        db.row_factory = sqlite3.Row
-        row = db.execute(
-            "select attempt_id, result_json, error from universal_action_executions"
-        ).fetchone()
-    assert row["attempt_id"] == attempt_id
-    assert row["error"] == ""
-    assert json.loads(row["result_json"])["outcome"] == "attempt_terminal"
-
-
-def test_reconcile_resolved_universal_action_failure_uses_superseding_attempt(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-    assert (
-        store.claim_universal_action_execution(execution)
-        is UniversalActionExecutionState.NOT_STARTED
-    )
-    failed_attempt_id = store.record_universal_reply_attempt(
-        execution,
-        conversation_id=execution.context.conversation_id,
-        conversation_title=execution.context.conversation_title,
-        trigger_message_id=execution.context.trigger_message_id,
-        trigger_sender=execution.context.trigger_sender,
-        trigger_text=execution.context.trigger_text,
-        action=execution.action.kind.value,
-        sensitivity_kind=execution.action.sensitivity_kind or "general",
-        send_status="pending",
-    )
-    store.mark_universal_action_execution_failed(execution, "missing subject")
-    sent_attempt_id = store.record_reply_attempt(
-        conversation_id=execution.context.conversation_id,
-        conversation_title=execution.context.conversation_title,
-        trigger_message_id=execution.context.trigger_message_id,
-        trigger_sender=execution.context.trigger_sender,
-        trigger_text=execution.context.trigger_text,
-        action=execution.action.kind.value,
-        sensitivity_kind=execution.action.sensitivity_kind or "general",
-        send_status="sent",
-    )
-    store.update_reply_attempt(
-        sent_attempt_id,
-        final_reply_text="covered by newer attempt",
-    )
-    store.update_reply_attempt(
-        failed_attempt_id,
-        send_status="skipped",
-        send_error=f"superseded_by_sent_attempt:{sent_attempt_id}",
-    )
-
-    assert store.reconcile_resolved_universal_action_failures() == 1
-
-    assert (
-        store.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.SUCCEEDED
-    )
-    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        db.row_factory = sqlite3.Row
-        row = db.execute("select result_json from universal_action_executions").fetchone()
-    result = json.loads(row["result_json"])
-    assert result["outcome"] == "superseded_by_terminal_attempt"
-    assert result["superseded_attempt_id"] == sent_attempt_id
-
-
-def test_count_unresolved_universal_action_executions_counts_failed(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-    store.claim_universal_action_execution(execution)
-    store.mark_universal_action_execution_failed(execution, "still unresolved")
-
-    assert store.count_unresolved_universal_action_executions() == 1
-
-
 def test_complete_unfinished_reply_tasks_before_trigger_marks_older_tasks_done(
     tmp_path: Path,
 ):
@@ -4009,981 +3711,6 @@ def test_reply_attempt_round_trips_mail_action_state(tmp_path):
     assert attempt.mail_action_result_json == '{"success": true}'
 
 
-def test_universal_plan_execution_get_or_create_keeps_first_snapshot(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(task_id)
-    first_plan = _universal_plan(reason="First plan")
-
-    first = store.create_universal_plan_execution(context, first_plan)
-    repeated = store.create_universal_plan_execution(
-        context,
-        _universal_plan(reason="Replacement must not win"),
-    )
-    loaded = store.load_universal_plan_execution(context)
-
-    assert repeated.execution_scope_id == first.execution_scope_id
-    assert repeated.execution_generation == "initial"
-    assert repeated.plan.reason == "First plan"
-    assert loaded == first
-    with sqlite3.connect(db_path) as db:
-        row = db.execute(
-            "select plan_json, context_json from universal_plan_executions"
-        ).fetchone()
-    plan_json, context_json = row
-    assert plan_json == json.dumps(
-        first_plan.model_dump(mode="json"),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    assert context_json == canonical_universal_context_json(context)
-
-
-def test_load_universal_plan_execution_upgrades_missing_reply_target(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(task_id)
-    old_plan = _reply_plan_without_target()
-    created = store.create_universal_plan_execution(context, old_plan)
-    old_plan_json = json.dumps(
-        old_plan.model_dump(mode="json"),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update universal_plan_executions set plan_json=? where execution_scope_id=?",
-            (old_plan_json, created.execution_scope_id),
-        )
-
-    loaded = store.load_universal_plan_execution(context)
-
-    assert loaded is not None
-    assert loaded.plan.actions[0].target == {
-        "conversation_id": "cid-universal",
-        "trigger_message_id": "msg-universal",
-    }
-    with sqlite3.connect(db_path) as db:
-        (plan_json,) = db.execute(
-            "select plan_json from universal_plan_executions where execution_scope_id=?",
-            (created.execution_scope_id,),
-        ).fetchone()
-    assert plan_json == json.dumps(
-        loaded.plan.model_dump(mode="json"),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def test_single_chat_trigger_replacement_rotates_universal_execution_generation(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    assert store.enqueue_reply_task(
-        conversation_id="cid-single",
-        conversation_title="Single",
-        single_chat=True,
-        trigger_message_id="msg-old",
-        trigger_create_time="2026-07-20 10:00:00",
-        trigger_sender="Alex",
-        trigger_text="old message",
-    )
-    task = store.get_reply_task_for_message("cid-single", "msg-old")
-    assert task is not None
-    old_context = UniversalTaskContext(
-        task_id=task.id,
-        conversation_id="cid-single",
-        conversation_title="Single",
-        single_chat=True,
-        trigger_message_id="msg-old",
-        trigger_create_time="2026-07-20 10:00:00",
-        trigger_sender="Alex",
-        trigger_text="old message",
-        context_messages=(),
-        required_dependencies=("dws",),
-        force_new_decision=False,
-        dry_run=False,
-        execution_generation=task.execution_generation,
-    )
-    old_plan = store.create_universal_plan_execution(old_context, _universal_plan())
-
-    assert store.replace_pending_single_chat_reply_task_trigger(
-        conversation_id="cid-single",
-        trigger_message_id="msg-new",
-        trigger_create_time="2026-07-21 10:00:00",
-        trigger_sender="Alex",
-        trigger_text="new message",
-        trigger_message_json='{"openMessageId":"msg-new"}',
-    ) == 1
-    replaced = store.get_reply_task_for_message("cid-single", "msg-new")
-    assert replaced is not None
-    assert replaced.id == task.id
-    assert replaced.execution_generation != task.execution_generation
-
-    new_context = UniversalTaskContext(
-        task_id=replaced.id,
-        conversation_id="cid-single",
-        conversation_title="Single",
-        single_chat=True,
-        trigger_message_id="msg-new",
-        trigger_create_time="2026-07-21 10:00:00",
-        trigger_sender="Alex",
-        trigger_text="new message",
-        context_messages=(),
-        required_dependencies=("dws",),
-        force_new_decision=False,
-        dry_run=False,
-        execution_generation=replaced.execution_generation,
-    )
-    assert store.load_universal_plan_execution(new_context) is None
-    new_plan = store.create_universal_plan_execution(
-        new_context, _universal_plan(reason="New trigger plan")
-    )
-
-    assert new_plan.execution_scope_id != old_plan.execution_scope_id
-    assert new_plan.execution_generation == replaced.execution_generation
-
-
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        lambda context: replace(
-            context,
-            context_messages=tuple(reversed(context.context_messages)),
-        ),
-        lambda context: replace(
-            context,
-            context_messages=(
-                replace(context.context_messages[0], content="Changed message"),
-                *context.context_messages[1:],
-            ),
-        ),
-        lambda context: replace(
-            context,
-            required_dependencies=("memory", "dws"),
-        ),
-        lambda context: replace(context, dry_run=True),
-    ],
-    ids=["message-order", "message-field", "dependencies", "dry-run"],
-)
-def test_universal_plan_execution_reuses_stored_snapshot_when_live_context_drifts(
-    tmp_path: Path,
-    mutate,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(
-        task_id,
-        context_messages=(
-            UniversalContextMessage("Alex", "msg-prior", "Earlier message"),
-            UniversalContextMessage("Derek", "msg-universal", "Handle this task"),
-        ),
-        required_dependencies=("dws", "memory"),
-    )
-    created = store.create_universal_plan_execution(context, _universal_plan())
-    drifted = mutate(context)
-
-    assert store.load_universal_plan_execution(drifted) == created
-    assert store.create_universal_plan_execution(
-        drifted,
-        _universal_plan(reason="Live context must not replace the stored plan"),
-    ) == created
-    assert store.load_universal_plan_context(
-        task_id, context.execution_generation
-    ) == context
-
-
-def test_universal_plan_execution_round_trip_is_deep_copied(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(task_id)
-    source = _universal_plan()
-
-    created = store.create_universal_plan_execution(context, source)
-    source.reason = "Mutated source"
-    source.actions[0].payload["data"] = "Mutated source data."
-    created.plan.reason = "Mutated returned snapshot"
-    created.plan.actions[0].payload["data"] = "Mutated returned data."
-    loaded = store.load_universal_plan_execution(context)
-
-    assert loaded is not None
-    assert loaded.plan.reason == "Handle the task"
-    assert loaded.plan.actions[0].payload["data"] == "Remember the result."
-
-
-def test_universal_plan_schema_does_not_store_context_hash(tmp_path: Path) -> None:
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-
-    with store._connect() as db:
-        columns = {
-            row["name"]
-            for row in db.execute(
-                "pragma table_info(universal_plan_executions)"
-            ).fetchall()
-        }
-
-    assert "context_json" in columns
-    assert "context_hash" not in columns
-
-
-def test_store_removes_legacy_context_hash_without_losing_plan_data(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "worker.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.executescript(
-            """
-            create table universal_plan_executions (
-                execution_scope_id text primary key,
-                reply_task_id integer not null,
-                execution_generation text not null,
-                plan_json text not null,
-                context_hash text not null default '',
-                context_json text not null default '',
-                status text not null default 'active',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                unique(reply_task_id, execution_generation)
-            );
-            insert into universal_plan_executions (
-                execution_scope_id,
-                reply_task_id,
-                execution_generation,
-                plan_json,
-                context_hash,
-                context_json
-            ) values (
-                'scope-1',
-                7,
-                'generation-1',
-                '{"plan":"preserved"}',
-                'obsolete',
-                '{"context":"preserved"}'
-            );
-            """
-        )
-
-    store = AutoReplyStore(db_path)
-
-    with store._connect() as db:
-        columns = {
-            row["name"]
-            for row in db.execute(
-                "pragma table_info(universal_plan_executions)"
-            ).fetchall()
-        }
-        row = db.execute(
-            """
-            select execution_scope_id, plan_json, context_json
-            from universal_plan_executions
-            """
-        ).fetchone()
-
-    assert "context_hash" not in columns
-    assert dict(row) == {
-        "execution_scope_id": "scope-1",
-        "plan_json": '{"plan":"preserved"}',
-        "context_json": '{"context":"preserved"}',
-    }
-
-
-def test_universal_plan_execution_uses_new_scope_for_new_generation(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    initial = store.create_universal_plan_execution(
-        _universal_context(task_id), _universal_plan()
-    )
-    rerun = store.enqueue_manual_rerun_reply_task(
-        conversation_id="cid-universal",
-        conversation_title="Universal",
-        single_chat=False,
-        trigger_message_id="msg-universal",
-        trigger_create_time="2026-07-20 10:01:00",
-        trigger_sender="Derek",
-        trigger_text="Run it again",
-        trigger_message_json="{}",
-        attempt_id=7,
-    )
-
-    current = store.create_universal_plan_execution(
-        _universal_context(
-            task_id,
-                execution_generation=rerun.execution_generation,
-                trigger_text="Run it again",
-                trigger_create_time="2026-07-20 10:01:00",
-                force_new_decision=True,
-        ),
-        _universal_plan(reason="Rerun plan"),
-    )
-
-    assert current.execution_scope_id != initial.execution_scope_id
-    assert current.execution_generation == rerun.execution_generation
-
-
-def test_universal_plan_execution_rejects_stale_task_generation(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    stale_context = _universal_context(task_id)
-    store.create_universal_plan_execution(stale_context, _universal_plan())
-    store.enqueue_manual_rerun_reply_task(
-        conversation_id="cid-universal",
-        conversation_title="Universal",
-        single_chat=False,
-        trigger_message_id="msg-universal",
-        trigger_create_time="2026-07-20 10:01:00",
-        trigger_sender="Derek",
-        trigger_text="Run it again",
-        trigger_message_json="{}",
-    )
-
-    with pytest.raises(ValueError, match="execution generation mismatch"):
-        store.load_universal_plan_execution(stale_context)
-    with pytest.raises(ValueError, match="execution generation mismatch"):
-        store.create_universal_plan_execution(
-            stale_context,
-            _universal_plan(reason="Stale overwrite"),
-        )
-
-
-def test_universal_plan_execution_is_atomic_across_store_instances(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    first_store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(first_store)
-    second_store = AutoReplyStore(db_path)
-    context = _universal_context(task_id)
-    barrier = Barrier(2)
-    results: Queue[UniversalPlanExecution] = Queue()
-    errors: Queue[BaseException] = Queue()
-
-    def create(store: AutoReplyStore) -> None:
-        try:
-            barrier.wait(timeout=5)
-            results.put(
-                store.create_universal_plan_execution(
-                    context,
-                    _universal_plan(),
-                )
-            )
-        except BaseException as exc:
-            errors.put(exc)
-
-    threads = [
-        Thread(target=create, args=(first_store,)),
-        Thread(target=create, args=(second_store,)),
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-
-    assert all(not thread.is_alive() for thread in threads)
-    if not errors.empty():
-        raise errors.get()
-    created = [results.get(timeout=1), results.get(timeout=1)]
-    assert created[0].execution_scope_id == created[1].execution_scope_id
-    assert created[0].plan == created[1].plan
-    assert created[0].plan.reason == "Handle the task"
-    with sqlite3.connect(db_path) as db:
-        row_count = db.execute(
-            "select count(*) from universal_plan_executions"
-        ).fetchone()[0]
-    assert row_count == 1
-
-
-def test_load_universal_plan_execution_reads_one_sqlite_snapshot(
-    tmp_path: Path,
-    monkeypatch,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(task_id)
-    created = store.create_universal_plan_execution(context, _universal_plan())
-    reader = AutoReplyStore(db_path)
-    first_read_done = Event()
-    continue_read = Event()
-    results: Queue[UniversalPlanExecution | None] = Queue()
-    errors: Queue[BaseException] = Queue()
-    original_validate = reader._validate_context_matches_reply_task
-
-    def pause_after_task_read(task, supplied_context) -> None:
-        original_validate(task, supplied_context)
-        first_read_done.set()
-        if not continue_read.wait(timeout=5):
-            raise TimeoutError("load snapshot test did not resume")
-
-    monkeypatch.setattr(
-        reader,
-        "_validate_context_matches_reply_task",
-        pause_after_task_read,
-    )
-
-    def load() -> None:
-        try:
-            results.put(reader.load_universal_plan_execution(context))
-        except BaseException as exc:
-            errors.put(exc)
-
-    thread = Thread(target=load)
-    thread.start()
-    if not first_read_done.wait(timeout=5):
-        continue_read.set()
-        thread.join(timeout=10)
-        raise AssertionError("load did not complete its first snapshot read")
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            "delete from universal_plan_executions where execution_scope_id=?",
-            (created.execution_scope_id,),
-        )
-    continue_read.set()
-    thread.join(timeout=10)
-
-    assert not thread.is_alive()
-    if not errors.empty():
-        raise errors.get()
-    loaded = results.get(timeout=1)
-    assert loaded is not None
-    assert loaded.execution_scope_id == created.execution_scope_id
-
-
-def test_universal_plan_execution_database_uniqueness_is_enforced(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    created = store.create_universal_plan_execution(
-        _universal_context(task_id), _universal_plan()
-    )
-
-    with sqlite3.connect(db_path) as db:
-        unique_column_sets = {
-            tuple(
-                row[2]
-                for row in db.execute(f"pragma index_info('{index[1]}')").fetchall()
-            )
-            for index in db.execute(
-                "pragma index_list('universal_plan_executions')"
-            ).fetchall()
-            if index[2]
-        }
-        assert ("reply_task_id", "execution_generation") in unique_column_sets
-        plan_json = db.execute(
-            "select plan_json from universal_plan_executions where execution_scope_id=?",
-            (created.execution_scope_id,),
-        ).fetchone()[0]
-        with pytest.raises(sqlite3.IntegrityError):
-            db.execute(
-                """
-                insert into universal_plan_executions (
-                    execution_scope_id, reply_task_id, execution_generation, plan_json
-                ) values (?, ?, ?, ?)
-                """,
-                ("conflicting-scope", task_id, "initial", plan_json),
-            )
-        with pytest.raises(sqlite3.IntegrityError):
-            db.execute(
-                """
-                insert into universal_plan_executions (
-                    execution_scope_id, reply_task_id, execution_generation, plan_json
-                ) values (?, ?, ?, ?)
-                """,
-                (created.execution_scope_id, task_id, "other-generation", plan_json),
-            )
-
-
-def test_universal_plan_execution_strictly_parses_persisted_plan(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(task_id)
-    created = store.create_universal_plan_execution(
-        context, _universal_plan()
-    )
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update universal_plan_executions set plan_json='{}' where execution_scope_id=?",
-            (created.execution_scope_id,),
-        )
-
-    with pytest.raises(ValueError):
-        store.load_universal_plan_execution(context)
-
-
-def test_store_adds_missing_plan_context_column_and_fails_closed(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    plan = _universal_plan()
-    plan_json = json.dumps(
-        plan.model_dump(mode="json"),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    with sqlite3.connect(db_path) as db:
-        db.executescript(
-            """
-            create table reply_tasks (
-                id integer primary key autoincrement,
-                conversation_id text not null,
-                conversation_title text not null,
-                single_chat integer not null,
-                trigger_message_id text not null,
-                trigger_create_time text not null,
-                trigger_sender text not null,
-                trigger_text text not null,
-                trigger_message_json text not null default '{}',
-                available_at text not null default '',
-                force_new_decision integer not null default 0,
-                oa_url text not null default '',
-                manual_rerun_attempt_id integer not null default 0,
-                execution_generation text not null default 'initial',
-                status text not null default 'pending',
-                attempts integer not null default 0,
-                locked_at text,
-                error text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                unique(conversation_id, trigger_message_id)
-            );
-            create table universal_plan_executions (
-                execution_scope_id text primary key,
-                reply_task_id integer not null,
-                execution_generation text not null,
-                plan_json text not null,
-                status text not null default 'active',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                unique(reply_task_id, execution_generation),
-                foreign key(reply_task_id) references reply_tasks(id)
-            );
-            insert into reply_tasks (
-                conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender, trigger_text
-            ) values (
-                'cid-universal', 'Universal', 0, 'msg-universal',
-                '2026-07-20 10:00:00', 'Derek', 'Handle this task'
-            );
-            """
-        )
-        db.execute(
-            """
-            insert into universal_plan_executions (
-                execution_scope_id, reply_task_id, execution_generation, plan_json
-            ) values ('legacy-scope', 1, 'initial', ?)
-            """,
-            (plan_json,),
-        )
-
-    store = AutoReplyStore(db_path)
-    context = _universal_context(1)
-    with store._connect() as db:
-        columns = {
-            column["name"]: column
-            for column in db.execute(
-                "pragma table_info(universal_plan_executions)"
-            ).fetchall()
-        }
-        row = db.execute(
-            """
-            select context_json
-            from universal_plan_executions where execution_scope_id='legacy-scope'
-            """
-        ).fetchone()
-    assert "context_hash" not in columns
-    assert columns["context_json"]["notnull"] == 1
-    assert columns["context_json"]["dflt_value"] == "''"
-    assert dict(row) == {"context_json": ""}
-
-    with pytest.raises(ValueError, match="plan context missing"):
-        store.load_universal_plan_execution(context)
-
-    plan_execution = UniversalPlanExecution("legacy-scope", "initial", plan)
-    execution = build_universal_action_execution(
-        context,
-        plan_execution,
-        plan_execution.plan.actions[0],
-        0,
-    )
-    with pytest.raises(ValueError, match="plan context missing"):
-        store.claim_universal_action_execution(execution)
-
-
-def test_universal_action_started_survives_restart_as_unknown_and_failed_reclaims(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-
-    assert (
-        store.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.NOT_STARTED
-    )
-    assert (
-        store.claim_universal_action_execution(execution)
-        is UniversalActionExecutionState.NOT_STARTED
-    )
-    assert (
-        store.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.UNKNOWN
-    )
-    assert (
-        store.claim_universal_action_execution(execution)
-        is UniversalActionExecutionState.UNKNOWN
-    )
-
-    reopened = AutoReplyStore(db_path)
-    assert (
-        reopened.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.UNKNOWN
-    )
-    reopened.mark_universal_action_execution_failed(execution, "no side effect")
-    assert (
-        reopened.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.NOT_STARTED
-    )
-    assert (
-        reopened.claim_universal_action_execution(execution)
-        is UniversalActionExecutionState.NOT_STARTED
-    )
-    reopened.mark_universal_action_execution_unknown(execution, "outcome unavailable")
-    assert (
-        reopened.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.UNKNOWN
-    )
-    assert (
-        reopened.claim_universal_action_execution(execution)
-        is UniversalActionExecutionState.UNKNOWN
-    )
-    with reopened._connect() as db:
-        row = db.execute(
-            "select status, error from universal_action_executions where execution_id=?",
-            (execution.execution_id,),
-        ).fetchone()
-    assert dict(row) == {"status": "unknown", "error": "outcome unavailable"}
-
-
-def test_universal_action_claim_is_atomic_across_store_instances(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    first_store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(first_store)
-    execution = _universal_action_execution(first_store, task_id)
-    second_store = AutoReplyStore(db_path)
-    barrier = Barrier(2)
-    results: Queue[UniversalActionExecutionState] = Queue()
-    errors: Queue[BaseException] = Queue()
-
-    def claim(store: AutoReplyStore) -> None:
-        try:
-            barrier.wait(timeout=5)
-            results.put(store.claim_universal_action_execution(execution))
-        except BaseException as exc:
-            errors.put(exc)
-
-    threads = [
-        Thread(target=claim, args=(first_store,)),
-        Thread(target=claim, args=(second_store,)),
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-
-    assert all(not thread.is_alive() for thread in threads)
-    if not errors.empty():
-        raise errors.get()
-    states = [results.get(timeout=1), results.get(timeout=1)]
-    assert sorted(state.value for state in states) == ["not_started", "unknown"]
-    with sqlite3.connect(db_path) as db:
-        rows = db.execute(
-            "select execution_id, status from universal_action_executions"
-        ).fetchall()
-    assert rows == [(execution.execution_id, "started")]
-
-
-def test_get_universal_action_state_reads_one_sqlite_snapshot(
-    tmp_path: Path,
-    monkeypatch,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-    store.claim_universal_action_execution(execution)
-    reader = AutoReplyStore(db_path)
-    first_read_done = Event()
-    continue_read = Event()
-    results: Queue[UniversalActionExecutionState] = Queue()
-    errors: Queue[BaseException] = Queue()
-    original_read_context = reader._universal_context_from_plan_row
-
-    def pause_after_plan_read(row):
-        context = original_read_context(row)
-        first_read_done.set()
-        if not continue_read.wait(timeout=5):
-            raise TimeoutError("action snapshot test did not resume")
-        return context
-
-    monkeypatch.setattr(
-        reader,
-        "_universal_context_from_plan_row",
-        pause_after_plan_read,
-    )
-
-    def get_state() -> None:
-        try:
-            results.put(reader.get_universal_action_execution_state(execution))
-        except BaseException as exc:
-            errors.put(exc)
-
-    thread = Thread(target=get_state)
-    thread.start()
-    if not first_read_done.wait(timeout=5):
-        continue_read.set()
-        thread.join(timeout=10)
-        raise AssertionError("action state did not complete its first snapshot read")
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            "delete from universal_action_executions where execution_id=?",
-            (execution.execution_id,),
-        )
-    continue_read.set()
-    thread.join(timeout=10)
-
-    assert not thread.is_alive()
-    if not errors.empty():
-        raise errors.get()
-    assert results.get(timeout=1) is UniversalActionExecutionState.UNKNOWN
-
-
-def test_universal_action_success_is_persistent_and_idempotent(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-
-    store.claim_universal_action_execution(execution)
-    store.complete_universal_action_execution(
-        execution,
-        attempt_id=17,
-        result_json='{"ok":true}',
-    )
-
-    reopened = AutoReplyStore(db_path)
-    assert (
-        reopened.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.SUCCEEDED
-    )
-    assert (
-        reopened.claim_universal_action_execution(execution)
-        is UniversalActionExecutionState.SUCCEEDED
-    )
-    with reopened._connect() as db:
-        row = db.execute(
-            """
-            select status, attempt_id, result_json, error, completed_at
-            from universal_action_executions where execution_id=?
-            """,
-            (execution.execution_id,),
-        ).fetchone()
-    assert row["status"] == "succeeded"
-    assert row["attempt_id"] == 17
-    assert row["result_json"] == '{"ok":true}'
-    assert row["error"] == ""
-    assert row["completed_at"]
-
-
-def test_universal_action_complete_and_marks_require_started_claim(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-
-    with pytest.raises(ValueError, match="must be started"):
-        store.complete_universal_action_execution(execution)
-    with pytest.raises(ValueError, match="must be started"):
-        store.mark_universal_action_execution_unknown(execution, "unknown")
-    with pytest.raises(ValueError, match="must be started"):
-        store.mark_universal_action_execution_failed(execution, "failed")
-
-
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        lambda execution: replace(execution, execution_id="wrong-id"),
-        lambda execution: replace(execution, execution_scope_id="wrong-scope"),
-        lambda execution: replace(execution, action_index=1),
-        lambda execution: replace(execution, action_hash="0" * 64),
-        lambda execution: replace(
-            execution,
-            context=replace(execution.context, execution_generation="stale-generation"),
-        ),
-        lambda execution: replace(
-            execution,
-            action=execution.action.model_copy(
-                update={"reason": "Changed persisted action"}, deep=True
-            ),
-        ),
-    ],
-    ids=["execution-id", "scope", "index", "hash", "generation", "action-json"],
-)
-def test_universal_action_identity_drift_fails_closed(tmp_path: Path, mutate):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-    store.claim_universal_action_execution(execution)
-
-    with pytest.raises(ValueError):
-        store.get_universal_action_execution_state(mutate(execution))
-
-
-def test_universal_action_rejects_persisted_action_json_drift(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-    store.claim_universal_action_execution(execution)
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update universal_action_executions set action_json='{}' where execution_id=?",
-            (execution.execution_id,),
-        )
-
-    with pytest.raises(ValueError, match="action identity mismatch"):
-        store.get_universal_action_execution_state(execution)
-
-
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        lambda context: replace(
-            context,
-            context_messages=tuple(reversed(context.context_messages)),
-        ),
-        lambda context: replace(
-            context,
-            context_messages=(
-                replace(context.context_messages[0], sender_name="Changed sender"),
-                *context.context_messages[1:],
-            ),
-        ),
-        lambda context: replace(
-            context,
-            required_dependencies=("memory", "dws"),
-        ),
-        lambda context: replace(context, dry_run=True),
-    ],
-    ids=["message-order", "message-field", "dependencies", "dry-run"],
-)
-def test_universal_action_rejects_bound_context_drift(tmp_path: Path, mutate):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    context = _universal_context(
-        task_id,
-        context_messages=(
-            UniversalContextMessage("Alex", "msg-prior", "Earlier message"),
-            UniversalContextMessage("Derek", "msg-universal", "Handle this task"),
-        ),
-        required_dependencies=("dws", "memory"),
-    )
-    plan_execution = store.create_universal_plan_execution(
-        context,
-        _universal_plan(),
-    )
-    execution = build_universal_action_execution(
-        context,
-        plan_execution,
-        plan_execution.plan.actions[0],
-        0,
-    )
-
-    with pytest.raises(ValueError, match="action context mismatch"):
-        store.get_universal_action_execution_state(
-            replace(execution, context=mutate(context))
-        )
-
-
-def test_universal_action_rejects_inactive_plan_scope(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update universal_plan_executions set status='closed' where execution_scope_id=?",
-            (execution.execution_scope_id,),
-        )
-
-    with pytest.raises(ValueError, match="plan execution is not active"):
-        store.claim_universal_action_execution(execution)
-
-
-def test_universal_action_rejects_stale_task_generation(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-    store.enqueue_manual_rerun_reply_task(
-        conversation_id="cid-universal",
-        conversation_title="Universal",
-        single_chat=False,
-        trigger_message_id="msg-universal",
-        trigger_create_time="2026-07-20 10:01:00",
-        trigger_sender="Derek",
-        trigger_text="Run it again",
-        trigger_message_json="{}",
-    )
-
-    with pytest.raises(ValueError, match="execution generation mismatch"):
-        store.get_universal_action_execution_state(execution)
-    with pytest.raises(ValueError, match="execution generation mismatch"):
-        store.claim_universal_action_execution(execution)
-
-
-def test_universal_action_database_uniqueness_and_canonical_json(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    execution = _universal_action_execution(store, task_id)
-    store.claim_universal_action_execution(execution)
-
-    with sqlite3.connect(db_path) as db:
-        db.row_factory = sqlite3.Row
-        row = db.execute(
-            "select * from universal_action_executions where execution_id=?",
-            (execution.execution_id,),
-        ).fetchone()
-        assert row["action_json"] == json.dumps(
-            execution.action.model_dump(mode="json"),
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        with pytest.raises(sqlite3.IntegrityError):
-            db.execute(
-                """
-                insert into universal_action_executions (
-                    execution_id, execution_scope_id, action_index, action_kind,
-                    action_hash, action_json, status
-                ) values (?, ?, ?, ?, ?, ?, 'started')
-                """,
-                (
-                    "different-execution-id",
-                    execution.execution_scope_id,
-                    execution.action_index,
-                    execution.action.kind.value,
-                    execution.action_hash,
-                    row["action_json"],
-                ),
-            )
-
-
 def test_sent_reply_exists_matches_exact_conversation_and_trigger(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_sent_reply("cid-1", "msg-1", "Sent")
@@ -5032,3 +3759,131 @@ def test_channel_login_claim_requires_owner_to_finalize_and_persists_safe_state(
         "started_at": now.isoformat(),
         "status": "failed",
     }
+
+
+def test_removed_runtime_tables_modules_and_apis_are_absent(tmp_path: Path) -> None:
+    from app.worker import DingTalkAutoReplyWorker
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with store._connect() as db:
+        tables = {
+            str(row[0])
+            for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            ).fetchall()
+        }
+
+    assert "agent_runs" in tables
+    assert "universal_plan_executions" not in tables
+    assert "universal_action_executions" not in tables
+    assert store.get_service_state("dws_auth_backup") is None
+    assert not hasattr(store, "create_universal_plan_execution")
+    assert not hasattr(store, "claim_universal_action_execution")
+    assert not hasattr(DingTalkAutoReplyWorker, "execute_universal_send_reply")
+    assert importlib.util.find_spec("app.universal_consumer") is None
+    assert importlib.util.find_spec("app.universal_plan") is None
+
+
+def test_removed_runtime_migrates_unreferenced_history_before_drop(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    assert store.enqueue_reply_task(
+        conversation_id="cid-legacy",
+        conversation_title="Legacy history",
+        single_chat=False,
+        trigger_message_id="msg-legacy",
+        trigger_create_time="2026-07-20 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Handle this task",
+    )
+    task_id = store.claim_reply_tasks(limit=1)[0].id
+    existing_attempt_id = store.record_reply_attempt(
+        conversation_id="cid-legacy",
+        conversation_title="Legacy history",
+        trigger_message_id="msg-legacy",
+        trigger_sender="Derek",
+        trigger_text="Handle this task",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    with store._connect() as db:
+        db.executescript(
+            """
+            create table universal_plan_executions (
+                execution_scope_id text primary key,
+                reply_task_id integer not null
+            );
+            create table universal_action_executions (
+                execution_id text primary key,
+                execution_scope_id text not null,
+                attempt_id integer,
+                action_kind text not null,
+                status text not null,
+                error text not null default '',
+                result_json text not null default '',
+                created_at text not null,
+                updated_at text not null
+            );
+            """
+        )
+        db.execute(
+            "insert into universal_plan_executions values (?, ?)",
+            ("scope-1", task_id),
+        )
+        db.executemany(
+            """
+            insert into universal_action_executions values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    "action-existing",
+                    "scope-1",
+                    existing_attempt_id,
+                    "send_reply",
+                    "succeeded",
+                    "",
+                    '{"receipt":"existing"}',
+                    "2026-07-20 10:01:00",
+                    "2026-07-20 10:02:00",
+                ),
+                (
+                    "action-missing",
+                    "scope-1",
+                    None,
+                    "oa_approval",
+                    "failed",
+                    "legacy failure",
+                    '{"outcome":"failed"}',
+                    "2026-07-20 10:03:00",
+                    "2026-07-20 10:04:00",
+                ),
+            ),
+        )
+        db.execute(
+            "insert or replace into service_state (key, value) values (?, ?)",
+            ("dws_auth_backup", '{"archive":"removed"}'),
+        )
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    migrated = AutoReplyStore(db_path)
+
+    attempts = migrated.list_reply_attempts(limit=20)
+    assert len(attempts) == 2
+    historical = next(attempt for attempt in attempts if attempt.id != existing_attempt_id)
+    assert historical.action == "oa_approval"
+    assert historical.send_status == "failed"
+    assert historical.send_error == "legacy failure"
+    assert historical.audit_summary == '{"outcome":"failed"}'
+    with migrated._connect() as db:
+        tables = {
+            str(row[0])
+            for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            ).fetchall()
+        }
+    assert "universal_plan_executions" not in tables
+    assert "universal_action_executions" not in tables
+    assert migrated.get_service_state("dws_auth_backup") is None
