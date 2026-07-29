@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -33,8 +33,33 @@ LAST_SUCCESS_STATE_KEY = "weekly_okr_report:last_success_date"
 LAST_ATTEMPT_STATE_KEY = "weekly_okr_report:last_attempt_at"
 
 
+class KrScoreReview(BaseModel):
+    kr_id: str
+    objective_title: str
+    kr_title: str
+    category: Literal["业务OKR", "领导力", "文化价值观"]
+    system_progress: str
+    independent_evidence: str
+    evidence_assessment: str
+    base_score: float = Field(ge=0, le=100)
+    time_discount: str
+    score: float = Field(ge=0, le=100)
+    improvement: str
+
+
+class DimensionScoreReview(BaseModel):
+    dimension: str
+    required_behavior: str
+    positive_evidence: str
+    missing_or_contrary_evidence: str
+    score: float = Field(ge=0, le=100)
+    next_band_evidence: str
+
+
 class ManagerReportAnalysis(BaseModel):
     name: str
+    role_level: Literal["专业贡献者", "经理", "总监", "VP", "CXO", "职级待确认"]
+    role_level_evidence: str
     progress_summary: str
     key_progress: list[str] = Field(default_factory=list)
     independent_evidence: list[str] = Field(default_factory=list)
@@ -42,6 +67,9 @@ class ManagerReportAnalysis(BaseModel):
     risks: list[str] = Field(default_factory=list)
     next_week_focus: list[str] = Field(default_factory=list)
     data_gaps: list[str] = Field(default_factory=list)
+    kr_reviews: list[KrScoreReview]
+    leadership_dimensions: list[DimensionScoreReview]
+    culture_dimensions: list[DimensionScoreReview]
 
 
 class CeoAttentionItem(BaseModel):
@@ -90,6 +118,16 @@ class WeeklyOkrReportResult:
     document_url: str = ""
     local_report_path: str = ""
     send_state: str = ""
+
+
+@dataclass(frozen=True)
+class ManagerScorecard:
+    business_score: float | None
+    leadership_score: float | None
+    culture_score: float | None
+    culture_coefficient: float | None
+    final_score: float | None
+    final_status: str
 
 
 class WeeklyOkrAgent(Protocol):
@@ -380,6 +418,35 @@ class DwsWeeklyOkrGateway:
             url = str(existing[0].get("docUrl") or "").strip()
             if not node_id:
                 raise DwsError("existing weekly OKR document is missing nodeId")
+            self.dws.run_json(
+                [
+                    self.dws.dws_bin,
+                    "doc",
+                    "read",
+                    "--node",
+                    node_id,
+                    "--format",
+                    "json",
+                ],
+                timeout_seconds=180,
+            )
+            self.dws.run_json(
+                [
+                    self.dws.dws_bin,
+                    "doc",
+                    "update",
+                    "--node",
+                    node_id,
+                    "--content-file",
+                    str(content_file),
+                    "--mode",
+                    "overwrite",
+                    "--yes",
+                    "--format",
+                    "json",
+                ],
+                timeout_seconds=180,
+            )
             readback = self.dws.run_json(
                 [
                     self.dws.dws_bin,
@@ -393,7 +460,7 @@ class DwsWeeklyOkrGateway:
                 timeout_seconds=180,
             )
             if not _contains_text(readback, verification_marker):
-                raise DwsError("existing weekly OKR document failed content readback")
+                raise DwsError("updated weekly OKR document failed content readback")
             return PublishedDocument(
                 node_id=node_id,
                 url=url or f"https://alidocs.dingtalk.com/i/nodes/{node_id}",
@@ -517,13 +584,14 @@ def build_weekly_okr_prompt(
 
 任务：
 1. 读取实时文件中每位管理者的 `processed.objectives`、`processed.okrRows`、KR 数值进度、进度历史和评论/进展。不能只看进度百分比。
-2. 对本周有实质进展、风险或承诺的 KR，使用 memory_recall 以及 DWS 的文档、知识库、AI听记、群聊、日志、待办、日历等只读能力寻找独立证据。文档型产出必须找到并读取正文；只找到标题不算已验证。
-3. 区分“动作/材料已发生”和“结果/效果已落地”。无法独立访问的业务系统若 OKR 进展给出明确数字，可作为工作事实，但要写清审计缺口。
-4. 每位名单成员都必须返回一条 manager_reviews；没有 OKR、没有本周更新或没有独立证据也必须明确写出，不得省略。
-5. 这是进度周报，不做绩效打分。重点写本周实际结果、阻塞、下周承诺和需要 CEO 决策的事项。
-6. 不要在输出中暴露本地路径、token、cookie、内部命令或原始工具输出。
+2. 必须对实时文件中的每一个 KR 返回且只返回一条 kr_reviews，以 krId 原样写入 kr_id。系统百分比和自述只作为线索，综合评论/进展、独立证据、目标承诺、实际效果和完成时间，按技能中的 0/20/40/60/80/100 校准规则给出 base_score 和应用时间折扣后的 score。不得用系统进度直接换算评分。
+3. 使用 memory_recall 以及 DWS 的文档、知识库、AI听记、群聊、日志、待办、日历等只读能力寻找独立证据。文档型产出必须找到并读取正文；只找到标题按未找到处理。无法独立访问的业务系统若进展给出明确数字，可作为工作事实，但要写清审计缺口。
+4. 将 KR 语义分类为业务OKR、领导力或文化价值观。业务/GTM、产品、工程类分别应用技能中的效果证据门槛；多项承诺逐项评价；先按结果质量给基础分，再按 DDL 应用时间折扣。
+5. 使用当前钉钉通讯录 title 作为职级授权来源，确认专业贡献者、经理、总监、VP、CXO；无法可靠确认则写职级待确认。管理者按四个领导力维度分别评分；专业贡献者只有在系统明确分配领导力考核时才返回四维候选分，且候选分不进入专业贡献者最终公式。所有人按三个文化价值观维度分别评分。80+ 必须有超出标准的具体案例，90+ 必须有相应榜样范围证据，低于 70 必须写明未满足行为或反面案例。不要用业务得分替代领导力或文化得分。
+6. 每位名单成员都必须返回一条 manager_reviews；没有 OKR、没有本周更新或没有独立证据也不得省略。重点进展、风险、下周承诺和 CEO 决策事项保持简洁。
+7. 不要自行汇总最终绩效分；程序会用 KR score 按 O 权重×KR 权重计算业务 OKR 分，领导力四维取算术平均，文化三维取算术平均，再按技能公式计算。不要在输出中暴露本地路径、token、cookie、内部命令或原始工具输出。
 
-输出：只返回符合 schema 的 JSON。manager_reviews.name 必须逐字使用名单中的 name，且不多不少。
+输出：只返回符合 schema 的 JSON。manager_reviews.name 必须逐字使用名单中的 name，且不多不少；每个 KR 的说明控制在管理者可读的简洁篇幅。
 """
 
 
@@ -610,6 +678,7 @@ def run_weekly_okr_report(
         week_end=week_end,
     )
     _validate_manager_coverage(analysis, roster.managers)
+    _validate_kr_coverage(analysis, manager_payloads)
     report_title = (
         f"CEO-2 管理者 OKR 进度周报（{week_start.isoformat()}—{week_end.isoformat()}）"
     )
@@ -640,13 +709,14 @@ def run_weekly_okr_report(
         folder_id=folder_id,
         name=report_title,
         content_file=report_path,
-        verification_marker=report_title,
+        verification_marker="综合证据评分",
     )
     summary = render_group_summary(
         title=report_title,
         analysis=analysis,
         document_url=document.url,
         manager_count=len(roster.managers),
+        manager_payloads=manager_payloads,
     )
     send_state = gateway.send_group_summary(
         conversation_id=roster.conversation_id,
@@ -756,12 +826,15 @@ def render_weekly_okr_report(
         for item in manager_payloads
     }
     reviews = {review.name: review for review in analysis.manager_reviews}
+    scorecards = _manager_scorecards(analysis, manager_payloads)
     lines = [
         f"# {title}",
         "",
         f"- OKR 周期：{period_label}",
         f"- 管理者范围：CEO-2 管理群，共 {len(managers)} 人",
-        "- 数据口径：实时叮当 OKR 目标、KR 数值进度、进展评论，以及本周可读取的独立渠道证据",
+        "- 数据口径：实时叮当 OKR 目标、KR 评论/进展，以及文档、知识库、AI听记、群聊等可读取的独立证据",
+        "- 综合证据评分：系统进度仅作为线索；每个 KR 按实际结果、证据强度和完成时间评分",
+        "- 评分公式：业务 OKR 按 O 权重×KR 权重汇总；管理者最终分 =（业务 OKR×70% + 领导力×30%）×文化系数",
         "",
         "## 管理摘要",
         "",
@@ -780,10 +853,30 @@ def render_weekly_okr_report(
     else:
         lines.append("- 本周未发现需要 CEO 立即决策的新增事项。")
 
-    lines.extend(["", "## 管理者进度", ""])
+    lines.extend(["", "## 管理者评分概览", ""])
+    lines.extend(
+        [
+            "| 管理者 | 职级 | 业务 OKR | 领导力 | 文化价值观 | 文化系数 | 最终分 | 状态 |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+        ]
+    )
+    for manager in managers:
+        review = reviews[manager.name]
+        scorecard = scorecards[manager.name]
+        lines.append(
+            f"| {_md_cell(manager.name)} | {_md_cell(review.role_level)} | "
+            f"{_score_text(scorecard.business_score)} | "
+            f"{_score_text(scorecard.leadership_score)} | "
+            f"{_score_text(scorecard.culture_score)} | "
+            f"{_coefficient_text(scorecard.culture_coefficient)} | "
+            f"{_score_text(scorecard.final_score)} | {_md_cell(scorecard.final_status)} |"
+        )
+
+    lines.extend(["", "## 管理者进展与逐 KR 评分", ""])
     for manager in managers:
         review = reviews[manager.name]
         manager_stats = stats[manager.name]
+        scorecard = scorecards[manager.name]
         lines.extend(
             [
                 f"### {manager.name}｜{manager.title}",
@@ -791,6 +884,12 @@ def render_weekly_okr_report(
                 f"- 系统概况：{manager_stats['objective_count']} 个 O，"
                 f"{manager_stats['kr_count']} 个 KR，当前 KR 平均进度 "
                 f"{manager_stats['average_progress']}",
+                f"- 职级判断：{review.role_level}（{review.role_level_evidence}）",
+                f"- 综合评分：业务 OKR {_score_text(scorecard.business_score)}；"
+                f"领导力 {_score_text(scorecard.leadership_score)}；"
+                f"文化价值观 {_score_text(scorecard.culture_score)}；"
+                f"文化系数 {_coefficient_text(scorecard.culture_coefficient)}；"
+                f"最终分 {_score_text(scorecard.final_score)}（{scorecard.final_status}）",
                 f"- 进度判断：{review.progress_summary}",
                 f"- 证据评价：{review.evidence_assessment}",
             ]
@@ -800,6 +899,47 @@ def render_weekly_okr_report(
         _append_named_items(lines, "风险与阻塞", review.risks)
         _append_named_items(lines, "下周重点", review.next_week_focus)
         _append_named_items(lines, "数据缺口", review.data_gaps)
+        if review.leadership_dimensions:
+            lines.extend(
+                [
+                    "",
+                    "#### 领导力评分",
+                    "",
+                    "| 维度 | 要求 | 正向证据 | 缺口/反面证据 | 评分 | 升档证据 |",
+                    "| --- | --- | --- | --- | ---: | --- |",
+                ]
+            )
+            lines.extend(_dimension_row(item) for item in review.leadership_dimensions)
+        if review.culture_dimensions:
+            lines.extend(
+                [
+                    "",
+                    "#### 文化价值观评分",
+                    "",
+                    "| 维度 | 要求 | 正向证据 | 缺口/反面证据 | 评分 | 升档证据 |",
+                    "| --- | --- | --- | --- | ---: | --- |",
+                ]
+            )
+            lines.extend(_dimension_row(item) for item in review.culture_dimensions)
+        lines.extend(
+            [
+                "",
+                "#### 逐 KR 评分",
+                "",
+                "| KR | 权重 | 系统KR进度 | 独立检索证据内容 | 证据评价 | 评分 | 提升建议 |",
+                "| --- | ---: | --- | --- | --- | ---: | --- |",
+            ]
+        )
+        row_by_id = _live_kr_rows(manager_payloads, manager.name)
+        for kr in review.kr_reviews:
+            live_row = row_by_id[kr.kr_id]
+            weight = f"O {live_row.get('objectiveWeight', 0)}% × KR {live_row.get('krWeight', 0)}%"
+            lines.append(
+                f"| {_md_cell(live_row.get('krTitle', kr.kr_title))} | {_md_cell(weight)} | "
+                f"{_md_cell(kr.system_progress)} | {_md_cell(kr.independent_evidence)} | "
+                f"{_md_cell(kr.evidence_assessment)} | {kr.score:.1f} | "
+                f"{_md_cell(kr.improvement)} |"
+            )
         lines.append("")
 
     lines.extend(["## 数据覆盖与限制", ""])
@@ -815,16 +955,24 @@ def render_group_summary(
     analysis: WeeklyOkrAnalysis,
     document_url: str,
     manager_count: int,
+    manager_payloads: list[dict[str, Any]],
 ) -> str:
+    scorecards = _manager_scorecards(analysis, manager_payloads)
+    finalized = [item.final_score for item in scorecards.values() if item.final_score is not None]
+    pending = manager_count - len(finalized)
     lines = [
         f"## {title}",
         "",
-        f"本周已完成 {manager_count} 位管理者的实时 OKR 进度汇总。",
-        analysis.executive_summary,
+        f"已按综合证据口径更新：系统进度仅作线索，结合评论/进展和独立证据逐 KR 评分。",
+        f"评分概览：{manager_count} 人中 {len(finalized)} 人形成最终分，{pending} 人因职级或维度证据待补充暂不形成最终分"
+        + (f"；已形成最终分的平均值为 {sum(finalized) / len(finalized):.1f}。" if finalized else "。"),
     ]
+    if analysis.company_progress:
+        lines.extend(["", "重点进展："])
+        lines.extend(f"- {item}" for item in analysis.company_progress[:3])
     if analysis.ceo_attention_items:
-        lines.extend(["", "需要重点关注："])
-        for item in analysis.ceo_attention_items[:5]:
+        lines.extend(["", "主要风险："])
+        for item in analysis.ceo_attention_items[:3]:
             lines.extend(
                 [
                     "",
@@ -886,9 +1034,11 @@ def _validate_live_okr_payload(payload: object, *, manager: ManagerIdentity) -> 
         if str(row.get("level") or "").upper() != "KR":
             continue
         required = (
+            "objectiveId",
             "objectiveTitle",
             "objectiveWeight",
             "objectiveProgress",
+            "krId",
             "krTitle",
             "krWeight",
             "krProgress",
@@ -915,6 +1065,151 @@ def _validate_manager_coverage(
         raise ValueError(
             f"weekly OKR analysis manager coverage mismatch: missing={missing}, extra={extra}"
         )
+
+
+def _validate_kr_coverage(
+    analysis: WeeklyOkrAnalysis,
+    manager_payloads: list[dict[str, Any]],
+) -> None:
+    payloads = {item["manager"]["name"]: item for item in manager_payloads}
+    for review in analysis.manager_reviews:
+        expected_rows = _live_kr_rows(manager_payloads, review.name)
+        actual_ids = [item.kr_id for item in review.kr_reviews]
+        if len(actual_ids) != len(set(actual_ids)):
+            raise ValueError(f"weekly OKR analysis contains duplicate KRs for {review.name}")
+        if set(actual_ids) != set(expected_rows):
+            missing = sorted(set(expected_rows) - set(actual_ids))
+            extra = sorted(set(actual_ids) - set(expected_rows))
+            raise ValueError(
+                f"weekly OKR KR coverage mismatch for {review.name}: "
+                f"missing={missing}, extra={extra}"
+            )
+        for item in review.kr_reviews:
+            if item.score > item.base_score:
+                raise ValueError(f"time-discounted score exceeds base score for KR {item.kr_id}")
+        if len(review.culture_dimensions) != 3:
+            raise ValueError(f"culture scoring must contain three dimensions for {review.name}")
+        if review.role_level in {"经理", "总监", "VP", "CXO"}:
+            if len(review.leadership_dimensions) != 4:
+                raise ValueError(
+                    f"leadership scoring must contain four dimensions for {review.name}"
+                )
+        elif len(review.leadership_dimensions) not in {0, 4}:
+            raise ValueError(
+                f"candidate leadership scoring must contain zero or four dimensions for {review.name}"
+            )
+        if review.name not in payloads:
+            raise ValueError(f"missing live OKR payload for {review.name}")
+
+
+def _manager_scorecards(
+    analysis: WeeklyOkrAnalysis,
+    manager_payloads: list[dict[str, Any]],
+) -> dict[str, ManagerScorecard]:
+    cards: dict[str, ManagerScorecard] = {}
+    for review in analysis.manager_reviews:
+        live_rows = _live_kr_rows(manager_payloads, review.name)
+        weighted_scores: list[tuple[float, float]] = []
+        for kr in review.kr_reviews:
+            if kr.category != "业务OKR":
+                continue
+            row = live_rows[kr.kr_id]
+            objective_weight = _weight_number(row.get("objectiveWeight"))
+            kr_weight = _weight_number(row.get("krWeight"))
+            combined_weight = objective_weight * kr_weight
+            if combined_weight > 0:
+                weighted_scores.append((kr.score, combined_weight))
+        business_score = _weighted_average(weighted_scores)
+        leadership_score = _plain_average(review.leadership_dimensions)
+        culture_score = _plain_average(review.culture_dimensions)
+        coefficient = (
+            _culture_coefficient(culture_score) if culture_score is not None else None
+        )
+        final_score: float | None = None
+        if business_score is None:
+            status = "缺少可计权业务 OKR"
+        elif coefficient is None:
+            status = "文化维度待补充"
+        elif review.role_level in {"经理", "总监", "VP", "CXO"}:
+            if leadership_score is None:
+                status = "领导力维度待补充"
+            else:
+                final_score = (
+                    business_score * 0.7 + leadership_score * 0.3
+                ) * coefficient
+                status = "已形成最终分"
+        elif review.role_level == "专业贡献者":
+            final_score = business_score * coefficient
+            status = "已形成最终分（专业贡献者公式）"
+        else:
+            status = "职级待确认，暂不形成最终分"
+        cards[review.name] = ManagerScorecard(
+            business_score=_rounded(business_score),
+            leadership_score=_rounded(leadership_score),
+            culture_score=_rounded(culture_score),
+            culture_coefficient=coefficient,
+            final_score=_rounded(final_score),
+            final_status=status,
+        )
+    return cards
+
+
+def _live_kr_rows(
+    manager_payloads: list[dict[str, Any]],
+    manager_name: str,
+) -> dict[str, dict[str, Any]]:
+    for item in manager_payloads:
+        if item.get("manager", {}).get("name") != manager_name:
+            continue
+        rows = item.get("liveOkr", {}).get("processed", {}).get("okrRows", [])
+        result: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict) or str(row.get("level") or "").upper() != "KR":
+                continue
+            kr_id = str(row.get("krId") or "").strip()
+            if not kr_id:
+                raise ValueError(f"live OKR KR row for {manager_name} is missing krId")
+            if kr_id in result:
+                raise ValueError(f"live OKR contains duplicate KR {kr_id} for {manager_name}")
+            result[kr_id] = row
+        return result
+    raise ValueError(f"missing live OKR payload for {manager_name}")
+
+
+def _weighted_average(items: list[tuple[float, float]]) -> float | None:
+    total_weight = sum(weight for _, weight in items)
+    if total_weight <= 0:
+        return None
+    return sum(score * weight for score, weight in items) / total_weight
+
+
+def _plain_average(items: list[DimensionScoreReview]) -> float | None:
+    if not items:
+        return None
+    return sum(item.score for item in items) / len(items)
+
+
+def _culture_coefficient(score: float) -> float:
+    if score >= 100:
+        return 1.2
+    if score >= 90:
+        return 1.1
+    if score >= 80:
+        return 1.05
+    if score >= 70:
+        return 1.0
+    if score >= 50:
+        return 0.95
+    return 0.8
+
+
+def _weight_number(value: object) -> float:
+    number = _progress_number(value)
+    return 0.0 if number is None else number
+
+
+def _rounded(value: float | None) -> float | None:
+    return None if value is None else round(value, 1)
 
 
 def _extract_report_payload(raw: str) -> dict[str, Any]:
@@ -993,6 +1288,27 @@ def _append_named_items(lines: list[str], label: str, items: list[str]) -> None:
         return
     lines.append(f"- {label}：")
     lines.extend(f"  - {item}" for item in items)
+
+
+def _dimension_row(item: DimensionScoreReview) -> str:
+    return (
+        f"| {_md_cell(item.dimension)} | {_md_cell(item.required_behavior)} | "
+        f"{_md_cell(item.positive_evidence)} | "
+        f"{_md_cell(item.missing_or_contrary_evidence)} | {item.score:.1f} | "
+        f"{_md_cell(item.next_band_evidence)} |"
+    )
+
+
+def _md_cell(value: object) -> str:
+    return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", "<br>")
+
+
+def _score_text(value: float | None) -> str:
+    return "暂不形成" if value is None else f"{value:.1f}"
+
+
+def _coefficient_text(value: float | None) -> str:
+    return "暂不形成" if value is None else f"{value:.2f}"
 
 
 def _nested_list(payload: object, key: str) -> list[dict[str, Any]]:

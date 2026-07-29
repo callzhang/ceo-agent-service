@@ -5,12 +5,15 @@ import pytest
 
 from app.weekly_okr_report import (
     CeoAttentionItem,
+    DimensionScoreReview,
     DwsWeeklyOkrGateway,
     GroupRoster,
+    KrScoreReview,
     ManagerIdentity,
     ManagerReportAnalysis,
     PublishedDocument,
     WeeklyOkrAnalysis,
+    _manager_scorecards,
     _extract_report_payload,
     run_weekly_okr_report,
     weekly_okr_report_window_open,
@@ -71,6 +74,34 @@ class CreateDecodeRecoveryDws:
         raise AssertionError(command)
 
 
+class ExistingDocumentDws:
+    dws_bin = "dws"
+
+    def __init__(self, marker):
+        self.marker = marker
+        self.commands = []
+        self.read_calls = 0
+
+    def run_json(self, command, **_kwargs):
+        self.commands.append(command)
+        if command[1:4] == ["wiki", "node", "list"]:
+            return {
+                "nodes": [
+                    {
+                        "name": "weekly-title",
+                        "nodeId": "doc-existing",
+                        "docUrl": "https://alidocs.example/doc-existing",
+                    }
+                ]
+            }
+        if command[1:3] == ["doc", "read"]:
+            self.read_calls += 1
+            return {"content": "旧内容" if self.read_calls == 1 else self.marker}
+        if command[1:3] == ["doc", "update"]:
+            return {"success": True}
+        raise AssertionError(command)
+
+
 class FakeGateway:
     def __init__(self, managers):
         self.managers = managers
@@ -127,9 +158,11 @@ class FakeSource:
                 "okrRows": [
                     {
                         "level": "KR",
+                        "objectiveId": "objective-1",
                         "objectiveTitle": "O1",
                         "objectiveWeight": 100,
                         "objectiveProgress": 50,
+                        "krId": "kr-1",
                         "krTitle": "KR1",
                         "krWeight": 100,
                         "krProgress": 50,
@@ -160,6 +193,8 @@ class FakeAgent:
             manager_reviews=[
                 ManagerReportAnalysis(
                     name=manager.name,
+                    role_level="总监" if manager.title == "总监" else "经理",
+                    role_level_evidence=f"钉钉通讯录当前职务为{manager.title}",
                     progress_summary="本周完成一个可核验里程碑。",
                     key_progress=["KR 有新增进展"],
                     independent_evidence=["相关文档已读取"],
@@ -167,6 +202,23 @@ class FakeAgent:
                     risks=[],
                     next_week_focus=["关闭剩余事项"],
                     data_gaps=[],
+                    kr_reviews=[
+                        KrScoreReview(
+                            kr_id="kr-1",
+                            objective_title="O1",
+                            kr_title="KR1",
+                            category="业务OKR",
+                            system_progress="系统 50%，本周评论称已交付",
+                            independent_evidence="相关文档已读取并核对交付内容",
+                            evidence_assessment="产出已形成，但缺少使用效果数据。",
+                            base_score=80,
+                            time_discount="未适用",
+                            score=80,
+                            improvement="补充验收和使用效果。",
+                        )
+                    ],
+                    leadership_dimensions=_dimensions(4, 70),
+                    culture_dimensions=_dimensions(3, 80),
                 )
                 for manager in managers
             ],
@@ -179,6 +231,20 @@ def managers():
     return [
         ManagerIdentity("甲", "总监", "u1", "o1"),
         ManagerIdentity("乙", "经理", "u2", "o2"),
+    ]
+
+
+def _dimensions(count, score):
+    return [
+        DimensionScoreReview(
+            dimension=f"维度{i + 1}",
+            required_behavior="按当前职级稳定履责",
+            positive_evidence="有本周具体行为案例",
+            missing_or_contrary_evidence="跨团队效果仍需补充",
+            score=score,
+            next_band_evidence="补充可复用结果和采用记录",
+        )
+        for i in range(count)
     ]
 
 
@@ -264,6 +330,8 @@ def test_extract_report_payload_reads_final_codex_jsonl_message():
         "manager_reviews": [
             {
                 "name": "甲",
+                "role_level": "总监",
+                "role_level_evidence": "钉钉通讯录当前职务为总监",
                 "progress_summary": "推进中",
                 "key_progress": [],
                 "independent_evidence": [],
@@ -271,6 +339,23 @@ def test_extract_report_payload_reads_final_codex_jsonl_message():
                 "risks": [],
                 "next_week_focus": [],
                 "data_gaps": ["缺少验收记录"],
+                "kr_reviews": [
+                    {
+                        "kr_id": "kr-1",
+                        "objective_title": "O1",
+                        "kr_title": "KR1",
+                        "category": "业务OKR",
+                        "system_progress": "系统进度 50%",
+                        "independent_evidence": "已读取交付文档",
+                        "evidence_assessment": "有产出，效果待验证",
+                        "base_score": 80,
+                        "time_discount": "未适用",
+                        "score": 80,
+                        "improvement": "补充验收记录",
+                    }
+                ],
+                "leadership_dimensions": [item.model_dump() for item in _dimensions(4, 70)],
+                "culture_dimensions": [item.model_dump() for item in _dimensions(3, 80)],
             }
         ],
         "source_coverage": ["实时叮当 OKR"],
@@ -331,6 +416,55 @@ def test_publish_document_recovers_when_cli_output_decode_fails_after_create(
 
     assert published.node_id == "doc-recovered"
     assert published.url == "https://alidocs.example/doc-recovered"
+
+
+def test_existing_weekly_document_is_overwritten_and_read_back(tmp_path):
+    content_file = tmp_path / "report.md"
+    content_file.write_text("# weekly-title\n\n综合证据评分\n", encoding="utf-8")
+    dws = ExistingDocumentDws("综合证据评分")
+
+    published = DwsWeeklyOkrGateway(dws).publish_document(
+        workspace_id="wiki-target",
+        folder_id="folder-target",
+        name="weekly-title",
+        content_file=content_file,
+        verification_marker="综合证据评分",
+    )
+
+    assert published.node_id == "doc-existing"
+    assert dws.read_calls == 2
+    update = next(command for command in dws.commands if command[1:3] == ["doc", "update"])
+    assert ["--mode", "overwrite"] == update[update.index("--mode") : update.index("--mode") + 2]
+    assert "--yes" in update
+
+
+def test_manager_final_score_uses_business_leadership_and_culture_formula(tmp_path):
+    source_path = tmp_path / "source.json"
+    source_path.write_text('{"processed": true}', encoding="utf-8")
+    roster = managers()
+    analysis = FakeAgent().analyze(
+        source_path=source_path,
+        managers=roster,
+        period_label="2026 Q3",
+        week_start=datetime(2026, 7, 27).date(),
+        week_end=datetime(2026, 7, 30).date(),
+    )
+    source = FakeSource()
+    payloads = [
+        {
+            "manager": {"name": manager.name},
+            "liveOkr": source.fetch_user_okr(user_id=manager.user_id, period_label="2026 Q3"),
+        }
+        for manager in roster
+    ]
+
+    cards = _manager_scorecards(analysis, payloads)
+
+    assert cards["甲"].business_score == 80.0
+    assert cards["甲"].leadership_score == 70.0
+    assert cards["甲"].culture_score == 80.0
+    assert cards["甲"].culture_coefficient == 1.05
+    assert cards["甲"].final_score == 80.9
 
 
 def json_string(value):

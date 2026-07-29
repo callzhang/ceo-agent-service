@@ -2,14 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "executive_summary",
-    "company_progress",
-    "ceo_attention_items",
-    "manager_reviews",
-    "source_coverage",
-    "warnings"
-  ],
+  "required": ["executive_summary", "company_progress", "ceo_attention_items", "manager_reviews", "source_coverage", "warnings"],
   "properties": {
     "executive_summary": {"type": "string"},
     "company_progress": {"type": "array", "items": {"type": "string"}},
@@ -32,29 +25,63 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "name",
-          "progress_summary",
-          "key_progress",
-          "independent_evidence",
-          "evidence_assessment",
-          "risks",
-          "next_week_focus",
-          "data_gaps"
-        ],
+        "required": ["name", "role_level", "role_level_evidence", "progress_summary", "key_progress", "independent_evidence", "evidence_assessment", "risks", "next_week_focus", "data_gaps", "kr_reviews", "leadership_dimensions", "culture_dimensions"],
         "properties": {
           "name": {"type": "string"},
+          "role_level": {"type": "string", "enum": ["专业贡献者", "经理", "总监", "VP", "CXO", "职级待确认"]},
+          "role_level_evidence": {"type": "string"},
           "progress_summary": {"type": "string"},
           "key_progress": {"type": "array", "items": {"type": "string"}},
           "independent_evidence": {"type": "array", "items": {"type": "string"}},
           "evidence_assessment": {"type": "string"},
           "risks": {"type": "array", "items": {"type": "string"}},
           "next_week_focus": {"type": "array", "items": {"type": "string"}},
-          "data_gaps": {"type": "array", "items": {"type": "string"}}
+          "data_gaps": {"type": "array", "items": {"type": "string"}},
+          "kr_reviews": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kr_id", "objective_title", "kr_title", "category", "system_progress", "independent_evidence", "evidence_assessment", "base_score", "time_discount", "score", "improvement"],
+              "properties": {
+                "kr_id": {"type": "string"},
+                "objective_title": {"type": "string"},
+                "kr_title": {"type": "string"},
+                "category": {"type": "string", "enum": ["业务OKR", "领导力", "文化价值观"]},
+                "system_progress": {"type": "string"},
+                "independent_evidence": {"type": "string"},
+                "evidence_assessment": {"type": "string"},
+                "base_score": {"type": "number", "minimum": 0, "maximum": 100},
+                "time_discount": {"type": "string"},
+                "score": {"type": "number", "minimum": 0, "maximum": 100},
+                "improvement": {"type": "string"}
+              }
+            }
+          },
+          "leadership_dimensions": {"$ref": "#/$defs/dimensions"},
+          "culture_dimensions": {"$ref": "#/$defs/dimensions"}
         }
       }
     },
     "source_coverage": {"type": "array", "items": {"type": "string"}},
     "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "dimensions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dimension", "required_behavior", "positive_evidence", "missing_or_contrary_evidence", "score", "next_band_evidence"],
+        "properties": {
+          "dimension": {"type": "string"},
+          "required_behavior": {"type": "string"},
+          "positive_evidence": {"type": "string"},
+          "missing_or_contrary_evidence": {"type": "string"},
+          "score": {"type": "number", "minimum": 0, "maximum": 100},
+          "next_band_evidence": {"type": "string"}
+        }
+      }
+    }
   }
 }
