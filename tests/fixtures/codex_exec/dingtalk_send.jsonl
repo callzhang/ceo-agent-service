@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"captured-send-session"}
+{"type":"item.started","item":{"id":"effect-1","type":"command_execution","command":"dws chat message send --group cid-1 --text 'done' --format json --yes"}}
+{"type":"item.completed","item":{"id":"effect-1","type":"command_execution","command":"dws chat message send --group cid-1 --text 'done' --format json --yes","aggregated_output":"{\"success\":true}","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"{\"outcome\":\"completed\",\"summary\":\"Agent completed and verified the requested work.\",\"error\":{\"code\":\"\",\"retryable\":false,\"authorization_required\":false,\"side_effect_state\":\"confirmed\"}}"}}

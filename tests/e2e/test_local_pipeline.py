@@ -1,5 +1,5 @@
-import json
 from datetime import datetime
+from pathlib import Path
 
 from app.agent_result import EffectKind
 from app.agent_runner import DirectAgentRunner, NativeCliMetadataClassifier
@@ -215,65 +215,22 @@ class ContextOnlyDws:
 
 
 class CapturedJsonlExecutor:
-    def __init__(self, commands: tuple[str, ...]) -> None:
-        self.commands = commands
+    def __init__(self, fixture: Path) -> None:
+        self.fixture = fixture
 
     def __call__(self, _command, *, on_stdout_line, **_kwargs) -> ProcessRunResult:
-        records: list[dict[str, object]] = [
-            {"type": "thread.started", "thread_id": "local-pipeline-session"}
-        ]
-        for index, command in enumerate(self.commands, start=1):
-            call_id = f"effect-{index}"
-            records.extend(
-                (
-                    {
-                        "type": "item.started",
-                        "item": {
-                            "id": call_id,
-                            "type": "command_execution",
-                            "command": command,
-                        },
-                    },
-                    {
-                        "type": "item.completed",
-                        "item": {
-                            "id": call_id,
-                            "type": "command_execution",
-                            "command": command,
-                            "aggregated_output": '{"success":true}',
-                            "exit_code": 0,
-                            "status": "completed",
-                        },
-                    },
-                )
-            )
-        records.append(
-            {
-                "type": "item.completed",
-                "item": {
-                    "type": "agent_message",
-                    "text": json.dumps(
-                        {
-                            "outcome": "completed",
-                            "summary": "Agent completed and verified the requested work.",
-                            "error": {
-                                "code": "",
-                                "retryable": False,
-                                "authorization_required": False,
-                                "side_effect_state": "confirmed",
-                            },
-                        }
-                    ),
-                },
-            }
-        )
-        output = "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
+        output = self.fixture.read_text(encoding="utf-8").strip()
         for line in output.splitlines():
             on_stdout_line(line)
         return ProcessRunResult(returncode=0, stdout=output, stderr="")
 
 
-def _direct_agent_pipeline(tmp_path, commands: tuple[tuple[str, str], ...]):
+def _direct_agent_pipeline(
+    tmp_path,
+    *,
+    fixture_name: str,
+    command_paths: tuple[str, ...],
+):
     store = AutoReplyStore(tmp_path / "direct-agent.sqlite3")
     trigger = DingTalkMessage(
         open_conversation_id="cid-1",
@@ -299,12 +256,14 @@ def _direct_agent_pipeline(tmp_path, commands: tuple[tuple[str, str], ...]):
     runner = DirectAgentRunner(
         store=store,
         workspace=tmp_path,
-        executor=CapturedJsonlExecutor(tuple(command for _path, command in commands)),
+        executor=CapturedJsonlExecutor(
+            Path(__file__).parents[1] / "fixtures" / "codex_exec" / fixture_name
+        ),
         owner="local-pipeline-agent",
         native_cli_classifier=NativeCliMetadataClassifier(
             reviewed_effects={
                 ("dws", command_path): EffectKind.EFFECTFUL
-                for command_path, _command in commands
+                for command_path in command_paths
             }
         ),
     )
@@ -325,12 +284,8 @@ def _direct_agent_pipeline(tmp_path, commands: tuple[tuple[str, str], ...]):
 def test_direct_agent_local_pipeline_send_uses_jsonl_and_persisted_receipt(tmp_path):
     worker, store = _direct_agent_pipeline(
         tmp_path,
-        (
-            (
-                "chat message send",
-                "dws chat message send --group cid-1 --text 'done' --format json --yes",
-            ),
-        ),
+        fixture_name="dingtalk_send.jsonl",
+        command_paths=("chat message send",),
     )
 
     assert worker.consume_once(max_tasks=1) == 1
@@ -348,16 +303,8 @@ def test_direct_agent_local_pipeline_handoff_reaction_and_ding_use_jsonl_receipt
 ):
     worker, store = _direct_agent_pipeline(
         tmp_path,
-        (
-            (
-                "chat message add-text-emotion",
-                "dws chat message add-text-emotion --group cid-1 --message-id msg-1 --text '我去叫' --yes",
-            ),
-            (
-                "ding message send",
-                "dws ding message send --user-id principal --text '请人工处理' --yes",
-            ),
-        ),
+        fixture_name="dingtalk_handoff.jsonl",
+        command_paths=("chat message add-text-emotion", "ding message send"),
     )
 
     assert worker.consume_once(max_tasks=1) == 1

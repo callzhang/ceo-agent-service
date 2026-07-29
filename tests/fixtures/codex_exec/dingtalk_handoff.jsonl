@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"captured-handoff-session"}
+{"type":"item.started","item":{"id":"effect-1","type":"command_execution","command":"dws chat message add-text-emotion --group cid-1 --message-id msg-1 --text 'calling' --yes"}}
+{"type":"item.completed","item":{"id":"effect-1","type":"command_execution","command":"dws chat message add-text-emotion --group cid-1 --message-id msg-1 --text 'calling' --yes","aggregated_output":"{\"success\":true}","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"effect-2","type":"command_execution","command":"dws ding message send --user-id principal --text 'manual review required' --yes"}}
+{"type":"item.completed","item":{"id":"effect-2","type":"command_execution","command":"dws ding message send --user-id principal --text 'manual review required' --yes","aggregated_output":"{\"success\":true}","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"{\"outcome\":\"completed\",\"summary\":\"Agent completed and verified the requested work.\",\"error\":{\"code\":\"\",\"retryable\":false,\"authorization_required\":false,\"side_effect_state\":\"confirmed\"}}"}}
