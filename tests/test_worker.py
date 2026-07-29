@@ -2111,6 +2111,16 @@ def test_consume_manual_rerun_task_forces_new_decision(tmp_path: Path, monkeypat
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="unused")),
         monkeypatch,
     )
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id=trigger.open_message_id,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
     rerun = worker.store.enqueue_manual_rerun_reply_task(
         conversation_id="cid-1",
         conversation_title="Friday",
@@ -2120,7 +2130,7 @@ def test_consume_manual_rerun_task_forces_new_decision(tmp_path: Path, monkeypat
         trigger_sender=trigger.sender_name,
         trigger_text=trigger.content,
         trigger_message_json=trigger.model_dump_json(),
-        attempt_id=7,
+        attempt_id=attempt_id,
     )
     script_no_action(worker)
     assert worker.consume_once(max_tasks=1) == 1

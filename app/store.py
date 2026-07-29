@@ -1696,6 +1696,11 @@ class AutoReplyStore:
             receipt = None
         if not isinstance(receipt, dict) or not receipt:
             return "failed", "migrated_missing_execution_receipt"
+        if AutoReplyStore._legacy_receipt_has_explicit_failure(receipt):
+            return "failed", "migrated_explicit_execution_failure"
+        if receipt.get("outcome") == "blocked":
+            return "blocked", "migrated_structured_execution_block"
+
         effect_statuses = {
             "send_reply": "sent",
             "ask_clarifying_question": "sent",
@@ -1707,7 +1712,141 @@ class AutoReplyStore:
             "queue_okr_review": "completed",
             "memory_write": "completed",
         }
-        return effect_statuses.get(action, "completed"), ""
+        status = effect_statuses.get(action, "completed")
+        if AutoReplyStore._legacy_action_receipt_is_success(action, receipt):
+            return status, ""
+        tool_events = receipt.get("tool_events")
+        if (
+            isinstance(tool_events, list)
+            and all(isinstance(event, dict) for event in tool_events)
+            and _persisted_agent_effect_state(tool_events) == "confirmed"
+        ):
+            return status, ""
+        if _persisted_agent_receipt_ids(receipt):
+            return status, ""
+        return "failed", "migrated_unverified_execution_receipt"
+
+    @staticmethod
+    def _legacy_receipt_has_explicit_failure(value: object) -> bool:
+        if isinstance(value, list):
+            return any(
+                AutoReplyStore._legacy_receipt_has_explicit_failure(item)
+                for item in value
+            )
+        if not isinstance(value, dict):
+            return False
+        if value.get("success") is False or value.get("ok") is False:
+            return True
+        error = value.get("error")
+        if error is not None and error is not False and error != "":
+            return True
+        for field in ("errcode", "code"):
+            code = value.get(field)
+            if isinstance(code, int) and not isinstance(code, bool) and code != 0:
+                return True
+            if isinstance(code, str) and code.strip().lstrip("-").isdigit():
+                if int(code.strip()) != 0:
+                    return True
+        if value.get("status") in {"failed", "blocked", "unknown"}:
+            return True
+        if value.get("state") in {"failed", "blocked", "unknown"}:
+            return True
+        if value.get("outcome") in {"failed", "unknown", "preflight_failed"}:
+            return True
+        return any(
+            AutoReplyStore._legacy_receipt_has_explicit_failure(item)
+            for item in value.values()
+            if isinstance(item, (dict, list))
+        )
+
+    @staticmethod
+    def _legacy_action_receipt_is_success(
+        action: str,
+        receipt: dict[str, object],
+    ) -> bool:
+        if action in {"send_reply", "ask_clarifying_question"}:
+            return (
+                receipt.get("action_kind") == action
+                and receipt.get("outcome")
+                in {
+                    "delivered",
+                    "delivery_salvaged_after_error",
+                    "duplicate_existing_delivery",
+                }
+            )
+        if action == "oa_approval":
+            outcome = receipt.get("outcome")
+            process_id = str(receipt.get("process_instance_id") or "").strip()
+            approval_action = str(receipt.get("action") or "").strip()
+            if not process_id or not approval_action:
+                return False
+            if outcome == "commented":
+                return True
+            task_id = str(receipt.get("task_id") or "").strip()
+            return bool(task_id) and outcome in {
+                "already_handled",
+                "applicant_notified",
+                "applied",
+                "handled_by_different_action",
+                "salvaged",
+            }
+        if action in {"mail_reply", "calendar_response"}:
+            if receipt.get("success") is True:
+                return True
+            if receipt.get("ok") is True:
+                return AutoReplyStore._legacy_receipt_has_identifier(
+                    receipt.get("result"), {"messageid", "eventid", "receipt"}
+                )
+            return any(
+                receipt.get(field) == 0 or receipt.get(field) == "0"
+                for field in ("errcode", "code")
+            )
+        if action == "dws_markdown_document_reply":
+            return (
+                bool(str(receipt.get("node_id") or "").strip())
+                and bool(str(receipt.get("url") or "").strip())
+                and AutoReplyStore._legacy_receipt_has_identifier(
+                    receipt.get("delivery"), {"messageid", "receipt"}
+                )
+            )
+        if action == "dws_message_reaction":
+            return AutoReplyStore._legacy_receipt_has_identifier(
+                receipt,
+                {"emotionid", "reactionid", "receipt"},
+            )
+        if action == "queue_okr_review":
+            return (
+                receipt.get("action_kind") == action
+                and receipt.get("outcome") == "okr_review_queued_and_acknowledged"
+            )
+        if action == "memory_write":
+            return (
+                bool(str(receipt.get("episode_uuid") or "").strip())
+                and receipt.get("processing_status") == "completed"
+            )
+        return False
+
+    @staticmethod
+    def _legacy_receipt_has_identifier(
+        value: object,
+        fields: set[str],
+    ) -> bool:
+        if isinstance(value, list):
+            return any(
+                AutoReplyStore._legacy_receipt_has_identifier(item, fields)
+                for item in value
+            )
+        if not isinstance(value, dict):
+            return False
+        for key, item in value.items():
+            normalized_key = str(key).replace("_", "").casefold()
+            if normalized_key in fields and str(item or "").strip():
+                return True
+            if isinstance(item, (dict, list)) and (
+                AutoReplyStore._legacy_receipt_has_identifier(item, fields)
+            ):
+                return True
+        return False
 
     @staticmethod
     def _migrate_agent_run_events(db: sqlite3.Connection) -> None:

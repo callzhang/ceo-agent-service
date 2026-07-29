@@ -4249,6 +4249,53 @@ def test_removed_runtime_migrates_unreferenced_history_before_drop(
     assert migrated.get_service_state("dws_auth_backup") is None
 
 
+_LEGACY_EFFECT_SUCCESS_CASES: dict[str, tuple[str, dict[str, object]]] = {
+    "send_reply": (
+        "sent",
+        {"action_kind": "send_reply", "outcome": "delivered"},
+    ),
+    "ask_clarifying_question": (
+        "sent",
+        {"action_kind": "ask_clarifying_question", "outcome": "delivered"},
+    ),
+    "oa_approval": (
+        "completed",
+        {
+            "action": "同意",
+            "outcome": "applied",
+            "process_instance_id": "process-1",
+            "task_id": "task-1",
+        },
+    ),
+    "mail_reply": ("sent", {"success": True}),
+    "calendar_response": ("calendar", {"success": True}),
+    "dws_markdown_document_reply": (
+        "document",
+        {
+            "node_id": "node-1",
+            "url": "https://alidocs.dingtalk.com/i/nodes/node-1",
+            "delivery": {"messageId": "message-1"},
+        },
+    ),
+    "dws_message_reaction": ("reacted", {"reactionId": "reaction-1"}),
+    "queue_okr_review": (
+        "completed",
+        {
+            "action_kind": "queue_okr_review",
+            "outcome": "okr_review_queued_and_acknowledged",
+        },
+    ),
+    "memory_write": (
+        "completed",
+        {
+            "episode_uuid": "episode-1",
+            "processing_status": "completed",
+            "duplicate": False,
+        },
+    ),
+}
+
+
 def test_removed_runtime_migrates_every_action_status_with_terminal_semantics(
     tmp_path: Path,
 ) -> None:
@@ -4271,15 +4318,10 @@ def test_removed_runtime_migrates_every_action_status_with_terminal_semantics(
     )
     legacy_statuses = ("succeeded", "failed", "blocked", "unknown", "not_started")
     succeeded_status = {
-        "send_reply": "sent",
-        "ask_clarifying_question": "sent",
-        "oa_approval": "completed",
-        "mail_reply": "sent",
-        "calendar_response": "calendar",
-        "dws_markdown_document_reply": "document",
-        "dws_message_reaction": "reacted",
-        "queue_okr_review": "completed",
-        "memory_write": "completed",
+        **{
+            action: status
+            for action, (status, _) in _LEGACY_EFFECT_SUCCESS_CASES.items()
+        },
         "no_reply": "skipped",
         "handoff_to_human": "blocked",
         "blocked": "blocked",
@@ -4337,9 +4379,11 @@ def test_removed_runtime_migrates_every_action_status_with_terminal_semantics(
                         action,
                         legacy_status,
                         f"legacy-{legacy_status}" if legacy_status != "succeeded" else "",
-                        '{"receipt":{"completed":true}}'
-                        if legacy_status == "succeeded"
-                        else "",
+                            json.dumps(
+                                _LEGACY_EFFECT_SUCCESS_CASES.get(action, ("", {}))[1]
+                            )
+                            if legacy_status == "succeeded"
+                            else "",
                         "2026-07-20 10:00:00",
                         "2026-07-20 10:01:00",
                     ),
@@ -4363,6 +4407,94 @@ def test_removed_runtime_migrates_every_action_status_with_terminal_semantics(
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     AutoReplyStore(db_path)
     assert len(migrated.list_reply_attempts(limit=200)) == len(expected)
+
+
+@pytest.mark.parametrize(
+    ("action", "success_receipt", "expected_status"),
+    [
+        (action, receipt, status)
+        for action, (status, receipt) in _LEGACY_EFFECT_SUCCESS_CASES.items()
+    ],
+)
+def test_removed_runtime_requires_action_specific_success_receipt(
+    action: str,
+    success_receipt: dict[str, object],
+    expected_status: str,
+) -> None:
+    success = AutoReplyStore._removed_runtime_attempt_status(
+        action=action,
+        legacy_status="succeeded",
+        result_json=json.dumps(success_receipt, ensure_ascii=False),
+    )
+    unknown = AutoReplyStore._removed_runtime_attempt_status(
+        action=action,
+        legacy_status="succeeded",
+        result_json='{"unexpected":"value"}',
+    )
+
+    assert success == (expected_status, "")
+    for error_receipt in (
+        {"error": "failed"},
+        {"error": {"code": "failed"}},
+        {"success": False},
+    ):
+        assert AutoReplyStore._removed_runtime_attempt_status(
+            action=action,
+            legacy_status="succeeded",
+            result_json=json.dumps(error_receipt),
+        ) == ("failed", "migrated_explicit_execution_failure")
+    assert unknown == ("failed", "migrated_unverified_execution_receipt")
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        {
+            "tool_events": [
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "call_id": "call-1",
+                        "metadata": {"effect": "effectful"},
+                    },
+                }
+            ]
+        },
+        {
+            "receipt": {
+                "receipt_id": "receipt-1",
+                "operation_id": "operation-1",
+                "completed": True,
+                "persisted": True,
+                "safe_to_confirm": True,
+            }
+        },
+    ],
+)
+def test_removed_runtime_accepts_completed_effect_evidence(
+    receipt: dict[str, object],
+) -> None:
+    assert AutoReplyStore._removed_runtime_attempt_status(
+        action="agent_action",
+        legacy_status="succeeded",
+        result_json=json.dumps(receipt),
+    ) == ("completed", "")
+
+
+def test_removed_runtime_structured_block_is_not_completed() -> None:
+    assert AutoReplyStore._removed_runtime_attempt_status(
+        action="oa_approval",
+        legacy_status="succeeded",
+        result_json=json.dumps(
+            {
+                "action": "同意",
+                "outcome": "blocked",
+                "process_instance_id": "process-1",
+                "task_id": "task-1",
+            },
+            ensure_ascii=False,
+        ),
+    ) == ("blocked", "migrated_structured_execution_block")
 
 
 def test_removed_runtime_migration_starts_immediate_transaction(tmp_path: Path) -> None:
