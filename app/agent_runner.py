@@ -909,12 +909,17 @@ def _mcp_result_explicitly_succeeded(value: object) -> bool:
     decoded_strings = 0
     decoded_bytes = 0
     if isinstance(value, str):
-        encoded_size = len(value.encode("utf-8"))
+        if len(value) > _MAX_MCP_RESULT_JSON_BYTES:
+            return False
+        try:
+            encoded_size = len(value.encode("utf-8"))
+        except (UnicodeError, MemoryError):
+            return False
         if encoded_size > _MAX_MCP_RESULT_JSON_BYTES:
             return False
         try:
             value = json.loads(value)
-        except (json.JSONDecodeError, MemoryError, RecursionError):
+        except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
             return False
         decoded_strings = 1
         decoded_bytes = encoded_size
@@ -975,15 +980,21 @@ def _mcp_result_explicitly_succeeded(value: object) -> bool:
         stripped = current.lstrip()
         if not stripped.startswith(("{", "[")):
             continue
-        encoded_size = len(current.encode("utf-8"))
+        remaining_bytes = _MAX_MCP_RESULT_JSON_BYTES - decoded_bytes
+        if len(current) > remaining_bytes:
+            return False
+        try:
+            encoded_size = len(current.encode("utf-8"))
+        except (UnicodeError, MemoryError):
+            return False
         if (
             decoded_strings >= _MAX_MCP_RESULT_JSON_STRINGS
-            or decoded_bytes + encoded_size > _MAX_MCP_RESULT_JSON_BYTES
+            or encoded_size > remaining_bytes
         ):
             return False
         try:
             decoded = json.loads(current)
-        except (json.JSONDecodeError, MemoryError, RecursionError):
+        except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
             return False
         if not isinstance(decoded, (dict, list)):
             continue

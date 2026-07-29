@@ -404,6 +404,21 @@ def test_mcp_result_fails_closed_for_json_beyond_decoder_recursion_limit(
     assert _mcp_result_explicitly_succeeded(result) is False
 
 
+@pytest.mark.parametrize("nested_in_result", (False, True))
+def test_mcp_result_fails_closed_for_json_integer_beyond_decoder_limit(
+    nested_in_result: bool,
+):
+    oversized_integer = "9" * 5_000
+    encoded_value = '{"value":' + oversized_integer + "}"
+    if nested_in_result:
+        result = {"content": [], "structuredContent": {"payload": encoded_value}}
+    else:
+        result = '{"content":[],"structuredContent":' + encoded_value + "}"
+
+    assert len(encoded_value.encode("utf-8")) < _MAX_MCP_RESULT_JSON_BYTES
+    assert _mcp_result_explicitly_succeeded(result) is False
+
+
 class _OverBudgetList(list):
     def __len__(self):
         return _MAX_MCP_RESULT_NODES + 1
