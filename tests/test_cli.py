@@ -2844,7 +2844,7 @@ def test_send_attempt_command_sends_existing_unsent_reply_without_rerunning_code
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Phina: 看一下\n\n<@user-1> 可以先这样处理。（by明哥分身）"
+    final_reply = "可以先这样处理。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -3131,7 +3131,7 @@ def test_send_attempt_command_sends_single_chat_as_native_reply(
         sensitivity_kind="general",
         direct_user_id="user-1",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
+    final_reply = "收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -3194,7 +3194,7 @@ def test_send_attempt_command_resolves_single_chat_trigger_sender_from_recent_me
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
+    final_reply = "收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -3254,7 +3254,7 @@ def test_send_attempt_command_resolves_single_chat_trigger_sender_near_attempt_t
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
+    final_reply = "收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -3316,7 +3316,7 @@ def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_abs
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
+    final_reply = "收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -3383,7 +3383,7 @@ def test_send_attempt_command_uses_saved_snake_case_trigger_payload(
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
+    final_reply = "收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -3436,7 +3436,7 @@ def test_send_attempt_command_requires_trigger_sender_for_native_reply(
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
+    final_reply = "收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -3504,7 +3504,7 @@ def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_t
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
+    final_reply = "收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -3519,74 +3519,16 @@ def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_t
     assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
 
 
-def test_send_attempt_command_regenerates_runtime_leaks_before_sending(
+def test_send_attempt_command_blocks_runtime_leaks_without_rerunning_agent(
     monkeypatch, tmp_path
 ):
-    sent = {}
-    codex_calls = []
-
     class FakeDws:
         def __init__(self, **kwargs):
-            pass
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return ""
-
-        def read_recent_messages(self, conversation, limit=20):
-            return [
-                cli.DingTalkMessage(
-                    open_conversation_id=conversation.open_conversation_id,
-                    open_message_id="msg-1",
-                    conversation_title=conversation.title,
-                    single_chat=conversation.single_chat,
-                    sender_name="Phina",
-                    sender_open_dingtalk_id="sender-open-1",
-                    sender_user_id="sender-user-1",
-                    create_time="2026-05-13 18:00:00",
-                    content="@Alex Chen 看一下",
-                )
-            ]
-
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            at_open_dingtalk_ids=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            sent["message"] = (
-                conversation_id,
-                text,
-                at_users,
-                user_id,
-                open_dingtalk_id,
-            )
-            return {"result": {"processQueryKey": "key-1"}}
-
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
-            sent["reply"] = (
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                text,
-                at_users,
-            )
-            return {"result": {"processQueryKey": "key-1"}}
+            raise AssertionError("blocked attempt must not construct DWS")
 
     class FakeCodex:
-        def __init__(self, workspace, timeout_seconds, idle_timeout_seconds):
-            self.workspace = workspace
-            self.timeout_seconds = timeout_seconds
-            self.idle_timeout_seconds = idle_timeout_seconds
-
-        def decide(self, prompt, session_id, image_paths=None):
-            codex_calls.append((prompt, session_id, image_paths))
-            return SimpleNamespace(
-                action=cli.CodexAction.SEND_REPLY,
-                reply_text="改写后可以发送",
-            )
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("send-attempt must not rerun the agent")
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
     monkeypatch.setattr(cli, "CodexDecisionRunner", FakeCodex)
@@ -3613,23 +3555,15 @@ def test_send_attempt_command_regenerates_runtime_leaks_before_sending(
             ("session-1", attempt_id),
         )
 
-    result = send_attempt_command(settings, attempt_id)
+    with pytest.raises(SystemExit, match="blocked by leak_check"):
+        send_attempt_command(settings, attempt_id)
 
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
-    assert updated.send_status == "sent"
-    assert updated.send_error == ""
-    assert updated.final_reply_text == "改写后可以发送（by明哥分身）"
-    assert result["send_status"] == "sent"
-    assert sent["reply"] == (
-        "cid-1",
-        "msg-1",
-        "改写后可以发送（by明哥分身）",
-        None,
-    )
-    assert len(codex_calls) == 1
-    assert codex_calls[0][1] == "session-1"
-    assert "发送安全检查拦截" in codex_calls[0][0]
+    assert updated.send_status == "blocked"
+    assert updated.send_error == "leak_check"
+    assert updated.final_reply_text == "Codex 检索了本地 workspace 后认为可以。（by明哥分身）"
+    assert cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1") is None
 
 
 def test_max_batches_can_be_configured_from_env(monkeypatch):

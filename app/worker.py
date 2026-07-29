@@ -35,10 +35,6 @@ from app.agent_runner import (
     DirectAgentRunner,
     structured_execution_evidence,
 )
-from app.codex_decision import (
-    REPLY_AGENT_ENVELOPE_SCHEMA_HINT,
-    append_signature,
-)
 from app.channel_gate import (
     ChannelGate,
     ChannelGateResult,
@@ -74,10 +70,6 @@ from app.dingtalk_models import (
     DingTalkConversation,
     DingTalkMessage,
 )
-from app.leak_check import (
-    FORBIDDEN_MARKERS,
-    contains_forbidden_leak,
-)
 from app.codex_runner import selected_codex_model_provider
 from app.notification import (
     dingtalk_conversation_notification_url,
@@ -112,7 +104,6 @@ XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER = (
 )
 BLOCKED_UNRECOVERABLE_EXTERNAL_AUTH_PREFIX = "blocked_unrecoverable_external_auth"
 DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
-LEAK_CHECK_REGENERATION_SCHEMA = REPLY_AGENT_ENVELOPE_SCHEMA_HINT
 SPLIT_PERSON_SIGNATURE = assistant_signature()
 STALE_PROCESSING_TASK_SECONDS = 30 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
@@ -392,25 +383,6 @@ UNIVERSAL_MATERIAL_SHEET_COLUMN_LIMIT = 50
 class CalendarConflictContext:
     invite: DwsCalendarEvent
     conflicts: list[DwsCalendarEvent]
-
-
-@dataclass(frozen=True)
-class ReplyAtTarget:
-    user_id: str = ""
-    open_dingtalk_id: str = ""
-    name: str = ""
-
-
-class ReplyDeliveryError(RuntimeError):
-    """Raised after recording a delivery failure so queued tasks can retry."""
-
-
-class ReplyPreDeliveryError(ReplyDeliveryError):
-    """Raised when reply preparation fails before any transport call."""
-
-
-class MarkdownDocumentCreateIncompleteError(ReplyDeliveryError):
-    """Raised when DWS reports document creation without a usable document."""
 
 
 class ReplyTaskProcessingError(RuntimeError):
@@ -2136,6 +2108,9 @@ class DingTalkAutoReplyWorker:
             trigger_sender=task.trigger_sender,
             trigger_text=task.trigger_text,
             trigger_create_time=task.trigger_create_time,
+            trigger_sender_user_id=trigger.sender_user_id or "",
+            trigger_sender_open_dingtalk_id=trigger.sender_open_dingtalk_id or "",
+            trigger_mentioned_user_ids=tuple(trigger.mentioned_user_ids),
             messages=tuple(messages),
             materials=materials,
             prior_receipts=prior_receipts,
@@ -4522,345 +4497,9 @@ class DingTalkAutoReplyWorker:
         parts = urlsplit(url.rstrip(".,;，。；"))
         return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
-    def _explicit_reply_at_targets(
-        self, trigger: DingTalkMessage, reply_text: str
-    ) -> list[ReplyAtTarget]:
-        targets: list[ReplyAtTarget] = []
-        for mention_name in self._visible_mention_names(reply_text):
-            target = self._reply_at_target_for_name(trigger, mention_name)
-            if target is not None:
-                self._append_reply_at_target(targets, target)
-        return targets
-
-    def _default_reply_at_targets(self, trigger: DingTalkMessage) -> list[ReplyAtTarget]:
-        current_user_id = self.store.get_current_user_id()
-        targets: list[ReplyAtTarget] = []
-        sender_user_id = trigger.sender_user_id
-        if not sender_user_id:
-            try:
-                sender_user_id = self.dws.resolve_message_sender(trigger)
-            except Exception:
-                if trigger.sender_open_dingtalk_id:
-                    self._append_reply_at_target(
-                        targets,
-                        ReplyAtTarget(
-                            open_dingtalk_id=trigger.sender_open_dingtalk_id,
-                            name=trigger.sender_name,
-                        ),
-                    )
-                else:
-                    raise
-        for user_id in [sender_user_id or "", *trigger.mentioned_user_ids]:
-            if not user_id:
-                continue
-            if current_user_id and user_id == current_user_id:
-                continue
-            self._append_reply_at_target(
-                targets,
-                self._reply_at_target_for_user_id(user_id, trigger),
-            )
-        return targets
-
-    @staticmethod
-    def _reply_at_display_names(
-        conversation: DingTalkConversation, targets: list[ReplyAtTarget]
-    ) -> list[str]:
-        if conversation.single_chat:
-            return []
-        names: list[str] = []
-        for target in targets:
-            name = target.name.strip()
-            if name:
-                names.append(name)
-        return names
-
-    @staticmethod
-    def _apply_reply_at_mentions(reply_text: str, names: list[str]) -> str:
-        cleaned_names: list[str] = []
-        for name in names:
-            clean_name = name.strip()
-            if clean_name and clean_name not in cleaned_names:
-                cleaned_names.append(clean_name)
-        if not cleaned_names:
-            return reply_text
-
-        text = reply_text.strip()
-        missing_names: list[str] = []
-        for name in cleaned_names:
-            if f"@{name}" in text:
-                continue
-            stripped = text.lstrip()
-            leading = text[: len(text) - len(stripped)]
-            if stripped.startswith(name):
-                tail = stripped[len(name) :].lstrip()
-                text = f"{leading}@{name}" + (f" {tail}" if tail else "")
-                continue
-            missing_names.append(name)
-
-        if not missing_names:
-            return text
-        prefix = " ".join(f"@{name}" for name in missing_names)
-        return f"{prefix} {text.lstrip()}"
-
-    @staticmethod
-    def _visible_mention_names(text: str) -> list[str]:
-        names: list[str] = []
-        for match in MENTION_PATTERN.finditer(text):
-            token = match.group().strip()
-            if not token.startswith("@"):
-                continue
-            name = token[1:].strip()
-            for separator in ("(", "（"):
-                position = name.find(separator)
-                if position >= 0:
-                    name = name[:position].strip()
-            if name and name not in names:
-                names.append(name)
-        return names
-
-    def _reply_at_target_for_name(
-        self, trigger: DingTalkMessage, name: str
-    ) -> ReplyAtTarget | None:
-        if name == trigger.sender_name and trigger.sender_open_dingtalk_id:
-            return ReplyAtTarget(
-                user_id=trigger.sender_user_id or "",
-                open_dingtalk_id=trigger.sender_open_dingtalk_id,
-                name=trigger.sender_name,
-            )
-        matches = self.store.find_org_users_by_name(name)
-        if len(matches) != 1:
-            return None
-        profile = matches[0]
-        current_user_id = self.store.get_current_user_id()
-        if current_user_id and profile.user_id == current_user_id:
-            return None
-        return ReplyAtTarget(
-            user_id=profile.user_id,
-            open_dingtalk_id=profile.open_dingtalk_id or "",
-            name=profile.name,
-        )
-
-    def _reply_at_target_for_user_id(
-        self, user_id: str, trigger: DingTalkMessage
-    ) -> ReplyAtTarget:
-        if trigger.sender_user_id == user_id:
-            return ReplyAtTarget(
-                user_id=user_id,
-                open_dingtalk_id=trigger.sender_open_dingtalk_id or "",
-                name=trigger.sender_name,
-            )
-        profile = self.store.get_org_user_profile(user_id)
-        if profile is None:
-            return ReplyAtTarget(user_id=user_id)
-        return ReplyAtTarget(
-            user_id=profile.user_id,
-            open_dingtalk_id=profile.open_dingtalk_id or "",
-            name=profile.name,
-        )
-
-    @staticmethod
-    def _append_reply_at_target(
-        targets: list[ReplyAtTarget], target: ReplyAtTarget
-    ) -> None:
-        for existing in targets:
-            if target.open_dingtalk_id and (
-                existing.open_dingtalk_id == target.open_dingtalk_id
-            ):
-                return
-            if target.user_id and existing.user_id == target.user_id:
-                return
-        targets.append(target)
-
-    @staticmethod
-    def _format_reply_delivery_text(reply_text: str) -> str:
-        return DingTalkAutoReplyWorker._native_reply_body(reply_text)
-
-    def _send_reply(
-        self,
-        conversation: DingTalkConversation,
-        trigger: DingTalkMessage,
-        new_messages: list[DingTalkMessage],
-        reply_text: str,
-        reason: str,
-        attempt_id: int,
-        system_actions: list[dict] | None = None,
-        comment_target_messages: list[DingTalkMessage] | None = None,
-        raise_on_delivery_failure: bool = False,
-        allow_duplicate_send: bool = False,
-    ) -> None:
-        if not reply_text.strip():
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="blocked",
-                send_error=f"empty_reply: {reason}",
-            )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "empty_reply",
-                reason,
-            )
-            self._notify(
-                title=f"CEO agent empty reply: {conversation.title}",
-                message=reason[:120],
-                conversation=conversation,
-                attempt_id=attempt_id,
-            )
-            return
-        try:
-            explicit_at_targets = self._explicit_reply_at_targets(trigger, reply_text)
-            at_targets = explicit_at_targets or self._default_reply_at_targets(trigger)
-        except Exception as exc:
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="failed",
-                send_error=str(exc),
-            )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "reply_at_users",
-                str(exc),
-            )
-            self._notify(
-                title=f"CEO reply recipient failed: {conversation.title}",
-                message=str(exc)[:120],
-                conversation=conversation,
-                attempt_id=attempt_id,
-            )
-            if raise_on_delivery_failure:
-                raise ReplyPreDeliveryError(str(exc)) from exc
-            return
-        at_users = [target.user_id for target in at_targets if target.user_id]
-        at_open_dingtalk_ids = (
-            [
-                target.open_dingtalk_id
-                for target in at_targets
-                if target.open_dingtalk_id
-            ]
-            if not conversation.single_chat
-            else []
-        )
-        at_open_dingtalk_names = (
-            [
-                target.name
-                for target in at_targets
-                if target.open_dingtalk_id and target.name
-            ]
-            if not conversation.single_chat
-            else []
-        )
-        reply_at_names = self._reply_at_display_names(
-            conversation,
-            at_targets,
-        )
-        direct_user_id = at_users[0] if conversation.single_chat and at_users else None
-        reply_text = append_signature(reply_text)
-        reply_text = self._format_reply_delivery_text(
-            reply_text,
-        )
-        if contains_forbidden_leak(reply_text):
-            regenerated_reply_text = self._regenerate_reply_after_leak_check(
-                blocked_reply_text=reply_text,
-            )
-            if regenerated_reply_text:
-                reply_text = append_signature(regenerated_reply_text)
-                reply_text = self._format_reply_delivery_text(
-                    reply_text,
-                )
-        reply_text = self._apply_reply_at_mentions(reply_text, reply_at_names)
-        self.store.update_reply_attempt(
-            attempt_id,
-            final_reply_text=reply_text,
-            direct_user_id=direct_user_id or "",
-            direct_open_dingtalk_id=(
-                trigger.sender_open_dingtalk_id if conversation.single_chat else ""
-            ),
-        )
-        if self.dry_run:
-            self.store.update_reply_attempt(attempt_id, send_status="dry_run")
-            return
-        if not allow_duplicate_send and self.store.has_sent_reply_for_trigger(
-            conversation.open_conversation_id,
-            trigger.open_message_id,
-        ):
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="skipped",
-                send_error="duplicate_sent_reply_for_trigger",
-            )
-            self._mark_seen(new_messages)
-            return
-        try:
-            send_result = self.dws.send_reply_to_trigger(
-                conversation,
-                trigger,
-                reply_text,
-                at_users=at_users,
-                at_open_dingtalk_ids=at_open_dingtalk_ids,
-                at_open_dingtalk_names=at_open_dingtalk_names,
-            )
-        except Exception as exc:
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="failed",
-                send_error=str(exc),
-            )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "send",
-                str(exc),
-            )
-            if raise_on_delivery_failure:
-                raise ReplyDeliveryError(str(exc)) from exc
-            return
-        self.store.update_reply_attempt(
-            attempt_id,
-            send_status="sent",
-            send_error="",
-        )
-        self.store.record_sent_reply(
-            conversation.open_conversation_id,
-            trigger.open_message_id,
-            reply_text,
-            send_result_json=json.dumps(send_result or {}, ensure_ascii=False),
-            recall_key=DwsClient.extract_recall_key(send_result),
-        )
-        self._mark_seen(new_messages)
-
-    @staticmethod
-    def _leak_check_feedback_prompt(blocked_reply_text: str) -> str:
-        forbidden_terms = "、".join(f"`{marker}`" for marker in FORBIDDEN_MARKERS)
-        return (
-            "上一版 reply_text 被发送安全检查拦截，不能发送。\n"
-            "请基于同一个上下文重新输出合法 AgentEnvelope JSON，"
-            "只改写 user_response.text，不要解释。\n"
-            '本次 kind 必须是 reply，例如 "kind":"reply"。\n'
-            "user_response.text 不要引用来源、不要加脚注编号、不要写参考文献，"
-            f"也不要出现这些会被发送安全检查拦截的字符串：{forbidden_terms}。\n"
-            "如果业务上需要表达产品能力或判断依据，改用普通中文描述，不要照搬上述字符串。\n"
-            "上一版最终回复如下，仅用于改写，不要原样复制：\n"
-            f"{blocked_reply_text[:1200]}\n"
-            f"{LEAK_CHECK_REGENERATION_SCHEMA}"
-        )
-
     @staticmethod
     def _is_robot_direct_trigger(trigger: DingTalkMessage) -> bool:
         return trigger.raw_payload.get("ceo_agent_source") == "robot_direct"
-
-    @staticmethod
-    def _native_reply_body(reply_text: str) -> str:
-        stripped = reply_text.strip()
-        lines = stripped.splitlines()
-        if len(lines) >= 3 and lines[0].startswith("> ") and not lines[1].strip():
-            stripped = "\n".join(lines[2:]).lstrip()
-        while stripped.startswith("<@"):
-            end = stripped.find(">")
-            if end < 0:
-                break
-            stripped = stripped[end + 1 :].lstrip()
-        return stripped
 
     def _notify(
         self,

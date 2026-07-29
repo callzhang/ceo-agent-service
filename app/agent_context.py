@@ -40,6 +40,9 @@ class AgentTaskContext:
     messages: tuple[AgentContextMessage, ...]
     materials: tuple[MaterialReference, ...]
     prior_receipts: tuple[PriorReceipt, ...]
+    trigger_sender_user_id: str = ""
+    trigger_sender_open_dingtalk_id: str = ""
+    trigger_mentioned_user_ids: tuple[str, ...] = ()
     trigger_raw_payload: dict[str, object] = field(default_factory=dict)
 
     def render(self) -> str:
@@ -51,6 +54,9 @@ class AgentTaskContext:
             "single_chat": self.single_chat,
             "message_id": self.trigger_message_id,
             "sender": self.trigger_sender,
+            "sender_user_id": self.trigger_sender_user_id,
+            "sender_open_dingtalk_id": self.trigger_sender_open_dingtalk_id,
+            "mentioned_user_ids": list(self.trigger_mentioned_user_ids),
             "text": self.trigger_text,
             "create_time": self.trigger_create_time,
             "raw_payload": self.trigger_raw_payload,

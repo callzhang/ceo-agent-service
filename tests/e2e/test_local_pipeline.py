@@ -1,9 +1,7 @@
 from datetime import datetime
-import json
 from pathlib import Path
-from types import SimpleNamespace
 
-import app.agent_runner as agent_runner_module
+import app.native_cli_metadata as native_cli_metadata_module
 from app.agent_result import EffectKind
 from app.agent_runner import DirectAgentRunner, NativeCliMetadataClassifier
 from app.channel_gate import ChannelGateResult, ChannelGateState
@@ -309,32 +307,26 @@ def test_direct_agent_pipeline_discovers_dws_effect_from_production_metadata(
     tmp_path,
     monkeypatch,
 ):
-    calls: list[tuple[str, ...]] = []
+    calls: list[str] = []
 
-    def schema_metadata(command, **_kwargs):
-        calls.append(tuple(command))
-        assert command == ["dws", "schema", "--all", "--compact", "--format", "json"]
-        return SimpleNamespace(
-            returncode=0,
-            stdout=json.dumps(
-                {
-                    "products": [
-                        {
-                            "tools": [
-                                {
-                                    "cli_path": "chat message send",
-                                    "effect": "write",
-                                }
-                            ]
-                        }
-                    ]
-                }
-            ),
-            stderr="",
-        )
+    def dws_metadata():
+        calls.append("dws")
+        return {("dws", "chat message send"): EffectKind.EFFECTFUL}
 
-    agent_runner_module._load_reviewed_dws_effects.cache_clear()
-    monkeypatch.setattr(agent_runner_module.subprocess, "run", schema_metadata)
+    def lark_metadata():
+        calls.append("lark-cli")
+        return {}
+
+    monkeypatch.setattr(
+        native_cli_metadata_module,
+        "_load_reviewed_dws_effects",
+        dws_metadata,
+    )
+    monkeypatch.setattr(
+        native_cli_metadata_module,
+        "_load_reviewed_lark_effects",
+        lark_metadata,
+    )
     worker, store = _direct_agent_pipeline(
         tmp_path,
         fixture_name="dingtalk_send.jsonl",
@@ -346,12 +338,11 @@ def test_direct_agent_pipeline_discovers_dws_effect_from_production_metadata(
 
     task = store.get_reply_task_for_message("cid-1", "msg-1")
     run = store.get_agent_run_for_task_generation(task.id, "g1")
-    assert calls == [("dws", "schema", "--all", "--compact", "--format", "json")]
+    assert calls == ["dws", "lark-cli"]
     assert [
         (item.operation_id, item.command_path)
         for item in store.list_agent_execution_receipts(run.id)
     ] == [("effect-1", "chat message send")]
-    agent_runner_module._load_reviewed_dws_effects.cache_clear()
 
 
 def test_direct_agent_local_pipeline_handoff_reaction_and_ding_use_jsonl_receipts(

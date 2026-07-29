@@ -629,6 +629,29 @@ def _message(
     )
 
 
+def test_direct_agent_context_preserves_raw_sender_identity(tmp_path: Path):
+    trigger = _message().model_copy(
+        update={
+            "sender_open_dingtalk_id": "open-user-1",
+            "mentioned_user_ids": ["mentioned-1"],
+        }
+    )
+    worker, runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [ScriptedRun(_result(AgentOutcome.NO_ACTION))],
+    )
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    context = runner.calls[0][2]
+    assert context.trigger_sender == "ET"
+    assert context.trigger_sender_user_id == "user-1"
+    assert context.trigger_sender_open_dingtalk_id == "open-user-1"
+    assert context.trigger_mentioned_user_ids == ("mentioned-1",)
+
+
 def _enqueue(
     store: AutoReplyStore,
     trigger: DingTalkMessage,

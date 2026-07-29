@@ -856,8 +856,6 @@ class AutoReplyStore:
                     on agent_run_events(agent_run_id, sequence);
                 create index if not exists idx_agent_run_events_run_call
                     on agent_run_events(agent_run_id, call_id, sequence);
-                create index if not exists idx_agent_run_events_run_scope
-                    on agent_run_events(agent_run_id, event_scope);
                 create table if not exists agent_execution_receipts (
                     id integer primary key autoincrement,
                     agent_run_id integer not null,

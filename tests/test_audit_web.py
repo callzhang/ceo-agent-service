@@ -5051,26 +5051,38 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
     )
 
     attempt = store.get_reply_attempt(result["attempt_id"])
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
-    assert result["send_status"] == "sent"
+    assert result["send_status"] == "queued"
     assert attempt is not None
     assert attempt.trigger_sender == "Mina 邹"
     assert attempt.trigger_text == "@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力"
-    assert (
-        attempt.final_reply_text
-        == "@Mina 邹 这个岗位核心看业务拆解、模型理解、项目推进和学习速度。（by明哥分身）"
-    )
+    assert attempt.draft_reply_text == "这个岗位核心看业务拆解、模型理解、项目推进和学习速度。"
+    assert attempt.final_reply_text == ""
+    assert task is not None
+    assert task.status == "pending"
+    assert task.force_new_decision is True
+    assert task.manual_rerun_attempt_id == attempt.id
     assert dws.sent_messages == []
-    assert dws.reply_messages == [
-        (
-            "cid-1",
-            "msg-1",
-            "open-mina",
-            attempt.final_reply_text,
-        )
-    ]
-    assert sent_reply is not None
-    assert sent_reply.recall_key == "recall-1"
+    assert dws.reply_messages == []
+    assert sent_reply is None
+
+    first_generation = task.execution_generation
+    second_result = handle_reviewed_message_reply(
+        store,
+        dws,
+        user_name="Mina 邹",
+        group_name="【招聘】大模型项目经理/大模型数据解决方案专家",
+        message_str="@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力",
+        reply_text="这个岗位核心看业务拆解、模型理解、项目推进和学习速度。",
+    )
+    requeued = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert second_result["send_status"] == "queued"
+    assert requeued is not None
+    assert requeued.id == task.id
+    assert requeued.execution_generation != first_generation
+    assert requeued.manual_rerun_attempt_id == second_result["attempt_id"]
+    assert store.get_sent_reply("cid-1", "msg-1") is None
 
 
 def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
@@ -5196,26 +5208,22 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
     )
 
     attempt = store.get_reply_attempt(result["attempt_id"])
-    assert result["send_status"] == "sent"
+    task = store.get_reply_task_for_message("cid-site", "msg-site-1")
+    assert result["send_status"] == "queued"
     assert attempt is not None
-    assert (
-        attempt.final_reply_text
-        == "@Claire 我已经完成审核，会把核心 comment 补到 tracker。（by明哥分身）"
-    )
+    assert attempt.final_reply_text == ""
     assert (
         attempt.reviewer_feedback
         == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
     )
     assert attempt.corrected_reply_text == "我已经完成审核，会把核心 comment 补到 tracker。"
+    assert task is not None
+    assert task.status == "pending"
+    assert task.force_new_decision is True
+    assert task.manual_rerun_attempt_id == attempt.id
     assert dws.sent_messages == []
-    assert dws.reply_messages == [
-        (
-            "cid-site",
-            "msg-site-1",
-            "open-claire",
-            attempt.final_reply_text,
-        )
-    ]
+    assert dws.reply_messages == []
+    assert store.get_sent_reply("cid-site", "msg-site-1") is None
 
 
 def test_handle_reviewed_message_reply_matches_private_message_without_mention(
@@ -5325,26 +5333,20 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
     )
 
     attempt = store.get_reply_attempt(result["attempt_id"])
+    task = store.get_reply_task_for_message("cid-private", "msg-private-1")
     sent_reply = store.get_sent_reply("cid-private", "msg-private-1")
-    assert result["send_status"] == "sent"
+    assert result["send_status"] == "queued"
     assert attempt is not None
     assert attempt.trigger_sender == "Mina 邹"
     assert attempt.trigger_text == "明哥分身，大模型项目经理需要具备什么能力"
-    assert (
-        attempt.final_reply_text
-        == "这个岗位核心看业务拆解、模型理解、项目推进和学习速度。（by明哥分身）"
-    )
+    assert attempt.final_reply_text == ""
+    assert task is not None
+    assert task.status == "pending"
+    assert task.force_new_decision is True
+    assert task.manual_rerun_attempt_id == attempt.id
     assert dws.sent_messages == []
-    assert dws.reply_messages == [
-        (
-            "cid-private",
-            "msg-private-1",
-            "open-mina",
-            attempt.final_reply_text,
-        )
-    ]
-    assert sent_reply is not None
-    assert sent_reply.recall_key == "recall-private-1"
+    assert dws.reply_messages == []
+    assert sent_reply is None
 
 
 def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_search_misses(
@@ -5449,18 +5451,17 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
     )
 
     attempt = store.get_reply_attempt(result["attempt_id"])
-    assert result["send_status"] == "sent"
+    task = store.get_reply_task_for_message("cid-private", "msg-private-1")
+    assert result["send_status"] == "queued"
     assert attempt is not None
-    assert attempt.final_reply_text == "收到，那你先按这个口径推进。（by明哥分身）"
+    assert attempt.final_reply_text == ""
+    assert task is not None
+    assert task.status == "pending"
+    assert task.force_new_decision is True
+    assert task.manual_rerun_attempt_id == attempt.id
     assert dws.sent_messages == []
-    assert dws.reply_messages == [
-        (
-            "cid-private",
-            "msg-private-1",
-            "open-mina",
-            attempt.final_reply_text,
-        )
-    ]
+    assert dws.reply_messages == []
+    assert store.get_sent_reply("cid-private", "msg-private-1") is None
 
 
 def test_render_log_list_shows_recent_operations(tmp_path: Path):

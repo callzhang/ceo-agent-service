@@ -10070,13 +10070,8 @@ def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
     assert latest.send_status == "skipped"
 
 
-def test_native_reply_body_strips_legacy_quote_and_at_placeholders():
-    sent_text = DingTalkAutoReplyWorker._native_reply_body(
-        "> 周俊杰: 如果是私有化的POC都是走产研评估流程的，如果...\n\n"
-        "<@sender-user-1> 流程方向没问题（by明哥分身）"
-    )
-
-    assert sent_text == "流程方向没问题（by明哥分身）"
+def test_worker_has_no_service_side_reply_body_rewriter():
+    assert not hasattr(DingTalkAutoReplyWorker, "_native_reply_body")
 
 
 def test_resume_prompt_only_includes_turn_message_without_repeating_thread_prompt(

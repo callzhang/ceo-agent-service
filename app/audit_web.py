@@ -10,8 +10,6 @@ import os
 from pathlib import Path
 import subprocess
 from typing import TypedDict
-import urllib.error
-import urllib.request
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import uvicorn
@@ -102,7 +100,6 @@ from app.feedback_events import (
     sync_feedback_events_for_context as sync_feedback_events_for_context_impl,
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
-from app.meeting_alignment_models import MeetingAlignmentRun
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
@@ -138,7 +135,6 @@ AUDIT_WEB_SQLITE_BUSY_TIMEOUT_SECONDS = 2
 USER_FEEDBACK_SYNC_BATCH_LIMIT = 5
 USER_FEEDBACK_SYNC_TIMEOUT_SECONDS = 0.5
 USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN = 5
-from app.worker import DingTalkAutoReplyWorker
 
 
 CSS = """
@@ -6569,15 +6565,22 @@ def handle_reviewed_message_reply(
             ],
             ensure_ascii=False,
         ),
-        audit_summary="已按发送人、群名、消息原文定位并处理。",
+        audit_summary=(
+            "Reviewer feedback: "
+            + reviewer_feedback.strip()
+            + "\nSuggested response: "
+            + reply_text.strip()
+        ).strip(),
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=None, dry_run=False)
-    worker._send_reply(
-        conversation=conversation,
-        trigger=trigger,
-        new_messages=[trigger],
-        reply_text=reply_text,
-        reason="reviewed_message_reply",
+    store.enqueue_manual_rerun_reply_task(
+        conversation_id=conversation.open_conversation_id,
+        conversation_title=conversation.title,
+        single_chat=conversation.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
         attempt_id=attempt_id,
     )
     if reviewer_feedback.strip():
@@ -6594,8 +6597,8 @@ def handle_reviewed_message_reply(
         "conversation_title": conversation.title,
         "trigger_sender": trigger.sender_name,
         "trigger_text": trigger.content,
-        "send_status": attempt.send_status,
-        "final_reply_text": attempt.final_reply_text,
+        "send_status": "queued",
+        "final_reply_text": "",
         "reviewer_feedback": attempt.reviewer_feedback,
     }
 

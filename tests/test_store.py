@@ -1746,6 +1746,60 @@ def test_reconciliation_event_count_uses_run_scope_composite_index(tmp_path: Pat
     ), plan
 
 
+def test_legacy_agent_run_events_adds_scope_before_index_and_is_idempotent(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.executescript(
+            """
+            create table agent_run_events (
+                id integer primary key autoincrement,
+                agent_run_id integer not null,
+                sequence integer not null,
+                event_json text not null,
+                event_type text not null default '',
+                call_id text not null default '',
+                effect_kind text not null default '',
+                receipt_operation_id text not null default '',
+                created_at text not null default current_timestamp,
+                unique(agent_run_id, sequence)
+            );
+            insert into agent_run_events (
+                agent_run_id, sequence, event_json, event_type
+            ) values (7, 1, '{"type":"item.completed"}', 'item.completed');
+            """
+        )
+
+    store = AutoReplyStore(db_path)
+    store._initialize()
+
+    with sqlite3.connect(db_path) as db:
+        columns = {
+            row[1] for row in db.execute("pragma table_info(agent_run_events)")
+        }
+        indexes = {
+            row[1] for row in db.execute("pragma index_list(agent_run_events)")
+        }
+        preserved = db.execute(
+            "select agent_run_id, sequence, event_json, event_scope "
+            "from agent_run_events"
+        ).fetchall()
+        plan = db.execute(
+            "explain query plan select count(*) from agent_run_events "
+            "where agent_run_id=? and event_scope='reconciliation'",
+            (7,),
+        ).fetchall()
+
+    assert "event_scope" in columns
+    assert "idx_agent_run_events_run_scope" in indexes
+    assert preserved == [(7, 1, '{"type":"item.completed"}', "direct")]
+    assert any(
+        "USING COVERING INDEX idx_agent_run_events_run_scope" in row[3]
+        for row in plan
+    ), plan
+
+
 def test_get_agent_run_for_task_generation_returns_exact_row(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

@@ -13,11 +13,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, NonNegativeInt, PositiveInt
 
-from app.codex_decision import CodexDecisionRunner, append_signature
+from app.codex_decision import CodexDecisionRunner
 from app.database_backup import (
     BACKUP_CHECK_INTERVAL_SECONDS,
     backup_database_if_due,
-    prune_database_backups,
 )
 from app.config import (
     consumer_poll_interval_seconds,
@@ -1580,30 +1579,22 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         raise SystemExit(
             f"reply attempt {attempt_id} is not sendable: action={attempt.action}"
         )
-    reply_text = DingTalkAutoReplyWorker._native_reply_body(attempt.final_reply_text)
+    reply_text = attempt.final_reply_text.strip()
     if not reply_text.strip():
         raise SystemExit(f"reply attempt {attempt_id} has empty final_reply_text")
     if contains_forbidden_leak(reply_text):
-        regenerated_reply_text = _regenerate_send_attempt_after_leak_check(
-            settings,
-            blocked_reply_text=reply_text,
-            session_id=attempt.codex_session_id or None,
+        store.update_reply_attempt(
+            attempt.id,
+            send_status="blocked",
+            send_error="leak_check",
         )
-        if regenerated_reply_text:
-            reply_text = append_signature(regenerated_reply_text)
-        if contains_forbidden_leak(reply_text):
-            store.update_reply_attempt(
-                attempt.id,
-                send_status="blocked",
-                send_error="leak_check",
-            )
-            store.record_error(
-                attempt.conversation_id,
-                attempt.trigger_message_id,
-                "leak_check",
-                reply_text,
-            )
-            raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
+        store.record_error(
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+            "leak_check",
+            reply_text,
+        )
+        raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
 
     conversation = store.get_conversation(attempt.conversation_id)
     if conversation is None:
@@ -1690,25 +1681,6 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
             )
 
         if delivery_text_has_forbidden_leak():
-            regenerated_reply_text = _regenerate_send_attempt_after_leak_check(
-                settings,
-                blocked_reply_text=reply_text,
-                session_id=attempt.codex_session_id or None,
-            )
-            if regenerated_reply_text:
-                clean_reply_text = append_signature(regenerated_reply_text)
-                outgoing_text = prepare_outgoing_reply_text(
-                    reply_text=clean_reply_text,
-                    original_text=attempt.trigger_text,
-                    attempt_id=attempt.id,
-                    feedback_base_url=feedback_base_url,
-                    feedback_link_prefix=feedback_link_prefix,
-                    feedback_link_appender=append_feedback_links,
-                )
-                reply_text = outgoing_text.text
-                feedback_token = outgoing_text.feedback_token
-                store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
-        if delivery_text_has_forbidden_leak():
             store.update_reply_attempt(
                 attempt.id,
                 send_status="blocked",
@@ -1788,31 +1760,6 @@ def _send_reply_to_trigger_chunks(dws, conversation, trigger, text: str) -> dict
             for index, chunk in enumerate(chunks, start=1)
         ]
     }
-
-
-def _regenerate_send_attempt_after_leak_check(
-    settings: WorkerSettings,
-    *,
-    blocked_reply_text: str,
-    session_id: str | None,
-) -> str:
-    codex = CodexDecisionRunner(
-        workspace=settings.workspace,
-        timeout_seconds=settings.codex_timeout_seconds,
-        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
-    )
-    decision = codex.decide(
-        prompt=DingTalkAutoReplyWorker._leak_check_feedback_prompt(
-            blocked_reply_text
-        ),
-        session_id=session_id,
-    )
-    if decision.action not in {
-        CodexAction.SEND_REPLY,
-        CodexAction.ASK_CLARIFYING_QUESTION,
-    }:
-        return ""
-    return decision.reply_text.strip()
 
 
 def _send_calendar_attempt(
