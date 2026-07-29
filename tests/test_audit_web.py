@@ -5080,8 +5080,9 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
     assert second_result["send_status"] == "queued"
     assert requeued is not None
     assert requeued.id == task.id
-    assert requeued.execution_generation != first_generation
-    assert requeued.manual_rerun_attempt_id == second_result["attempt_id"]
+    assert requeued.execution_generation == first_generation
+    assert second_result["attempt_id"] == attempt.id
+    assert requeued.manual_rerun_attempt_id == attempt.id
     assert store.get_sent_reply("cid-1", "msg-1") is None
 
 

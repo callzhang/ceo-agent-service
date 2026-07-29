@@ -84,10 +84,8 @@ from app.developer_prompt import (
     write_user_prompt_template,
 )
 from app.dingtalk_models import (
-    CodexAction,
     DingTalkConversation,
     DingTalkMessage,
-    SensitivityKind,
 )
 from app.wechat.models import WechatMessage
 from app.dws_client import DwsClient
@@ -6546,33 +6544,7 @@ def handle_reviewed_message_reply(
         single_chat=conversation.single_chat,
         codex_session_id=None,
     )
-    attempt_id = store.record_reply_attempt(
-        conversation_id=conversation.open_conversation_id,
-        conversation_title=conversation.title,
-        trigger_message_id=trigger.open_message_id,
-        trigger_sender=trigger.sender_name,
-        trigger_text=trigger.content,
-        action=CodexAction.SEND_REPLY.value,
-        sensitivity_kind=SensitivityKind.GENERAL.value,
-        codex_reason="reviewed_message_reply",
-        draft_reply_text=reply_text,
-        audit_tool_events_json=json.dumps(
-            [
-                {
-                    "tool": "audit_web.handle_reviewed_message_reply",
-                    "result": "matched user_name/group_name/message_str",
-                }
-            ],
-            ensure_ascii=False,
-        ),
-        audit_summary=(
-            "Reviewer feedback: "
-            + reviewer_feedback.strip()
-            + "\nSuggested response: "
-            + reply_text.strip()
-        ).strip(),
-    )
-    store.enqueue_manual_rerun_reply_task(
+    attempt_id, _task = store.record_reviewed_reply_rerun(
         conversation_id=conversation.open_conversation_id,
         conversation_title=conversation.title,
         single_chat=conversation.single_chat,
@@ -6581,14 +6553,9 @@ def handle_reviewed_message_reply(
         trigger_sender=trigger.sender_name,
         trigger_text=trigger.content,
         trigger_message_json=trigger.model_dump_json(),
-        attempt_id=attempt_id,
+        suggested_reply_text=reply_text,
+        reviewer_feedback=reviewer_feedback,
     )
-    if reviewer_feedback.strip():
-        store.record_reply_feedback(
-            attempt_id,
-            feedback=reviewer_feedback,
-            corrected_reply_text=reply_text,
-        )
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         raise ValueError(f"reply attempt disappeared: {attempt_id}")

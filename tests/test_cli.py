@@ -2803,27 +2803,12 @@ def test_reset_codex_sessions_command_only_clears_conversation_sessions(tmp_path
 
 
 @pytest.mark.parametrize("send_status", ["dry_run", "failed", "pending"])
-def test_send_attempt_command_sends_existing_unsent_reply_without_rerunning_codex(
+def test_send_attempt_command_queues_direct_agent_without_sending(
     monkeypatch, tmp_path, capsys, send_status
 ):
-    sent = {}
-
     class FakeDws:
         def __init__(self, **kwargs):
-            sent["kwargs"] = kwargs
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return send_result["result"]["processQueryKey"]
-
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
-            sent["reply"] = (
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
+            raise AssertionError("send-attempt must not construct DwsClient")
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
     settings = WorkerSettings(
@@ -2854,27 +2839,22 @@ def test_send_attempt_command_sends_existing_unsent_reply_without_rerunning_code
 
     result = send_attempt_command(settings, attempt_id)
 
-    assert sent["reply"] == (
-        "cid-1",
-        "msg-1",
-        "open-sender-1",
-        "可以先这样处理。（by明哥分身）",
-    )
-    assert result["send_status"] == "sent"
+    assert result["send_status"] == "queued"
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
-    assert updated.send_status == "sent"
-    assert updated.send_error == ""
+    assert updated.send_status == send_status
     assert updated.final_reply_text == "可以先这样处理。（by明哥分身）"
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert sent_reply.recall_key == "recall-1"
-    assert '"kind": "native_reply"' in sent_reply.send_result_json
-    assert '"ref_message_id": "msg-1"' in sent_reply.send_result_json
-    assert '"send_status": "sent"' in capsys.readouterr().out
+    task = cli.AutoReplyStore(settings.db_path).get_reply_task_for_message(
+        "cid-1", "msg-1"
+    )
+    assert sent_reply is None
+    assert task is not None and task.status == "pending"
+    assert task.manual_rerun_attempt_id == attempt_id
+    assert '"send_status": "queued"' in capsys.readouterr().out
 
 
-def test_send_attempt_command_marks_existing_sent_reply_without_duplicate_send(
+def test_send_attempt_command_dedupes_same_pending_rerun_without_direct_send(
     monkeypatch, tmp_path, capsys
 ):
     class FakeDws:
@@ -2897,30 +2877,25 @@ def test_send_attempt_command_marks_existing_sent_reply_without_duplicate_send(
         send_status="pending",
     )
     store.update_reply_attempt(attempt_id, final_reply_text="新回复")
-    store.record_sent_reply("cid-1", "msg-1", "已发回复", send_result_json='{"ok":true}')
+    first = send_attempt_command(settings, attempt_id)
+    first_task = store.get_reply_task_for_message("cid-1", "msg-1")
+    second = send_attempt_command(settings, attempt_id)
+    second_task = store.get_reply_task_for_message("cid-1", "msg-1")
 
-    result = send_attempt_command(settings, attempt_id)
-
-    assert result["send_status"] == "sent"
-    updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
-    assert updated is not None
-    assert updated.send_status == "sent"
-    assert updated.send_error == "already_sent"
-    assert "已发回复" in capsys.readouterr().out
+    assert first["send_status"] == second["send_status"] == "queued"
+    assert first_task is not None and second_task is not None
+    assert first_task.execution_generation == second_task.execution_generation
+    assert store.get_sent_reply("cid-1", "msg-1") is None
 
 
-def test_send_attempt_command_executes_existing_dry_run_calendar_response(
+def test_send_attempt_command_queues_existing_calendar_attempt(
     monkeypatch, tmp_path, capsys
 ):
     calls = {}
 
     class FakeDws:
         def __init__(self, **kwargs):
-            calls["kwargs"] = kwargs
-
-        def respond_calendar_event(self, event_id, response_status):
-            calls["calendar"] = (event_id, response_status)
-            return {"success": True}
+            raise AssertionError("send-attempt must not construct DwsClient")
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
     settings = WorkerSettings(
@@ -2947,623 +2922,16 @@ def test_send_attempt_command_executes_existing_dry_run_calendar_response(
 
     result = send_attempt_command(settings, attempt_id)
 
-    assert calls["calendar"] == ("event-1", "accepted")
-    assert result["send_status"] == "calendar"
-    assert result["calendar_response_status"] == "accepted"
+    assert calls == {}
+    assert result["send_status"] == "queued"
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
-    assert updated.send_status == "calendar"
-    assert updated.send_error == ""
-    assert updated.calendar_response_result_json == '{"success": true}'
-    assert '"calendar_response_status": "accepted"' in capsys.readouterr().out
-
-
-def test_send_attempt_command_appends_feedback_links_when_configured(
-    monkeypatch, tmp_path
-):
-    sent = {}
-
-    class FakeDws:
-        def __init__(self, **kwargs):
-            pass
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return send_result["result"]["processQueryKey"]
-
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
-            sent["reply"] = (
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
-    monkeypatch.setenv(
-        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
-        "https://feedback.example.com",
+    assert updated.send_status == "dry_run"
+    task = cli.AutoReplyStore(settings.db_path).get_reply_task_for_message(
+        "cid-1", "msg-1"
     )
-    monkeypatch.setattr(cli, "DwsClient", FakeDws)
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, None)
-    enqueue_trigger_task(store)
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        trigger_message_id="msg-1",
-        trigger_sender="Phina",
-        trigger_text="@Alex Chen 看一下",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-    store.update_reply_attempt(
-        attempt_id,
-        final_reply_text="可以先这样处理。（by明哥分身）",
-        send_status="dry_run",
-    )
-
-    send_attempt_command(settings, attempt_id)
-
-    sent_text = sent["reply"][3]
-    assert "反馈：[👍 有帮助](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
-    assert "source=" not in sent_text
-    assert f"attempt_id={attempt_id}" in sent_text
-    sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert sent_reply.feedback_token.startswith("spike_")
-    assert sent_reply.feedback_token in sent_text
-    assert '"kind": "native_reply"' in sent_reply.send_result_json
-
-
-def test_send_attempt_command_keeps_reply_when_feedback_is_overdue(
-    monkeypatch, tmp_path
-):
-    sent = {}
-
-    class FakeDws:
-        def __init__(self, **kwargs):
-            pass
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return send_result["result"]["processQueryKey"]
-
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
-            sent["reply"] = (
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
-    monkeypatch.setenv(
-        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
-        "https://feedback.example.com",
-    )
-    monkeypatch.setattr(cli, "DwsClient", FakeDws)
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, None)
-    enqueue_trigger_task(store)
-    store.record_sent_reply(
-        "cid-1",
-        "old-msg-1",
-        "旧回复",
-        feedback_token="token-old",
-    )
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update sent_replies set sent_at=? where trigger_message_id=?",
-            ("2026-05-01 12:00:00", "old-msg-1"),
-        )
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        trigger_message_id="msg-1",
-        trigger_sender="Phina",
-        trigger_text="@Alex Chen 看一下",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-    store.update_reply_attempt(
-        attempt_id,
-        final_reply_text="可以先这样处理。（by明哥分身）",
-        send_status="dry_run",
-    )
-
-    send_attempt_command(settings, attempt_id)
-
-    sent_text = sent["reply"][3]
-    assert "可以先这样处理。（by明哥分身）" in sent_text
-    assert "【反馈】" in sent_text
-    assert "点过后不再提示" in sent_text
-    assert "这条回复有帮助吗？" in sent_text
-    assert "/api/dingtalk-feedback-spike" in sent_text
-    assert "请对我提供反馈后再提问" not in sent_text
-    sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert sent_reply.feedback_token in sent_text
-
-
-def test_send_attempt_command_sends_single_chat_as_native_reply(
-    monkeypatch, tmp_path
-):
-    sent = {}
-
-    class FakeDws:
-        def __init__(self, **kwargs):
-            sent["kwargs"] = kwargs
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return send_result["result"]["processQueryKey"]
-
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
-            sent["reply"] = (
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
-    monkeypatch.setattr(cli, "DwsClient", FakeDws)
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Claire", True, None)
-    enqueue_trigger_task(
-        store,
-        conversation_title="Claire",
-        single_chat=True,
-        trigger_sender="Claire",
-        trigger_text="可以不参加",
-    )
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Claire",
-        trigger_message_id="msg-1",
-        trigger_sender="Claire",
-        trigger_text="可以不参加",
-        action="send_reply",
-        sensitivity_kind="general",
-        direct_user_id="user-1",
-    )
-    final_reply = "收到。（by明哥分身）"
-    store.update_reply_attempt(
-        attempt_id,
-        final_reply_text=final_reply,
-        send_status="dry_run",
-    )
-
-    send_attempt_command(settings, attempt_id)
-
-    assert sent["reply"] == (
-        "cid-1",
-        "msg-1",
-        "open-sender-1",
-        "收到。（by明哥分身）",
-    )
-    sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-
-
-def test_send_attempt_command_resolves_single_chat_trigger_sender_from_recent_message(
-    monkeypatch, tmp_path
-):
-    sent = {}
-
-    class FakeDws:
-        def __init__(self, **kwargs):
-            sent["kwargs"] = kwargs
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return send_result["result"]["processQueryKey"]
-
-        def read_recent_messages(self, conversation, limit=50):
-            sent["read_recent"] = (conversation.open_conversation_id, limit)
-            return [
-                SimpleNamespace(
-                    open_message_id="msg-1",
-                    sender_open_dingtalk_id="open-1",
-                ),
-            ]
-
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
-            sent["reply"] = (
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
-    monkeypatch.setattr(cli, "DwsClient", FakeDws)
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Claire", True, None)
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Claire",
-        trigger_message_id="msg-1",
-        trigger_sender="Claire",
-        trigger_text="可以不参加",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-    final_reply = "收到。（by明哥分身）"
-    store.update_reply_attempt(
-        attempt_id,
-        final_reply_text=final_reply,
-        send_status="dry_run",
-    )
-
-    send_attempt_command(settings, attempt_id)
-
-    assert sent["read_recent"] == ("cid-1", cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT)
-    assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
-
-
-def test_send_attempt_command_resolves_single_chat_trigger_sender_near_attempt_time(
-    monkeypatch, tmp_path
-):
-    sent = {}
-
-    class FakeDws:
-        def __init__(self, **kwargs):
-            sent["kwargs"] = kwargs
-            sent["read_recent"] = []
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return send_result["result"]["processQueryKey"]
-
-        def read_recent_messages(self, conversation, limit=50):
-            sent["read_recent"].append((conversation.last_message_create_at, limit))
-            if conversation.last_message_create_at is None:
-                return []
-            return [
-                SimpleNamespace(
-                    open_message_id="msg-1",
-                    sender_open_dingtalk_id="open-1",
-                ),
-            ]
-
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
-            sent["reply"] = (
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
-    monkeypatch.setattr(cli, "DwsClient", FakeDws)
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Claire", True, None)
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Claire",
-        trigger_message_id="msg-1",
-        trigger_sender="Claire",
-        trigger_text="可以不参加",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-    final_reply = "收到。（by明哥分身）"
-    store.update_reply_attempt(
-        attempt_id,
-        final_reply_text=final_reply,
-        send_status="dry_run",
-    )
-
-    send_attempt_command(settings, attempt_id)
-
-    assert sent["read_recent"][0] == (
-        None,
-        cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT,
-    )
-    assert sent["read_recent"][1][0] is not None
-    assert sent["read_recent"][1][1] == cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT
-    assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
-
-
-def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_absent(
-    monkeypatch, tmp_path
-):
-    sent = {}
-
-    class FakeDws:
-        def __init__(self, **kwargs):
-            sent["kwargs"] = kwargs
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return send_result["result"]["processQueryKey"]
-
-        def read_recent_messages(self, conversation, limit=50):
-            return [
-                SimpleNamespace(
-                    open_message_id="msg-1",
-                    sender_user_id=None,
-                    sender_open_dingtalk_id="open-1",
-                ),
-            ]
-
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
-            sent["reply"] = (
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
-    monkeypatch.setattr(cli, "DwsClient", FakeDws)
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Claire", True, None)
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Claire",
-        trigger_message_id="msg-1",
-        trigger_sender="Claire",
-        trigger_text="可以不参加",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-    final_reply = "收到。（by明哥分身）"
-    store.update_reply_attempt(
-        attempt_id,
-        final_reply_text=final_reply,
-        send_status="dry_run",
-    )
-
-    send_attempt_command(settings, attempt_id)
-
-    assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
-
-
-def test_send_attempt_command_uses_saved_snake_case_trigger_payload(
-    monkeypatch, tmp_path
-):
-    sent = {}
-
-    class FakeDws:
-        def __init__(self, **kwargs):
-            sent["kwargs"] = kwargs
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return send_result["result"]["processQueryKey"]
-
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
-            sent["reply"] = (
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
-    monkeypatch.setattr(cli, "DwsClient", FakeDws)
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Claire", True, None)
-    store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Claire",
-        single_chat=True,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-05-28 18:00:00",
-        trigger_sender="Claire",
-        trigger_text="可以不参加",
-        trigger_message_json=json.dumps(
-            {
-                "open_conversation_id": "cid-1",
-                "open_message_id": "msg-1",
-                "sender_name": "Claire",
-                "sender_open_dingtalk_id": "open-snake-1",
-                "create_time": "2026-05-28 18:00:00",
-                "content": "可以不参加",
-            },
-            ensure_ascii=False,
-        ),
-    )
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Claire",
-        trigger_message_id="msg-1",
-        trigger_sender="Claire",
-        trigger_text="可以不参加",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-    final_reply = "收到。（by明哥分身）"
-    store.update_reply_attempt(
-        attempt_id,
-        final_reply_text=final_reply,
-        send_status="dry_run",
-    )
-
-    send_attempt_command(settings, attempt_id)
-
-    assert sent["reply"] == (
-        "cid-1",
-        "msg-1",
-        "open-snake-1",
-        "收到。（by明哥分身）",
-    )
-
-
-def test_send_attempt_command_requires_trigger_sender_for_native_reply(
-    monkeypatch, tmp_path
-):
-    sent = {}
-
-    class FakeDws:
-        def __init__(self, **kwargs):
-            sent["kwargs"] = kwargs
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return send_result["result"]["processQueryKey"]
-
-        def read_recent_messages(self, conversation, limit=50):
-            return [
-                SimpleNamespace(
-                    open_message_id="msg-1",
-                    sender_user_id=None,
-                    sender_open_dingtalk_id=None,
-                    sender_name="Claire",
-                ),
-            ]
-
-    monkeypatch.setattr(cli, "DwsClient", FakeDws)
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Claire", True, None)
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Claire",
-        trigger_message_id="msg-1",
-        trigger_sender="Claire",
-        trigger_text="可以不参加",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-    final_reply = "收到。（by明哥分身）"
-    store.update_reply_attempt(
-        attempt_id,
-        final_reply_text=final_reply,
-        send_status="dry_run",
-    )
-
-    with pytest.raises(SystemExit, match="senderOpenDingTalkId"):
-        send_attempt_command(settings, attempt_id)
-
-
-def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_time(
-    monkeypatch, tmp_path
-):
-    sent = {}
-
-    class FakeDws:
-        def __init__(self, **kwargs):
-            sent["kwargs"] = kwargs
-            sent["read_recent"] = []
-            sent["forward"] = []
-
-        @staticmethod
-        def extract_recall_key(send_result):
-            return send_result["result"]["processQueryKey"]
-
-        def read_recent_messages(self, conversation, limit=50):
-            sent["read_recent"].append((conversation.last_message_create_at, limit))
-            return []
-
-        def build_message_list_command(self, conversation, limit, forward):
-            sent["forward"].append((conversation.last_message_create_at, limit, forward))
-            return {"conversation": conversation, "limit": limit, "forward": forward}
-
-        def run_json(self, command):
-            return command
-
-        def parse_messages(self, payload, conversation_title, single_chat):
-            return [
-                SimpleNamespace(
-                    open_message_id="msg-1",
-                    sender_user_id=None,
-                    sender_open_dingtalk_id="open-1",
-                ),
-            ]
-
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
-            sent["reply"] = (
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
-    monkeypatch.setattr(cli, "DwsClient", FakeDws)
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Claire", True, None)
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Claire",
-        trigger_message_id="msg-1",
-        trigger_sender="Claire",
-        trigger_text="可以不参加",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-    final_reply = "收到。（by明哥分身）"
-    store.update_reply_attempt(
-        attempt_id,
-        final_reply_text=final_reply,
-        send_status="dry_run",
-    )
-
-    send_attempt_command(settings, attempt_id)
-
-    assert sent["forward"][0][0] is not None
-    assert sent["forward"][0][1] == cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT
-    assert sent["forward"][0][2] is True
-    assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
-
-
-def test_send_attempt_command_blocks_runtime_leaks_without_rerunning_agent(
-    monkeypatch, tmp_path
-):
-    class FakeDws:
-        def __init__(self, **kwargs):
-            raise AssertionError("blocked attempt must not construct DWS")
-
-    class FakeCodex:
-        def __init__(self, *args, **kwargs):
-            raise AssertionError("send-attempt must not rerun the agent")
-
-    monkeypatch.setattr(cli, "DwsClient", FakeDws)
-    monkeypatch.setattr(cli, "CodexDecisionRunner", FakeCodex)
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, None)
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        trigger_message_id="msg-1",
-        trigger_sender="Phina",
-        trigger_text="@Alex Chen 看一下",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-    store.update_reply_attempt(
-        attempt_id,
-        final_reply_text="Codex 检索了本地 workspace 后认为可以。（by明哥分身）",
-        send_status="dry_run",
-    )
-    with store._connect() as conn:
-        conn.execute(
-            "update reply_attempts set codex_session_id=? where id=?",
-            ("session-1", attempt_id),
-        )
-
-    with pytest.raises(SystemExit, match="blocked by leak_check"):
-        send_attempt_command(settings, attempt_id)
-
-    updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
-    assert updated is not None
-    assert updated.send_status == "blocked"
-    assert updated.send_error == "leak_check"
-    assert updated.final_reply_text == "Codex 检索了本地 workspace 后认为可以。（by明哥分身）"
-    assert cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1") is None
+    assert task is not None and task.manual_rerun_attempt_id == attempt_id
+    assert '"send_status": "queued"' in capsys.readouterr().out
 
 
 def test_max_batches_can_be_configured_from_env(monkeypatch):

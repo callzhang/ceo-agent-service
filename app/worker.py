@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse, urlsplit, urlunsplit
 from app.agent_context import (
     AgentContextMessage,
     AgentTaskContext,
+    ManualRerunInstruction,
     MaterialReference,
     PriorReceipt,
 )
@@ -66,7 +67,6 @@ from app.corpus import (
     extract_retrieval_keywords,
 )
 from app.dingtalk_models import (
-    CodexAction,
     DingTalkConversation,
     DingTalkMessage,
 )
@@ -117,7 +117,6 @@ CALENDAR_CONTEXT_MATCH_MIN_SCORE = 0.05
 CALENDAR_CONTEXT_MATCH_LOOKBACK = timedelta(minutes=10)
 CALENDAR_ORGANIZER_RESPONSE_ERROR = "Cannot change response status of event organizer"
 CALENDAR_EVENT_NOT_FOUND_ERROR = "Event does not exist"
-CALENDAR_BURST_REPLY_SUPPRESSION_WINDOW = timedelta(minutes=30)
 OA_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=14)
 DWS_TRANSIENT_ERROR_STATE_PREFIX = "dws_transient_error_count:"
 DWS_TRANSIENT_NOTIFY_THRESHOLD = 3
@@ -373,10 +372,6 @@ MESSAGE_RECOVERY_INTERVAL = message_recovery_interval()
 FAST_PATH_UNREAD_BACKOFF = fast_path_unread_backoff_duration()
 SINGLE_CHAT_READ_RECOVERY_WINDOW = single_chat_read_recovery_window()
 SINGLE_CHAT_READ_RECOVERY_LIMIT = single_chat_read_recovery_limit()
-UNIVERSAL_MATERIAL_CONTENT_LIMIT = 60_000
-UNIVERSAL_MATERIAL_FOLDER_CHILD_LIMIT = 20
-UNIVERSAL_MATERIAL_SHEET_ROW_LIMIT = 200
-UNIVERSAL_MATERIAL_SHEET_COLUMN_LIMIT = 50
 
 
 @dataclass(frozen=True)
@@ -418,7 +413,6 @@ class DingTalkAutoReplyWorker:
         send_attempts: int = 2,
         max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
         now_provider: Callable[[], datetime] | None = None,
-        oa_approval_handler=None,
         channel_gates: dict[str, ChannelGate] | None = None,
         login_coordinator: LoginCoordinator | None = None,
         direct_agent_runner: DirectAgentRunner | None = None,
@@ -434,7 +428,6 @@ class DingTalkAutoReplyWorker:
         self.max_task_attempts = max_task_attempts
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
-        self.oa_approval_handler = oa_approval_handler
         self.channel_gates = channel_gates or default_channel_gates(
             dws_binary=str(getattr(dws, "dws_bin", "dws"))
         )
@@ -2098,6 +2091,19 @@ class DingTalkAutoReplyWorker:
             context_messages=context_messages,
         )
         prior_receipts = self._agent_prior_receipts(task)
+        manual_rerun = None
+        if task.manual_rerun_attempt_id:
+            source_attempt = self.store.get_reply_attempt(task.manual_rerun_attempt_id)
+            if source_attempt is not None:
+                manual_rerun = ManualRerunInstruction(
+                    source_attempt_id=source_attempt.id,
+                    reviewer_feedback=source_attempt.reviewer_feedback.strip(),
+                    suggested_reply_text=(
+                        source_attempt.corrected_reply_text.strip()
+                        or source_attempt.draft_reply_text.strip()
+                        or source_attempt.final_reply_text.strip()
+                    ),
+                )
         return AgentTaskContext(
             task_id=task.id,
             channel=task.channel,
@@ -2114,6 +2120,7 @@ class DingTalkAutoReplyWorker:
             messages=tuple(messages),
             materials=materials,
             prior_receipts=prior_receipts,
+            manual_rerun=manual_rerun,
             trigger_raw_payload=dict(trigger.raw_payload),
         )
 
@@ -2590,32 +2597,6 @@ class DingTalkAutoReplyWorker:
         error: str = "",
         replace_pending_single_chat: bool = True,
     ) -> bool:
-        if self._should_suppress_burst_calendar_reply(conversation, trigger):
-            self.store.record_reply_attempt(
-                conversation_id=conversation.open_conversation_id,
-                conversation_title=conversation.title,
-                trigger_message_id=trigger.open_message_id,
-                trigger_sender=trigger.sender_name,
-                trigger_text=trigger.content,
-                action=CodexAction.NO_REPLY.value,
-                sensitivity_kind="calendar",
-                codex_reason=(
-                    "Suppressed a same-topic calendar card because a recent "
-                    "calendar reply was already sent in this single chat."
-                ),
-                send_status="skipped",
-            )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "calendar_burst_reply_suppressed",
-                (
-                    "suppressed same-topic calendar reply after recent sent "
-                    f"calendar reply: message={trigger.open_message_id}"
-                ),
-            )
-            self._mark_seen([trigger])
-            return False
         if conversation.single_chat and replace_pending_single_chat:
             updated = self.store.replace_pending_single_chat_reply_task_trigger(
                 conversation_id=conversation.open_conversation_id,
@@ -2653,65 +2634,6 @@ class DingTalkAutoReplyWorker:
             channel="dingtalk",
         )
         return updated > 0
-
-    def _should_suppress_burst_calendar_reply(
-        self,
-        conversation: DingTalkConversation,
-        trigger: DingTalkMessage,
-    ) -> bool:
-        if not conversation.single_chat or not self._is_calendar_message(trigger):
-            return False
-        trigger_topic = self._calendar_reply_topic(trigger)
-        if not trigger_topic:
-            return False
-        trigger_time = self._message_create_time_as_instant(trigger)
-        trigger_sender = trigger.sender_name.strip()
-        for attempt in self.store.list_reply_attempts_for_conversation(
-            conversation.open_conversation_id,
-            limit=20,
-        ):
-            if attempt.trigger_message_id == trigger.open_message_id:
-                continue
-            if attempt.action != CodexAction.SEND_REPLY.value:
-                continue
-            if attempt.send_status != "sent":
-                continue
-            if not self._is_calendar_text(attempt.trigger_text):
-                continue
-            if self._calendar_reply_topic_text(attempt.trigger_text) != trigger_topic:
-                continue
-            if trigger_sender and attempt.trigger_sender.strip() != trigger_sender:
-                continue
-            attempt_time = self._parse_service_state_datetime(
-                attempt.updated_at or attempt.created_at
-            )
-            if attempt_time is None:
-                continue
-            delta = abs(trigger_time - attempt_time.astimezone(trigger_time.tzinfo))
-            if delta <= CALENDAR_BURST_REPLY_SUPPRESSION_WINDOW:
-                return True
-        return False
-
-    @staticmethod
-    def _calendar_reply_topic(message: DingTalkMessage) -> str:
-        return DingTalkAutoReplyWorker._calendar_reply_topic_text(message.content)
-
-    @staticmethod
-    def _calendar_reply_topic_text(text: str) -> str:
-        topic = DingTalkAutoReplyWorker._strip_calendar_prefix(text).strip()
-        topic = re.sub(r"^[【\[].*?[】\]]\s*", "", topic)
-        topic = re.split(r"\s[-—–:：]\s|[-—–]", topic, maxsplit=1)[0]
-        return re.sub(r"\s+", "", topic).strip().lower()
-
-    @staticmethod
-    def _strip_calendar_prefix(text: str) -> str:
-        return re.sub(r"^\s*[\[［【]\s*日程\s*[\]］】]\s*", "", text, count=1)
-
-    @staticmethod
-    def _is_calendar_text(text: str) -> bool:
-        return bool(
-            re.match(r"^\s*[\[［【]\s*日程\s*[\]］】]", text.strip())
-        )
 
     def _reply_task_trigger_messages(
         self,

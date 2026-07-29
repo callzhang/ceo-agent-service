@@ -1364,6 +1364,61 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
     ] == ["send-b"]
 
 
+def test_manual_review_reaches_agent_without_unrelated_attempt_fields(tmp_path: Path):
+    trigger = _message("请根据审核意见重新处理")
+    worker, runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [ScriptedRun(_result(AgentOutcome.NO_ACTION))],
+    )
+    _enqueue(worker.store, trigger)
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        trigger_message_id=trigger.open_message_id,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="按审核后的版本处理。",
+        direct_user_id="unrelated-direct-user",
+        direct_open_dingtalk_id="unrelated-open-id",
+        codex_session_id="unrelated-session",
+        audit_documents_json='[{"path":"/private/unrelated"}]',
+        audit_tool_events_json='[{"token":"unrelated-secret"}]',
+    )
+    worker.store.record_reply_feedback(
+        attempt_id,
+        feedback="先核对材料，再执行。",
+        corrected_reply_text="按最新材料回复。",
+    )
+    worker.store.enqueue_manual_rerun_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        attempt_id=attempt_id,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    context = runner.calls[0][2]
+    assert context.manual_rerun is not None
+    assert context.manual_rerun.source_attempt_id == attempt_id
+    assert context.manual_rerun.reviewer_feedback == "先核对材料，再执行。"
+    assert context.manual_rerun.suggested_reply_text == "按最新材料回复。"
+    rendered = context.render()
+    assert "unrelated-direct-user" not in rendered
+    assert "unrelated-open-id" not in rendered
+    assert "unrelated-session" not in rendered
+    assert "/private/unrelated" not in rendered
+    assert "unrelated-secret" not in rendered
+
+
 def test_completed_generation_is_not_executed_again(tmp_path: Path):
     trigger = _message()
     worker, runner, _dws = _worker(

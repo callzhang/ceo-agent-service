@@ -1583,71 +1583,127 @@ class AutoReplyStore:
 
     @staticmethod
     def _migrate_removed_runtime(db: sqlite3.Connection) -> None:
-        tables = {
-            str(row["name"])
-            for row in db.execute(
-                "select name from sqlite_master where type='table'"
-            ).fetchall()
-        }
-        if {
-            "universal_plan_executions",
-            "universal_action_executions",
-        }.issubset(tables):
-            rows = db.execute(
-                """
-                select actions.*, tasks.conversation_id, tasks.conversation_title,
-                       tasks.trigger_message_id, tasks.trigger_sender,
-                       tasks.trigger_text
-                from universal_action_executions as actions
-                join universal_plan_executions as plans
-                  on plans.execution_scope_id=actions.execution_scope_id
-                join reply_tasks as tasks on tasks.id=plans.reply_task_id
-                left join reply_attempts as attempts
-                  on attempts.id=actions.attempt_id
-                where attempts.id is null
-                order by actions.created_at, actions.execution_id
-                """
-            ).fetchall()
-            for row in rows:
-                status = str(row["status"] or "").strip().lower()
-                send_status = (
-                    "completed"
-                    if status == "succeeded"
-                    else "failed"
-                    if status == "failed"
-                    else "blocked"
-                )
-                error = str(row["error"] or "").strip()
-                result = str(row["result_json"] or "").strip()
-                summary = result or error or f"migrated removed runtime state: {status}"
-                db.execute(
+        if db.in_transaction:
+            db.commit()
+        db.execute("begin immediate")
+        try:
+            tables = {
+                str(row["name"])
+                for row in db.execute(
+                    "select name from sqlite_master where type='table'"
+                ).fetchall()
+            }
+            if {
+                "universal_plan_executions",
+                "universal_action_executions",
+            }.issubset(tables):
+                rows = db.execute(
                     """
-                    insert into reply_attempts (
-                        conversation_id, conversation_title, trigger_message_id,
-                        trigger_sender, trigger_text, action, sensitivity_kind,
-                        codex_reason, audit_summary, send_status, send_error,
-                        created_at, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, 'general', ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["conversation_id"],
-                        row["conversation_title"],
-                        row["trigger_message_id"],
-                        row["trigger_sender"],
-                        row["trigger_text"],
-                        str(row["action_kind"] or "agent_action"),
-                        "migrated from removed runtime",
-                        summary[:2000],
-                        send_status,
-                        error[:1000],
-                        row["created_at"],
-                        row["updated_at"],
-                    ),
-                )
-        db.execute("drop table if exists universal_action_executions")
-        db.execute("drop table if exists universal_plan_executions")
-        db.execute("drop index if exists idx_reply_attempts_universal_execution")
-        db.execute("delete from service_state where key = 'dws_auth_backup'")
+                    select actions.*, tasks.conversation_id, tasks.conversation_title,
+                           tasks.trigger_message_id, tasks.trigger_sender,
+                           tasks.trigger_text
+                    from universal_action_executions as actions
+                    join universal_plan_executions as plans
+                      on plans.execution_scope_id=actions.execution_scope_id
+                    join reply_tasks as tasks on tasks.id=plans.reply_task_id
+                    left join reply_attempts as attempts
+                      on attempts.id=actions.attempt_id
+                    where attempts.id is null
+                    order by actions.created_at, actions.execution_id
+                    """
+                ).fetchall()
+                for row in rows:
+                    legacy_status = str(row["status"] or "").strip().lower()
+                    action = str(row["action_kind"] or "agent_action").strip()
+                    result = str(row["result_json"] or "").strip()
+                    send_status, migration_error = (
+                        AutoReplyStore._removed_runtime_attempt_status(
+                            action=action,
+                            legacy_status=legacy_status,
+                            result_json=result,
+                        )
+                    )
+                    error = str(row["error"] or "").strip() or migration_error
+                    summary = (
+                        result
+                        or error
+                        or f"migrated removed runtime state: {legacy_status}"
+                    )
+                    db.execute(
+                        """
+                        insert into reply_attempts (
+                            conversation_id, conversation_title, trigger_message_id,
+                            trigger_sender, trigger_text, action, sensitivity_kind,
+                            codex_reason, audit_summary, send_status, send_error,
+                            created_at, updated_at
+                        ) values (?, ?, ?, ?, ?, ?, 'general', ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            row["conversation_id"],
+                            row["conversation_title"],
+                            row["trigger_message_id"],
+                            row["trigger_sender"],
+                            row["trigger_text"],
+                            action,
+                            "migrated from removed runtime",
+                            summary[:2000],
+                            send_status,
+                            error[:1000],
+                            row["created_at"],
+                            row["updated_at"],
+                        ),
+                    )
+            db.execute("drop table if exists universal_action_executions")
+            db.execute("drop table if exists universal_plan_executions")
+            db.execute("drop index if exists idx_reply_attempts_universal_execution")
+            db.execute("delete from service_state where key = 'dws_auth_backup'")
+        except Exception:
+            db.rollback()
+            raise
+        db.commit()
+
+    @staticmethod
+    def _removed_runtime_attempt_status(
+        *,
+        action: str,
+        legacy_status: str,
+        result_json: str,
+    ) -> tuple[str, str]:
+        if legacy_status == "failed":
+            return "failed", ""
+        if legacy_status in {"blocked", "unknown"}:
+            return "blocked", ""
+        if legacy_status == "skipped":
+            return "skipped", ""
+        if legacy_status != "succeeded":
+            return "failed", f"migrated_incomplete_status:{legacy_status}"
+
+        terminal_statuses = {
+            "no_reply": "skipped",
+            "handoff_to_human": "blocked",
+            "blocked": "blocked",
+            "stop_with_error": "failed",
+        }
+        if action in terminal_statuses:
+            return terminal_statuses[action], ""
+        try:
+            receipt = json.loads(result_json)
+        except json.JSONDecodeError:
+            receipt = None
+        if not isinstance(receipt, dict) or not receipt:
+            return "failed", "migrated_missing_execution_receipt"
+        effect_statuses = {
+            "send_reply": "sent",
+            "ask_clarifying_question": "sent",
+            "oa_approval": "completed",
+            "mail_reply": "sent",
+            "calendar_response": "calendar",
+            "dws_markdown_document_reply": "document",
+            "dws_message_reaction": "reacted",
+            "queue_okr_review": "completed",
+            "memory_write": "completed",
+        }
+        return effect_statuses.get(action, "completed"), ""
 
     @staticmethod
     def _migrate_agent_run_events(db: sqlite3.Connection) -> None:
@@ -1926,8 +1982,22 @@ class AutoReplyStore:
         attempt_id: int = 0,
         channel: str = "dingtalk",
     ) -> ReplyTask:
-        execution_generation = uuid4().hex
         with self._connect() as db:
+            existing = db.execute(
+                """
+                select * from reply_tasks
+                where channel=? and conversation_id=? and trigger_message_id=?
+                """,
+                (channel, conversation_id, trigger_message_id),
+            ).fetchone()
+            if (
+                attempt_id > 0
+                and existing is not None
+                and existing["status"] in {"pending", "processing"}
+                and int(existing["manual_rerun_attempt_id"] or 0) == attempt_id
+            ):
+                return self._reply_task_from_row(existing)
+            execution_generation = uuid4().hex
             db.execute(
                 """
                 insert into reply_tasks (
@@ -6777,6 +6847,140 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def record_reviewed_reply_rerun(
+        self,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        single_chat: bool,
+        trigger_message_id: str,
+        trigger_create_time: str,
+        trigger_sender: str,
+        trigger_text: str,
+        trigger_message_json: str,
+        suggested_reply_text: str,
+        reviewer_feedback: str = "",
+        channel: str = "dingtalk",
+    ) -> tuple[int, ReplyTask]:
+        """Atomically persist one reviewed instruction and queue its generation."""
+        feedback = reviewer_feedback.strip()
+        suggestion = suggested_reply_text.strip()
+        with self._connect() as db:
+            existing = db.execute(
+                """
+                select attempts.id as attempt_id, tasks.*
+                from reply_tasks as tasks
+                join reply_attempts as attempts
+                  on attempts.id=tasks.manual_rerun_attempt_id
+                where tasks.channel=?
+                  and tasks.conversation_id=?
+                  and tasks.trigger_message_id=?
+                  and tasks.status in ('pending', 'processing')
+                  and attempts.codex_reason='reviewed_message_reply'
+                  and attempts.reviewer_feedback=?
+                  and attempts.corrected_reply_text=?
+                limit 1
+                """,
+                (
+                    channel,
+                    conversation_id,
+                    trigger_message_id,
+                    feedback,
+                    suggestion,
+                ),
+            ).fetchone()
+            if existing is not None:
+                return int(existing["attempt_id"]), self._reply_task_from_row(existing)
+
+            audit_summary = (
+                "Reviewer feedback: "
+                + feedback
+                + "\nSuggested response: "
+                + suggestion
+            ).strip()
+            cursor = db.execute(
+                """
+                insert into reply_attempts (
+                    conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    codex_reason, draft_reply_text, audit_tool_events_json,
+                    audit_summary, reviewer_feedback, corrected_reply_text,
+                    reviewed_at, send_status, channel
+                ) values (?, ?, ?, ?, ?, 'send_reply', 'general',
+                          'reviewed_message_reply', ?, ?, ?, ?, ?,
+                          current_timestamp, 'pending', ?)
+                """,
+                (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_text,
+                    suggestion,
+                    json.dumps(
+                        [{"tool": "audit_review", "result": "queued"}],
+                        ensure_ascii=False,
+                    ),
+                    audit_summary,
+                    feedback,
+                    suggestion,
+                    channel,
+                ),
+            )
+            attempt_id = int(cursor.lastrowid)
+            execution_generation = uuid4().hex
+            db.execute(
+                """
+                insert into reply_tasks (
+                    channel, conversation_id, conversation_title, single_chat,
+                    trigger_message_id, trigger_create_time, trigger_sender,
+                    trigger_text, trigger_message_json, available_at,
+                    force_new_decision, manual_rerun_attempt_id,
+                    execution_generation, status, locked_at, error
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?,
+                          'pending', null, ?)
+                on conflict(channel, conversation_id, trigger_message_id) do update set
+                    conversation_title=excluded.conversation_title,
+                    single_chat=excluded.single_chat,
+                    trigger_create_time=excluded.trigger_create_time,
+                    trigger_sender=excluded.trigger_sender,
+                    trigger_text=excluded.trigger_text,
+                    trigger_message_json=excluded.trigger_message_json,
+                    available_at='',
+                    force_new_decision=1,
+                    manual_rerun_attempt_id=excluded.manual_rerun_attempt_id,
+                    execution_generation=excluded.execution_generation,
+                    status='pending',
+                    locked_at=null,
+                    error=excluded.error,
+                    updated_at=current_timestamp
+                """,
+                (
+                    channel,
+                    conversation_id,
+                    conversation_title,
+                    int(single_chat),
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    attempt_id,
+                    execution_generation,
+                    f"manual_rerun_from_attempt:{attempt_id}",
+                ),
+            )
+            task_row = db.execute(
+                """
+                select * from reply_tasks
+                where channel=? and conversation_id=? and trigger_message_id=?
+                """,
+                (channel, conversation_id, trigger_message_id),
+            ).fetchone()
+            if task_row is None:
+                raise RuntimeError("reviewed reply task was not persisted")
+            return attempt_id, self._reply_task_from_row(task_row)
+
     def get_reply_attempt(self, attempt_id: int) -> ReplyAttempt | None:
         with self._connect() as db:
             row = db.execute(
@@ -7011,10 +7215,6 @@ class AutoReplyStore:
                     end as action,
                     case
                         when runs.status='no_action' then 'skipped'
-                        when runs.status in ('retry', 'failed') and exists (
-                            select 1 from meeting_alignment_runs as later_runs
-                            where later_runs.job_id=runs.job_id and later_runs.id>runs.id
-                        ) then 'skipped'
                         when runs.status in ('retry', 'failed') then 'failed'
                         when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
                         when runs.status='ready_to_send' and exists (

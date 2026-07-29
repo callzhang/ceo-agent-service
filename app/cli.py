@@ -56,21 +56,12 @@ from app.dws_client import (
     native_reply_delivery_payload,
 )
 from app.feedback_spike import (
-    append_feedback_links,
     build_events_url,
-    contains_forbidden_leak_outside_feedback_links,
-    prepare_outgoing_reply_text,
     send_feedback_spike_links,
 )
-from app.feedback_policy import (
-    FEEDBACK_REQUIRED_LINK_PREFIX,
-    requires_feedback_block,
-    requires_feedback_reminder,
-)
 from app.external_retry import is_external_dependency_error
-from app.leak_check import contains_forbidden_leak
 from app.message_split import split_dingtalk_text
-from app.dingtalk_models import CodexAction, DingTalkConversation, DingTalkMessage
+from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.notification import send_macos_notification
 from app.meeting_alignment import (
     MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY,
@@ -80,7 +71,6 @@ from app.meeting_alignment import (
     recover_meeting_alignment_jobs,
 )
 from app.meeting_alignment_agent import MeetingAlignmentCodexRunner
-from app.oa_approval import OaApprovalSpecHandler
 from app.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
@@ -108,7 +98,6 @@ from app.work_profile import (
     write_jsonl,
 )
 from app.worker import (
-    CALENDAR_ACTION_SEND_STATUS,
     DingTalkAutoReplyWorker,
     _is_codex_authorization_wait_reason,
     _normalize_codex_stop_error_reason,
@@ -154,7 +143,6 @@ OKR_OBJECTIVE_RULE_ID_ENV = "CEO_OKR_OBJECTIVE_RULE_ID"
 OKR_REVIEW_CODEX_TIMEOUT_SECONDS = 1200
 OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS = 900
 WORK_SUMMARY_INPUT_STALE_GRACE_SECONDS = 60
-SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT = 500
 run_audit_web = None
 
 
@@ -740,12 +728,6 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
-    oa_approval_handler = OaApprovalSpecHandler(
-        workspace=settings.workspace,
-        timeout_seconds=settings.codex_timeout_seconds,
-        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
-        store=store,
-    )
     style_profile = _load_style_profile(settings.corpus_dir)
     style_records = load_corpus_records(settings.corpus_dir / "style_corpus.csv")
     worker = DingTalkAutoReplyWorker(
@@ -756,7 +738,6 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         style_profile=style_profile,
         style_records=style_records,
     )
-    worker.oa_approval_handler = oa_approval_handler
     okr_source_kind = _okr_source_kind()
     if okr_source_kind == "agoal":
         worker.okr_live_source = DwsAgoalApiOkrSource(
@@ -1570,177 +1551,56 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
             f"reply attempt {attempt_id} is not an unsent attempt: "
             f"{attempt.send_status}"
         )
-    if attempt.calendar_event_id.strip() and attempt.calendar_response_status.strip():
-        return _send_calendar_attempt(settings, store, attempt)
-    if attempt.action not in {
-        CodexAction.SEND_REPLY.value,
-        CodexAction.ASK_CLARIFYING_QUESTION.value,
-    }:
-        raise SystemExit(
-            f"reply attempt {attempt_id} is not sendable: action={attempt.action}"
-        )
-    reply_text = attempt.final_reply_text.strip()
-    if not reply_text.strip():
-        raise SystemExit(f"reply attempt {attempt_id} has empty final_reply_text")
-    if contains_forbidden_leak(reply_text):
-        store.update_reply_attempt(
-            attempt.id,
-            send_status="blocked",
-            send_error="leak_check",
-        )
-        store.record_error(
-            attempt.conversation_id,
-            attempt.trigger_message_id,
-            "leak_check",
-            reply_text,
-        )
-        raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
-
+    task = store.get_reply_task_for_message(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+        channel=attempt.channel,
+    )
     conversation = store.get_conversation(attempt.conversation_id)
-    if conversation is None:
-        raise SystemExit(f"conversation not found: {attempt.conversation_id}")
-    sent_reply = store.get_sent_reply(
-        attempt.conversation_id,
-        attempt.trigger_message_id,
-    )
-    if sent_reply is not None:
-        store.update_reply_attempt(
-            attempt.id,
-            send_status="sent",
-            send_error="already_sent",
-            retry_count=0,
-        )
-        result = {
-            "attempt_id": attempt.id,
-            "conversation_title": attempt.conversation_title,
-            "trigger_sender": attempt.trigger_sender,
-            "trigger_text_excerpt": _excerpt(attempt.trigger_text),
-            "send_status": "sent",
-            "reply_text_excerpt": _excerpt(sent_reply.reply_text),
-            "send_result_excerpt": _excerpt(sent_reply.send_result_json),
-        }
-        print(json.dumps(result, ensure_ascii=False), flush=True)
-        return result
-
-    dws = DwsClient(
-        ding_robot_code=settings.ding_robot_code,
-        ding_robot_name=settings.ding_robot_name,
-        ding_receiver_user_id=settings.ding_receiver_user_id,
-        transient_retry_attempts=settings.dws_transient_retry_attempts,
-        transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
-    )
-    dingtalk_conversation = DingTalkConversation(
-        open_conversation_id=conversation.conversation_id,
-        title=conversation.title,
-        single_chat=conversation.single_chat,
-        unread_point=0,
-    )
-    trigger = _trigger_message_for_attempt(
-        dws=dws,
-        conversation=dingtalk_conversation,
-        attempt=attempt,
-        store=store,
-    )
-    feedback_token = ""
-    feedback_base_url = feedback_spike_vercel_base_url()
-    feedback_stats = store.feedback_pressure_stats(
-        attempt.conversation_id,
-        now_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-    )
-    feedback_block = bool(feedback_base_url) and requires_feedback_block(
-        feedback_stats
-    )
-    feedback_link_prefix = (
-        FEEDBACK_REQUIRED_LINK_PREFIX
-        if bool(feedback_base_url)
-        and (
-            feedback_block
-            or requires_feedback_reminder(feedback_stats)
-        )
-        else "反馈："
-    )
-    if feedback_base_url:
-        outgoing_text = prepare_outgoing_reply_text(
-            reply_text=reply_text,
-            original_text=attempt.trigger_text,
-            attempt_id=attempt.id,
-            feedback_base_url=feedback_base_url,
-            feedback_link_prefix=feedback_link_prefix,
-            feedback_link_appender=append_feedback_links,
-        )
-        reply_text = outgoing_text.text
-        feedback_token = outgoing_text.feedback_token
-        store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
-
-        def delivery_text_has_forbidden_leak() -> bool:
-            return contains_forbidden_leak_outside_feedback_links(
-                reply_text,
-                vercel_base_url=feedback_base_url,
-                feedback_token=feedback_token,
-                attempt_id=attempt.id,
+    if task is not None:
+        trigger_message_json = task.trigger_message_json
+        trigger_create_time = task.trigger_create_time
+        conversation_title = task.conversation_title
+        single_chat = task.single_chat
+    else:
+        if attempt.channel != "dingtalk" or conversation is None:
+            raise SystemExit(
+                f"original trigger is unavailable for reply attempt {attempt_id}"
             )
-
-        if delivery_text_has_forbidden_leak():
-            store.update_reply_attempt(
-                attempt.id,
-                send_status="blocked",
-                send_error="leak_check",
-            )
-            store.record_error(
-                attempt.conversation_id,
-                attempt.trigger_message_id,
-                "leak_check",
-                reply_text,
-            )
-            raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
-    store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
-    try:
-        send_result = _send_reply_to_trigger_chunks(
-            dws, dingtalk_conversation, trigger, reply_text
+        trigger = DingTalkMessage(
+            open_conversation_id=attempt.conversation_id,
+            open_message_id=attempt.trigger_message_id,
+            conversation_title=conversation.title,
+            single_chat=conversation.single_chat,
+            sender_name=attempt.trigger_sender,
+            create_time=attempt.created_at,
+            content=attempt.trigger_text,
         )
-    except Exception as exc:
-        store.update_reply_attempt(
-            attempt.id,
-            send_status="failed",
-            send_error=str(exc),
-        )
-        store.record_error(
-            attempt.conversation_id,
-            attempt.trigger_message_id,
-            "send",
-            str(exc),
-        )
-        raise
-
-    store.update_reply_attempt(
-        attempt.id,
-        send_status="sent",
-        send_error="",
-        retry_count=0,
-    )
-    store.record_sent_reply(
-        attempt.conversation_id,
-        attempt.trigger_message_id,
-        reply_text,
-        send_result_json=json.dumps(
-            native_reply_delivery_payload(
-                dingtalk_conversation,
-                trigger,
-                send_result,
-            ),
-            ensure_ascii=False,
-        ),
-        recall_key=extract_recall_key_from_send_result(send_result),
-        feedback_token=feedback_token,
+        trigger_message_json = trigger.model_dump_json()
+        trigger_create_time = trigger.create_time
+        conversation_title = conversation.title
+        single_chat = conversation.single_chat
+    queued_task = store.enqueue_manual_rerun_reply_task(
+        conversation_id=attempt.conversation_id,
+        conversation_title=conversation_title,
+        single_chat=single_chat,
+        trigger_message_id=attempt.trigger_message_id,
+        trigger_create_time=trigger_create_time,
+        trigger_sender=attempt.trigger_sender,
+        trigger_text=attempt.trigger_text,
+        trigger_message_json=trigger_message_json,
+        oa_url=attempt.oa_url,
+        attempt_id=attempt.id,
+        channel=attempt.channel,
     )
     result = {
         "attempt_id": attempt.id,
         "conversation_title": attempt.conversation_title,
         "trigger_sender": attempt.trigger_sender,
         "trigger_text_excerpt": _excerpt(attempt.trigger_text),
-        "send_status": "sent",
-        "reply_text_excerpt": _excerpt(reply_text),
-        "send_result_excerpt": _excerpt(json.dumps(send_result or {}, ensure_ascii=False)),
+        "send_status": "queued",
+        "task_id": queued_task.id,
+        "execution_generation": queued_task.execution_generation,
     }
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return result
@@ -1760,115 +1620,6 @@ def _send_reply_to_trigger_chunks(dws, conversation, trigger, text: str) -> dict
             for index, chunk in enumerate(chunks, start=1)
         ]
     }
-
-
-def _send_calendar_attempt(
-    settings: WorkerSettings,
-    store: AutoReplyStore,
-    attempt,
-) -> dict[str, object]:
-    dws = DwsClient(
-        ding_robot_code=settings.ding_robot_code,
-        ding_robot_name=settings.ding_robot_name,
-        ding_receiver_user_id=settings.ding_receiver_user_id,
-        transient_retry_attempts=settings.dws_transient_retry_attempts,
-        transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
-    )
-    event_id = attempt.calendar_event_id.strip()
-    response_status = attempt.calendar_response_status.strip()
-    try:
-        action_result = dws.respond_calendar_event(event_id, response_status)
-    except Exception as exc:
-        store.update_reply_attempt(
-            attempt.id,
-            send_status="failed",
-            send_error=str(exc),
-        )
-        store.record_error(
-            attempt.conversation_id,
-            attempt.trigger_message_id,
-            "calendar_response",
-            str(exc),
-        )
-        raise
-
-    store.update_reply_attempt(
-        attempt.id,
-        calendar_response_result_json=json.dumps(
-            action_result,
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
-        send_status=CALENDAR_ACTION_SEND_STATUS,
-        send_error="",
-        retry_count=0,
-    )
-    if attempt.codex_reason:
-        store.record_error(
-            attempt.conversation_id,
-            attempt.trigger_message_id,
-            "calendar_response",
-            f"{response_status}: {attempt.codex_reason}",
-        )
-    result = {
-        "attempt_id": attempt.id,
-        "conversation_title": attempt.conversation_title,
-        "trigger_sender": attempt.trigger_sender,
-        "trigger_text_excerpt": _excerpt(attempt.trigger_text),
-        "send_status": CALENDAR_ACTION_SEND_STATUS,
-        "calendar_event_id": event_id,
-        "calendar_response_status": response_status,
-        "calendar_response_result_excerpt": _excerpt(
-            json.dumps(action_result or {}, ensure_ascii=False)
-        ),
-    }
-    print(json.dumps(result, ensure_ascii=False), flush=True)
-    return result
-
-
-def _trigger_message_for_attempt(
-    *,
-    dws: DwsClient,
-    conversation: DingTalkConversation,
-    attempt,
-    store: AutoReplyStore,
-) -> DingTalkMessage:
-    task = store.get_reply_task_for_message(
-        attempt.conversation_id,
-        attempt.trigger_message_id,
-    )
-    if task is not None:
-        try:
-            raw_payload = json.loads(task.trigger_message_json)
-        except json.JSONDecodeError:
-            raw_payload = {}
-        if isinstance(raw_payload, dict):
-            message = _trigger_message_from_payload(
-                raw_payload,
-                conversation=conversation,
-            )
-            if (
-                message.open_message_id == attempt.trigger_message_id
-                and message.sender_open_dingtalk_id
-            ):
-                return message
-
-    candidate_conversations = [conversation]
-    attempt_created_at_ms = _attempt_created_at_ms(attempt.created_at)
-    if attempt_created_at_ms is not None:
-        candidate_conversations.append(
-            conversation.model_copy(update={"last_message_create_at": attempt_created_at_ms})
-        )
-    for candidate_conversation in candidate_conversations:
-        for message in _send_attempt_target_lookup_messages(dws, candidate_conversation):
-            if message.open_message_id != attempt.trigger_message_id:
-                continue
-            if getattr(message, "sender_open_dingtalk_id", ""):
-                return message
-            break
-    raise SystemExit(
-        f"reply attempt {attempt.id} cannot resolve trigger senderOpenDingTalkId for native reply"
-    )
 
 
 def _trigger_message_from_payload(
@@ -1926,35 +1677,6 @@ def _trigger_message_from_payload(
         ),
         raw_payload=payload,
     )
-
-
-def _send_attempt_target_lookup_messages(dws: DwsClient, conversation):
-    yield from dws.read_recent_messages(
-        conversation,
-        limit=SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT,
-    )
-    if conversation.last_message_create_at is None:
-        return
-    payload = dws.run_json(
-        dws.build_message_list_command(
-            conversation,
-            limit=SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT,
-            forward=True,
-        )
-    )
-    yield from dws.parse_messages(
-        payload,
-        conversation_title=conversation.title,
-        single_chat=conversation.single_chat,
-    )
-
-
-def _attempt_created_at_ms(created_at: str) -> int | None:
-    try:
-        parsed = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        return None
-    return int(parsed.replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
 def _load_style_profile(corpus_dir: Path) -> str:

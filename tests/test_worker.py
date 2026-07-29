@@ -1488,7 +1488,6 @@ def make_worker(
     style_records: list[CorpusRecord] | None = None,
     dry_run: bool = False,
     max_task_attempts: int = 3,
-    oa_approval_handler=None,
     fast_path_unread_backoff: timedelta = timedelta(0),
     channel_gates=None,
     direct_agent_runner=None,
@@ -1512,7 +1511,6 @@ def make_worker(
         style_records=style_records,
         now_provider=fixed_worker_now,
         max_task_attempts=max_task_attempts,
-        oa_approval_handler=oa_approval_handler,
         channel_gates=channel_gates or fixed_channel_gates(),
         direct_agent_runner=direct_agent_runner,
     )
@@ -2659,7 +2657,7 @@ def test_producer_enriches_bare_calendar_card_task_with_invite_details(
     assert merged.raw_payload == {}
 
 
-def test_single_chat_suppresses_same_topic_calendar_reply_burst(
+def test_single_chat_calendar_reply_is_not_suppressed_by_approximate_topic_match(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -2697,12 +2695,10 @@ def test_single_chat_suppresses_same_topic_calendar_reply_burst(
     )
 
     attempts = worker.store.list_reply_attempts(limit=10)
-    assert queued is False
-    assert worker.store.count_reply_tasks(status="pending") == 0
-    assert attempts[0].trigger_message_id == "msg-calendar-second"
-    assert attempts[0].action == "no_reply"
-    assert attempts[0].send_status == "skipped"
-    assert worker.store.has_seen("msg-calendar-second") is True
+    assert queued is True
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert all(attempt.trigger_message_id != "msg-calendar-second" for attempt in attempts)
+    assert worker.store.has_seen("msg-calendar-second") is False
 
 
 def test_group_calendar_card_without_explicit_mention_is_ignored(
@@ -7498,7 +7494,7 @@ def test_single_chat_alidocs_card_reaches_codex_as_material_reference(
     assert final_sent(dws) == []
 
 
-def test_structured_approval_card_is_processed_by_oa_handler(
+def test_structured_approval_card_is_processed_by_direct_agent(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -7532,13 +7528,11 @@ def test_structured_approval_card_is_processed_by_oa_handler(
             audit_summary="结构化 OA 卡片需要按审批审阅原则处理。",
         )
     )
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_handler=oa_handler,
     )
     script_agent_result(
         worker,
@@ -7553,7 +7547,6 @@ def test_structured_approval_card_is_processed_by_oa_handler(
 
     assert len(agent_runner(worker).calls) == 1
     assert "dws oa +list-pending --format json" in agent_prompt(worker)
-    assert oa_handler.calls == []
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
@@ -7570,14 +7563,12 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         dry_run=False,
-        oa_approval_handler=oa_handler,
     )
     worker.store.record_reply_attempt(
         conversation_id="cid-1",
@@ -7601,7 +7592,6 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
 
     assert len(agent_runner(worker).calls) == 1
     assert '"completed": true' in agent_prompt(worker)
-    assert oa_handler.calls == []
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
     assert worker.store.count_reply_attempts() == 2
@@ -7620,14 +7610,12 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         dry_run=False,
-        oa_approval_handler=oa_handler,
     )
     previous_attempt_id = worker.store.record_reply_attempt(
         conversation_id="cid-1",
@@ -7661,7 +7649,6 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
     assert len(agent_runner(worker).calls) == 1
     assert "Safe prior execution receipts\n[]" in agent_prompt(worker)
     assert '"kind": "dingtalk_oa"' not in agent_prompt(worker)
-    assert oa_handler.calls == []
     assert dws.oa_approval_actions == []
     attempts = worker.store.list_reply_attempts(limit=2)
     assert attempts[0].trigger_message_id == "msg-1"
@@ -7836,7 +7823,7 @@ def test_ai_minutes_permission_request_is_auto_approved_without_codex_or_reply(
     assert attempt.send_status == "skipped"
 
 
-def test_ding_approval_reminder_is_processed_by_oa_handler(
+def test_ding_approval_reminder_is_processed_by_direct_agent(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("[Ding]张静提醒您审批他的录用申请", single_chat=True)
@@ -7855,13 +7842,11 @@ def test_ding_approval_reminder_is_processed_by_oa_handler(
             audit_summary="审批催办需要按 OA 审阅原则处理。",
         )
     )
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_handler=oa_handler,
     )
     script_agent_result(
         worker,
@@ -7876,7 +7861,6 @@ def test_ding_approval_reminder_is_processed_by_oa_handler(
 
     assert len(agent_runner(worker).calls) == 1
     assert "dws oa +list-pending --format json" in agent_prompt(worker)
-    assert oa_handler.calls == []
     assert dws.oa_approval_actions == []
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
@@ -7892,13 +7876,11 @@ def test_oa_approval_missing_applicant_records_failed_delivery(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_handler = MissingTargetOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_handler=oa_handler,
     )
     worker.direct_agent_runner = FakeAgentResultRunner(
         worker.store,
@@ -7935,14 +7917,12 @@ def test_oa_reject_action_still_requires_task_id(tmp_path: Path, monkeypatch):
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_handler = ProcessOnlyRejectOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         dry_run=False,
-        oa_approval_handler=oa_handler,
     )
     worker.direct_agent_runner = FakeAgentResultRunner(
         worker.store,
@@ -7983,14 +7963,12 @@ def test_oa_reject_action_requires_parseable_current_user_ownership(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         dry_run=False,
-        oa_approval_handler=oa_handler,
     )
     worker.direct_agent_runner = FakeAgentResultRunner(
         worker.store,
@@ -8039,14 +8017,12 @@ def test_oa_approval_does_not_execute_task_that_is_not_current_user(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         dry_run=False,
-        oa_approval_handler=oa_handler,
     )
     worker.direct_agent_runner = FakeAgentResultRunner(
         worker.store,
@@ -8071,7 +8047,6 @@ def test_oa_approval_does_not_execute_task_that_is_not_current_user(
     assert attempt.action == "agent_run"
     assert attempt.send_status == "skipped"
     assert attempt.send_error == "oa_task_not_current_user"
-    assert oa_handler.calls == []
 
 
 def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
@@ -8107,19 +8082,15 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
         }
     }
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_handler=oa_handler,
     )
 
     script_no_action(worker)
     worker.run_once()
-
-    assert oa_handler.calls == []
     assert len(agent_runner(worker).calls) == 1
     assert "dws oa +list-pending --format json" in agent_prompt(worker)
     assert "试用期工作内容和转正要求" not in agent_prompt(worker)
@@ -8174,19 +8145,15 @@ def test_oa_approval_detail_always_includes_openapi_comments(
         }
     }
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_handler=oa_handler,
     )
 
     script_no_action(worker)
     worker.run_once()
-
-    assert oa_handler.calls == []
     prompt = agent_prompt(worker)
     assert "dws oa approval detail --instance-id proc-1 --format json" in prompt
     assert "证据不严谨，需要补充模型对比结论。" not in prompt
@@ -8227,19 +8194,15 @@ def test_oa_approval_detail_param_error_is_recovered_by_openapi(
         }
     }
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_handler=oa_handler,
     )
 
     script_no_action(worker)
     worker.run_once()
-
-    assert oa_handler.calls == []
     prompt = agent_prompt(worker)
     assert "dws oa approval detail --instance-id proc-1 --format json" in prompt
     assert "recovered_by_openapi" not in prompt
@@ -8266,13 +8229,11 @@ def test_oa_approval_is_not_discovered_when_dws_gate_needs_login(
         "refresh_token_valid": False,
     }
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_handler=oa_handler,
         channel_gates=fixed_channel_gates(ChannelGateState.NEEDS_LOGIN),
     )
     monkeypatch.setattr(
@@ -8284,7 +8245,6 @@ def test_oa_approval_is_not_discovered_when_dws_gate_needs_login(
 
     assert dws.list_unread_calls == 0
     assert dws.auth_login_starts == 1
-    assert oa_handler.approval_detail_texts == []
     assert notifications == []
 
 
@@ -8300,14 +8260,12 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         dry_run=True,
-        oa_approval_handler=oa_handler,
     )
     script_agent_result(
         worker,
@@ -8321,7 +8279,6 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert oa_handler.calls == []
     assert dws.oa_approval_actions == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
@@ -8332,7 +8289,7 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     assert worker.store.count_reply_attempts() == 1
 
 
-def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_handler(
+def test_bare_dingtalk_approval_wrapper_reaches_direct_agent(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -8344,13 +8301,11 @@ def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_handler(
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_handler=oa_handler,
     )
 
     script_no_action(worker)
@@ -8358,7 +8313,6 @@ def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_handler(
 
     assert len(agent_runner(worker).calls) == 1
     assert "dws oa +list-pending --format json" in agent_prompt(worker)
-    assert oa_handler.calls == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
@@ -10732,13 +10686,11 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
         }
     }
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_handler=oa_handler,
     )
 
     script_no_action(worker)
@@ -10748,8 +10700,6 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
         force_new_decision=True,
         oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
     )
-
-    assert oa_handler.calls == []
     runner = worker.direct_agent_runner
     assert isinstance(runner, FakeAgentResultRunner)
     context = runner.calls[0][2]
@@ -12529,13 +12479,11 @@ def test_fast_path_followup_uses_recent_oa_card_url_when_unread_omits_card(
         {"cid-1": [oa_card, followup]},
         unread_messages={"cid-1": [followup]},
     )
-    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="missing route")),
         monkeypatch,
-        oa_approval_handler=oa_handler,
     )
     worker.store.set_service_state(
         "message_recovery_checked_at",
@@ -12548,8 +12496,6 @@ def test_fast_path_followup_uses_recent_oa_card_url_when_unread_omits_card(
     dws.conversations = []
     script_no_action(worker)
     assert worker.consume_once() == 1
-
-    assert oa_handler.calls == []
     runner = worker.direct_agent_runner
     assert isinstance(runner, FakeAgentResultRunner)
     material = next(

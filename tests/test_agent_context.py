@@ -1,6 +1,7 @@
 from app.agent_context import (
     AgentContextMessage,
     AgentTaskContext,
+    ManualRerunInstruction,
     MaterialReference,
     PriorReceipt,
 )
@@ -79,6 +80,28 @@ def test_context_reuses_confirmed_facts_without_reasking():
 
     assert "do not ask the user to provide confirmed facts again" in rendered
     assert "预算已经确认" in rendered
+
+
+def test_context_renders_only_minimal_manual_review_instruction():
+    original = _context()
+    context = AgentTaskContext(
+        **{
+            **original.__dict__,
+            "manual_rerun": ManualRerunInstruction(
+                source_attempt_id=42,
+                reviewer_feedback="需要先核对材料，再执行。",
+                suggested_reply_text="请按材料中的最新数字回复。",
+            ),
+        }
+    )
+
+    rendered = context.render()
+    manual_section = rendered.split("Manual rerun instruction", 1)[1]
+
+    assert '"source_attempt_id": 42' in manual_section
+    assert "需要先核对材料，再执行。" in manual_section
+    assert "请按材料中的最新数字回复。" in manual_section
+    assert "trigger_sender_user_id" not in manual_section
 
 
 def _oa_context(

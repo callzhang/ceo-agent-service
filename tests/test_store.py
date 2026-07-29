@@ -403,7 +403,7 @@ def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
     assert [claimed_task.id for claimed_task in claimed] == [task.id]
 
 
-def test_manual_rerun_always_allocates_a_new_execution_generation(tmp_path: Path):
+def test_manual_rerun_dedupes_same_pending_source_attempt(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     _enqueue_universal_reply_task(store)
 
@@ -425,7 +425,53 @@ def test_manual_rerun_always_allocates_a_new_execution_generation(tmp_path: Path
     assert second.execution_generation
     assert first.execution_generation != "initial"
     assert second.execution_generation != "initial"
-    assert first.execution_generation != second.execution_generation
+    assert first.execution_generation == second.execution_generation
+    assert first.id == second.id
+
+
+def test_reviewed_reply_and_rerun_roll_back_together(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-atomic-review",
+        conversation_title="Review",
+        single_chat=False,
+        trigger_message_id="msg-atomic-review",
+        trigger_create_time="2026-07-29 10:00:00",
+        trigger_sender="ET",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    with store._connect() as db:
+        db.executescript(
+            """
+            create trigger reject_review_rerun before update on reply_tasks
+            when new.manual_rerun_attempt_id > 0
+            begin
+                select raise(abort, 'forced review rerun failure');
+            end;
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced review rerun failure"):
+        store.record_reviewed_reply_rerun(
+            conversation_id="cid-atomic-review",
+            conversation_title="Review",
+            single_chat=False,
+            trigger_message_id="msg-atomic-review",
+            trigger_create_time="2026-07-29 10:00:00",
+            trigger_sender="ET",
+            trigger_text="请处理",
+            trigger_message_json="{}",
+            suggested_reply_text="建议内容",
+            reviewer_feedback="审核意见",
+        )
+
+    attempts = store.list_reply_attempts(limit=20)
+    task = store.get_reply_task_for_message(
+        "cid-atomic-review", "msg-atomic-review"
+    )
+    assert attempts == []
+    assert task is not None and task.manual_rerun_attempt_id == 0
 
 
 def test_agent_run_is_unique_per_task_generation(tmp_path: Path):
@@ -3304,7 +3350,7 @@ def test_history_keeps_blocked_side_effects_visible_after_terminal_reply(
     assert store.count_recoverable_blocked_reply_attempts() == 2
 
 
-def test_history_treats_superseded_meeting_failure_as_skipped(tmp_path: Path):
+def test_history_preserves_superseded_meeting_failure(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = store.upsert_meeting_alignment_job(
         meeting_id="meeting-1",
@@ -3345,8 +3391,8 @@ def test_history_treats_superseded_meeting_failure_as_skipped(tmp_path: Path):
     sent_items = store.list_history_items(send_statuses=("sent",))
 
     assert failed_run_id != sent_run_id
-    assert [item.source_id for item in failed_items] == []
-    assert [item.source_id for item in skipped_items] == [failed_run_id]
+    assert [item.source_id for item in failed_items] == [failed_run_id]
+    assert [item.source_id for item in skipped_items] == []
     assert [item.source_id for item in sent_items] == [sent_run_id]
 
 
@@ -3941,3 +3987,210 @@ def test_removed_runtime_migrates_unreferenced_history_before_drop(
     assert "universal_plan_executions" not in tables
     assert "universal_action_executions" not in tables
     assert migrated.get_service_state("dws_auth_backup") is None
+
+
+def test_removed_runtime_migrates_every_action_status_with_terminal_semantics(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    actions = (
+        "send_reply",
+        "ask_clarifying_question",
+        "oa_approval",
+        "mail_reply",
+        "calendar_response",
+        "dws_markdown_document_reply",
+        "dws_message_reaction",
+        "queue_okr_review",
+        "memory_write",
+        "no_reply",
+        "handoff_to_human",
+        "blocked",
+        "stop_with_error",
+    )
+    legacy_statuses = ("succeeded", "failed", "blocked", "unknown", "not_started")
+    succeeded_status = {
+        "send_reply": "sent",
+        "ask_clarifying_question": "sent",
+        "oa_approval": "completed",
+        "mail_reply": "sent",
+        "calendar_response": "calendar",
+        "dws_markdown_document_reply": "document",
+        "dws_message_reaction": "reacted",
+        "queue_okr_review": "completed",
+        "memory_write": "completed",
+        "no_reply": "skipped",
+        "handoff_to_human": "blocked",
+        "blocked": "blocked",
+        "stop_with_error": "failed",
+    }
+    expected: dict[str, str] = {}
+    with store._connect() as db:
+        db.executescript(
+            """
+            create table universal_plan_executions (
+                execution_scope_id text primary key,
+                reply_task_id integer not null
+            );
+            create table universal_action_executions (
+                execution_id text primary key,
+                execution_scope_id text not null,
+                attempt_id integer,
+                action_kind text not null,
+                status text not null,
+                error text not null default '',
+                result_json text not null default '',
+                created_at text not null,
+                updated_at text not null
+            );
+            """
+        )
+        for action in actions:
+            for legacy_status in legacy_statuses:
+                key = f"{action}-{legacy_status}"
+                db.execute(
+                    """
+                    insert into reply_tasks (
+                        conversation_id, conversation_title, single_chat,
+                        trigger_message_id, trigger_create_time, trigger_sender,
+                        trigger_text
+                    ) values ('cid-migration', 'Migration', 0, ?,
+                              '2026-07-20 09:00:00', 'Derek', ?)
+                    """,
+                    (key, key),
+                )
+                task_id = int(db.execute("select last_insert_rowid()").fetchone()[0])
+                scope = f"scope-{key}"
+                db.execute(
+                    "insert into universal_plan_executions values (?, ?)",
+                    (scope, task_id),
+                )
+                db.execute(
+                    """
+                    insert into universal_action_executions
+                    values (?, ?, null, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"execution-{key}",
+                        scope,
+                        action,
+                        legacy_status,
+                        f"legacy-{legacy_status}" if legacy_status != "succeeded" else "",
+                        '{"receipt":{"completed":true}}'
+                        if legacy_status == "succeeded"
+                        else "",
+                        "2026-07-20 10:00:00",
+                        "2026-07-20 10:01:00",
+                    ),
+                )
+                expected[key] = (
+                    succeeded_status[action]
+                    if legacy_status == "succeeded"
+                    else "blocked"
+                    if legacy_status in {"blocked", "unknown"}
+                    else "failed"
+                )
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    migrated = AutoReplyStore(db_path)
+    actual = {
+        attempt.trigger_message_id: attempt.send_status
+        for attempt in migrated.list_reply_attempts(limit=200)
+    }
+
+    assert actual == expected
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    AutoReplyStore(db_path)
+    assert len(migrated.list_reply_attempts(limit=200)) == len(expected)
+
+
+def test_removed_runtime_migration_starts_immediate_transaction(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    statements: list[str] = []
+    with store._connect() as db:
+        db.set_trace_callback(statements.append)
+        AutoReplyStore._migrate_removed_runtime(db)
+
+    assert any(statement.strip().upper() == "BEGIN IMMEDIATE" for statement in statements)
+
+
+def test_removed_runtime_migration_rolls_back_every_change_on_failure(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-rollback",
+        conversation_title="Rollback",
+        single_chat=False,
+        trigger_message_id="msg-rollback",
+        trigger_create_time="2026-07-20 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="rollback",
+    )
+    task = store.get_reply_task_for_message("cid-rollback", "msg-rollback")
+    assert task is not None
+    with store._connect() as db:
+        db.executescript(
+            """
+            create table universal_plan_executions (
+                execution_scope_id text primary key,
+                reply_task_id integer not null
+            );
+            create table universal_action_executions (
+                execution_id text primary key,
+                execution_scope_id text not null,
+                attempt_id integer,
+                action_kind text not null,
+                status text not null,
+                error text not null default '',
+                result_json text not null default '',
+                created_at text not null,
+                updated_at text not null
+            );
+            create trigger reject_auth_cleanup before delete on service_state
+            when old.key='dws_auth_backup'
+            begin
+                select raise(abort, 'forced migration failure');
+            end;
+            """
+        )
+        db.execute(
+            "insert into universal_plan_executions values ('scope-rollback', ?)",
+            (task.id,),
+        )
+        db.execute(
+            """
+            insert into universal_action_executions values (
+                'action-rollback', 'scope-rollback', null, 'send_reply',
+                'succeeded', '', '{"receipt":{"completed":true}}',
+                '2026-07-20 10:01:00', '2026-07-20 10:02:00'
+            )
+            """
+        )
+        db.execute(
+            "insert or replace into service_state (key, value) values (?, ?)",
+            ("dws_auth_backup", "present"),
+        )
+
+    with sqlite3.connect(store.path) as db:
+        db.row_factory = sqlite3.Row
+        with pytest.raises(sqlite3.IntegrityError, match="forced migration failure"):
+            AutoReplyStore._migrate_removed_runtime(db)
+        tables = {
+            row["name"]
+            for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            ).fetchall()
+        }
+        attempts = db.execute(
+            "select count(*) from reply_attempts where trigger_message_id='msg-rollback'"
+        ).fetchone()[0]
+        auth_state = db.execute(
+            "select value from service_state where key='dws_auth_backup'"
+        ).fetchone()
+
+    assert "universal_plan_executions" in tables
+    assert "universal_action_executions" in tables
+    assert attempts == 0
+    assert auth_state is not None

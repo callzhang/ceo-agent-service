@@ -27,6 +27,13 @@ class PriorReceipt:
 
 
 @dataclass(frozen=True)
+class ManualRerunInstruction:
+    source_attempt_id: int
+    reviewer_feedback: str = ""
+    suggested_reply_text: str = ""
+
+
+@dataclass(frozen=True)
 class AgentTaskContext:
     task_id: int
     channel: str
@@ -40,6 +47,7 @@ class AgentTaskContext:
     messages: tuple[AgentContextMessage, ...]
     materials: tuple[MaterialReference, ...]
     prior_receipts: tuple[PriorReceipt, ...]
+    manual_rerun: ManualRerunInstruction | None = None
     trigger_sender_user_id: str = ""
     trigger_sender_open_dingtalk_id: str = ""
     trigger_mentioned_user_ids: tuple[str, ...] = ()
@@ -88,16 +96,25 @@ class AgentTaskContext:
             }
             for receipt in self.prior_receipts
         ]
-        return "\n\n".join(
-            (
-                _AGENT_RULES,
-                "Original trigger\n" + _json(trigger),
-                "Recent conversation context\n" + _json(messages),
-                "Raw material references and exact read commands\n"
-                + _json(materials),
-                "Safe prior execution receipts\n" + _json(receipts),
+        sections = [
+            _AGENT_RULES,
+            "Original trigger\n" + _json(trigger),
+            "Recent conversation context\n" + _json(messages),
+            "Raw material references and exact read commands\n" + _json(materials),
+            "Safe prior execution receipts\n" + _json(receipts),
+        ]
+        if self.manual_rerun is not None:
+            sections.append(
+                "Manual rerun instruction\n"
+                + _json(
+                    {
+                        "source_attempt_id": self.manual_rerun.source_attempt_id,
+                        "reviewer_feedback": self.manual_rerun.reviewer_feedback,
+                        "suggested_reply_text": self.manual_rerun.suggested_reply_text,
+                    }
+                )
             )
-        )
+        return "\n\n".join(sections)
 
 
 def _json(value: object) -> str:
