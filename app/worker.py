@@ -273,7 +273,10 @@ def _is_codex_login_required_error(reason: str) -> bool:
     normalized = reason.lower()
     return (
         "failed to refresh token" in normalized
-        and ("session has ended" in normalized or "invalid refresh token" in normalized)
+        and (
+            "session has ended" in normalized
+            or "invalid refresh token" in normalized
+        )
     ) or "token_invalidated" in normalized
 
 
@@ -591,9 +594,7 @@ class DingTalkAutoReplyWorker:
         self.login_coordinator = login_coordinator or LoginCoordinator(
             store=store,
             launchers={
-                "dingtalk": lambda: getattr(
-                    self.dws, "dws", self.dws
-                ).start_auth_login(),
+                "dingtalk": lambda: getattr(self.dws, "dws", self.dws).start_auth_login(),
                 "lark": start_lark_auth_login,
             },
             now=lambda: self._now().astimezone(timezone.utc),
@@ -758,9 +759,14 @@ class DingTalkAutoReplyWorker:
 
     @contextmanager
     def _universal_planning_session(self, context: UniversalTaskContext, planner):
-        owner = f"universal:{context.task_id}:{context.execution_generation}:{id(self)}"
+        owner = (
+            f"universal:{context.task_id}:{context.execution_generation}:"
+            f"{id(self)}"
+        )
         with self.store.codex_session_lock(context.conversation_id, owner):
-            before_session_id = self.store.get_codex_session_id(context.conversation_id)
+            before_session_id = self.store.get_codex_session_id(
+                context.conversation_id
+            )
             try:
                 yield
             finally:
@@ -845,9 +851,7 @@ class DingTalkAutoReplyWorker:
                 self._universal_calendar_prompt_message(calendar_prompt_message)
             )
 
-        material_context_messages = list(context_messages) or list(
-            prompt_context_messages
-        )
+        material_context_messages = list(context_messages) or list(prompt_context_messages)
         material_references = self._universal_material_references(
             [trigger],
             material_context_messages,
@@ -869,8 +873,7 @@ class DingTalkAutoReplyWorker:
                     single_chat=conversation.single_chat,
                     sender_name="CEO系统",
                     create_time=trigger.create_time,
-                    content="图片材料读取失败：\n- "
-                    + "\n- ".join(image_download_errors),
+                    content="图片材料读取失败：\n- " + "\n- ".join(image_download_errors),
                 )
             )
         if effective_oa_url or self._is_oa_approval_message(trigger):
@@ -923,7 +926,9 @@ class DingTalkAutoReplyWorker:
                 calendar_context.invite.event_id if calendar_context else ""
             ),
             trusted_calendar_response_status_override=(
-                calendar_context.invite.self_response_status if calendar_context else ""
+                calendar_context.invite.self_response_status
+                if calendar_context
+                else ""
             ),
             trusted_calendar_organizer_override=(
                 calendar_context.invite.organizer if calendar_context else ""
@@ -1052,7 +1057,9 @@ class DingTalkAutoReplyWorker:
             if not isinstance(raw_node, dict):
                 continue
             name = str(raw_node.get("name") or "未命名材料")
-            node_reference = str(raw_node.get("nodeId") or raw_node.get("docUrl") or "")
+            node_reference = str(
+                raw_node.get("nodeId") or raw_node.get("docUrl") or ""
+            )
             if not node_reference:
                 parts.append(f"材料：{name}\n读取失败：缺少 nodeId/docUrl")
                 continue
@@ -1110,9 +1117,7 @@ class DingTalkAutoReplyWorker:
             )
             text = self._xlsx_text(data)
             if not text.strip():
-                raise DwsError(
-                    f"DingTalk xlsx read returned empty content: {reference}"
-                )
+                raise DwsError(f"DingTalk xlsx read returned empty content: {reference}")
             return text
         return (
             f"材料名称：{name}\n"
@@ -1199,14 +1204,14 @@ class DingTalkAutoReplyWorker:
                 f"dws doc read --node {quoted_reference} --format json",
             )
         if kind == "dingtalk_minutes":
-            return (f"dws minutes get info --id {quoted_reference} --format json",)
-        if kind == "lark_doc":
             return (
-                (
-                    "lark-cli docs +fetch "
-                    f"--doc {quoted_reference} --doc-format markdown --format json --as bot"
-                ),
+                f"dws minutes get info --id {quoted_reference} --format json",
             )
+        if kind == "lark_doc":
+            return ((
+                "lark-cli docs +fetch "
+                f"--doc {quoted_reference} --doc-format markdown --format json --as bot"
+            ),)
         return ()
 
     def _trusted_task_context_for_universal(
@@ -1468,9 +1473,7 @@ class DingTalkAutoReplyWorker:
         )
         return True
 
-    def execute_universal_oa_approval(
-        self, execution: UniversalActionExecution
-    ) -> bool:
+    def execute_universal_oa_approval(self, execution: UniversalActionExecution) -> bool:
         if execution.action.kind is not PlannedActionKind.OA_APPROVAL:
             raise ValueError("universal OA executor received a non-OA action")
         claim_state = self.store.claim_universal_action_execution(execution)
@@ -1506,9 +1509,7 @@ class DingTalkAutoReplyWorker:
 
         trusted_process_id = execution.context.trusted_oa_process_instance_id
         trusted_task_id = execution.context.trusted_oa_task_id
-        if not trusted_process_id or (
-            not trusted_task_id and not is_comment_only_action
-        ):
+        if not trusted_process_id or (not trusted_task_id and not is_comment_only_action):
             return self._finalize_universal_oa_action(
                 execution,
                 attempt_id=attempt_id,
@@ -1591,7 +1592,9 @@ class DingTalkAutoReplyWorker:
                 raise
             try:
                 _current_user_id, tasks, records = (
-                    self._read_universal_oa_comment_fallback_state(process_instance_id)
+                    self._read_universal_oa_comment_fallback_state(
+                        process_instance_id
+                    )
                 )
             except ValueError as fallback_exc:
                 return self._finalize_universal_oa_action(
@@ -1645,7 +1648,9 @@ class DingTalkAutoReplyWorker:
         target_activity_id = ""
         revert_action = ""
         if oa_action == "退回":
-            target_activity_id = str(payload.get("target_activity_id") or "").strip()
+            target_activity_id = str(
+                payload.get("target_activity_id") or ""
+            ).strip()
             revert_action = str(payload.get("revert_action") or "").strip()
             try:
                 activities = self.dws.read_oa_revert_activities(task_id)
@@ -1904,11 +1909,15 @@ class DingTalkAutoReplyWorker:
             return "missing_oa_task_ownership"
 
         complete_records = [
-            task for task in matching_tasks if cls._universal_oa_task_owner(task)
+            task
+            for task in matching_tasks
+            if cls._universal_oa_task_owner(task)
         ]
         if not complete_records:
             return "missing_oa_task_ownership"
-        owners = {cls._universal_oa_task_owner(task) for task in complete_records}
+        owners = {
+            cls._universal_oa_task_owner(task) for task in complete_records
+        }
         if len(owners) > 1:
             return "oa_task_ownership_conflict"
         current_user_records = [
@@ -1952,15 +1961,12 @@ class DingTalkAutoReplyWorker:
         current_user_id: str,
         action: str,
     ) -> bool:
-        return (
-            self._universal_oa_action_completion_state(
-                process_instance_id=process_instance_id,
-                task_id=task_id,
-                current_user_id=current_user_id,
-                action=action,
-            )
-            == "expected"
-        )
+        return self._universal_oa_action_completion_state(
+            process_instance_id=process_instance_id,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            action=action,
+        ) == "expected"
 
     def _universal_oa_action_completion_state(
         self,
@@ -2022,15 +2028,12 @@ class DingTalkAutoReplyWorker:
         current_user_id: str,
         action: str,
     ) -> bool:
-        return (
-            cls._universal_oa_record_action_state(
-                records,
-                task_id=task_id,
-                current_user_id=current_user_id,
-                action=action,
-            )
-            == "expected"
-        )
+        return cls._universal_oa_record_action_state(
+            records,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            action=action,
+        ) == "expected"
 
     @classmethod
     def _universal_oa_record_action_state(
@@ -2047,17 +2050,13 @@ class DingTalkAutoReplyWorker:
                 continue
             if cls._universal_oa_task_owner(record) != current_user_id:
                 continue
-            operation = (
-                str(
-                    record.get("operationType")
-                    or record.get("action")
-                    or record.get("result")
-                    or record.get("operation")
-                    or ""
-                )
-                .strip()
-                .upper()
-            )
+            operation = str(
+                record.get("operationType")
+                or record.get("action")
+                or record.get("result")
+                or record.get("operation")
+                or ""
+            ).strip().upper()
             recorded_action = cls._universal_oa_canonical_action(operation)
             if not recorded_action:
                 continue
@@ -2146,21 +2145,20 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _universal_oa_task_owner(task: dict[str, Any]) -> str:
         return str(
-            task.get("userId") or task.get("userid") or task.get("user_id") or ""
+            task.get("userId")
+            or task.get("userid")
+            or task.get("user_id")
+            or ""
         ).strip()
 
     @staticmethod
     def _universal_oa_task_status(task: dict[str, Any]) -> str:
-        return (
-            str(
-                task.get("status")
-                or task.get("taskStatus")
-                or task.get("task_status")
-                or ""
-            )
-            .strip()
-            .upper()
-        )
+        return str(
+            task.get("status")
+            or task.get("taskStatus")
+            or task.get("task_status")
+            or ""
+        ).strip().upper()
 
     @staticmethod
     def _universal_oa_process_container(detail: dict[str, Any]) -> dict[str, Any]:
@@ -2207,22 +2205,20 @@ class DingTalkAutoReplyWorker:
     def _universal_oa_process_id(cls, detail: dict[str, Any]) -> str:
         process = cls._universal_oa_process_container(detail)
         return str(
-            process.get("processInstanceId") or process.get("process_instance_id") or ""
+            process.get("processInstanceId")
+            or process.get("process_instance_id")
+            or ""
         ).strip()
 
     @classmethod
     def _universal_oa_process_status(cls, detail: dict[str, Any]) -> str:
         process = cls._universal_oa_process_container(detail)
-        return (
-            str(
-                process.get("status")
-                or process.get("processStatus")
-                or process.get("process_status")
-                or ""
-            )
-            .strip()
-            .upper()
-        )
+        return str(
+            process.get("status")
+            or process.get("processStatus")
+            or process.get("process_status")
+            or ""
+        ).strip().upper()
 
     @classmethod
     def _oa_applicant_user_id(cls, detail: Any) -> str:
@@ -2234,7 +2230,10 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _oa_return_notification_text(remark: str) -> str:
-        return f"你的审批申请需要补充或修改后重新提交。\n\n审批意见：{remark.strip()}"
+        return (
+            "你的审批申请需要补充或修改后重新提交。\n\n"
+            f"审批意见：{remark.strip()}"
+        )
 
     def _notify_universal_oa_applicant(
         self,
@@ -2518,13 +2517,9 @@ class DingTalkAutoReplyWorker:
             )
             raise
 
-    def execute_universal_calendar_response(
-        self, execution: UniversalActionExecution
-    ) -> bool:
+    def execute_universal_calendar_response(self, execution: UniversalActionExecution) -> bool:
         if execution.action.kind is not PlannedActionKind.CALENDAR_RESPONSE:
-            raise ValueError(
-                "universal calendar executor received a non-calendar action"
-            )
+            raise ValueError("universal calendar executor received a non-calendar action")
         claim_state = self.store.claim_universal_action_execution(execution)
         if claim_state is UniversalActionExecutionState.SUCCEEDED:
             return True
@@ -2609,7 +2604,9 @@ class DingTalkAutoReplyWorker:
                     verified_event.self_response_status,
                     response_status,
                 ):
-                    raise ReplyDeliveryError("calendar response verification mismatch")
+                    raise ReplyDeliveryError(
+                        "calendar response verification mismatch"
+                    )
             self._mark_seen(messages)
             self.store.complete_universal_action_execution(
                 execution,
@@ -2711,8 +2708,9 @@ class DingTalkAutoReplyWorker:
     ) -> bool:
         if isinstance(payload, dict):
             for key, value in payload.items():
-                if key.casefold() in receipt_keys and cls._universal_receipt_value(
-                    value
+                if (
+                    key.casefold() in receipt_keys
+                    and cls._universal_receipt_value(value)
                 ):
                     return True
             return any(
@@ -2733,10 +2731,16 @@ class DingTalkAutoReplyWorker:
             return False
         if isinstance(value, int):
             return value > 0
-        return isinstance(value, str) and bool(value.strip()) and value.strip() != "0"
+        return (
+            isinstance(value, str)
+            and bool(value.strip())
+            and value.strip() != "0"
+        )
 
     @classmethod
-    def _universal_document_permission_receipt_is_success(cls, payload: object) -> bool:
+    def _universal_document_permission_receipt_is_success(
+        cls, payload: object
+    ) -> bool:
         return (
             isinstance(payload, dict)
             and payload.get("success") is True
@@ -2762,7 +2766,9 @@ class DingTalkAutoReplyWorker:
         )
 
     @classmethod
-    def _universal_text_emotion_create_receipt_is_success(cls, payload: object) -> bool:
+    def _universal_text_emotion_create_receipt_is_success(
+        cls, payload: object
+    ) -> bool:
         return not cls._universal_dws_payload_is_explicit_failure(
             payload
         ) and cls._universal_dws_receipt_has_key(payload, {"emotionid"})
@@ -2778,11 +2784,7 @@ class DingTalkAutoReplyWorker:
                     if value not in (None, "", 0, "0"):
                         return True
                 if folded_key == "code":
-                    if (
-                        isinstance(value, int)
-                        and not isinstance(value, bool)
-                        and value != 0
-                    ):
+                    if isinstance(value, int) and not isinstance(value, bool) and value != 0:
                         return True
                     if isinstance(value, str) and value.strip().lstrip("-").isdigit():
                         if int(value.strip()) != 0:
@@ -2824,7 +2826,9 @@ class DingTalkAutoReplyWorker:
                 send_status="failed",
                 send_error=unknown_error,
             )
-            self.store.mark_universal_action_execution_unknown(execution, unknown_error)
+            self.store.mark_universal_action_execution_unknown(
+                execution, unknown_error
+            )
             return
         self.store.update_reply_attempt(
             attempt_id,
@@ -2833,9 +2837,7 @@ class DingTalkAutoReplyWorker:
         )
         self.store.mark_universal_action_execution_failed(execution, send_error)
 
-    def execute_universal_document_reply(
-        self, execution: UniversalActionExecution
-    ) -> bool:
+    def execute_universal_document_reply(self, execution: UniversalActionExecution) -> bool:
         if execution.action.kind is not PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY:
             raise ValueError(
                 "universal document executor received a non-document action"
@@ -2860,7 +2862,9 @@ class DingTalkAutoReplyWorker:
             != execution.context.conversation_id
             or str(target.get("trigger_message_id") or "").strip()
             != execution.context.trigger_message_id
-            or (planner_document_url or trusted_document_url)
+            or (
+                planner_document_url or trusted_document_url
+            )
             and self._canonical_doc_url(planner_document_url)
             != self._canonical_doc_url(trusted_document_url)
         ):
@@ -2913,12 +2917,12 @@ class DingTalkAutoReplyWorker:
                     raise ReplyDeliveryError(
                         "DWS document creation receipt reports failure"
                     )
-                if (
-                    not doc_url
-                    or not node_id
-                    or not self._universal_dws_receipt_is_success(doc_result)
+                if not doc_url or not node_id or not self._universal_dws_receipt_is_success(
+                    doc_result
                 ):
-                    raise ReplyDeliveryError("DWS document receipt is missing")
+                    raise ReplyDeliveryError(
+                        "DWS document receipt is missing"
+                    )
                 receipt.update(
                     {
                         "doc_result": doc_result,
@@ -2947,7 +2951,9 @@ class DingTalkAutoReplyWorker:
                         receipt, ensure_ascii=False, sort_keys=True
                     ),
                 )
-                if self._universal_dws_payload_is_explicit_failure(permission_result):
+                if self._universal_dws_payload_is_explicit_failure(
+                    permission_result
+                ):
                     raise ReplyDeliveryError(
                         "DWS document permission receipt reports failure"
                     )
@@ -3046,9 +3052,7 @@ class DingTalkAutoReplyWorker:
                     return chunk.get("send_result") or {}
         return send_result
 
-    def execute_universal_message_reaction(
-        self, execution: UniversalActionExecution
-    ) -> bool:
+    def execute_universal_message_reaction(self, execution: UniversalActionExecution) -> bool:
         if execution.action.kind is not PlannedActionKind.DWS_MESSAGE_REACTION:
             raise ValueError(
                 "universal reaction executor received a non-reaction action"
@@ -3126,7 +3130,9 @@ class DingTalkAutoReplyWorker:
                 ),
             )
             if self._universal_dws_payload_is_explicit_failure(result):
-                raise ReplyDeliveryError("DWS message reaction receipt reports failure")
+                raise ReplyDeliveryError(
+                    "DWS message reaction receipt reports failure"
+                )
             if not self._universal_reaction_receipt_is_success(result):
                 events.append(
                     {
@@ -3336,7 +3342,9 @@ class DingTalkAutoReplyWorker:
                     create_result
                 )
             ):
-                raise ReplyDeliveryError("DWS text emotion create receipt is missing")
+                raise ReplyDeliveryError(
+                    "DWS text emotion create receipt is missing"
+                )
             background_id = (
                 _extract_text_emotion_background_id(create_result) or background_id
             )
@@ -3355,8 +3363,9 @@ class DingTalkAutoReplyWorker:
             )
         add_state = str(checkpoint.get("add_state") or "").strip()
         add_result = checkpoint.get("add_result")
-        if add_state == "succeeded" and self._universal_reaction_receipt_is_success(
-            add_result
+        if (
+            add_state == "succeeded"
+            and self._universal_reaction_receipt_is_success(add_result)
         ):
             return checkpoint
         if add_state in {"ambiguous", "started"}:
@@ -3405,9 +3414,7 @@ class DingTalkAutoReplyWorker:
             raise ReplyDeliveryError("DWS text emotion add receipt reports failure")
         return checkpoint
 
-    def execute_universal_memory_write(
-        self, execution: UniversalActionExecution
-    ) -> bool:
+    def execute_universal_memory_write(self, execution: UniversalActionExecution) -> bool:
         if execution.action.kind is not PlannedActionKind.MEMORY_WRITE:
             raise ValueError("universal Memory executor received a non-memory action")
         payload = self._universal_memory_payload(execution)
@@ -3567,9 +3574,7 @@ class DingTalkAutoReplyWorker:
             "source_description": f"ceo-agent-memory:{source_hash}",
         }
 
-    def execute_universal_terminal_action(
-        self, execution: UniversalActionExecution
-    ) -> bool:
+    def execute_universal_terminal_action(self, execution: UniversalActionExecution) -> bool:
         terminal_statuses = {
             PlannedActionKind.NO_REPLY: "skipped",
             PlannedActionKind.HANDOFF_TO_HUMAN: "skipped",
@@ -3578,9 +3583,7 @@ class DingTalkAutoReplyWorker:
         }
         send_status = terminal_statuses.get(execution.action.kind)
         if send_status is None:
-            raise ValueError(
-                "universal terminal executor received a non-terminal action"
-            )
+            raise ValueError("universal terminal executor received a non-terminal action")
         claim_state = self.store.claim_universal_action_execution(execution)
         if claim_state is UniversalActionExecutionState.SUCCEEDED:
             return True
@@ -3960,9 +3963,9 @@ class DingTalkAutoReplyWorker:
             is_login_error = self._is_dws_login_error(exc)
             if not is_login_error:
                 auth_status = self._dws_auth_status_for_backup()
-                is_login_error = bool(
+                is_login_error = bool(auth_status) and not self._dws_auth_status_is_ready(
                     auth_status
-                ) and not self._dws_auth_status_is_ready(auth_status)
+                )
             if is_login_error:
                 restored_result = self._restore_dws_auth_backup_and_retry(
                     kind,
@@ -4471,9 +4474,7 @@ class DingTalkAutoReplyWorker:
         return event.status.strip().lower() != "cancelled"
 
     @staticmethod
-    def _calendar_event_has_attendee(
-        event: DwsCalendarEvent, attendee_name: str
-    ) -> bool:
+    def _calendar_event_has_attendee(event: DwsCalendarEvent, attendee_name: str) -> bool:
         expected = attendee_name.strip()
         if not expected:
             return False
@@ -4550,7 +4551,8 @@ class DingTalkAutoReplyWorker:
         if not should_recover:
             return conversations, set()
         existing_ids = {
-            conversation.open_conversation_id for conversation in conversations
+            conversation.open_conversation_id
+            for conversation in conversations
         }
         recovered = self._conversations_with_recent_single_chat_recovery(conversations)
         recovery_conversation_ids = {
@@ -4616,7 +4618,8 @@ class DingTalkAutoReplyWorker:
 
     def _mark_dws_read_forbidden(self, conversation_id: str) -> None:
         forbidden_until = (
-            self._now().astimezone(timezone.utc) + DWS_FORBIDDEN_CONVERSATION_COOLDOWN
+            self._now().astimezone(timezone.utc)
+            + DWS_FORBIDDEN_CONVERSATION_COOLDOWN
         ).isoformat()
         state = self._dws_forbidden_conversations()
         state[conversation_id] = forbidden_until
@@ -4665,7 +4668,9 @@ class DingTalkAutoReplyWorker:
         if not isinstance(payload, dict):
             return {}
         return {
-            str(key): value for key, value in payload.items() if isinstance(value, str)
+            str(key): value
+            for key, value in payload.items()
+            if isinstance(value, str)
         }
 
     @staticmethod
@@ -4693,7 +4698,9 @@ class DingTalkAutoReplyWorker:
         if not checked_at:
             return True
         try:
-            last_checked = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+            last_checked = datetime.fromisoformat(
+                checked_at.replace("Z", "+00:00")
+            )
         except ValueError:
             return True
         if last_checked.tzinfo is None:
@@ -5711,9 +5718,7 @@ class DingTalkAutoReplyWorker:
     ) -> None:
         completed_by_id: dict[int, ReplyTask] = {}
         if conversation.single_chat:
-            for (
-                completed_task
-            ) in self.store.complete_unfinished_reply_tasks_before_trigger(
+            for completed_task in self.store.complete_unfinished_reply_tasks_before_trigger(
                 conversation_id=task.conversation_id,
                 trigger_create_time=task.trigger_create_time,
                 exclude_task_id=task.id,
@@ -5821,7 +5826,8 @@ class DingTalkAutoReplyWorker:
                     return False
             if (
                 existing_run.status == "running"
-                and existing_run.lease_expires_at > self._sqlite_timestamp(self._now())
+                and existing_run.lease_expires_at
+                > self._sqlite_timestamp(self._now())
             ):
                 self.store.defer_reply_task(
                     task.id,
@@ -5925,9 +5931,7 @@ class DingTalkAutoReplyWorker:
                     kind=kind,
                     reference=reference,
                     source_message_id=source_message_id,
-                    read_commands=tuple(
-                        command for command in read_commands if command
-                    ),
+                    read_commands=tuple(command for command in read_commands if command),
                 )
             )
 
@@ -5989,9 +5993,9 @@ class DingTalkAutoReplyWorker:
                     )
                     commands = (
                         "dws api POST /v1.0/robot/messageFiles/download"
-                        ' --data "$(jq -cn --arg downloadCode '
+                        " --data \"$(jq -cn --arg downloadCode "
                         + shlex.quote(download_code)
-                        + ' --arg robotCode "$DINGTALK_DING_ROBOT_CODE"'
+                        + " --arg robotCode \"$DINGTALK_DING_ROBOT_CODE\""
                         " '{downloadCode:$downloadCode,robotCode:$robotCode}')\""
                         " --format json",
                     )
@@ -6048,7 +6052,9 @@ class DingTalkAutoReplyWorker:
             )
             process_instance_id = self._oa_process_instance_id_from_url(oa_url)
             task_id = self._oa_task_id_from_url(oa_url)
-            raw_process_id, raw_task_id = self._raw_oa_identifiers(message.raw_payload)
+            raw_process_id, raw_task_id = self._raw_oa_identifiers(
+                message.raw_payload
+            )
             process_instance_id = process_instance_id or raw_process_id
             task_id = task_id or raw_task_id
             if process_instance_id:
@@ -6178,7 +6184,9 @@ class DingTalkAutoReplyWorker:
                 persisted=receipt.persisted,
                 safe_to_confirm=receipt.safe_to_confirm,
             )
-            for receipt in self.store.list_agent_execution_receipts(run_result.run_id)
+            for receipt in self.store.list_agent_execution_receipts(
+                run_result.run_id
+            )
         )
         receipts = (
             *embedded_receipts,
@@ -6550,7 +6558,9 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _is_calendar_text(text: str) -> bool:
-        return bool(re.match(r"^\s*[\[［【]\s*日程\s*[\]］】]", text.strip()))
+        return bool(
+            re.match(r"^\s*[\[［【]\s*日程\s*[\]］】]", text.strip())
+        )
 
     def _reply_task_trigger_messages(
         self,
@@ -6604,7 +6614,8 @@ class DingTalkAutoReplyWorker:
                 current_sender_key = sender_key
         flush_group()
         return [
-            DingTalkAutoReplyWorker._latest_trigger_message(group) for group in groups
+            DingTalkAutoReplyWorker._latest_trigger_message(group)
+            for group in groups
         ]
 
     @staticmethod
@@ -6637,7 +6648,8 @@ class DingTalkAutoReplyWorker:
             else:
                 groups.append([message])
         triggers = [
-            DingTalkAutoReplyWorker._latest_trigger_message(group) for group in groups
+            DingTalkAutoReplyWorker._latest_trigger_message(group)
+            for group in groups
         ]
         return sorted(
             triggers,
@@ -6670,7 +6682,8 @@ class DingTalkAutoReplyWorker:
         )
         raw_payload = dict(latest.raw_payload)
         raw_payload["coalesced_message_ids"] = [
-            message.open_message_id for message in ordered_messages
+            message.open_message_id
+            for message in ordered_messages
         ]
         raw_payload["coalesced_messages"] = [
             {
@@ -6737,9 +6750,7 @@ class DingTalkAutoReplyWorker:
             grouped.setdefault(message.open_conversation_id, []).append(message)
         return grouped
 
-    def _robot_direct_messages_by_conversation(
-        self,
-    ) -> dict[str, list[DingTalkMessage]]:
+    def _robot_direct_messages_by_conversation(self) -> dict[str, list[DingTalkMessage]]:
         read_robot_direct_messages = getattr(
             self.dws,
             "read_robot_direct_messages",
@@ -6855,13 +6866,9 @@ class DingTalkAutoReplyWorker:
             for message in prompt_context_messages
             if message.open_message_id == message_id
         ]
-        trigger = (
-            candidates[-1]
-            if candidates
-            else self._lookup_rerun_message_by_id(
-                conversation,
-                message_id,
-            )
+        trigger = candidates[-1] if candidates else self._lookup_rerun_message_by_id(
+            conversation,
+            message_id,
         )
         if trigger is None:
             raise ValueError(
@@ -7130,7 +7137,8 @@ class DingTalkAutoReplyWorker:
             okr_source_json=json.dumps(okr_payload, ensure_ascii=False),
         )
         reply_text = (
-            f"已受理 {period.period_label} OKR 审核请求，正在实时核实 KR 进度和证据。"
+            f"已受理 {period.period_label} OKR 审核请求，"
+            "正在实时核实 KR 进度和证据。"
         )
         updates = {
             "send_status": "dry_run" if self.dry_run else "pending",
@@ -7226,9 +7234,7 @@ class DingTalkAutoReplyWorker:
         final_reply_text = result.oa_remark
         if not self.dry_run:
             has_process_target = bool(effective_oa_process_instance_id.strip())
-            has_approval_target = bool(
-                has_process_target and effective_oa_task_id.strip()
-            )
+            has_approval_target = bool(has_process_target and effective_oa_task_id.strip())
             if result.oa_action.strip() == "退回":
                 try:
                     approval_detail = json.loads(approval_detail_text)
@@ -7461,7 +7467,10 @@ class DingTalkAutoReplyWorker:
                 or ""
             ).upper()
             user_id = str(
-                task.get("userid") or task.get("userId") or task.get("user_id") or ""
+                task.get("userid")
+                or task.get("userId")
+                or task.get("user_id")
+                or ""
             )
             return status == "RUNNING" and user_id == current_user_id
         return False
@@ -7804,10 +7813,14 @@ class DingTalkAutoReplyWorker:
         }
         if "dws_login_required" in error_kinds:
             documents["tool_status"] = "dws_login_required"
-            documents["tool_issue"] = "DWS 未登录或登录态失效，当前不是审批材料缺失。"
+            documents["tool_issue"] = (
+                "DWS 未登录或登录态失效，当前不是审批材料缺失。"
+            )
         elif "dws_authorization_required" in error_kinds:
             documents["tool_status"] = "dws_authorization_required"
-            documents["tool_issue"] = "DWS 权限不足，当前不是审批材料缺失。"
+            documents["tool_issue"] = (
+                "DWS 权限不足，当前不是审批材料缺失。"
+            )
         elif "dingtalk_openapi_quota_exceeded" in error_kinds:
             documents["tool_status"] = "oa_detail_unavailable"
             documents["tool_issue"] = (
@@ -8110,7 +8123,9 @@ class DingTalkAutoReplyWorker:
             include_resolved=include_resolved,
         )
         pending_candidates = [
-            event for event in candidates if self._calendar_event_is_self_pending(event)
+            event
+            for event in candidates
+            if self._calendar_event_is_self_pending(event)
         ]
         if include_resolved:
             matched = self._calendar_pending_invite_from_sender_candidates(
@@ -8182,7 +8197,10 @@ class DingTalkAutoReplyWorker:
             if self._calendar_event_is_active(event)
             and (
                 self._calendar_event_is_self_pending(event)
-                or (include_resolved and self._calendar_event_has_self_response(event))
+                or (
+                    include_resolved
+                    and self._calendar_event_has_self_response(event)
+                )
             )
         ]
 
@@ -8204,9 +8222,11 @@ class DingTalkAutoReplyWorker:
                 near_message_candidates,
                 message,
             )
-        upcoming_candidate = self._closest_upcoming_calendar_event_without_change_time(
-            candidates,
-            message,
+        upcoming_candidate = (
+            self._closest_upcoming_calendar_event_without_change_time(
+                candidates,
+                message,
+            )
         )
         if upcoming_candidate is not None:
             return upcoming_candidate
@@ -8361,9 +8381,7 @@ class DingTalkAutoReplyWorker:
         left: dict[str, float],
         right: dict[str, float],
     ) -> float:
-        return sum(
-            left[keyword] * right[keyword] for keyword in left if keyword in right
-        )
+        return sum(left[keyword] * right[keyword] for keyword in left if keyword in right)
 
     def _calendar_pending_invite_candidates_with_details(
         self,
@@ -8499,7 +8517,9 @@ class DingTalkAutoReplyWorker:
         message: DingTalkMessage,
     ) -> int | None:
         message_time_ms = int(
-            DingTalkAutoReplyWorker._message_create_time_as_instant(message).timestamp()
+            DingTalkAutoReplyWorker._message_create_time_as_instant(
+                message
+            ).timestamp()
             * 1000
         )
         deltas = [
@@ -8539,20 +8559,15 @@ class DingTalkAutoReplyWorker:
         message_type = (message.message_type or "").strip().lower()
         content = message.content.strip()
         decoded_content = unquote(content)
-        return (
-            message_type
-            in {
-                "calendar",
-                "schedule",
-            }
-            or content.startswith("[日程]")
-            or any(
-                marker in decoded_content
-                for marker in (
-                    "newCalendar=1",
-                    "calendarDetail",
-                    "uniqueId=",
-                )
+        return message_type in {
+            "calendar",
+            "schedule",
+        } or content.startswith("[日程]") or any(
+            marker in decoded_content
+            for marker in (
+                "newCalendar=1",
+                "calendarDetail",
+                "uniqueId=",
             )
         )
 
@@ -8792,7 +8807,8 @@ class DingTalkAutoReplyWorker:
 
         normalized_current = normalize(current_status)
         return bool(
-            normalized_current and normalized_current == normalize(requested_status)
+            normalized_current
+            and normalized_current == normalize(requested_status)
         )
 
     def _mark_calendar_response_already_set(
@@ -9126,10 +9142,9 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _has_rendered_non_text_prefix(content: str) -> bool:
-        return (
-            content.startswith(RENDERED_NON_TEXT_PREFIXES)
-            or RENDERED_NON_TEXT_PREFIX_PATTERN.match(content) is not None
-        )
+        return content.startswith(
+            RENDERED_NON_TEXT_PREFIXES
+        ) or RENDERED_NON_TEXT_PREFIX_PATTERN.match(content) is not None
 
     @staticmethod
     def _has_dingtalk_minutes_link(content: str) -> bool:
@@ -9214,7 +9229,9 @@ class DingTalkAutoReplyWorker:
                 max(current_user_message_times) if current_user_message_times else None
             )
             eligible_messages = [
-                message for message in messages if message.addresses_principal()
+                message
+                for message in messages
+                if message.addresses_principal()
             ]
             ignore_current_user_cutoff = False
         candidates = [
@@ -9337,7 +9354,8 @@ class DingTalkAutoReplyWorker:
             add(message)
 
         has_seen_context = any(
-            self.store.has_seen(message.open_message_id) for message in context_messages
+            self.store.has_seen(message.open_message_id)
+            for message in context_messages
         )
         if not has_seen_context:
             return sorted(result, key=lambda message: message.create_time)
@@ -9560,7 +9578,9 @@ class DingTalkAutoReplyWorker:
                 calendar_response_event.event_id if calendar_response_event else ""
             ),
             mail_mailbox=(
-                str(mail_reply_action.get("mailbox") or "") if mail_reply_action else ""
+                str(mail_reply_action.get("mailbox") or "")
+                if mail_reply_action
+                else ""
             ),
             mail_message_id=(
                 str(mail_reply_action.get("message_id") or "")
@@ -9568,10 +9588,14 @@ class DingTalkAutoReplyWorker:
                 else ""
             ),
             mail_subject=(
-                str(mail_reply_action.get("subject") or "") if mail_reply_action else ""
+                str(mail_reply_action.get("subject") or "")
+                if mail_reply_action
+                else ""
             ),
             mail_reply_text=(
-                str(mail_reply_action.get("content") or "") if mail_reply_action else ""
+                str(mail_reply_action.get("content") or "")
+                if mail_reply_action
+                else ""
             ),
         )
 
@@ -9860,7 +9884,8 @@ class DingTalkAutoReplyWorker:
         return [
             action
             for action in decision.system_actions
-            if isinstance(action, dict) and action.get("type") == "dws_message_reaction"
+            if isinstance(action, dict)
+            and action.get("type") == "dws_message_reaction"
         ]
 
     @staticmethod
@@ -10051,7 +10076,8 @@ class DingTalkAutoReplyWorker:
                 if not emotion_id:
                     raise ValueError("create-text-emotion returned no emotion id")
                 background_id = (
-                    _extract_text_emotion_background_id(create_result) or background_id
+                    _extract_text_emotion_background_id(create_result)
+                    or background_id
                 )
             command = [
                 "dws",
@@ -10328,9 +10354,7 @@ class DingTalkAutoReplyWorker:
         image_paths: list[Path] = []
         image_download_errors: list[str] = []
         seen_sources: set[str] = set()
-        for message in self._referenced_document_messages(
-            new_messages, context_messages
-        ):
+        for message in self._referenced_document_messages(new_messages, context_messages):
             for source_key, payload in self._message_image_sources(message):
                 if source_key in seen_sources:
                     continue
@@ -10338,9 +10362,7 @@ class DingTalkAutoReplyWorker:
                 try:
                     image_path = self._download_message_image(message, payload)
                 except Exception as exc:
-                    detail = self._image_download_error_detail(
-                        message, payload, str(exc)
-                    )
+                    detail = self._image_download_error_detail(message, payload, str(exc))
                     self.store.record_error(
                         message.open_conversation_id,
                         message.open_message_id,
@@ -10372,11 +10394,7 @@ class DingTalkAutoReplyWorker:
         payload: dict[str, str],
         error: str,
     ) -> str:
-        source = (
-            payload.get("media_id")
-            or payload.get("download_code")
-            or payload.get("url")
-        )
+        source = payload.get("media_id") or payload.get("download_code") or payload.get("url")
         source_text = f" resource {source}" if source else ""
         return f"{message.open_message_id}:{source_text} error {error}"
 
@@ -10792,7 +10810,9 @@ class DingTalkAutoReplyWorker:
         for message in messages:
             for text in (message.content, message.quoted_content or ""):
                 for match in DINGTALK_SHANJI_DOC_SELECTOR_PATTERN.finditer(text):
-                    task_uuid = cls._minutes_task_uuid_from_selector_url(match.group(0))
+                    task_uuid = cls._minutes_task_uuid_from_selector_url(
+                        match.group(0)
+                    )
                     if not task_uuid or task_uuid in seen:
                         continue
                     seen.add(task_uuid)
@@ -10872,10 +10892,7 @@ class DingTalkAutoReplyWorker:
         *,
         raise_on_delivery_failure: bool = False,
     ) -> bool:
-        if (
-            attempt.calendar_event_id.strip()
-            and attempt.calendar_response_status.strip()
-        ):
+        if attempt.calendar_event_id.strip() and attempt.calendar_response_status.strip():
             return self._retry_existing_calendar_attempt(
                 conversation,
                 trigger,
@@ -11299,7 +11316,10 @@ class DingTalkAutoReplyWorker:
         feedback_link_prefix = (
             FEEDBACK_REQUIRED_LINK_PREFIX
             if bool(feedback_base_url)
-            and (feedback_block or requires_feedback_reminder(feedback_stats))
+            and (
+                feedback_block
+                or requires_feedback_reminder(feedback_stats)
+            )
             else "反馈："
         )
         if feedback_base_url:
@@ -11425,11 +11445,9 @@ class DingTalkAutoReplyWorker:
         self,
         conversation_id: str,
     ) -> None:
-        sent_replies = (
-            self.store.list_sent_replies_with_feedback_tokens_for_conversation(
-                conversation_id,
-                limit=10,
-            )
+        sent_replies = self.store.list_sent_replies_with_feedback_tokens_for_conversation(
+            conversation_id,
+            limit=10,
         )
         if not sent_replies:
             return
@@ -11466,9 +11484,7 @@ class DingTalkAutoReplyWorker:
                 if candidate is not None:
                     created += 1
         if created:
-            logger.info(
-                "queued service bugfix candidates from feedback count=%s", created
-            )
+            logger.info("queued service bugfix candidates from feedback count=%s", created)
         return created
 
     def _deliver_minutes_comment(
@@ -11689,9 +11705,8 @@ class DingTalkAutoReplyWorker:
                 or [self._reply_document_editor_user_id(trigger)],
             )
         except Exception as exc:
-            can_fallback_to_chunked_reply = (
-                requested_document_reply is None
-                or isinstance(exc, MarkdownDocumentCreateIncompleteError)
+            can_fallback_to_chunked_reply = requested_document_reply is None or isinstance(
+                exc, MarkdownDocumentCreateIncompleteError
             )
             if can_fallback_to_chunked_reply:
                 logger.warning(
@@ -11746,7 +11761,9 @@ class DingTalkAutoReplyWorker:
             )
         except Exception as exc:
             send_error = (
-                failure_send_error(exc) if failure_send_error is not None else str(exc)
+                failure_send_error(exc)
+                if failure_send_error is not None
+                else str(exc)
             )
             self.store.update_reply_attempt(
                 attempt_id,
@@ -11872,14 +11889,14 @@ class DingTalkAutoReplyWorker:
             normalized_editor_user_ids,
         )
         intro = (
-            "内容我写成了文档：" if action is not None else "内容较长，我写成了文档："
+            "内容我写成了文档："
+            if action is not None
+            else "内容较长，我写成了文档："
         )
         return {
             "title": title,
             "url": doc_url,
-            "reason": "requested_document"
-            if action is not None
-            else "message_too_long",
+            "reason": "requested_document" if action is not None else "message_too_long",
             "doc_result": doc_result,
             "node_id": doc_node_id,
             "editor_user_ids": normalized_editor_user_ids,
@@ -12082,9 +12099,7 @@ class DingTalkAutoReplyWorker:
         summary = "\n".join(part for part in summary_parts if part)
         if not summary.strip():
             return
-        project_name = (
-            conversation.title.strip() if not conversation.single_chat else ""
-        )
+        project_name = conversation.title.strip() if not conversation.single_chat else ""
         task_signals = {}
         if follow_up_candidates:
             task_signals = {
@@ -12137,7 +12152,9 @@ class DingTalkAutoReplyWorker:
             trigger_time = self._message_create_time_as_instant(trigger)
         except ValueError:
             trigger_time = self._now()
-        since = self._sqlite_timestamp(trigger_time - RECENT_FOLLOW_UP_CONTEXT_WINDOW)
+        since = self._sqlite_timestamp(
+            trigger_time - RECENT_FOLLOW_UP_CONTEXT_WINDOW
+        )
         return self.store.list_recent_follow_up_candidates(
             conversation_id=conversation.open_conversation_id,
             owner_user_id=trigger.sender_user_id or "",
@@ -12201,8 +12218,9 @@ class DingTalkAutoReplyWorker:
                 {"index": index, "text": chunk, "send_result": send_result}
             )
         result: dict[str, Any] = {"chunks": chunk_results}
-        if not conversation.single_chat and not self._sent_chunks_visible(
-            conversation, chunks
+        if (
+            not conversation.single_chat
+            and not self._sent_chunks_visible(conversation, chunks)
         ):
             result["visibility"] = "native_reply_not_confirmed"
         return max_retry_count, result
@@ -12323,9 +12341,7 @@ class DingTalkAutoReplyWorker:
                 self._append_reply_at_target(targets, target)
         return targets
 
-    def _default_reply_at_targets(
-        self, trigger: DingTalkMessage
-    ) -> list[ReplyAtTarget]:
+    def _default_reply_at_targets(self, trigger: DingTalkMessage) -> list[ReplyAtTarget]:
         current_user_id = self.store.get_current_user_id()
         targets: list[ReplyAtTarget] = []
         sender_user_id = trigger.sender_user_id
@@ -12637,11 +12653,14 @@ class DingTalkAutoReplyWorker:
             return False
         reason = reason or ""
         return (
-            "thread/resume failed" in reason
-            and "no rollout found for thread id" in reason
-        ) or (
-            "codex_rollout::list" in reason
-            and "state db returned stale rollout path" in reason
+            (
+                "thread/resume failed" in reason
+                and "no rollout found for thread id" in reason
+            )
+            or (
+                "codex_rollout::list" in reason
+                and "state db returned stale rollout path" in reason
+            )
         )
 
     def _build_prompt(
@@ -12700,9 +12719,7 @@ class DingTalkAutoReplyWorker:
             if profile.org_labels:
                 record["org_labels"] = sorted(profile.org_labels)
             if profile.manager_user_id:
-                manager_profile = self.store.get_org_user_profile(
-                    profile.manager_user_id
-                )
+                manager_profile = self.store.get_org_user_profile(profile.manager_user_id)
                 if manager_profile is not None and manager_profile.name:
                     record["manager"] = {
                         "name": manager_profile.name,
@@ -12724,9 +12741,7 @@ class DingTalkAutoReplyWorker:
                 break
         return lines
 
-    def _resolve_sender_user_id_for_prompt(
-        self, message: DingTalkMessage
-    ) -> str | None:
+    def _resolve_sender_user_id_for_prompt(self, message: DingTalkMessage) -> str | None:
         if message.sender_user_id:
             return message.sender_user_id
         try:
@@ -12766,7 +12781,10 @@ class DingTalkAutoReplyWorker:
         department_ids = sorted(profile.department_ids)
         department_names = sorted(profile.department_names)
         if department_names:
-            return f"{', '.join(department_names)} [ids: {', '.join(department_ids)}]"
+            return (
+                f"{', '.join(department_names)} "
+                f"[ids: {', '.join(department_ids)}]"
+            )
         return ", ".join(department_ids)
 
     @staticmethod

@@ -272,9 +272,7 @@ class McpToolEffectRegistry:
     @classmethod
     def default(cls) -> "McpToolEffectRegistry":
         configured = os.environ.get("CEO_AGENT_MCP_EFFECTS_PATH", "").strip()
-        return cls.from_path(
-            Path(configured) if configured else DEFAULT_MCP_EFFECTS_PATH
-        )
+        return cls.from_path(Path(configured) if configured else DEFAULT_MCP_EFFECTS_PATH)
 
     def classify(self, item: dict[str, object]) -> McpToolCall | None:
         if item.get("type") != "mcp_tool_call":
@@ -340,9 +338,7 @@ class DirectAgentRunner:
         self.native_cli_classifier = (
             native_cli_classifier or NativeCliMetadataClassifier()
         )
-        self.mcp_effect_registry = (
-            mcp_effect_registry or McpToolEffectRegistry.default()
-        )
+        self.mcp_effect_registry = mcp_effect_registry or McpToolEffectRegistry.default()
 
     def run(
         self,
@@ -730,7 +726,9 @@ class DirectAgentRunner:
         persisted = self.store.get_agent_run(run_id)
         if persisted is None:
             raise RuntimeError("agent run was not persisted")
-        events, embedded_receipts = structured_execution_evidence(persisted.tool_events)
+        events, embedded_receipts = structured_execution_evidence(
+            persisted.tool_events
+        )
         receipts = (
             *embedded_receipts,
             *_execution_receipts_for_run(self.store, run_id),
@@ -1140,7 +1138,9 @@ def _native_cli_command(
     if not isinstance(item, dict) or item.get("type") != "command_execution":
         return None
     return (
-        classifier.classify_cached(item) if cached_only else classifier.classify(item)
+        classifier.classify_cached(item)
+        if cached_only
+        else classifier.classify(item)
     )
 
 
@@ -1251,7 +1251,9 @@ def _mcp_result_explicitly_succeeded(value: object) -> bool:
             if len(current) > _MAX_MCP_RESULT_NODES - node_count - len(stack):
                 return False
             for nested in current:
-                stack.append((nested, depth + 1, inspect_errors, decode_json_strings))
+                stack.append(
+                    (nested, depth + 1, inspect_errors, decode_json_strings)
+                )
             continue
         if not decode_json_strings or not isinstance(current, str):
             continue
@@ -1314,7 +1316,9 @@ def _valid_mcp_content_block(value: object) -> bool:
         mime_type = value.get("mimeType", value.get("mime_type"))
         return isinstance(value.get("data"), str) and isinstance(mime_type, str)
     if block_type == "resource_link":
-        return isinstance(value.get("name"), str) and isinstance(value.get("uri"), str)
+        return isinstance(value.get("name"), str) and isinstance(
+            value.get("uri"), str
+        )
     if block_type != "resource":
         return False
     resource = value.get("resource")
@@ -1593,7 +1597,9 @@ def _redact_argv(parts: list[str]) -> list[str]:
             or flag in _COMMAND_CONTENT_FLAGS
             or _is_sensitive_key(normalized_flag)
         ):
-            sanitized.append(f"{flag}={_REDACTED}" if separator else flag)
+            sanitized.append(
+                f"{flag}={_REDACTED}" if separator else flag
+            )
             redact_next = not separator
         elif (separator and _is_signed_url(value)) or _is_signed_url(part):
             sanitized.append(_REDACTED)
@@ -1642,7 +1648,9 @@ def _effect_event(payload: dict[str, object]) -> ToolEffectEvent | None:
     )
 
 
-def _native_effect_kind(item_type: str, item: dict[str, object]) -> EffectKind | None:
+def _native_effect_kind(
+    item_type: str, item: dict[str, object]
+) -> EffectKind | None:
     if item_type in _NATIVE_READ_ONLY_ITEM_TYPES:
         return EffectKind.READ_ONLY
     if item_type not in _NATIVE_CLASSIFIABLE_ITEM_TYPES and not item_type.endswith(

@@ -1705,6 +1705,106 @@ def test_completed_reconciliation_recovers_processing_task_from_terminal_run(
     assert store.get_reply_task(task_id).status == "done"
 
 
+@pytest.mark.parametrize("outcome", ["confirmed", "absent"])
+def test_stale_generation_reconciliation_cannot_mutate_run_or_task(
+    tmp_path: Path, outcome: str
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(
+        task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker-1",
+        now="2026-07-29 09:00:01",
+    )
+    store.claim_unknown_agent_run(
+        run.id,
+        owner="reconciler-1",
+        now="2026-07-29 09:00:02",
+    )
+    new_generation = store.rotate_reply_task_execution_generation(task_id)
+
+    with pytest.raises(AgentRunLeaseLostError):
+        if outcome == "confirmed":
+            store.resolve_unknown_agent_run_confirmed(
+                run.id,
+                task_id,
+                {"outcome": "completed", "summary": "stale proof"},
+                owner="reconciler-1",
+                now="2026-07-29 09:00:03",
+            )
+        else:
+            store.resolve_unknown_agent_run_absent(
+                run.id,
+                task_id,
+                code="reconciliation_confirmed_no_effect",
+                owner="reconciler-1",
+                now="2026-07-29 09:00:03",
+            )
+
+    assert store.get_agent_run(run.id).status == "unknown"
+    task = store.get_reply_task(task_id)
+    assert task.status == "processing"
+    assert task.execution_generation == new_generation
+
+
+@pytest.mark.parametrize("outcome", ["completed", "absent"])
+def test_stale_generation_recovery_cannot_mutate_task(tmp_path: Path, outcome: str):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(
+        task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker-1",
+        now="2026-07-29 09:00:01",
+    )
+    store.claim_unknown_agent_run(
+        run.id,
+        owner="reconciler-1",
+        now="2026-07-29 09:00:02",
+    )
+    if outcome == "completed":
+        store.complete_unknown_agent_run(
+            run.id,
+            {
+                "outcome": "completed",
+                "summary": "effect confirmed",
+                "proof": {"observed_state": "completed"},
+            },
+            owner="reconciler-1",
+            side_effect_state="confirmed",
+            now="2026-07-29 09:00:03",
+        )
+    else:
+        store.fail_unknown_agent_run(
+            run.id,
+            {"code": "reconciliation_confirmed_no_effect", "retryable": False},
+            owner="reconciler-1",
+            now="2026-07-29 09:00:03",
+        )
+    new_generation = store.rotate_reply_task_execution_generation(task_id)
+
+    with pytest.raises(ValueError, match="generation"):
+        if outcome == "completed":
+            store.recover_completed_reconciliation_task(run.id, task_id)
+        else:
+            store.recover_absent_reconciliation_task(
+                run.id,
+                task_id,
+                code="reconciliation_confirmed_no_effect",
+            )
+
+    task = store.get_reply_task(task_id)
+    assert task.status == "processing"
+    assert task.execution_generation == new_generation
+
+
 def test_unknown_event_append_is_bounded_and_does_not_reload_agent_run(
     tmp_path: Path, monkeypatch
 ):
@@ -1738,6 +1838,43 @@ def test_unknown_event_append_is_bounded_and_does_not_reload_agent_run(
         store.append_unknown_agent_run_event(
             run.id,
             {"type": "item.completed", "item": {"output": "x" * (256 * 1024)}},
+            owner="reconciler-1",
+        )
+
+
+def test_reconciliation_event_limit_excludes_direct_run_history(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    for index in range(256):
+        store.append_agent_run_event(
+            run.id,
+            {
+                "type": "item.completed",
+                "item": {"id": f"direct-{index}"},
+                "_ceo_event_scope": "reconciliation",
+            },
+            owner="worker-1",
+        )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker-1",
+    )
+    store.claim_unknown_agent_run(run.id, owner="reconciler-1")
+    monkeypatch.setattr("app.store.MAX_RECONCILIATION_EVENTS", 1)
+
+    store.append_unknown_agent_run_event(
+        run.id,
+        {"type": "item.completed", "item": {"id": "reconcile-1"}},
+        owner="reconciler-1",
+    )
+    with pytest.raises(ValueError, match="reconciliation event limit exceeded"):
+        store.append_unknown_agent_run_event(
+            run.id,
+            {"type": "item.completed", "item": {"id": "reconcile-2"}},
             owner="reconciler-1",
         )
 

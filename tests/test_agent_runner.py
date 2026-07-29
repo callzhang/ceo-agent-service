@@ -3188,6 +3188,43 @@ def test_reconciliation_cli_rejects_oversized_output_without_returning_payload(
     }
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected_code", "retryable"),
+    [
+        (subprocess.TimeoutExpired(["dws"], 120), "reconciliation_cli_timeout", True),
+        (OSError(11, "resource temporarily unavailable"), "reconciliation_cli_start_unavailable", True),
+        (OSError(22, "invalid argument"), "reconciliation_cli_start_invalid", False),
+    ],
+)
+def test_reconciliation_cli_returns_typed_bounded_process_failures(
+    monkeypatch, failure: BaseException, expected_code: str, retryable: bool
+):
+    from app.reconciliation_cli import execute_reviewed_read
+
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={("dws", "oa approval detail"): EffectKind.READ_ONLY}
+    )
+    monkeypatch.setattr("app.reconciliation_cli.shutil.which", lambda _cli: "/trusted/dws")
+
+    def fail_process(*_args, **_kwargs):
+        raise failure
+
+    receipt = execute_reviewed_read(
+        ["dws", "oa", "approval", "detail", "--instance-id", "proc-1"],
+        classifier=classifier,
+        process_runner=fail_process,
+    )
+
+    assert receipt["stdout"] == ""
+    assert receipt["error"] == {
+        "channel": "dws",
+        "code": expected_code,
+        "retryable": retryable,
+        "gate_state": "unavailable",
+    }
+    assert "resource temporarily unavailable" not in str(receipt)
+
+
 def test_reconciliation_jsonl_event_count_is_bounded(
     tmp_path: Path, store: AutoReplyStore, monkeypatch
 ):

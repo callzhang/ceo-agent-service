@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import errno
 import shutil
 import subprocess
 import threading
@@ -22,6 +23,25 @@ class CliOutputLimitError(RuntimeError):
     pass
 
 
+def _process_failure_receipt(
+    command, *, code: str, retryable: bool
+) -> dict[str, object]:
+    return {
+        "cli": command.cli,
+        "operation": command.command_path,
+        "operation_digest": command.command_digest,
+        "target_identifiers": command.target_identifiers,
+        "result_digest": hashlib.sha256(b"").hexdigest(),
+        "stdout": "",
+        "error": {
+            "channel": command.cli,
+            "code": code,
+            "retryable": retryable,
+            "gate_state": "unavailable",
+        },
+    }
+
+
 def execute_reviewed_read(
     argv: Sequence[str],
     *,
@@ -39,7 +59,11 @@ def execute_reviewed_read(
         raise AgentReadOnlyViolationError("reconciliation_write_forbidden")
     executable = shutil.which(command.cli)
     if executable is None:
-        raise RuntimeError("reconciliation_cli_unavailable")
+        return _process_failure_receipt(
+            command,
+            code="reconciliation_cli_start_unavailable",
+            retryable=True,
+        )
     reviewed_argv = [executable, *argv[1:]]
     try:
         process = (
@@ -73,6 +97,23 @@ def execute_reviewed_read(
                 "gate_state": "blocked",
             },
         }
+    except subprocess.TimeoutExpired:
+        return _process_failure_receipt(
+            command,
+            code="reconciliation_cli_timeout",
+            retryable=True,
+        )
+    except OSError as exc:
+        retryable = exc.errno not in {errno.EINVAL, errno.EACCES, errno.ENOEXEC}
+        return _process_failure_receipt(
+            command,
+            code=(
+                "reconciliation_cli_start_unavailable"
+                if retryable
+                else "reconciliation_cli_start_invalid"
+            ),
+            retryable=retryable,
+        )
     receipt: dict[str, object] = {
         "cli": command.cli,
         "operation": command.command_path,
