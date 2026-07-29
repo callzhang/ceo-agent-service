@@ -118,6 +118,7 @@ SQLite 审计 + 外部系统结果
 | --- | --- |
 | `app.worker.DingTalkAutoReplyWorker` | 钉钉生产、消费和大部分业务编排 |
 | `app.dws_client.DwsClient` | 封装 DWS 命令和结果解析 |
+| `app.org_cache.CachedDwsClient` | 为组织目录读取提供缓存覆盖，其余 DWS 能力透明委托给底层客户端，避免新增只读能力因包装器漏方法而中断 |
 | `app.store.AutoReplyStore` | 持久化队列、attempt、sent reply、error |
 | `app.universal_context` | 构造 Universal Agent 可见任务上下文 |
 | `app.universal_planner` | 调用 Codex 生成 `UniversalPlan` |

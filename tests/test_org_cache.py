@@ -320,6 +320,19 @@ def test_cached_dws_client_delegates_auth_archives(tmp_path):
     assert process == "process"
 
 
+def test_cached_dws_client_delegates_unmodified_dws_capabilities(tmp_path):
+    class FakeDws:
+        def get_todo_task(self, task_id):
+            return {"result": {"todoDetailModel": {"taskId": task_id}}}
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    cached = CachedDwsClient(FakeDws(), CachedOrgDirectory(store))
+
+    assert cached.get_todo_task("todo-1") == {
+        "result": {"todoDetailModel": {"taskId": "todo-1"}}
+    }
+
+
 def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
     class FakeDws:
         def __init__(self):

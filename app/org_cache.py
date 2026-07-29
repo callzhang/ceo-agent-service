@@ -86,6 +86,9 @@ class CachedDwsClient:
         self.dws = dws
         self.org_directory = org_directory
 
+    def __getattr__(self, name: str):
+        return getattr(self.dws, name)
+
     def list_unread_conversations(self, count: int):
         return self.dws.list_unread_conversations(count)
 
