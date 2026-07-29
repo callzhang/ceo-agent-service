@@ -2405,15 +2405,15 @@ class DingTalkAutoReplyWorker:
         result_metadata: dict[str, Any] | None = None,
     ) -> str:
         result: dict[str, Any] = {
-            "action": execution.action.payload["action"],
-            "execution_id": execution.execution_id,
-            "execution_scope_id": execution.execution_scope_id,
-            "outcome": outcome,
-            "process_instance_id": str(
-                execution.action.target.get("process_instance_id") or ""
-            ),
-            "task_id": str(execution.action.target.get("task_id") or ""),
-        }
+                "action": execution.action.payload["action"],
+                "execution_id": execution.execution_id,
+                "execution_scope_id": execution.execution_scope_id,
+                "outcome": outcome,
+                "process_instance_id": str(
+                    execution.action.target.get("process_instance_id") or ""
+                ),
+                "task_id": str(execution.action.target.get("task_id") or ""),
+            }
         if result_metadata:
             result.update(result_metadata)
         if dws_action_result is not None:
@@ -5224,14 +5224,16 @@ class DingTalkAutoReplyWorker:
                             title=notification_prefix + task.conversation_title,
                             message=authorization_wait_error[:120],
                             conversation=conversation,
-                        )
+                    )
                     continue
                 self._record_agent_runtime_failure_attempt(task, error)
                 if task.attempts < self.max_task_attempts:
                     self.store.requeue_reply_task(
                         task.id,
                         error,
-                        available_at=self._reply_task_retry_available_at(task.attempts),
+                        available_at=self._reply_task_retry_available_at(
+                            task.attempts
+                        ),
                     )
                     self.store.record_error(
                         task.conversation_id,

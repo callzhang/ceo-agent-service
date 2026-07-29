@@ -1,5 +1,4 @@
 """Fail-closed Codex command and JSONL helpers for the WeChat Memory workflow."""
-
 from __future__ import annotations
 
 import json
@@ -8,19 +7,19 @@ from collections.abc import Iterator
 
 from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX
 
-_TRANSPORT_OPTION = re.compile(r"^mcp_servers\.([A-Za-z0-9_-]+)\.(?:url|command)=")
-_TOOL_ITEM_TYPES = frozenset(
-    {
-        "command_execution",
-        "dynamic_tool_call",
-        "function_call",
-        "mcp_tool_call",
-        "tool_call",
-        "tool_search_call",
-        "web_search",
-        "web_search_call",
-    }
+_TRANSPORT_OPTION = re.compile(
+    r"^mcp_servers\.([A-Za-z0-9_-]+)\.(?:url|command)="
 )
+_TOOL_ITEM_TYPES = frozenset({
+    "command_execution",
+    "dynamic_tool_call",
+    "function_call",
+    "mcp_tool_call",
+    "tool_call",
+    "tool_search_call",
+    "web_search",
+    "web_search_call",
+})
 
 
 def _jsonl_payloads(raw: str) -> Iterator[dict]:
@@ -57,7 +56,11 @@ def completed_mcp_tool_calls(raw: str) -> list[dict]:
         if isinstance(item, dict):
             completed_items.append(item)
 
-    calls = [event for event in completed_items if event.get("type") == "mcp_tool_call"]
+    calls = [
+        event
+        for event in completed_items
+        if event.get("type") == "mcp_tool_call"
+    ]
     outputs = {
         str(event.get("call_id") or ""): event.get("output")
         for event in completed_items
@@ -123,9 +126,7 @@ def configured_transport_server_names(
 
 
 def disable_configured_mcp_servers(
-    command: list[str],
-    *,
-    except_names: frozenset[str] = frozenset(),
+    command: list[str], *, except_names: frozenset[str] = frozenset(),
     include_all_configured: bool = False,
 ) -> None:
     for name in configured_transport_server_names(
@@ -149,14 +150,10 @@ def make_read_only_without_tools(command: list[str]) -> None:
     _insert_command_options(
         command,
         [
-            "--sandbox",
-            "read-only",
-            "-c",
-            'approval_policy="never"',
-            "-c",
-            "tools.enabled_tools=[]",
-            "-c",
-            'web_search="disabled"',
+            "--sandbox", "read-only",
+            "-c", 'approval_policy="never"',
+            "-c", "tools.enabled_tools=[]",
+            "-c", 'web_search="disabled"',
         ],
     )
 

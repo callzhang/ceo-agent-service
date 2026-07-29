@@ -58,9 +58,9 @@ UNRECOVERABLE_BLOCKED_ERROR_PREFIX = "blocked_unrecoverable_"
 def is_unrecoverable_blocked_attempt(attempt: "ReplyAttempt") -> bool:
     return (
         attempt.send_status.strip().lower() == "blocked"
-        and attempt.send_error.strip()
-        .lower()
-        .startswith(UNRECOVERABLE_BLOCKED_ERROR_PREFIX)
+        and attempt.send_error.strip().lower().startswith(
+            UNRECOVERABLE_BLOCKED_ERROR_PREFIX
+        )
     )
 
 
@@ -74,8 +74,6 @@ def is_terminal_reply_attempt(attempt: "ReplyAttempt") -> bool:
         "calendar",
         "document",
     } or is_unrecoverable_blocked_attempt(attempt)
-
-
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 UNIVERSAL_MEMORY_LEASE_SECONDS = 15 * 60
@@ -1413,7 +1411,9 @@ class AutoReplyStore:
                 row["name"]
                 for row in db.execute("pragma table_info(feedback_events)").fetchall()
             }
-            for column, definition in (("resolved_at", "text not null default ''"),):
+            for column, definition in (
+                ("resolved_at", "text not null default ''"),
+            ):
                 if column not in feedback_event_columns:
                     db.execute(
                         f"alter table feedback_events add column {column} {definition}"
@@ -1568,12 +1568,11 @@ class AutoReplyStore:
                         f"text not null default 'dingtalk'"
                     )
             work_summary_input_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(work_summary_inputs)"
-                ).fetchall()
+                row["name"] for row in db.execute("pragma table_info(work_summary_inputs)").fetchall()
             }
-            for column, definition in (("available_at", "text not null default ''"),):
+            for column, definition in (
+                ("available_at", "text not null default ''"),
+            ):
                 if column not in work_summary_input_columns:
                     db.execute(
                         f"alter table work_summary_inputs add column {column} {definition}"
@@ -1582,7 +1581,9 @@ class AutoReplyStore:
                 row["name"]
                 for row in db.execute("pragma table_info(work_todos)").fetchall()
             }
-            for column, definition in (("description", "text not null default ''"),):
+            for column, definition in (
+                ("description", "text not null default ''"),
+            ):
                 if column not in work_todo_columns:
                     db.execute(
                         f"alter table work_todos add column {column} {definition}"
