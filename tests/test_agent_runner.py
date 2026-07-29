@@ -5,8 +5,13 @@ import shlex
 import pytest
 
 from app.agent_context import AgentTaskContext
-from app.agent_result import AgentOutcome
-from app.agent_runner import AGENT_RESULT_SCHEMA_PATH, DirectAgentRunner
+from app.agent_result import AgentOutcome, EffectKind
+from app.agent_runner import (
+    AGENT_RESULT_SCHEMA_PATH,
+    DirectAgentRunner,
+    McpToolEffectRegistry,
+    NativeCliMetadataClassifier,
+)
 from app.process_runner import ProcessRunResult
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.dws_client import DWS_AGENT_CODE_ENV
@@ -124,6 +129,17 @@ class RecordingExecutor:
         )
 
 
+class CompletionAwareExecutor(RecordingExecutor):
+    def __init__(self, output: str):
+        super().__init__(output)
+        self.finished_streaming = False
+
+    def __call__(self, command, *, prompt, **kwargs):
+        result = super().__call__(command, prompt=prompt, **kwargs)
+        self.finished_streaming = True
+        return result
+
+
 @pytest.fixture
 def store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "reply.sqlite3")
@@ -189,6 +205,172 @@ def test_failed_agent_result_persists_failed_run(tmp_path: Path, store: AutoRepl
     assert run is not None
     assert run.status == "failed"
     assert json.loads(run.structured_error_json)["code"] == "material_unavailable"
+
+
+def test_production_shaped_mcp_write_creates_correlated_receipt(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    arguments = {"data": "durable fact", "type": "text"}
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "mcp-write-1",
+                        "type": "mcp_tool_call",
+                        "server": "memory_connector",
+                        "tool": "memory_write",
+                        "arguments": arguments,
+                        "status": "in_progress",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "mcp-write-1",
+                        "type": "mcp_tool_call",
+                        "server": "memory_connector",
+                        "tool": "memory_write",
+                        "arguments": arguments,
+                        "result": {"content": [{"type": "text", "text": "ok"}]},
+                        "status": "completed",
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+    registry = McpToolEffectRegistry(
+        {("memory_connector", "memory_write"): EffectKind.EFFECTFUL}
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        mcp_effect_registry=registry,
+        owner="worker-1",
+    ).run(task, _context(task.id))
+
+    receipts = store.list_agent_execution_receipts(result.run_id)
+    assert len(receipts) == 1
+    assert receipts[0].operation_id == "mcp-write-1"
+    assert receipts[0].cli == "mcp:memory_connector"
+    assert receipts[0].command_path == "memory_write"
+    assert result.result.outcome is AgentOutcome.COMPLETED
+
+
+def test_production_shaped_mcp_read_cannot_confirm_completion(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "mcp-read-1",
+                        "type": "mcp_tool_call",
+                        "server": "memory_connector",
+                        "tool": "memory_recall",
+                        "arguments": {"query": "fact"},
+                        "result": {"content": []},
+                        "status": "completed",
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+    registry = McpToolEffectRegistry(
+        {("memory_connector", "memory_recall"): EffectKind.READ_ONLY}
+    )
+
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+            mcp_effect_registry=registry,
+        ).run(task, _context(task.id))
+
+
+def test_unregistered_production_mcp_tool_fails_closed(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "mcp-unknown-1",
+                        "type": "mcp_tool_call",
+                        "server": "custom_server",
+                        "tool": "custom_operation",
+                        "arguments": {},
+                        "result": {"ok": True},
+                        "status": "completed",
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+            mcp_effect_registry=McpToolEffectRegistry({}),
+        ).run(task, _context(task.id))
+
+
+def test_mcp_registry_loads_only_exact_reviewed_capabilities(tmp_path: Path):
+    path = tmp_path / "mcp-effects.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "tools": [
+                    {
+                        "server": "memory_connector",
+                        "tool": "memory_write",
+                        "effect": "effectful",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    registry = McpToolEffectRegistry.from_path(path)
+
+    classified = registry.classify(
+        {
+            "type": "mcp_tool_call",
+            "server": "memory_connector",
+            "tool": "memory_write",
+            "arguments": {"data": "fact"},
+        }
+    )
+
+    assert classified is not None
+    assert classified.effect is EffectKind.EFFECTFUL
+    assert registry.classify(
+        {
+            "type": "mcp_tool_call",
+            "server": "memory_connector",
+            "tool": "memory_write_preview",
+            "arguments": {},
+        }
+    ) is None
 
 
 def test_direct_runner_uses_dedicated_direct_agent_instructions(
@@ -390,6 +572,90 @@ def test_native_dws_completed_write_creates_trusted_persisted_receipt(
     assert receipts[0].safe_to_confirm is True
 
 
+@pytest.mark.parametrize(
+    ("command_path", "command"),
+    (
+        (
+            "chat message send",
+            "dws chat message send --group cid --text 'hello' --format json --yes",
+        ),
+        (
+            "chat message add-emoji",
+            "dws chat message add-emoji --group cid --message-id mid --emoji '👍' --format json --yes",
+        ),
+        (
+            "doc create",
+            "dws doc create --title 'Review' --format json --yes",
+        ),
+        (
+            "doc update",
+            "dws doc update --node-id node-1 --content 'Reviewed' --format json --yes",
+        ),
+        (
+            "oa approval approve",
+            "dws oa approval approve --instance-id proc-1 --task-id task-1 --remark 'Reviewed' --format json --yes",
+        ),
+        (
+            "oa approval oa-comments",
+            "dws oa approval oa-comments --instance-id proc-1 --format json --yes",
+        ),
+    ),
+)
+def test_direct_agent_production_jsonl_write_protocols_persist_receipts(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    command_path: str,
+    command: str,
+):
+    task = _task(store)
+    call_id = "effect-1"
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": call_id,
+                        "type": "command_execution",
+                        "command": command,
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": call_id,
+                        "type": "command_execution",
+                        "command": command,
+                        "aggregated_output": '{"success":true}',
+                        "exit_code": 0,
+                        "status": "completed",
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={("dws", command_path): EffectKind.EFFECTFUL}
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        native_cli_classifier=classifier,
+    ).run(task, _context(task.id))
+
+    receipts = store.list_agent_execution_receipts(result.run_id)
+    assert [(receipt.operation_id, receipt.command_path) for receipt in receipts] == [
+        (call_id, command_path)
+    ]
+
+
 def test_native_lark_completed_write_creates_trusted_persisted_receipt(
     tmp_path: Path, store: AutoReplyStore
 ):
@@ -573,6 +839,7 @@ def test_native_parser_rejects_command_substitution_before_metadata_lookup(
             store=store,
             workspace=tmp_path,
             executor=RecordingExecutor(output),
+            native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
         ).run(task, _context(task.id))
 
     assert schema_calls == []
@@ -634,6 +901,7 @@ def test_native_write_parser_rejects_shell_composition_without_executing_it(
             store=store,
             workspace=tmp_path,
             executor=RecordingExecutor(output),
+            native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
         ).run(task, _context(task.id))
 
     assert schema_calls == []
@@ -773,6 +1041,156 @@ def test_failed_native_write_terminal_closes_effect_on_abnormal_codex_exit(
     assert run.side_effect_state == "none"
     assert error_code in run.structured_error_json
     assert store.list_agent_execution_receipts(run.id) == []
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "error_code"),
+    (
+        ("nonzero", "codex_process_failed"),
+        ("timeout", "codex_process_timeout"),
+        ("stream", "codex_stream_invalid"),
+    ),
+)
+def test_transport_failure_without_open_effect_is_retryable(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    failure_kind: str,
+    error_code: str,
+):
+    task = _task(store)
+    lines = [json.dumps({"type": "thread.started", "thread_id": "session-1"})]
+    if failure_kind == "stream":
+        lines.append("{")
+    executor = RecordingExecutor(
+        "\n".join(lines),
+        returncode=1 if failure_kind == "nonzero" else 0,
+        timed_out=failure_kind == "timeout",
+    )
+
+    with pytest.raises(RuntimeError, match=error_code):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+        ).run(task, _context(task.id))
+
+    run = store.get_agent_run_for_task_generation(
+        task.id, task.execution_generation
+    )
+    error = json.loads(run.structured_error_json)
+    assert run.status == "failed"
+    assert run.side_effect_state == "none"
+    assert error == {"code": error_code, "retryable": True}
+
+
+def test_native_metadata_lookup_runs_after_stdout_is_drained(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    command = "dws chat message send --group cid --text hello --yes"
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "native-send-1",
+                        "type": "command_execution",
+                        "command": command,
+                        "exit_code": 0,
+                        "status": "completed",
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+    executor = CompletionAwareExecutor(output)
+
+    class Classifier(NativeCliMetadataClassifier):
+        def classify(self, item):
+            assert executor.finished_streaming is True
+            return super().classify(item)
+
+    DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=executor,
+        native_cli_classifier=Classifier(
+            reviewed_effects={
+                ("dws", "chat message send"): EffectKind.EFFECTFUL,
+            }
+        ),
+    ).run(task, _context(task.id))
+
+
+def test_native_metadata_cache_contains_command_path_not_message_text():
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={
+            ("dws", "chat message send"): EffectKind.EFFECTFUL,
+        }
+    )
+    first = classifier.classify(
+        {
+            "type": "command_execution",
+            "command": "dws chat message send --group cid --text first-secret --yes",
+        }
+    )
+    second = classifier.classify(
+        {
+            "type": "command_execution",
+            "command": "dws chat message send --group cid --text second-secret --yes",
+        }
+    )
+
+    assert first.effect is EffectKind.EFFECTFUL
+    assert second.effect is EffectKind.EFFECTFUL
+    assert classifier.cache_keys == (("dws", "chat message send"),)
+    assert "first-secret" not in repr(classifier.cache_keys)
+    assert "second-secret" not in repr(classifier.cache_keys)
+
+
+def test_persisted_native_event_redacts_message_text_but_keeps_receipt_digest(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    message = "private-message-4827"
+    command = f"dws chat message send --group cid --text '{message}' --yes"
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "send-1",
+                        "type": "command_execution",
+                        "command": command,
+                        "exit_code": 0,
+                        "status": "completed",
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        native_cli_classifier=NativeCliMetadataClassifier(
+            reviewed_effects={
+                ("dws", "chat message send"): EffectKind.EFFECTFUL,
+            }
+        ),
+    ).run(task, _context(task.id))
+
+    persisted = store.get_agent_run(result.run_id)
+    serialized = json.dumps(persisted.tool_events, ensure_ascii=False)
+    assert message not in serialized
+    receipts = store.list_agent_execution_receipts(result.run_id)
+    assert len(receipts) == 1
+    assert len(receipts[0].command_digest) == 64
 
 
 def test_direct_runner_persists_each_jsonl_event_before_final_parse(
@@ -960,7 +1378,6 @@ def test_corrupt_stream_after_effect_start_marks_run_unknown(
                         "id": "write-1",
                         "type": "command_execution",
                         "command": "dws chat message send --conversation cid --text hello",
-                        "metadata": {"effect": "effectful"},
                     },
                 }
             ),
@@ -973,6 +1390,11 @@ def test_corrupt_stream_after_effect_start_marks_run_unknown(
             store=store,
             workspace=tmp_path,
             executor=RecordingExecutor(output),
+            native_cli_classifier=NativeCliMetadataClassifier(
+                reviewed_effects={
+                    ("dws", "chat message send"): EffectKind.EFFECTFUL,
+                }
+            ),
         ).run(task, _context(task.id))
 
     persisted = store.get_agent_run_for_task_generation(
@@ -1206,7 +1628,7 @@ def test_completed_native_web_search_is_read_only_evidence(
         {"annotations": {"readOnlyHint": True}},
     ),
 )
-def test_trusted_read_only_metadata_does_not_confirm_completion(
+def test_untrusted_event_read_only_metadata_does_not_confirm_completion(
     tmp_path: Path,
     store: AutoReplyStore,
     classification: dict[str, dict[str, object]],
@@ -1243,7 +1665,7 @@ def test_trusted_read_only_metadata_does_not_confirm_completion(
         {"annotations": {"destructiveHint": True}},
     ),
 )
-def test_trusted_effectful_lifecycle_confirms_completion(
+def test_untrusted_event_effectful_metadata_cannot_confirm_completion(
     tmp_path: Path,
     store: AutoReplyStore,
     classification: dict[str, dict[str, object]],
@@ -1275,13 +1697,18 @@ def test_trusted_effectful_lifecycle_confirms_completion(
         )
     )
 
-    run = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-    ).run(task, _context(task.id))
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+            mcp_effect_registry=McpToolEffectRegistry({}),
+        ).run(task, _context(task.id))
 
-    assert store.get_agent_run(run.run_id).side_effect_state == "confirmed"
+    run = store.get_agent_run_for_task_generation(
+        task.id, task.execution_generation
+    )
+    assert run.side_effect_state == "none"
 
 
 def test_command_output_cannot_inject_a_trusted_execution_receipt(

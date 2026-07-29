@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "server": "memory_connector",
+      "tool": "user_get",
+      "effect": "read_only"
+    },
+    {
+      "server": "memory_connector",
+      "tool": "memory_recall",
+      "effect": "read_only"
+    },
+    {
+      "server": "memory_connector",
+      "tool": "memory_get",
+      "effect": "read_only"
+    },
+    {
+      "server": "memory_connector",
+      "tool": "timeline_get",
+      "effect": "read_only"
+    },
+    {
+      "server": "memory_connector",
+      "tool": "memory_write",
+      "effect": "effectful"
+    },
+    {
+      "server": "memory_connector",
+      "tool": "document_upload",
+      "effect": "effectful"
+    }
+  ]
+}

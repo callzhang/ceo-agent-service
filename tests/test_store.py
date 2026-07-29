@@ -821,6 +821,17 @@ def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
             owner="worker-a",
             now="2026-07-29 00:30:02",
         ),
+        lambda: store.record_agent_execution_receipt(
+            first.run.id,
+            receipt_id="stale-receipt",
+            operation_id="stale-write",
+            cli="dws",
+            command_path="chat message send",
+            command_digest="digest",
+            exit_code=0,
+            owner="worker-a",
+            now="2026-07-29 00:30:02",
+        ),
     ]
     for mutate in stale_mutations:
         with pytest.raises(AgentRunLeaseLostError, match="agent run lease lost"):
@@ -1029,6 +1040,96 @@ def test_agent_run_effect_state_tracks_structured_call_lifecycle(tmp_path: Path)
     assert confirmed.side_effect_state == "confirmed"
 
 
+def test_failed_agent_effect_is_terminal_and_not_unknown(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    started = {
+        "type": "item.started",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    failed = {
+        "type": "item.failed",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+
+    store.append_agent_run_event(run.id, started, owner="worker-1")
+    terminal = store.append_agent_run_event(run.id, failed, owner="worker-1")
+
+    assert terminal.side_effect_state == "none"
+
+
+def test_agent_run_events_use_append_only_rows_in_sequence(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    first = {"type": "item.started", "call_id": "c1"}
+    second = {"type": "item.completed", "call_id": "c1"}
+
+    store.append_agent_run_event(run.id, first, owner="worker-1")
+    store.append_agent_run_event(run.id, second, owner="worker-1")
+
+    with sqlite3.connect(store.path) as db:
+        rows = db.execute(
+            "select sequence, event_json from agent_run_events "
+            "where agent_run_id=? order by sequence",
+            (run.id,),
+        ).fetchall()
+        compact = db.execute(
+            "select tool_events_json from agent_runs where id=?",
+            (run.id,),
+        ).fetchone()[0]
+    assert [(row[0], json.loads(row[1])) for row in rows] == [
+        (1, first),
+        (2, second),
+    ]
+    assert compact == "[]"
+    assert store.get_agent_run(run.id).tool_events == [first, second]
+
+
+def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    legacy_events = [
+        {"type": "item.started", "call_id": "legacy-1"},
+        {"type": "item.failed", "call_id": "legacy-1"},
+    ]
+    with sqlite3.connect(db_path) as db:
+        db.execute("drop table agent_run_events")
+        db.execute(
+            "update agent_runs set tool_events_json=? where id=?",
+            (json.dumps(legacy_events), run.id),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    migrated = AutoReplyStore(db_path)
+    first_load = migrated.get_agent_run(run.id)
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    second_load = AutoReplyStore(db_path).get_agent_run(run.id)
+
+    assert first_load.tool_events == legacy_events
+    assert second_load.tool_events == legacy_events
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "select count(*) from agent_run_events where agent_run_id=?",
+            (run.id,),
+        ).fetchone()[0] == 2
+        assert db.execute(
+            "select tool_events_json from agent_runs where id=?",
+            (run.id,),
+        ).fetchone()[0] == "[]"
+
+
 def test_safe_persisted_receipt_closes_started_agent_effect(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
@@ -1061,6 +1162,45 @@ def test_safe_persisted_receipt_closes_started_agent_effect(tmp_path: Path):
     confirmed = store.append_agent_run_event(run.id, receipt, owner="worker-1")
 
     assert confirmed.side_effect_state == "confirmed"
+
+
+def test_execution_receipt_requires_current_unexpired_owner(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-a",
+        lease_seconds=60,
+        now="2026-07-29 00:00:00",
+    ).run
+
+    with pytest.raises(AgentRunLeaseLostError, match="agent run lease lost"):
+        store.record_agent_execution_receipt(
+            run.id,
+            receipt_id="receipt-stale-owner",
+            operation_id="write-1",
+            cli="dws",
+            command_path="chat message send",
+            command_digest="digest",
+            exit_code=0,
+            owner="worker-b",
+            now="2026-07-29 00:00:30",
+        )
+    with pytest.raises(AgentRunLeaseLostError, match="agent run lease lost"):
+        store.record_agent_execution_receipt(
+            run.id,
+            receipt_id="receipt-expired",
+            operation_id="write-1",
+            cli="dws",
+            command_path="chat message send",
+            command_digest="digest",
+            exit_code=0,
+            owner="worker-a",
+            now="2026-07-29 00:01:01",
+        )
+
+    assert store.list_agent_execution_receipts(run.id) == []
 
 
 def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):

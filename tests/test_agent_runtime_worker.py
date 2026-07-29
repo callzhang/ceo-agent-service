@@ -67,15 +67,20 @@ class ContextOnlyDws:
         raise AttributeError(name)
 
 
-def _effect_event(call_id: str, status: str) -> dict[str, object]:
-    return {
-        "type": f"item.{status}",
-        "item": {
-            "id": call_id,
-            "type": "mcp_tool_call",
-            "metadata": {"effect": "effectful"},
+def _persisted_effect_evidence(call_id: str, status: str) -> dict[str, object]:
+    item: dict[str, object] = {
+        "id": call_id,
+        "type": "command_execution",
+        "metadata": {
+            "effect": "effectful",
+            "native_cli": "dws",
+            "operation": "chat message send",
+            "command_digest": "a" * 64,
         },
     }
+    if status == "completed":
+        item.update({"exit_code": 0, "status": "completed"})
+    return {"type": f"item.{status}", "item": item}
 
 
 def _read_event(call_id: str = "read-1") -> dict[str, object]:
@@ -84,7 +89,11 @@ def _read_event(call_id: str = "read-1") -> dict[str, object]:
         "item": {
             "id": call_id,
             "type": "mcp_tool_call",
-            "metadata": {"effect": "read_only"},
+            "server": "memory_connector",
+            "tool": "memory_recall",
+            "arguments": {"query": "current task context"},
+            "result": {"content": []},
+            "status": "completed",
         },
     }
 
@@ -184,6 +193,7 @@ class ScriptedDirectAgentRunner:
                 command_path=receipt.command_path,
                 command_digest=receipt.command_digest,
                 exit_code=0,
+                owner=self.owner,
                 now=NOW,
             )
         if script.result.error.side_effect_state is SideEffectState.UNKNOWN:
@@ -206,12 +216,6 @@ class ScriptedDirectAgentRunner:
             evidence_state = (
                 "confirmed"
                 if script.receipts
-                or any(
-                    event.get("type") == "item.completed"
-                    and isinstance(event.get("item"), dict)
-                    and event["item"].get("metadata") == {"effect": "effectful"}
-                    for event in script.events
-                )
                 else "none"
             )
             self.store.complete_agent_run(
@@ -837,7 +841,7 @@ def test_incomplete_effect_is_unknown_and_never_replayed(tmp_path: Path):
                     code="send_interrupted",
                     side_effect_state=SideEffectState.UNKNOWN,
                 ),
-                (_effect_event("send-1", "started"),),
+                (_persisted_effect_evidence("send-1", "started"),),
             )
         ],
     )
@@ -1060,7 +1064,7 @@ def test_stale_processing_with_incomplete_effect_becomes_unknown_without_rerun(
     )
     worker.store.append_agent_run_event(
         claim.run.id,
-        _effect_event("send-1", "started"),
+        _persisted_effect_evidence("send-1", "started"),
         owner="dead-worker",
         now="2026-07-28 07:00:01",
     )

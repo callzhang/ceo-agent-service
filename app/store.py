@@ -401,10 +401,11 @@ class AgentRunLeaseLostError(RuntimeError):
 def _persisted_agent_effect_state(events: list[dict[str, object]]) -> str:
     started: set[str] = set()
     completed: set[str] = set()
+    failed: set[str] = set()
     for event in events:
         event_type = event.get("type")
         item = event.get("item")
-        if event_type not in {"item.started", "item.completed"} or not isinstance(
+        if event_type not in {"item.started", "item.completed", "item.failed"} or not isinstance(
             item, dict
         ):
             continue
@@ -416,10 +417,12 @@ def _persisted_agent_effect_state(events: list[dict[str, object]]) -> str:
             continue
         if event_type == "item.started":
             started.add(call_id)
-        else:
+        elif event_type == "item.completed":
             completed.add(call_id)
+        else:
+            failed.add(call_id)
     completed.update(_persisted_agent_receipt_ids(events))
-    if started - completed:
+    if started - completed - failed:
         return "unknown"
     if completed:
         return "confirmed"
@@ -461,6 +464,56 @@ def _persisted_agent_receipt_ids(value: object) -> set[str]:
     for item in value.values():
         receipt_ids.update(_persisted_agent_receipt_ids(item))
     return receipt_ids
+
+
+def _agent_event_columns(event: dict[str, object]) -> tuple[str, str, str, str]:
+    event_type = str(event.get("type") or "")
+    item = event.get("item")
+    if not isinstance(item, dict):
+        return event_type, "", "", ""
+    call_id_value = item.get("call_id") or item.get("id")
+    call_id = call_id_value.strip() if isinstance(call_id_value, str) else ""
+    metadata = item.get("metadata")
+    effect_kind = ""
+    if isinstance(metadata, dict):
+        candidate = metadata.get("effect")
+        if candidate in {"read_only", "effectful"}:
+            effect_kind = str(candidate)
+    receipt_ids = _persisted_agent_receipt_ids(event)
+    receipt_operation_id = next(iter(receipt_ids), "")
+    return event_type, call_id, effect_kind, receipt_operation_id
+
+
+def _agent_effect_state_from_rows(
+    db: sqlite3.Connection,
+    run_id: int,
+) -> str:
+    states: dict[str, str] = {}
+    for row in db.execute(
+        """
+        select event_type, call_id, effect_kind, receipt_operation_id
+        from agent_run_events
+        where agent_run_id=?
+        order by sequence
+        """,
+        (run_id,),
+    ).fetchall():
+        call_id = row["call_id"]
+        if row["effect_kind"] == "effectful" and call_id:
+            if row["event_type"] == "item.started":
+                states[call_id] = "started"
+            elif row["event_type"] == "item.completed":
+                states[call_id] = "completed"
+            elif row["event_type"] == "item.failed":
+                states[call_id] = "failed"
+        receipt_operation_id = row["receipt_operation_id"]
+        if receipt_operation_id:
+            states[receipt_operation_id] = "completed"
+    if "started" in states.values():
+        return "unknown"
+    if "completed" in states.values():
+        return "confirmed"
+    return "none"
 
 
 class OkrReviewRequest(BaseModel):
@@ -810,6 +863,23 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_agent_runs_status
                     on agent_runs(status, updated_at);
+                create table if not exists agent_run_events (
+                    id integer primary key autoincrement,
+                    agent_run_id integer not null,
+                    sequence integer not null,
+                    event_json text not null,
+                    event_type text not null default '',
+                    call_id text not null default '',
+                    effect_kind text not null default '',
+                    receipt_operation_id text not null default '',
+                    created_at text not null default current_timestamp,
+                    unique(agent_run_id, sequence),
+                    foreign key(agent_run_id) references agent_runs(id)
+                );
+                create index if not exists idx_agent_run_events_run_sequence
+                    on agent_run_events(agent_run_id, sequence);
+                create index if not exists idx_agent_run_events_run_call
+                    on agent_run_events(agent_run_id, call_id, sequence);
                 create table if not exists agent_execution_receipts (
                     id integer primary key autoincrement,
                     agent_run_id integer not null,
@@ -1576,6 +1646,56 @@ class AutoReplyStore:
                     "alter table wechat_memory_candidates add column "
                     "memory_write_error text not null default ''"
                 )
+            self._migrate_agent_run_events(db)
+
+    @staticmethod
+    def _migrate_agent_run_events(db: sqlite3.Connection) -> None:
+        rows = db.execute(
+            "select id, tool_events_json from agent_runs "
+            "where tool_events_json <> '[]'"
+        ).fetchall()
+        for row in rows:
+            try:
+                events = json.loads(row["tool_events_json"])
+            except json.JSONDecodeError as exc:
+                raise ValueError("agent run tool events are not valid JSON") from exc
+            if not isinstance(events, list) or any(
+                not isinstance(event, dict) for event in events
+            ):
+                raise ValueError("agent run tool events must be JSON objects")
+            for sequence, event in enumerate(events, start=1):
+                event_text = _json_object_text(event, field="event")
+                event_type, call_id, effect_kind, receipt_operation_id = (
+                    _agent_event_columns(event)
+                )
+                db.execute(
+                    """
+                    insert or ignore into agent_run_events (
+                        agent_run_id, sequence, event_json, event_type,
+                        call_id, effect_kind, receipt_operation_id
+                    ) values (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["id"],
+                        sequence,
+                        event_text,
+                        event_type,
+                        call_id,
+                        effect_kind,
+                        receipt_operation_id,
+                    ),
+                )
+                persisted = db.execute(
+                    "select event_json from agent_run_events "
+                    "where agent_run_id=? and sequence=?",
+                    (row["id"], sequence),
+                ).fetchone()
+                if persisted is None or json.loads(persisted["event_json"]) != event:
+                    raise ValueError("conflicting agent run event migration")
+            db.execute(
+                "update agent_runs set tool_events_json='[]' where id=?",
+                (row["id"],),
+            )
 
     @staticmethod
     def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
@@ -1686,15 +1806,17 @@ class AutoReplyStore:
         )
 
     @staticmethod
-    def _agent_run_from_row(row: sqlite3.Row) -> AgentRun:
-        try:
-            tool_events = json.loads(row["tool_events_json"])
-        except json.JSONDecodeError as exc:
-            raise ValueError("agent run tool events are not valid JSON") from exc
-        if not isinstance(tool_events, list) or any(
-            not isinstance(event, dict) for event in tool_events
-        ):
-            raise ValueError("agent run tool events must be JSON objects")
+    def _agent_run_from_row(
+        row: sqlite3.Row,
+        *,
+        db: sqlite3.Connection,
+    ) -> AgentRun:
+        event_rows = db.execute(
+            "select event_json from agent_run_events "
+            "where agent_run_id=? order by sequence",
+            (row["id"],),
+        ).fetchall()
+        tool_events = [json.loads(event["event_json"]) for event in event_rows]
         return AgentRun(
             id=row["id"],
             reply_task_id=row["reply_task_id"],
@@ -2688,7 +2810,7 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(row) if row is not None else None
+            return self._agent_run_from_row(row, db=db) if row is not None else None
 
     def get_agent_run_for_task_generation(
         self,
@@ -2704,7 +2826,7 @@ class AutoReplyStore:
                 """,
                 (reply_task_id, execution_generation),
             ).fetchone()
-            return self._agent_run_from_row(row) if row is not None else None
+            return self._agent_run_from_row(row, db=db) if row is not None else None
 
     def record_agent_execution_receipt(
         self,
@@ -2716,6 +2838,7 @@ class AutoReplyStore:
         command_path: str,
         command_digest: str,
         exit_code: int,
+        owner: str,
         now: str | datetime | None = None,
     ) -> AgentExecutionReceipt:
         if not all(
@@ -2733,13 +2856,16 @@ class AutoReplyStore:
             raise ValueError("only successful executions can produce receipts")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             run = db.execute(
-                "select status from agent_runs where id=?",
+                "select status, lease_owner, lease_expires_at "
+                "from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
             if run is None:
                 raise ValueError("agent run does not exist")
             if run["status"] != "running":
                 raise ValueError("execution receipt requires running agent run")
+            if run["lease_owner"] != owner or run["lease_expires_at"] <= now_text:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
             db.execute(
                 """
                 insert or ignore into agent_execution_receipts (
@@ -2914,7 +3040,10 @@ class AutoReplyStore:
                         "select * from agent_runs where id=?",
                         (row["id"],),
                     ).fetchone()
-            return AgentRunClaim(run=self._agent_run_from_row(row), claimed=claimed)
+            return AgentRunClaim(
+                run=self._agent_run_from_row(row, db=db),
+                claimed=claimed,
+            )
 
     def renew_agent_run_lease(
         self,
@@ -2958,7 +3087,7 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated)
+            return self._agent_run_from_row(updated, db=db)
 
     def set_agent_run_session(
         self,
@@ -3021,7 +3150,7 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated)
+            return self._agent_run_from_row(updated, db=db)
 
     def append_agent_run_event(
         self,
@@ -3035,6 +3164,9 @@ class AutoReplyStore:
             raise ValueError("owner must be non-empty")
         event_text = _json_object_text(event, field="event")
         normalized_event = json.loads(event_text)
+        event_type, call_id, effect_kind, receipt_operation_id = (
+            _agent_event_columns(normalized_event)
+        )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
                 "select * from agent_runs where id=?",
@@ -3044,28 +3176,42 @@ class AutoReplyStore:
                 raise ValueError("agent run does not exist")
             if row["status"] != "running":
                 raise ValueError("cannot append event to terminal agent run")
-            try:
-                events = json.loads(row["tool_events_json"])
-            except json.JSONDecodeError as exc:
-                raise ValueError("agent run tool events are not valid JSON") from exc
-            if not isinstance(events, list) or any(
-                not isinstance(item, dict) for item in events
-            ):
-                raise ValueError("agent run tool events must be JSON objects")
-            events.append(normalized_event)
-            side_effect_state = _persisted_agent_effect_state(events)
+            if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            sequence = db.execute(
+                "select coalesce(max(sequence), 0) + 1 from agent_run_events "
+                "where agent_run_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            db.execute(
+                """
+                insert into agent_run_events (
+                    agent_run_id, sequence, event_json, event_type,
+                    call_id, effect_kind, receipt_operation_id, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    sequence,
+                    event_text,
+                    event_type,
+                    call_id,
+                    effect_kind,
+                    receipt_operation_id,
+                    now_text,
+                ),
+            )
+            side_effect_state = _agent_effect_state_from_rows(db, run_id)
             cursor = db.execute(
                 """
                 update agent_runs
-                set tool_events_json=?,
-                    side_effect_state=?,
+                set side_effect_state=?,
                     transcript_end_line=transcript_end_line + 1,
                     updated_at=?
                 where id=? and status='running' and lease_owner=?
                   and lease_expires_at>?
                 """,
                 (
-                    json.dumps(events, ensure_ascii=False, separators=(",", ":")),
                     side_effect_state,
                     now_text,
                     run_id,
@@ -3079,7 +3225,7 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated)
+            return self._agent_run_from_row(updated, db=db)
 
     def append_unknown_agent_run_event(
         self,
@@ -3099,25 +3245,40 @@ class AutoReplyStore:
                 raise ValueError("agent run does not exist")
             if row["status"] != "unknown":
                 raise ValueError("agent run reconciliation requires unknown status")
-            try:
-                events = json.loads(row["tool_events_json"])
-            except json.JSONDecodeError as exc:
-                raise ValueError("agent run tool events are not valid JSON") from exc
-            if not isinstance(events, list) or any(
-                not isinstance(item, dict) for item in events
-            ):
-                raise ValueError("agent run tool events must be JSON objects")
-            events.append(normalized_event)
+            sequence = db.execute(
+                "select coalesce(max(sequence), 0) + 1 from agent_run_events "
+                "where agent_run_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            event_type, call_id, effect_kind, receipt_operation_id = (
+                _agent_event_columns(normalized_event)
+            )
+            db.execute(
+                """
+                insert into agent_run_events (
+                    agent_run_id, sequence, event_json, event_type,
+                    call_id, effect_kind, receipt_operation_id, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    sequence,
+                    event_text,
+                    event_type,
+                    call_id,
+                    effect_kind,
+                    receipt_operation_id,
+                    now_text,
+                ),
+            )
             cursor = db.execute(
                 """
                 update agent_runs
-                set tool_events_json=?,
-                    transcript_end_line=transcript_end_line + 1,
+                set transcript_end_line=transcript_end_line + 1,
                     updated_at=?
                 where id=? and status='unknown'
                 """,
                 (
-                    json.dumps(events, ensure_ascii=False, separators=(",", ":")),
                     now_text,
                     run_id,
                 ),
@@ -3128,7 +3289,7 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated)
+            return self._agent_run_from_row(updated, db=db)
 
     def _transition_agent_run(
         self,
@@ -3171,7 +3332,7 @@ class AutoReplyStore:
                 and row["transcript_end_line"] == end_line
             )
             if exact_terminal_write:
-                return self._agent_run_from_row(row)
+                return self._agent_run_from_row(row, db=db)
             if row["status"] == target_status:
                 raise ValueError("conflicting terminal rewrite")
             if row["status"] == "completed":
@@ -3229,7 +3390,7 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated)
+            return self._agent_run_from_row(updated, db=db)
 
     def complete_agent_run(
         self,
@@ -3336,7 +3497,7 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(row)
+            return self._agent_run_from_row(row, db=db)
 
     def fail_expired_agent_run(
         self,
@@ -3368,7 +3529,7 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(row)
+            return self._agent_run_from_row(row, db=db)
 
     def complete_unknown_agent_run(
         self,
@@ -3432,7 +3593,7 @@ class AutoReplyStore:
                 """,
                 (limit,),
             ).fetchall()
-            return [self._agent_run_from_row(row) for row in rows]
+            return [self._agent_run_from_row(row, db=db) for row in rows]
 
     def peek_reply_tasks(
         self,

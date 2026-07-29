@@ -1,8 +1,10 @@
 import json
 import hashlib
+import os
 import shlex
 import subprocess
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qsl, urlsplit
@@ -33,6 +35,9 @@ from app.wechat.codex_safety import make_read_only_without_tools
 
 AGENT_RESULT_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "agent_result.schema.json"
+)
+DEFAULT_MCP_EFFECTS_PATH = (
+    Path(__file__).resolve().parent.parent / "config" / "mcp-tool-effects.json"
 )
 TOTAL_TIMEOUT_SECONDS = 1200
 IDLE_TIMEOUT_SECONDS = 900
@@ -84,6 +89,19 @@ _SENSITIVE_KEY_NAMES = frozenset(
 _SESSION_KEY_NAMES = frozenset({"sessionid", "threadid"})
 _COMMAND_KEY_NAMES = frozenset({"argv", "cmd", "command"})
 _STRUCTURED_TEXT_KEY_NAMES = frozenset({"arguments", "output", "result"})
+_COMMAND_CONTENT_FLAGS = frozenset(
+    {
+        "--body",
+        "--comment",
+        "--content",
+        "--html",
+        "--markdown",
+        "--message",
+        "--remark",
+        "--text",
+        "--title",
+    }
+)
 _RECEIPT_KEYS = frozenset(ExecutionReceipt.model_fields)
 _REDACTED = "[REDACTED]"
 
@@ -110,33 +128,186 @@ class DirectAgentRunResult:
 class NativeCliCommand:
     cli: str
     command_path: str
-    argv: tuple[str, ...]
     effect: EffectKind
     command_digest: str
+
+
+@dataclass(frozen=True)
+class McpToolCall:
+    server: str
+    tool: str
+    effect: EffectKind
+    operation_digest: str
+
+
+class McpToolEffectRegistry:
+    """Exact reviewed MCP capabilities; unknown server/tool pairs fail closed."""
+
+    def __init__(
+        self,
+        effects: dict[tuple[str, str], EffectKind],
+    ) -> None:
+        self._effects = dict(effects)
+
+    @classmethod
+    def from_path(cls, path: Path) -> "McpToolEffectRegistry":
+        if not path.exists():
+            return cls({})
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        tools = payload.get("tools") if isinstance(payload, dict) else None
+        if not isinstance(tools, list):
+            raise ValueError("MCP effect registry must contain a tools list")
+        effects: dict[tuple[str, str], EffectKind] = {}
+        for item in tools:
+            if not isinstance(item, dict):
+                raise ValueError("MCP effect registry tools must be objects")
+            server = item.get("server")
+            tool = item.get("tool")
+            effect = item.get("effect")
+            if not isinstance(server, str) or not server.strip():
+                raise ValueError("MCP effect registry server must be non-empty")
+            if not isinstance(tool, str) or not tool.strip():
+                raise ValueError("MCP effect registry tool must be non-empty")
+            if effect not in {EffectKind.READ_ONLY.value, EffectKind.EFFECTFUL.value}:
+                raise ValueError("MCP effect registry effect is invalid")
+            key = (server.strip(), tool.strip())
+            parsed_effect = EffectKind(effect)
+            if key in effects and effects[key] is not parsed_effect:
+                raise ValueError("MCP effect registry contains a conflicting tool")
+            effects[key] = parsed_effect
+        return cls(effects)
+
+    @classmethod
+    def default(cls) -> "McpToolEffectRegistry":
+        configured = os.environ.get("CEO_AGENT_MCP_EFFECTS_PATH", "").strip()
+        return cls.from_path(Path(configured) if configured else DEFAULT_MCP_EFFECTS_PATH)
+
+    def classify(self, item: dict[str, object]) -> McpToolCall | None:
+        if item.get("type") != "mcp_tool_call":
+            return None
+        server = item.get("server")
+        tool = item.get("tool")
+        if not isinstance(server, str) or not isinstance(tool, str):
+            return None
+        effect = self._effects.get((server, tool))
+        if effect is None:
+            return None
+        arguments = item.get("arguments")
+        canonical = json.dumps(
+            {"server": server, "tool": tool, "arguments": arguments},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return McpToolCall(
+            server=server,
+            tool=tool,
+            effect=effect,
+            operation_digest=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        )
+
+@lru_cache(maxsize=1)
+def _load_reviewed_dws_effects() -> dict[tuple[str, str], EffectKind]:
+    effects: dict[tuple[str, str], EffectKind] = {}
+    try:
+        process = subprocess.run(
+            ["dws", "schema", "--all", "--compact", "--format", "json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return effects
+    if process is None or process.returncode != 0:
+        return effects
+    try:
+        payload = json.loads(process.stdout)
+    except json.JSONDecodeError:
+        return effects
+    products = payload.get("products") if isinstance(payload, dict) else None
+    if not isinstance(products, list):
+        return effects
+    for product in products:
+        tools = product.get("tools") if isinstance(product, dict) else None
+        if not isinstance(tools, list):
+            continue
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            command_path = tool.get("cli_path")
+            effect = tool.get("effect")
+            if not isinstance(command_path, str) or not command_path.strip():
+                continue
+            if effect == "read":
+                parsed = EffectKind.READ_ONLY
+            elif effect == "write":
+                parsed = EffectKind.EFFECTFUL
+            else:
+                continue
+            effects[("dws", command_path.strip())] = parsed
+    return effects
 
 
 class NativeCliMetadataClassifier:
     """Classify native CLI commands from their installed reviewed metadata."""
 
-    def __init__(self) -> None:
-        self._cache: dict[tuple[str, ...], NativeCliCommand | None] = {}
+    def __init__(
+        self,
+        *,
+        reviewed_effects: dict[tuple[str, str], EffectKind] | None = None,
+    ) -> None:
+        self._cache: dict[tuple[str, str], EffectKind | None] = dict(
+            reviewed_effects or {}
+        )
+        self._prewarmed = reviewed_effects is not None
+
+    @property
+    def cache_keys(self) -> tuple[tuple[str, str], ...]:
+        return tuple(sorted(self._cache))
+
+    def prewarm(self) -> None:
+        if self._prewarmed:
+            return
+        self._prewarmed = True
+        self._cache.update(_load_reviewed_dws_effects())
 
     def classify(self, item: dict[str, object]) -> NativeCliCommand | None:
         argv = _native_command_argv(item)
         if argv is None or "--dry-run" in argv:
             return None
-        cached = self._cache.get(argv)
-        if cached is not None or argv in self._cache:
-            return cached
         cli = Path(argv[0]).name
+        for command_path in _command_path_candidates(argv[1:]):
+            cache_key = (cli, command_path)
+            if cache_key in self._cache:
+                effect = self._cache[cache_key]
+                return (
+                    _classified_native_command(cli, command_path, argv, effect)
+                    if effect is not None
+                    else None
+                )
         if cli == "dws":
-            classified = self._classify_dws(argv)
-        elif cli == "lark-cli":
-            classified = self._classify_lark(argv)
-        else:
-            classified = None
-        self._cache[argv] = classified
-        return classified
+            return self._classify_dws(argv)
+        if cli == "lark-cli":
+            return self._classify_lark(argv)
+        return None
+
+    def classify_cached(self, item: dict[str, object]) -> NativeCliCommand | None:
+        argv = _native_command_argv(item)
+        if argv is None or "--dry-run" in argv:
+            return None
+        cli = Path(argv[0]).name
+        for command_path in _command_path_candidates(argv[1:]):
+            effect = self._cache.get((cli, command_path))
+            if effect is not None:
+                return _classified_native_command(
+                    cli,
+                    command_path,
+                    argv,
+                    effect,
+                )
+        return None
 
     def _classify_dws(self, argv: tuple[str, ...]) -> NativeCliCommand | None:
         for command_path in _command_path_candidates(argv[1:]):
@@ -167,11 +338,13 @@ class NativeCliMetadataClassifier:
             effect = metadata.get("effect") if isinstance(metadata, dict) else None
             if effect not in {"read", "write"}:
                 continue
+            parsed = EffectKind.READ_ONLY if effect == "read" else EffectKind.EFFECTFUL
+            self._cache[("dws", command_path)] = parsed
             return _classified_native_command(
                 "dws",
                 command_path,
                 argv,
-                EffectKind.READ_ONLY if effect == "read" else EffectKind.EFFECTFUL,
+                parsed,
             )
         return None
 
@@ -196,15 +369,17 @@ class NativeCliMetadataClassifier:
                     break
             if risk not in {"read", "write", "high-risk-write"}:
                 continue
+            parsed = (
+                EffectKind.READ_ONLY
+                if risk == "read"
+                else EffectKind.EFFECTFUL
+            )
+            self._cache[("lark-cli", command_path)] = parsed
             return _classified_native_command(
                 "lark-cli",
                 command_path,
                 argv,
-                (
-                    EffectKind.READ_ONLY
-                    if risk == "read"
-                    else EffectKind.EFFECTFUL
-                ),
+                parsed,
             )
         return None
 
@@ -222,6 +397,7 @@ class DirectAgentRunner:
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
+        mcp_effect_registry: McpToolEffectRegistry | None = None,
     ) -> None:
         self.store = store
         self.codex = CodexRunner(workspace=workspace, codex_bin=codex_bin)
@@ -230,6 +406,7 @@ class DirectAgentRunner:
         self.native_cli_classifier = (
             native_cli_classifier or NativeCliMetadataClassifier()
         )
+        self.mcp_effect_registry = mcp_effect_registry or McpToolEffectRegistry.default()
 
     def run(
         self,
@@ -276,7 +453,7 @@ class DirectAgentRunner:
         )
         if read_only:
             make_read_only_without_tools(command)
-        events: list[dict[str, object]] = []
+        self.native_cli_classifier.prewarm()
         saw_json = False
 
         def persist_line(line: str) -> None:
@@ -301,35 +478,13 @@ class DirectAgentRunner:
                     transcript_start_line=run.transcript_start_line,
                     now=now,
                 )
-            native_command = _native_cli_command(
-                payload,
-                self.native_cli_classifier,
-            )
-            safe_event = _safe_event(payload, native_command=native_command)
+            safe_event = _safe_event(payload)
             self.store.append_agent_run_event(
                 run.id,
                 safe_event,
                 owner=self.owner,
                 now=now,
             )
-            events.append(safe_event)
-            if (
-                native_command is not None
-                and native_command.effect is EffectKind.EFFECTFUL
-                and _native_command_completed(payload)
-            ):
-                call_id = _native_call_id(payload)
-                if call_id:
-                    self.store.record_agent_execution_receipt(
-                        run.id,
-                        receipt_id=f"native-cli:{run.id}:{call_id}",
-                        operation_id=call_id,
-                        cli=native_command.cli,
-                        command_path=native_command.command_path,
-                        command_digest=native_command.command_digest,
-                        exit_code=0,
-                        now=now,
-                    )
 
         try:
             process = self.executor(
@@ -343,6 +498,7 @@ class DirectAgentRunner:
         except AgentRunLeaseLostError:
             raise
         except AgentStreamError as exc:
+            self._classify_persisted_execution_events(run.id, now=now)
             self._record_failure(
                 run.id,
                 "codex_stream_invalid",
@@ -350,12 +506,19 @@ class DirectAgentRunner:
             )
             raise RuntimeError("codex_stream_invalid") from exc
         except Exception as exc:
+            self._classify_persisted_execution_events(run.id, now=now)
             self._record_failure(
                 run.id,
                 "codex_process_failed",
                 now=now,
             )
             raise RuntimeError("codex_process_failed") from exc
+
+        self._persist_deferred_execution_evidence(
+            run.id,
+            process.stdout,
+            now=now,
+        )
 
         if process.timed_out:
             self._record_failure(
@@ -464,12 +627,96 @@ class DirectAgentRunner:
             return
         self.store.fail_agent_run(
             run_id,
-            {"code": code},
+            {"code": code, "retryable": True},
             owner=self.owner,
             transcript_end_line=persisted.transcript_end_line,
             side_effect_state=evidence_state.value,
             now=now,
         )
+
+    def _persist_deferred_execution_evidence(
+        self,
+        run_id: int,
+        stdout: str,
+        *,
+        now: str | None,
+    ) -> None:
+        for line in stdout.splitlines():
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            native_command = _native_cli_command(
+                payload,
+                self.native_cli_classifier,
+                cached_only=False,
+            )
+            mcp_call = _mcp_tool_call(payload, self.mcp_effect_registry)
+            if native_command is None and mcp_call is None:
+                continue
+            safe_event = _effect_evidence_event(
+                payload,
+                native_command=native_command,
+                mcp_call=mcp_call,
+            )
+            self.store.append_agent_run_event(
+                run_id,
+                safe_event,
+                owner=self.owner,
+                now=now,
+            )
+            if (
+                native_command is not None
+                and native_command.effect is EffectKind.EFFECTFUL
+                and _native_command_completed(payload)
+            ):
+                call_id = _native_call_id(payload)
+                if call_id:
+                    self.store.record_agent_execution_receipt(
+                        run_id,
+                        receipt_id=f"native-cli:{run_id}:{call_id}",
+                        operation_id=call_id,
+                        cli=native_command.cli,
+                        command_path=native_command.command_path,
+                        command_digest=native_command.command_digest,
+                        exit_code=0,
+                        owner=self.owner,
+                        now=now,
+                    )
+            if (
+                mcp_call is not None
+                and mcp_call.effect is EffectKind.EFFECTFUL
+                and _mcp_call_completed(payload)
+            ):
+                call_id = _native_call_id(payload)
+                if call_id:
+                    self.store.record_agent_execution_receipt(
+                        run_id,
+                        receipt_id=f"mcp:{run_id}:{call_id}",
+                        operation_id=call_id,
+                        cli=f"mcp:{mcp_call.server}",
+                        command_path=mcp_call.tool,
+                        command_digest=mcp_call.operation_digest,
+                        exit_code=0,
+                        owner=self.owner,
+                        now=now,
+                    )
+
+    def _classify_persisted_execution_events(
+        self,
+        run_id: int,
+        *,
+        now: str | None,
+    ) -> None:
+        run = self.store.get_agent_run(run_id)
+        if run is None:
+            raise RuntimeError("agent run was not persisted")
+        serialized = "\n".join(
+            json.dumps(event, ensure_ascii=False) for event in run.tool_events
+        )
+        self._persist_deferred_execution_evidence(run_id, serialized, now=now)
 
 
 def _session_id(payload: dict[str, object]) -> str:
@@ -564,7 +811,6 @@ def _classified_native_command(
     return NativeCliCommand(
         cli=cli,
         command_path=command_path,
-        argv=argv,
         effect=effect,
         command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
     )
@@ -573,6 +819,8 @@ def _classified_native_command(
 def _native_cli_command(
     payload: dict[str, object],
     classifier: NativeCliMetadataClassifier,
+    *,
+    cached_only: bool,
 ) -> NativeCliCommand | None:
     if payload.get("type") not in {
         "item.started",
@@ -583,7 +831,25 @@ def _native_cli_command(
     item = payload.get("item")
     if not isinstance(item, dict) or item.get("type") != "command_execution":
         return None
-    return classifier.classify(item)
+    return (
+        classifier.classify_cached(item)
+        if cached_only
+        else classifier.classify(item)
+    )
+
+
+def _mcp_tool_call(
+    payload: dict[str, object],
+    registry: McpToolEffectRegistry,
+) -> McpToolCall | None:
+    if payload.get("type") not in {
+        "item.started",
+        "item.completed",
+        "item.failed",
+    }:
+        return None
+    item = payload.get("item")
+    return registry.classify(item) if isinstance(item, dict) else None
 
 
 def _native_call_id(payload: dict[str, object]) -> str:
@@ -603,6 +869,13 @@ def _native_command_completed(payload: dict[str, object]) -> bool:
     return item.get("exit_code") == 0 and item.get("status") == "completed"
 
 
+def _mcp_call_completed(payload: dict[str, object]) -> bool:
+    if payload.get("type") != "item.completed":
+        return False
+    item = payload.get("item")
+    return isinstance(item, dict) and item.get("status") == "completed"
+
+
 def _execution_receipts_for_run(
     store: AutoReplyStore,
     run_id: int,
@@ -619,16 +892,59 @@ def _execution_receipts_for_run(
     )
 
 
+def _effect_evidence_event(
+    payload: dict[str, object],
+    *,
+    native_command: NativeCliCommand | None,
+    mcp_call: McpToolCall | None,
+) -> dict[str, object]:
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        raise ValueError("effect evidence requires an item")
+    evidence_item: dict[str, object] = {
+        "type": str(item.get("type") or ""),
+    }
+    call_id = _native_call_id(payload)
+    if call_id:
+        evidence_item["id"] = call_id
+    if isinstance(item.get("status"), str):
+        evidence_item["status"] = item["status"]
+    evidence = {
+        "type": str(payload.get("type") or ""),
+        "item": evidence_item,
+    }
+    return _safe_event(
+        evidence,
+        native_command=native_command,
+        mcp_call=mcp_call,
+        completion_payload=payload,
+    )
+
+
 def _safe_event(
     payload: dict[str, object],
     *,
     native_command: NativeCliCommand | None = None,
+    mcp_call: McpToolCall | None = None,
+    completion_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    completion_payload = completion_payload or payload
     safe_event = {
         str(key): _sanitize_event_value(value, key=str(key))
         for key, value in payload.items()
     }
     item = safe_event.get("item")
+    if (
+        native_command is None
+        and mcp_call is None
+        and isinstance(item, dict)
+        and (
+            item.get("type") in _NATIVE_CLASSIFIABLE_ITEM_TYPES
+            or str(item.get("type") or "").endswith("_tool_call")
+        )
+    ):
+        item.pop("metadata", None)
+        item.pop("annotations", None)
     if native_command is not None and isinstance(item, dict):
         metadata = item.get("metadata")
         if not isinstance(metadata, dict):
@@ -645,7 +961,26 @@ def _safe_event(
         if (
             safe_event.get("type") == "item.completed"
             and native_command.effect is EffectKind.EFFECTFUL
-            and not _native_command_completed(payload)
+            and not _native_command_completed(completion_payload)
+        ):
+            safe_event["type"] = "item.failed"
+    if mcp_call is not None and isinstance(item, dict):
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            item["metadata"] = metadata
+        metadata.update(
+            {
+                "effect": mcp_call.effect.value,
+                "mcp_server": mcp_call.server,
+                "operation": mcp_call.tool,
+                "operation_digest": mcp_call.operation_digest,
+            }
+        )
+        if (
+            safe_event.get("type") == "item.completed"
+            and mcp_call.effect is EffectKind.EFFECTFUL
+            and not _mcp_call_completed(completion_payload)
         ):
             safe_event["type"] = "item.failed"
     return safe_event
@@ -733,8 +1068,10 @@ def _redact_argv(parts: list[str]) -> list[str]:
             continue
         flag, separator, value = part.partition("=")
         normalized_flag = _normalized_key(flag.lstrip("-"))
-        if flag in DwsClient.SENSITIVE_COMMAND_FLAGS or _is_sensitive_key(
-            normalized_flag
+        if (
+            flag in DwsClient.SENSITIVE_COMMAND_FLAGS
+            or flag in _COMMAND_CONTENT_FLAGS
+            or _is_sensitive_key(normalized_flag)
         ):
             sanitized.append(
                 f"{flag}={_REDACTED}" if separator else flag
