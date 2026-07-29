@@ -14,6 +14,8 @@ from app.channel_gate import classify_cli_read_failure
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
+    NativeCliMetadataUnavailableError,
+    describe_native_command,
 )
 
 MAX_CLI_OUTPUT_BYTES = 256 * 1024
@@ -51,11 +53,22 @@ def execute_reviewed_read(
     if not argv:
         raise AgentReadOnlyViolationError("reconciliation_command_invalid")
     reviewed = classifier or NativeCliMetadataClassifier()
-    reviewed.prewarm()
-    command = reviewed.classify_cached(
-        {"type": "command_execution", "argv": list(argv)}
-    )
-    if command is None or command.effect is not EffectKind.READ_ONLY:
+    item = {"type": "command_execution", "argv": list(argv)}
+    descriptor = describe_native_command(item)
+    if descriptor is None:
+        raise AgentReadOnlyViolationError("reconciliation_command_invalid")
+    try:
+        reviewed.prewarm()
+        command = reviewed.classify_cached(item)
+    except NativeCliMetadataUnavailableError as exc:
+        return _process_failure_receipt(
+            descriptor,
+            code=exc.code,
+            retryable=exc.retryable,
+        )
+    if command is None:
+        raise AgentReadOnlyViolationError("reconciliation_command_unreviewed")
+    if command.effect is not EffectKind.READ_ONLY:
         raise AgentReadOnlyViolationError("reconciliation_write_forbidden")
     executable = shutil.which(command.cli)
     if executable is None:

@@ -130,11 +130,7 @@ from app.org_cache import (
     refresh_org_cache,
 )
 from app.permission import PermissionAction, PermissionGate
-from app.prompt import (
-    LinkedDocumentContext,
-    MaterialReferenceContext,
-    build_turn_prompt,
-)
+from app.prompt import LinkedDocumentContext, MaterialReferenceContext, build_turn_prompt
 from app.store import (
     AgentRunLeaseLostError,
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
@@ -427,9 +423,7 @@ def _extract_text_emotion_background_id(payload: object) -> str:
 
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
 DINGTALK_FILE_ID_PATTERN = re.compile(r"(?:^|\s)fileId:\s*(?P<file_id>\S+)")
-IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(
-    r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)"
-)
+IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)")
 MARKDOWN_IMAGE_URL_PATTERN = re.compile(r"!\[[^\]]*]\((?P<url>https?://[^)]+)\)")
 DINGTALK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GROUP_CONTEXT_RECOVERY_WINDOW = timedelta(hours=24)
@@ -5349,9 +5343,7 @@ class DingTalkAutoReplyWorker:
                 self._record_agent_runtime_failure_attempt(task, error)
                 continue
             if run.status != "running":
-                self.store.fail_reply_task(
-                    task.id, f"invalid_agent_run_state:{run.status}"
-                )
+                self.store.fail_reply_task(task.id, f"invalid_agent_run_state:{run.status}")
                 continue
             if run.side_effect_state == "unknown":
                 run = self.store.mark_expired_agent_run_unknown(
@@ -6313,9 +6305,7 @@ class DingTalkAutoReplyWorker:
         *,
         result: AgentResult | None = None,
     ) -> None:
-        summary = (
-            result.summary if result is not None else "外部动作结果未知，等待只读核对。"
-        )
+        summary = result.summary if result is not None else "外部动作结果未知，等待只读核对。"
         run_result = DirectAgentRunResult(
             run_id=run.id,
             result=result
@@ -8528,6 +8518,7 @@ class DingTalkAutoReplyWorker:
             if event_time_ms > 0
         ]
         return min(deltas) if deltas else None
+
 
     def _calendar_pending_invite_search_window(
         self,

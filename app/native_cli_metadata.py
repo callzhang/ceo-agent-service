@@ -17,11 +17,19 @@ class AgentReadOnlyViolationError(RuntimeError):
     pass
 
 
+class NativeCliMetadataUnavailableError(RuntimeError):
+    def __init__(self, *, cli: str, code: str, retryable: bool = True) -> None:
+        super().__init__(code)
+        self.cli = cli
+        self.code = code
+        self.retryable = retryable
+
+
 @dataclass(frozen=True)
 class NativeCliCommand:
     cli: str
     command_path: str
-    effect: EffectKind
+    effect: EffectKind | None
     command_digest: str
     target_identifiers: dict[str, str]
 
@@ -37,17 +45,29 @@ def _load_reviewed_dws_effects() -> dict[tuple[str, str], EffectKind]:
             timeout=30,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return effects
+    except subprocess.TimeoutExpired as exc:
+        raise NativeCliMetadataUnavailableError(
+            cli="dws", code="native_cli_metadata_timeout"
+        ) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise NativeCliMetadataUnavailableError(
+            cli="dws", code="native_cli_metadata_start"
+        ) from exc
     if process.returncode != 0:
-        return effects
+        raise NativeCliMetadataUnavailableError(
+            cli="dws", code="native_cli_metadata_nonzero"
+        )
     try:
         payload = json.loads(process.stdout)
-    except json.JSONDecodeError:
-        return effects
+    except json.JSONDecodeError as exc:
+        raise NativeCliMetadataUnavailableError(
+            cli="dws", code="native_cli_metadata_invalid_json"
+        ) from exc
     products = payload.get("products") if isinstance(payload, dict) else None
     if not isinstance(products, list):
-        return effects
+        raise NativeCliMetadataUnavailableError(
+            cli="dws", code="native_cli_metadata_invalid_json"
+        )
     for product in products:
         tools = product.get("tools") if isinstance(product, dict) else None
         if not isinstance(tools, list):
@@ -80,16 +100,28 @@ def _load_reviewed_lark_effects() -> dict[tuple[str, str], EffectKind]:
             timeout=30,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return effects
+    except subprocess.TimeoutExpired as exc:
+        raise NativeCliMetadataUnavailableError(
+            cli="lark-cli", code="native_cli_metadata_timeout"
+        ) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise NativeCliMetadataUnavailableError(
+            cli="lark-cli", code="native_cli_metadata_start"
+        ) from exc
     if process.returncode != 0:
-        return effects
+        raise NativeCliMetadataUnavailableError(
+            cli="lark-cli", code="native_cli_metadata_nonzero"
+        )
     try:
         payload = json.loads(process.stdout)
-    except json.JSONDecodeError:
-        return effects
+    except json.JSONDecodeError as exc:
+        raise NativeCliMetadataUnavailableError(
+            cli="lark-cli", code="native_cli_metadata_invalid_json"
+        ) from exc
     if not isinstance(payload, list):
-        return effects
+        raise NativeCliMetadataUnavailableError(
+            cli="lark-cli", code="native_cli_metadata_invalid_json"
+        )
     for tool in payload:
         if not isinstance(tool, dict):
             continue
@@ -120,17 +152,29 @@ class NativeCliMetadataClassifier:
             reviewed_effects or {}
         )
         self._prewarmed = reviewed_effects is not None
+        self._discovery_errors: dict[str, NativeCliMetadataUnavailableError] = {}
 
     @property
     def cache_keys(self) -> tuple[tuple[str, str], ...]:
         return tuple(sorted(self._cache))
 
     def prewarm(self) -> None:
-        if self._prewarmed:
+        if self._prewarmed and not self._discovery_errors:
             return
+        retrying = self._prewarmed
         self._prewarmed = True
-        self._cache.update(_load_reviewed_dws_effects())
-        self._cache.update(_load_reviewed_lark_effects())
+        for cli, loader in (
+            ("dws", _load_reviewed_dws_effects),
+            ("lark-cli", _load_reviewed_lark_effects),
+        ):
+            if retrying and cli not in self._discovery_errors:
+                continue
+            try:
+                self._cache.update(loader())
+            except NativeCliMetadataUnavailableError as exc:
+                self._discovery_errors[cli] = exc
+            else:
+                self._discovery_errors.pop(cli, None)
 
     def classify(self, item: dict[str, object]) -> NativeCliCommand | None:
         argv = native_command_argv(item)
@@ -161,6 +205,8 @@ class NativeCliMetadataClassifier:
             effect = self._cache.get((cli, command_path))
             if effect is not None:
                 return _classified_native_command(cli, command_path, argv, effect)
+        if cli in self._discovery_errors:
+            raise self._discovery_errors[cli]
         return None
 
     def _classify_dws(self, argv: tuple[str, ...]) -> NativeCliCommand | None:
@@ -359,4 +405,19 @@ def _classified_native_command(
         effect=effect,
         command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
         target_identifiers=_argv_target_identifiers(argv),
+    )
+
+
+def describe_native_command(item: dict[str, object]) -> NativeCliCommand | None:
+    argv = native_command_argv(item)
+    if argv is None or "--dry-run" in argv:
+        return None
+    command_paths = _command_path_candidates(argv[1:])
+    if not command_paths:
+        return None
+    return _classified_native_command(
+        Path(argv[0]).name,
+        command_paths[0],
+        argv,
+        None,
     )

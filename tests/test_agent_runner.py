@@ -155,7 +155,8 @@ def _reconciliation_result_line(
 
 
 def _unknown_run(store: AutoReplyStore):
-    task = _task(store)
+    _task(store)
+    task = store.claim_reply_tasks(limit=1)[0]
     claim = store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -2282,6 +2283,89 @@ def test_reconciliation_runner_persists_typed_cli_error_before_stopping(
     }
 
 
+def test_reconciliation_runner_preserves_metadata_discovery_failure(
+    tmp_path: Path, store: AutoReplyStore, monkeypatch
+):
+    from app.native_cli_metadata import (
+        NativeCliMetadataUnavailableError,
+        describe_native_command,
+    )
+
+    task, run = _unknown_run(store)
+    argv = [
+        "dws",
+        "oa",
+        "approval",
+        "detail",
+        "--instance-id",
+        "proc-1",
+    ]
+    descriptor = describe_native_command(
+        {"type": "command_execution", "argv": argv}
+    )
+    assert descriptor is not None
+    error = {
+        "channel": "dws",
+        "code": "native_cli_metadata_timeout",
+        "retryable": True,
+        "gate_state": "unavailable",
+    }
+    receipt = {
+        "operation": descriptor.command_path,
+        "operation_digest": descriptor.command_digest,
+        "target_identifiers": descriptor.target_identifiers,
+        "result_digest": hashlib.sha256(b"").hexdigest(),
+        "stdout": "",
+        "error": error,
+    }
+    output = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "query-1",
+                "type": "mcp_tool_call",
+                "server": "reconciliation_cli",
+                "tool": "execute_reviewed_read",
+                "arguments": {"argv": argv},
+                "status": "completed",
+                "result": {
+                    "structuredContent": receipt,
+                    "isError": False,
+                },
+            },
+        }
+    )
+    classifier = NativeCliMetadataClassifier()
+    monkeypatch.setattr(
+        "app.native_cli_metadata._load_reviewed_dws_effects",
+        lambda: (_ for _ in ()).throw(
+            NativeCliMetadataUnavailableError(
+                cli="dws",
+                code="native_cli_metadata_timeout",
+                retryable=True,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "app.native_cli_metadata._load_reviewed_lark_effects", lambda: {}
+    )
+    classifier.prewarm()
+    runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        owner="reconcile-owner",
+        native_cli_classifier=classifier,
+    )
+
+    with pytest.raises(ReconciliationDependencyError) as excinfo:
+        runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+    assert excinfo.value.code == "native_cli_metadata_timeout"
+    assert excinfo.value.gate_state.value == "unavailable"
+    assert excinfo.value.retryable is True
+
+
 def test_reconciliation_proof_ignores_model_supplied_internal_digest(
     tmp_path: Path, store: AutoReplyStore
 ):
@@ -2365,6 +2449,143 @@ def test_native_cli_prewarm_loads_lark_read_metadata_on_cold_start(monkeypatch):
     )
     assert command is not None
     assert command.effect is EffectKind.READ_ONLY
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "process"),
+    [
+        ("timeout", subprocess.TimeoutExpired(["dws", "schema"], 30)),
+        ("start", OSError(11, "temporarily unavailable")),
+        (
+            "nonzero",
+            subprocess.CompletedProcess([], returncode=1, stdout="", stderr="failed"),
+        ),
+        (
+            "invalid_json",
+            subprocess.CompletedProcess([], returncode=0, stdout="not-json", stderr=""),
+        ),
+    ],
+)
+def test_native_cli_metadata_discovery_failure_is_typed(
+    monkeypatch, failure_kind: str, process: object
+):
+    from app.native_cli_metadata import (
+        NativeCliMetadataUnavailableError,
+        _load_reviewed_dws_effects,
+    )
+
+    _load_reviewed_dws_effects.cache_clear()
+
+    def run(*_args, **_kwargs):
+        if isinstance(process, BaseException):
+            raise process
+        return process
+
+    monkeypatch.setattr("app.native_cli_metadata.subprocess.run", run)
+
+    with pytest.raises(NativeCliMetadataUnavailableError) as excinfo:
+        _load_reviewed_dws_effects()
+
+    assert excinfo.value.cli == "dws"
+    assert excinfo.value.code == f"native_cli_metadata_{failure_kind}"
+    assert excinfo.value.retryable is True
+    _load_reviewed_dws_effects.cache_clear()
+
+
+def test_native_cli_metadata_accepts_legitimate_empty_schema(monkeypatch):
+    from app.native_cli_metadata import _load_reviewed_dws_effects
+
+    _load_reviewed_dws_effects.cache_clear()
+    monkeypatch.setattr(
+        "app.native_cli_metadata.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], returncode=0, stdout='{"products": []}', stderr=""
+        ),
+    )
+
+    assert _load_reviewed_dws_effects() == {}
+    _load_reviewed_dws_effects.cache_clear()
+
+
+def test_native_cli_metadata_retries_transient_discovery_failure(monkeypatch):
+    from app.native_cli_metadata import NativeCliMetadataUnavailableError
+
+    attempts = 0
+
+    def load_dws():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise NativeCliMetadataUnavailableError(
+                cli="dws",
+                code="native_cli_metadata_timeout",
+                retryable=True,
+            )
+        return {("dws", "oa approval detail"): EffectKind.READ_ONLY}
+
+    monkeypatch.setattr("app.native_cli_metadata._load_reviewed_dws_effects", load_dws)
+    monkeypatch.setattr(
+        "app.native_cli_metadata._load_reviewed_lark_effects", lambda: {}
+    )
+    classifier = NativeCliMetadataClassifier()
+
+    classifier.prewarm()
+    with pytest.raises(NativeCliMetadataUnavailableError):
+        classifier.classify_cached(
+            {"type": "command_execution", "argv": ["dws", "oa", "approval", "detail"]}
+        )
+    classifier.prewarm()
+
+    command = classifier.classify_cached(
+        {"type": "command_execution", "argv": ["dws", "oa", "approval", "detail"]}
+    )
+    assert command is not None
+    assert command.effect is EffectKind.READ_ONLY
+    assert attempts == 2
+
+
+def test_reconciliation_cli_reports_metadata_discovery_unavailable(monkeypatch):
+    from app.native_cli_metadata import NativeCliMetadataUnavailableError
+    from app.reconciliation_cli import execute_reviewed_read
+
+    classifier = NativeCliMetadataClassifier()
+    monkeypatch.setattr(
+        classifier,
+        "prewarm",
+        lambda: (_ for _ in ()).throw(
+            NativeCliMetadataUnavailableError(
+                cli="dws",
+                code="native_cli_metadata_timeout",
+                retryable=True,
+            )
+        ),
+    )
+
+    receipt = execute_reviewed_read(
+        ["dws", "oa", "approval", "detail", "--instance-id", "proc-1"],
+        classifier=classifier,
+    )
+
+    assert receipt["error"] == {
+        "channel": "dws",
+        "code": "native_cli_metadata_timeout",
+        "retryable": True,
+        "gate_state": "unavailable",
+    }
+
+
+def test_reconciliation_cli_distinguishes_unknown_command_from_write(monkeypatch):
+    from app.reconciliation_cli import execute_reviewed_read
+
+    classifier = NativeCliMetadataClassifier(reviewed_effects={})
+
+    with pytest.raises(
+        AgentReadOnlyViolationError, match="reconciliation_command_unreviewed"
+    ):
+        execute_reviewed_read(
+            ["dws", "unknown", "read", "--id", "one"],
+            classifier=classifier,
+        )
 
 
 def test_unrelated_read_event_cannot_prove_unknown_effect(

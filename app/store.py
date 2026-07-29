@@ -889,6 +889,8 @@ class AutoReplyStore:
                     on agent_run_events(agent_run_id, sequence);
                 create index if not exists idx_agent_run_events_run_call
                     on agent_run_events(agent_run_id, call_id, sequence);
+                create index if not exists idx_agent_run_events_run_scope
+                    on agent_run_events(agent_run_id, event_scope);
                 create table if not exists agent_execution_receipts (
                     id integer primary key autoincrement,
                     agent_run_id integer not null,
@@ -1388,6 +1390,10 @@ class AutoReplyStore:
                     "alter table agent_run_events add column "
                     "event_scope text not null default 'direct'"
                 )
+            db.execute(
+                "create index if not exists idx_agent_run_events_run_scope "
+                "on agent_run_events(agent_run_id, event_scope)"
+            )
             self._migrate_reply_task_channel_identity(db)
             db.execute(
                 """
@@ -1576,7 +1582,8 @@ class AutoReplyStore:
                         f"text not null default 'dingtalk'"
                     )
             work_summary_input_columns = {
-                row["name"] for row in db.execute("pragma table_info(work_summary_inputs)").fetchall()
+                row["name"]
+                for row in db.execute("pragma table_info(work_summary_inputs)").fetchall()
             }
             for column, definition in (
                 ("available_at", "text not null default ''"),
@@ -1671,8 +1678,7 @@ class AutoReplyStore:
                         f"alter table org_user_profiles add column {column} {definition}"
                     )
             wechat_memory_columns = {
-                row["name"]
-                for row in db.execute(
+                row["name"] for row in db.execute(
                     "pragma table_info(wechat_memory_candidates)"
                 ).fetchall()
             }
@@ -3903,12 +3909,16 @@ class AutoReplyStore:
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
             rows = db.execute(
-                "select * from agent_runs where status='unknown' "
-                "and reconciliation_suspended=0 "
-                "and (reconciliation_next_attempt_at='' "
-                "or reconciliation_next_attempt_at<=?) "
-                "and (lease_owner='' or lease_expires_at<=?) "
-                "order by updated_at, id limit ?",
+                "select agent_runs.* from agent_runs "
+                "join reply_tasks on reply_tasks.id=agent_runs.reply_task_id "
+                "where agent_runs.status='unknown' "
+                "and reply_tasks.status='processing' "
+                "and reply_tasks.execution_generation=agent_runs.execution_generation "
+                "and agent_runs.reconciliation_suspended=0 "
+                "and (agent_runs.reconciliation_next_attempt_at='' "
+                "or agent_runs.reconciliation_next_attempt_at<=?) "
+                "and (agent_runs.lease_owner='' or agent_runs.lease_expires_at<=?) "
+                "order by agent_runs.updated_at, agent_runs.id limit ?",
                 (now_text, now_text, limit),
             ).fetchall()
             return [self._agent_run_from_row(row, db=db) for row in rows]
@@ -3943,6 +3953,13 @@ class AutoReplyStore:
                   and (reconciliation_next_attempt_at=''
                        or reconciliation_next_attempt_at<=?)
                   and (lease_owner='' or lease_expires_at<=?)
+                  and exists (
+                      select 1 from reply_tasks
+                      where reply_tasks.id=agent_runs.reply_task_id
+                        and reply_tasks.status='processing'
+                        and reply_tasks.execution_generation=
+                            agent_runs.execution_generation
+                  )
                 """,
                 (owner, lease_expires_at, now_text, run_id, now_text, now_text),
             )

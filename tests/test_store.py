@@ -1751,6 +1751,34 @@ def test_stale_generation_reconciliation_cannot_mutate_run_or_task(
     assert task.execution_generation == new_generation
 
 
+def test_stale_generation_unknown_run_is_not_due_or_claimable(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(
+        task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker-1",
+        now="2026-07-29 09:00:01",
+    )
+    store.rotate_reply_task_execution_generation(task_id)
+    before = store.get_agent_run(run.id)
+
+    due = store.list_unknown_agent_runs(now="2026-07-29 09:00:02")
+    claim = store.claim_unknown_agent_run(
+        run.id,
+        owner="reconciler-1",
+        now="2026-07-29 09:00:02",
+    )
+
+    assert [item.id for item in due] == []
+    assert claim.claimed is False
+    assert claim.run == before
+    assert store.get_agent_run(run.id) == before
+
+
 @pytest.mark.parametrize("outcome", ["completed", "absent"])
 def test_stale_generation_recovery_cannot_mutate_task(tmp_path: Path, outcome: str):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1877,6 +1905,28 @@ def test_reconciliation_event_limit_excludes_direct_run_history(
             {"type": "item.completed", "item": {"id": "reconcile-2"}},
             owner="reconciler-1",
         )
+
+
+def test_reconciliation_event_count_uses_run_scope_composite_index(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    AutoReplyStore(db_path)
+
+    with sqlite3.connect(db_path) as db:
+        indexes = {
+            row[1]
+            for row in db.execute("pragma index_list(agent_run_events)").fetchall()
+        }
+        plan = db.execute(
+            "explain query plan select count(*) from agent_run_events "
+            "where agent_run_id=? and event_scope='reconciliation'",
+            (1,),
+        ).fetchall()
+
+    assert "idx_agent_run_events_run_scope" in indexes
+    assert any(
+        "USING COVERING INDEX idx_agent_run_events_run_scope" in row[3]
+        for row in plan
+    ), plan
 
 
 def test_get_agent_run_for_task_generation_returns_exact_row(tmp_path: Path):

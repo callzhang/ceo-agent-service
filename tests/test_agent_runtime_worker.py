@@ -318,6 +318,12 @@ class FailingReconciliationRunner(ScriptedDirectAgentRunner):
 def _seed_unknown_run(store: AutoReplyStore, task_id: int):
     task = store.get_reply_task(task_id)
     assert task is not None
+    if task.status == "pending":
+        claimed_tasks = store.claim_reply_tasks(limit=1)
+        assert [item.id for item in claimed_tasks] == [task_id]
+        task = claimed_tasks[0]
+    else:
+        assert task.status == "processing"
     claim = store.claim_agent_run(
         task.id,
         task.execution_generation,

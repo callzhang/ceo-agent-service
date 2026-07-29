@@ -34,6 +34,8 @@ from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliCommand,
     NativeCliMetadataClassifier,
+    NativeCliMetadataUnavailableError,
+    describe_native_command,
     structured_target_identifiers,
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
@@ -670,9 +672,20 @@ class DirectAgentRunner:
             ):
                 arguments = item.get("arguments")
                 argv = arguments.get("argv") if isinstance(arguments, dict) else None
-                command = self.native_cli_classifier.classify_cached(
-                    {"type": "command_execution", "argv": argv}
-                )
+                command_item = {"type": "command_execution", "argv": argv}
+                try:
+                    command = self.native_cli_classifier.classify_cached(command_item)
+                except NativeCliMetadataUnavailableError as exc:
+                    descriptor = describe_native_command(command_item)
+                    if descriptor is None:
+                        raise AgentReadOnlyViolationError(
+                            "reconciliation_command_unreviewed"
+                        ) from exc
+                    return _metadata_discovery_failure_event(
+                        payload,
+                        descriptor=descriptor,
+                        discovery_error=exc,
+                    )
                 if command is None or command.effect is not EffectKind.READ_ONLY:
                     raise AgentReadOnlyViolationError("reconciliation_write_forbidden")
                 safe_event = _safe_event(payload, native_command=command)
@@ -1068,6 +1081,54 @@ def _controlled_cli_receipt(value: object) -> dict[str, object] | None:
             continue
         return candidate
     return None
+
+
+def _metadata_discovery_failure_event(
+    payload: dict[str, object],
+    *,
+    descriptor: NativeCliCommand,
+    discovery_error: NativeCliMetadataUnavailableError,
+) -> dict[str, object]:
+    safe_event = _safe_event(payload)
+    if payload.get("type") != "item.completed":
+        return safe_event
+    item = payload.get("item")
+    receipt = (
+        _controlled_cli_receipt(item.get("result"))
+        if isinstance(item, dict)
+        else None
+    )
+    receipt_error = receipt.get("error") if isinstance(receipt, dict) else None
+    validated_error = (
+        _validated_reconciliation_error(receipt_error)
+        if isinstance(receipt_error, dict)
+        else None
+    )
+    expected_error = {
+        "channel": discovery_error.cli,
+        "code": discovery_error.code,
+        "gate_state": ChannelGateState.UNAVAILABLE.value,
+        "retryable": discovery_error.retryable,
+    }
+    if (
+        receipt is None
+        or receipt.get("operation") != descriptor.command_path
+        or receipt.get("operation_digest") != descriptor.command_digest
+        or receipt.get("target_identifiers") != descriptor.target_identifiers
+        or validated_error != expected_error
+    ):
+        raise AgentReadOnlyViolationError("reconciliation_query_receipt_invalid")
+    safe_item = safe_event.get("item")
+    if not isinstance(safe_item, dict):
+        raise AgentReadOnlyViolationError("reconciliation_query_receipt_invalid")
+    safe_item["metadata"] = {
+        "native_cli": descriptor.cli,
+        "operation": descriptor.command_path,
+        "command_digest": descriptor.command_digest,
+        "target_identifiers": descriptor.target_identifiers,
+        "reconciliation_error": validated_error,
+    }
+    return safe_event
 
 
 def _reconciliation_dependency_error(
