@@ -113,13 +113,10 @@ class FakeAgentResultRunner:
             result, events, session_id = script[:3]
             receipts = script[3] if len(script) == 4 else ()
         else:
-            result = explicit_agent_result(
-                AgentOutcome.NO_ACTION,
-                "测试 Agent 判定无需动作。",
+            raise AssertionError(
+                "Direct Agent invocation was not explicitly scripted: "
+                f"task={task.id} generation={task.execution_generation}"
             )
-            events = ()
-            session_id = f"worker-test-session-{task.id}"
-            receipts = ()
         self.calls.append(
             (task.id, task.execution_generation, context, run.codex_session_id)
         )
@@ -144,6 +141,7 @@ class FakeAgentResultRunner:
                 command_path=command_path,
                 command_digest=command_digest,
                 exit_code=0,
+                owner=self.owner,
             )
         if result.error.side_effect_state is SideEffectState.UNKNOWN:
             run = self.store.mark_agent_run_unknown(
@@ -234,6 +232,21 @@ def agent_runner(worker: DingTalkAutoReplyWorker) -> FakeAgentResultRunner:
 
 def agent_prompt(worker: DingTalkAutoReplyWorker) -> str:
     return agent_runner(worker).calls[0][2].render()
+
+
+def script_no_action(worker: DingTalkAutoReplyWorker, *, count: int = 1) -> None:
+    runner = agent_runner(worker)
+    for index in range(count):
+        runner.scripts.append(
+            (
+                explicit_agent_result(
+                    AgentOutcome.NO_ACTION,
+                    "测试明确指定无需外部动作。",
+                ),
+                (),
+                f"worker-test-session-{len(runner.scripts) + index + 1}",
+            )
+        )
 
 
 def assert_calendar_agent_contract(
@@ -2189,6 +2202,7 @@ def test_consume_manual_rerun_task_forces_new_decision(tmp_path: Path, monkeypat
         trigger_message_json=trigger.model_dump_json(),
         attempt_id=7,
     )
+    script_no_action(worker)
     assert worker.consume_once(max_tasks=1) == 1
     assert rerun.execution_generation
     assert worker.direct_agent_runner.calls[0][0:2] == (
@@ -3834,6 +3848,7 @@ def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(
     dws.messages = {"cid-1": [trigger, manual_reply]}
     dws.unread_messages = {"cid-1": []}
     worker.now_provider = lambda: fixed_worker_now() + timedelta(minutes=6)
+    script_no_action(worker)
     assert worker.run_once() is None
 
     assert worker.store.count_reply_tasks(status="done") == 1
@@ -3876,6 +3891,7 @@ def test_fast_path_backoff_skips_when_trigger_was_recalled_after_wait(
     dws.messages = {"cid-1": [recalled_trigger]}
     dws.unread_messages = {"cid-1": []}
     worker.now_provider = lambda: fixed_worker_now() + timedelta(minutes=6)
+    script_no_action(worker)
     assert worker.run_once() is None
 
     assert dws.messages_by_id_reads == []
@@ -4746,6 +4762,7 @@ def test_lark_blocked_task_does_not_block_later_dingtalk_task(tmp_path, monkeypa
     blocked_ids = [task.id for task in all_tasks[:-1]]
     processable_id = all_tasks[-1].id
 
+    script_no_action(worker)
     assert worker.consume_once(max_tasks=1) == 1
 
     processable = store.get_reply_task(processable_id)
@@ -5556,6 +5573,7 @@ def test_consume_once_completes_older_single_chat_processing_task_after_newer_re
         trigger_message_json=new_message.model_dump_json(),
     )
 
+    script_no_action(worker)
     assert worker.consume_once(max_tasks=1) == 1
 
     tasks = {
@@ -6039,6 +6057,7 @@ def test_calendar_invite_still_injects_calendar_context_before_codex(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -6485,6 +6504,7 @@ def test_calendar_response_respects_worker_dry_run(
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    script_no_action(worker)
     worker.run_once()
 
     assert_calendar_agent_contract(worker, dws)
@@ -8064,6 +8084,7 @@ def test_single_chat_alidocs_card_reaches_codex_as_material_reference(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -8277,6 +8298,7 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
         send_status="commented",
     )
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -8335,6 +8357,7 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
             ("2026-05-13 09:30:00", "2026-05-13 09:30:00", previous_attempt_id),
         )
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -8414,6 +8437,7 @@ def test_status_like_message_with_followup_request_is_processed_by_codex(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -8433,6 +8457,7 @@ def test_question_with_link_still_goes_to_codex(tmp_path: Path, monkeypatch):
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -8450,6 +8475,7 @@ def test_bare_external_link_is_processed_by_codex(tmp_path: Path, monkeypatch):
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -8498,6 +8524,7 @@ def test_ai_minutes_permission_request_is_auto_approved_without_codex_or_reply(
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -8887,6 +8914,7 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
         oa_approval_handler=oa_handler,
     )
 
+    script_no_action(worker)
     worker.run_once()
 
     assert oa_handler.calls == []
@@ -8989,6 +9017,7 @@ def test_oa_approval_detail_always_includes_openapi_comments(
         oa_approval_handler=oa_handler,
     )
 
+    script_no_action(worker)
     worker.run_once()
 
     assert oa_handler.calls == []
@@ -9041,6 +9070,7 @@ def test_oa_approval_detail_param_error_is_recovered_by_openapi(
         oa_approval_handler=oa_handler,
     )
 
+    script_no_action(worker)
     worker.run_once()
 
     assert oa_handler.calls == []
@@ -9504,6 +9534,7 @@ def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_handler(
         oa_approval_handler=oa_handler,
     )
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -9848,6 +9879,7 @@ def test_dingtalk_material_links_are_passed_to_codex_without_worker_reading(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.doc_info_calls == []
@@ -9874,6 +9906,7 @@ def test_lark_doc_link_is_passed_to_codex_as_material_reference(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -9901,6 +9934,7 @@ def test_dingtalk_doc_link_is_passed_to_codex_without_worker_read(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.doc_info_calls == []
@@ -9942,6 +9976,7 @@ def test_single_chat_doc_material_no_reply_retries_without_worker_read(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.doc_info_calls == []
@@ -9981,6 +10016,7 @@ def test_single_chat_file_material_no_reply_retries_without_worker_read(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.search_document_calls == []
@@ -10026,6 +10062,7 @@ def test_single_chat_mixed_minutes_and_doc_material_retries_for_doc(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.minutes_info_calls == []
@@ -10133,6 +10170,7 @@ def test_docs_dingtalk_aitable_material_no_reply_retries_without_worker_read(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.doc_info_calls == []
@@ -10168,6 +10206,7 @@ def test_dingtalk_doc_link_in_context_is_passed_to_codex_without_worker_read(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.doc_info_calls == []
@@ -10197,6 +10236,7 @@ def test_referenced_file_message_is_passed_to_codex_without_worker_read(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.search_document_calls == []
@@ -10230,6 +10270,7 @@ def test_referenced_file_message_includes_drive_download_command(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.search_document_calls == []
@@ -10386,6 +10427,7 @@ def test_single_chat_minutes_no_reply_does_not_trigger_material_retry(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -10509,6 +10551,7 @@ def test_media_id_image_is_downloaded_and_passed_to_codex(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.resource_download_url_calls == []
@@ -10552,6 +10595,7 @@ def test_media_id_image_uses_dws_local_download_path(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert codex.calls == []
@@ -10596,6 +10640,7 @@ def test_media_id_image_reads_nested_dws_download_url_response(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert codex.calls == []
@@ -10638,6 +10683,7 @@ def test_robot_download_code_image_is_downloaded_and_passed_to_codex(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.robot_message_file_download_calls == []
@@ -10750,6 +10796,7 @@ def test_minutes_permission_setup_is_passed_to_codex_without_worker_read(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.minutes_info_calls == []
@@ -10779,6 +10826,7 @@ def test_alidocs_permission_setup_is_passed_to_codex_without_worker_read(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert dws.doc_info_calls == []
@@ -11246,6 +11294,7 @@ def test_stale_processing_task_with_terminal_attempt_is_requeued_not_completed(
         lambda _max_age_seconds: 0,
     )
 
+    script_no_action(worker)
     assert worker.consume_once(max_tasks=1) == 1
 
     assert worker.store.count_reply_tasks(status="done") == 1
@@ -11474,6 +11523,7 @@ def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
         codex_reason="handoff delivery failed",
     )
 
+    script_no_action(worker)
     assert worker.consume_once(max_tasks=1) == 1
 
     assert worker.store.count_reply_tasks(status="done") == 1
@@ -11508,6 +11558,7 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
         codex_session_id="session-1",
     )
 
+    script_no_action(worker)
     worker.run_once()
 
     prompt = agent_prompt(worker)
@@ -11573,6 +11624,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
         tz=ZoneInfo("Asia/Shanghai")
     ) + timedelta(minutes=1)
 
+    script_no_action(worker)
     assert worker.consume_once(max_tasks=1) == 1
 
     assert agent_runner(worker).calls[0][3] == "session-1"
@@ -12122,6 +12174,7 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     worker.store.upsert_conversation("cid-1", "Friday", False, "old-session")
 
+    script_no_action(worker)
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
 
     assert codex.calls == []
@@ -12158,6 +12211,7 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
         oa_approval_handler=oa_handler,
     )
 
+    script_no_action(worker)
     worker.rerun_message(
         conversation(single_chat=True),
         "msg-1",
@@ -12328,6 +12382,7 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
         style_records=style_records,
     )
 
+    script_no_action(worker)
     worker.run_once()
 
     prompt = agent_prompt(worker)
@@ -12373,6 +12428,7 @@ def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeyp
         corrected_reply_text="你把代码提交一下，然后代码提交了，就可以让别人帮你看了",
     )
 
+    script_no_action(worker)
     worker.run_once()
 
     prompt = agent_prompt(worker)
@@ -12861,6 +12917,7 @@ def test_okr_mentions_without_agent_queue_action_do_not_fetch_okr_source(
         },
     )()
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -13085,6 +13142,7 @@ def test_single_chat_old_candidate_context_does_not_become_new_question(
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="ack only"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert final_sent(dws) == []
@@ -13192,6 +13250,7 @@ def test_single_chat_recovery_processes_unseen_gap_before_later_seen_anchor(
     worker.store.mark_seen("msg-seen-old", "cid-1")
     worker.store.mark_seen("msg-seen-new", "cid-1")
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -13326,6 +13385,7 @@ def test_initial_prompt_context_includes_previous_20_plus_unread_tail(
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="handled"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert final_sent(dws) == []
@@ -13367,6 +13427,7 @@ def test_resumed_prompt_context_only_includes_messages_after_last_seen(
     )
     worker.store.mark_seen("old-seen", "cid-1")
 
+    script_no_action(worker)
     worker.run_once()
 
     runner = worker.direct_agent_runner
@@ -13759,6 +13820,7 @@ def test_run_once_max_batches_stops_after_limit(tmp_path: Path, monkeypatch):
     codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先推进"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once(max_batches=1)
 
     assert len(agent_runner(worker).calls) == 1
@@ -13784,6 +13846,7 @@ def test_single_chat_same_display_name_without_current_user_id_still_calls_codex
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="handled"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -13839,6 +13902,7 @@ def test_message_after_current_user_reply_still_calls_codex(
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="handled"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
@@ -13882,6 +13946,7 @@ def test_read_failure_records_error_and_continues_next_conversation(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
+    script_no_action(worker)
     worker.run_once()
 
     assert final_sent(dws) == []
@@ -13912,6 +13977,7 @@ def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_mi
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -13937,6 +14003,7 @@ def test_group_agent_name_mention_from_search_is_processed_when_mentions_miss_it
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -13966,6 +14033,7 @@ def test_group_mention_from_unread_payload_is_processed_when_mention_lookup_miss
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -14195,6 +14263,7 @@ def test_fast_path_followup_uses_recent_oa_card_url_when_unread_omits_card(
     task = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
     assert "coalesced_message_ids" not in task.trigger_message_json
     dws.conversations = []
+    script_no_action(worker)
     assert worker.consume_once() == 1
 
     assert oa_handler.calls == []
@@ -14246,6 +14315,7 @@ def test_group_all_mention_from_unread_conversation_is_processed(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -14269,6 +14339,7 @@ def test_group_all_mention_is_case_insensitive_for_ascii_alias(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -14298,6 +14369,7 @@ def test_group_mention_from_read_conversation_is_processed_from_mentions(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -14328,6 +14400,7 @@ def test_group_all_mention_from_read_conversation_is_processed_from_broadcast_se
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -14574,6 +14647,7 @@ def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -14607,6 +14681,7 @@ def test_current_user_file_does_not_hide_unanswered_group_mention(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -14638,6 +14713,7 @@ def test_processing_ack_does_not_hide_unanswered_group_mention(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
+    script_no_action(worker)
     worker.run_once()
 
     prompt = agent_prompt(worker)
