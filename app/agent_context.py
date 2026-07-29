@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,7 @@ class AgentTaskContext:
     messages: tuple[AgentContextMessage, ...]
     materials: tuple[MaterialReference, ...]
     prior_receipts: tuple[PriorReceipt, ...]
+    trigger_raw_payload: dict[str, object] = field(default_factory=dict)
 
     def render(self) -> str:
         trigger = {
@@ -52,6 +53,7 @@ class AgentTaskContext:
             "sender": self.trigger_sender,
             "text": self.trigger_text,
             "create_time": self.trigger_create_time,
+            "raw_payload": self.trigger_raw_payload,
         }
         messages = [
             {

@@ -6,9 +6,11 @@ import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 from urllib.parse import parse_qsl, urlsplit
 from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agent_context import AgentTaskContext
 from app.agent_result import (
@@ -29,12 +31,18 @@ from app.dws_client import DwsClient
 from app.history import safe_observability_error
 from app.leak_check import contains_credential
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
-from app.store import AgentRunLeaseLostError, AutoReplyStore, ReplyTask
-from app.wechat.codex_safety import make_read_only_without_tools
+from app.store import AgentRun, AgentRunLeaseLostError, AutoReplyStore, ReplyTask
+from app.wechat.codex_safety import (
+    make_read_only_with_reviewed_tools,
+    make_read_only_without_tools,
+)
 
 
 AGENT_RESULT_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "agent_result.schema.json"
+)
+AGENT_RECONCILIATION_SCHEMA_PATH = (
+    Path(__file__).resolve().parent / "schemas" / "agent_reconciliation_result.schema.json"
 )
 DEFAULT_MCP_EFFECTS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "mcp-tool-effects.json"
@@ -118,6 +126,61 @@ class AgentStreamError(RuntimeError):
     pass
 
 
+class AgentRunUnknownError(RuntimeError):
+    def __init__(self, code: str, run_id: int) -> None:
+        self.code = code
+        self.run_id = run_id
+        super().__init__(code)
+
+
+class AgentReadOnlyViolationError(RuntimeError):
+    pass
+
+
+class ReconciliationProof(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    original_call_id: str = Field(min_length=1)
+    original_operation_digest: str = Field(min_length=1)
+    query_call_id: str = Field(min_length=1)
+    observed_state: Literal["effect_present", "effect_absent"]
+
+
+class ReconciliationError(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    code: str = ""
+    retryable: bool = False
+    authorization_required: bool = False
+
+
+class ReconciliationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    outcome: AgentOutcome
+    summary: str = Field(min_length=1)
+    proof: ReconciliationProof | None = None
+    error: ReconciliationError = Field(default_factory=ReconciliationError)
+
+
+@dataclass(frozen=True)
+class AgentReconciliationRunResult:
+    run_id: int
+    result: ReconciliationResult
+    transcript_start_line: int
+    transcript_end_line: int
+    events: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True)
+class UnknownEffectReference:
+    call_id: str
+    transport: str
+    operation: str
+    operation_digest: str
+    target_identifiers: dict[str, str]
+
+
 @dataclass(frozen=True)
 class DirectAgentRunResult:
     run_id: int
@@ -134,6 +197,7 @@ class NativeCliCommand:
     command_path: str
     effect: EffectKind
     command_digest: str
+    target_identifiers: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -142,6 +206,7 @@ class McpToolCall:
     tool: str
     effect: EffectKind
     operation_digest: str
+    target_identifiers: dict[str, str]
 
 
 class McpToolEffectRegistry:
@@ -230,7 +295,18 @@ class McpToolEffectRegistry:
             tool=tool,
             effect=effect,
             operation_digest=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+            target_identifiers=_structured_target_identifiers(arguments),
         )
+
+    def reviewed_read_tools(self) -> dict[str, tuple[str, ...]]:
+        grouped: dict[str, list[str]] = {}
+        for (server, tool), effect in self._effects.items():
+            if effect is EffectKind.READ_ONLY:
+                grouped.setdefault(server, []).append(tool)
+        return {
+            server: tuple(sorted(tools))
+            for server, tools in grouped.items()
+        }
 
 @lru_cache(maxsize=1)
 def _load_reviewed_dws_effects() -> dict[tuple[str, str], EffectKind]:
@@ -529,6 +605,8 @@ class DirectAgentRunner:
                 "codex_stream_invalid",
                 now=now,
             )
+            if self.store.get_agent_run(run.id).status == "unknown":
+                raise AgentRunUnknownError("codex_stream_invalid", run.id) from exc
             raise RuntimeError("codex_stream_invalid") from exc
         except Exception as exc:
             self._classify_persisted_execution_events(run.id, now=now)
@@ -537,6 +615,8 @@ class DirectAgentRunner:
                 "codex_process_failed",
                 now=now,
             )
+            if self.store.get_agent_run(run.id).status == "unknown":
+                raise AgentRunUnknownError("codex_process_failed", run.id) from exc
             raise RuntimeError("codex_process_failed") from exc
 
         self._persist_deferred_execution_evidence(
@@ -551,6 +631,8 @@ class DirectAgentRunner:
                 "codex_process_timeout",
                 now=now,
             )
+            if self.store.get_agent_run(run.id).status == "unknown":
+                raise AgentRunUnknownError("codex_process_timeout", run.id)
             raise RuntimeError("codex_process_timeout")
         if process.returncode != 0:
             self._record_failure(
@@ -558,6 +640,8 @@ class DirectAgentRunner:
                 "codex_process_failed",
                 now=now,
             )
+            if self.store.get_agent_run(run.id).status == "unknown":
+                raise AgentRunUnknownError("codex_process_failed", run.id)
             raise RuntimeError("codex_process_failed")
         persisted = self.store.get_agent_run(run.id)
         if persisted is None:
@@ -590,6 +674,10 @@ class DirectAgentRunner:
                 transcript_end_line=persisted.transcript_end_line,
                 now=now,
             )
+            raise AgentRunUnknownError(
+                result.error.code or "agent_side_effect_unknown",
+                run.id,
+            )
         elif result.outcome is AgentOutcome.FAILED:
             self.store.fail_agent_run(
                 run.id,
@@ -619,6 +707,134 @@ class DirectAgentRunner:
             events=tuple(completed_run.tool_events),
             receipts=tuple(all_receipts),
         )
+
+    def reconcile(
+        self,
+        existing_run: AgentRun,
+        context: AgentTaskContext,
+        *,
+        now: str | None = None,
+    ) -> AgentReconciliationRunResult:
+        if existing_run.status != "unknown":
+            raise ValueError("reconciliation requires an unknown agent run")
+        if context.task_id != existing_run.reply_task_id:
+            raise ValueError("agent context does not match unknown run")
+        claim = self.store.claim_unknown_agent_run(
+            existing_run.id,
+            owner=self.owner,
+            lease_seconds=LEASE_SECONDS,
+            now=now,
+        )
+        if not claim.claimed:
+            raise AgentRunUnavailableError(
+                f"agent reconciliation is not available: {existing_run.id}"
+            )
+        run = claim.run
+        original = _unknown_effect_reference(run.tool_events)
+        prompt = _reconciliation_prompt(context, original)
+        command = self.codex.build_command(
+            prompt=prompt,
+            session_id=None,
+            output_schema_path=AGENT_RECONCILIATION_SCHEMA_PATH,
+            approval_policy="never",
+            developer_instructions=(
+                DIRECT_AGENT_DEVELOPER_INSTRUCTIONS
+                + "\n\n"
+                + READ_ONLY_DEVELOPER_INSTRUCTION
+            ),
+            use_approval_bypass=False,
+            preserve_native_model_config=True,
+        )
+        make_read_only_with_reviewed_tools(
+            command,
+            reviewed_mcp_tools=self.mcp_effect_registry.reviewed_read_tools(),
+        )
+        self.native_cli_classifier.prewarm()
+        appended_events: list[dict[str, object]] = []
+        saw_json = False
+
+        def persist_line(line: str) -> None:
+            nonlocal saw_json
+            if not line.strip():
+                return
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                if saw_json:
+                    raise AgentStreamError("codex_stream_invalid") from exc
+                return
+            saw_json = True
+            if not isinstance(payload, dict):
+                raise AgentStreamError("codex_stream_invalid")
+            safe_event = self._read_only_safe_event(payload)
+            appended_events.append(safe_event)
+            self.store.append_unknown_agent_run_event(
+                run.id,
+                safe_event,
+                owner=self.owner,
+                now=now,
+            )
+
+        try:
+            process = self.executor(
+                command,
+                prompt=prompt,
+                env=self.codex.build_env(preserve_local_cli_auth=True),
+                total_timeout_seconds=TOTAL_TIMEOUT_SECONDS,
+                idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
+                on_stdout_line=persist_line,
+            )
+        except AgentReadOnlyViolationError:
+            raise
+        except AgentRunLeaseLostError:
+            raise
+        except AgentStreamError as exc:
+            raise RuntimeError("codex_stream_invalid") from exc
+        except Exception as exc:
+            raise RuntimeError("codex_process_failed") from exc
+        if process.timed_out:
+            raise RuntimeError("codex_process_timeout")
+        if process.returncode != 0:
+            raise RuntimeError("codex_process_failed")
+        result = _parse_reconciliation_result(process.stdout)
+        _validate_reconciliation_proof(result, original, appended_events)
+        persisted = self.store.get_agent_run(run.id)
+        if persisted is None:
+            raise RuntimeError("agent run was not persisted")
+        return AgentReconciliationRunResult(
+            run_id=run.id,
+            result=result,
+            transcript_start_line=run.transcript_end_line,
+            transcript_end_line=persisted.transcript_end_line,
+            events=tuple(appended_events),
+        )
+
+    def _read_only_safe_event(
+        self,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        event_type = payload.get("type")
+        item = payload.get("item")
+        if event_type not in {"item.started", "item.completed", "item.failed"}:
+            return _safe_event(payload)
+        if not isinstance(item, dict):
+            return _safe_event(payload)
+        item_type = str(item.get("type") or "")
+        if item_type == "command_execution":
+            command = self.native_cli_classifier.classify_cached(item)
+            if command is None or command.effect is not EffectKind.READ_ONLY:
+                raise AgentReadOnlyViolationError("reconciliation_write_forbidden")
+            return _safe_event(payload, native_command=command)
+        if item_type == "mcp_tool_call":
+            call = self.mcp_effect_registry.classify(item)
+            if call is None or call.effect is not EffectKind.READ_ONLY:
+                raise AgentReadOnlyViolationError("reconciliation_write_forbidden")
+            return _safe_event(payload, mcp_call=call)
+        if item_type in _NATIVE_READ_ONLY_ITEM_TYPES or item_type == "agent_message":
+            return _safe_event(payload)
+        if item_type.endswith("_tool_call") or item_type in _NATIVE_CLASSIFIABLE_ITEM_TYPES:
+            raise AgentReadOnlyViolationError("reconciliation_unknown_tool_forbidden")
+        return _safe_event(payload)
 
     def _record_failure(
         self,
@@ -744,6 +960,144 @@ class DirectAgentRunner:
         self._persist_deferred_execution_evidence(run_id, serialized, now=now)
 
 
+def _unknown_effect_reference(
+    events: list[dict[str, object]] | tuple[dict[str, object], ...],
+) -> UnknownEffectReference:
+    started: dict[str, dict[str, object]] = {}
+    closed: set[str] = set()
+    for event in events:
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata")
+        call_id = item.get("call_id") or item.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            continue
+        if event.get("type") == "item.started" and isinstance(metadata, dict):
+            if metadata.get("effect") == EffectKind.EFFECTFUL.value:
+                started[call_id] = metadata
+        elif event.get("type") in {"item.completed", "item.failed"}:
+            closed.add(call_id)
+    incomplete = [(call_id, data) for call_id, data in started.items() if call_id not in closed]
+    if len(incomplete) != 1:
+        raise ValueError("unknown run must contain one incomplete effectful call")
+    call_id, metadata = incomplete[0]
+    digest = metadata.get("command_digest") or metadata.get("operation_digest")
+    operation = metadata.get("operation")
+    transport = metadata.get("native_cli") or metadata.get("mcp_server")
+    targets = metadata.get("target_identifiers")
+    if not all(isinstance(value, str) and value for value in (digest, operation, transport)):
+        raise ValueError("unknown effect identity is incomplete")
+    target_identifiers = {
+        str(key): str(value)
+        for key, value in targets.items()
+        if isinstance(key, str) and isinstance(value, str) and value
+    } if isinstance(targets, dict) else {}
+    return UnknownEffectReference(
+        call_id=call_id,
+        transport=str(transport),
+        operation=str(operation),
+        operation_digest=str(digest),
+        target_identifiers=target_identifiers,
+    )
+
+
+def _reconciliation_prompt(
+    context: AgentTaskContext,
+    original: UnknownEffectReference,
+) -> str:
+    identity = {
+        "call_id": original.call_id,
+        "transport": original.transport,
+        "operation": original.operation,
+        "operation_digest": original.operation_digest,
+        "target_identifiers": original.target_identifiers,
+    }
+    return (
+        "Read-only unknown side-effect reconciliation. Never replay the original "
+        "operation. Query live state with reviewed read-only tools. Return completed "
+        "only when the effect is present, no_action only when its absence is confirmed, "
+        "and bind proof to both the original call and the completed live query.\n\n"
+        "Original uncertain operation\n"
+        + json.dumps(identity, ensure_ascii=False, indent=2)
+        + "\n\n"
+        + context.render()
+    )
+
+
+def _parse_reconciliation_result(raw: str) -> ReconciliationResult:
+    payloads: list[dict[str, object]] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    for payload in reversed(payloads):
+        item = payload.get("item")
+        if not isinstance(item, dict) or item.get("type") != "agent_message":
+            continue
+        candidate = item.get("text") or item.get("message")
+        if not isinstance(candidate, str):
+            continue
+        try:
+            return ReconciliationResult.model_validate_json(candidate)
+        except ValidationError as exc:
+            raise RuntimeError("reconciliation_result_invalid") from exc
+    raise RuntimeError("reconciliation_result_invalid")
+
+
+def _validate_reconciliation_proof(
+    result: ReconciliationResult,
+    original: UnknownEffectReference,
+    events: list[dict[str, object]],
+) -> None:
+    if result.outcome not in {AgentOutcome.COMPLETED, AgentOutcome.NO_ACTION}:
+        return
+    proof = result.proof
+    expected_state = (
+        "effect_present"
+        if result.outcome is AgentOutcome.COMPLETED
+        else "effect_absent"
+    )
+    if (
+        proof is None
+        or proof.original_call_id != original.call_id
+        or proof.original_operation_digest != original.operation_digest
+        or proof.observed_state != expected_state
+    ):
+        raise RuntimeError("reconciliation_proof_invalid")
+    query_event = next(
+        (
+            event
+            for event in events
+            if event.get("type") == "item.completed"
+            and isinstance(event.get("item"), dict)
+            and (event["item"].get("call_id") or event["item"].get("id"))
+            == proof.query_call_id
+        ),
+        None,
+    )
+    if query_event is None:
+        raise RuntimeError("reconciliation_proof_invalid")
+    query_item = query_event["item"]
+    metadata = query_item.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("effect") != "read_only":
+        raise RuntimeError("reconciliation_proof_invalid")
+    query_targets = metadata.get("target_identifiers")
+    if not isinstance(query_targets, dict) or not original.target_identifiers:
+        raise RuntimeError("reconciliation_proof_invalid")
+    original_values = set(original.target_identifiers.values())
+    query_values = {
+        value for value in query_targets.values() if isinstance(value, str) and value
+    }
+    if not original_values.intersection(query_values):
+        raise RuntimeError("reconciliation_proof_invalid")
+
+
 def _session_id(payload: dict[str, object]) -> str:
     if payload.get("type") not in {"thread.started", "thread_started"}:
         return ""
@@ -826,6 +1180,57 @@ def _command_path_candidates(argv: tuple[str, ...]) -> tuple[str, ...]:
     )
 
 
+def _argv_target_identifiers(argv: tuple[str, ...]) -> dict[str, str]:
+    identifiers: dict[str, str] = {}
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if not token.startswith("--"):
+            index += 1
+            continue
+        flag, separator, inline_value = token[2:].partition("=")
+        normalized = flag.replace("_", "-").casefold()
+        is_target = (
+            normalized.endswith("-id")
+            or normalized in {"id", "conversation", "group", "email", "node", "url"}
+        )
+        if separator:
+            value = inline_value
+        elif index + 1 < len(argv) and not argv[index + 1].startswith("-"):
+            value = argv[index + 1]
+            index += 1
+        else:
+            value = ""
+        if is_target and value and not contains_credential(value):
+            identifiers[normalized] = safe_observability_error(value, limit=500)
+        index += 1
+    return identifiers
+
+
+def _structured_target_identifiers(value: object) -> dict[str, str]:
+    identifiers: dict[str, str] = {}
+    stack: list[object] = [value]
+    while stack and len(identifiers) < 32:
+        current = stack.pop()
+        if isinstance(current, list):
+            stack.extend(current[:64])
+            continue
+        if not isinstance(current, dict):
+            continue
+        for key, item in current.items():
+            normalized = str(key).replace("_", "").replace("-", "").casefold()
+            if isinstance(item, str) and (
+                normalized == "id"
+                or normalized.endswith("id")
+                or normalized.endswith("url")
+            ):
+                if item and not contains_credential(item):
+                    identifiers[str(key)] = safe_observability_error(item, limit=500)
+            elif isinstance(item, dict | list):
+                stack.append(item)
+    return identifiers
+
+
 def _classified_native_command(
     cli: str,
     command_path: str,
@@ -838,6 +1243,7 @@ def _classified_native_command(
         command_path=command_path,
         effect=effect,
         command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+        target_identifiers=_argv_target_identifiers(argv),
     )
 
 
@@ -1125,6 +1531,7 @@ def _safe_event(
                 "native_cli": native_command.cli,
                 "operation": native_command.command_path,
                 "command_digest": native_command.command_digest,
+                "target_identifiers": native_command.target_identifiers,
             }
         )
         if (
@@ -1146,6 +1553,7 @@ def _safe_event(
                 "mcp_server": mcp_call.server,
                 "operation": mcp_call.tool,
                 "operation_digest": mcp_call.operation_digest,
+                "target_identifiers": mcp_call.target_identifiers,
             }
         )
         if (

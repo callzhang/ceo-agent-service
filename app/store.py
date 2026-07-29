@@ -367,6 +367,8 @@ class AgentRun(BaseModel):
     side_effect_state: str = "none"
     lease_owner: str = ""
     lease_expires_at: str = ""
+    reconciliation_attempts: int = 0
+    reconciliation_next_attempt_at: str = ""
     started_at: str = ""
     completed_at: str = ""
     created_at: str
@@ -854,6 +856,8 @@ class AutoReplyStore:
                         check(side_effect_state in ('none', 'confirmed', 'unknown')),
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
+                    reconciliation_attempts integer not null default 0,
+                    reconciliation_next_attempt_at text not null default '',
                     started_at text not null default '',
                     completed_at text not null default '',
                     created_at text not null default current_timestamp,
@@ -1353,6 +1357,22 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table reply_tasks add column {column} {definition}"
                     )
+            agent_run_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(agent_runs)").fetchall()
+            }
+            for column, definition in (
+                ("reconciliation_attempts", "integer not null default 0"),
+                ("reconciliation_next_attempt_at", "text not null default ''"),
+            ):
+                if column not in agent_run_columns:
+                    db.execute(
+                        f"alter table agent_runs add column {column} {definition}"
+                    )
+            db.execute(
+                "create index if not exists idx_agent_runs_reconciliation_due "
+                "on agent_runs(status, reconciliation_next_attempt_at, id)"
+            )
             self._migrate_reply_task_channel_identity(db)
             db.execute(
                 """
@@ -1831,6 +1851,8 @@ class AutoReplyStore:
             side_effect_state=row["side_effect_state"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],
+            reconciliation_attempts=row["reconciliation_attempts"],
+            reconciliation_next_attempt_at=row["reconciliation_next_attempt_at"],
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             created_at=row["created_at"],
@@ -3273,8 +3295,11 @@ class AutoReplyStore:
         run_id: int,
         event: dict[str, object],
         *,
+        owner: str,
         now: str | datetime | None = None,
     ) -> AgentRun:
+        if not owner.strip():
+            raise ValueError("owner must be non-empty")
         event_text = _json_object_text(event, field="event")
         normalized_event = json.loads(event_text)
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
@@ -3286,6 +3311,8 @@ class AutoReplyStore:
                 raise ValueError("agent run does not exist")
             if row["status"] != "unknown":
                 raise ValueError("agent run reconciliation requires unknown status")
+            if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
             sequence = db.execute(
                 "select coalesce(max(sequence), 0) + 1 from agent_run_events "
                 "where agent_run_id=?",
@@ -3317,15 +3344,18 @@ class AutoReplyStore:
                 update agent_runs
                 set transcript_end_line=transcript_end_line + 1,
                     updated_at=?
-                where id=? and status='unknown'
+                where id=? and status='unknown' and lease_owner=?
+                  and lease_expires_at>?
                 """,
                 (
                     now_text,
                     run_id,
+                    owner,
+                    now_text,
                 ),
             )
             if cursor.rowcount != 1:
-                raise ValueError("agent run reconciliation requires unknown status")
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
             updated = db.execute(
                 "select * from agent_runs where id=?",
                 (run_id,),
@@ -3345,7 +3375,7 @@ class AutoReplyStore:
         transcript_end_line: int | None,
         now: str | datetime | None,
     ) -> AgentRun:
-        if expected_status == "running" and (owner is None or not owner.strip()):
+        if owner is None or not owner.strip():
             raise ValueError("owner must be non-empty")
         if expected_status not in {"running", "unknown"}:
             raise ValueError("invalid expected agent run status")
@@ -3421,12 +3451,13 @@ class AutoReplyStore:
                         side_effect_state=?, transcript_end_line=?,
                         lease_owner='', lease_expires_at='', completed_at=?,
                         updated_at=?
-                    where id=? and status='unknown'
+                    where id=? and status='unknown' and lease_owner=?
+                      and lease_expires_at>?
                     """,
-                    values,
+                    (*values, owner, now_text),
                 )
                 if cursor.rowcount != 1:
-                    raise ValueError("agent run reconciliation requires unknown status")
+                    raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
             updated = db.execute(
                 "select * from agent_runs where id=?",
                 (run_id,),
@@ -3577,6 +3608,7 @@ class AutoReplyStore:
         run_id: int,
         final_result: dict[str, object],
         *,
+        owner: str,
         side_effect_state: str = "none",
         transcript_end_line: int | None = None,
         now: str | datetime | None = None,
@@ -3584,7 +3616,7 @@ class AutoReplyStore:
         return self._transition_agent_run(
             run_id,
             expected_status="unknown",
-            owner=None,
+            owner=owner,
             target_status="completed",
             final_result_json=_json_object_text(
                 final_result,
@@ -3601,6 +3633,7 @@ class AutoReplyStore:
         run_id: int,
         structured_error: dict[str, object],
         *,
+        owner: str,
         transcript_end_line: int | None = None,
         side_effect_state: str = "none",
         now: str | datetime | None = None,
@@ -3608,7 +3641,7 @@ class AutoReplyStore:
         return self._transition_agent_run(
             run_id,
             expected_status="unknown",
-            owner=None,
+            owner=owner,
             target_status="failed",
             final_result_json="",
             structured_error_json=_json_object_text(
@@ -3620,21 +3653,106 @@ class AutoReplyStore:
             now=now,
         )
 
-    def list_unknown_agent_runs(self, *, limit: int = 100) -> list[AgentRun]:
+    def list_unknown_agent_runs(
+        self,
+        *,
+        limit: int = 100,
+        now: str | datetime | None = None,
+    ) -> list[AgentRun]:
         if limit <= 0:
             return []
+        _, now_text = _utc_store_time(now)
         with self._connect() as db:
             rows = db.execute(
-                """
-                select *
-                from agent_runs
-                where status='unknown'
-                order by updated_at, id
-                limit ?
-                """,
-                (limit,),
+                "select * from agent_runs where status='unknown' "
+                "and (reconciliation_next_attempt_at='' "
+                "or reconciliation_next_attempt_at<=?) "
+                "and (lease_owner='' or lease_expires_at<=?) "
+                "order by updated_at, id limit ?",
+                (now_text, now_text, limit),
             ).fetchall()
             return [self._agent_run_from_row(row, db=db) for row in rows]
+
+    def claim_unknown_agent_run(
+        self,
+        run_id: int,
+        *,
+        owner: str,
+        lease_seconds: int = 1800,
+        now: str | datetime | None = None,
+    ) -> AgentRunClaim:
+        if not owner.strip():
+            raise ValueError("owner must be non-empty")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (
+            db,
+            (now_value, now_text),
+        ):
+            lease_expires_at = (
+                now_value + timedelta(seconds=lease_seconds)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = db.execute(
+                """
+                update agent_runs
+                set lease_owner=?, lease_expires_at=?,
+                    reconciliation_attempts=reconciliation_attempts + 1,
+                    updated_at=?
+                where id=? and status='unknown'
+                  and (reconciliation_next_attempt_at=''
+                       or reconciliation_next_attempt_at<=?)
+                  and (lease_owner='' or lease_expires_at<=?)
+                """,
+                (owner, lease_expires_at, now_text, run_id, now_text, now_text),
+            )
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("agent run does not exist")
+            return AgentRunClaim(
+                run=self._agent_run_from_row(row, db=db),
+                claimed=cursor.rowcount == 1,
+            )
+
+    def defer_unknown_agent_run_reconciliation(
+        self,
+        run_id: int,
+        structured_error: dict[str, object],
+        *,
+        owner: str,
+        next_attempt_at: str,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        if not owner.strip():
+            raise ValueError("owner must be non-empty")
+        error_json = _json_object_text(structured_error, field="structured_error")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            cursor = db.execute(
+                """
+                update agent_runs
+                set structured_error_json=?, reconciliation_next_attempt_at=?,
+                    lease_owner='', lease_expires_at='', updated_at=?
+                where id=? and status='unknown' and lease_owner=?
+                  and lease_expires_at>?
+                """,
+                (
+                    error_json,
+                    next_attempt_at,
+                    now_text,
+                    run_id,
+                    owner,
+                    now_text,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(row, db=db)
 
     def peek_reply_tasks(
         self,

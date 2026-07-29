@@ -9,6 +9,8 @@ from app.agent_result import AgentOutcome, EffectKind
 from app.agent_runner import (
     AGENT_RESULT_SCHEMA_PATH,
     DEFAULT_MCP_EFFECTS_PATH,
+    AgentReadOnlyViolationError,
+    AgentRunUnknownError,
     DirectAgentRunner,
     McpToolEffectRegistry,
     NativeCliMetadataClassifier,
@@ -107,6 +109,81 @@ def _jsonl(*, session_id: str = "session-1") -> str:
             _result_line(),
         )
     )
+
+
+def _reconciliation_result_line(
+    *,
+    outcome: str,
+    observed_state: str,
+    original_call_id: str = "write-1",
+    original_operation_digest: str = "a" * 64,
+    query_call_id: str = "query-1",
+) -> str:
+    return json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": json.dumps(
+                    {
+                        "outcome": outcome,
+                        "summary": "Live state was checked without replay.",
+                        "proof": {
+                            "original_call_id": original_call_id,
+                            "original_operation_digest": original_operation_digest,
+                            "query_call_id": query_call_id,
+                            "observed_state": observed_state,
+                        },
+                        "error": {
+                            "code": "",
+                            "retryable": False,
+                            "authorization_required": False,
+                        },
+                    }
+                ),
+            },
+        }
+    )
+
+
+def _unknown_run(store: AutoReplyStore):
+    task = _task(store)
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        owner="seed-owner",
+        lease_seconds=60,
+        now="2026-07-29 09:00:00",
+    )
+    store.append_agent_run_event(
+        claim.run.id,
+        {
+            "type": "item.started",
+            "item": {
+                "id": "write-1",
+                "type": "command_execution",
+                "metadata": {
+                    "effect": "effectful",
+                    "native_cli": "dws",
+                    "operation": "oa approval approve",
+                    "command_digest": "a" * 64,
+                    "target_identifiers": {
+                        "instance-id": "proc-1",
+                        "task-id": "task-1",
+                    },
+                },
+            },
+        },
+        owner="seed-owner",
+        now="2026-07-29 09:00:01",
+    )
+    run = store.mark_agent_run_unknown(
+        claim.run.id,
+        {"code": "codex_process_timeout", "retryable": True},
+        owner="seed-owner",
+        now="2026-07-29 09:00:02",
+    )
+    return task, run
 
 
 class RecordingExecutor:
@@ -1669,7 +1746,7 @@ def test_corrupt_stream_after_effect_start_marks_run_unknown(
         )
     )
 
-    with pytest.raises(RuntimeError, match="codex_stream_invalid"):
+    with pytest.raises(AgentRunUnknownError, match="codex_stream_invalid"):
         DirectAgentRunner(
             store=store,
             workspace=tmp_path,
@@ -1686,6 +1763,215 @@ def test_corrupt_stream_after_effect_start_marks_run_unknown(
     )
     assert persisted.status == "unknown"
     assert persisted.side_effect_state == "unknown"
+
+
+def test_reconciliation_runs_reviewed_live_dws_read_and_binds_proof_to_original_call(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task, run = _unknown_run(store)
+    read_command = "dws oa approval detail --instance-id proc-1 --format json"
+    output = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "reconcile-1"}),
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "query-1",
+                        "type": "command_execution",
+                        "command": read_command,
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "query-1",
+                        "type": "command_execution",
+                        "command": read_command,
+                        "exit_code": 0,
+                        "status": "completed",
+                        "aggregated_output": '{"status":"COMPLETED"}',
+                    },
+                }
+            ),
+            _reconciliation_result_line(
+                outcome="completed",
+                observed_state="effect_present",
+            ),
+        )
+    )
+    executor = RecordingExecutor(output)
+    runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=executor,
+        owner="reconcile-owner",
+        native_cli_classifier=NativeCliMetadataClassifier(
+            reviewed_effects={
+                ("dws", "oa approval detail"): EffectKind.READ_ONLY,
+            }
+        ),
+    )
+
+    result = runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+    assert result.result.outcome.value == "completed"
+    assert "tools.enabled_tools=[]" not in executor.commands[0]
+    assert any(
+        event.get("item", {}).get("metadata", {}).get("effect") == "read_only"
+        for event in store.get_agent_run(run.id).tool_events
+    )
+
+
+def test_reconciliation_rejects_write_before_accepting_result(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task, run = _unknown_run(store)
+    output = json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "id": "replay-1",
+                "type": "command_execution",
+                "command": (
+                    "dws oa approval approve --instance-id proc-1 "
+                    "--task-id task-1 --yes"
+                ),
+            },
+        }
+    )
+    runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        owner="reconcile-owner",
+        native_cli_classifier=NativeCliMetadataClassifier(
+            reviewed_effects={
+                ("dws", "oa approval approve"): EffectKind.EFFECTFUL,
+            }
+        ),
+    )
+
+    with pytest.raises(AgentReadOnlyViolationError):
+        runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted.status == "unknown"
+    assert "replay-1" not in json.dumps(persisted.tool_events)
+
+
+def test_unrelated_read_event_cannot_prove_unknown_effect(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task, run = _unknown_run(store)
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "query-1",
+                        "type": "web_search_call",
+                        "query": "unrelated public information",
+                    },
+                }
+            ),
+            _reconciliation_result_line(
+                outcome="completed",
+                observed_state="effect_present",
+            ),
+        )
+    )
+    runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        owner="reconcile-owner",
+    )
+
+    with pytest.raises(RuntimeError, match="reconciliation_proof_invalid"):
+        runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+    assert store.get_agent_run(run.id).status == "unknown"
+
+
+def test_reconciliation_allows_reviewed_mcp_read_and_denies_reviewed_mcp_write(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task, run = _unknown_run(store)
+    read_item = {
+        "id": "query-1",
+        "type": "mcp_tool_call",
+        "server": "memory_connector",
+        "tool": "memory_recall",
+        "arguments": {"processInstanceId": "proc-1"},
+        "status": "completed",
+        "result": {
+            "content": [{"type": "text", "text": "COMPLETED"}],
+            "isError": False,
+        },
+    }
+    output = "\n".join(
+        (
+            json.dumps({"type": "item.started", "item": read_item}),
+            json.dumps({"type": "item.completed", "item": read_item}),
+            _reconciliation_result_line(
+                outcome="completed",
+                observed_state="effect_present",
+            ),
+        )
+    )
+    registry = McpToolEffectRegistry(
+        {
+            ("memory_connector", "memory_recall"): EffectKind.READ_ONLY,
+            ("memory_connector", "memory_write"): EffectKind.EFFECTFUL,
+        }
+    )
+    executor = RecordingExecutor(output)
+    runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=executor,
+        owner="reconcile-owner",
+        mcp_effect_registry=registry,
+    )
+
+    result = runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+    assert result.result.outcome is AgentOutcome.COMPLETED
+    assert (
+        'mcp_servers.memory_connector.enabled_tools=["memory_recall"]'
+        in executor.commands[0]
+    )
+
+    second_store = AutoReplyStore(tmp_path / "second.sqlite3")
+    second_task, second_run = _unknown_run(second_store)
+    write_output = json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "id": "mcp-write-1",
+                "type": "mcp_tool_call",
+                "server": "memory_connector",
+                "tool": "memory_write",
+                "arguments": {"processInstanceId": "proc-1"},
+            },
+        }
+    )
+    with pytest.raises(AgentReadOnlyViolationError):
+        DirectAgentRunner(
+            store=second_store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(write_output),
+            owner="reconcile-owner",
+            mcp_effect_registry=registry,
+        ).reconcile(
+            second_run,
+            _context(second_task.id),
+            now="2026-07-29 09:01:00",
+        )
 
 
 def test_persisted_events_redact_secret_values(

@@ -144,7 +144,7 @@ def make_read_only_without_tools(command: list[str]) -> None:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     _remove_config_options(
         command,
-        prefixes=("approval_policy=", "approvals_reviewer="),
+        prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
     )
     disable_configured_mcp_servers(command, include_all_configured=True)
     _insert_command_options(
@@ -154,6 +154,46 @@ def make_read_only_without_tools(command: list[str]) -> None:
             "-c", 'approval_policy="never"',
             "-c", "tools.enabled_tools=[]",
             "-c", 'web_search="disabled"',
+        ],
+    )
+
+
+def make_read_only_with_reviewed_tools(
+    command: list[str],
+    *,
+    reviewed_mcp_tools: dict[str, tuple[str, ...]],
+) -> None:
+    """Use a read-only sandbox and expose only explicitly reviewed MCP reads."""
+    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
+        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
+    _remove_config_options(
+        command,
+        prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
+    )
+    configured = configured_transport_server_names(
+        command,
+        include_all_configured=True,
+    )
+    for name in configured:
+        tools = reviewed_mcp_tools.get(name, ())
+        if not tools:
+            _insert_command_options(
+                command,
+                ["-c", f"mcp_servers.{name}.enabled=false"],
+            )
+            continue
+        encoded = json.dumps(list(tools), ensure_ascii=True, separators=(",", ":"))
+        _insert_command_options(
+            command,
+            ["-c", f"mcp_servers.{name}.enabled_tools={encoded}"],
+        )
+    _insert_command_options(
+        command,
+        [
+            "--sandbox",
+            "read-only",
+            "-c",
+            'approval_policy="never"',
         ],
     )
 

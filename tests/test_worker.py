@@ -13113,7 +13113,7 @@ def test_queued_okr_review_ack_delivery_failure_requeues_after_agent_queue_actio
 
     assert codex.calls == []
     assert worker.store.count_reply_tasks(status="done") == 0
-    assert worker.store.count_reply_tasks(status="failed") == 1
+    assert worker.store.count_reply_tasks(status="processing") == 1
     assert worker.store.claim_reply_tasks(limit=1) == []
     assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_reply_attempt(1)
@@ -15081,7 +15081,7 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
     assert store.count_errors() == 0
-    assert store.count_reply_tasks(status="failed") == 1
+    assert store.count_reply_tasks(status="processing") == 1
     assert dws.send_attempt_count == 0
     attempt = store.get_reply_attempt(1)
     assert attempt is not None

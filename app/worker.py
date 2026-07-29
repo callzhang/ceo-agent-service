@@ -34,6 +34,9 @@ from app.agent_result import (
     validate_completion_evidence,
 )
 from app.agent_runner import (
+    LEASE_SECONDS,
+    AgentReadOnlyViolationError,
+    AgentRunUnavailableError,
     DirectAgentRunResult,
     DirectAgentRunner,
     structured_execution_evidence,
@@ -127,6 +130,7 @@ from app.org_cache import (
 from app.permission import PermissionAction, PermissionGate
 from app.prompt import LinkedDocumentContext, MaterialReferenceContext, build_turn_prompt
 from app.store import (
+    AgentRunLeaseLostError,
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
     RecentFollowUpCandidate,
@@ -5142,6 +5146,7 @@ class DingTalkAutoReplyWorker:
         self._pass_channel_results = {}
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
+        self.reconcile_unknown_agent_runs(limit=limit)
         self._recover_stale_agent_reply_tasks()
         claimed_tasks = 0
         scan_now = self._sqlite_timestamp(self._now())
@@ -5270,11 +5275,6 @@ class DingTalkAutoReplyWorker:
                 recovered += 1
                 continue
             if run.status == "unknown":
-                self._apply_unknown_agent_run(
-                    task,
-                    run,
-                    "agent_side_effect_unknown",
-                )
                 continue
             if run.status == "completed" and run.final_result_json:
                 result = AgentResult.model_validate_json(run.final_result_json)
@@ -5354,6 +5354,186 @@ class DingTalkAutoReplyWorker:
                 title="CEO task retrying stale tasks",
                 message=f"requeued {recovered} stale task(s)",
             )
+
+    def reconcile_unknown_agent_runs(self, *, limit: int = 50) -> int:
+        resolved = 0
+        now = self._sqlite_timestamp(self._now())
+        unknown_runs = self.store.list_unknown_agent_runs(limit=limit, now=now)
+        if not unknown_runs:
+            return 0
+        runner = self._direct_agent_runner()
+        reconcile = getattr(runner, "reconcile", None)
+        for run in unknown_runs:
+            task = self.store.get_reply_task(run.reply_task_id)
+            if task is None:
+                continue
+            if not callable(reconcile):
+                claim = self.store.claim_unknown_agent_run(
+                    run.id,
+                    owner=runner.owner,
+                    lease_seconds=LEASE_SECONDS,
+                    now=now,
+                )
+                if claim.claimed:
+                    self._defer_agent_reconciliation(
+                        run.id,
+                        runner.owner,
+                        code="reconciliation_tool_unavailable",
+                        retryable=False,
+                    )
+                continue
+            context = self._build_agent_reconciliation_context(task)
+            try:
+                result = reconcile(run, context, now=now)
+            except (AgentRunUnavailableError, AgentRunLeaseLostError):
+                continue
+            except AgentReadOnlyViolationError:
+                self._defer_agent_reconciliation(
+                    run.id,
+                    runner.owner,
+                    code="reconciliation_write_forbidden",
+                    retryable=False,
+                )
+                continue
+            except Exception as exc:
+                code = str(exc).strip() or "reconciliation_tool_unavailable"
+                retryable = code in {
+                    "codex_process_failed",
+                    "codex_process_timeout",
+                    "codex_stream_invalid",
+                    "reconciliation_tool_unavailable",
+                }
+                self._defer_agent_reconciliation(
+                    run.id,
+                    runner.owner,
+                    code=code,
+                    retryable=retryable,
+                )
+                continue
+
+            outcome = result.result.outcome
+            if outcome is AgentOutcome.COMPLETED:
+                self.store.complete_unknown_agent_run(
+                    run.id,
+                    result.result.model_dump(mode="json"),
+                    owner=runner.owner,
+                    side_effect_state="confirmed",
+                    transcript_end_line=result.transcript_end_line,
+                    now=now,
+                )
+                self.store.complete_reply_task(task.id)
+                self._record_agent_attempt(
+                    task,
+                    result,
+                    send_status="completed",
+                )
+                resolved += 1
+                continue
+            if outcome is AgentOutcome.NO_ACTION:
+                code = "reconciliation_confirmed_no_effect"
+                self.store.fail_unknown_agent_run(
+                    run.id,
+                    {"code": code, "retryable": False},
+                    owner=runner.owner,
+                    side_effect_state="none",
+                    transcript_end_line=result.transcript_end_line,
+                    now=now,
+                )
+                self.store.rotate_reply_task_execution_generation(task.id)
+                self.store.requeue_reply_task(task.id, code)
+                self._record_agent_attempt(
+                    task,
+                    result,
+                    send_status="failed",
+                    send_error=code,
+                )
+                resolved += 1
+                continue
+            code = result.result.error.code or (
+                "reconciliation_needs_human"
+                if outcome is AgentOutcome.NEEDS_HUMAN
+                else "reconciliation_failed"
+            )
+            self._defer_agent_reconciliation(
+                run.id,
+                runner.owner,
+                code=code,
+                retryable=result.result.error.retryable,
+                authorization_required=result.result.error.authorization_required,
+            )
+            self._record_agent_attempt(
+                task,
+                result,
+                send_status=(
+                    "blocked"
+                    if outcome is AgentOutcome.NEEDS_HUMAN
+                    else "failed"
+                ),
+                send_error=code,
+            )
+        return resolved
+
+    def _defer_agent_reconciliation(
+        self,
+        run_id: int,
+        owner: str,
+        *,
+        code: str,
+        retryable: bool,
+        authorization_required: bool = False,
+    ) -> None:
+        run = self.store.get_agent_run(run_id)
+        if run is None:
+            return
+        delay_seconds = (
+            min(3600, 60 * (2 ** max(run.reconciliation_attempts - 1, 0)))
+            if retryable
+            else 24 * 60 * 60
+        )
+        next_attempt = self._sqlite_timestamp(
+            self._now() + timedelta(seconds=delay_seconds)
+        )
+        self.store.defer_unknown_agent_run_reconciliation(
+            run_id,
+            {
+                "code": code,
+                "retryable": retryable,
+                "authorization_required": authorization_required,
+            },
+            owner=owner,
+            next_attempt_at=next_attempt,
+            now=self._sqlite_timestamp(self._now()),
+        )
+
+    def _build_agent_reconciliation_context(
+        self,
+        task: ReplyTask,
+    ) -> AgentTaskContext:
+        try:
+            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        except (ValueError, TypeError):
+            trigger = DingTalkMessage(
+                open_conversation_id=task.conversation_id,
+                open_message_id=task.trigger_message_id,
+                conversation_title=task.conversation_title,
+                single_chat=task.single_chat,
+                sender_name=task.trigger_sender,
+                create_time=task.trigger_create_time,
+                content=task.trigger_text,
+                raw_payload={},
+            )
+        conversation = DingTalkConversation(
+            open_conversation_id=task.conversation_id,
+            title=task.conversation_title,
+            single_chat=task.single_chat,
+            unread_point=1,
+        )
+        return self._build_agent_task_context(
+            conversation=conversation,
+            task=task,
+            trigger=trigger,
+            context_messages=[],
+        )
 
     def _record_agent_runtime_failure_attempt(
         self,
@@ -5656,6 +5836,7 @@ class DingTalkAutoReplyWorker:
             messages=tuple(messages),
             materials=materials,
             prior_receipts=prior_receipts,
+            trigger_raw_payload=dict(trigger.raw_payload),
         )
 
     def _agent_material_references(
@@ -6086,7 +6267,6 @@ class DingTalkAutoReplyWorker:
             send_status="blocked",
             send_error=reason or "agent_side_effect_unknown",
         )
-        self.store.fail_reply_task(task.id, reason or "agent_side_effect_unknown")
 
     def _trigger_has_terminal_result(
         self,

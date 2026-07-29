@@ -7,7 +7,14 @@ import pytest
 
 from app.agent_context import AgentTaskContext
 from app.agent_result import AgentError, AgentOutcome, AgentResult, SideEffectState
-from app.agent_runner import DirectAgentRunner, DirectAgentRunResult
+from app.agent_runner import (
+    AgentReconciliationRunResult,
+    DirectAgentRunner,
+    DirectAgentRunResult,
+    ReconciliationError,
+    ReconciliationProof,
+    ReconciliationResult,
+)
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.dingtalk_models import DingTalkMessage
 from app.store import AutoReplyStore
@@ -234,6 +241,54 @@ class ScriptedDirectAgentRunner:
             transcript_end_line=len(script.events),
             events=script.events,
         )
+
+
+class ScriptedReconciliationRunner(ScriptedDirectAgentRunner):
+    def __init__(self, store: AutoReplyStore, result: ReconciliationResult) -> None:
+        super().__init__(store, [])
+        self.reconciliation_result = result
+        self.reconciliation_contexts: list[AgentTaskContext] = []
+
+    def reconcile(self, run, context, **kwargs) -> AgentReconciliationRunResult:
+        claim = self.store.claim_unknown_agent_run(
+            run.id,
+            owner=self.owner,
+            lease_seconds=1800,
+            now=kwargs.get("now") or NOW,
+        )
+        assert claim.claimed
+        self.reconciliation_contexts.append(context)
+        return AgentReconciliationRunResult(
+            run_id=run.id,
+            result=self.reconciliation_result,
+            transcript_start_line=run.transcript_end_line,
+            transcript_end_line=run.transcript_end_line,
+            events=(),
+        )
+
+
+def _seed_unknown_run(store: AutoReplyStore, task_id: int):
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        owner="seed-owner",
+        lease_seconds=60,
+        now="2026-07-29 08:59:00",
+    )
+    store.append_agent_run_event(
+        claim.run.id,
+        _persisted_effect_evidence("write-1", "started"),
+        owner="seed-owner",
+        now="2026-07-29 08:59:01",
+    )
+    return store.mark_agent_run_unknown(
+        claim.run.id,
+        {"code": "codex_process_timeout", "retryable": True},
+        owner="seed-owner",
+        now="2026-07-29 08:59:02",
+    )
 
 
 def _prompt_json_section(prompt: str, heading: str):
@@ -619,6 +674,120 @@ def test_dry_run_invokes_direct_agent_in_read_only_mode(tmp_path: Path):
     assert runner.read_only_values == [True]
 
 
+def test_unknown_oa_run_reconciliation_receives_raw_instance_id_and_read_command(
+    tmp_path: Path,
+):
+    trigger = _message(
+        "请核对审批是否已经处理",
+        raw_payload={"processInstanceId": "proc-raw-only"},
+    )
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    unknown = _seed_unknown_run(store, task_id)
+    runner = ScriptedReconciliationRunner(
+        store,
+        ReconciliationResult(
+            outcome=AgentOutcome.COMPLETED,
+            summary="Live OA state confirms the original effect.",
+            proof=ReconciliationProof(
+                original_call_id="write-1",
+                original_operation_digest="a" * 64,
+                query_call_id="query-1",
+                observed_state="effect_present",
+            ),
+        ),
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        direct_agent_runner=runner,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.reconcile_unknown_agent_runs(limit=1) == 1
+
+    context = runner.reconciliation_contexts[0]
+    assert context.trigger_raw_payload == {"processInstanceId": "proc-raw-only"}
+    oa_material = next(item for item in context.materials if item.kind == "dingtalk_oa")
+    assert "proc-raw-only" in oa_material.reference
+    assert oa_material.read_commands == (
+        "dws oa approval detail --instance-id proc-raw-only --format json",
+    )
+    assert store.get_agent_run(unknown.id).status == "completed"
+    assert store.get_reply_task(task_id).status == "done"
+
+
+def test_no_action_reconciliation_rotates_generation_only_after_confirmed_absence(
+    tmp_path: Path,
+):
+    trigger = _message(raw_payload={"processInstanceId": "proc-1"})
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    unknown = _seed_unknown_run(store, task_id)
+    runner = ScriptedReconciliationRunner(
+        store,
+        ReconciliationResult(
+            outcome=AgentOutcome.NO_ACTION,
+            summary="Live state confirms the write did not happen.",
+            proof=ReconciliationProof(
+                original_call_id="write-1",
+                original_operation_digest="a" * 64,
+                query_call_id="query-1",
+                observed_state="effect_absent",
+            ),
+        ),
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        direct_agent_runner=runner,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.reconcile_unknown_agent_runs(limit=1) == 1
+
+    task = store.get_reply_task(task_id)
+    assert task is not None and task.status == "pending"
+    assert task.execution_generation != unknown.execution_generation
+    assert store.get_agent_run(unknown.id).status == "failed"
+
+
+def test_reconciliation_failure_sets_backoff_and_is_not_reclaimed_early(
+    tmp_path: Path,
+):
+    trigger = _message(raw_payload={"processInstanceId": "proc-1"})
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    unknown = _seed_unknown_run(store, task_id)
+    runner = ScriptedReconciliationRunner(
+        store,
+        ReconciliationResult(
+            outcome=AgentOutcome.FAILED,
+            summary="DWS network read failed.",
+            error=ReconciliationError(code="dws_network_unavailable", retryable=True),
+        ),
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        direct_agent_runner=runner,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.reconcile_unknown_agent_runs(limit=1) == 0
+    deferred = store.get_agent_run(unknown.id)
+    assert deferred.status == "unknown"
+    assert deferred.reconciliation_next_attempt_at > "2026-07-29 09:00:00"
+    assert worker.reconcile_unknown_agent_runs(limit=1) == 0
+    assert len(runner.reconciliation_contexts) == 1
+
+
 @pytest.mark.parametrize(
     ("script", "task_status", "attempt_status"),
     [
@@ -889,7 +1058,7 @@ def test_incomplete_effect_is_unknown_and_never_replayed(tmp_path: Path):
     worker.consume_once(max_tasks=1)
 
     assert len(runner.calls) == 1
-    assert worker.store.get_reply_task(task_id).status == "failed"
+    assert worker.store.get_reply_task(task_id).status == "processing"
     run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
     assert run is not None and run.status == "unknown"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
@@ -1120,7 +1289,7 @@ def test_stale_processing_with_incomplete_effect_becomes_unknown_without_rerun(
     assert run is not None
     assert run.status == "unknown"
     assert run.side_effect_state == "unknown"
-    assert worker.store.get_reply_task(task_id).status == "failed"
+    assert worker.store.get_reply_task(task_id).status == "processing"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.action == "agent_run"

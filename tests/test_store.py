@@ -1449,9 +1449,15 @@ def test_unknown_agent_run_can_complete_or_fail_but_cannot_return_to_running(
         owner="worker-1",
     )
     listed = store.list_unknown_agent_runs()
+    reconciliation = store.claim_unknown_agent_run(
+        run.id,
+        owner="reconciler-1",
+    )
+    assert reconciliation.claimed
     completed = store.complete_unknown_agent_run(
         run.id,
         {"outcome": "completed", "summary": "effect confirmed"},
+        owner="reconciler-1",
         side_effect_state="confirmed",
     )
 
@@ -1483,9 +1489,12 @@ def test_unknown_agent_run_uses_explicit_reconciliation_event_path(tmp_path: Pat
             {"type": "reconciliation.completed", "call_id": "r1"},
             owner="worker-1",
         )
+    claim = store.claim_unknown_agent_run(run.id, owner="reconciler-1")
+    assert claim.claimed
     appended = store.append_unknown_agent_run_event(
         run.id,
         {"type": "reconciliation.completed", "call_id": "r1"},
+        owner="reconciler-1",
     )
 
     assert [event["call_id"] for event in appended.tool_events] == ["r1"]
@@ -1529,14 +1538,59 @@ def test_unknown_agent_run_may_transition_to_failed(tmp_path: Path):
         {"code": "effect_completion_missing", "call_id": "c1"},
         owner="worker-1",
     )
+    claim = store.claim_unknown_agent_run(run.id, owner="reconciler-1")
+    assert claim.claimed
 
     failed = store.fail_unknown_agent_run(
         run.id,
         {"code": "reconciliation_confirmed_no_effect"},
+        owner="reconciler-1",
     )
 
     assert failed.status == "failed"
     assert failed.side_effect_state == "none"
+
+
+def test_unknown_reconciliation_claim_is_atomic_and_stale_owner_cannot_append(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-07-29 09:00:00",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing", "call_id": "c1"},
+        owner="worker-1",
+        now="2026-07-29 09:00:01",
+    )
+
+    winner = store.claim_unknown_agent_run(
+        run.id,
+        owner="reconciler-a",
+        lease_seconds=60,
+        now="2026-07-29 09:00:02",
+    )
+    loser = store.claim_unknown_agent_run(
+        run.id,
+        owner="reconciler-b",
+        lease_seconds=60,
+        now="2026-07-29 09:00:02",
+    )
+
+    assert winner.claimed is True
+    assert loser.claimed is False
+    with pytest.raises(AgentRunLeaseLostError):
+        store.append_unknown_agent_run_event(
+            run.id,
+            {"type": "item.completed", "item": {"id": "q1"}},
+            owner="reconciler-b",
+            now="2026-07-29 09:00:03",
+        )
 
 
 def test_get_agent_run_for_task_generation_returns_exact_row(tmp_path: Path):

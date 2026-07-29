@@ -1,0 +1,45 @@
+{
+  "$defs": {
+    "Error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {"default": "", "type": "string"},
+        "retryable": {"default": false, "type": "boolean"},
+        "authorization_required": {"default": false, "type": "boolean"}
+      },
+      "type": "object"
+    },
+    "Proof": {
+      "additionalProperties": false,
+      "properties": {
+        "original_call_id": {"minLength": 1, "type": "string"},
+        "original_operation_digest": {"minLength": 1, "type": "string"},
+        "query_call_id": {"minLength": 1, "type": "string"},
+        "observed_state": {
+          "enum": ["effect_present", "effect_absent"],
+          "type": "string"
+        }
+      },
+      "required": [
+        "original_call_id",
+        "original_operation_digest",
+        "query_call_id",
+        "observed_state"
+      ],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "enum": ["completed", "no_action", "needs_human", "failed"],
+      "type": "string"
+    },
+    "summary": {"minLength": 1, "type": "string"},
+    "proof": {"anyOf": [{"$ref": "#/$defs/Proof"}, {"type": "null"}]},
+    "error": {"$ref": "#/$defs/Error"}
+  },
+  "required": ["outcome", "summary"],
+  "title": "ReconciliationResult",
+  "type": "object"
+}
