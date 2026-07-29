@@ -485,11 +485,23 @@ def _native_command_argv(item: dict[str, object]) -> tuple[str, ...] | None:
     ):
         argv = tuple(raw_command)
     elif isinstance(raw_command, str):
-        if any(token in raw_command for token in ("\n", ";", "|", "&&", ">", "<")):
-            return None
         try:
-            argv = tuple(shlex.split(raw_command))
+            lexer = shlex.shlex(
+                raw_command,
+                posix=True,
+                punctuation_chars="|&;<>\n",
+            )
+            lexer.whitespace = " \t\r"
+            lexer.whitespace_split = True
+            lexer.commenters = ""
+            argv = tuple(lexer)
         except ValueError:
+            return None
+        shell_punctuation = frozenset("|&;<>\n")
+        if any(
+            token and all(character in shell_punctuation for character in token)
+            for token in argv
+        ):
             return None
     else:
         return None
@@ -540,7 +552,11 @@ def _native_cli_command(
     payload: dict[str, object],
     classifier: NativeCliMetadataClassifier,
 ) -> NativeCliCommand | None:
-    if payload.get("type") not in {"item.started", "item.completed"}:
+    if payload.get("type") not in {
+        "item.started",
+        "item.completed",
+        "item.failed",
+    }:
         return None
     item = payload.get("item")
     if not isinstance(item, dict) or item.get("type") != "command_execution":
@@ -726,7 +742,7 @@ def _is_signed_url(value: str) -> bool:
 
 def _effect_event(payload: dict[str, object]) -> ToolEffectEvent | None:
     event_type = str(payload.get("type") or "")
-    if event_type not in {"item.started", "item.completed"}:
+    if event_type not in {"item.started", "item.completed", "item.failed"}:
         return None
     item = payload.get("item")
     if not isinstance(item, dict):
@@ -741,11 +757,11 @@ def _effect_event(payload: dict[str, object]) -> ToolEffectEvent | None:
     return ToolEffectEvent(
         call_id=call_id,
         effect=effect,
-        status=(
-            EffectEventStatus.STARTED
-            if event_type == "item.started"
-            else EffectEventStatus.COMPLETED
-        ),
+        status={
+            "item.started": EffectEventStatus.STARTED,
+            "item.completed": EffectEventStatus.COMPLETED,
+            "item.failed": EffectEventStatus.FAILED,
+        }[event_type],
     )
 
 

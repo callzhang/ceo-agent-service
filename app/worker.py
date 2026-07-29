@@ -5891,6 +5891,11 @@ class DingTalkAutoReplyWorker:
         )
         if attempt is None:
             return ()
+        if attempt.send_status == "skipped" or attempt.action in {
+            "no_action",
+            "no_reply",
+        }:
+            return ()
         summary = (attempt.audit_summary or attempt.codex_reason).strip()
         if not summary:
             return ()
@@ -5907,7 +5912,6 @@ class DingTalkAutoReplyWorker:
                     "document",
                     "reacted",
                     "sent",
-                    "skipped",
                 },
             ),
         )

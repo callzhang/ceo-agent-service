@@ -1,4 +1,4 @@
-import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,10 +7,11 @@ import pytest
 
 from app.agent_context import AgentTaskContext
 from app.agent_result import AgentError, AgentOutcome, AgentResult, SideEffectState
-from app.agent_runner import DirectAgentRunResult
+from app.agent_runner import DirectAgentRunner, DirectAgentRunResult
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.dingtalk_models import DingTalkMessage
 from app.store import AutoReplyStore
+from app.process_runner import ProcessRunResult
 from app.worker import DingTalkAutoReplyWorker
 
 
@@ -230,43 +231,147 @@ class ScriptedDirectAgentRunner:
         )
 
 
-class LiveOaDirectAgentRunner:
-    def __init__(self, store: AutoReplyStore, live_output: dict[str, object]) -> None:
-        self.store = store
-        self.live_output = live_output
-        self.calls: list[AgentTaskContext] = []
-        self.read_commands: list[str] = []
-        self.write_commands: list[str] = []
-        self.owner = "live-oa-agent"
+def _prompt_json_section(prompt: str, heading: str):
+    start = prompt.index(heading) + len(heading)
+    value, _end = json.JSONDecoder().raw_decode(prompt[start:].lstrip())
+    return value
 
-    def run(self, task, context, **_kwargs) -> DirectAgentRunResult:
-        claim = self.store.claim_agent_run(
-            task.id,
-            task.execution_generation,
-            owner=self.owner,
-            now=NOW,
+
+def _agent_result_event(result: AgentResult) -> dict[str, object]:
+    return {
+        "type": "item.completed",
+        "item": {
+            "type": "agent_message",
+            "text": result.model_dump_json(),
+        },
+    }
+
+
+def _command_event(
+    event_type: str,
+    call_id: str,
+    command: str,
+    *,
+    output: str = "",
+) -> dict[str, object]:
+    item: dict[str, object] = {
+        "id": call_id,
+        "type": "command_execution",
+        "command": command,
+    }
+    if event_type == "item.completed":
+        item.update(
+            {
+                "exit_code": 0,
+                "status": "completed",
+                "aggregated_output": output,
+            }
         )
-        assert claim.claimed
-        run = claim.run
-        if not run.codex_session_id:
-            run = self.store.set_agent_run_session(
-                run.id,
-                "session-live-oa",
-                owner=self.owner,
-                now=NOW,
-            )
-        self.calls.append(context)
-        oa_material = next(item for item in context.materials if item.kind == "dingtalk_oa")
-        for index, command in enumerate(oa_material.read_commands):
-            self.read_commands.append(command)
-            run = self.store.append_agent_run_event(
-                run.id,
-                _read_event(f"oa-read-{index}"),
-                owner=self.owner,
-                now=NOW,
-            )
+    return {"type": event_type, "item": item}
 
-        tasks = self.live_output.get("tasks")
+
+class ProtocolCodexExecutor:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def __call__(self, _command, *, prompt: str, **kwargs) -> ProcessRunResult:
+        self.prompts.append(prompt)
+        records = [
+            {"type": "thread.started", "thread_id": "protocol-session"},
+            *self.records(prompt),
+        ]
+        output = "\n".join(json.dumps(record) for record in records)
+        callback = kwargs["on_stdout_line"]
+        for line in output.splitlines():
+            callback(line)
+        return ProcessRunResult(returncode=0, stdout=output, stderr="")
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        raise NotImplementedError
+
+
+class ConfirmedFactProtocolExecutor(ProtocolCodexExecutor):
+    def __init__(self, fact_value: str) -> None:
+        super().__init__()
+        self.fact_value = fact_value
+        self.fact_was_present = False
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        messages = _prompt_json_section(prompt, "Recent conversation context\n")
+        self.fact_was_present = any(
+            self.fact_value in str(message.get("text") or "")
+            for message in messages
+            if isinstance(message, dict)
+        )
+        result = (
+            _result(
+                AgentOutcome.NO_ACTION,
+                summary=f"Reused confirmed context value {self.fact_value}.",
+            )
+            if self.fact_was_present
+            else _result(
+                AgentOutcome.NEEDS_HUMAN,
+                summary="A required confirmed context value is missing.",
+                code="confirmed_fact_missing",
+            )
+        )
+        return [_agent_result_event(result)]
+
+
+class NativeCommandStub:
+    def __init__(self, read_output: dict[str, object]) -> None:
+        self.read_output = read_output
+        self.calls: list[str] = []
+        self.write_calls: list[str] = []
+
+    def __call__(self, command: str) -> str:
+        self.calls.append(command)
+        if command.startswith("dws oa approval detail "):
+            return json.dumps(self.read_output)
+        if command.startswith("dws oa approval approve "):
+            self.write_calls.append(command)
+            return json.dumps({"success": True})
+        if command.startswith(("dws doc info ", "dws doc read ")):
+            return json.dumps({"content": "diagnostic evidence"})
+        raise AssertionError(f"unexpected native command: {command}")
+
+
+class OaProtocolExecutor(ProtocolCodexExecutor):
+    def __init__(self, native_executor: NativeCommandStub) -> None:
+        super().__init__()
+        self.native_executor = native_executor
+        self.read_commands: list[str] = []
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        materials = _prompt_json_section(
+            prompt,
+            "Raw material references and exact read commands\n",
+        )
+        oa_material = next(
+            material
+            for material in materials
+            if isinstance(material, dict) and material.get("kind") == "dingtalk_oa"
+        )
+        reference = json.loads(str(oa_material["reference"]))
+        records: list[dict[str, object]] = []
+        live_results: list[dict[str, object]] = []
+        for index, command in enumerate(oa_material["read_commands"]):
+            self.read_commands.append(command)
+            output = self.native_executor(command)
+            records.extend(
+                (
+                    _command_event("item.started", f"oa-read-{index}", command),
+                    _command_event(
+                        "item.completed",
+                        f"oa-read-{index}",
+                        command,
+                        output=output,
+                    ),
+                )
+            )
+            live_results.append(json.loads(output))
+
+        tasks = live_results[-1].get("tasks") if live_results else []
         live_tasks = tasks if isinstance(tasks, list) else []
         if len(live_tasks) != 1:
             result = _result(
@@ -290,41 +395,83 @@ class LiveOaDirectAgentRunner:
                 )
             else:
                 task_id = str(live_task.get("task_id") or "")
-                command = f"dws oa approval execute --task-id {task_id} --action agree --format json"
-                self.write_commands.append(command)
-                digest = hashlib.sha256(command.encode("utf-8")).hexdigest()
-                self.store.record_agent_execution_receipt(
-                    run.id,
-                    receipt_id=f"native:oa-write:{digest}",
-                    operation_id="oa-write",
-                    cli="dws",
-                    command_path="oa approval execute",
-                    command_digest=digest,
-                    exit_code=0,
-                    now=NOW,
+                process_id = str(reference.get("process_instance_id") or "")
+                write_command = (
+                    "dws oa approval approve --instance-id "
+                    f"{process_id} --task-id {task_id} "
+                    "--remark 'Reviewed by protocol agent' --format json --yes"
+                )
+                output = self.native_executor(write_command)
+                records.extend(
+                    (
+                        _command_event("item.started", "oa-write", write_command),
+                        _command_event(
+                            "item.completed",
+                            "oa-write",
+                            write_command,
+                            output=output,
+                        ),
+                    )
                 )
                 result = _result(
                     summary="Live OA task was reviewed and completed.",
                     side_effect_state=SideEffectState.CONFIRMED,
                 )
+        records.append(_agent_result_event(result))
+        return records
 
-        run = self.store.complete_agent_run(
-            run.id,
-            result.model_dump(mode="json"),
-            owner=self.owner,
-            side_effect_state=(
-                "confirmed" if self.write_commands else "none"
+
+class DiagnosisOnlyProtocolExecutor(ProtocolCodexExecutor):
+    def __init__(self, native_executor: NativeCommandStub) -> None:
+        super().__init__()
+        self.native_executor = native_executor
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        materials = _prompt_json_section(
+            prompt,
+            "Raw material references and exact read commands\n",
+        )
+        command = next(
+            command
+            for material in materials
+            if isinstance(material, dict)
+            for command in material.get("read_commands", [])
+        )
+        output = self.native_executor(command)
+        return [
+            _command_event("item.started", "diagnostic-read", command),
+            _command_event(
+                "item.completed",
+                "diagnostic-read",
+                command,
+                output=output,
             ),
-            transcript_end_line=len(run.tool_events),
-            now=NOW,
-        )
-        return DirectAgentRunResult(
-            run_id=run.id,
-            result=result,
-            transcript_start_line=run.transcript_start_line,
-            transcript_end_line=run.transcript_end_line,
-            events=tuple(run.tool_events),
-        )
+            _agent_result_event(
+                _result(
+                    summary="Diagnosed the requested repair but did not execute it.",
+                    side_effect_state=SideEffectState.CONFIRMED,
+                )
+            ),
+        ]
+
+
+class FailedWriteProtocolExecutor(ProtocolCodexExecutor):
+    def records(self, _prompt: str) -> list[dict[str, object]]:
+        command = "dws chat message send --group cid-1 --text 'hello' --yes"
+        failed = _command_event("item.completed", "send-failed", command)
+        failed["item"].update({"exit_code": 1, "status": "failed"})
+        return [
+            _command_event("item.started", "send-failed", command),
+            failed,
+            _agent_result_event(
+                _result(
+                    AgentOutcome.FAILED,
+                    summary="The native write returned a nonzero exit code.",
+                    retryable=True,
+                    code="native_write_failed",
+                )
+            ),
+        ]
 
 
 def _message(
@@ -393,6 +540,35 @@ def _worker(
         now_provider=lambda: NOW,
     )
     return worker, runner, dws
+
+
+def _worker_with_protocol_executor(
+    tmp_path: Path,
+    messages: list[DingTalkMessage],
+    executor: ProtocolCodexExecutor,
+    *,
+    max_task_attempts: int = 3,
+) -> tuple[DingTalkAutoReplyWorker, ContextOnlyDws]:
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    dws = ContextOnlyDws(messages)
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=dws,
+        codex=object(),
+        direct_agent_runner=DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+            owner="protocol-agent",
+        ),
+        channel_gates={
+            "dingtalk": ReadyGate("dingtalk"),
+            "lark": ReadyGate("lark"),
+        },
+        now_provider=lambda: NOW,
+        max_task_attempts=max_task_attempts,
+    )
+    return worker, dws
 
 
 def test_queued_task_runs_agent_once_and_records_completed_attempt(tmp_path: Path):
@@ -909,25 +1085,88 @@ def test_stale_processing_with_incomplete_effect_becomes_unknown_without_rerun(
 
 
 def test_context_reuses_confirmed_fact_and_does_not_pre_read_material(tmp_path: Path):
-    context_fact = _message("交付窗口已经确认是第二个工作日。", message_id="msg-fact")
+    fact_value = "value-4827-zeta"
+    context_fact = _message(
+        json.dumps({"confirmed_field": fact_value}),
+        message_id="msg-fact",
+    )
     trigger = _message(
-        "请基于已确认事实更新方案 https://alidocs.dingtalk.com/i/nodes/abc",
+        "请复用上下文中的已确认字段，不要再次询问。",
         message_id="msg-2",
     )
-    worker, runner, dws = _worker(
+    executor = ConfirmedFactProtocolExecutor(fact_value)
+    worker, dws = _worker_with_protocol_executor(
         tmp_path,
         [context_fact, trigger],
-        [ScriptedRun(_result(AgentOutcome.NO_ACTION, summary="已复用上下文事实。"))],
+        executor,
+    )
+    _enqueue(worker.store, trigger)
+
+    worker.consume_once(max_tasks=1)
+
+    assert executor.fact_was_present is True
+    assert fact_value in executor.prompts[0]
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-2")
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == ""
+    assert dws.forbidden_material_reads == []
+
+
+def test_confirmed_fact_protocol_agent_asks_only_when_fact_is_absent(tmp_path: Path):
+    fact_value = "value-4827-zeta"
+    trigger = _message("请复用上下文中的已确认字段。")
+    executor = ConfirmedFactProtocolExecutor(fact_value)
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        executor,
+    )
+    _enqueue(worker.store, trigger)
+
+    worker.consume_once(max_tasks=1)
+
+    assert executor.fact_was_present is False
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "confirmed_fact_missing"
+
+
+@pytest.mark.parametrize(
+    ("action", "send_status"),
+    [("agent_run", "skipped"), ("no_action", "completed")],
+)
+def test_skipped_attempt_is_not_exposed_as_completed_prior_receipt(
+    tmp_path: Path,
+    action: str,
+    send_status: str,
+):
+    trigger = _message("无需执行外部动作")
+    worker, runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [ScriptedRun(_result(AgentOutcome.NO_ACTION, summary="无需动作。"))],
+    )
+    worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="测试群",
+        trigger_message_id="msg-1",
+        trigger_sender="ET",
+        trigger_text=trigger.content,
+        action=action,
+        sensitivity_kind="general",
+        codex_reason="No external action was required.",
+        audit_summary="No external action was required.",
+        send_status=send_status,
     )
     _enqueue(worker.store, trigger)
 
     worker.consume_once(max_tasks=1)
 
     context = runner.calls[0][2]
-    assert any("第二个工作日" in message.text for message in context.messages)
-    assert "15%" not in context.render()
-    assert any("dws doc" in command for material in context.materials for command in material.read_commands)
-    assert dws.forbidden_material_reads == []
+    assert context.prior_receipts == ()
+    assert "No external action was required" not in context.render()
 
 
 def test_calendar_context_passes_raw_event_id_and_exact_live_read_command(
@@ -1015,26 +1254,96 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
         "请审核这个审批",
         raw_payload=raw_payload,
     )
-    worker, _scripted_runner, dws = _worker(tmp_path, [trigger], [])
-    runner = LiveOaDirectAgentRunner(worker.store, live_output)
-    worker.direct_agent_runner = runner
+    native_executor = NativeCommandStub(live_output)
+    codex_executor = OaProtocolExecutor(native_executor)
+    worker, dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        codex_executor,
+    )
     _enqueue(worker.store, trigger)
 
     worker.consume_once(max_tasks=1)
 
-    context = runner.calls[0]
-    commands = [command for material in context.materials for command in material.read_commands]
-    assert "proc-1" in " ".join(commands)
-    assert any("dws oa approval detail" in command for command in commands)
-    assert runner.read_commands == commands
+    assert "proc-1" in " ".join(codex_executor.read_commands)
+    assert any(
+        "dws oa approval detail" in command
+        for command in codex_executor.read_commands
+    )
+    assert native_executor.calls[: len(codex_executor.read_commands)] == (
+        codex_executor.read_commands
+    )
     assert dws.forbidden_material_reads == []
-    task_id = context.task_id
+    task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    task_id = task.id
     run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
     assert run is not None
-    assert bool(runner.write_commands) is effectful
+    assert bool(native_executor.write_calls) is effectful
     assert bool(worker.store.list_agent_execution_receipts(run.id)) is effectful
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == attempt_status
     if oa_state == "instance_id_only":
-        assert "task-live" in runner.write_commands[0]
+        assert "task-live" in native_executor.write_calls[0]
+
+
+def test_diagnosis_only_completed_claim_is_rejected_by_real_runner_protocol(
+    tmp_path: Path,
+):
+    trigger = _message(
+        "请修复并验证这个文档关联的问题 "
+        "https://alidocs.dingtalk.com/i/nodes/diagnostic-doc"
+    )
+    native_executor = NativeCommandStub({})
+    codex_executor = DiagnosisOnlyProtocolExecutor(native_executor)
+    worker, dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        codex_executor,
+        max_task_attempts=1,
+    )
+    task_id = _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    task = worker.store.get_reply_task(task_id)
+    assert task is not None and task.status == "failed"
+    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    assert run is not None
+    assert run.status == "failed"
+    assert run.side_effect_state == "none"
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "codex_result_invalid"
+    assert len(native_executor.calls) == 1
+    assert native_executor.write_calls == []
+    assert dws.forbidden_material_reads == []
+
+
+def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
+    tmp_path: Path,
+):
+    trigger = _message("请发送一次通知")
+    executor = FailedWriteProtocolExecutor()
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        executor,
+    )
+    task_id = _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    task = worker.store.get_reply_task(task_id)
+    assert task is not None and task.status == "pending"
+    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    assert run is not None
+    assert run.status == "failed"
+    assert run.side_effect_state == "none"
+    assert worker.store.list_agent_execution_receipts(run.id) == []
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "native_write_failed"

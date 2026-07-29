@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shlex
 
 import pytest
 
@@ -437,13 +438,44 @@ def test_native_lark_completed_write_creates_trusted_persisted_receipt(
     ]
 
 
-def test_failed_native_write_is_unknown_and_has_no_success_receipt(
-    tmp_path: Path, store: AutoReplyStore
+@pytest.mark.parametrize(
+    "command",
+    [
+        "dws chat message send --group cid --text 'first line\nsecond line' --yes",
+        "dws chat message send --group cid --text '| A | B |\n| - | - |' --yes",
+        "dws chat message send --group cid --text '<@user> please review' --yes",
+        "dws chat message send --group cid --text 'quoted ; | < > && value' --yes",
+        [
+            "dws",
+            "chat",
+            "message",
+            "send",
+            "--group",
+            "cid",
+            "--text",
+            "array argv shape",
+            "--yes",
+        ],
+        "/bin/zsh -lc "
+        + shlex.quote(
+            "dws chat message send --group cid --text '<@user> a | b' --yes"
+        ),
+    ],
+    ids=[
+        "multiline-body",
+        "markdown-table",
+        "angle-bracket-mention",
+        "quoted-shell-metacharacters",
+        "argv-array",
+        "codex-shell-wrapper",
+    ],
+)
+def test_native_write_parser_accepts_metacharacters_inside_arguments(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    command,
 ):
     task = _task(store)
-    command = (
-        "dws chat message send --group cid --text hello --format json --yes"
-    )
     output = "\n".join(
         (
             json.dumps(
@@ -463,8 +495,60 @@ def test_failed_native_write_is_unknown_and_has_no_success_receipt(
                         "id": "native-send-1",
                         "type": "command_execution",
                         "command": command,
-                        "exit_code": 1,
-                        "status": "failed",
+                        "exit_code": 0,
+                        "status": "completed",
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
+    receipts = store.list_agent_execution_receipts(result.run_id)
+    assert len(receipts) == 1
+    assert receipts[0].command_path == "chat message send"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "dws doc read --node node-1 | cat",
+        "dws doc read --node node-1 > output.json",
+        "dws doc read --node node-1; dws doc read --node node-2",
+        "dws doc read --node node-1\ndws doc read --node node-2",
+        "dws doc read --node node-1 && dws doc read --node node-2",
+    ],
+    ids=["pipeline", "redirection", "multiple-commands", "newline-command", "and-list"],
+)
+def test_native_write_parser_rejects_shell_composition_without_executing_it(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    command: str,
+    monkeypatch,
+):
+    task = _task(store)
+    schema_calls = []
+    monkeypatch.setattr(
+        "app.agent_runner.subprocess.run",
+        lambda *args, **kwargs: schema_calls.append((args, kwargs)),
+    )
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "native-command-1",
+                        "type": "command_execution",
+                        "command": command,
+                        "exit_code": 0,
+                        "status": "completed",
                     },
                 }
             ),
@@ -479,10 +563,78 @@ def test_failed_native_write_is_unknown_and_has_no_success_receipt(
             executor=RecordingExecutor(output),
         ).run(task, _context(task.id))
 
+    assert schema_calls == []
+
+
+@pytest.mark.parametrize("terminal_event_type", ["item.completed", "item.failed"])
+def test_failed_native_write_terminal_event_is_failed_and_has_no_success_receipt(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    terminal_event_type: str,
+):
+    task = _task(store)
+    command = (
+        "dws chat message send --group cid --text hello --format json --yes"
+    )
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "native-send-1",
+                        "type": "command_execution",
+                        "command": command,
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": terminal_event_type,
+                    "item": {
+                        "id": "native-send-1",
+                        "type": "command_execution",
+                        "command": command,
+                        "exit_code": 1,
+                        "status": "failed",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": json.dumps(
+                            {
+                                "outcome": "failed",
+                                "summary": "The native write returned a nonzero exit code.",
+                                "error": {
+                                    "code": "native_write_failed",
+                                    "retryable": True,
+                                    "authorization_required": False,
+                                    "side_effect_state": "none",
+                                },
+                            }
+                        ),
+                    },
+                }
+            ),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id))
+
     run = store.get_agent_run_for_task_generation(
         task.id, task.execution_generation
     )
-    assert run is not None and run.status == "unknown"
+    assert run is not None and run.status == "failed"
+    assert run.side_effect_state == "none"
+    assert store.list_agent_execution_receipts(result.run_id) == []
     assert store.list_agent_execution_receipts(run.id) == []
 
 

@@ -322,6 +322,34 @@ def test_effectful_started_without_completion_cannot_confirm_completion():
     assert exc_info.value.evidence_state is SideEffectState.UNKNOWN
 
 
+def test_failed_effectful_terminal_closes_started_without_confirming_success():
+    events = [
+        ToolEffectEvent(
+            call_id="write-1",
+            effect=EffectKind.EFFECTFUL,
+            status=EffectEventStatus.STARTED,
+        ),
+        ToolEffectEvent(
+            call_id="write-1",
+            effect=EffectKind.EFFECTFUL,
+            status=EffectEventStatus.FAILED,
+        ),
+    ]
+    failed = AgentResult(
+        outcome=AgentOutcome.FAILED,
+        summary="The write command returned a nonzero exit code.",
+        error=AgentError(code="native_write_failed", retryable=True),
+    )
+
+    assert (
+        validate_completion_evidence(failed, events=events)
+        is SideEffectState.NONE
+    )
+    with pytest.raises(InconsistentAgentResultError) as exc_info:
+        validate_completion_evidence(_completed_confirmed(), events=events)
+    assert exc_info.value.evidence_state is SideEffectState.NONE
+
+
 def test_completed_different_operation_does_not_mask_incomplete_effect():
     events = [
         ToolEffectEvent(

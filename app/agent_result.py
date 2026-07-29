@@ -43,6 +43,7 @@ class EffectKind(StrEnum):
 class EffectEventStatus(StrEnum):
     STARTED = "started"
     COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class ToolEffectEvent(BaseModel):
@@ -132,6 +133,12 @@ def _completion_evidence_state(
         if event.effect is EffectKind.EFFECTFUL
         and event.status is EffectEventStatus.COMPLETED
     }
+    effectful_failed = {
+        event.call_id
+        for event in event_list
+        if event.effect is EffectKind.EFFECTFUL
+        and event.status is EffectEventStatus.FAILED
+    }
     receipt_completed = {
         receipt.operation_id
         for receipt in receipt_list
@@ -141,7 +148,7 @@ def _completion_evidence_state(
 
     # Lifecycle evidence is set-based: duplicates and event order do not matter.
     # Every started effect must close under the same stable operation ID.
-    if effectful_started - completed_operations:
+    if effectful_started - completed_operations - effectful_failed:
         return SideEffectState.UNKNOWN
     if completed_operations:
         return SideEffectState.CONFIRMED
