@@ -80,6 +80,8 @@ SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 UNIVERSAL_MEMORY_LEASE_SECONDS = 15 * 60
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
+MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
+MAX_RECONCILIATION_EVENTS = 256
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
 
@@ -3295,10 +3297,12 @@ class AutoReplyStore:
         *,
         owner: str,
         now: str | datetime | None = None,
-    ) -> AgentRun:
+    ) -> None:
         if not owner.strip():
             raise ValueError("owner must be non-empty")
         event_text = _json_object_text(event, field="event")
+        if len(event_text.encode("utf-8")) > MAX_AGENT_RUN_EVENT_BYTES:
+            raise ValueError("agent run event exceeds size limit")
         normalized_event = json.loads(event_text)
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
@@ -3311,6 +3315,12 @@ class AutoReplyStore:
                 raise ValueError("agent run reconciliation requires unknown status")
             if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            event_count = db.execute(
+                "select count(*) from agent_run_events where agent_run_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            if event_count >= MAX_RECONCILIATION_EVENTS:
+                raise ValueError("agent run reconciliation event limit exceeded")
             sequence = db.execute(
                 "select coalesce(max(sequence), 0) + 1 from agent_run_events "
                 "where agent_run_id=?",
@@ -3354,11 +3364,6 @@ class AutoReplyStore:
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
-            updated = db.execute(
-                "select * from agent_runs where id=?",
-                (run_id,),
-            ).fetchone()
-            return self._agent_run_from_row(updated, db=db)
 
     def _transition_agent_run(
         self,
@@ -3650,6 +3655,194 @@ class AutoReplyStore:
             transcript_end_line=transcript_end_line,
             now=now,
         )
+
+    def resolve_unknown_agent_run_confirmed(
+        self,
+        run_id: int,
+        task_id: int,
+        final_result: dict[str, object],
+        *,
+        owner: str,
+        transcript_end_line: int | None = None,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        final_result_json = _json_object_text(final_result, field="final_result")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            end_line = self._claimed_unknown_run_end_line(
+                db, run_id, task_id, owner, now_text, transcript_end_line
+            )
+            run_cursor = db.execute(
+                """
+                update agent_runs
+                set status='completed', final_result_json=?, structured_error_json='',
+                    side_effect_state='confirmed', transcript_end_line=?,
+                    lease_owner='', lease_expires_at='', completed_at=?, updated_at=?
+                where id=? and reply_task_id=? and status='unknown'
+                  and lease_owner=? and lease_expires_at>?
+                """,
+                (
+                    final_result_json,
+                    end_line,
+                    now_text,
+                    now_text,
+                    run_id,
+                    task_id,
+                    owner,
+                    now_text,
+                ),
+            )
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status='done', locked_at=null, error='', available_at='', updated_at=?
+                where id=? and status in ('processing', 'pending')
+                """,
+                (now_text, task_id),
+            )
+            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            row = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
+            return self._agent_run_from_row(row, db=db)
+
+    def resolve_unknown_agent_run_absent(
+        self,
+        run_id: int,
+        task_id: int,
+        *,
+        code: str,
+        owner: str,
+        transcript_end_line: int | None = None,
+        now: str | datetime | None = None,
+    ) -> str:
+        generation = uuid4().hex
+        error_json = _json_object_text(
+            {"code": code, "retryable": False}, field="structured_error"
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            end_line = self._claimed_unknown_run_end_line(
+                db, run_id, task_id, owner, now_text, transcript_end_line
+            )
+            run_cursor = db.execute(
+                """
+                update agent_runs
+                set status='failed', final_result_json='', structured_error_json=?,
+                    side_effect_state='none', transcript_end_line=?,
+                    lease_owner='', lease_expires_at='', completed_at=?, updated_at=?
+                where id=? and reply_task_id=? and status='unknown'
+                  and lease_owner=? and lease_expires_at>?
+                """,
+                (
+                    error_json,
+                    end_line,
+                    now_text,
+                    now_text,
+                    run_id,
+                    task_id,
+                    owner,
+                    now_text,
+                ),
+            )
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending', locked_at=null, force_new_decision=1,
+                    execution_generation=?, available_at='', error=?, updated_at=?
+                where id=? and status in ('processing', 'pending')
+                """,
+                (generation, code, now_text, task_id),
+            )
+            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+        return generation
+
+    def recover_absent_reconciliation_task(
+        self,
+        run_id: int,
+        task_id: int,
+        *,
+        code: str,
+        now: str | datetime | None = None,
+    ) -> str:
+        generation = uuid4().hex
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                "select * from agent_runs where id=? and reply_task_id=?",
+                (run_id, task_id),
+            ).fetchone()
+            if row is None or row["status"] != "failed":
+                raise ValueError("failed reconciliation run was not found")
+            try:
+                error = json.loads(row["structured_error_json"] or "{}")
+            except json.JSONDecodeError as exc:
+                raise ValueError("failed reconciliation error is malformed") from exc
+            if not isinstance(error, dict) or error.get("code") != code:
+                raise ValueError("failed reconciliation error does not match")
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending', locked_at=null, force_new_decision=1,
+                    execution_generation=?, available_at='', error=?, updated_at=?
+                where id=? and status in ('processing', 'pending')
+                """,
+                (generation, code, now_text, task_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("retryable reply task was not found")
+        return generation
+
+    def recover_completed_reconciliation_task(
+        self,
+        run_id: int,
+        task_id: int,
+        *,
+        now: str | datetime | None = None,
+    ) -> None:
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                "select * from agent_runs where id=? and reply_task_id=?",
+                (run_id, task_id),
+            ).fetchone()
+            if (
+                row is None
+                or row["status"] != "completed"
+                or row["side_effect_state"] != "confirmed"
+                or not row["final_result_json"]
+            ):
+                raise ValueError("completed reconciliation run was not found")
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='done', locked_at=null, error='', available_at='', updated_at=?
+                where id=? and status in ('processing', 'pending')
+                """,
+                (now_text, task_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("reconciliation reply task was not recoverable")
+
+    @staticmethod
+    def _claimed_unknown_run_end_line(
+        db: sqlite3.Connection,
+        run_id: int,
+        task_id: int,
+        owner: str,
+        now_text: str,
+        transcript_end_line: int | None,
+    ) -> int:
+        row = db.execute(
+            "select * from agent_runs where id=? and reply_task_id=?",
+            (run_id, task_id),
+        ).fetchone()
+        if (
+            row is None
+            or row["status"] != "unknown"
+            or row["lease_owner"] != owner
+            or row["lease_expires_at"] <= now_text
+        ):
+            raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+        if transcript_end_line is not None and transcript_end_line < 0:
+            raise ValueError("transcript_end_line must not be negative")
+        return row["transcript_end_line"] if transcript_end_line is None else transcript_end_line
 
     def list_unknown_agent_runs(
         self,

@@ -2,10 +2,8 @@ import json
 import hashlib
 import os
 import shlex
-import subprocess
 import sys
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Literal
 from urllib.parse import parse_qsl, urlsplit
@@ -28,9 +26,16 @@ from app.agent_result import (
     validate_completion_evidence,
 )
 from app.codex_runner import CodexRunner
+from app.channel_gate import ChannelGateState
 from app.dws_client import DwsClient
 from app.history import safe_observability_error
 from app.leak_check import contains_credential
+from app.native_cli_metadata import (
+    AgentReadOnlyViolationError,
+    NativeCliCommand,
+    NativeCliMetadataClassifier,
+    structured_target_identifiers,
+)
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRun, AgentRunLeaseLostError, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import (
@@ -119,6 +124,8 @@ _MAX_MCP_RESULT_DEPTH = 32
 _MAX_MCP_RESULT_NODES = 2048
 _MAX_MCP_RESULT_JSON_STRINGS = 64
 _MAX_MCP_RESULT_JSON_BYTES = 256 * 1024
+_MAX_RECONCILIATION_EVENT_BYTES = 256 * 1024
+_MAX_RECONCILIATION_EVENTS = 256
 
 
 class AgentRunUnavailableError(RuntimeError):
@@ -136,34 +143,25 @@ class AgentRunUnknownError(RuntimeError):
         super().__init__(code)
 
 
-class AgentReadOnlyViolationError(RuntimeError):
-    pass
-
-
 class ReconciliationDependencyError(RuntimeError):
     def __init__(
         self,
         code: str,
         *,
+        channel: str,
+        gate_state: ChannelGateState,
         retryable: bool,
-        authorization_required: bool,
     ) -> None:
         self.code = code
+        self.channel = channel
+        self.gate_state = gate_state
         self.retryable = retryable
-        self.authorization_required = authorization_required
         super().__init__(code)
 
 
 class ReconciliationProof(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    original_call_id: str = Field(min_length=1)
-    original_operation_digest: str = Field(min_length=1)
-    query_call_id: str = Field(min_length=1)
-    query_operation: str = Field(min_length=1)
-    query_operation_digest: str = Field(min_length=1)
-    query_result_digest: str = Field(min_length=1)
-    query_target_identifiers: dict[str, str] = Field(min_length=1)
     observed_state: Literal["effect_present", "effect_absent"]
 
 
@@ -210,15 +208,6 @@ class DirectAgentRunResult:
     transcript_end_line: int
     events: tuple[dict[str, object], ...]
     receipts: tuple[ExecutionReceipt, ...] = ()
-
-
-@dataclass(frozen=True)
-class NativeCliCommand:
-    cli: str
-    command_path: str
-    effect: EffectKind
-    command_digest: str
-    target_identifiers: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -318,7 +307,7 @@ class McpToolEffectRegistry:
             tool=tool,
             effect=effect,
             operation_digest=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
-            target_identifiers=_structured_target_identifiers(arguments),
+            target_identifiers=structured_target_identifiers(arguments),
         )
 
     def reviewed_read_tools(self) -> dict[str, tuple[str, ...]]:
@@ -327,219 +316,6 @@ class McpToolEffectRegistry:
             if effect is EffectKind.READ_ONLY:
                 grouped.setdefault(server, []).append(tool)
         return {server: tuple(sorted(tools)) for server, tools in grouped.items()}
-
-
-@lru_cache(maxsize=1)
-def _load_reviewed_dws_effects() -> dict[tuple[str, str], EffectKind]:
-    effects: dict[tuple[str, str], EffectKind] = {}
-    try:
-        process = subprocess.run(
-            ["dws", "schema", "--all", "--compact", "--format", "json"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return effects
-    if process is None or process.returncode != 0:
-        return effects
-    try:
-        payload = json.loads(process.stdout)
-    except json.JSONDecodeError:
-        return effects
-    products = payload.get("products") if isinstance(payload, dict) else None
-    if not isinstance(products, list):
-        return effects
-    for product in products:
-        tools = product.get("tools") if isinstance(product, dict) else None
-        if not isinstance(tools, list):
-            continue
-        for tool in tools:
-            if not isinstance(tool, dict):
-                continue
-            command_path = tool.get("cli_path")
-            effect = tool.get("effect")
-            if not isinstance(command_path, str) or not command_path.strip():
-                continue
-            if effect == "read":
-                parsed = EffectKind.READ_ONLY
-            elif effect == "write":
-                parsed = EffectKind.EFFECTFUL
-            else:
-                continue
-            effects[("dws", command_path.strip())] = parsed
-    return effects
-
-
-@lru_cache(maxsize=1)
-def _load_reviewed_lark_effects() -> dict[tuple[str, str], EffectKind]:
-    effects: dict[tuple[str, str], EffectKind] = {}
-    try:
-        process = subprocess.run(
-            ["lark-cli", "schema"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return effects
-    if process.returncode != 0:
-        return effects
-    try:
-        payload = json.loads(process.stdout)
-    except json.JSONDecodeError:
-        return effects
-    if not isinstance(payload, list):
-        return effects
-    for tool in payload:
-        if not isinstance(tool, dict):
-            continue
-        command_path = tool.get("name")
-        metadata = tool.get("_meta")
-        risk = metadata.get("risk") if isinstance(metadata, dict) else None
-        if not isinstance(command_path, str) or not command_path.strip():
-            continue
-        if risk == "read":
-            effect = EffectKind.READ_ONLY
-        elif risk in {"write", "high-risk-write"}:
-            effect = EffectKind.EFFECTFUL
-        else:
-            continue
-        effects[("lark-cli", command_path.strip())] = effect
-    return effects
-
-
-class NativeCliMetadataClassifier:
-    """Classify native CLI commands from their installed reviewed metadata."""
-
-    def __init__(
-        self,
-        *,
-        reviewed_effects: dict[tuple[str, str], EffectKind] | None = None,
-    ) -> None:
-        self._cache: dict[tuple[str, str], EffectKind | None] = dict(
-            reviewed_effects or {}
-        )
-        self._prewarmed = reviewed_effects is not None
-
-    @property
-    def cache_keys(self) -> tuple[tuple[str, str], ...]:
-        return tuple(sorted(self._cache))
-
-    def prewarm(self) -> None:
-        if self._prewarmed:
-            return
-        self._prewarmed = True
-        self._cache.update(_load_reviewed_dws_effects())
-        self._cache.update(_load_reviewed_lark_effects())
-
-    def classify(self, item: dict[str, object]) -> NativeCliCommand | None:
-        argv = _native_command_argv(item)
-        if argv is None or "--dry-run" in argv:
-            return None
-        cli = Path(argv[0]).name
-        for command_path in _command_path_candidates(argv[1:]):
-            cache_key = (cli, command_path)
-            if cache_key in self._cache:
-                effect = self._cache[cache_key]
-                return (
-                    _classified_native_command(cli, command_path, argv, effect)
-                    if effect is not None
-                    else None
-                )
-        if cli == "dws":
-            return self._classify_dws(argv)
-        if cli == "lark-cli":
-            return self._classify_lark(argv)
-        return None
-
-    def classify_cached(self, item: dict[str, object]) -> NativeCliCommand | None:
-        argv = _native_command_argv(item)
-        if argv is None or "--dry-run" in argv:
-            return None
-        cli = Path(argv[0]).name
-        for command_path in _command_path_candidates(argv[1:]):
-            effect = self._cache.get((cli, command_path))
-            if effect is not None:
-                return _classified_native_command(
-                    cli,
-                    command_path,
-                    argv,
-                    effect,
-                )
-        return None
-
-    def _classify_dws(self, argv: tuple[str, ...]) -> NativeCliCommand | None:
-        for command_path in _command_path_candidates(argv[1:]):
-            try:
-                process = subprocess.run(
-                    [
-                        argv[0],
-                        "schema",
-                        "--cli-path",
-                        command_path,
-                        "--compact",
-                        "--format",
-                        "json",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    check=False,
-                )
-            except (OSError, subprocess.SubprocessError):
-                return None
-            if process.returncode != 0:
-                continue
-            try:
-                metadata = json.loads(process.stdout)
-            except json.JSONDecodeError:
-                continue
-            effect = metadata.get("effect") if isinstance(metadata, dict) else None
-            if effect not in {"read", "write"}:
-                continue
-            parsed = EffectKind.READ_ONLY if effect == "read" else EffectKind.EFFECTFUL
-            self._cache[("dws", command_path)] = parsed
-            return _classified_native_command(
-                "dws",
-                command_path,
-                argv,
-                parsed,
-            )
-        return None
-
-    def _classify_lark(self, argv: tuple[str, ...]) -> NativeCliCommand | None:
-        for command_path in _command_path_candidates(argv[1:]):
-            try:
-                process = subprocess.run(
-                    [argv[0], *command_path.split(), "--help"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    check=False,
-                )
-            except (OSError, subprocess.SubprocessError):
-                return None
-            if process.returncode != 0:
-                continue
-            risk = ""
-            for line in (process.stdout + "\n" + process.stderr).splitlines():
-                if line.strip().casefold().startswith("risk:"):
-                    risk = line.split(":", 1)[1].strip().casefold()
-                    break
-            if risk not in {"read", "write", "high-risk-write"}:
-                continue
-            parsed = EffectKind.READ_ONLY if risk == "read" else EffectKind.EFFECTFUL
-            self._cache[("lark-cli", command_path)] = parsed
-            return _classified_native_command(
-                "lark-cli",
-                command_path,
-                argv,
-                parsed,
-            )
-        return None
 
 
 ProcessExecutor = Callable[..., ProcessRunResult]
@@ -817,6 +593,10 @@ class DirectAgentRunner:
             nonlocal saw_json
             if not line.strip():
                 return
+            if len(line.encode("utf-8")) > _MAX_RECONCILIATION_EVENT_BYTES:
+                raise AgentStreamError("reconciliation_event_too_large")
+            if len(appended_events) >= _MAX_RECONCILIATION_EVENTS:
+                raise AgentStreamError("reconciliation_event_limit_exceeded")
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError as exc:
@@ -1129,7 +909,9 @@ def _reconciliation_prompt(
         "reconciliation_cli execute_reviewed_read tool; direct shell execution is "
         "disabled. Query live state with reviewed read-only tools. Return completed "
         "only when the effect is present, no_action only when its absence is confirmed, "
-        "and bind proof to both the original call and the completed live query.\n\n"
+        "and set proof.observed_state to effect_present or effect_absent. The service "
+        "binds the unique matching completed live read receipt; do not reproduce "
+        "internal call IDs or digests.\n\n"
         "Original uncertain operation\n"
         + json.dumps(identity, ensure_ascii=False, indent=2)
         + "\n\n"
@@ -1175,34 +957,32 @@ def _validate_reconciliation_proof(
         if result.outcome is AgentOutcome.COMPLETED
         else "effect_absent"
     )
-    if (
-        proof is None
-        or proof.original_call_id != original.call_id
-        or proof.original_operation_digest != original.operation_digest
-        or proof.observed_state != expected_state
-    ):
+    if proof is None or proof.observed_state != expected_state:
         raise RuntimeError("reconciliation_proof_invalid")
-    query_event = next(
-        (
-            event
-            for event in events
-            if event.get("type") == "item.completed"
-            and isinstance(event.get("item"), dict)
-            and (event["item"].get("call_id") or event["item"].get("id"))
-            == proof.query_call_id
-        ),
-        None,
-    )
-    if query_event is None:
+    matches = [
+        event
+        for event in events
+        if _is_matching_reconciliation_read_event(event, original)
+    ]
+    if not matches:
         raise RuntimeError("reconciliation_proof_invalid")
-    query_item = query_event["item"]
-    if query_item.get("type") != "mcp_tool_call":
-        raise RuntimeError("reconciliation_proof_invalid")
-    metadata = query_item.get("metadata")
+    if len(matches) != 1:
+        raise RuntimeError("reconciliation_proof_ambiguous")
+
+
+def _is_matching_reconciliation_read_event(
+    event: dict[str, object], original: UnknownEffectReference
+) -> bool:
+    if event.get("type") != "item.completed":
+        return False
+    item = event.get("item")
+    if not isinstance(item, dict) or item.get("type") != "mcp_tool_call":
+        return False
+    metadata = item.get("metadata")
     if not isinstance(metadata, dict) or metadata.get("effect") != "read_only":
-        raise RuntimeError("reconciliation_proof_invalid")
-    server = query_item.get("server")
-    tool = query_item.get("tool")
+        return False
+    server = item.get("server")
+    tool = item.get("tool")
     controlled_cli = (
         server == "reconciliation_cli"
         and tool == "execute_reviewed_read"
@@ -1215,30 +995,31 @@ def _validate_reconciliation_proof(
         and metadata.get("mcp_server") == server
         and metadata.get("operation") == tool
     )
-    if not controlled_cli and not reviewed_mcp:
-        raise RuntimeError("reconciliation_proof_invalid")
     query_targets = metadata.get("target_identifiers")
-    query_operation_digest = metadata.get("command_digest") or metadata.get(
+    operation_digest = metadata.get("command_digest") or metadata.get(
         "operation_digest"
     )
+    call_id = item.get("call_id") or item.get("id")
     if (
-        not isinstance(query_targets, dict)
+        not (controlled_cli or reviewed_mcp)
+        or not isinstance(call_id, str)
+        or not call_id
+        or not isinstance(operation_digest, str)
+        or not operation_digest
+        or not isinstance(metadata.get("result_digest"), str)
+        or not metadata.get("result_digest")
+        or not isinstance(query_targets, dict)
         or not original.target_identifiers
-        or metadata.get("operation") != proof.query_operation
-        or query_operation_digest != proof.query_operation_digest
-        or metadata.get("result_digest") != proof.query_result_digest
-        or query_targets != proof.query_target_identifiers
     ):
-        raise RuntimeError("reconciliation_proof_invalid")
-    if any(
-        not any(
+        return False
+    return all(
+        any(
             _target_key_matches(original_key, query_key)
             and query_value == original_value
             for query_key, query_value in query_targets.items()
         )
         for original_key, original_value in original.target_identifiers.items()
-    ):
-        raise RuntimeError("reconciliation_proof_invalid")
+    )
 
 
 def _target_key_matches(left: str, right: str) -> bool:
@@ -1306,26 +1087,30 @@ def _reconciliation_dependency_error(
     validated = _validated_reconciliation_error(error)
     return ReconciliationDependencyError(
         validated["code"],
+        channel=validated["channel"],
+        gate_state=ChannelGateState(validated["gate_state"]),
         retryable=validated["retryable"],
-        authorization_required=validated["authorization_required"],
     )
 
 
 def _validated_reconciliation_error(error: dict[str, object]) -> dict[str, object]:
     code = error.get("code")
+    channel = error.get("channel")
+    gate_state = error.get("gate_state")
     retryable = error.get("retryable")
-    authorization_required = error.get("authorization_required")
     if (
         not isinstance(code, str)
         or not code
+        or channel not in {"dws", "lark-cli"}
+        or gate_state not in {state.value for state in ChannelGateState}
         or not isinstance(retryable, bool)
-        or not isinstance(authorization_required, bool)
     ):
         raise AgentReadOnlyViolationError("reconciliation_query_receipt_invalid")
     return {
+        "channel": channel,
         "code": code,
+        "gate_state": gate_state,
         "retryable": retryable,
-        "authorization_required": authorization_required,
     }
 
 
@@ -1337,149 +1122,6 @@ def _session_id(payload: dict[str, object]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
-
-
-def _native_command_argv(item: dict[str, object]) -> tuple[str, ...] | None:
-    raw_command = item.get("argv") or item.get("command")
-    if isinstance(raw_command, list) and all(
-        isinstance(part, str) for part in raw_command
-    ):
-        argv = tuple(raw_command)
-    elif isinstance(raw_command, str):
-        if _contains_shell_command_substitution(raw_command):
-            return None
-        try:
-            lexer = shlex.shlex(
-                raw_command,
-                posix=True,
-                punctuation_chars="|&;<>\n",
-            )
-            lexer.whitespace = " \t\r"
-            lexer.whitespace_split = True
-            lexer.commenters = ""
-            argv = tuple(lexer)
-        except ValueError:
-            return None
-        shell_punctuation = frozenset("|&;<>\n")
-        if any(
-            token and all(character in shell_punctuation for character in token)
-            for token in argv
-        ):
-            return None
-    else:
-        return None
-    if not argv:
-        return None
-    executable = Path(argv[0]).name
-    if executable in {"bash", "sh", "zsh"}:
-        for flag in ("-lc", "-c"):
-            if flag in argv:
-                index = argv.index(flag)
-                if index + 1 < len(argv):
-                    return _native_command_argv({"command": argv[index + 1]})
-        return None
-    if executable not in {"dws", "lark-cli"}:
-        return None
-    return argv
-
-
-def _contains_shell_command_substitution(command: str) -> bool:
-    escaped = False
-    for index, character in enumerate(command):
-        if escaped:
-            escaped = False
-            continue
-        if character == "\\":
-            escaped = True
-            continue
-        if character == "`":
-            return True
-        if character == "$" and command[index + 1 : index + 2] == "(":
-            return True
-    return False
-
-
-def _command_path_candidates(argv: tuple[str, ...]) -> tuple[str, ...]:
-    command_tokens: list[str] = []
-    for token in argv:
-        if token.startswith("-"):
-            break
-        command_tokens.append(token)
-    return tuple(
-        " ".join(command_tokens[:length])
-        for length in range(len(command_tokens), 0, -1)
-    )
-
-
-def _argv_target_identifiers(argv: tuple[str, ...]) -> dict[str, str]:
-    identifiers: dict[str, str] = {}
-    index = 1
-    while index < len(argv):
-        token = argv[index]
-        if not token.startswith("--"):
-            index += 1
-            continue
-        flag, separator, inline_value = token[2:].partition("=")
-        normalized = flag.replace("_", "-").casefold()
-        is_target = normalized.endswith("-id") or normalized in {
-            "id",
-            "conversation",
-            "group",
-            "email",
-            "node",
-            "url",
-        }
-        if separator:
-            value = inline_value
-        elif index + 1 < len(argv) and not argv[index + 1].startswith("-"):
-            value = argv[index + 1]
-            index += 1
-        else:
-            value = ""
-        if is_target and value and not contains_credential(value):
-            identifiers[normalized] = safe_observability_error(value, limit=500)
-        index += 1
-    return identifiers
-
-
-def _structured_target_identifiers(value: object) -> dict[str, str]:
-    identifiers: dict[str, str] = {}
-    stack: list[object] = [value]
-    while stack and len(identifiers) < 32:
-        current = stack.pop()
-        if isinstance(current, list):
-            stack.extend(current[:64])
-            continue
-        if not isinstance(current, dict):
-            continue
-        for key, item in current.items():
-            normalized = str(key).replace("_", "").replace("-", "").casefold()
-            if isinstance(item, str) and (
-                normalized == "id"
-                or normalized.endswith("id")
-                or normalized.endswith("url")
-            ):
-                if item and not contains_credential(item):
-                    identifiers[str(key)] = safe_observability_error(item, limit=500)
-            elif isinstance(item, dict | list):
-                stack.append(item)
-    return identifiers
-
-
-def _classified_native_command(
-    cli: str,
-    command_path: str,
-    argv: tuple[str, ...],
-    effect: EffectKind,
-) -> NativeCliCommand:
-    normalized = shlex.join(argv)
-    return NativeCliCommand(
-        cli=cli,
-        command_path=command_path,
-        effect=effect,
-        command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
-        target_identifiers=_argv_target_identifiers(argv),
-    )
 
 
 def _native_cli_command(

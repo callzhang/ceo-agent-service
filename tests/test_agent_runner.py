@@ -141,16 +141,7 @@ def _reconciliation_result_line(
                     {
                         "outcome": outcome,
                         "summary": "Live state was checked without replay.",
-                        "proof": {
-                            "original_call_id": original_call_id,
-                            "original_operation_digest": original_operation_digest,
-                            "query_call_id": query_call_id,
-                            "query_operation": query_operation,
-                            "query_operation_digest": query_operation_digest,
-                            "query_result_digest": query_result_digest,
-                            "query_target_identifiers": query_target_identifiers,
-                            "observed_state": observed_state,
-                        },
+                        "proof": {"observed_state": observed_state},
                         "error": {
                             "code": "",
                             "retryable": False,
@@ -1255,7 +1246,7 @@ def test_native_parser_rejects_command_substitution_before_metadata_lookup(
             stderr="",
         )
 
-    monkeypatch.setattr("app.agent_runner.subprocess.run", schema_lookup)
+    monkeypatch.setattr("app.native_cli_metadata.subprocess.run", schema_lookup)
 
     output = "\n".join(
         (
@@ -1316,7 +1307,7 @@ def test_native_write_parser_rejects_shell_composition_without_executing_it(
     task = _task(store)
     schema_calls = []
     monkeypatch.setattr(
-        "app.agent_runner.subprocess.run",
+        "app.native_cli_metadata.subprocess.run",
         lambda *args, **kwargs: schema_calls.append((args, kwargs)),
     )
     output = "\n".join(
@@ -2138,9 +2129,10 @@ def test_reconciliation_proof_rejects_agent_message_forged_as_live_tool_receipt(
             "dws",
             {"error": {"type": "network", "code": "NETWORK_ERROR"}},
             {
+                "channel": "dws",
                 "code": "NETWORK_ERROR",
                 "retryable": True,
-                "authorization_required": False,
+                "gate_state": "unavailable",
             },
         ),
         (
@@ -2153,9 +2145,10 @@ def test_reconciliation_proof_rejects_agent_message_forged_as_live_tool_receipt(
                 }
             },
             {
+                "channel": "lark-cli",
                 "code": "not_authenticated",
                 "retryable": False,
-                "authorization_required": True,
+                "gate_state": "needs_login",
             },
         ),
         (
@@ -2167,18 +2160,20 @@ def test_reconciliation_proof_rejects_agent_message_forged_as_live_tool_receipt(
                 }
             },
             {
+                "channel": "dws",
                 "code": "PAT_MEDIUM_RISK_NO_PERMISSION",
                 "retryable": False,
-                "authorization_required": True,
+                "gate_state": "blocked",
             },
         ),
         (
             "lark-cli",
             {"error": {"type": "parameter", "code": "PARAM_ERROR"}},
             {
+                "channel": "lark-cli",
                 "code": "PARAM_ERROR",
                 "retryable": False,
-                "authorization_required": False,
+                "gate_state": "unavailable",
             },
         ),
     ],
@@ -2237,9 +2232,10 @@ def test_reconciliation_runner_persists_typed_cli_error_before_stopping(
         "result_digest": hashlib.sha256(b"").hexdigest(),
         "stdout": "",
         "error": {
+            "channel": "dws",
             "code": "NETWORK_ERROR",
             "retryable": True,
-            "authorization_required": False,
+            "gate_state": "unavailable",
         },
     }
     output = json.dumps(
@@ -2279,13 +2275,14 @@ def test_reconciliation_runner_persists_typed_cli_error_before_stopping(
     assert error_info.value.retryable is True
     persisted_event = store.get_agent_run(run.id).tool_events[-1]
     assert persisted_event["item"]["metadata"]["reconciliation_error"] == {
+        "channel": "dws",
         "code": "NETWORK_ERROR",
+        "gate_state": "unavailable",
         "retryable": True,
-        "authorization_required": False,
     }
 
 
-def test_reconciliation_proof_rejects_query_result_digest_mismatch(
+def test_reconciliation_proof_ignores_model_supplied_internal_digest(
     tmp_path: Path, store: AutoReplyStore
 ):
     task, run = _unknown_run(store)
@@ -2336,17 +2333,17 @@ def test_reconciliation_proof_rejects_query_result_digest_mismatch(
         ),
     )
 
-    with pytest.raises(RuntimeError, match="reconciliation_proof_invalid"):
-        runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+    result = runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+    assert result.result.outcome is AgentOutcome.COMPLETED
 
 
 def test_native_cli_prewarm_loads_lark_read_metadata_on_cold_start(monkeypatch):
     monkeypatch.setattr(
-        "app.agent_runner._load_reviewed_dws_effects",
+        "app.native_cli_metadata._load_reviewed_dws_effects",
         lambda: {},
     )
     monkeypatch.setattr(
-        "app.agent_runner._load_reviewed_lark_effects",
+        "app.native_cli_metadata._load_reviewed_lark_effects",
         lambda: {("lark-cli", "approval instance get"): EffectKind.READ_ONLY},
     )
     classifier = NativeCliMetadataClassifier()
@@ -3060,3 +3057,153 @@ def test_agent_prompt_never_instructs_auth_commands(
     prompt = executor.prompts[0]
     assert "Never run authentication login, reset, or logout commands" in prompt
     assert "run dws auth login" not in prompt.casefold()
+
+
+def test_reconciliation_binds_unique_mcp_receipt_without_model_internal_digests(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task, run = _unknown_run(store)
+    registry = McpToolEffectRegistry(
+        {("memory_connector", "memory_recall"): EffectKind.READ_ONLY}
+    )
+    read_item = {
+        "id": "query-live",
+        "type": "mcp_tool_call",
+        "server": "memory_connector",
+        "tool": "memory_recall",
+        "arguments": {"processInstanceId": "proc-1", "taskId": "task-1"},
+        "status": "completed",
+        "result": {"content": [{"type": "text", "text": "COMPLETED"}]},
+    }
+    output = "\n".join(
+        (
+            json.dumps({"type": "item.completed", "item": read_item}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": json.dumps(
+                            {
+                                "outcome": "completed",
+                                "summary": "Live state confirms the effect.",
+                                "proof": {"observed_state": "effect_present"},
+                            }
+                        ),
+                    },
+                }
+            ),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        owner="reconcile-owner",
+        mcp_effect_registry=registry,
+    ).reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+    assert result.result.outcome is AgentOutcome.COMPLETED
+    receipt = result.events[0]["item"]["metadata"]
+    assert receipt["operation"] == "memory_recall"
+    assert receipt["result_digest"]
+
+
+def test_reconciliation_rejects_multiple_matching_live_read_receipts(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task, run = _unknown_run(store)
+    registry = McpToolEffectRegistry(
+        {("memory_connector", "memory_recall"): EffectKind.READ_ONLY}
+    )
+
+    def read_item(call_id: str) -> dict[str, object]:
+        return {
+            "id": call_id,
+            "type": "mcp_tool_call",
+            "server": "memory_connector",
+            "tool": "memory_recall",
+            "arguments": {"processInstanceId": "proc-1", "taskId": "task-1"},
+            "status": "completed",
+            "result": {"content": [{"type": "text", "text": "COMPLETED"}]},
+        }
+
+    output = "\n".join(
+        (
+            json.dumps({"type": "item.completed", "item": read_item("query-1")}),
+            json.dumps({"type": "item.completed", "item": read_item("query-2")}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": json.dumps(
+                            {
+                                "outcome": "completed",
+                                "summary": "Live state confirms the effect.",
+                                "proof": {"observed_state": "effect_present"},
+                            }
+                        ),
+                    },
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="reconciliation_proof_ambiguous"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+            owner="reconcile-owner",
+            mcp_effect_registry=registry,
+        ).reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+
+def test_reconciliation_cli_rejects_oversized_output_without_returning_payload(
+    monkeypatch,
+):
+    from app.reconciliation_cli import MAX_CLI_OUTPUT_BYTES, execute_reviewed_read
+
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={("dws", "oa approval detail"): EffectKind.READ_ONLY}
+    )
+    monkeypatch.setattr("app.reconciliation_cli.shutil.which", lambda _cli: "/trusted/dws")
+
+    receipt = execute_reviewed_read(
+        ["dws", "oa", "approval", "detail", "--instance-id", "proc-1"],
+        classifier=classifier,
+        process_runner=lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="x" * (MAX_CLI_OUTPUT_BYTES + 1), stderr=""
+        ),
+    )
+
+    assert receipt["stdout"] == ""
+    assert receipt["error"] == {
+        "channel": "dws",
+        "code": "reconciliation_cli_output_limit_exceeded",
+        "retryable": False,
+        "gate_state": "blocked",
+    }
+
+
+def test_reconciliation_jsonl_event_count_is_bounded(
+    tmp_path: Path, store: AutoReplyStore, monkeypatch
+):
+    task, run = _unknown_run(store)
+    monkeypatch.setattr("app.agent_runner._MAX_RECONCILIATION_EVENTS", 1)
+    output = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "one"}),
+            json.dumps({"type": "thread.started", "thread_id": "two"}),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="codex_stream_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+            owner="reconcile-owner",
+        ).reconcile(run, _context(task.id), now="2026-07-29 09:01:00")

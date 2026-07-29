@@ -38,6 +38,28 @@ class ReadyGate:
         )
 
 
+class StaticGate:
+    def __init__(self, result: ChannelGateResult) -> None:
+        self.channel_name = result.channel
+        self.result = result
+        self.checks = 0
+
+    def check(self) -> ChannelGateResult:
+        self.checks += 1
+        return self.result
+
+
+class RecordingLoginCoordinator:
+    def __init__(self) -> None:
+        self.results: list[ChannelGateResult] = []
+
+    def handle(self, result: ChannelGateResult):
+        from app.channel_gate import LoginHandlingResult
+
+        self.results.append(result)
+        return LoginHandlingResult(launched=result.state is ChannelGateState.NEEDS_LOGIN)
+
+
 class ContextOnlyDws:
     dws_bin = "dws"
 
@@ -271,14 +293,15 @@ class FailingReconciliationRunner(ScriptedDirectAgentRunner):
         store: AutoReplyStore,
         *,
         code: str,
-        retryable: bool,
-        authorization_required: bool,
+        channel: str,
+        gate_state: ChannelGateState,
     ) -> None:
         super().__init__(store, [])
         self.error = ReconciliationDependencyError(
             code,
-            retryable=retryable,
-            authorization_required=authorization_required,
+            channel=channel,
+            gate_state=gate_state,
+            retryable=gate_state is ChannelGateState.UNAVAILABLE,
         )
 
     def reconcile(self, run, context, **kwargs):
@@ -717,16 +740,6 @@ def test_unknown_oa_run_reconciliation_receives_raw_instance_id_and_read_command
             outcome=AgentOutcome.COMPLETED,
             summary="Live OA state confirms the original effect.",
             proof=ReconciliationProof(
-                original_call_id="write-1",
-                original_operation_digest="a" * 64,
-                query_call_id="query-1",
-                query_operation="oa approval detail",
-                query_operation_digest="b" * 64,
-                query_result_digest="c" * 64,
-                query_target_identifiers={
-                    "instance-id": "proc-raw-only",
-                    "task-id": "task-1",
-                },
                 observed_state="effect_present",
             ),
         ),
@@ -766,16 +779,6 @@ def test_no_action_reconciliation_rotates_generation_only_after_confirmed_absenc
             outcome=AgentOutcome.NO_ACTION,
             summary="Live state confirms the write did not happen.",
             proof=ReconciliationProof(
-                original_call_id="write-1",
-                original_operation_digest="a" * 64,
-                query_call_id="query-1",
-                query_operation="oa approval detail",
-                query_operation_digest="b" * 64,
-                query_result_digest="c" * 64,
-                query_target_identifiers={
-                    "instance-id": "proc-1",
-                    "task-id": "task-1",
-                },
                 observed_state="effect_absent",
             ),
         ),
@@ -863,19 +866,19 @@ def test_non_retryable_reconciliation_is_never_selected_by_due_scan(tmp_path: Pa
 
 
 @pytest.mark.parametrize(
-    ("code", "retryable", "authorization_required"),
+    ("code", "gate_state", "should_retry"),
     [
-        ("NETWORK_ERROR", True, False),
-        ("not_authenticated", False, True),
-        ("PAT_MEDIUM_RISK_NO_PERMISSION", False, True),
-        ("PARAM_ERROR", False, False),
+        ("NETWORK_ERROR", ChannelGateState.UNAVAILABLE, True),
+        ("not_authenticated", ChannelGateState.NEEDS_LOGIN, True),
+        ("PAT_MEDIUM_RISK_NO_PERMISSION", ChannelGateState.BLOCKED, False),
+        ("PARAM_ERROR", ChannelGateState.BLOCKED, False),
     ],
 )
 def test_worker_persists_and_schedules_typed_reconciliation_dependency_error(
     tmp_path: Path,
     code: str,
-    retryable: bool,
-    authorization_required: bool,
+    gate_state: ChannelGateState,
+    should_retry: bool,
 ):
     trigger = _message(raw_payload={"processInstanceId": "proc-1"})
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
@@ -884,8 +887,8 @@ def test_worker_persists_and_schedules_typed_reconciliation_dependency_error(
     runner = FailingReconciliationRunner(
         store,
         code=code,
-        retryable=retryable,
-        authorization_required=authorization_required,
+        channel="dws",
+        gate_state=gate_state,
     )
     worker = DingTalkAutoReplyWorker(
         store=store,
@@ -900,12 +903,12 @@ def test_worker_persists_and_schedules_typed_reconciliation_dependency_error(
 
     deferred = store.get_agent_run(unknown.id)
     assert json.loads(deferred.structured_error_json) == {
-        "authorization_required": authorization_required,
         "code": code,
-        "retryable": retryable,
+        "gate_state": gate_state.value,
+        "retryable": should_retry,
     }
-    assert deferred.reconciliation_suspended is (not retryable)
-    assert bool(deferred.reconciliation_next_attempt_at) is retryable
+    assert deferred.reconciliation_suspended is (not should_retry)
+    assert bool(deferred.reconciliation_next_attempt_at) is should_retry
 
 
 @pytest.mark.parametrize(
@@ -1694,3 +1697,99 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
     assert attempt is not None
     assert attempt.send_status == "failed"
     assert attempt.send_error == "native_write_failed"
+
+
+@pytest.mark.parametrize(
+    ("gate_state", "suspended", "has_retry", "login_calls"),
+    [
+        (ChannelGateState.NEEDS_LOGIN, False, True, 1),
+        (ChannelGateState.BLOCKED, True, False, 0),
+        (ChannelGateState.UNAVAILABLE, False, True, 0),
+    ],
+)
+def test_reconciliation_dependency_uses_typed_gate_and_login_once(
+    tmp_path: Path,
+    gate_state: ChannelGateState,
+    suspended: bool,
+    has_retry: bool,
+    login_calls: int,
+):
+    trigger = _message(raw_payload={"processInstanceId": "proc-1"})
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    unknown = _seed_unknown_run(store, task_id)
+    runner = FailingReconciliationRunner(
+        store,
+        code=f"dingtalk_{gate_state.value}",
+        channel="dws",
+        gate_state=gate_state,
+    )
+    gate = ReadyGate("dingtalk")
+    login = RecordingLoginCoordinator()
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        direct_agent_runner=runner,
+        channel_gates={"dingtalk": gate},
+        login_coordinator=login,
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.reconcile_unknown_agent_runs(limit=1) == 0
+
+    deferred = store.get_agent_run(unknown.id)
+    assert deferred.reconciliation_suspended is suspended
+    assert bool(deferred.reconciliation_next_attempt_at) is has_retry
+    actual_login_calls = sum(
+        result.state is ChannelGateState.NEEDS_LOGIN for result in login.results
+    )
+    assert actual_login_calls == login_calls
+    if login_calls:
+        worker.reconcile_unknown_agent_runs(limit=1)
+        assert (
+            sum(
+                result.state is ChannelGateState.NEEDS_LOGIN
+                for result in login.results
+            )
+            == 1
+        )
+
+
+def test_stale_recovery_does_not_parse_completed_reconciliation_as_direct_result(
+    tmp_path: Path,
+):
+    trigger = _message(raw_payload={"processInstanceId": "proc-1"})
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    store.claim_reply_task(task_id, now="2026-07-28 08:00:00")
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=? where id=?",
+            ("2026-07-28 08:00:00", task_id),
+        )
+    unknown = _seed_unknown_run(store, task_id)
+    store.claim_unknown_agent_run(unknown.id, owner="reconciler", now=NOW)
+    store.complete_unknown_agent_run(
+        unknown.id,
+        {
+            "outcome": "completed",
+            "summary": "Live state confirms the effect.",
+            "proof": {"observed_state": "effect_present"},
+        },
+        owner="reconciler",
+        side_effect_state="confirmed",
+        now=NOW,
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        direct_agent_runner=ScriptedDirectAgentRunner(store, []),
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    worker._recover_stale_agent_reply_tasks()
+
+    assert store.get_reply_task(task_id).status == "done"

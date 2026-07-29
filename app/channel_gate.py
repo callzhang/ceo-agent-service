@@ -60,9 +60,10 @@ class ChannelGateResult(BaseModel):
 
 @dataclass(frozen=True)
 class CliReadFailure:
+    channel: str
     code: str
     retryable: bool
-    authorization_required: bool
+    gate_state: ChannelGateState
 
 
 class ChannelGate(Protocol):
@@ -669,9 +670,10 @@ def classify_cli_read_failure(
     payloads = _json_objects(completed.stdout, completed.stderr)
     if not payloads:
         return CliReadFailure(
+            channel=channel,
             code=f"{channel}_reconciliation_read_malformed",
             retryable=False,
-            authorization_required=False,
+            gate_state=ChannelGateState.BLOCKED,
         )
     errors = tuple(_structured_error(payload) for payload in payloads)
     classified = _classify_structured_failure(
@@ -692,18 +694,16 @@ def classify_cli_read_failure(
         error_types & {"network", "provider", "timeout", "unavailable"}
         or (channel == "dws" and raw_code in DwsClient.RETRYABLE_ERROR_CODES)
     )
-    authorization_required = bool(
-        classified is not None
-        and (
-            classified.state is ChannelGateState.NEEDS_LOGIN
-            or classified.reason_code.endswith("_authorization_missing")
-        )
-        or (channel == "dws" and raw_code in DwsError.AUTHORIZATION_ERROR_CODES)
-    )
+    state = classified.state if classified is not None else ChannelGateState.BLOCKED
+    if channel == "dws" and raw_code in DwsError.LOGIN_ERROR_CODES:
+        state = ChannelGateState.NEEDS_LOGIN
+    elif channel == "dws" and raw_code in DwsError.AUTHORIZATION_ERROR_CODES:
+        state = ChannelGateState.BLOCKED
     return CliReadFailure(
+        channel=channel,
         code=code,
         retryable=retryable,
-        authorization_required=authorization_required,
+        gate_state=state,
     )
 
 

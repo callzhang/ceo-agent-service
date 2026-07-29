@@ -37,6 +37,7 @@ from app.agent_runner import (
     LEASE_SECONDS,
     AgentReadOnlyViolationError,
     AgentRunUnavailableError,
+    ReconciliationResult,
     ReconciliationDependencyError,
     DirectAgentRunResult,
     DirectAgentRunner,
@@ -5275,7 +5276,27 @@ class DingTalkAutoReplyWorker:
             if run.status == "unknown":
                 continue
             if run.status == "completed" and run.final_result_json:
-                result = AgentResult.model_validate_json(run.final_result_json)
+                payload = json.loads(run.final_result_json)
+                if isinstance(payload, dict) and "proof" in payload:
+                    reconciliation = ReconciliationResult.model_validate_json(
+                        run.final_result_json
+                    )
+                    if (
+                        reconciliation.outcome is AgentOutcome.COMPLETED
+                        and run.side_effect_state == "confirmed"
+                    ):
+                        self.store.recover_completed_reconciliation_task(
+                            run.id,
+                            task.id,
+                            now=self._sqlite_timestamp(self._now()),
+                        )
+                        recovered += 1
+                        continue
+                    self.store.fail_reply_task(
+                        task.id, "invalid_completed_reconciliation_result"
+                    )
+                    continue
+                result = AgentResult.model_validate(payload)
                 self._apply_agent_result(
                     task,
                     DirectAgentRunResult(
@@ -5298,6 +5319,15 @@ class DingTalkAutoReplyWorker:
                     and run.side_effect_state == "none"
                 )
                 error = str(structured_error.get("code") or "agent_run_failed")
+                if error == "reconciliation_confirmed_no_effect":
+                    self.store.recover_absent_reconciliation_task(
+                        run.id,
+                        task.id,
+                        code=error,
+                        now=self._sqlite_timestamp(self._now()),
+                    )
+                    recovered += 1
+                    continue
                 if retryable and task.attempts < self.max_task_attempts:
                     self.store.requeue_reply_task(
                         task.id,
@@ -5367,6 +5397,8 @@ class DingTalkAutoReplyWorker:
             task = self.store.get_reply_task(run.reply_task_id)
             if task is None:
                 continue
+            if not self._required_channels_ready(self.required_channels_for_task(task)):
+                continue
             if not callable(reconcile):
                 claim = self.store.claim_unknown_agent_run(
                     run.id,
@@ -5396,12 +5428,28 @@ class DingTalkAutoReplyWorker:
                 )
                 continue
             except ReconciliationDependencyError as exc:
+                service_channel = "dingtalk" if exc.channel == "dws" else "lark"
+                if exc.gate_state is ChannelGateState.NEEDS_LOGIN:
+                    self._pass_channel_results.pop(service_channel, None)
+                    self.login_coordinator.handle(
+                        ChannelGateResult(
+                            channel=service_channel,
+                            state=ChannelGateState.NEEDS_LOGIN,
+                            reason_code=exc.code,
+                        )
+                    )
                 self._defer_agent_reconciliation(
                     run.id,
                     runner.owner,
                     code=exc.code,
-                    retryable=exc.retryable,
-                    authorization_required=exc.authorization_required,
+                    retryable=(
+                        exc.gate_state is ChannelGateState.NEEDS_LOGIN
+                        or (
+                            exc.gate_state is ChannelGateState.UNAVAILABLE
+                            and exc.retryable
+                        )
+                    ),
+                    gate_state=exc.gate_state,
                 )
                 continue
             except Exception as exc:
@@ -5422,15 +5470,14 @@ class DingTalkAutoReplyWorker:
 
             outcome = result.result.outcome
             if outcome is AgentOutcome.COMPLETED:
-                self.store.complete_unknown_agent_run(
+                self.store.resolve_unknown_agent_run_confirmed(
                     run.id,
+                    task.id,
                     result.result.model_dump(mode="json"),
                     owner=runner.owner,
-                    side_effect_state="confirmed",
                     transcript_end_line=result.transcript_end_line,
                     now=now,
                 )
-                self.store.complete_reply_task(task.id)
                 self._record_agent_attempt(
                     task,
                     result,
@@ -5440,16 +5487,14 @@ class DingTalkAutoReplyWorker:
                 continue
             if outcome is AgentOutcome.NO_ACTION:
                 code = "reconciliation_confirmed_no_effect"
-                self.store.fail_unknown_agent_run(
+                self.store.resolve_unknown_agent_run_absent(
                     run.id,
-                    {"code": code, "retryable": False},
+                    task.id,
+                    code=code,
                     owner=runner.owner,
-                    side_effect_state="none",
                     transcript_end_line=result.transcript_end_line,
                     now=now,
                 )
-                self.store.rotate_reply_task_execution_generation(task.id)
-                self.store.requeue_reply_task(task.id, code)
                 self._record_agent_attempt(
                     task,
                     result,
@@ -5488,6 +5533,7 @@ class DingTalkAutoReplyWorker:
         code: str,
         retryable: bool,
         authorization_required: bool = False,
+        gate_state: ChannelGateState | None = None,
     ) -> None:
         run = self.store.get_agent_run(run_id)
         if run is None:
@@ -5506,7 +5552,11 @@ class DingTalkAutoReplyWorker:
             {
                 "code": code,
                 "retryable": retryable,
-                "authorization_required": authorization_required,
+                **(
+                    {"gate_state": gate_state.value}
+                    if gate_state is not None
+                    else {"authorization_required": authorization_required}
+                ),
             },
             owner=owner,
             next_attempt_at=next_attempt,
