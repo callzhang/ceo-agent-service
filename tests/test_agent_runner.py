@@ -12,6 +12,7 @@ from app.agent_runner import (
     DirectAgentRunner,
     McpToolEffectRegistry,
     NativeCliMetadataClassifier,
+    _mcp_result_explicitly_succeeded,
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRunLeaseLostError, AutoReplyStore
@@ -275,6 +276,82 @@ def test_production_shaped_mcp_error_never_creates_receipt(
     assert run is not None
     assert store.list_agent_execution_receipts(run.id) == []
     assert run.side_effect_state == "none"
+
+
+@pytest.mark.parametrize(
+    "result",
+    (
+        {"isError": False},
+        {"result": {"isError": False}},
+        {"content": [{"type": "text", "text": "stored"}]},
+        {"content": [], "structured_content": {"status": "stored"}},
+        {"structuredContent": {"status": "stored"}},
+        {
+            "result": json.dumps(
+                {
+                    "content": [{"type": "text", "text": "stored"}],
+                    "structured_content": {"status": "stored"},
+                }
+            )
+        },
+    ),
+)
+def test_mcp_result_success_requires_explicit_success_or_valid_protocol_shape(result):
+    assert _mcp_result_explicitly_succeeded(result) is True
+
+
+@pytest.mark.parametrize(
+    "result",
+    (
+        None,
+        "",
+        "not-json",
+        {},
+        {"unexpected": 1},
+        {"result": {"unexpected": 1}},
+        {"error": {"code": "write_failed"}},
+        {"errorCode": "write_failed"},
+        {"content": "not-a-content-list"},
+        {"content": ["not-a-content-block"]},
+        {"content": [{"type": "text"}]},
+        {"structured_content": "not-an-object"},
+        {"isError": "false", "content": []},
+        {"isError": False, "content": "not-a-content-list"},
+        {"isError": False, "result": {"isError": True}},
+        {"isError": False, "result": {"error": {"code": "write_failed"}}},
+        {
+            "isError": False,
+            "result": json.dumps({"error": {"code": "write_failed"}}),
+        },
+        {
+            "isError": False,
+            "result": json.dumps({"isError": True, "content": []}),
+        },
+        {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps({"error": {"code": "write_failed"}}),
+                }
+            ]
+        },
+    ),
+)
+def test_mcp_result_success_rejects_errors_and_malformed_protocol_shapes(result):
+    assert _mcp_result_explicitly_succeeded(result) is False
+
+
+def test_mcp_result_does_not_parse_ordinary_content_text_as_error_metadata():
+    result = {
+        "content": [
+            {
+                "type": "text",
+                "text": "User wrote isError=true in an ordinary sentence.",
+            }
+        ]
+    }
+
+    assert _mcp_result_explicitly_succeeded(result) is True
 
 
 def test_production_shaped_mcp_read_cannot_confirm_completion(

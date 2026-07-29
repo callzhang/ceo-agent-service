@@ -901,7 +901,7 @@ def _mcp_call_completed(payload: dict[str, object]) -> bool:
 
 
 def _mcp_result_explicitly_succeeded(value: object) -> bool:
-    """Accept a non-empty MCP result unless any nested layer reports an error."""
+    """Accept only an explicit success or a structurally valid MCP result."""
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -910,17 +910,93 @@ def _mcp_result_explicitly_succeeded(value: object) -> bool:
     if not isinstance(value, dict) or not value:
         return False
 
-    def has_error(current: object) -> bool:
-        if isinstance(current, dict):
-            flag = current.get("isError")
-            if flag is True or ("isError" in current and not isinstance(flag, bool)):
-                return True
-            return any(has_error(nested) for nested in current.values())
-        if isinstance(current, list):
-            return any(has_error(nested) for nested in current)
-        return False
+    explicit_success = False
+    valid_result_shape = False
 
-    return not has_error(value)
+    def inspect(current: object) -> bool:
+        nonlocal explicit_success, valid_result_shape
+        if isinstance(current, dict):
+            if "isError" in current:
+                flag = current["isError"]
+                if not isinstance(flag, bool) or flag:
+                    return False
+                explicit_success = True
+
+            for key, nested in current.items():
+                normalized_key = key.replace("_", "").lower()
+                if normalized_key == "error" and nested not in (None, False, ""):
+                    return False
+                if normalized_key in {"errorcode", "errcode"} and nested not in (
+                    None,
+                    False,
+                    0,
+                    "",
+                    "0",
+                ):
+                    return False
+
+            if "content" in current:
+                content = current["content"]
+                if not isinstance(content, list) or not all(
+                    _valid_mcp_content_block(block) for block in content
+                ):
+                    return False
+                valid_result_shape = True
+
+            for key in ("structured_content", "structuredContent"):
+                if key not in current:
+                    continue
+                if not isinstance(current[key], dict):
+                    return False
+                valid_result_shape = True
+
+            for key, nested in current.items():
+                inspected = nested
+                if key in {"result", "structured_content", "structuredContent"}:
+                    inspected = _decode_json_object_or_array(nested)
+                elif key == "text" and current.get("type") == "text":
+                    inspected = _decode_json_object_or_array(nested)
+                if not inspect(inspected):
+                    return False
+            return True
+        if isinstance(current, list):
+            return all(inspect(nested) for nested in current)
+        return True
+
+    return inspect(value) and (explicit_success or valid_result_shape)
+
+
+def _decode_json_object_or_array(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    return decoded if isinstance(decoded, (dict, list)) else value
+
+
+def _valid_mcp_content_block(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    block_type = value.get("type")
+    if block_type == "text":
+        return isinstance(value.get("text"), str)
+    if block_type in {"image", "audio"}:
+        mime_type = value.get("mimeType", value.get("mime_type"))
+        return isinstance(value.get("data"), str) and isinstance(mime_type, str)
+    if block_type == "resource_link":
+        return isinstance(value.get("name"), str) and isinstance(
+            value.get("uri"), str
+        )
+    if block_type != "resource":
+        return False
+    resource = value.get("resource")
+    if not isinstance(resource, dict) or not isinstance(resource.get("uri"), str):
+        return False
+    return isinstance(resource.get("text"), str) or isinstance(
+        resource.get("blob"), str
+    )
 
 
 def _execution_receipts_for_run(
