@@ -1199,17 +1199,31 @@ def _validate_reconciliation_proof(
 
 
 def _target_key_matches(left: str, right: str) -> bool:
-    normalized_left = "".join(
-        character for character in left.casefold() if character.isalnum()
-    )
-    normalized_right = "".join(
-        character for character in right.casefold() if character.isalnum()
-    )
-    return (
-        normalized_left == normalized_right
-        or normalized_left.endswith(normalized_right)
-        or normalized_right.endswith(normalized_left)
-    )
+    left_parts = _target_key_parts(left)
+    right_parts = _target_key_parts(right)
+    if left_parts == right_parts:
+        return True
+    shorter, longer = sorted((left_parts, right_parts), key=len)
+    return len(shorter) >= 2 and longer[-len(shorter) :] == shorter
+
+
+def _target_key_parts(value: str) -> tuple[str, ...]:
+    parts: list[str] = []
+    current = ""
+    for character in value:
+        if not character.isalnum():
+            if current:
+                parts.append(current.casefold())
+                current = ""
+            continue
+        if current and character.isupper() and not current[-1].isupper():
+            parts.append(current.casefold())
+            current = character
+        else:
+            current += character
+    if current:
+        parts.append(current.casefold())
+    return tuple(parts)
 
 
 def _controlled_cli_receipt(value: object) -> dict[str, object] | None:

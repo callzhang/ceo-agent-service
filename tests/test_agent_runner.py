@@ -21,6 +21,7 @@ from app.agent_runner import (
     _MAX_MCP_RESULT_JSON_STRINGS,
     _MAX_MCP_RESULT_NODES,
     _mcp_result_explicitly_succeeded,
+    _target_key_matches,
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRunLeaseLostError, AutoReplyStore
@@ -2077,6 +2078,12 @@ def test_reconciliation_proof_rejects_query_with_different_task_on_same_process(
 
     with pytest.raises(RuntimeError, match="reconciliation_proof_invalid"):
         runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+
+def test_reconciliation_proof_requires_full_correlation_key_name():
+    assert _target_key_matches("instance-id", "instance_id") is True
+    assert _target_key_matches("instance-id", "processInstanceId") is True
+    assert _target_key_matches("instance-id", "id") is False
 
 
 def test_reconciliation_proof_rejects_query_result_digest_mismatch(
