@@ -18,6 +18,7 @@ from app.agent_result import (
     ResultParseError,
     SideEffectState,
     ToolEffectEvent,
+    completion_evidence_state,
     parse_agent_result,
     validate_completion_evidence,
 )
@@ -448,7 +449,10 @@ class DirectAgentRunner:
             *embedded_receipts,
             *_execution_receipts_for_run(self.store, run_id),
         )
-        evidence_state = _evidence_state(list(events), list(receipts))
+        evidence_state = completion_evidence_state(
+            events=events,
+            receipts=receipts,
+        )
         if evidence_state is SideEffectState.UNKNOWN:
             self.store.mark_agent_run_unknown(
                 run_id,
@@ -485,6 +489,8 @@ def _native_command_argv(item: dict[str, object]) -> tuple[str, ...] | None:
     ):
         argv = tuple(raw_command)
     elif isinstance(raw_command, str):
+        if _contains_shell_command_substitution(raw_command):
+            return None
         try:
             lexer = shlex.shlex(
                 raw_command,
@@ -518,6 +524,22 @@ def _native_command_argv(item: dict[str, object]) -> tuple[str, ...] | None:
     if executable not in {"dws", "lark-cli"}:
         return None
     return argv
+
+
+def _contains_shell_command_substitution(command: str) -> bool:
+    escaped = False
+    for index, character in enumerate(command):
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\":
+            escaped = True
+            continue
+        if character == "`":
+            return True
+        if character == "$" and command[index + 1 : index + 2] == "(":
+            return True
+    return False
 
 
 def _command_path_candidates(argv: tuple[str, ...]) -> tuple[str, ...]:
@@ -872,31 +894,3 @@ def _structured_receipt_candidates(value: object):
         return
     for nested in value.values():
         yield from _structured_receipt_candidates(nested)
-
-
-def _evidence_state(
-    events: list[ToolEffectEvent],
-    receipts: list[ExecutionReceipt],
-) -> SideEffectState:
-    started = {
-        event.call_id
-        for event in events
-        if event.effect is EffectKind.EFFECTFUL
-        and event.status is EffectEventStatus.STARTED
-    }
-    completed = {
-        event.call_id
-        for event in events
-        if event.effect is EffectKind.EFFECTFUL
-        and event.status is EffectEventStatus.COMPLETED
-    }
-    completed.update(
-        receipt.operation_id
-        for receipt in receipts
-        if receipt.completed and receipt.persisted and receipt.safe_to_confirm
-    )
-    if started - completed:
-        return SideEffectState.UNKNOWN
-    if completed:
-        return SideEffectState.CONFIRMED
-    return SideEffectState.NONE

@@ -99,7 +99,7 @@ def validate_completion_evidence(
     events: Iterable[ToolEffectEvent],
     receipts: Iterable[ExecutionReceipt] = (),
 ) -> SideEffectState:
-    evidence_state = _completion_evidence_state(events=events, receipts=receipts)
+    evidence_state = completion_evidence_state(events=events, receipts=receipts)
     if (
         result.outcome is AgentOutcome.COMPLETED
         and result.error.side_effect_state is SideEffectState.CONFIRMED
@@ -114,7 +114,7 @@ def validate_completion_evidence(
     return evidence_state
 
 
-def _completion_evidence_state(
+def completion_evidence_state(
     *,
     events: Iterable[ToolEffectEvent],
     receipts: Iterable[ExecutionReceipt],

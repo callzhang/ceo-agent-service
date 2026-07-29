@@ -445,6 +445,8 @@ def test_native_lark_completed_write_creates_trusted_persisted_receipt(
         "dws chat message send --group cid --text '| A | B |\n| - | - |' --yes",
         "dws chat message send --group cid --text '<@user> please review' --yes",
         "dws chat message send --group cid --text 'quoted ; | < > && value' --yes",
+        "dws chat message send --group cid --text 'budget is $100' --yes",
+        r'dws chat message send --group cid --text "\$(literal)" --yes',
         [
             "dws",
             "chat",
@@ -466,6 +468,8 @@ def test_native_lark_completed_write_creates_trusted_persisted_receipt(
         "markdown-table",
         "angle-bracket-mention",
         "quoted-shell-metacharacters",
+        "literal-currency",
+        "escaped-command-substitution-literal",
         "argv-array",
         "codex-shell-wrapper",
     ],
@@ -517,14 +521,83 @@ def test_native_write_parser_accepts_metacharacters_inside_arguments(
 
 @pytest.mark.parametrize(
     "command",
+    (
+        'dws chat message send --group cid --text "$(whoami)" --yes',
+        "dws chat message send --group cid --text '`whoami`' --yes",
+        "/bin/zsh -lc "
+        + shlex.quote(
+            "dws chat message send --group cid --text '$(whoami)' --yes"
+        ),
+    ),
+    ids=("dollar-parens", "backticks", "codex-shell-wrapper"),
+)
+def test_native_parser_rejects_command_substitution_before_metadata_lookup(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    monkeypatch,
+    command: str,
+):
+    task = _task(store)
+    schema_calls = []
+
+    def schema_lookup(*args, **kwargs):
+        schema_calls.append((args, kwargs))
+        return ProcessRunResult(
+            returncode=0,
+            stdout=json.dumps({"effect": "write"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.agent_runner.subprocess.run", schema_lookup)
+
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "native-command-1",
+                        "type": "command_execution",
+                        "command": command,
+                        "exit_code": 0,
+                        "status": "completed",
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
+
+    assert schema_calls == []
+
+
+@pytest.mark.parametrize(
+    "command",
     [
         "dws doc read --node node-1 | cat",
         "dws doc read --node node-1 > output.json",
         "dws doc read --node node-1; dws doc read --node node-2",
         "dws doc read --node node-1\ndws doc read --node node-2",
         "dws doc read --node node-1 && dws doc read --node node-2",
+        "dws chat message send --text <(whoami)",
+        "dws chat message send --text >(whoami)",
     ],
-    ids=["pipeline", "redirection", "multiple-commands", "newline-command", "and-list"],
+    ids=[
+        "pipeline",
+        "redirection",
+        "multiple-commands",
+        "newline-command",
+        "and-list",
+        "input-process-substitution",
+        "output-process-substitution",
+    ],
 )
 def test_native_write_parser_rejects_shell_composition_without_executing_it(
     tmp_path: Path,
@@ -635,6 +708,70 @@ def test_failed_native_write_terminal_event_is_failed_and_has_no_success_receipt
     assert run is not None and run.status == "failed"
     assert run.side_effect_state == "none"
     assert store.list_agent_execution_receipts(result.run_id) == []
+    assert store.list_agent_execution_receipts(run.id) == []
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "error_code"),
+    (
+        ("nonzero", "codex_process_failed"),
+        ("timeout", "codex_process_timeout"),
+        ("stream", "codex_stream_invalid"),
+    ),
+)
+def test_failed_native_write_terminal_closes_effect_on_abnormal_codex_exit(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    failure_kind: str,
+    error_code: str,
+):
+    task = _task(store)
+    command = "dws chat message send --group cid --text hello --yes"
+    lines = [
+        json.dumps(
+            {
+                "type": "item.started",
+                "item": {
+                    "id": "native-send-1",
+                    "type": "command_execution",
+                    "command": command,
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "native-send-1",
+                    "type": "command_execution",
+                    "command": command,
+                    "exit_code": 1,
+                    "status": "failed",
+                },
+            }
+        ),
+    ]
+    if failure_kind == "stream":
+        lines.append("{")
+    executor = RecordingExecutor(
+        "\n".join(lines),
+        returncode=1 if failure_kind == "nonzero" else 0,
+        timed_out=failure_kind == "timeout",
+    )
+
+    with pytest.raises(RuntimeError, match=error_code):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+        ).run(task, _context(task.id))
+
+    run = store.get_agent_run_for_task_generation(
+        task.id, task.execution_generation
+    )
+    assert run is not None and run.status == "failed"
+    assert run.side_effect_state == "none"
+    assert error_code in run.structured_error_json
     assert store.list_agent_execution_receipts(run.id) == []
 
 
