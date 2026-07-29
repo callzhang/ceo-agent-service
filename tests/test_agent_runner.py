@@ -12,6 +12,10 @@ from app.agent_runner import (
     DirectAgentRunner,
     McpToolEffectRegistry,
     NativeCliMetadataClassifier,
+    _MAX_MCP_RESULT_DEPTH,
+    _MAX_MCP_RESULT_JSON_BYTES,
+    _MAX_MCP_RESULT_JSON_STRINGS,
+    _MAX_MCP_RESULT_NODES,
     _mcp_result_explicitly_succeeded,
 )
 from app.process_runner import ProcessRunResult
@@ -281,22 +285,16 @@ def test_production_shaped_mcp_error_never_creates_receipt(
 @pytest.mark.parametrize(
     "result",
     (
-        {"isError": False},
-        {"result": {"isError": False}},
+        {"isError": False, "content": []},
         {"content": [{"type": "text", "text": "stored"}]},
         {"content": [], "structured_content": {"status": "stored"}},
-        {"structuredContent": {"status": "stored"}},
-        {
-            "result": json.dumps(
-                {
-                    "content": [{"type": "text", "text": "stored"}],
-                    "structured_content": {"status": "stored"},
-                }
-            )
-        },
+        {"content": [], "structuredContent": {"status": "stored"}},
+        {"content": [], "structured_content": None},
+        {"content": [], "structuredContent": None},
+        json.dumps({"content": [{"type": "text", "text": "stored"}]}),
     ),
 )
-def test_mcp_result_success_requires_explicit_success_or_valid_protocol_shape(result):
+def test_mcp_result_success_requires_valid_top_level_call_tool_result(result):
     assert _mcp_result_explicitly_succeeded(result) is True
 
 
@@ -307,14 +305,19 @@ def test_mcp_result_success_requires_explicit_success_or_valid_protocol_shape(re
         "",
         "not-json",
         {},
+        {"isError": False},
+        {"unexpected": {"isError": False}},
+        {"unexpected": [{"isError": False}]},
+        {"result": {"isError": False, "content": []}},
         {"unexpected": 1},
         {"result": {"unexpected": 1}},
-        {"error": {"code": "write_failed"}},
-        {"errorCode": "write_failed"},
+        {"content": [], "error": {"code": "write_failed"}},
+        {"content": [], "errorCode": "write_failed"},
         {"content": "not-a-content-list"},
         {"content": ["not-a-content-block"]},
         {"content": [{"type": "text"}]},
-        {"structured_content": "not-an-object"},
+        {"content": [], "structured_content": "not-an-object"},
+        {"content": [], "structuredContent": []},
         {"isError": "false", "content": []},
         {"isError": False, "content": "not-a-content-list"},
         {"isError": False, "result": {"isError": True}},
@@ -327,31 +330,117 @@ def test_mcp_result_success_requires_explicit_success_or_valid_protocol_shape(re
             "isError": False,
             "result": json.dumps({"isError": True, "content": []}),
         },
-        {
-            "content": [
-                {
-                    "type": "text",
-                    "text": json.dumps({"error": {"code": "write_failed"}}),
-                }
-            ]
-        },
     ),
 )
 def test_mcp_result_success_rejects_errors_and_malformed_protocol_shapes(result):
     assert _mcp_result_explicitly_succeeded(result) is False
 
 
-def test_mcp_result_does_not_parse_ordinary_content_text_as_error_metadata():
+@pytest.mark.parametrize(
+    "text",
+    (
+        "User wrote isError=true in an ordinary sentence.",
+        json.dumps({"error": {"code": "write_failed"}}),
+    ),
+)
+def test_mcp_result_does_not_parse_ordinary_content_text_as_error_metadata(text):
     result = {
         "content": [
             {
                 "type": "text",
-                "text": "User wrote isError=true in an ordinary sentence.",
+                "text": text,
             }
         ]
     }
 
     assert _mcp_result_explicitly_succeeded(result) is True
+
+
+@pytest.mark.parametrize(
+    "block",
+    (
+        {"type": "text", "text": "ok"},
+        {"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"},
+        {"type": "audio", "data": "YXVkaW8=", "mime_type": "audio/wav"},
+        {"type": "resource_link", "name": "doc", "uri": "file:///doc"},
+        {
+            "type": "resource",
+            "resource": {"uri": "file:///doc", "text": "body"},
+        },
+        {
+            "type": "resource",
+            "resource": {"uri": "file:///doc", "blob": "Ym9keQ=="},
+        },
+    ),
+)
+def test_mcp_result_accepts_supported_sdk_content_blocks(block):
+    assert _mcp_result_explicitly_succeeded({"content": [block]}) is True
+
+
+def _nested_mapping(depth: int) -> dict[str, object]:
+    value: dict[str, object] = {"value": "ok"}
+    for _ in range(depth):
+        value = {"nested": value}
+    return value
+
+
+def test_mcp_result_fails_closed_for_very_deep_external_data():
+    result = {"content": [], "structuredContent": _nested_mapping(1200)}
+
+    assert _mcp_result_explicitly_succeeded(result) is False
+
+
+def test_mcp_result_depth_limit_is_inclusive():
+    accepted = {
+        "content": [],
+        "structuredContent": _nested_mapping(_MAX_MCP_RESULT_DEPTH - 2),
+    }
+    rejected = {
+        "content": [],
+        "structuredContent": _nested_mapping(_MAX_MCP_RESULT_DEPTH - 1),
+    }
+
+    assert _mcp_result_explicitly_succeeded(accepted) is True
+    assert _mcp_result_explicitly_succeeded(rejected) is False
+
+
+def test_mcp_result_node_limit_is_inclusive():
+    accepted_items = [None] * (_MAX_MCP_RESULT_NODES - 4)
+    rejected_items = [None] * (_MAX_MCP_RESULT_NODES - 3)
+
+    assert _mcp_result_explicitly_succeeded(
+        {"content": [], "structuredContent": {"items": accepted_items}}
+    ) is True
+    assert _mcp_result_explicitly_succeeded(
+        {"content": [], "structuredContent": {"items": rejected_items}}
+    ) is False
+
+
+def test_mcp_result_decoded_json_string_limit_is_inclusive():
+    accepted_items = [json.dumps({"value": index}) for index in range(_MAX_MCP_RESULT_JSON_STRINGS)]
+    rejected_items = accepted_items + [json.dumps({"value": "overflow"})]
+
+    assert _mcp_result_explicitly_succeeded(
+        {"content": [], "structuredContent": {"items": accepted_items}}
+    ) is True
+    assert _mcp_result_explicitly_succeeded(
+        {"content": [], "structuredContent": {"items": rejected_items}}
+    ) is False
+
+
+def test_mcp_result_decoded_json_byte_limit_is_inclusive():
+    prefix = '{"value":"'
+    suffix = '"}'
+    accepted_json = prefix + ("x" * (_MAX_MCP_RESULT_JSON_BYTES - len(prefix) - len(suffix))) + suffix
+    rejected_json = prefix + ("x" * (_MAX_MCP_RESULT_JSON_BYTES - len(prefix) - len(suffix) + 1)) + suffix
+
+    assert len(accepted_json.encode("utf-8")) == _MAX_MCP_RESULT_JSON_BYTES
+    assert _mcp_result_explicitly_succeeded(
+        {"content": [], "structuredContent": {"payload": accepted_json}}
+    ) is True
+    assert _mcp_result_explicitly_succeeded(
+        {"content": [], "structuredContent": {"payload": rejected_json}}
+    ) is False
 
 
 def test_production_shaped_mcp_read_cannot_confirm_completion(

@@ -104,6 +104,10 @@ _COMMAND_CONTENT_FLAGS = frozenset(
 )
 _RECEIPT_KEYS = frozenset(ExecutionReceipt.model_fields)
 _REDACTED = "[REDACTED]"
+_MAX_MCP_RESULT_DEPTH = 32
+_MAX_MCP_RESULT_NODES = 2048
+_MAX_MCP_RESULT_JSON_STRINGS = 64
+_MAX_MCP_RESULT_JSON_BYTES = 256 * 1024
 
 
 class AgentRunUnavailableError(RuntimeError):
@@ -901,79 +905,109 @@ def _mcp_call_completed(payload: dict[str, object]) -> bool:
 
 
 def _mcp_result_explicitly_succeeded(value: object) -> bool:
-    """Accept only an explicit success or a structurally valid MCP result."""
+    """Accept only a valid top-level MCP CallToolResult without error evidence."""
+    decoded_strings = 0
+    decoded_bytes = 0
     if isinstance(value, str):
+        encoded_size = len(value.encode("utf-8"))
+        if encoded_size > _MAX_MCP_RESULT_JSON_BYTES:
+            return False
         try:
             value = json.loads(value)
         except json.JSONDecodeError:
             return False
+        decoded_strings = 1
+        decoded_bytes = encoded_size
     if not isinstance(value, dict) or not value:
         return False
 
-    explicit_success = False
-    valid_result_shape = False
+    if "content" not in value:
+        return False
+    content = value["content"]
+    if not isinstance(content, list) or not all(
+        _valid_mcp_content_block(block) for block in content
+    ):
+        return False
 
-    def inspect(current: object) -> bool:
-        nonlocal explicit_success, valid_result_shape
+    if "isError" in value:
+        flag = value["isError"]
+        if not isinstance(flag, bool) or flag:
+            return False
+
+    structured_keys = ("structured_content", "structuredContent")
+    for key in structured_keys:
+        if key in value and value[key] is not None and not isinstance(value[key], dict):
+            return False
+
+    stack: list[tuple[object, int, bool, bool]] = [(value, 0, True, False)]
+    node_count = 0
+    while stack:
+        current, depth, inspect_errors, decode_json_strings = stack.pop()
+        node_count += 1
+        if node_count > _MAX_MCP_RESULT_NODES or depth > _MAX_MCP_RESULT_DEPTH:
+            return False
+
         if isinstance(current, dict):
-            if "isError" in current:
-                flag = current["isError"]
-                if not isinstance(flag, bool) or flag:
-                    return False
-                explicit_success = True
-
+            if inspect_errors and _mcp_mapping_has_error(current):
+                return False
             for key, nested in current.items():
-                normalized_key = key.replace("_", "").lower()
-                if normalized_key == "error" and nested not in (None, False, ""):
-                    return False
-                if normalized_key in {"errorcode", "errcode"} and nested not in (
-                    None,
-                    False,
-                    0,
-                    "",
-                    "0",
-                ):
-                    return False
-
-            if "content" in current:
-                content = current["content"]
-                if not isinstance(content, list) or not all(
-                    _valid_mcp_content_block(block) for block in content
-                ):
-                    return False
-                valid_result_shape = True
-
-            for key in ("structured_content", "structuredContent"):
-                if key not in current:
-                    continue
-                if not isinstance(current[key], dict):
-                    return False
-                valid_result_shape = True
-
-            for key, nested in current.items():
-                inspected = nested
-                if key in {"result", "structured_content", "structuredContent"}:
-                    inspected = _decode_json_object_or_array(nested)
-                elif key == "text" and current.get("type") == "text":
-                    inspected = _decode_json_object_or_array(nested)
-                if not inspect(inspected):
-                    return False
-            return True
+                if depth == 0:
+                    child_errors = key in {"result", *structured_keys}
+                    child_decode = child_errors
+                else:
+                    child_errors = inspect_errors
+                    child_decode = decode_json_strings
+                stack.append((nested, depth + 1, child_errors, child_decode))
+            continue
         if isinstance(current, list):
-            return all(inspect(nested) for nested in current)
-        return True
+            stack.extend(
+                (nested, depth + 1, inspect_errors, decode_json_strings)
+                for nested in current
+            )
+            continue
+        if not decode_json_strings or not isinstance(current, str):
+            continue
 
-    return inspect(value) and (explicit_success or valid_result_shape)
+        stripped = current.lstrip()
+        if not stripped.startswith(("{", "[")):
+            continue
+        encoded_size = len(current.encode("utf-8"))
+        if (
+            decoded_strings >= _MAX_MCP_RESULT_JSON_STRINGS
+            or decoded_bytes + encoded_size > _MAX_MCP_RESULT_JSON_BYTES
+        ):
+            return False
+        try:
+            decoded = json.loads(current)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(decoded, (dict, list)):
+            continue
+        decoded_strings += 1
+        decoded_bytes += encoded_size
+        stack.append((decoded, depth + 1, inspect_errors, True))
+
+    return True
 
 
-def _decode_json_object_or_array(value: object) -> object:
-    if not isinstance(value, str):
-        return value
-    try:
-        decoded = json.loads(value)
-    except json.JSONDecodeError:
-        return value
-    return decoded if isinstance(decoded, (dict, list)) else value
+def _mcp_mapping_has_error(value: dict[str, object]) -> bool:
+    if "isError" in value:
+        flag = value["isError"]
+        if not isinstance(flag, bool) or flag:
+            return True
+    for key, nested in value.items():
+        normalized_key = key.replace("_", "").lower()
+        if normalized_key == "error" and nested not in (None, False, ""):
+            return True
+        if normalized_key in {"errorcode", "errcode"} and nested not in (
+            None,
+            False,
+            0,
+            "",
+            "0",
+        ):
+            return True
+    return False
 
 
 def _valid_mcp_content_block(value: object) -> bool:
