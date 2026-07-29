@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "executive_summary",
+    "company_progress",
+    "ceo_attention_items",
+    "manager_reviews",
+    "source_coverage",
+    "warnings"
+  ],
+  "properties": {
+    "executive_summary": {"type": "string"},
+    "company_progress": {"type": "array", "items": {"type": "string"}},
+    "ceo_attention_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["topic", "owner_names", "issue", "recommended_decision"],
+        "properties": {
+          "topic": {"type": "string"},
+          "owner_names": {"type": "array", "items": {"type": "string"}},
+          "issue": {"type": "string"},
+          "recommended_decision": {"type": "string"}
+        }
+      }
+    },
+    "manager_reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "progress_summary",
+          "key_progress",
+          "independent_evidence",
+          "evidence_assessment",
+          "risks",
+          "next_week_focus",
+          "data_gaps"
+        ],
+        "properties": {
+          "name": {"type": "string"},
+          "progress_summary": {"type": "string"},
+          "key_progress": {"type": "array", "items": {"type": "string"}},
+          "independent_evidence": {"type": "array", "items": {"type": "string"}},
+          "evidence_assessment": {"type": "string"},
+          "risks": {"type": "array", "items": {"type": "string"}},
+          "next_week_focus": {"type": "array", "items": {"type": "string"}},
+          "data_gaps": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "source_coverage": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  }
+}

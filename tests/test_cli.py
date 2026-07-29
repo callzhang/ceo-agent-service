@@ -140,6 +140,16 @@ def test_parser_supports_process_okr_reviews():
     assert args.max_batches == 1
 
 
+def test_parser_supports_forced_weekly_okr_report():
+    args = build_parser().parse_args(
+        ["weekly-okr-report", "--force", "--period-label", "2026 Q3"]
+    )
+
+    assert args.command == "weekly-okr-report"
+    assert args.force is True
+    assert args.period_label == "2026 Q3"
+
+
 def test_parser_supports_channel_doctor():
     args = build_parser().parse_args(["channel-doctor"])
 

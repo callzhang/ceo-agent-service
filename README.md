@@ -29,6 +29,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时，自动发到最匹配的群，1:1 会议才私聊，并默认只真实 @ 参会相关人；非参会人只有会议中明确说到是他的任务时才 @。
 - **审计 Web UI**：本地 FastAPI 页面查看历史、attempt 详情、Codex session、错误、Prompt 模板和路由配置。
 - **自动修复 heartbeat**：定期检查 failed/processing/dry_run backlog，包括 `reply_tasks`、work summary 和通用 action 执行状态；修复后必须把受影响信息处理到最终状态。
+- **管理者 OKR 周报**：每周日读取 CEO-2 管理群成员的实时叮当 OKR、KR 评论/进展及可访问的独立渠道证据，在“目标与执行”知识库的独立文件夹创建周报，并把摘要发回群内。
 
 ## 系统架构
 
@@ -422,8 +423,22 @@ scripts/install-auto-reply-agents.sh
 - meeting producer loop：读取 AI 听记与日历参会证据，只为 Derek 参会且明确结束至少 `CEO_MEETING_SETTLE_SECONDS` 的会议建队列；没有匹配日程的临时通话，仅在完整转写恰好证明 Derek 和另一位唯一员工时按 1:1 放行；没有触发条件的会议保持安静。
 - meeting consumer loop：独立分析、选择最高分可发送群并投递；多方会议绝不降级私聊，1:1 才私聊另一位参会人。发送正文固定以 `【会议跟进】会议标题（会议时间）` 开头，便于收件人识别来源会议；真实 @ 默认限于参会人，非参会人只有会议转写明确说到是他的任务、由他负责、交给他确认或跟进时才 @。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
 - task maintenance loop：按 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 处理 Work Item，并按 `CEO_TASK_DAILY_INTERVAL_SECONDS` 扫描 AI 听记、`CEO_WORKSPACE` 文件和到期 follow-up。
+- weekly OKR report：task maintenance loop 每次只做本地到期检查；默认周日 18:00 后执行一次，失败按 `CEO_WEEKLY_OKR_RETRY_SECONDS` 重试。只有实时 OKR 获取、文档创建回读和群消息发送状态全部确认后，才记录当周完成。
 
 这些周期参数统一在审计页 `Config → System Config` 中维护，保存到 `.env` 后由 Python 服务启动时读取；launchd 模板不再在 shell 命令里写死或覆盖这些周期值。
+
+首次使用专用叮当 OKR 会话时运行：
+
+```bash
+.venv/bin/python ~/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py login
+```
+
+扫码一次后，专用浏览器配置和短期 token 缓存供后台周报复用。手动立即跑一轮可使用：
+
+```bash
+CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 \
+  .venv/bin/python -m app.cli weekly-okr-report --force
+```
 
 meeting producer 首次启用时会持久化激活时间。服务启动恢复队列前，会把激活时间以前且从未尝试发送的历史任务统一标记为 `no_action`；因此切换瞬间已被旧进程领取的历史会议也不会在重启后重新进入分析或发送。
 
