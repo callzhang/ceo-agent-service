@@ -229,8 +229,11 @@ class CodexWeeklyOkrAgent:
                     separators=(",", ":"),
                 ).encode("utf-8")
             ).hexdigest()
+            manager_cache_key = hashlib.sha256(
+                manager.user_id.encode("utf-8")
+            ).hexdigest()[:16]
             analysis_path = source_path.with_name(
-                f"analysis.manager-{index:02d}.json"
+                f"analysis.manager-{manager_cache_key}.json"
             )
             jobs.append((manager, manager_source, analysis_path, source_hash))
 
