@@ -1,4 +1,5 @@
 import hashlib
+import html
 import json
 import logging
 import os
@@ -784,6 +785,10 @@ class DingTalkAutoReplyWorker:
                 self._universal_calendar_prompt_message(calendar_prompt_message)
             )
 
+        planner_context_messages.extend(
+            self._universal_todo_prompt_messages(conversation, trigger)
+        )
+
         material_context_messages = list(context_messages) or list(prompt_context_messages)
         material_references = self._universal_material_references(
             [trigger],
@@ -873,6 +878,151 @@ class DingTalkAutoReplyWorker:
         )
         result = self._universal_consumer().process(context)
         return self._map_universal_consumer_result(result, trigger)
+
+    def _universal_todo_prompt_messages(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+    ) -> list[DingTalkMessage]:
+        messages: list[DingTalkMessage] = []
+        for task_id in self._dingtalk_todo_task_ids(trigger):
+            payload = self._call_dws(
+                "read_todo_task_detail",
+                lambda task_id=task_id: self.dws.get_todo_task(task_id),
+                conversation_id=conversation.open_conversation_id,
+                message_id=trigger.open_message_id,
+                default={},
+            )
+            content = self._render_dingtalk_todo_context(payload, task_id)
+            if not content:
+                content = (
+                    "钉钉待办详情读取失败：\n"
+                    f"task_id: {task_id}\n"
+                    "不要根据链接或附近对话猜测待办内容；如回答依赖该内容，"
+                    "应明确说明详情暂不可读。"
+                )
+            messages.append(
+                DingTalkMessage(
+                    open_conversation_id=conversation.open_conversation_id,
+                    open_message_id=(
+                        f"{trigger.open_message_id}:trusted-dingtalk-todo-{task_id}"
+                    ),
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    sender_name="CEO系统",
+                    create_time=trigger.create_time,
+                    content=content,
+                )
+            )
+        return messages
+
+    @classmethod
+    def _dingtalk_todo_task_ids(cls, message: DingTalkMessage) -> list[str]:
+        task_ids: list[str] = []
+        seen_task_ids: set[str] = set()
+        messages = [message, *cls._coalesced_messages(message)]
+        for candidate_message in messages:
+            for text in (
+                candidate_message.content,
+                candidate_message.quoted_content or "",
+            ):
+                for match in MEDIA_OR_LINK_PATTERN.finditer(text):
+                    link = cls._matched_link_target(match.group(0))
+                    for task_id in cls._todo_task_ids_from_url(link):
+                        if task_id in seen_task_ids:
+                            continue
+                        seen_task_ids.add(task_id)
+                        task_ids.append(task_id)
+        return task_ids
+
+    @staticmethod
+    def _matched_link_target(value: str) -> str:
+        candidate = html.unescape(value.strip())
+        markdown_separator = candidate.find("](")
+        if markdown_separator >= 0 and candidate.endswith(")"):
+            return candidate[markdown_separator + 2 : -1].strip()
+        return candidate
+
+    @staticmethod
+    def _todo_task_ids_from_url(url: str) -> list[str]:
+        task_ids: list[str] = []
+        seen_values: set[str] = set()
+        pending = [url]
+        while pending:
+            candidate = html.unescape(pending.pop(0).strip())
+            if not candidate or candidate in seen_values:
+                continue
+            seen_values.add(candidate)
+            parsed = urlsplit(candidate)
+            if parsed.scheme not in {"http", "https", "dingtalk"}:
+                continue
+            query = parse_qs(parsed.query)
+            if "dd-todo" in unquote(parsed.path).casefold():
+                for key in ("taskId", "task_id"):
+                    for value in query.get(key, []):
+                        task_id = str(value).strip()
+                        if task_id and task_id not in task_ids:
+                            task_ids.append(task_id)
+            for values in query.values():
+                for value in values:
+                    nested = html.unescape(unquote(str(value))).strip()
+                    if "://" in nested and nested not in seen_values:
+                        pending.append(nested)
+        return task_ids
+
+    @staticmethod
+    def _render_dingtalk_todo_context(
+        payload: object,
+        task_id: str,
+    ) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            return ""
+        detail = result.get("todoDetailModel")
+        if not isinstance(detail, dict):
+            return ""
+
+        def names(field: str) -> list[str]:
+            values = detail.get(field)
+            if not isinstance(values, list):
+                return []
+            return [
+                str(item.get("name") or "").strip()
+                for item in values
+                if isinstance(item, dict) and str(item.get("name") or "").strip()
+            ]
+
+        creator = detail.get("creatorInfo")
+        creator_name = (
+            str(creator.get("name") or "").strip()
+            if isinstance(creator, dict)
+            else ""
+        )
+        trusted_detail = {
+            "task_id": str(detail.get("taskId") or task_id).strip(),
+            "subject": str(detail.get("subject") or "").strip(),
+            "description": str(
+                detail.get("description") or detail.get("content") or ""
+            ).strip(),
+            "is_done": detail.get("isDone"),
+            "due_time": detail.get("dueTime"),
+            "creator": creator_name,
+            "executors": names("executorInfos"),
+            "participants": names("participantInfos"),
+        }
+        return (
+            "可信钉钉待办详情：\n"
+            "以下内容由服务根据触发消息中的待办链接在规划前读取；"
+            "解释引用待办时必须优先使用该详情。\n"
+            + json.dumps(
+                trusted_detail,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
 
     def _universal_material_references(
         self,

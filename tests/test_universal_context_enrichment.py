@@ -27,6 +27,25 @@ class FakeDws:
     pass
 
 
+class FakeTodoDws:
+    def __init__(self) -> None:
+        self.task_ids: list[str] = []
+
+    def get_todo_task(self, task_id: str) -> dict:
+        self.task_ids.append(task_id)
+        return {
+            "result": {
+                "todoDetailModel": {
+                    "taskId": task_id,
+                    "subject": "落地月度更新AI skill最小闭环",
+                    "isDone": False,
+                    "creatorInfo": {"name": "Derek Zen"},
+                    "executorInfos": [{"name": "Mina 邹"}],
+                }
+            }
+        }
+
+
 class FakeLegacyCodex:
     timeout_seconds = 901
     idle_timeout_seconds = 900
@@ -186,6 +205,86 @@ def test_universal_worker_enriches_calendar_context_before_planning(
     assert "domain_payload" not in synthetic.content
     assert "calendar_response action" in synthetic.content
     assert "口头表示接受不算完成" in synthetic.content
+
+
+def test_universal_worker_resolves_referenced_todo_card_before_planning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = make_worker(tmp_path)
+    dws = FakeTodoDws()
+    worker.dws = dws
+    trigger = message(
+        "这是什么意思来着？\n"
+        "dingtalk://dingtalkclient/page/link?pc_slide=true&url="
+        "https%3A%2F%2Fn.dingtalk.com%2Fdingding%2Fdd-todo%2Fdetail%2F"
+        "index.html%3FtaskId%3D55349477697%26bizTag%3Dteambition"
+    )
+    consumer = CapturingConsumer()
+    monkeypatch.setattr(worker.store, "load_universal_plan_context", lambda *_: None)
+    monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
+    monkeypatch.setattr(worker, "_maybe_backup_dws_auth", lambda: None)
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
+
+    worker._process_universal_queued_task(
+        conversation(single_chat=True),
+        reply_task(trigger),
+        trigger,
+        [trigger],
+        [trigger],
+    )
+
+    assert dws.task_ids == ["55349477697"]
+    todo_context = next(
+        item
+        for item in consumer.contexts[0].context_messages
+        if item.open_message_id == "msg-trigger:trusted-dingtalk-todo-55349477697"
+    )
+    assert "可信钉钉待办详情" in todo_context.content
+    assert "落地月度更新AI skill最小闭环" in todo_context.content
+    assert "Mina 邹" in todo_context.content
+
+
+def test_todo_reference_parser_ignores_oa_task_ids() -> None:
+    oa_url = (
+        "https://aflow.dingtalk.com/dingtalk/mobile/homepage.htm?"
+        "procInstId=proc-1&taskId=oa-task-1&dinghash=approval"
+    )
+
+    assert DingTalkAutoReplyWorker._todo_task_ids_from_url(oa_url) == []
+
+
+def test_universal_todo_read_failure_is_visible_and_non_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = make_worker(tmp_path)
+    trigger = message(
+        "请解释这个待办\n"
+        "https://n.dingtalk.com/dingding/dd-todo/detail/index.html?"
+        "taskId=todo-unavailable"
+    )
+    consumer = CapturingConsumer()
+    monkeypatch.setattr(worker.store, "load_universal_plan_context", lambda *_: None)
+    monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
+    monkeypatch.setattr(
+        worker,
+        "_call_dws",
+        lambda _kind, _call, **kwargs: kwargs["default"],
+    )
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
+
+    assert worker._process_universal_queued_task(
+        conversation(single_chat=True),
+        reply_task(trigger),
+        trigger,
+        [trigger],
+        [trigger],
+    ) is True
+
+    todo_context = consumer.contexts[0].context_messages[-1]
+    assert "钉钉待办详情读取失败" in todo_context.content
+    assert "不要根据链接或附近对话猜测" in todo_context.content
 
 
 @pytest.mark.parametrize("resolver", ["context", "attempt"])

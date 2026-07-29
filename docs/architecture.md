@@ -130,7 +130,7 @@ SQLite 审计 + 外部系统结果
 1. Producer 读取未读会话、@消息、机器人私聊、广播 alias 和慢路径补扫。
 2. 路由规则过滤系统消息、过期消息、无效群消息和不可处理卡片。
 3. 合格触发写入 `reply_tasks`，唯一键是 `channel + conversation_id + trigger_message_id`。
-4. Consumer 领取 pending task，读取上下文、文档、图片、OA、日程、任务信息和本地材料。
+4. Consumer 领取 pending task，读取上下文、文档、图片、OA、日程、钉钉待办、任务信息和本地材料。互动待办卡只暴露链接时，服务会结构化解析 `dd-todo` 链接并在规划前读取待办详情；读取失败不阻断规划，但上下文会明确禁止猜测。
 5. Universal planner 输出结构化 action。
 6. Validator 检查重复、权限、依赖、dry-run、可信目标和计划合法性。
 7. Executor 发送回复、追问、handoff、OA 操作、日程动作、文档动作、reaction 或 memory write。
