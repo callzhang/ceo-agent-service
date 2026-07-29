@@ -287,6 +287,28 @@ class ScriptedReconciliationRunner(ScriptedDirectAgentRunner):
         )
 
 
+class GenerationSwitchingReconciliationRunner(ScriptedReconciliationRunner):
+    def __init__(
+        self,
+        store: AutoReplyStore,
+        result: ReconciliationResult,
+        *,
+        task_id: int,
+    ) -> None:
+        super().__init__(store, result)
+        self.task_id = task_id
+
+    def reconcile(self, run, context, **kwargs) -> AgentReconciliationRunResult:
+        result = super().reconcile(run, context, **kwargs)
+        if run.reply_task_id == self.task_id:
+            with self.store._connect() as db:
+                db.execute(
+                    "update reply_tasks set execution_generation='g2' where id=?",
+                    (self.task_id,),
+                )
+        return result
+
+
 class FailingReconciliationRunner(ScriptedDirectAgentRunner):
     def __init__(
         self,
@@ -804,6 +826,58 @@ def test_no_action_reconciliation_rotates_generation_only_after_confirmed_absenc
     assert task is not None and task.status == "pending"
     assert task.execution_generation != unknown.execution_generation
     assert store.get_agent_run(unknown.id).status == "failed"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "observed_state", "second_run_status", "second_task_status"),
+    [
+        (AgentOutcome.COMPLETED, "effect_present", "completed", "done"),
+        (AgentOutcome.NO_ACTION, "effect_absent", "failed", "pending"),
+    ],
+)
+def test_reconciliation_generation_race_skips_stale_run_and_continues(
+    tmp_path: Path,
+    outcome: AgentOutcome,
+    observed_state: str,
+    second_run_status: str,
+    second_task_status: str,
+):
+    first = _message(message_id="msg-race-1")
+    second = _message(message_id="msg-race-2")
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    first_task_id = _enqueue(store, first)
+    second_task_id = _enqueue(store, second)
+    first_run = _seed_unknown_run(store, first_task_id)
+    second_run = _seed_unknown_run(store, second_task_id)
+    runner = GenerationSwitchingReconciliationRunner(
+        store,
+        ReconciliationResult(
+            outcome=outcome,
+            summary="Live state checked.",
+            proof=ReconciliationProof(observed_state=observed_state),
+        ),
+        task_id=first_task_id,
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([first, second]),
+        codex=object(),
+        direct_agent_runner=runner,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.reconcile_unknown_agent_runs(limit=2) == 1
+
+    stale_run = store.get_agent_run(first_run.id)
+    stale_task = store.get_reply_task(first_task_id)
+    assert stale_run is not None and stale_run.status == "unknown"
+    assert stale_run.lease_owner == runner.owner
+    assert stale_task is not None and stale_task.execution_generation == "g2"
+    assert stale_task.status == "processing"
+    assert store.get_agent_run(second_run.id).status == second_run_status
+    assert store.get_reply_task(second_task_id).status == second_task_status
+    assert len(runner.reconciliation_contexts) == 2
 
 
 def test_reconciliation_failure_sets_backoff_and_is_not_reclaimed_early(

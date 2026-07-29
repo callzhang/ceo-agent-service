@@ -4,12 +4,16 @@ import hashlib
 import errno
 import shutil
 import subprocess
-import threading
 from collections.abc import Callable, Sequence
 
 from mcp.server.fastmcp import FastMCP
 
 from app.agent_result import EffectKind
+from app.bounded_process import (
+    MAX_PROCESS_OUTPUT_BYTES,
+    ProcessOutputLimitError,
+    run_bounded_process,
+)
 from app.channel_gate import classify_cli_read_failure
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -18,11 +22,8 @@ from app.native_cli_metadata import (
     describe_native_command,
 )
 
-MAX_CLI_OUTPUT_BYTES = 256 * 1024
-
-
-class CliOutputLimitError(RuntimeError):
-    pass
+MAX_CLI_OUTPUT_BYTES = MAX_PROCESS_OUTPUT_BYTES
+CliOutputLimitError = ProcessOutputLimitError
 
 
 def _process_failure_receipt(
@@ -80,7 +81,7 @@ def execute_reviewed_read(
     reviewed_argv = [executable, *argv[1:]]
     try:
         process = (
-            _run_bounded_process(reviewed_argv, timeout=120)
+            run_bounded_process(reviewed_argv, timeout=120)
             if process_runner is None
             else process_runner(
                 reviewed_argv,
@@ -94,7 +95,7 @@ def execute_reviewed_read(
             len(process.stdout.encode("utf-8")) > MAX_CLI_OUTPUT_BYTES
             or len(process.stderr.encode("utf-8")) > MAX_CLI_OUTPUT_BYTES
         ):
-            raise CliOutputLimitError
+            raise CliOutputLimitError(stdout_bytes=0, stderr_bytes=0)
     except CliOutputLimitError:
         return {
             "cli": command.cli,
@@ -144,51 +145,6 @@ def execute_reviewed_read(
             "gate_state": failure.gate_state.value,
         }
     return receipt
-
-
-def _run_bounded_process(
-    argv: Sequence[str], *, timeout: int
-) -> subprocess.CompletedProcess[str]:
-    process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    streams: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
-    exceeded = threading.Event()
-
-    def drain(name: str, pipe) -> None:
-        while chunk := pipe.read(64 * 1024):
-            target = streams[name]
-            remaining = MAX_CLI_OUTPUT_BYTES + 1 - len(target)
-            if remaining > 0:
-                target.extend(chunk[:remaining])
-            if len(target) > MAX_CLI_OUTPUT_BYTES:
-                exceeded.set()
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-
-    threads = [
-        threading.Thread(target=drain, args=(name, pipe), daemon=True)
-        for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr))
-    ]
-    for thread in threads:
-        thread.start()
-    try:
-        returncode = process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
-        raise
-    finally:
-        for thread in threads:
-            thread.join()
-    if exceeded.is_set():
-        raise CliOutputLimitError
-    return subprocess.CompletedProcess(
-        args=list(argv),
-        returncode=returncode,
-        stdout=streams["stdout"].decode("utf-8", errors="replace"),
-        stderr=streams["stderr"].decode("utf-8", errors="replace"),
-    )
 
 
 server = FastMCP(

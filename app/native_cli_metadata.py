@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.agent_result import EffectKind
+from app.bounded_process import ProcessOutputLimitError, run_bounded_process
 from app.history import safe_observability_error
 from app.leak_check import contains_credential
 
@@ -38,13 +39,14 @@ class NativeCliCommand:
 def _load_reviewed_dws_effects() -> dict[tuple[str, str], EffectKind]:
     effects: dict[tuple[str, str], EffectKind] = {}
     try:
-        process = subprocess.run(
+        process = run_bounded_process(
             ["dws", "schema", "--all", "--compact", "--format", "json"],
-            capture_output=True,
-            text=True,
             timeout=30,
-            check=False,
         )
+    except ProcessOutputLimitError as exc:
+        raise NativeCliMetadataUnavailableError(
+            cli="dws", code="native_cli_metadata_output_limit"
+        ) from exc
     except subprocess.TimeoutExpired as exc:
         raise NativeCliMetadataUnavailableError(
             cli="dws", code="native_cli_metadata_timeout"
@@ -93,13 +95,14 @@ def _load_reviewed_dws_effects() -> dict[tuple[str, str], EffectKind]:
 def _load_reviewed_lark_effects() -> dict[tuple[str, str], EffectKind]:
     effects: dict[tuple[str, str], EffectKind] = {}
     try:
-        process = subprocess.run(
+        process = run_bounded_process(
             ["lark-cli", "schema"],
-            capture_output=True,
-            text=True,
             timeout=30,
-            check=False,
         )
+    except ProcessOutputLimitError as exc:
+        raise NativeCliMetadataUnavailableError(
+            cli="lark-cli", code="native_cli_metadata_output_limit"
+        ) from exc
     except subprocess.TimeoutExpired as exc:
         raise NativeCliMetadataUnavailableError(
             cli="lark-cli", code="native_cli_metadata_timeout"
@@ -212,7 +215,7 @@ class NativeCliMetadataClassifier:
     def _classify_dws(self, argv: tuple[str, ...]) -> NativeCliCommand | None:
         for command_path in _command_path_candidates(argv[1:]):
             try:
-                process = subprocess.run(
+                process = run_bounded_process(
                     [
                         argv[0],
                         "schema",
@@ -222,11 +225,12 @@ class NativeCliMetadataClassifier:
                         "--format",
                         "json",
                     ],
-                    capture_output=True,
-                    text=True,
                     timeout=10,
-                    check=False,
                 )
+            except ProcessOutputLimitError as exc:
+                raise NativeCliMetadataUnavailableError(
+                    cli="dws", code="native_cli_metadata_output_limit"
+                ) from exc
             except (OSError, subprocess.SubprocessError):
                 return None
             if process.returncode != 0:
@@ -248,13 +252,14 @@ class NativeCliMetadataClassifier:
     def _classify_lark(self, argv: tuple[str, ...]) -> NativeCliCommand | None:
         for command_path in _command_path_candidates(argv[1:]):
             try:
-                process = subprocess.run(
+                process = run_bounded_process(
                     [argv[0], *command_path.split(), "--help"],
-                    capture_output=True,
-                    text=True,
                     timeout=10,
-                    check=False,
                 )
+            except ProcessOutputLimitError as exc:
+                raise NativeCliMetadataUnavailableError(
+                    cli="lark-cli", code="native_cli_metadata_output_limit"
+                ) from exc
             except (OSError, subprocess.SubprocessError):
                 return None
             if process.returncode != 0:

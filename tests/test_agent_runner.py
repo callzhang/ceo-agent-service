@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 
 import pytest
 
@@ -1247,7 +1248,7 @@ def test_native_parser_rejects_command_substitution_before_metadata_lookup(
             stderr="",
         )
 
-    monkeypatch.setattr("app.native_cli_metadata.subprocess.run", schema_lookup)
+    monkeypatch.setattr("app.native_cli_metadata.run_bounded_process", schema_lookup)
 
     output = "\n".join(
         (
@@ -1308,7 +1309,7 @@ def test_native_write_parser_rejects_shell_composition_without_executing_it(
     task = _task(store)
     schema_calls = []
     monkeypatch.setattr(
-        "app.native_cli_metadata.subprocess.run",
+        "app.native_cli_metadata.run_bounded_process",
         lambda *args, **kwargs: schema_calls.append((args, kwargs)),
     )
     output = "\n".join(
@@ -2481,7 +2482,7 @@ def test_native_cli_metadata_discovery_failure_is_typed(
             raise process
         return process
 
-    monkeypatch.setattr("app.native_cli_metadata.subprocess.run", run)
+    monkeypatch.setattr("app.native_cli_metadata.run_bounded_process", run)
 
     with pytest.raises(NativeCliMetadataUnavailableError) as excinfo:
         _load_reviewed_dws_effects()
@@ -2492,12 +2493,76 @@ def test_native_cli_metadata_discovery_failure_is_typed(
     _load_reviewed_dws_effects.cache_clear()
 
 
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_bounded_process_rejects_oversized_metadata_stream(stream: str):
+    from app.bounded_process import (
+        MAX_PROCESS_OUTPUT_BYTES,
+        ProcessOutputLimitError,
+        run_bounded_process,
+    )
+
+    script = (
+        "import sys; "
+        f"sys.{stream}.buffer.write(b'x' * ({MAX_PROCESS_OUTPUT_BYTES} + 1)); "
+        f"sys.{stream}.flush()"
+    )
+    with pytest.raises(ProcessOutputLimitError) as excinfo:
+        run_bounded_process([sys.executable, "-c", script], timeout=10)
+
+    assert excinfo.value.stdout_bytes <= MAX_PROCESS_OUTPUT_BYTES
+    assert excinfo.value.stderr_bytes <= MAX_PROCESS_OUTPUT_BYTES
+
+
+def test_native_cli_metadata_output_limit_is_typed_and_retryable(monkeypatch):
+    from app.bounded_process import ProcessOutputLimitError
+    from app.native_cli_metadata import (
+        NativeCliMetadataUnavailableError,
+        _load_reviewed_dws_effects,
+    )
+
+    _load_reviewed_dws_effects.cache_clear()
+    monkeypatch.setattr(
+        "app.native_cli_metadata.run_bounded_process",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ProcessOutputLimitError(stdout_bytes=256 * 1024, stderr_bytes=0)
+        ),
+    )
+
+    with pytest.raises(NativeCliMetadataUnavailableError) as excinfo:
+        _load_reviewed_dws_effects()
+
+    assert excinfo.value.code == "native_cli_metadata_output_limit"
+    assert excinfo.value.retryable is True
+    _load_reviewed_dws_effects.cache_clear()
+
+
+def test_native_cli_command_metadata_output_limit_is_typed_and_retryable(monkeypatch):
+    from app.bounded_process import ProcessOutputLimitError
+    from app.native_cli_metadata import NativeCliMetadataUnavailableError
+
+    monkeypatch.setattr(
+        "app.native_cli_metadata.run_bounded_process",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ProcessOutputLimitError(stdout_bytes=256 * 1024, stderr_bytes=0)
+        ),
+    )
+
+    with pytest.raises(NativeCliMetadataUnavailableError) as excinfo:
+        NativeCliMetadataClassifier(reviewed_effects={}).classify(
+            {"type": "command_execution", "argv": ["dws", "doc", "read"]}
+        )
+
+    assert excinfo.value.cli == "dws"
+    assert excinfo.value.code == "native_cli_metadata_output_limit"
+    assert excinfo.value.retryable is True
+
+
 def test_native_cli_metadata_accepts_legitimate_empty_schema(monkeypatch):
     from app.native_cli_metadata import _load_reviewed_dws_effects
 
     _load_reviewed_dws_effects.cache_clear()
     monkeypatch.setattr(
-        "app.native_cli_metadata.subprocess.run",
+        "app.native_cli_metadata.run_bounded_process",
         lambda *_args, **_kwargs: subprocess.CompletedProcess(
             [], returncode=0, stdout='{"products": []}', stderr=""
         ),

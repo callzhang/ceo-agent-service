@@ -5471,14 +5471,17 @@ class DingTalkAutoReplyWorker:
 
             outcome = result.result.outcome
             if outcome is AgentOutcome.COMPLETED:
-                self.store.resolve_unknown_agent_run_confirmed(
-                    run.id,
-                    task.id,
-                    result.result.model_dump(mode="json"),
-                    owner=runner.owner,
-                    transcript_end_line=result.transcript_end_line,
-                    now=now,
-                )
+                try:
+                    self.store.resolve_unknown_agent_run_confirmed(
+                        run.id,
+                        task.id,
+                        result.result.model_dump(mode="json"),
+                        owner=runner.owner,
+                        transcript_end_line=result.transcript_end_line,
+                        now=now,
+                    )
+                except AgentRunLeaseLostError:
+                    continue
                 self._record_agent_attempt(
                     task,
                     result,
@@ -5488,14 +5491,17 @@ class DingTalkAutoReplyWorker:
                 continue
             if outcome is AgentOutcome.NO_ACTION:
                 code = "reconciliation_confirmed_no_effect"
-                self.store.resolve_unknown_agent_run_absent(
-                    run.id,
-                    task.id,
-                    code=code,
-                    owner=runner.owner,
-                    transcript_end_line=result.transcript_end_line,
-                    now=now,
-                )
+                try:
+                    self.store.resolve_unknown_agent_run_absent(
+                        run.id,
+                        task.id,
+                        code=code,
+                        owner=runner.owner,
+                        transcript_end_line=result.transcript_end_line,
+                        now=now,
+                    )
+                except AgentRunLeaseLostError:
+                    continue
                 self._record_agent_attempt(
                     task,
                     result,
