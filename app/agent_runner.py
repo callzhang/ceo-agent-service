@@ -914,7 +914,7 @@ def _mcp_result_explicitly_succeeded(value: object) -> bool:
             return False
         try:
             value = json.loads(value)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, MemoryError, RecursionError):
             return False
         decoded_strings = 1
         decoded_bytes = encoded_size
@@ -948,6 +948,8 @@ def _mcp_result_explicitly_succeeded(value: object) -> bool:
             return False
 
         if isinstance(current, dict):
+            if len(current) > _MAX_MCP_RESULT_NODES - node_count - len(stack):
+                return False
             if inspect_errors and _mcp_mapping_has_error(current):
                 return False
             for key, nested in current.items():
@@ -960,10 +962,12 @@ def _mcp_result_explicitly_succeeded(value: object) -> bool:
                 stack.append((nested, depth + 1, child_errors, child_decode))
             continue
         if isinstance(current, list):
-            stack.extend(
-                (nested, depth + 1, inspect_errors, decode_json_strings)
-                for nested in current
-            )
+            if len(current) > _MAX_MCP_RESULT_NODES - node_count - len(stack):
+                return False
+            for nested in current:
+                stack.append(
+                    (nested, depth + 1, inspect_errors, decode_json_strings)
+                )
             continue
         if not decode_json_strings or not isinstance(current, str):
             continue
@@ -979,8 +983,8 @@ def _mcp_result_explicitly_succeeded(value: object) -> bool:
             return False
         try:
             decoded = json.loads(current)
-        except json.JSONDecodeError:
-            continue
+        except (json.JSONDecodeError, MemoryError, RecursionError):
+            return False
         if not isinstance(decoded, (dict, list)):
             continue
         decoded_strings += 1

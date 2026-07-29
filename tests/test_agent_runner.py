@@ -390,6 +390,47 @@ def test_mcp_result_fails_closed_for_very_deep_external_data():
     assert _mcp_result_explicitly_succeeded(result) is False
 
 
+@pytest.mark.parametrize("nested_in_result", (False, True))
+def test_mcp_result_fails_closed_for_json_beyond_decoder_recursion_limit(
+    nested_in_result: bool,
+):
+    deep_value = ("[" * 20_000) + "0" + ("]" * 20_000)
+    if nested_in_result:
+        result = {"content": [], "structuredContent": {"payload": deep_value}}
+    else:
+        result = '{"content":[],"structuredContent":' + deep_value + "}"
+
+    assert len(deep_value.encode("utf-8")) < _MAX_MCP_RESULT_JSON_BYTES
+    assert _mcp_result_explicitly_succeeded(result) is False
+
+
+class _OverBudgetList(list):
+    def __len__(self):
+        return _MAX_MCP_RESULT_NODES + 1
+
+    def __iter__(self):
+        raise AssertionError("over-budget list must not be iterated")
+
+
+class _OverBudgetDict(dict):
+    def __len__(self):
+        return _MAX_MCP_RESULT_NODES + 1
+
+    def items(self):
+        raise AssertionError("over-budget dict must not be iterated")
+
+
+@pytest.mark.parametrize(
+    "wide_value",
+    (_OverBudgetList(), _OverBudgetDict()),
+    ids=("list", "dict"),
+)
+def test_mcp_result_rejects_wide_container_before_queuing_children(wide_value):
+    result = {"content": [], "structuredContent": {"wide": wide_value}}
+
+    assert _mcp_result_explicitly_succeeded(result) is False
+
+
 def test_mcp_result_depth_limit_is_inclusive():
     accepted = {
         "content": [],
