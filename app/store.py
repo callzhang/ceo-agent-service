@@ -1983,6 +1983,7 @@ class AutoReplyStore:
         channel: str = "dingtalk",
     ) -> ReplyTask:
         with self._connect() as db:
+            db.execute("begin immediate")
             existing = db.execute(
                 """
                 select * from reply_tasks

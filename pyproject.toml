@@ -32,7 +32,6 @@ reader-build = [
 ceo-agent = "app.cli:main"
 
 [tool.pytest.ini_options]
-addopts = "-m 'not live'"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [

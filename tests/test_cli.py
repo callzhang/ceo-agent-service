@@ -2883,6 +2883,7 @@ def test_send_attempt_command_dedupes_same_pending_rerun_without_direct_send(
     second_task = store.get_reply_task_for_message("cid-1", "msg-1")
 
     assert first["send_status"] == second["send_status"] == "queued"
+    assert first["execution_generation"] == second["execution_generation"]
     assert first_task is not None and second_task is not None
     assert first_task.execution_generation == second_task.execution_generation
     assert store.get_sent_reply("cid-1", "msg-1") is None

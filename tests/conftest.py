@@ -19,6 +19,27 @@ os.environ["CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY"] = (
 os.environ["CEO_DING_ROBOT_NAME"] = "极简云机器人"
 os.environ["CEO_FORBIDDEN_PATH_PREFIXES"] = "/Users/principal/,/home/principal/"
 os.environ["FAST_PATH_UNREAD_BACKOFF"] = "0s"
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-live",
+        action="store_true",
+        default=False,
+        help="collect and run tests marked live",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--run-live"):
+        return
+    live_items = [item for item in items if item.get_closest_marker("live")]
+    if not live_items:
+        return
+    items[:] = [item for item in items if item not in live_items]
+    config.hook.pytest_deselected(items=live_items)
+
+
 @pytest.fixture(autouse=True)
 def block_real_notifications_in_tests(monkeypatch, request):
     if request.path.name == "test_notification.py":

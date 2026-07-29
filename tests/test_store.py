@@ -1,6 +1,7 @@
 import json
 import importlib.util
 from datetime import datetime, timezone
+from multiprocessing import get_context
 from pathlib import Path
 from queue import Queue
 import sqlite3
@@ -11,6 +12,28 @@ import pytest
 
 import app.store as store_module
 from app.store import AgentRunLeaseLostError, AutoReplyStore
+
+
+def _enqueue_manual_rerun_in_process(
+    db_path: str,
+    attempt_id: int,
+    barrier,
+    results,
+) -> None:
+    store = AutoReplyStore(Path(db_path))
+    barrier.wait(timeout=10)
+    task = store.enqueue_manual_rerun_reply_task(
+        conversation_id="cid-process-rerun",
+        conversation_title="Process rerun",
+        single_chat=False,
+        trigger_message_id="msg-process-rerun",
+        trigger_create_time="2026-07-29 11:00:00",
+        trigger_sender="ET",
+        trigger_text="请重新处理",
+        trigger_message_json="{}",
+        attempt_id=attempt_id,
+    )
+    results.put((task.id, task.execution_generation))
 
 
 def _enqueue_universal_reply_task(
@@ -427,6 +450,62 @@ def test_manual_rerun_dedupes_same_pending_source_attempt(tmp_path: Path):
     assert second.execution_generation != "initial"
     assert first.execution_generation == second.execution_generation
     assert first.id == second.id
+
+
+def test_manual_rerun_dedupes_same_attempt_across_processes(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.enqueue_reply_task(
+        conversation_id="cid-process-rerun",
+        conversation_title="Process rerun",
+        single_chat=False,
+        trigger_message_id="msg-process-rerun",
+        trigger_create_time="2026-07-29 10:59:00",
+        trigger_sender="ET",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    context = get_context("spawn")
+    barrier = context.Barrier(8)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_enqueue_manual_rerun_in_process,
+            args=(str(db_path), 42, barrier, results),
+        )
+        for _ in range(8)
+    ]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=20)
+        assert process.exitcode == 0
+
+    outcomes = [results.get(timeout=2) for _ in processes]
+    assert len({task_id for task_id, _ in outcomes}) == 1
+    assert len({generation for _, generation in outcomes}) == 1
+
+
+def test_manual_rerun_new_source_attempt_rotates_generation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    common = {
+        "conversation_id": "cid-corrected-rerun",
+        "conversation_title": "Corrected rerun",
+        "single_chat": False,
+        "trigger_message_id": "msg-corrected-rerun",
+        "trigger_create_time": "2026-07-29 11:00:00",
+        "trigger_sender": "ET",
+        "trigger_text": "请重新处理",
+        "trigger_message_json": "{}",
+    }
+
+    first = store.enqueue_manual_rerun_reply_task(**common, attempt_id=42)
+    corrected = store.enqueue_manual_rerun_reply_task(**common, attempt_id=43)
+
+    assert corrected.id == first.id
+    assert corrected.execution_generation != first.execution_generation
+    assert corrected.manual_rerun_attempt_id == 43
 
 
 def test_reviewed_reply_and_rerun_roll_back_together(tmp_path: Path) -> None:
