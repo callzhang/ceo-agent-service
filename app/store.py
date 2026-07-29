@@ -58,9 +58,9 @@ UNRECOVERABLE_BLOCKED_ERROR_PREFIX = "blocked_unrecoverable_"
 def is_unrecoverable_blocked_attempt(attempt: "ReplyAttempt") -> bool:
     return (
         attempt.send_status.strip().lower() == "blocked"
-        and attempt.send_error.strip().lower().startswith(
-            UNRECOVERABLE_BLOCKED_ERROR_PREFIX
-        )
+        and attempt.send_error.strip()
+        .lower()
+        .startswith(UNRECOVERABLE_BLOCKED_ERROR_PREFIX)
     )
 
 
@@ -74,6 +74,8 @@ def is_terminal_reply_attempt(attempt: "ReplyAttempt") -> bool:
         "calendar",
         "document",
     } or is_unrecoverable_blocked_attempt(attempt)
+
+
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 UNIVERSAL_MEMORY_LEASE_SECONDS = 15 * 60
@@ -369,6 +371,7 @@ class AgentRun(BaseModel):
     lease_expires_at: str = ""
     reconciliation_attempts: int = 0
     reconciliation_next_attempt_at: str = ""
+    reconciliation_suspended: bool = False
     started_at: str = ""
     completed_at: str = ""
     created_at: str
@@ -407,9 +410,11 @@ def _persisted_agent_effect_state(events: list[dict[str, object]]) -> str:
     for event in events:
         event_type = event.get("type")
         item = event.get("item")
-        if event_type not in {"item.started", "item.completed", "item.failed"} or not isinstance(
-            item, dict
-        ):
+        if event_type not in {
+            "item.started",
+            "item.completed",
+            "item.failed",
+        } or not isinstance(item, dict):
             continue
         metadata = item.get("metadata")
         if not isinstance(metadata, dict) or metadata.get("effect") != "effectful":
@@ -858,6 +863,7 @@ class AutoReplyStore:
                     lease_expires_at text not null default '',
                     reconciliation_attempts integer not null default 0,
                     reconciliation_next_attempt_at text not null default '',
+                    reconciliation_suspended integer not null default 0,
                     started_at text not null default '',
                     completed_at text not null default '',
                     created_at text not null default current_timestamp,
@@ -1364,6 +1370,7 @@ class AutoReplyStore:
             for column, definition in (
                 ("reconciliation_attempts", "integer not null default 0"),
                 ("reconciliation_next_attempt_at", "text not null default ''"),
+                ("reconciliation_suspended", "integer not null default 0"),
             ):
                 if column not in agent_run_columns:
                     db.execute(
@@ -1404,9 +1411,7 @@ class AutoReplyStore:
                 row["name"]
                 for row in db.execute("pragma table_info(feedback_events)").fetchall()
             }
-            for column, definition in (
-                ("resolved_at", "text not null default ''"),
-            ):
+            for column, definition in (("resolved_at", "text not null default ''"),):
                 if column not in feedback_event_columns:
                     db.execute(
                         f"alter table feedback_events add column {column} {definition}"
@@ -1562,11 +1567,11 @@ class AutoReplyStore:
                     )
             work_summary_input_columns = {
                 row["name"]
-                for row in db.execute("pragma table_info(work_summary_inputs)").fetchall()
+                for row in db.execute(
+                    "pragma table_info(work_summary_inputs)"
+                ).fetchall()
             }
-            for column, definition in (
-                ("available_at", "text not null default ''"),
-            ):
+            for column, definition in (("available_at", "text not null default ''"),):
                 if column not in work_summary_input_columns:
                     db.execute(
                         f"alter table work_summary_inputs add column {column} {definition}"
@@ -1575,9 +1580,7 @@ class AutoReplyStore:
                 row["name"]
                 for row in db.execute("pragma table_info(work_todos)").fetchall()
             }
-            for column, definition in (
-                ("description", "text not null default ''"),
-            ):
+            for column, definition in (("description", "text not null default ''"),):
                 if column not in work_todo_columns:
                     db.execute(
                         f"alter table work_todos add column {column} {definition}"
@@ -1657,7 +1660,8 @@ class AutoReplyStore:
                         f"alter table org_user_profiles add column {column} {definition}"
                     )
             wechat_memory_columns = {
-                row["name"] for row in db.execute(
+                row["name"]
+                for row in db.execute(
                     "pragma table_info(wechat_memory_candidates)"
                 ).fetchall()
             }
@@ -1671,8 +1675,7 @@ class AutoReplyStore:
     @staticmethod
     def _migrate_agent_run_events(db: sqlite3.Connection) -> None:
         rows = db.execute(
-            "select id, tool_events_json from agent_runs "
-            "where tool_events_json <> '[]'"
+            "select id, tool_events_json from agent_runs where tool_events_json <> '[]'"
         ).fetchall()
         for row in rows:
             try:
@@ -1721,7 +1724,8 @@ class AutoReplyStore:
     def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
         """Replace the legacy cross-channel UNIQUE constraint in place."""
         columns = {
-            row["name"] for row in db.execute("pragma table_info(reply_tasks)").fetchall()
+            row["name"]
+            for row in db.execute("pragma table_info(reply_tasks)").fetchall()
         }
         if "channel" not in columns:
             db.execute(
@@ -1853,6 +1857,7 @@ class AutoReplyStore:
             lease_expires_at=row["lease_expires_at"],
             reconciliation_attempts=row["reconciliation_attempts"],
             reconciliation_next_attempt_at=row["reconciliation_next_attempt_at"],
+            reconciliation_suspended=bool(row["reconciliation_suspended"]),
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             created_at=row["created_at"],
@@ -2319,9 +2324,9 @@ class AutoReplyStore:
         if durable_context != supplied_context:
             raise ValueError("task context mismatch")
         stored_context = self._universal_context_from_plan_row(plan_row)
-        if canonical_universal_context_json(context) != canonical_universal_context_json(
-            stored_context
-        ):
+        if canonical_universal_context_json(
+            context
+        ) != canonical_universal_context_json(stored_context):
             raise ValueError("action context mismatch")
 
         plan_execution = self._universal_plan_execution_from_row(plan_row)
@@ -2444,12 +2449,16 @@ class AutoReplyStore:
             payload = json.loads(canonical_payload_json)
         except (TypeError, json.JSONDecodeError):
             raise ValueError("canonical memory payload must be valid JSON") from None
-        if not isinstance(payload, dict) or json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ) != canonical_payload_json:
+        if (
+            not isinstance(payload, dict)
+            or json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            != canonical_payload_json
+        ):
             raise ValueError("canonical memory payload must be canonical JSON")
 
         with self._connect() as db:
@@ -2498,27 +2507,23 @@ class AutoReplyStore:
                 return UniversalMemoryActionClaim(
                     UniversalActionExecutionState.SUCCEEDED
                 )
-            if row["status"] == "started" and db.execute(
-                "select datetime(?) > current_timestamp",
-                (row["lease_expires_at"],),
-            ).fetchone()[0]:
-                return UniversalMemoryActionClaim(
-                    UniversalActionExecutionState.UNKNOWN
-                )
+            if (
+                row["status"] == "started"
+                and db.execute(
+                    "select datetime(?) > current_timestamp",
+                    (row["lease_expires_at"],),
+                ).fetchone()[0]
+            ):
+                return UniversalMemoryActionClaim(UniversalActionExecutionState.UNKNOWN)
             previous_status = row["status"]
-            retryable_legacy_blocked = (
-                previous_status == "blocked"
-                and str(row["error"] or "").startswith(
-                    "memory_backend_unavailable:"
-                )
-            )
+            retryable_legacy_blocked = previous_status == "blocked" and str(
+                row["error"] or ""
+            ).startswith("memory_backend_unavailable:")
             if (
                 previous_status not in {"started", "unknown", "failed"}
                 and not retryable_legacy_blocked
             ):
-                return UniversalMemoryActionClaim(
-                    UniversalActionExecutionState.UNKNOWN
-                )
+                return UniversalMemoryActionClaim(UniversalActionExecutionState.UNKNOWN)
             cursor = db.execute(
                 """
                 update universal_action_executions
@@ -2542,9 +2547,7 @@ class AutoReplyStore:
                 ),
             )
             if cursor.rowcount != 1:
-                return UniversalMemoryActionClaim(
-                    UniversalActionExecutionState.UNKNOWN
-                )
+                return UniversalMemoryActionClaim(UniversalActionExecutionState.UNKNOWN)
             return UniversalMemoryActionClaim(
                 UniversalActionExecutionState.NOT_STARTED,
                 lease_token,
@@ -2939,9 +2942,7 @@ class AutoReplyStore:
                 """,
                 (run_id,),
             ).fetchall()
-            return [
-                AgentExecutionReceipt.model_validate(dict(row)) for row in rows
-            ]
+            return [AgentExecutionReceipt.model_validate(dict(row)) for row in rows]
 
     @contextmanager
     def _agent_run_write_transaction(
@@ -2971,9 +2972,9 @@ class AutoReplyStore:
             db,
             (now_value, now_text),
         ):
-            lease_expires_at = (
-                now_value + timedelta(seconds=lease_seconds)
-            ).strftime("%Y-%m-%d %H:%M:%S")
+            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
             task = db.execute(
                 "select execution_generation from reply_tasks where id=?",
                 (reply_task_id,),
@@ -3011,24 +3012,24 @@ class AutoReplyStore:
             ).fetchone()
             if row is None:
                 raise RuntimeError("agent run claim did not create a row")
-            has_completed_receipt = db.execute(
-                """
+            has_completed_receipt = (
+                db.execute(
+                    """
                 select 1
                 from agent_execution_receipts
                 where agent_run_id=? and completed=1 and persisted=1
                   and safe_to_confirm=1
                 limit 1
                 """,
-                (row["id"],),
-            ).fetchone() is not None
+                    (row["id"],),
+                ).fetchone()
+                is not None
+            )
             if (
                 not claimed
                 and row["status"] == "running"
                 and row["lease_expires_at"] <= now_text
-                and (
-                    row["side_effect_state"] == "confirmed"
-                    or has_completed_receipt
-                )
+                and (row["side_effect_state"] == "confirmed" or has_completed_receipt)
             ):
                 db.execute(
                     """
@@ -3124,9 +3125,9 @@ class AutoReplyStore:
             db,
             (now_value, now_text),
         ):
-            lease_expires_at = (
-                now_value + timedelta(seconds=lease_seconds)
-            ).strftime("%Y-%m-%d %H:%M:%S")
+            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
             cursor = db.execute(
                 """
                 update agent_runs
@@ -3203,10 +3204,7 @@ class AutoReplyStore:
                     raise ValueError("agent run does not exist")
                 if row["status"] != "running":
                     raise ValueError("agent run session requires running status")
-                if (
-                    row["lease_owner"] != owner
-                    or row["lease_expires_at"] <= now_text
-                ):
+                if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
                     raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
                 raise ValueError("agent run session cannot be replaced")
             updated = db.execute(
@@ -3227,8 +3225,8 @@ class AutoReplyStore:
             raise ValueError("owner must be non-empty")
         event_text = _json_object_text(event, field="event")
         normalized_event = json.loads(event_text)
-        event_type, call_id, effect_kind, receipt_operation_id = (
-            _agent_event_columns(normalized_event)
+        event_type, call_id, effect_kind, receipt_operation_id = _agent_event_columns(
+            normalized_event
         )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
@@ -3665,6 +3663,7 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute(
                 "select * from agent_runs where status='unknown' "
+                "and reconciliation_suspended=0 "
                 "and (reconciliation_next_attempt_at='' "
                 "or reconciliation_next_attempt_at<=?) "
                 "and (lease_owner='' or lease_expires_at<=?) "
@@ -3689,9 +3688,9 @@ class AutoReplyStore:
             db,
             (now_value, now_text),
         ):
-            lease_expires_at = (
-                now_value + timedelta(seconds=lease_seconds)
-            ).strftime("%Y-%m-%d %H:%M:%S")
+            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
             cursor = db.execute(
                 """
                 update agent_runs
@@ -3699,6 +3698,7 @@ class AutoReplyStore:
                     reconciliation_attempts=reconciliation_attempts + 1,
                     updated_at=?
                 where id=? and status='unknown'
+                  and reconciliation_suspended=0
                   and (reconciliation_next_attempt_at=''
                        or reconciliation_next_attempt_at<=?)
                   and (lease_owner='' or lease_expires_at<=?)
@@ -3723,6 +3723,7 @@ class AutoReplyStore:
         *,
         owner: str,
         next_attempt_at: str,
+        suspended: bool = False,
         now: str | datetime | None = None,
     ) -> AgentRun:
         if not owner.strip():
@@ -3733,6 +3734,7 @@ class AutoReplyStore:
                 """
                 update agent_runs
                 set structured_error_json=?, reconciliation_next_attempt_at=?,
+                    reconciliation_suspended=?,
                     lease_owner='', lease_expires_at='', updated_at=?
                 where id=? and status='unknown' and lease_owner=?
                   and lease_expires_at>?
@@ -3740,6 +3742,7 @@ class AutoReplyStore:
                 (
                     error_json,
                     next_attempt_at,
+                    int(suspended),
                     now_text,
                     run_id,
                     owner,
@@ -3788,7 +3791,7 @@ class AutoReplyStore:
                 f"""
                 select *
                 from reply_tasks
-                where {' and '.join(clauses)}
+                where {" and ".join(clauses)}
                 order by id
                 limit ?
                 """,
@@ -3818,7 +3821,7 @@ class AutoReplyStore:
                 f"""
                 select max(id) as max_id
                 from reply_tasks
-                where {' and '.join(clauses)}
+                where {" and ".join(clauses)}
                 """,
                 args,
             ).fetchone()
@@ -4362,7 +4365,10 @@ class AutoReplyStore:
             )
 
     def complete_reply_task_for_message(
-        self, conversation_id: str, trigger_message_id: str, *,
+        self,
+        conversation_id: str,
+        trigger_message_id: str,
+        *,
         channel: str = "dingtalk",
     ) -> int:
         with self._connect() as db:
@@ -4524,7 +4530,10 @@ class AutoReplyStore:
             return [self._reply_task_from_row(row) for row in rows]
 
     def get_reply_task_for_message(
-        self, conversation_id: str, trigger_message_id: str, *,
+        self,
+        conversation_id: str,
+        trigger_message_id: str,
+        *,
         channel: str = "dingtalk",
     ) -> ReplyTask | None:
         with self._connect() as db:
@@ -4590,9 +4599,13 @@ class AutoReplyStore:
                         updated_at=current_timestamp
                     """,
                     (
-                        scope.account_id, scope.target_type, scope.target_id,
-                        scope.conversation_id, scope.display_name,
-                        scope.trigger_mode, int(scope.enabled),
+                        scope.account_id,
+                        scope.target_type,
+                        scope.target_id,
+                        scope.conversation_id,
+                        scope.display_name,
+                        scope.trigger_mode,
+                        int(scope.enabled),
                         scope.binding_status,
                         json.dumps(scope.binding_evidence, ensure_ascii=False),
                         watermark,
@@ -4631,10 +4644,14 @@ class AutoReplyStore:
             ).fetchall()
         return [
             WechatReplyScope(
-                account_id=row["account_id"], target_type=row["target_type"],
-                target_id=row["target_id"], conversation_id=row["conversation_id"],
-                display_name=row["display_name"], trigger_mode=row["trigger_mode"],
-                enabled=bool(row["enabled"]), binding_status=row["binding_status"],
+                account_id=row["account_id"],
+                target_type=row["target_type"],
+                target_id=row["target_id"],
+                conversation_id=row["conversation_id"],
+                display_name=row["display_name"],
+                trigger_mode=row["trigger_mode"],
+                enabled=bool(row["enabled"]),
+                binding_status=row["binding_status"],
                 binding_evidence=json.loads(row["binding_evidence_json"]),
                 disabled_reason=row["disabled_reason"],
                 last_active_at=row["last_discovered_at"],
@@ -4647,7 +4664,8 @@ class AutoReplyStore:
     ) -> WechatReplyScope | None:
         return next(
             (
-                scope for scope in self.list_wechat_reply_scopes(account_id)
+                scope
+                for scope in self.list_wechat_reply_scopes(account_id)
                 if scope.target_type == target_type and scope.target_id == target_id
             ),
             None,
@@ -4655,10 +4673,18 @@ class AutoReplyStore:
 
     # ---- WeChat channel: read state ----
     def upsert_wechat_read_state(
-        self, *, account_id: str, account_dir: str, db_dir: str,
-        app_version: str, self_user_id: str, capability_status: str,
-        capability_reason: str = "", watermark_sent_at: str = "",
-        watermark_message_id: str = "", last_scan_at: str = "",
+        self,
+        *,
+        account_id: str,
+        account_dir: str,
+        db_dir: str,
+        app_version: str,
+        self_user_id: str,
+        capability_status: str,
+        capability_reason: str = "",
+        watermark_sent_at: str = "",
+        watermark_message_id: str = "",
+        last_scan_at: str = "",
     ) -> None:
         with self._connect() as db:
             db.execute(
@@ -4692,9 +4718,16 @@ class AutoReplyStore:
                     updated_at=current_timestamp
                 """,
                 (
-                    account_id, account_dir, db_dir, app_version, self_user_id,
-                    capability_status, capability_reason, watermark_sent_at,
-                    watermark_message_id, last_scan_at,
+                    account_id,
+                    account_dir,
+                    db_dir,
+                    app_version,
+                    self_user_id,
+                    capability_status,
+                    capability_reason,
+                    watermark_sent_at,
+                    watermark_message_id,
+                    last_scan_at,
                 ),
             )
 
@@ -4716,7 +4749,8 @@ class AutoReplyStore:
         self, *, enabled_only: bool = True
     ) -> list[WechatReplyScope]:
         ready = [
-            row for row in self.list_wechat_read_states()
+            row
+            for row in self.list_wechat_read_states()
             if row["capability_status"] == "ready"
         ]
         if len(ready) != 1:
@@ -4727,14 +4761,18 @@ class AutoReplyStore:
 
     # ---- WeChat channel: deliveries ----
     def create_wechat_delivery(
-        self, *, reply_task_id: int, account_id: str, target_type: str,
-        target_id: str, conversation_id: str, reply_text: str,
+        self,
+        *,
+        reply_task_id: int,
+        account_id: str,
+        target_type: str,
+        target_id: str,
+        conversation_id: str,
+        reply_text: str,
         evidence: dict[str, str] | None = None,
     ) -> int:
         with self._connect() as db:
-            superseded_error = (
-                f"superseded_by_newer_wechat_trigger:{reply_task_id}"
-            )
+            superseded_error = f"superseded_by_newer_wechat_trigger:{reply_task_id}"
             older_deliveries = db.execute(
                 """
                 select id
@@ -4794,8 +4832,12 @@ class AutoReplyStore:
                   )
                 """,
                 (
-                    reply_task_id, account_id, target_type, target_id,
-                    conversation_id, reply_text,
+                    reply_task_id,
+                    account_id,
+                    target_type,
+                    target_id,
+                    conversation_id,
+                    reply_text,
                     json.dumps(evidence or {}, ensure_ascii=False),
                 ),
             )
@@ -4807,6 +4849,7 @@ class AutoReplyStore:
 
     def get_wechat_delivery_for_task(self, reply_task_id: int):
         from app.wechat.models import WechatDelivery
+
         with self._connect() as db:
             row = db.execute(
                 "select * from wechat_deliveries where reply_task_id=?",
@@ -4815,25 +4858,36 @@ class AutoReplyStore:
         if row is None:
             return None
         return WechatDelivery(
-            id=row["id"], task_id=row["reply_task_id"], account_id=row["account_id"],
-            target_type=row["target_type"], target_id=row["target_id"],
-            conversation_id=row["conversation_id"], reply_text=row["reply_text"],
-            status=row["status"], evidence=json.loads(row["evidence_json"]),
+            id=row["id"],
+            task_id=row["reply_task_id"],
+            account_id=row["account_id"],
+            target_type=row["target_type"],
+            target_id=row["target_id"],
+            conversation_id=row["conversation_id"],
+            reply_text=row["reply_text"],
+            status=row["status"],
+            evidence=json.loads(row["evidence_json"]),
             error=row["error"],
         )
 
     def list_wechat_deliveries_by_status(self, status: str) -> list:
         from app.wechat.models import WechatDelivery
+
         with self._connect() as db:
             rows = db.execute(
                 "select * from wechat_deliveries where status=? order by id", (status,)
             ).fetchall()
         return [
             WechatDelivery(
-                id=row["id"], task_id=row["reply_task_id"], account_id=row["account_id"],
-                target_type=row["target_type"], target_id=row["target_id"],
-                conversation_id=row["conversation_id"], reply_text=row["reply_text"],
-                status=row["status"], evidence=json.loads(row["evidence_json"]),
+                id=row["id"],
+                task_id=row["reply_task_id"],
+                account_id=row["account_id"],
+                target_type=row["target_type"],
+                target_id=row["target_id"],
+                conversation_id=row["conversation_id"],
+                reply_text=row["reply_text"],
+                status=row["status"],
+                evidence=json.loads(row["evidence_json"]),
                 error=row["error"],
             )
             for row in rows
@@ -4843,7 +4897,11 @@ class AutoReplyStore:
         self.set_wechat_delivery_status(delivery_id, "sending", action_started_at=now)
 
     def set_wechat_delivery_status(
-        self, delivery_id: int, status: str, *, error: str = "",
+        self,
+        delivery_id: int,
+        status: str,
+        *,
+        error: str = "",
         action_started_at: str | None = None,
     ) -> None:
         with self._connect() as db:
@@ -4937,8 +4995,9 @@ class AutoReplyStore:
         )
 
     # ---- WeChat channel: memory candidates ----
-    def add_wechat_memory_candidate(self, *, import_run_id: str, account_id: str,
-                                    candidate) -> int | None:
+    def add_wechat_memory_candidate(
+        self, *, import_run_id: str, account_id: str, candidate
+    ) -> int | None:
         with self._connect() as db:
             canonical = " ".join(candidate.statement.split()).casefold()
             existing = db.execute(
@@ -4949,21 +5008,35 @@ class AutoReplyStore:
             for row in existing:
                 if " ".join(row["statement"].split()).casefold() != canonical:
                     continue
-                conversations = sorted(set(json.loads(row["source_conversation_ids_json"]))
-                                       | set(candidate.source_conversation_ids))
-                messages = sorted(set(json.loads(row["source_message_ids_json"]))
-                                  | set(candidate.source_message_ids))
-                starts = [value for value in (row["source_time_start"],
-                          candidate.source_time_start) if value]
-                ends = [value for value in (row["source_time_end"],
-                        candidate.source_time_end) if value]
+                conversations = sorted(
+                    set(json.loads(row["source_conversation_ids_json"]))
+                    | set(candidate.source_conversation_ids)
+                )
+                messages = sorted(
+                    set(json.loads(row["source_message_ids_json"]))
+                    | set(candidate.source_message_ids)
+                )
+                starts = [
+                    value
+                    for value in (row["source_time_start"], candidate.source_time_start)
+                    if value
+                ]
+                ends = [
+                    value
+                    for value in (row["source_time_end"], candidate.source_time_end)
+                    if value
+                ]
                 db.execute(
                     "update wechat_memory_candidates set source_conversation_ids_json=?, "
                     "source_message_ids_json=?, source_time_start=?, source_time_end=?, "
                     "updated_at=current_timestamp where id=?",
-                    (json.dumps(conversations, ensure_ascii=False),
-                     json.dumps(messages, ensure_ascii=False), min(starts, default=""),
-                     max(ends, default=""), row["id"]),
+                    (
+                        json.dumps(conversations, ensure_ascii=False),
+                        json.dumps(messages, ensure_ascii=False),
+                        min(starts, default=""),
+                        max(ends, default=""),
+                        row["id"],
+                    ),
                 )
                 return None
             cur = db.execute(
@@ -4975,12 +5048,18 @@ class AutoReplyStore:
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    import_run_id, account_id, candidate.statement, candidate.category,
-                    candidate.confidence, candidate.sensitivity,
+                    import_run_id,
+                    account_id,
+                    candidate.statement,
+                    candidate.category,
+                    candidate.confidence,
+                    candidate.sensitivity,
                     json.dumps(candidate.source_conversation_ids, ensure_ascii=False),
                     json.dumps(candidate.source_message_ids, ensure_ascii=False),
-                    candidate.source_time_start, candidate.source_time_end,
-                    candidate.evidence_excerpt, candidate.cleanup_notes,
+                    candidate.source_time_start,
+                    candidate.source_time_end,
+                    candidate.evidence_excerpt,
+                    candidate.cleanup_notes,
                 ),
             )
             if cur.rowcount != 1:
@@ -4995,13 +5074,19 @@ class AutoReplyStore:
         return dict(row) if row is not None else None
 
     def list_wechat_memory_candidates(
-        self, *, status: str | None = None, category: str | None = None,
+        self,
+        *,
+        status: str | None = None,
+        category: str | None = None,
         sensitivity: str | None = None,
     ) -> list[dict]:
         with self._connect() as db:
             clauses, values = [], []
-            for column, value in (("status", status), ("category", category),
-                                  ("sensitivity", sensitivity)):
+            for column, value in (
+                ("status", status),
+                ("category", category),
+                ("sensitivity", sensitivity),
+            ):
                 if value:
                     clauses.append(f"{column}=?")
                     values.append(value)
@@ -5013,7 +5098,11 @@ class AutoReplyStore:
         return [dict(row) for row in rows]
 
     def review_wechat_memory_candidate(
-        self, candidate_id: int, action: str, *, reviewer: str = "",
+        self,
+        candidate_id: int,
+        action: str,
+        *,
+        reviewer: str = "",
         final_statement: str = "",
     ) -> dict:
         with self._connect() as db:
@@ -5031,6 +5120,7 @@ class AutoReplyStore:
                 raise ValueError("candidate is writing and cannot be reviewed")
             if action == "approve":
                 from app.wechat.memory_import import validate_final_statement
+
                 statement = validate_final_statement(final_statement)
                 if current != "pending":
                     raise ValueError("only pending candidate can be approved")
@@ -5041,7 +5131,10 @@ class AutoReplyStore:
                     (reviewer, statement, candidate_id),
                 )
             elif action == "reject":
-                if current not in {"pending", "approved"} or write_status in {"writing", "written"}:
+                if current not in {"pending", "approved"} or write_status in {
+                    "writing",
+                    "written",
+                }:
                     raise ValueError("candidate cannot be rejected")
                 db.execute(
                     "update wechat_memory_candidates set status='rejected', reviewer=?, "
@@ -5052,7 +5145,9 @@ class AutoReplyStore:
                 if current != "approved":
                     raise ValueError("only approved candidate can be revoked")
                 next_write_status = (
-                    "revocation_unavailable" if write_status == "written" else write_status
+                    "revocation_unavailable"
+                    if write_status == "written"
+                    else write_status
                 )
                 db.execute(
                     "update wechat_memory_candidates set status='revoked', reviewer=?, "
@@ -5075,15 +5170,24 @@ class AutoReplyStore:
                 return {"outcome": "rejected", "reason": "candidate not found"}
             candidate = dict(row)
             if candidate["status"] != "approved":
-                return {"outcome": "rejected", "reason": "candidate must be approved before writing memory"}
+                return {
+                    "outcome": "rejected",
+                    "reason": "candidate must be approved before writing memory",
+                }
             if candidate["memory_id"]:
                 return {"outcome": "written", "memory_id": candidate["memory_id"]}
             if candidate["memory_write_status"] == "writing":
                 return {"outcome": "writing"}
             if candidate["memory_write_status"] == "unknown":
-                return {"outcome": "rejected", "reason": "unknown memory write outcome requires manual resolution"}
+                return {
+                    "outcome": "rejected",
+                    "reason": "unknown memory write outcome requires manual resolution",
+                }
             if candidate["memory_write_status"] == "revocation_unavailable":
-                return {"outcome": "rejected", "reason": "revoked candidate cannot be written"}
+                return {
+                    "outcome": "rejected",
+                    "reason": "revoked candidate cannot be written",
+                }
             updated = db.execute(
                 "update wechat_memory_candidates set memory_write_status='writing', "
                 "memory_write_error='', updated_at=current_timestamp where id=? "
@@ -5099,7 +5203,11 @@ class AutoReplyStore:
             return {"outcome": "claimed", "candidate": candidate}
 
     def finish_wechat_memory_candidate_write(
-        self, candidate_id: int, *, status: str, memory_id: str = "",
+        self,
+        candidate_id: int,
+        *,
+        status: str,
+        memory_id: str = "",
         error: str = "",
     ) -> None:
         if status not in {"written", "failed", "unknown"}:
@@ -5120,7 +5228,11 @@ class AutoReplyStore:
                 ).fetchone()
                 if row is None or row["memory_write_status"] != "writing":
                     raise RuntimeError("memory write claim lost")
-                fallback = "revocation_unavailable" if row["status"] == "revoked" else "unknown"
+                fallback = (
+                    "revocation_unavailable"
+                    if row["status"] == "revoked"
+                    else "unknown"
+                )
                 db.execute(
                     "update wechat_memory_candidates set memory_write_status=?, memory_id=?, "
                     "memory_write_error='review state changed during write', "
@@ -5138,7 +5250,11 @@ class AutoReplyStore:
                 raise RuntimeError("memory write claim lost")
 
     def resolve_wechat_memory_candidate_write_unknown(
-        self, candidate_id: int, *, reviewer: str, confirm: bool = False,
+        self,
+        candidate_id: int,
+        *,
+        reviewer: str,
+        confirm: bool = False,
         stale_after_seconds: int = 900,
     ) -> None:
         if not confirm:
@@ -5154,10 +5270,16 @@ class AutoReplyStore:
                 "reviewed_at=current_timestamp, updated_at=current_timestamp "
                 "where id=? and memory_write_status='writing' "
                 "and datetime(updated_at) <= datetime('now', ?)",
-                (reviewer.strip(), candidate_id, f"-{int(stale_after_seconds)} seconds"),
+                (
+                    reviewer.strip(),
+                    candidate_id,
+                    f"-{int(stale_after_seconds)} seconds",
+                ),
             )
             if changed.rowcount != 1:
-                raise ValueError("only confirmed stale writing candidate can be resolved to unknown")
+                raise ValueError(
+                    "only confirmed stale writing candidate can be resolved to unknown"
+                )
 
     @staticmethod
     def _meeting_alignment_job_from_row(
@@ -5321,10 +5443,7 @@ class AutoReplyStore:
             filtered["status"] = self._validate_meeting_alignment_status(
                 filtered["status"]
             )
-            if (
-                filtered["status"] == "ready_to_send"
-                and "locked_at" not in filtered
-            ):
+            if filtered["status"] == "ready_to_send" and "locked_at" not in filtered:
                 release_ready_lock_on_transition = True
                 filtered.setdefault("available_at", "")
             elif filtered["status"] in {
@@ -5348,7 +5467,7 @@ class AutoReplyStore:
             db.execute(
                 f"""
                 update meeting_alignment_jobs
-                set {', '.join(assignments)}, updated_at=current_timestamp
+                set {", ".join(assignments)}, updated_at=current_timestamp
                 where id=?
                 """,
                 args,
@@ -5611,10 +5730,7 @@ class AutoReplyStore:
                 """,
                 (job_id,),
             ).fetchall()
-            return [
-                self._meeting_alignment_run_from_row(row)
-                for row in rows
-            ]
+            return [self._meeting_alignment_run_from_row(row) for row in rows]
 
     def get_meeting_alignment_run(
         self,
@@ -5765,8 +5881,7 @@ class AutoReplyStore:
                 if processing_max_age_seconds <= 0:
                     return []
                 processing_clause = (
-                    "status='processing' "
-                    "and datetime(updated_at) <= datetime('now', ?)"
+                    "status='processing' and datetime(updated_at) <= datetime('now', ?)"
                 )
                 params.append(f"-{int(processing_max_age_seconds)} seconds")
             rows = db.execute(
@@ -6562,9 +6677,7 @@ class AutoReplyStore:
             unanswered_since_last_feedback=int(
                 row["unanswered_since_last_feedback"] or 0
             ),
-            unanswered_older_than_7_days=int(
-                row["unanswered_older_than_7_days"] or 0
-            ),
+            unanswered_older_than_7_days=int(row["unanswered_older_than_7_days"] or 0),
             unanswered_older_than_10_days=int(
                 row["unanswered_older_than_10_days"] or 0
             ),
@@ -6626,7 +6739,9 @@ class AutoReplyStore:
                 ),
             )
 
-    def list_feedback_events_for_token(self, feedback_token: str) -> list[FeedbackEvent]:
+    def list_feedback_events_for_token(
+        self, feedback_token: str
+    ) -> list[FeedbackEvent]:
         if not feedback_token.strip():
             return []
         with self._connect() as db:
@@ -6836,9 +6951,7 @@ class AutoReplyStore:
 
     def count_user_feedback_items(self) -> int:
         with self._connect() as db:
-            row = db.execute(
-                "select count(*) as count from feedback_events"
-            ).fetchone()
+            row = db.execute("select count(*) as count from feedback_events").fetchone()
             return int(row["count"])
 
     def count_pending_user_feedback_items(self) -> int:
@@ -7525,9 +7638,7 @@ class AutoReplyStore:
         call_id = str(event.get("call_id") or "")
         if not output and call_id and tool_outputs_by_call_id:
             output = tool_outputs_by_call_id.get(call_id, "")
-        parsed_output = AutoReplyStore._parse_memory_write_output(
-            output
-        )
+        parsed_output = AutoReplyStore._parse_memory_write_output(output)
         status = parsed_output.get("status") or "pending"
         payload = {
             "tool": tool,
@@ -7654,8 +7765,7 @@ class AutoReplyStore:
         unknown = set(updates) - allowed_columns
         if unknown:
             raise ValueError(
-                "unknown reply_attempt update column: "
-                + ", ".join(sorted(unknown))
+                "unknown reply_attempt update column: " + ", ".join(sorted(unknown))
             )
         return {column: value for column, value in updates.items() if value is not None}
 
@@ -7709,9 +7819,7 @@ class AutoReplyStore:
         self,
         attempt_id: int,
     ) -> UniversalExecutionObservation | None:
-        return self.list_universal_execution_observability([attempt_id]).get(
-            attempt_id
-        )
+        return self.list_universal_execution_observability([attempt_id]).get(attempt_id)
 
     def list_universal_execution_observability(
         self,
@@ -7933,7 +8041,9 @@ class AutoReplyStore:
             created_since=created_since,
         )
         with self._connect() as db:
-            row = db.execute(f"select count(*) as count from ({query})", args).fetchone()
+            row = db.execute(
+                f"select count(*) as count from ({query})", args
+            ).fetchone()
         return int(row["count"])
 
     @staticmethod
@@ -8334,7 +8444,7 @@ class AutoReplyStore:
                         embedding_updated_at
                     )
                     values (?, ?, ?, ?, ?, ?, ?, ?, {
-                        'current_timestamp' if embedding is not None else "''"
+                        "current_timestamp" if embedding is not None else "''"
                     })
                     """,
                     (
@@ -8438,9 +8548,7 @@ class AutoReplyStore:
             if bm25_score is None and not has_embedding_candidate:
                 continue
             bm25_normalized = (
-                1.0 / (1.0 + max(0.0, bm25_score))
-                if bm25_score is not None
-                else 0.0
+                1.0 / (1.0 + max(0.0, bm25_score)) if bm25_score is not None else 0.0
             )
             score = 0.55 * embedding_score + 0.30 * bm25_normalized
             results.append(
@@ -8964,7 +9072,7 @@ class AutoReplyStore:
             db.execute(
                 f"""
                 update work_todos
-                set {', '.join(assignments)}, updated_at=current_timestamp
+                set {", ".join(assignments)}, updated_at=current_timestamp
                 where id=?
                 """,
                 [*parameters, todo_id],
@@ -9001,7 +9109,9 @@ class AutoReplyStore:
             query = f"{query} where {' and '.join(clauses)}"
         query = f"{query} order by id"
         with self._connect() as db:
-            return [WorkTodo.model_validate(dict(row)) for row in db.execute(query, args)]
+            return [
+                WorkTodo.model_validate(dict(row)) for row in db.execute(query, args)
+            ]
 
     def list_work_project_ids_for_todo_owner(
         self,
@@ -9198,8 +9308,7 @@ class AutoReplyStore:
             clauses.append("trim(coalesce(dingtalk_task_id, '')) != ''")
         if statuses:
             normalized_statuses = tuple(
-                self._normalize_dingtalk_todo_link_status(status)
-                for status in statuses
+                self._normalize_dingtalk_todo_link_status(status) for status in statuses
             )
             clauses.append(f"status in ({','.join('?' for _ in statuses)})")
             args.extend(normalized_statuses)
@@ -9223,8 +9332,7 @@ class AutoReplyStore:
         args: list[str | int] = [work_todo_id]
         if statuses:
             normalized_statuses = tuple(
-                self._normalize_dingtalk_todo_link_status(status)
-                for status in statuses
+                self._normalize_dingtalk_todo_link_status(status) for status in statuses
             )
             query = f"{query} and status in ({','.join('?' for _ in statuses)})"
             args.extend(normalized_statuses)
@@ -9451,7 +9559,7 @@ class AutoReplyStore:
             db.execute(
                 f"""
                 update follow_up_drafts
-                set {', '.join(assignments)},
+                set {", ".join(assignments)},
                     updated_at=current_timestamp
                 where id=?
                 """,
@@ -9490,7 +9598,9 @@ class AutoReplyStore:
             clauses.append(f"status in ({','.join('?' for _ in statuses)})")
             args.extend(statuses)
         if due_before is not None:
-            clauses.append("scheduled_at != '' and datetime(scheduled_at) <= datetime(?)")
+            clauses.append(
+                "scheduled_at != '' and datetime(scheduled_at) <= datetime(?)"
+            )
             args.append(due_before)
         if clauses:
             query = f"{query} where {' and '.join(clauses)}"
@@ -9613,7 +9723,7 @@ class AutoReplyStore:
                 from follow_up_drafts f
                 left join work_projects p on p.id=f.project_id
                 left join work_todos t on t.id=f.todo_id
-                where {' and '.join(clauses)}
+                where {" and ".join(clauses)}
                 order by
                     case
                         when ? != '' and f.target_conversation_id=? then 0
@@ -9735,7 +9845,7 @@ class AutoReplyStore:
                 f"""
                 select *
                 from follow_up_drafts
-                where {' and '.join(clauses)}
+                where {" and ".join(clauses)}
                 order by sent_at desc, id desc
                 limit ?
                 """,
@@ -9933,9 +10043,7 @@ class AutoReplyStore:
 
     def count_sent_replies(self) -> int:
         with self._connect() as db:
-            row = db.execute(
-                "select count(*) as count from sent_replies"
-            ).fetchone()
+            row = db.execute("select count(*) as count from sent_replies").fetchone()
             return int(row["count"])
 
     def max_reply_attempt_id(self) -> int:
@@ -9972,7 +10080,9 @@ class AutoReplyStore:
         log_type: str = "",
     ) -> list[OperationLog]:
         sql = self._operation_logs_base_query()
-        where_sql, where_args = self._operation_log_filters(query=query, log_type=log_type)
+        where_sql, where_args = self._operation_log_filters(
+            query=query, log_type=log_type
+        )
         sql = f"""
             {sql}
             {where_sql}
@@ -10123,7 +10233,9 @@ class AutoReplyStore:
             )
         """
 
-    def _operation_log_filters(self, query: str = "", log_type: str = "") -> tuple[str, list[object]]:
+    def _operation_log_filters(
+        self, query: str = "", log_type: str = ""
+    ) -> tuple[str, list[object]]:
         filters: list[str] = []
         args: list[object] = []
         if log_type.strip():
@@ -10606,8 +10718,6 @@ class AutoReplyStore:
             department_names=set(json.loads(row["department_names_json"])),
             org_labels=list(json.loads(row["org_labels_json"])),
             has_subordinate=(
-                None
-                if row["has_subordinate"] is None
-                else bool(row["has_subordinate"])
+                None if row["has_subordinate"] is None else bool(row["has_subordinate"])
             ),
         )

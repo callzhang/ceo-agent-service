@@ -15,6 +15,14 @@
         "original_call_id": {"minLength": 1, "type": "string"},
         "original_operation_digest": {"minLength": 1, "type": "string"},
         "query_call_id": {"minLength": 1, "type": "string"},
+        "query_operation": {"minLength": 1, "type": "string"},
+        "query_operation_digest": {"minLength": 1, "type": "string"},
+        "query_result_digest": {"minLength": 1, "type": "string"},
+        "query_target_identifiers": {
+          "additionalProperties": {"minLength": 1, "type": "string"},
+          "minProperties": 1,
+          "type": "object"
+        },
         "observed_state": {
           "enum": ["effect_present", "effect_absent"],
           "type": "string"
@@ -24,6 +32,10 @@
         "original_call_id",
         "original_operation_digest",
         "query_call_id",
+        "query_operation",
+        "query_operation_digest",
+        "query_result_digest",
+        "query_target_identifiers",
         "observed_state"
       ],
       "type": "object"

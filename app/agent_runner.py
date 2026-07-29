@@ -3,6 +3,7 @@ import hashlib
 import os
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -42,7 +43,9 @@ AGENT_RESULT_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "agent_result.schema.json"
 )
 AGENT_RECONCILIATION_SCHEMA_PATH = (
-    Path(__file__).resolve().parent / "schemas" / "agent_reconciliation_result.schema.json"
+    Path(__file__).resolve().parent
+    / "schemas"
+    / "agent_reconciliation_result.schema.json"
 )
 DEFAULT_MCP_EFFECTS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "mcp-tool-effects.json"
@@ -143,6 +146,10 @@ class ReconciliationProof(BaseModel):
     original_call_id: str = Field(min_length=1)
     original_operation_digest: str = Field(min_length=1)
     query_call_id: str = Field(min_length=1)
+    query_operation: str = Field(min_length=1)
+    query_operation_digest: str = Field(min_length=1)
+    query_result_digest: str = Field(min_length=1)
+    query_target_identifiers: dict[str, str] = Field(min_length=1)
     observed_state: Literal["effect_present", "effect_absent"]
 
 
@@ -262,7 +269,9 @@ class McpToolEffectRegistry:
     @classmethod
     def default(cls) -> "McpToolEffectRegistry":
         configured = os.environ.get("CEO_AGENT_MCP_EFFECTS_PATH", "").strip()
-        return cls.from_path(Path(configured) if configured else DEFAULT_MCP_EFFECTS_PATH)
+        return cls.from_path(
+            Path(configured) if configured else DEFAULT_MCP_EFFECTS_PATH
+        )
 
     def classify(self, item: dict[str, object]) -> McpToolCall | None:
         if item.get("type") != "mcp_tool_call":
@@ -303,10 +312,8 @@ class McpToolEffectRegistry:
         for (server, tool), effect in self._effects.items():
             if effect is EffectKind.READ_ONLY:
                 grouped.setdefault(server, []).append(tool)
-        return {
-            server: tuple(sorted(tools))
-            for server, tools in grouped.items()
-        }
+        return {server: tuple(sorted(tools)) for server, tools in grouped.items()}
+
 
 @lru_cache(maxsize=1)
 def _load_reviewed_dws_effects() -> dict[tuple[str, str], EffectKind]:
@@ -351,6 +358,45 @@ def _load_reviewed_dws_effects() -> dict[tuple[str, str], EffectKind]:
     return effects
 
 
+@lru_cache(maxsize=1)
+def _load_reviewed_lark_effects() -> dict[tuple[str, str], EffectKind]:
+    effects: dict[tuple[str, str], EffectKind] = {}
+    try:
+        process = subprocess.run(
+            ["lark-cli", "schema"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return effects
+    if process.returncode != 0:
+        return effects
+    try:
+        payload = json.loads(process.stdout)
+    except json.JSONDecodeError:
+        return effects
+    if not isinstance(payload, list):
+        return effects
+    for tool in payload:
+        if not isinstance(tool, dict):
+            continue
+        command_path = tool.get("name")
+        metadata = tool.get("_meta")
+        risk = metadata.get("risk") if isinstance(metadata, dict) else None
+        if not isinstance(command_path, str) or not command_path.strip():
+            continue
+        if risk == "read":
+            effect = EffectKind.READ_ONLY
+        elif risk in {"write", "high-risk-write"}:
+            effect = EffectKind.EFFECTFUL
+        else:
+            continue
+        effects[("lark-cli", command_path.strip())] = effect
+    return effects
+
+
 class NativeCliMetadataClassifier:
     """Classify native CLI commands from their installed reviewed metadata."""
 
@@ -373,6 +419,7 @@ class NativeCliMetadataClassifier:
             return
         self._prewarmed = True
         self._cache.update(_load_reviewed_dws_effects())
+        self._cache.update(_load_reviewed_lark_effects())
 
     def classify(self, item: dict[str, object]) -> NativeCliCommand | None:
         argv = _native_command_argv(item)
@@ -470,11 +517,7 @@ class NativeCliMetadataClassifier:
                     break
             if risk not in {"read", "write", "high-risk-write"}:
                 continue
-            parsed = (
-                EffectKind.READ_ONLY
-                if risk == "read"
-                else EffectKind.EFFECTFUL
-            )
+            parsed = EffectKind.READ_ONLY if risk == "read" else EffectKind.EFFECTFUL
             self._cache[("lark-cli", command_path)] = parsed
             return _classified_native_command(
                 "lark-cli",
@@ -507,7 +550,9 @@ class DirectAgentRunner:
         self.native_cli_classifier = (
             native_cli_classifier or NativeCliMetadataClassifier()
         )
-        self.mcp_effect_registry = mcp_effect_registry or McpToolEffectRegistry.default()
+        self.mcp_effect_registry = (
+            mcp_effect_registry or McpToolEffectRegistry.default()
+        )
 
     def run(
         self,
@@ -539,8 +584,7 @@ class DirectAgentRunner:
             prompt = (
                 "Read-only invocation. Do not perform any external write, send, "
                 "approval, comment, reaction, document edit, or state-changing "
-                "command. Query live state only.\n\n"
-                + prompt
+                "command. Query live state only.\n\n" + prompt
             )
             developer_instructions += "\n\n" + READ_ONLY_DEVELOPER_INSTRUCTION
         command = self.codex.build_command(
@@ -748,6 +792,8 @@ class DirectAgentRunner:
         make_read_only_with_reviewed_tools(
             command,
             reviewed_mcp_tools=self.mcp_effect_registry.reviewed_read_tools(),
+            controlled_cli_command=sys.executable,
+            controlled_cli_args=("-m", "app.reconciliation_cli"),
         )
         self.native_cli_classifier.prewarm()
         appended_events: list[dict[str, object]] = []
@@ -821,18 +867,51 @@ class DirectAgentRunner:
             return _safe_event(payload)
         item_type = str(item.get("type") or "")
         if item_type == "command_execution":
-            command = self.native_cli_classifier.classify_cached(item)
-            if command is None or command.effect is not EffectKind.READ_ONLY:
-                raise AgentReadOnlyViolationError("reconciliation_write_forbidden")
-            return _safe_event(payload, native_command=command)
+            raise AgentReadOnlyViolationError("reconciliation_shell_forbidden")
         if item_type == "mcp_tool_call":
+            if (
+                item.get("server") == "reconciliation_cli"
+                and item.get("tool") == "execute_reviewed_read"
+            ):
+                arguments = item.get("arguments")
+                argv = arguments.get("argv") if isinstance(arguments, dict) else None
+                command = self.native_cli_classifier.classify_cached(
+                    {"type": "command_execution", "argv": argv}
+                )
+                if command is None or command.effect is not EffectKind.READ_ONLY:
+                    raise AgentReadOnlyViolationError("reconciliation_write_forbidden")
+                safe_event = _safe_event(payload, native_command=command)
+                if event_type == "item.completed":
+                    receipt = _controlled_cli_receipt(item.get("result"))
+                    if (
+                        receipt is None
+                        or receipt.get("operation") != command.command_path
+                        or receipt.get("operation_digest") != command.command_digest
+                        or receipt.get("target_identifiers")
+                        != command.target_identifiers
+                    ):
+                        raise AgentReadOnlyViolationError(
+                            "reconciliation_query_receipt_invalid"
+                        )
+                    safe_item = safe_event.get("item")
+                    metadata = (
+                        safe_item.get("metadata")
+                        if isinstance(safe_item, dict)
+                        else None
+                    )
+                    if isinstance(metadata, dict):
+                        metadata["result_digest"] = receipt["result_digest"]
+                return safe_event
             call = self.mcp_effect_registry.classify(item)
             if call is None or call.effect is not EffectKind.READ_ONLY:
                 raise AgentReadOnlyViolationError("reconciliation_write_forbidden")
             return _safe_event(payload, mcp_call=call)
         if item_type in _NATIVE_READ_ONLY_ITEM_TYPES or item_type == "agent_message":
             return _safe_event(payload)
-        if item_type.endswith("_tool_call") or item_type in _NATIVE_CLASSIFIABLE_ITEM_TYPES:
+        if (
+            item_type.endswith("_tool_call")
+            or item_type in _NATIVE_CLASSIFIABLE_ITEM_TYPES
+        ):
             raise AgentReadOnlyViolationError("reconciliation_unknown_tool_forbidden")
         return _safe_event(payload)
 
@@ -846,9 +925,7 @@ class DirectAgentRunner:
         persisted = self.store.get_agent_run(run_id)
         if persisted is None:
             raise RuntimeError("agent run was not persisted")
-        events, embedded_receipts = structured_execution_evidence(
-            persisted.tool_events
-        )
+        events, embedded_receipts = structured_execution_evidence(persisted.tool_events)
         receipts = (
             *embedded_receipts,
             *_execution_receipts_for_run(self.store, run_id),
@@ -978,7 +1055,9 @@ def _unknown_effect_reference(
                 started[call_id] = metadata
         elif event.get("type") in {"item.completed", "item.failed"}:
             closed.add(call_id)
-    incomplete = [(call_id, data) for call_id, data in started.items() if call_id not in closed]
+    incomplete = [
+        (call_id, data) for call_id, data in started.items() if call_id not in closed
+    ]
     if len(incomplete) != 1:
         raise ValueError("unknown run must contain one incomplete effectful call")
     call_id, metadata = incomplete[0]
@@ -986,13 +1065,19 @@ def _unknown_effect_reference(
     operation = metadata.get("operation")
     transport = metadata.get("native_cli") or metadata.get("mcp_server")
     targets = metadata.get("target_identifiers")
-    if not all(isinstance(value, str) and value for value in (digest, operation, transport)):
+    if not all(
+        isinstance(value, str) and value for value in (digest, operation, transport)
+    ):
         raise ValueError("unknown effect identity is incomplete")
-    target_identifiers = {
-        str(key): str(value)
-        for key, value in targets.items()
-        if isinstance(key, str) and isinstance(value, str) and value
-    } if isinstance(targets, dict) else {}
+    target_identifiers = (
+        {
+            str(key): str(value)
+            for key, value in targets.items()
+            if isinstance(key, str) and isinstance(value, str) and value
+        }
+        if isinstance(targets, dict)
+        else {}
+    )
     return UnknownEffectReference(
         call_id=call_id,
         transport=str(transport),
@@ -1015,7 +1100,9 @@ def _reconciliation_prompt(
     }
     return (
         "Read-only unknown side-effect reconciliation. Never replay the original "
-        "operation. Query live state with reviewed read-only tools. Return completed "
+        "operation. Run exact DWS/Lark read commands only through the "
+        "reconciliation_cli execute_reviewed_read tool; direct shell execution is "
+        "disabled. Query live state with reviewed read-only tools. Return completed "
         "only when the effect is present, no_action only when its absence is confirmed, "
         "and bind proof to both the original call and the completed live query.\n\n"
         "Original uncertain operation\n"
@@ -1088,14 +1175,61 @@ def _validate_reconciliation_proof(
     if not isinstance(metadata, dict) or metadata.get("effect") != "read_only":
         raise RuntimeError("reconciliation_proof_invalid")
     query_targets = metadata.get("target_identifiers")
-    if not isinstance(query_targets, dict) or not original.target_identifiers:
+    query_operation_digest = metadata.get("command_digest") or metadata.get(
+        "operation_digest"
+    )
+    if (
+        not isinstance(query_targets, dict)
+        or not original.target_identifiers
+        or metadata.get("operation") != proof.query_operation
+        or query_operation_digest != proof.query_operation_digest
+        or metadata.get("result_digest") != proof.query_result_digest
+        or query_targets != proof.query_target_identifiers
+    ):
         raise RuntimeError("reconciliation_proof_invalid")
-    original_values = set(original.target_identifiers.values())
-    query_values = {
-        value for value in query_targets.values() if isinstance(value, str) and value
-    }
-    if not original_values.intersection(query_values):
+    if any(
+        not any(
+            _target_key_matches(original_key, query_key)
+            and query_value == original_value
+            for query_key, query_value in query_targets.items()
+        )
+        for original_key, original_value in original.target_identifiers.items()
+    ):
         raise RuntimeError("reconciliation_proof_invalid")
+
+
+def _target_key_matches(left: str, right: str) -> bool:
+    normalized_left = "".join(
+        character for character in left.casefold() if character.isalnum()
+    )
+    normalized_right = "".join(
+        character for character in right.casefold() if character.isalnum()
+    )
+    return (
+        normalized_left == normalized_right
+        or normalized_left.endswith(normalized_right)
+        or normalized_right.endswith(normalized_left)
+    )
+
+
+def _controlled_cli_receipt(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict) or value.get("isError") is True:
+        return None
+    candidates = [value]
+    structured = value.get("structuredContent") or value.get("structured_content")
+    if isinstance(structured, dict):
+        candidates.append(structured)
+    for candidate in candidates:
+        if not isinstance(candidate.get("result_digest"), str):
+            continue
+        if not isinstance(candidate.get("operation_digest"), str):
+            continue
+        if not isinstance(candidate.get("operation"), str):
+            continue
+        if not isinstance(candidate.get("target_identifiers"), dict):
+            continue
+        return candidate
+    return None
 
 
 def _session_id(payload: dict[str, object]) -> str:
@@ -1190,10 +1324,14 @@ def _argv_target_identifiers(argv: tuple[str, ...]) -> dict[str, str]:
             continue
         flag, separator, inline_value = token[2:].partition("=")
         normalized = flag.replace("_", "-").casefold()
-        is_target = (
-            normalized.endswith("-id")
-            or normalized in {"id", "conversation", "group", "email", "node", "url"}
-        )
+        is_target = normalized.endswith("-id") or normalized in {
+            "id",
+            "conversation",
+            "group",
+            "email",
+            "node",
+            "url",
+        }
         if separator:
             value = inline_value
         elif index + 1 < len(argv) and not argv[index + 1].startswith("-"):
@@ -1263,9 +1401,7 @@ def _native_cli_command(
     if not isinstance(item, dict) or item.get("type") != "command_execution":
         return None
     return (
-        classifier.classify_cached(item)
-        if cached_only
-        else classifier.classify(item)
+        classifier.classify_cached(item) if cached_only else classifier.classify(item)
     )
 
 
@@ -1376,9 +1512,7 @@ def _mcp_result_explicitly_succeeded(value: object) -> bool:
             if len(current) > _MAX_MCP_RESULT_NODES - node_count - len(stack):
                 return False
             for nested in current:
-                stack.append(
-                    (nested, depth + 1, inspect_errors, decode_json_strings)
-                )
+                stack.append((nested, depth + 1, inspect_errors, decode_json_strings))
             continue
         if not decode_json_strings or not isinstance(current, str):
             continue
@@ -1441,9 +1575,7 @@ def _valid_mcp_content_block(value: object) -> bool:
         mime_type = value.get("mimeType", value.get("mime_type"))
         return isinstance(value.get("data"), str) and isinstance(mime_type, str)
     if block_type == "resource_link":
-        return isinstance(value.get("name"), str) and isinstance(
-            value.get("uri"), str
-        )
+        return isinstance(value.get("name"), str) and isinstance(value.get("uri"), str)
     if block_type != "resource":
         return False
     resource = value.get("resource")
@@ -1534,6 +1666,9 @@ def _safe_event(
                 "target_identifiers": native_command.target_identifiers,
             }
         )
+        result_digest = _native_read_result_digest(completion_payload)
+        if result_digest:
+            metadata["result_digest"] = result_digest
         if (
             safe_event.get("type") == "item.completed"
             and native_command.effect is EffectKind.EFFECTFUL
@@ -1556,6 +1691,9 @@ def _safe_event(
                 "target_identifiers": mcp_call.target_identifiers,
             }
         )
+        result_digest = _mcp_read_result_digest(completion_payload)
+        if result_digest:
+            metadata["result_digest"] = result_digest
         if (
             safe_event.get("type") == "item.completed"
             and mcp_call.effect is EffectKind.EFFECTFUL
@@ -1563,6 +1701,34 @@ def _safe_event(
         ):
             safe_event["type"] = "item.failed"
     return safe_event
+
+
+def _native_read_result_digest(payload: dict[str, object]) -> str:
+    if not _native_command_completed(payload):
+        return ""
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return ""
+    output = item.get("aggregated_output")
+    if not isinstance(output, str):
+        return ""
+    return hashlib.sha256(output.encode("utf-8")).hexdigest()
+
+
+def _mcp_read_result_digest(payload: dict[str, object]) -> str:
+    if not _mcp_call_completed(payload):
+        return ""
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return ""
+    result = item.get("result")
+    encoded = json.dumps(
+        result,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _minimal_safe_execution_event(
@@ -1688,9 +1854,7 @@ def _redact_argv(parts: list[str]) -> list[str]:
             or flag in _COMMAND_CONTENT_FLAGS
             or _is_sensitive_key(normalized_flag)
         ):
-            sanitized.append(
-                f"{flag}={_REDACTED}" if separator else flag
-            )
+            sanitized.append(f"{flag}={_REDACTED}" if separator else flag)
             redact_next = not separator
         elif (separator and _is_signed_url(value)) or _is_signed_url(part):
             sanitized.append(_REDACTED)
@@ -1739,9 +1903,7 @@ def _effect_event(payload: dict[str, object]) -> ToolEffectEvent | None:
     )
 
 
-def _native_effect_kind(
-    item_type: str, item: dict[str, object]
-) -> EffectKind | None:
+def _native_effect_kind(item_type: str, item: dict[str, object]) -> EffectKind | None:
     if item_type in _NATIVE_READ_ONLY_ITEM_TYPES:
         return EffectKind.READ_ONLY
     if item_type not in _NATIVE_CLASSIFIABLE_ITEM_TYPES and not item_type.endswith(

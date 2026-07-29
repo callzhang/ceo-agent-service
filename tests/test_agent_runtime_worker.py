@@ -66,6 +66,7 @@ class ContextOnlyDws:
                 "search_document",
             )
         ):
+
             def forbidden(*_args, **_kwargs):
                 self.forbidden_material_reads.append(name)
                 raise AssertionError(f"service material read is forbidden: {name}")
@@ -221,11 +222,7 @@ class ScriptedDirectAgentRunner:
                 now=NOW,
             )
         else:
-            evidence_state = (
-                "confirmed"
-                if script.receipts
-                else "none"
-            )
+            evidence_state = "confirmed" if script.receipts else "none"
             self.store.complete_agent_run(
                 run.id,
                 script.result.model_dump(mode="json"),
@@ -649,7 +646,9 @@ def test_queued_task_runs_agent_once_and_records_completed_attempt(tmp_path: Pat
     task_id = _enqueue(worker.store, trigger)
 
     assert worker.consume_once(max_tasks=1) == 1
-    assert [(task, generation) for task, generation, _ in runner.calls] == [(task_id, "g1")]
+    assert [(task, generation) for task, generation, _ in runner.calls] == [
+        (task_id, "g1")
+    ]
     assert worker.store.get_reply_task(task_id).status == "done"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
@@ -693,6 +692,13 @@ def test_unknown_oa_run_reconciliation_receives_raw_instance_id_and_read_command
                 original_call_id="write-1",
                 original_operation_digest="a" * 64,
                 query_call_id="query-1",
+                query_operation="oa approval detail",
+                query_operation_digest="b" * 64,
+                query_result_digest="c" * 64,
+                query_target_identifiers={
+                    "instance-id": "proc-raw-only",
+                    "task-id": "task-1",
+                },
                 observed_state="effect_present",
             ),
         ),
@@ -735,6 +741,13 @@ def test_no_action_reconciliation_rotates_generation_only_after_confirmed_absenc
                 original_call_id="write-1",
                 original_operation_digest="a" * 64,
                 query_call_id="query-1",
+                query_operation="oa approval detail",
+                query_operation_digest="b" * 64,
+                query_result_digest="c" * 64,
+                query_target_identifiers={
+                    "instance-id": "proc-1",
+                    "task-id": "task-1",
+                },
                 observed_state="effect_absent",
             ),
         ),
@@ -788,10 +801,47 @@ def test_reconciliation_failure_sets_backoff_and_is_not_reclaimed_early(
     assert len(runner.reconciliation_contexts) == 1
 
 
+def test_non_retryable_reconciliation_is_never_selected_by_due_scan(tmp_path: Path):
+    trigger = _message(raw_payload={"processInstanceId": "proc-1"})
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    unknown = _seed_unknown_run(store, task_id)
+    runner = ScriptedReconciliationRunner(
+        store,
+        ReconciliationResult(
+            outcome=AgentOutcome.NEEDS_HUMAN,
+            summary="Current user does not own the approval task.",
+            error=ReconciliationError(
+                code="oa_task_not_current_user",
+                retryable=False,
+            ),
+        ),
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        direct_agent_runner=runner,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.reconcile_unknown_agent_runs(limit=1) == 0
+    deferred = store.get_agent_run(unknown.id)
+    assert deferred.status == "unknown"
+    assert deferred.reconciliation_next_attempt_at == ""
+    assert deferred.reconciliation_suspended is True
+    assert store.list_unknown_agent_runs(now="2099-01-01 00:00:00") == []
+
+
 @pytest.mark.parametrize(
     ("script", "task_status", "attempt_status"),
     [
-        (ScriptedRun(_result(AgentOutcome.NO_ACTION, summary="无需动作。")), "done", "skipped"),
+        (
+            ScriptedRun(_result(AgentOutcome.NO_ACTION, summary="无需动作。")),
+            "done",
+            "skipped",
+        ),
         (
             ScriptedRun(
                 _result(
@@ -1073,15 +1123,11 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
         [
             ScriptedRun(
                 _result(side_effect_state=SideEffectState.CONFIRMED),
-                receipts=(
-                    _receipt("send-a", command_digest="a" * 64),
-                ),
+                receipts=(_receipt("send-a", command_digest="a" * 64),),
             ),
             ScriptedRun(
                 _result(side_effect_state=SideEffectState.CONFIRMED),
-                receipts=(
-                    _receipt("send-b", command_digest="b" * 64),
-                ),
+                receipts=(_receipt("send-b", command_digest="b" * 64),),
             ),
         ],
     )
@@ -1415,14 +1461,22 @@ def test_calendar_context_passes_raw_event_id_and_exact_live_read_command(
         (
             "complete_form",
             {"processInstanceId": "proc-1", "taskId": "task-1"},
-            {"tasks": [{"task_id": "task-1", "status": "running", "current_user": True}]},
+            {
+                "tasks": [
+                    {"task_id": "task-1", "status": "running", "current_user": True}
+                ]
+            },
             "completed",
             True,
         ),
         (
             "instance_id_only",
             {"processInstanceId": "proc-1"},
-            {"tasks": [{"task_id": "task-live", "status": "running", "current_user": True}]},
+            {
+                "tasks": [
+                    {"task_id": "task-live", "status": "running", "current_user": True}
+                ]
+            },
             "completed",
             True,
         ),
@@ -1441,14 +1495,22 @@ def test_calendar_context_passes_raw_event_id_and_exact_live_read_command(
         (
             "task_completed",
             {"processInstanceId": "proc-1"},
-            {"tasks": [{"task_id": "task-1", "status": "completed", "current_user": True}]},
+            {
+                "tasks": [
+                    {"task_id": "task-1", "status": "completed", "current_user": True}
+                ]
+            },
             "skipped",
             False,
         ),
         (
             "task_not_current_user",
             {"processInstanceId": "proc-1"},
-            {"tasks": [{"task_id": "task-1", "status": "running", "current_user": False}]},
+            {
+                "tasks": [
+                    {"task_id": "task-1", "status": "running", "current_user": False}
+                ]
+            },
             "blocked",
             False,
         ),
@@ -1479,8 +1541,7 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
 
     assert "proc-1" in " ".join(codex_executor.read_commands)
     assert any(
-        "dws oa approval detail" in command
-        for command in codex_executor.read_commands
+        "dws oa approval detail" in command for command in codex_executor.read_commands
     )
     assert native_executor.calls[: len(codex_executor.read_commands)] == (
         codex_executor.read_commands

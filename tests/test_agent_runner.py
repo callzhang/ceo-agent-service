@@ -1,6 +1,8 @@
 import json
+import hashlib
 from pathlib import Path
 import shlex
+import subprocess
 
 import pytest
 
@@ -118,7 +120,16 @@ def _reconciliation_result_line(
     original_call_id: str = "write-1",
     original_operation_digest: str = "a" * 64,
     query_call_id: str = "query-1",
+    query_operation: str = "oa approval detail",
+    query_operation_digest: str = "b" * 64,
+    query_result_digest: str = "c" * 64,
+    query_target_identifiers: dict[str, str] | None = None,
 ) -> str:
+    if query_target_identifiers is None:
+        query_target_identifiers = {
+            "instance-id": "proc-1",
+            "task-id": "task-1",
+        }
     return json.dumps(
         {
             "type": "item.completed",
@@ -132,6 +143,10 @@ def _reconciliation_result_line(
                             "original_call_id": original_call_id,
                             "original_operation_digest": original_operation_digest,
                             "query_call_id": query_call_id,
+                            "query_operation": query_operation,
+                            "query_operation_digest": query_operation_digest,
+                            "query_result_digest": query_result_digest,
+                            "query_target_identifiers": query_target_identifiers,
                             "observed_state": observed_state,
                         },
                         "error": {
@@ -186,6 +201,42 @@ def _unknown_run(store: AutoReplyStore):
     return task, run
 
 
+def _controlled_cli_read_item(
+    *,
+    argv: list[str],
+    result_text: str,
+    operation: str = "oa approval detail",
+    call_id: str = "query-1",
+) -> dict[str, object]:
+    command_text = shlex.join(argv)
+    targets = {
+        argv[index][2:]: argv[index + 1]
+        for index in range(1, len(argv) - 1)
+        if argv[index].startswith("--")
+        and argv[index][2:] in {"instance-id", "task-id"}
+    }
+    receipt = {
+        "operation": operation,
+        "operation_digest": hashlib.sha256(command_text.encode("utf-8")).hexdigest(),
+        "target_identifiers": targets,
+        "result_digest": hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
+        "stdout": result_text,
+    }
+    return {
+        "id": call_id,
+        "type": "mcp_tool_call",
+        "server": "reconciliation_cli",
+        "tool": "execute_reviewed_read",
+        "arguments": {"argv": argv},
+        "status": "completed",
+        "result": {
+            "content": [{"type": "text", "text": result_text}],
+            "structuredContent": receipt,
+            "isError": False,
+        },
+    }
+
+
 class RecordingExecutor:
     def __init__(self, output: str, *, returncode: int = 0, timed_out: bool = False):
         self.output = output
@@ -208,7 +259,9 @@ class RecordingExecutor:
             stderr="process failed" if self.returncode else "",
             timed_out=self.timed_out,
             timeout_kind="total" if self.timed_out else "",
-            timeout_reason="process timed out after 1200 seconds" if self.timed_out else "",
+            timeout_reason="process timed out after 1200 seconds"
+            if self.timed_out
+            else "",
         )
 
 
@@ -541,39 +594,67 @@ def test_mcp_result_node_limit_is_inclusive():
     accepted_items = [None] * (_MAX_MCP_RESULT_NODES - 4)
     rejected_items = [None] * (_MAX_MCP_RESULT_NODES - 3)
 
-    assert _mcp_result_explicitly_succeeded(
-        {"content": [], "structuredContent": {"items": accepted_items}}
-    ) is True
-    assert _mcp_result_explicitly_succeeded(
-        {"content": [], "structuredContent": {"items": rejected_items}}
-    ) is False
+    assert (
+        _mcp_result_explicitly_succeeded(
+            {"content": [], "structuredContent": {"items": accepted_items}}
+        )
+        is True
+    )
+    assert (
+        _mcp_result_explicitly_succeeded(
+            {"content": [], "structuredContent": {"items": rejected_items}}
+        )
+        is False
+    )
 
 
 def test_mcp_result_decoded_json_string_limit_is_inclusive():
-    accepted_items = [json.dumps({"value": index}) for index in range(_MAX_MCP_RESULT_JSON_STRINGS)]
+    accepted_items = [
+        json.dumps({"value": index}) for index in range(_MAX_MCP_RESULT_JSON_STRINGS)
+    ]
     rejected_items = accepted_items + [json.dumps({"value": "overflow"})]
 
-    assert _mcp_result_explicitly_succeeded(
-        {"content": [], "structuredContent": {"items": accepted_items}}
-    ) is True
-    assert _mcp_result_explicitly_succeeded(
-        {"content": [], "structuredContent": {"items": rejected_items}}
-    ) is False
+    assert (
+        _mcp_result_explicitly_succeeded(
+            {"content": [], "structuredContent": {"items": accepted_items}}
+        )
+        is True
+    )
+    assert (
+        _mcp_result_explicitly_succeeded(
+            {"content": [], "structuredContent": {"items": rejected_items}}
+        )
+        is False
+    )
 
 
 def test_mcp_result_decoded_json_byte_limit_is_inclusive():
     prefix = '{"value":"'
     suffix = '"}'
-    accepted_json = prefix + ("x" * (_MAX_MCP_RESULT_JSON_BYTES - len(prefix) - len(suffix))) + suffix
-    rejected_json = prefix + ("x" * (_MAX_MCP_RESULT_JSON_BYTES - len(prefix) - len(suffix) + 1)) + suffix
+    accepted_json = (
+        prefix
+        + ("x" * (_MAX_MCP_RESULT_JSON_BYTES - len(prefix) - len(suffix)))
+        + suffix
+    )
+    rejected_json = (
+        prefix
+        + ("x" * (_MAX_MCP_RESULT_JSON_BYTES - len(prefix) - len(suffix) + 1))
+        + suffix
+    )
 
     assert len(accepted_json.encode("utf-8")) == _MAX_MCP_RESULT_JSON_BYTES
-    assert _mcp_result_explicitly_succeeded(
-        {"content": [], "structuredContent": {"payload": accepted_json}}
-    ) is True
-    assert _mcp_result_explicitly_succeeded(
-        {"content": [], "structuredContent": {"payload": rejected_json}}
-    ) is False
+    assert (
+        _mcp_result_explicitly_succeeded(
+            {"content": [], "structuredContent": {"payload": accepted_json}}
+        )
+        is True
+    )
+    assert (
+        _mcp_result_explicitly_succeeded(
+            {"content": [], "structuredContent": {"payload": rejected_json}}
+        )
+        is False
+    )
 
 
 def test_production_shaped_mcp_read_cannot_confirm_completion(
@@ -675,14 +756,17 @@ def test_mcp_registry_loads_only_exact_reviewed_capabilities(tmp_path: Path):
 
     assert classified is not None
     assert classified.effect is EffectKind.EFFECTFUL
-    assert registry.classify(
-        {
-            "type": "mcp_tool_call",
-            "server": "memory_connector",
-            "tool": "memory_write_preview",
-            "arguments": {},
-        }
-    ) is None
+    assert (
+        registry.classify(
+            {
+                "type": "mcp_tool_call",
+                "server": "memory_connector",
+                "tool": "memory_write_preview",
+                "arguments": {},
+            }
+        )
+        is None
+    )
 
 
 def test_default_mcp_registry_covers_installed_xiaoqing_capabilities():
@@ -719,14 +803,17 @@ def test_default_mcp_registry_covers_installed_xiaoqing_capabilities():
     assert dry_run is not None
     assert dry_run.effect is EffectKind.READ_ONLY
 
-    assert registry.classify(
-        {
-            "type": "mcp_tool_call",
-            "server": "xiaoqing_interview",
-            "tool": "unreviewed_tool",
-            "arguments": {},
-        }
-    ) is None
+    assert (
+        registry.classify(
+            {
+                "type": "mcp_tool_call",
+                "server": "xiaoqing_interview",
+                "tool": "unreviewed_tool",
+                "arguments": {},
+            }
+        )
+        is None
+    )
 
 
 def test_direct_runner_uses_dedicated_direct_agent_instructions(
@@ -854,9 +941,7 @@ def test_expired_run_with_persisted_completed_effect_is_not_resumed_writable(
         )
     output = "\n".join(
         (
-            json.dumps(
-                {"type": "thread.started", "thread_id": "existing-session"}
-            ),
+            json.dumps({"type": "thread.started", "thread_id": "existing-session"}),
             _result_line(side_effect_state="confirmed"),
         )
     )
@@ -1083,9 +1168,7 @@ def test_native_lark_completed_write_creates_trusted_persisted_receipt(
             "--yes",
         ],
         "/bin/zsh -lc "
-        + shlex.quote(
-            "dws chat message send --group cid --text '<@user> a | b' --yes"
-        ),
+        + shlex.quote("dws chat message send --group cid --text '<@user> a | b' --yes"),
     ],
     ids=[
         "multiline-body",
@@ -1149,9 +1232,7 @@ def test_native_write_parser_accepts_metacharacters_inside_arguments(
         'dws chat message send --group cid --text "$(whoami)" --yes',
         "dws chat message send --group cid --text '`whoami`' --yes",
         "/bin/zsh -lc "
-        + shlex.quote(
-            "dws chat message send --group cid --text '$(whoami)' --yes"
-        ),
+        + shlex.quote("dws chat message send --group cid --text '$(whoami)' --yes"),
     ),
     ids=("dollar-parens", "backticks", "codex-shell-wrapper"),
 )
@@ -1272,9 +1353,7 @@ def test_failed_native_write_terminal_event_is_failed_and_has_no_success_receipt
     terminal_event_type: str,
 ):
     task = _task(store)
-    command = (
-        "dws chat message send --group cid --text hello --format json --yes"
-    )
+    command = "dws chat message send --group cid --text hello --format json --yes"
     output = "\n".join(
         (
             json.dumps(
@@ -1328,9 +1407,7 @@ def test_failed_native_write_terminal_event_is_failed_and_has_no_success_receipt
         executor=RecordingExecutor(output),
     ).run(task, _context(task.id))
 
-    run = store.get_agent_run_for_task_generation(
-        task.id, task.execution_generation
-    )
+    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
     assert run is not None and run.status == "failed"
     assert run.side_effect_state == "none"
     assert store.list_agent_execution_receipts(result.run_id) == []
@@ -1392,9 +1469,7 @@ def test_failed_native_write_terminal_closes_effect_on_abnormal_codex_exit(
             executor=executor,
         ).run(task, _context(task.id))
 
-    run = store.get_agent_run_for_task_generation(
-        task.id, task.execution_generation
-    )
+    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
     assert run is not None and run.status == "failed"
     assert run.side_effect_state == "none"
     assert error_code in run.structured_error_json
@@ -1432,9 +1507,7 @@ def test_transport_failure_without_open_effect_is_retryable(
             executor=executor,
         ).run(task, _context(task.id))
 
-    run = store.get_agent_run_for_task_generation(
-        task.id, task.execution_generation
-    )
+    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
     error = json.loads(run.structured_error_json)
     assert run.status == "failed"
     assert run.side_effect_state == "none"
@@ -1570,9 +1643,9 @@ def test_direct_runner_persists_each_jsonl_event_before_final_parse(
             observed_counts.append(len(run.tool_events))
         return ProcessRunResult(returncode=0, stdout="\n".join(lines), stderr="")
 
-    result = DirectAgentRunner(
-        store=store, workspace=tmp_path, executor=executor
-    ).run(task, _context(task.id))
+    result = DirectAgentRunner(store=store, workspace=tmp_path, executor=executor).run(
+        task, _context(task.id)
+    )
 
     persisted = store.get_agent_run(result.run_id)
     assert persisted.codex_session_id == "session-1"
@@ -1683,7 +1756,10 @@ def test_read_only_resume_places_all_safety_options_before_session_id(
     (
         (RecordingExecutor(_jsonl(), returncode=1), "codex_process_failed"),
         (RecordingExecutor(_jsonl(), timed_out=True), "codex_process_timeout"),
-        (RecordingExecutor('{"type":"thread.started","thread_id":"s"}\n{'), "codex_stream_invalid"),
+        (
+            RecordingExecutor('{"type":"thread.started","thread_id":"s"}\n{'),
+            "codex_stream_invalid",
+        ),
     ),
 )
 def test_runner_fails_closed_for_process_and_stream_errors(
@@ -1769,36 +1845,47 @@ def test_reconciliation_runs_reviewed_live_dws_read_and_binds_proof_to_original_
     tmp_path: Path, store: AutoReplyStore
 ):
     task, run = _unknown_run(store)
-    read_command = "dws oa approval detail --instance-id proc-1 --format json"
+    argv = [
+        "dws",
+        "oa",
+        "approval",
+        "detail",
+        "--instance-id",
+        "proc-1",
+        "--task-id",
+        "task-1",
+        "--format",
+        "json",
+    ]
+    read_command = shlex.join(argv)
+    read_item = _controlled_cli_read_item(
+        argv=argv,
+        result_text='{"status":"COMPLETED"}',
+    )
     output = "\n".join(
         (
             json.dumps({"type": "thread.started", "thread_id": "reconcile-1"}),
             json.dumps(
                 {
                     "type": "item.started",
-                    "item": {
-                        "id": "query-1",
-                        "type": "command_execution",
-                        "command": read_command,
-                    },
+                    "item": {**read_item, "status": "started", "result": None},
                 }
             ),
             json.dumps(
                 {
                     "type": "item.completed",
-                    "item": {
-                        "id": "query-1",
-                        "type": "command_execution",
-                        "command": read_command,
-                        "exit_code": 0,
-                        "status": "completed",
-                        "aggregated_output": '{"status":"COMPLETED"}',
-                    },
+                    "item": read_item,
                 }
             ),
             _reconciliation_result_line(
                 outcome="completed",
                 observed_state="effect_present",
+                query_operation_digest=hashlib.sha256(
+                    read_command.encode("utf-8")
+                ).hexdigest(),
+                query_result_digest=hashlib.sha256(
+                    b'{"status":"COMPLETED"}'
+                ).hexdigest(),
             ),
         )
     )
@@ -1818,7 +1905,8 @@ def test_reconciliation_runs_reviewed_live_dws_read_and_binds_proof_to_original_
     result = runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
 
     assert result.result.outcome.value == "completed"
-    assert "tools.enabled_tools=[]" not in executor.commands[0]
+    assert "tools.enabled_tools=[]" in executor.commands[0]
+    assert any("reconciliation_cli" in part for part in executor.commands[0])
     assert any(
         event.get("item", {}).get("metadata", {}).get("effect") == "read_only"
         for event in store.get_agent_run(run.id).tool_events
@@ -1829,23 +1917,11 @@ def test_reconciliation_rejects_write_before_accepting_result(
     tmp_path: Path, store: AutoReplyStore
 ):
     task, run = _unknown_run(store)
-    output = json.dumps(
-        {
-            "type": "item.started",
-            "item": {
-                "id": "replay-1",
-                "type": "command_execution",
-                "command": (
-                    "dws oa approval approve --instance-id proc-1 "
-                    "--task-id task-1 --yes"
-                ),
-            },
-        }
-    )
+    executor = RecordingExecutor("")
     runner = DirectAgentRunner(
         store=store,
         workspace=tmp_path,
-        executor=RecordingExecutor(output),
+        executor=executor,
         owner="reconcile-owner",
         native_cli_classifier=NativeCliMetadataClassifier(
             reviewed_effects={
@@ -1854,12 +1930,238 @@ def test_reconciliation_rejects_write_before_accepting_result(
         ),
     )
 
-    with pytest.raises(AgentReadOnlyViolationError):
+    with pytest.raises(RuntimeError, match="reconciliation_result_invalid"):
         runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
 
-    persisted = store.get_agent_run(run.id)
-    assert persisted.status == "unknown"
-    assert "replay-1" not in json.dumps(persisted.tool_events)
+    command = executor.commands[0]
+    assert "tools.enabled_tools=[]" in command
+    assert 'approval_policy="never"' in command
+
+
+def test_reconciliation_cli_rejects_write_before_subprocess_start(monkeypatch):
+    from app.reconciliation_cli import execute_reviewed_read
+
+    started: list[tuple[str, ...]] = []
+
+    def process_runner(argv, **kwargs):
+        started.append(tuple(argv))
+        raise AssertionError("write command must never start")
+
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={
+            ("dws", "oa approval approve"): EffectKind.EFFECTFUL,
+        }
+    )
+    with pytest.raises(AgentReadOnlyViolationError):
+        execute_reviewed_read(
+            [
+                "dws",
+                "oa",
+                "approval",
+                "approve",
+                "--instance-id",
+                "proc-1",
+                "--task-id",
+                "task-1",
+                "--yes",
+            ],
+            classifier=classifier,
+            process_runner=process_runner,
+        )
+
+    assert started == []
+
+
+def test_reconciliation_cli_runs_reviewed_read_through_trusted_executable(
+    monkeypatch,
+):
+    from app.reconciliation_cli import execute_reviewed_read
+
+    started: list[tuple[str, ...]] = []
+
+    def process_runner(argv, **kwargs):
+        started.append(tuple(argv))
+        return subprocess.CompletedProcess(
+            argv,
+            returncode=0,
+            stdout='{"status":"COMPLETED"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "app.reconciliation_cli.shutil.which", lambda cli: f"/trusted/{cli}"
+    )
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={
+            ("dws", "oa approval detail"): EffectKind.READ_ONLY,
+        }
+    )
+
+    receipt = execute_reviewed_read(
+        [
+            "/untrusted/dws",
+            "oa",
+            "approval",
+            "detail",
+            "--instance-id",
+            "proc-1",
+            "--task-id",
+            "task-1",
+        ],
+        classifier=classifier,
+        process_runner=process_runner,
+    )
+
+    assert started[0][0] == "/trusted/dws"
+    assert receipt["operation"] == "oa approval detail"
+    assert receipt["target_identifiers"] == {
+        "instance-id": "proc-1",
+        "task-id": "task-1",
+    }
+
+
+def test_reconciliation_proof_rejects_query_with_different_task_on_same_process(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task, run = _unknown_run(store)
+    argv = [
+        "dws",
+        "oa",
+        "approval",
+        "detail",
+        "--instance-id",
+        "proc-1",
+        "--task-id",
+        "task-2",
+        "--format",
+        "json",
+    ]
+    read_command = shlex.join(argv)
+    output_text = '{"status":"COMPLETED"}'
+    read_item = _controlled_cli_read_item(argv=argv, result_text=output_text)
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": read_item,
+                }
+            ),
+            _reconciliation_result_line(
+                outcome="completed",
+                observed_state="effect_present",
+                query_operation_digest=hashlib.sha256(
+                    read_command.encode("utf-8")
+                ).hexdigest(),
+                query_result_digest=hashlib.sha256(
+                    output_text.encode("utf-8")
+                ).hexdigest(),
+                query_target_identifiers={
+                    "instance-id": "proc-1",
+                    "task-id": "task-2",
+                },
+            ),
+        )
+    )
+    runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        owner="reconcile-owner",
+        native_cli_classifier=NativeCliMetadataClassifier(
+            reviewed_effects={
+                ("dws", "oa approval detail"): EffectKind.READ_ONLY,
+            }
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="reconciliation_proof_invalid"):
+        runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+
+def test_reconciliation_proof_rejects_query_result_digest_mismatch(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task, run = _unknown_run(store)
+    argv = [
+        "dws",
+        "oa",
+        "approval",
+        "detail",
+        "--instance-id",
+        "proc-1",
+        "--task-id",
+        "task-1",
+        "--format",
+        "json",
+    ]
+    read_command = shlex.join(argv)
+    read_item = _controlled_cli_read_item(
+        argv=argv,
+        result_text='{"status":"COMPLETED"}',
+    )
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": read_item,
+                }
+            ),
+            _reconciliation_result_line(
+                outcome="completed",
+                observed_state="effect_present",
+                query_operation_digest=hashlib.sha256(
+                    read_command.encode("utf-8")
+                ).hexdigest(),
+                query_result_digest="0" * 64,
+            ),
+        )
+    )
+    runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        owner="reconcile-owner",
+        native_cli_classifier=NativeCliMetadataClassifier(
+            reviewed_effects={
+                ("dws", "oa approval detail"): EffectKind.READ_ONLY,
+            }
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="reconciliation_proof_invalid"):
+        runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+
+def test_native_cli_prewarm_loads_lark_read_metadata_on_cold_start(monkeypatch):
+    monkeypatch.setattr(
+        "app.agent_runner._load_reviewed_dws_effects",
+        lambda: {},
+    )
+    monkeypatch.setattr(
+        "app.agent_runner._load_reviewed_lark_effects",
+        lambda: {("lark-cli", "approval instance get"): EffectKind.READ_ONLY},
+    )
+    classifier = NativeCliMetadataClassifier()
+
+    classifier.prewarm()
+
+    command = classifier.classify_cached(
+        {
+            "type": "command_execution",
+            "argv": [
+                "lark-cli",
+                "approval",
+                "instance",
+                "get",
+                "--instance-id",
+                "instance-1",
+            ],
+        }
+    )
+    assert command is not None
+    assert command.effect is EffectKind.READ_ONLY
 
 
 def test_unrelated_read_event_cannot_prove_unknown_effect(
@@ -1901,12 +2203,21 @@ def test_reconciliation_allows_reviewed_mcp_read_and_denies_reviewed_mcp_write(
     tmp_path: Path, store: AutoReplyStore
 ):
     task, run = _unknown_run(store)
+    registry = McpToolEffectRegistry(
+        {
+            ("memory_connector", "memory_recall"): EffectKind.READ_ONLY,
+            ("memory_connector", "memory_write"): EffectKind.EFFECTFUL,
+        }
+    )
     read_item = {
         "id": "query-1",
         "type": "mcp_tool_call",
         "server": "memory_connector",
         "tool": "memory_recall",
-        "arguments": {"processInstanceId": "proc-1"},
+        "arguments": {
+            "processInstanceId": "proc-1",
+            "taskId": "task-1",
+        },
         "status": "completed",
         "result": {
             "content": [{"type": "text", "text": "COMPLETED"}],
@@ -1920,14 +2231,21 @@ def test_reconciliation_allows_reviewed_mcp_read_and_denies_reviewed_mcp_write(
             _reconciliation_result_line(
                 outcome="completed",
                 observed_state="effect_present",
+                query_operation="memory_recall",
+                query_operation_digest=registry.classify(read_item).operation_digest,
+                query_result_digest=hashlib.sha256(
+                    json.dumps(
+                        read_item["result"],
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+                query_target_identifiers={
+                    "processInstanceId": "proc-1",
+                    "taskId": "task-1",
+                },
             ),
         )
-    )
-    registry = McpToolEffectRegistry(
-        {
-            ("memory_connector", "memory_recall"): EffectKind.READ_ONLY,
-            ("memory_connector", "memory_write"): EffectKind.EFFECTFUL,
-        }
     )
     executor = RecordingExecutor(output)
     runner = DirectAgentRunner(
@@ -1974,9 +2292,7 @@ def test_reconciliation_allows_reviewed_mcp_read_and_denies_reviewed_mcp_write(
         )
 
 
-def test_persisted_events_redact_secret_values(
-    tmp_path: Path, store: AutoReplyStore
-):
+def test_persisted_events_redact_secret_values(tmp_path: Path, store: AutoReplyStore):
     task = _task(store)
     secret = "super-secret-token"
     output = "\n".join(
@@ -2354,9 +2670,7 @@ def test_untrusted_event_effectful_metadata_cannot_confirm_completion(
             mcp_effect_registry=McpToolEffectRegistry({}),
         ).run(task, _context(task.id))
 
-    run = store.get_agent_run_for_task_generation(
-        task.id, task.execution_generation
-    )
+    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
     assert run.side_effect_state == "none"
 
 
