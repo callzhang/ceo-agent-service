@@ -1921,10 +1921,15 @@ class AutoReplyStore:
         if ("conversation_id", "trigger_message_id") not in unique_columns:
             return
 
+        generation_select = (
+            "execution_generation"
+            if "execution_generation" in columns
+            else "'initial'"
+        )
         db.execute("pragma foreign_keys=off")
         try:
             db.executescript(
-                """
+                f"""
                 begin immediate;
                 create table reply_tasks_channel_migration (
                     id integer primary key autoincrement,
@@ -1936,12 +1941,13 @@ class AutoReplyStore:
                     trigger_create_time text not null,
                     trigger_sender text not null,
                     trigger_text text not null,
-                    trigger_message_json text not null default '{}',
+                    trigger_message_json text not null default '{{}}',
                     available_at text not null default '',
                     force_new_decision integer not null default 0,
                     oa_url text not null default '',
                     manual_rerun_attempt_id integer not null default 0,
                     manual_rerun_revision_key text not null default '',
+                    execution_generation text not null default 'initial',
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     locked_at text,
@@ -1955,7 +1961,7 @@ class AutoReplyStore:
                     trigger_message_id, trigger_create_time, trigger_sender,
                     trigger_text, trigger_message_json, available_at,
                     force_new_decision, oa_url, manual_rerun_attempt_id,
-                    manual_rerun_revision_key, status,
+                    manual_rerun_revision_key, execution_generation, status,
                     attempts, locked_at, error, created_at, updated_at
                 )
                 select
@@ -1963,7 +1969,7 @@ class AutoReplyStore:
                     trigger_message_id, trigger_create_time, trigger_sender,
                     trigger_text, trigger_message_json, available_at,
                     force_new_decision, oa_url, manual_rerun_attempt_id,
-                    manual_rerun_revision_key, status,
+                    manual_rerun_revision_key, {generation_select}, status,
                     attempts, locked_at, error, created_at, updated_at
                 from reply_tasks;
                 drop table reply_tasks;
@@ -2216,6 +2222,14 @@ class AutoReplyStore:
         ):
             return cls._reply_task_from_row(existing)
         execution_generation = uuid4().hex
+        if existing is not None:
+            now_text = str(db.execute("select current_timestamp").fetchone()[0])
+            cls._supersede_running_agent_runs(
+                db,
+                int(existing["id"]),
+                str(existing["execution_generation"]),
+                now_text=now_text,
+            )
         db.execute(
             """
             insert into reply_tasks (
@@ -2324,17 +2338,12 @@ class AutoReplyStore:
         if exit_code != 0:
             raise ValueError("only successful executions can produce receipts")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            run = db.execute(
-                "select status, lease_owner, lease_expires_at "
-                "from agent_runs where id=?",
-                (run_id,),
-            ).fetchone()
-            if run is None:
-                raise ValueError("agent run does not exist")
-            if run["status"] != "running":
-                raise ValueError("execution receipt requires running agent run")
-            if run["lease_owner"] != owner or run["lease_expires_at"] <= now_text:
-                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+            )
             db.execute(
                 """
                 insert or ignore into agent_execution_receipts (
@@ -2398,6 +2407,72 @@ class AutoReplyStore:
         with self._connect() as db:
             db.execute("begin immediate")
             yield db, _utc_store_time(now)
+
+    @staticmethod
+    def _require_current_agent_run_write_access(
+        db: sqlite3.Connection,
+        run_id: int,
+        *,
+        owner: str,
+        now_text: str,
+        expected_status: str = "running",
+        status_error: str | None = None,
+    ) -> sqlite3.Row:
+        row = db.execute(
+            """
+            select agent_runs.*,
+                   reply_tasks.execution_generation as task_execution_generation
+            from agent_runs
+            join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+            where agent_runs.id=?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("agent run does not exist")
+        if row["execution_generation"] != row["task_execution_generation"]:
+            raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
+        if row["status"] != expected_status:
+            raise ValueError(
+                status_error or f"agent run write requires {expected_status} status"
+            )
+        if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
+            raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+        return row
+
+    @staticmethod
+    def _supersede_running_agent_runs(
+        db: sqlite3.Connection,
+        task_id: int,
+        current_generation: str,
+        *,
+        now_text: str,
+    ) -> None:
+        error_json = json.dumps(
+            {"code": "superseded_by_new_generation", "retryable": False},
+            separators=(",", ":"),
+        )
+        db.execute(
+            """
+            update agent_runs
+            set status=case
+                    when side_effect_state='none' then 'failed'
+                    else 'unknown'
+                end,
+                structured_error_json=?,
+                side_effect_state=case
+                    when side_effect_state='none' then 'none'
+                    else 'unknown'
+                end,
+                lease_owner='', lease_expires_at='',
+                completed_at=case
+                    when side_effect_state='none' then ? else completed_at
+                end,
+                updated_at=?
+            where reply_task_id=? and execution_generation=? and status='running'
+            """,
+            (error_json, now_text, now_text, task_id, current_generation),
+        )
 
     def claim_agent_run(
         self,
@@ -2571,6 +2646,13 @@ class AutoReplyStore:
             db,
             (now_value, now_text),
         ):
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                status_error="agent run lease requires running status",
+            )
             lease_expires_at = (
                 now_value + timedelta(seconds=lease_seconds)
             ).strftime("%Y-%m-%d %H:%M:%S")
@@ -2615,6 +2697,13 @@ class AutoReplyStore:
         if transcript_start_line < 0:
             raise ValueError("transcript_start_line must not be negative")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                status_error="agent run session requires running status",
+            )
             cursor = db.execute(
                 """
                 update agent_runs
@@ -2678,16 +2767,13 @@ class AutoReplyStore:
             _agent_event_columns(normalized_event)
         )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            row = db.execute(
-                "select * from agent_runs where id=?",
-                (run_id,),
-            ).fetchone()
-            if row is None:
-                raise ValueError("agent run does not exist")
-            if row["status"] != "running":
-                raise ValueError("cannot append event to terminal agent run")
-            if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
-                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                status_error="cannot append event to terminal agent run",
+            )
             sequence = db.execute(
                 "select coalesce(max(sequence), 0) + 1 from agent_run_events "
                 "where agent_run_id=?",
@@ -2753,11 +2839,19 @@ class AutoReplyStore:
         normalized_event = json.loads(event_text)
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
-                "select * from agent_runs where id=?",
+                """
+                select agent_runs.*,
+                       reply_tasks.execution_generation as task_execution_generation
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=?
+                """,
                 (run_id,),
             ).fetchone()
             if row is None:
                 raise ValueError("agent run does not exist")
+            if row["execution_generation"] != row["task_execution_generation"]:
+                raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
             if row["status"] != "unknown":
                 raise ValueError("agent run reconciliation requires unknown status")
             if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
@@ -2836,11 +2930,19 @@ class AutoReplyStore:
             raise ValueError("transcript_end_line must not be negative")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
-                "select * from agent_runs where id=?",
+                """
+                select agent_runs.*,
+                       reply_tasks.execution_generation as task_execution_generation
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=?
+                """,
                 (run_id,),
             ).fetchone()
             if row is None:
                 raise ValueError("agent run does not exist")
+            if row["execution_generation"] != row["task_execution_generation"]:
+                raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
             end_line = (
                 row["transcript_end_line"]
                 if transcript_end_line is None
@@ -2868,6 +2970,13 @@ class AutoReplyStore:
                 raise ValueError(
                     f"invalid agent run transition: {row['status']} -> {target_status}"
                 )
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                expected_status=expected_status,
+            )
             completed_at = now_text if target_status in {"completed", "failed"} else ""
             values = (
                 target_status,
@@ -3904,7 +4013,20 @@ class AutoReplyStore:
 
     def rotate_reply_task_execution_generation(self, task_id: int) -> str:
         execution_generation = uuid4().hex
-        with self._connect() as db:
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            task = db.execute(
+                "select execution_generation from reply_tasks where id=? "
+                "and status in ('processing', 'pending')",
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                raise ValueError("retryable reply task was not found")
+            self._supersede_running_agent_runs(
+                db,
+                task_id,
+                str(task["execution_generation"]),
+                now_text=now_text,
+            )
             cursor = db.execute(
                 """
                 update reply_tasks

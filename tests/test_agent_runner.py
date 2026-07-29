@@ -1796,6 +1796,72 @@ def test_runner_stops_when_lease_is_lost_during_event_persistence(
     monkeypatch.setattr(store, "append_agent_run_event", original)
 
 
+def test_runner_rejects_old_effect_completion_after_generation_switch(
+    tmp_path: Path,
+    store: AutoReplyStore,
+):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-old"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "send-old",
+                        "type": "command_execution",
+                        "command": "dws chat message send --conversation cid --text old",
+                        "exit_code": 0,
+                    },
+                }
+            ),
+            _result_line(side_effect_state="confirmed"),
+        )
+    )
+
+    class GenerationSwitchingExecutor(RecordingExecutor):
+        def __call__(self, command, *, prompt, **kwargs):
+            self.commands.append(command)
+            self.prompts.append(prompt)
+            self.kwargs.append(kwargs)
+            callback = kwargs["on_stdout_line"]
+            lines = self.output.splitlines()
+            callback(lines[0])
+            self.new_generation = store.rotate_reply_task_execution_generation(task.id)
+            callback(lines[1])
+            raise AssertionError("stale runner must stop before terminal output")
+
+    executor = GenerationSwitchingExecutor(output)
+    runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=executor,
+        owner="old-worker",
+        native_cli_classifier=NativeCliMetadataClassifier(
+            reviewed_effects={
+                ("dws", "chat message send"): EffectKind.EFFECTFUL,
+            }
+        ),
+    )
+
+    with pytest.raises(AgentRunLeaseLostError, match="superseded"):
+        runner.run(task, _context(task.id), now="2026-07-29 09:00:00")
+
+    old = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
+    assert old is not None
+    assert old.status == "failed"
+    assert old.tool_events == [
+        {"type": "thread.started", "thread_id": "[stored separately]"}
+    ]
+    new_claim = store.claim_agent_run(
+        task.id,
+        executor.new_generation,
+        owner="new-worker",
+        now="2026-07-29 09:00:01",
+    )
+    assert new_claim.claimed is True
+
+
 def test_corrupt_stream_after_effect_start_marks_run_unknown(
     tmp_path: Path, store: AutoReplyStore
 ):

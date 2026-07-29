@@ -386,6 +386,112 @@ def test_store_migrates_reply_tasks_with_initial_execution_generation(
     assert store.claim_reply_tasks(limit=1)[0].execution_generation == "initial"
 
 
+def test_store_channel_identity_migration_preserves_active_execution_generation(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.executescript(
+            """
+            create table reply_tasks (
+                id integer primary key autoincrement,
+                channel text not null default 'dingtalk',
+                conversation_id text not null,
+                conversation_title text not null,
+                single_chat integer not null,
+                trigger_message_id text not null,
+                trigger_create_time text not null,
+                trigger_sender text not null,
+                trigger_text text not null,
+                trigger_message_json text not null default '{}',
+                available_at text not null default '',
+                force_new_decision integer not null default 0,
+                oa_url text not null default '',
+                manual_rerun_attempt_id integer not null default 0,
+                manual_rerun_revision_key text not null default '',
+                execution_generation text not null default 'initial',
+                status text not null default 'pending',
+                attempts integer not null default 0,
+                locked_at text,
+                error text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                unique(conversation_id, trigger_message_id)
+            );
+            insert into reply_tasks (
+                conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, execution_generation, status
+            ) values (
+                'cid-active', 'Active', 0, 'msg-active',
+                '2026-07-20 09:00:00', 'Derek', 'Active task',
+                'gen-active', 'processing'
+            );
+            """
+        )
+
+    store = AutoReplyStore(db_path)
+    migrated = store.get_reply_task(1)
+    assert migrated is not None
+    assert migrated.status == "processing"
+    assert migrated.execution_generation == "gen-active"
+
+    AutoReplyStore(db_path)
+    assert store.get_reply_task(1).execution_generation == "gen-active"
+
+
+def test_reply_task_channel_identity_migration_rolls_back_on_rebuild_failure(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        db.executescript(
+            """
+            create table reply_tasks (
+                id integer primary key autoincrement,
+                channel text not null default 'dingtalk',
+                conversation_id text not null,
+                conversation_title text not null,
+                single_chat integer not null,
+                trigger_message_id text not null,
+                trigger_create_time text not null,
+                trigger_sender text not null,
+                trigger_text text not null,
+                execution_generation text not null default 'initial',
+                status text not null default 'pending',
+                attempts integer not null default 0,
+                locked_at text,
+                error text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                unique(conversation_id, trigger_message_id)
+            );
+            insert into reply_tasks (
+                conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, execution_generation, status
+            ) values (
+                'cid-active', 'Active', 0, 'msg-active',
+                '2026-07-20 09:00:00', 'Derek', 'Active task',
+                'gen-active', 'processing'
+            );
+            create table reply_tasks_channel_migration (id integer primary key);
+            """
+        )
+
+        with pytest.raises(sqlite3.OperationalError):
+            AutoReplyStore._migrate_reply_task_channel_identity(db)
+
+        row = db.execute(
+            "select execution_generation, status from reply_tasks where id=1"
+        ).fetchone()
+        assert dict(row) == {
+            "execution_generation": "gen-active",
+            "status": "processing",
+        }
+
+
 def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
@@ -1872,6 +1978,72 @@ def test_stale_generation_reconciliation_cannot_mutate_run_or_task(
     task = store.get_reply_task(task_id)
     assert task.status == "processing"
     assert task.execution_generation == new_generation
+
+
+def test_generation_switch_revokes_old_run_write_access_and_only_new_run_claims(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    old = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="old-worker",
+        now="2026-07-29 09:00:00",
+    ).run
+
+    new_generation = store.rotate_reply_task_execution_generation(task_id)
+
+    with pytest.raises(AgentRunLeaseLostError):
+        store.append_agent_run_event(
+            old.id,
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "send-1",
+                    "type": "command_execution",
+                    "metadata": {"effect": "effectful"},
+                },
+            },
+            owner="old-worker",
+            now="2026-07-29 09:00:01",
+        )
+    with pytest.raises(AgentRunLeaseLostError):
+        store.record_agent_execution_receipt(
+            old.id,
+            receipt_id="receipt-old",
+            operation_id="send-1",
+            cli="dws",
+            command_path="chat message send",
+            command_digest="digest-old",
+            exit_code=0,
+            owner="old-worker",
+            now="2026-07-29 09:00:01",
+        )
+    with pytest.raises(AgentRunLeaseLostError):
+        store.complete_agent_run(
+            old.id,
+            {"outcome": "completed"},
+            owner="old-worker",
+            side_effect_state="confirmed",
+            now="2026-07-29 09:00:01",
+        )
+
+    superseded = store.get_agent_run(old.id)
+    assert superseded is not None
+    assert superseded.status == "failed"
+    assert "superseded" in superseded.structured_error_json
+    assert superseded.lease_owner == ""
+    assert superseded.lease_expires_at == ""
+
+    new_claim = store.claim_agent_run(
+        task_id,
+        new_generation,
+        owner="new-worker",
+        now="2026-07-29 09:00:01",
+    )
+    assert new_claim.claimed is True
+    assert new_claim.run.execution_generation == new_generation
 
 
 def test_stale_generation_unknown_run_is_not_due_or_claimable(tmp_path: Path):
