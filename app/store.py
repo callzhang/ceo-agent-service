@@ -315,6 +315,7 @@ class ReplyTask(BaseModel):
     force_new_decision: bool = False
     oa_url: str = ""
     manual_rerun_attempt_id: int = 0
+    manual_rerun_revision_key: str = ""
     execution_generation: str = "initial"
     status: str
     attempts: int
@@ -797,6 +798,7 @@ class AutoReplyStore:
                     force_new_decision integer not null default 0,
                     oa_url text not null default '',
                     manual_rerun_attempt_id integer not null default 0,
+                    manual_rerun_revision_key text not null default '',
                     execution_generation text not null default 'initial',
                     status text not null default 'pending',
                     attempts integer not null default 0,
@@ -1289,6 +1291,7 @@ class AutoReplyStore:
                 ("force_new_decision", "integer not null default 0"),
                 ("oa_url", "text not null default ''"),
                 ("manual_rerun_attempt_id", "integer not null default 0"),
+                ("manual_rerun_revision_key", "text not null default ''"),
                 ("channel", "text not null default 'dingtalk'"),
             ):
                 if column not in reply_task_columns:
@@ -1455,6 +1458,7 @@ class AutoReplyStore:
                 ("force_new_decision", "integer not null default 0"),
                 ("oa_url", "text not null default ''"),
                 ("manual_rerun_attempt_id", "integer not null default 0"),
+                ("manual_rerun_revision_key", "text not null default ''"),
                 ("channel", "text not null default 'dingtalk'"),
                 ("execution_generation", "text not null default 'initial'"),
             ):
@@ -1798,6 +1802,7 @@ class AutoReplyStore:
                     force_new_decision integer not null default 0,
                     oa_url text not null default '',
                     manual_rerun_attempt_id integer not null default 0,
+                    manual_rerun_revision_key text not null default '',
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     locked_at text,
@@ -1810,14 +1815,16 @@ class AutoReplyStore:
                     id, channel, conversation_id, conversation_title, single_chat,
                     trigger_message_id, trigger_create_time, trigger_sender,
                     trigger_text, trigger_message_json, available_at,
-                    force_new_decision, oa_url, manual_rerun_attempt_id, status,
+                    force_new_decision, oa_url, manual_rerun_attempt_id,
+                    manual_rerun_revision_key, status,
                     attempts, locked_at, error, created_at, updated_at
                 )
                 select
                     id, channel, conversation_id, conversation_title, single_chat,
                     trigger_message_id, trigger_create_time, trigger_sender,
                     trigger_text, trigger_message_json, available_at,
-                    force_new_decision, oa_url, manual_rerun_attempt_id, status,
+                    force_new_decision, oa_url, manual_rerun_attempt_id,
+                    manual_rerun_revision_key, status,
                     attempts, locked_at, error, created_at, updated_at
                 from reply_tasks;
                 drop table reply_tasks;
@@ -1853,6 +1860,7 @@ class AutoReplyStore:
             force_new_decision=bool(row["force_new_decision"]),
             oa_url=row["oa_url"],
             manual_rerun_attempt_id=row["manual_rerun_attempt_id"],
+            manual_rerun_revision_key=row["manual_rerun_revision_key"],
             execution_generation=row["execution_generation"],
             status=row["status"],
             attempts=row["attempts"],
@@ -1984,88 +1992,147 @@ class AutoReplyStore:
     ) -> ReplyTask:
         with self._connect() as db:
             db.execute("begin immediate")
-            existing = db.execute(
-                """
-                select * from reply_tasks
-                where channel=? and conversation_id=? and trigger_message_id=?
-                """,
-                (channel, conversation_id, trigger_message_id),
-            ).fetchone()
-            if (
-                attempt_id > 0
-                and existing is not None
-                and existing["status"] in {"pending", "processing"}
-                and int(existing["manual_rerun_attempt_id"] or 0) == attempt_id
-            ):
-                return self._reply_task_from_row(existing)
-            execution_generation = uuid4().hex
-            db.execute(
-                """
-                insert into reply_tasks (
-                    channel,
-                    conversation_id,
-                    conversation_title,
-                    single_chat,
-                    trigger_message_id,
-                    trigger_create_time,
-                    trigger_sender,
-                    trigger_text,
-                    trigger_message_json,
-                    available_at,
-                    force_new_decision,
-                    oa_url,
-                    manual_rerun_attempt_id,
-                    execution_generation,
-                    status,
-                    locked_at,
-                    error
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, 'pending', null, ?)
-                on conflict(channel, conversation_id, trigger_message_id) do update set
-                    conversation_title=excluded.conversation_title,
-                    single_chat=excluded.single_chat,
-                    trigger_create_time=excluded.trigger_create_time,
-                    trigger_sender=excluded.trigger_sender,
-                    trigger_text=excluded.trigger_text,
-                    trigger_message_json=excluded.trigger_message_json,
-                    available_at='',
-                    force_new_decision=1,
-                    oa_url=excluded.oa_url,
-                    manual_rerun_attempt_id=excluded.manual_rerun_attempt_id,
-                    execution_generation=excluded.execution_generation,
-                    status='pending',
-                    locked_at=null,
-                    error=excluded.error,
-                    updated_at=current_timestamp
-                """,
-                (
-                    channel,
-                    conversation_id,
-                    conversation_title,
-                    int(single_chat),
-                    trigger_message_id,
-                    trigger_create_time,
-                    trigger_sender,
-                    trigger_text,
-                    trigger_message_json,
-                    oa_url,
-                    attempt_id,
-                    execution_generation,
-                    f"manual_rerun_from_attempt:{attempt_id}",
-                ),
+            revision_key = self._manual_rerun_revision_key(db, attempt_id)
+            return self._enqueue_manual_rerun_reply_task_in_connection(
+                db,
+                conversation_id=conversation_id,
+                conversation_title=conversation_title,
+                single_chat=single_chat,
+                trigger_message_id=trigger_message_id,
+                trigger_create_time=trigger_create_time,
+                trigger_sender=trigger_sender,
+                trigger_text=trigger_text,
+                trigger_message_json=trigger_message_json,
+                oa_url=oa_url,
+                attempt_id=attempt_id,
+                revision_key=revision_key,
+                channel=channel,
             )
+
+    @staticmethod
+    def _manual_rerun_revision_key(
+        db: sqlite3.Connection,
+        attempt_id: int,
+    ) -> str:
+        revision: dict[str, object] = {
+            "attempt_id": attempt_id,
+            "corrected_reply_text": "",
+            "reviewer_feedback": "",
+            "version": 1,
+        }
+        if attempt_id > 0:
             row = db.execute(
                 """
-                select *
-                from reply_tasks
-                where channel=?
-                  and conversation_id=? and trigger_message_id=?
+                select reviewer_feedback, corrected_reply_text
+                from reply_attempts where id=?
                 """,
-                (channel, conversation_id, trigger_message_id),
+                (attempt_id,),
             ).fetchone()
             if row is None:
-                raise RuntimeError("manual rerun reply task was not persisted")
-            return self._reply_task_from_row(row)
+                raise ValueError(f"manual rerun attempt does not exist: {attempt_id}")
+            revision["reviewer_feedback"] = str(
+                row["reviewer_feedback"] or ""
+            ).strip()
+            revision["corrected_reply_text"] = str(
+                row["corrected_reply_text"] or ""
+            ).strip()
+        canonical = json.dumps(
+            revision,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _enqueue_manual_rerun_reply_task_in_connection(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        single_chat: bool,
+        trigger_message_id: str,
+        trigger_create_time: str,
+        trigger_sender: str,
+        trigger_text: str,
+        trigger_message_json: str,
+        oa_url: str,
+        attempt_id: int,
+        revision_key: str,
+        channel: str,
+    ) -> ReplyTask:
+        existing = db.execute(
+            """
+            select * from reply_tasks
+            where channel=? and conversation_id=? and trigger_message_id=?
+            """,
+            (channel, conversation_id, trigger_message_id),
+        ).fetchone()
+        if (
+            existing is not None
+            and existing["status"] in {"pending", "processing"}
+            and int(existing["manual_rerun_attempt_id"] or 0) == attempt_id
+            and str(existing["manual_rerun_revision_key"] or "") == revision_key
+        ):
+            return cls._reply_task_from_row(existing)
+        execution_generation = uuid4().hex
+        db.execute(
+            """
+            insert into reply_tasks (
+                channel, conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, trigger_message_json, available_at,
+                force_new_decision, oa_url, manual_rerun_attempt_id,
+                manual_rerun_revision_key, execution_generation, status,
+                locked_at, error
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, ?,
+                      'pending', null, ?)
+            on conflict(channel, conversation_id, trigger_message_id) do update set
+                conversation_title=excluded.conversation_title,
+                single_chat=excluded.single_chat,
+                trigger_create_time=excluded.trigger_create_time,
+                trigger_sender=excluded.trigger_sender,
+                trigger_text=excluded.trigger_text,
+                trigger_message_json=excluded.trigger_message_json,
+                available_at='',
+                force_new_decision=1,
+                oa_url=excluded.oa_url,
+                manual_rerun_attempt_id=excluded.manual_rerun_attempt_id,
+                manual_rerun_revision_key=excluded.manual_rerun_revision_key,
+                execution_generation=excluded.execution_generation,
+                status='pending',
+                locked_at=null,
+                error=excluded.error,
+                updated_at=current_timestamp
+            """,
+            (
+                channel,
+                conversation_id,
+                conversation_title,
+                int(single_chat),
+                trigger_message_id,
+                trigger_create_time,
+                trigger_sender,
+                trigger_text,
+                trigger_message_json,
+                oa_url,
+                attempt_id,
+                revision_key,
+                execution_generation,
+                f"manual_rerun_from_attempt:{attempt_id}",
+            ),
+        )
+        row = db.execute(
+            """
+            select * from reply_tasks
+            where channel=? and conversation_id=? and trigger_message_id=?
+            """,
+            (channel, conversation_id, trigger_message_id),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("manual rerun reply task was not persisted")
+        return cls._reply_task_from_row(row)
 
     def get_agent_run(self, run_id: int) -> AgentRun | None:
         with self._connect() as db:
@@ -6930,58 +6997,23 @@ class AutoReplyStore:
                 ),
             )
             attempt_id = int(cursor.lastrowid)
-            execution_generation = uuid4().hex
-            db.execute(
-                """
-                insert into reply_tasks (
-                    channel, conversation_id, conversation_title, single_chat,
-                    trigger_message_id, trigger_create_time, trigger_sender,
-                    trigger_text, trigger_message_json, available_at,
-                    force_new_decision, manual_rerun_attempt_id,
-                    execution_generation, status, locked_at, error
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?,
-                          'pending', null, ?)
-                on conflict(channel, conversation_id, trigger_message_id) do update set
-                    conversation_title=excluded.conversation_title,
-                    single_chat=excluded.single_chat,
-                    trigger_create_time=excluded.trigger_create_time,
-                    trigger_sender=excluded.trigger_sender,
-                    trigger_text=excluded.trigger_text,
-                    trigger_message_json=excluded.trigger_message_json,
-                    available_at='',
-                    force_new_decision=1,
-                    manual_rerun_attempt_id=excluded.manual_rerun_attempt_id,
-                    execution_generation=excluded.execution_generation,
-                    status='pending',
-                    locked_at=null,
-                    error=excluded.error,
-                    updated_at=current_timestamp
-                """,
-                (
-                    channel,
-                    conversation_id,
-                    conversation_title,
-                    int(single_chat),
-                    trigger_message_id,
-                    trigger_create_time,
-                    trigger_sender,
-                    trigger_text,
-                    trigger_message_json,
-                    attempt_id,
-                    execution_generation,
-                    f"manual_rerun_from_attempt:{attempt_id}",
-                ),
+            revision_key = self._manual_rerun_revision_key(db, attempt_id)
+            task = self._enqueue_manual_rerun_reply_task_in_connection(
+                db,
+                conversation_id=conversation_id,
+                conversation_title=conversation_title,
+                single_chat=single_chat,
+                trigger_message_id=trigger_message_id,
+                trigger_create_time=trigger_create_time,
+                trigger_sender=trigger_sender,
+                trigger_text=trigger_text,
+                trigger_message_json=trigger_message_json,
+                oa_url="",
+                attempt_id=attempt_id,
+                revision_key=revision_key,
+                channel=channel,
             )
-            task_row = db.execute(
-                """
-                select * from reply_tasks
-                where channel=? and conversation_id=? and trigger_message_id=?
-                """,
-                (channel, conversation_id, trigger_message_id),
-            ).fetchone()
-            if task_row is None:
-                raise RuntimeError("reviewed reply task was not persisted")
-            return attempt_id, self._reply_task_from_row(task_row)
+            return attempt_id, task
 
     def get_reply_attempt(self, attempt_id: int) -> ReplyAttempt | None:
         with self._connect() as db:

@@ -400,6 +400,16 @@ def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
     )
     task = store.claim_reply_tasks(limit=1)[0]
     store.fail_reply_task(task.id, "old failure")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="@Alex Chen 看一下",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
 
     rerun = store.enqueue_manual_rerun_reply_task(
         conversation_id="cid-1",
@@ -411,7 +421,7 @@ def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
         trigger_text="@Alex Chen 重新看",
         trigger_message_json='{"open_message_id":"msg-1","content":"new"}',
         oa_url="https://oa.example/process",
-        attempt_id=42,
+        attempt_id=attempt_id,
     )
 
     assert rerun.id == task.id
@@ -419,8 +429,8 @@ def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
     assert rerun.locked_at is None
     assert rerun.force_new_decision is True
     assert rerun.oa_url == "https://oa.example/process"
-    assert rerun.manual_rerun_attempt_id == 42
-    assert rerun.error == "manual_rerun_from_attempt:42"
+    assert rerun.manual_rerun_attempt_id == attempt_id
+    assert rerun.error == f"manual_rerun_from_attempt:{attempt_id}"
     assert rerun.trigger_text == "@Alex Chen 重新看"
     claimed = store.claim_reply_tasks(limit=1)
     assert [claimed_task.id for claimed_task in claimed] == [task.id]
@@ -429,6 +439,16 @@ def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
 def test_manual_rerun_dedupes_same_pending_source_attempt(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     _enqueue_universal_reply_task(store)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-universal",
+        conversation_title="Universal",
+        trigger_message_id="msg-universal",
+        trigger_sender="Derek",
+        trigger_text="Handle this task",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
 
     rerun_args = {
         "conversation_id": "cid-universal",
@@ -439,7 +459,7 @@ def test_manual_rerun_dedupes_same_pending_source_attempt(tmp_path: Path):
         "trigger_sender": "Derek",
         "trigger_text": "Run it again",
         "trigger_message_json": "{}",
-        "attempt_id": 42,
+        "attempt_id": attempt_id,
     }
     first = store.enqueue_manual_rerun_reply_task(**rerun_args)
     second = store.enqueue_manual_rerun_reply_task(**rerun_args)
@@ -465,13 +485,23 @@ def test_manual_rerun_dedupes_same_attempt_across_processes(tmp_path: Path):
         trigger_text="请处理",
         trigger_message_json="{}",
     )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-process-rerun",
+        conversation_title="Process rerun",
+        trigger_message_id="msg-process-rerun",
+        trigger_sender="ET",
+        trigger_text="请处理",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
     context = get_context("spawn")
     barrier = context.Barrier(8)
     results = context.Queue()
     processes = [
         context.Process(
             target=_enqueue_manual_rerun_in_process,
-            args=(str(db_path), 42, barrier, results),
+                args=(str(db_path), attempt_id, barrier, results),
         )
         for _ in range(8)
     ]
@@ -499,13 +529,73 @@ def test_manual_rerun_new_source_attempt_rotates_generation(tmp_path: Path):
         "trigger_text": "请重新处理",
         "trigger_message_json": "{}",
     }
+    attempt_ids = [
+        store.record_reply_attempt(
+            conversation_id=common["conversation_id"],
+            conversation_title=common["conversation_title"],
+            trigger_message_id=common["trigger_message_id"],
+            trigger_sender=common["trigger_sender"],
+            trigger_text=common["trigger_text"],
+            action="send_reply",
+            sensitivity_kind="general",
+            send_status="failed",
+        )
+        for _ in range(2)
+    ]
 
-    first = store.enqueue_manual_rerun_reply_task(**common, attempt_id=42)
-    corrected = store.enqueue_manual_rerun_reply_task(**common, attempt_id=43)
+    first = store.enqueue_manual_rerun_reply_task(
+        **common, attempt_id=attempt_ids[0]
+    )
+    corrected = store.enqueue_manual_rerun_reply_task(
+        **common, attempt_id=attempt_ids[1]
+    )
 
     assert corrected.id == first.id
     assert corrected.execution_generation != first.execution_generation
-    assert corrected.manual_rerun_attempt_id == 43
+    assert corrected.manual_rerun_attempt_id == attempt_ids[1]
+
+
+def test_manual_rerun_changed_attempt_revision_rotates_processing_generation(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-revised-attempt",
+        conversation_title="Revised attempt",
+        trigger_message_id="msg-revised-attempt",
+        trigger_sender="ET",
+        trigger_text="请重新处理",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    common = {
+        "conversation_id": "cid-revised-attempt",
+        "conversation_title": "Revised attempt",
+        "single_chat": False,
+        "trigger_message_id": "msg-revised-attempt",
+        "trigger_create_time": "2026-07-29 11:00:00",
+        "trigger_sender": "ET",
+        "trigger_text": "请重新处理",
+        "trigger_message_json": "{}",
+        "attempt_id": attempt_id,
+    }
+
+    first = store.enqueue_manual_rerun_reply_task(**common)
+    claimed = store.claim_reply_tasks(limit=1)
+    assert claimed[0].execution_generation == first.execution_generation
+    assert store.record_reply_feedback(
+        attempt_id,
+        feedback="请根据审核意见重新处理",
+        corrected_reply_text="这是修正版回复。",
+    )
+
+    revised = store.enqueue_manual_rerun_reply_task(**common)
+    repeated = store.enqueue_manual_rerun_reply_task(**common)
+
+    assert revised.execution_generation != first.execution_generation
+    assert revised.status == "pending"
+    assert revised.execution_generation == repeated.execution_generation
 
 
 def test_reviewed_reply_and_rerun_roll_back_together(tmp_path: Path) -> None:
