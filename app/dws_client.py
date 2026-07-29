@@ -95,6 +95,13 @@ class DwsError(RuntimeError):
     AGENT_CODE_NOT_EXISTS_CODE = "AGENT_CODE_NOT_EXISTS"
     DINGTALK_OPENAPI_QUOTA_EXCEEDED_CODE = "90020"
     LOGIN_ERROR_CODES = {"2", "not_authenticated"}
+    AUTHORIZATION_ERROR_CODES = frozenset(
+        {
+            "PAT_HIGH_RISK_NO_PERMISSION",
+            "PAT_MEDIUM_RISK_NO_PERMISSION",
+            AGENT_CODE_NOT_EXISTS_CODE,
+        }
+    )
     LOGIN_ERROR_MARKERS = (
         "not_authenticated",
         "not authenticated",
@@ -123,11 +130,7 @@ class DwsError(RuntimeError):
 
     @property
     def needs_authorization(self) -> bool:
-        return self.code in {
-            "PAT_HIGH_RISK_NO_PERMISSION",
-            "PAT_MEDIUM_RISK_NO_PERMISSION",
-            self.AGENT_CODE_NOT_EXISTS_CODE,
-        }
+        return self.code in self.AUTHORIZATION_ERROR_CODES
 
     @property
     def needs_login(self) -> bool:

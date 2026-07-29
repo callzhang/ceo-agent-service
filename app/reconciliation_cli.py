@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 from mcp.server.fastmcp import FastMCP
 
 from app.agent_result import EffectKind
+from app.channel_gate import classify_cli_read_failure
 from app.agent_runner import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
@@ -40,9 +41,7 @@ def execute_reviewed_read(
         timeout=120,
         check=False,
     )
-    if process.returncode != 0:
-        raise RuntimeError("reconciliation_read_failed")
-    return {
+    receipt: dict[str, object] = {
         "cli": command.cli,
         "operation": command.command_path,
         "operation_digest": command.command_digest,
@@ -50,6 +49,14 @@ def execute_reviewed_read(
         "result_digest": hashlib.sha256(process.stdout.encode("utf-8")).hexdigest(),
         "stdout": process.stdout,
     }
+    if process.returncode != 0:
+        failure = classify_cli_read_failure(command.cli, process)
+        receipt["error"] = {
+            "code": failure.code,
+            "retryable": failure.retryable,
+            "authorization_required": failure.authorization_required,
+        }
+    return receipt
 
 
 server = FastMCP(

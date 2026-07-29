@@ -11,6 +11,7 @@ from app.agent_runner import (
     AgentReconciliationRunResult,
     DirectAgentRunner,
     DirectAgentRunResult,
+    ReconciliationDependencyError,
     ReconciliationError,
     ReconciliationProof,
     ReconciliationResult,
@@ -262,6 +263,33 @@ class ScriptedReconciliationRunner(ScriptedDirectAgentRunner):
             transcript_end_line=run.transcript_end_line,
             events=(),
         )
+
+
+class FailingReconciliationRunner(ScriptedDirectAgentRunner):
+    def __init__(
+        self,
+        store: AutoReplyStore,
+        *,
+        code: str,
+        retryable: bool,
+        authorization_required: bool,
+    ) -> None:
+        super().__init__(store, [])
+        self.error = ReconciliationDependencyError(
+            code,
+            retryable=retryable,
+            authorization_required=authorization_required,
+        )
+
+    def reconcile(self, run, context, **kwargs):
+        claim = self.store.claim_unknown_agent_run(
+            run.id,
+            owner=self.owner,
+            lease_seconds=1800,
+            now=kwargs.get("now") or NOW,
+        )
+        assert claim.claimed
+        raise self.error
 
 
 def _seed_unknown_run(store: AutoReplyStore, task_id: int):
@@ -832,6 +860,52 @@ def test_non_retryable_reconciliation_is_never_selected_by_due_scan(tmp_path: Pa
     assert deferred.reconciliation_next_attempt_at == ""
     assert deferred.reconciliation_suspended is True
     assert store.list_unknown_agent_runs(now="2099-01-01 00:00:00") == []
+
+
+@pytest.mark.parametrize(
+    ("code", "retryable", "authorization_required"),
+    [
+        ("NETWORK_ERROR", True, False),
+        ("not_authenticated", False, True),
+        ("PAT_MEDIUM_RISK_NO_PERMISSION", False, True),
+        ("PARAM_ERROR", False, False),
+    ],
+)
+def test_worker_persists_and_schedules_typed_reconciliation_dependency_error(
+    tmp_path: Path,
+    code: str,
+    retryable: bool,
+    authorization_required: bool,
+):
+    trigger = _message(raw_payload={"processInstanceId": "proc-1"})
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    unknown = _seed_unknown_run(store, task_id)
+    runner = FailingReconciliationRunner(
+        store,
+        code=code,
+        retryable=retryable,
+        authorization_required=authorization_required,
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        direct_agent_runner=runner,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.reconcile_unknown_agent_runs(limit=1) == 0
+
+    deferred = store.get_agent_run(unknown.id)
+    assert json.loads(deferred.structured_error_json) == {
+        "authorization_required": authorization_required,
+        "code": code,
+        "retryable": retryable,
+    }
+    assert deferred.reconciliation_suspended is (not retryable)
+    assert bool(deferred.reconciliation_next_attempt_at) is retryable
 
 
 @pytest.mark.parametrize(

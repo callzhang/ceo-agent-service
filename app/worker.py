@@ -37,6 +37,7 @@ from app.agent_runner import (
     LEASE_SECONDS,
     AgentReadOnlyViolationError,
     AgentRunUnavailableError,
+    ReconciliationDependencyError,
     DirectAgentRunResult,
     DirectAgentRunner,
     structured_execution_evidence,
@@ -5392,6 +5393,15 @@ class DingTalkAutoReplyWorker:
                     runner.owner,
                     code="reconciliation_write_forbidden",
                     retryable=False,
+                )
+                continue
+            except ReconciliationDependencyError as exc:
+                self._defer_agent_reconciliation(
+                    run.id,
+                    runner.owner,
+                    code=exc.code,
+                    retryable=exc.retryable,
+                    authorization_required=exc.authorization_required,
                 )
                 continue
             except Exception as exc:

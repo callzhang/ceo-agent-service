@@ -140,6 +140,20 @@ class AgentReadOnlyViolationError(RuntimeError):
     pass
 
 
+class ReconciliationDependencyError(RuntimeError):
+    def __init__(
+        self,
+        code: str,
+        *,
+        retryable: bool,
+        authorization_required: bool,
+    ) -> None:
+        self.code = code
+        self.retryable = retryable
+        self.authorization_required = authorization_required
+        super().__init__(code)
+
+
 class ReconciliationProof(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -820,6 +834,9 @@ class DirectAgentRunner:
                 owner=self.owner,
                 now=now,
             )
+            dependency_error = _reconciliation_dependency_error(safe_event)
+            if dependency_error is not None:
+                raise dependency_error
 
         try:
             process = self.executor(
@@ -831,6 +848,8 @@ class DirectAgentRunner:
                 on_stdout_line=persist_line,
             )
         except AgentReadOnlyViolationError:
+            raise
+        except ReconciliationDependencyError:
             raise
         except AgentRunLeaseLostError:
             raise
@@ -900,7 +919,13 @@ class DirectAgentRunner:
                         else None
                     )
                     if isinstance(metadata, dict):
-                        metadata["result_digest"] = receipt["result_digest"]
+                        receipt_error = receipt.get("error")
+                        if isinstance(receipt_error, dict):
+                            metadata["reconciliation_error"] = (
+                                _validated_reconciliation_error(receipt_error)
+                            )
+                        else:
+                            metadata["result_digest"] = receipt["result_digest"]
                 return safe_event
             call = self.mcp_effect_registry.classify(item)
             if call is None or call.effect is not EffectKind.READ_ONLY:
@@ -1171,8 +1196,26 @@ def _validate_reconciliation_proof(
     if query_event is None:
         raise RuntimeError("reconciliation_proof_invalid")
     query_item = query_event["item"]
+    if query_item.get("type") != "mcp_tool_call":
+        raise RuntimeError("reconciliation_proof_invalid")
     metadata = query_item.get("metadata")
     if not isinstance(metadata, dict) or metadata.get("effect") != "read_only":
+        raise RuntimeError("reconciliation_proof_invalid")
+    server = query_item.get("server")
+    tool = query_item.get("tool")
+    controlled_cli = (
+        server == "reconciliation_cli"
+        and tool == "execute_reviewed_read"
+        and metadata.get("native_cli") in {"dws", "lark-cli"}
+    )
+    reviewed_mcp = (
+        isinstance(server, str)
+        and server != "reconciliation_cli"
+        and isinstance(tool, str)
+        and metadata.get("mcp_server") == server
+        and metadata.get("operation") == tool
+    )
+    if not controlled_cli and not reviewed_mcp:
         raise RuntimeError("reconciliation_proof_invalid")
     query_targets = metadata.get("target_identifiers")
     query_operation_digest = metadata.get("command_digest") or metadata.get(
@@ -1203,8 +1246,10 @@ def _target_key_matches(left: str, right: str) -> bool:
     right_parts = _target_key_parts(right)
     if left_parts == right_parts:
         return True
-    shorter, longer = sorted((left_parts, right_parts), key=len)
-    return len(shorter) >= 2 and longer[-len(shorter) :] == shorter
+    return {left_parts, right_parts} == {
+        ("instance", "id"),
+        ("process", "instance", "id"),
+    }
 
 
 def _target_key_parts(value: str) -> tuple[str, ...]:
@@ -1244,6 +1289,44 @@ def _controlled_cli_receipt(value: object) -> dict[str, object] | None:
             continue
         return candidate
     return None
+
+
+def _reconciliation_dependency_error(
+    event: dict[str, object],
+) -> ReconciliationDependencyError | None:
+    item = event.get("item")
+    if not isinstance(item, dict) or item.get("type") != "mcp_tool_call":
+        return None
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    error = metadata.get("reconciliation_error")
+    if not isinstance(error, dict):
+        return None
+    validated = _validated_reconciliation_error(error)
+    return ReconciliationDependencyError(
+        validated["code"],
+        retryable=validated["retryable"],
+        authorization_required=validated["authorization_required"],
+    )
+
+
+def _validated_reconciliation_error(error: dict[str, object]) -> dict[str, object]:
+    code = error.get("code")
+    retryable = error.get("retryable")
+    authorization_required = error.get("authorization_required")
+    if (
+        not isinstance(code, str)
+        or not code
+        or not isinstance(retryable, bool)
+        or not isinstance(authorization_required, bool)
+    ):
+        raise AgentReadOnlyViolationError("reconciliation_query_receipt_invalid")
+    return {
+        "code": code,
+        "retryable": retryable,
+        "authorization_required": authorization_required,
+    }
 
 
 def _session_id(payload: dict[str, object]) -> str:

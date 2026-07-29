@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from app.dws_client import dws_noninteractive_environment
+from app.dws_client import DwsClient, DwsError, dws_noninteractive_environment
 
 CliRunner = Callable[..., subprocess.CompletedProcess[str]]
 LoginLauncher = Callable[[], "LoginProcess"]
@@ -56,6 +56,13 @@ class ChannelGateResult(BaseModel):
     reason_code: str
     detail: str = ""
     commands: tuple[tuple[str, ...], ...] = ()
+
+
+@dataclass(frozen=True)
+class CliReadFailure:
+    code: str
+    retryable: bool
+    authorization_required: bool
 
 
 class ChannelGate(Protocol):
@@ -654,6 +661,52 @@ def _classify_structured_failure(
     return None
 
 
+def classify_cli_read_failure(
+    channel: str,
+    completed: subprocess.CompletedProcess[str],
+) -> CliReadFailure:
+    """Preserve typed gate semantics for one reviewed CLI read failure."""
+    payloads = _json_objects(completed.stdout, completed.stderr)
+    if not payloads:
+        return CliReadFailure(
+            code=f"{channel}_reconciliation_read_malformed",
+            retryable=False,
+            authorization_required=False,
+        )
+    errors = tuple(_structured_error(payload) for payload in payloads)
+    classified = _classify_structured_failure(
+        channel=channel,
+        phase="reconciliation_read",
+        completed=completed,
+        payloads=payloads,
+        commands=[],
+    )
+    raw_code = next((code for _, _, code in errors if code), "")
+    code = raw_code or (
+        classified.reason_code
+        if classified is not None
+        else f"{channel}_reconciliation_read_failed"
+    )
+    error_types = {error_type for error_type, _, _ in errors}
+    retryable = bool(
+        error_types & {"network", "provider", "timeout", "unavailable"}
+        or (channel == "dws" and raw_code in DwsClient.RETRYABLE_ERROR_CODES)
+    )
+    authorization_required = bool(
+        classified is not None
+        and (
+            classified.state is ChannelGateState.NEEDS_LOGIN
+            or classified.reason_code.endswith("_authorization_missing")
+        )
+        or (channel == "dws" and raw_code in DwsError.AUTHORIZATION_ERROR_CODES)
+    )
+    return CliReadFailure(
+        code=code,
+        retryable=retryable,
+        authorization_required=authorization_required,
+    )
+
+
 def _generic_failure(
     *,
     channel: str,
@@ -734,7 +787,9 @@ def _structured_error(payload: dict[str, object]) -> tuple[str, str, str]:
     return (
         _string_value(error, "type").casefold(),
         _string_value(error, "subtype").casefold(),
-        _string_value(error, "code") or _string_value(payload, "code"),
+        _string_value(error, "server_error_code")
+        or _string_value(error, "code")
+        or _string_value(payload, "code"),
     )
 
 
