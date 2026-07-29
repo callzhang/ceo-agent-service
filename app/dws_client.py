@@ -282,6 +282,10 @@ class DwsClient:
         ("contact", "user", "get"),
         ("contact", "user", "search"),
     }
+    GENERIC_BUSINESS_RETRYABLE_ERROR_CODES = {"ERROR"}
+    GENERIC_BUSINESS_RETRYABLE_READ_COMMANDS = (
+        TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS
+    )
     TEXT_RETRYABLE_READ_COMMANDS = {
         ("doc", "download"),
         ("drive", "download"),
@@ -3398,6 +3402,12 @@ class DwsClient:
     def _is_retryable_error(cls, command: list[str], code: str | None) -> bool:
         if code in cls.RETRYABLE_ERROR_CODES:
             return True
+        if code in cls.GENERIC_BUSINESS_RETRYABLE_ERROR_CODES:
+            command_path = tuple(command[1:])
+            return cls._command_path_matches(
+                command_path,
+                cls.GENERIC_BUSINESS_RETRYABLE_READ_COMMANDS,
+            )
         if cls.is_message_read_retryable_error_code(code):
             command_path = tuple(command[1:])
             return cls._command_path_matches(
@@ -3582,6 +3592,12 @@ class DwsClient:
             return None
         if not isinstance(payload, dict):
             return None
+        dotted_server_error_code = payload.get("error.server_error_code")
+        if (
+            isinstance(dotted_server_error_code, str)
+            and dotted_server_error_code
+        ):
+            return dotted_server_error_code
         dotted_error_code = payload.get("error.code")
         if isinstance(dotted_error_code, str) and dotted_error_code:
             return dotted_error_code

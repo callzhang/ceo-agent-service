@@ -4705,6 +4705,48 @@ def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
     assert len(calls) == 2
 
 
+def test_run_json_retries_calendar_read_with_flattened_generic_server_error(
+    monkeypatch,
+):
+    calls = []
+    sleeps = []
+    error_payload = (
+        '{"error.code":1,'
+        '"error.message":"[UNCLASSIFIED] business error: success=false",'
+        '"error.reason":"business_error",'
+        '"error.server_error_code":"ERROR"}'
+    )
+    command = [
+        "dws",
+        "calendar",
+        "event",
+        "list",
+        "--start",
+        "2026-07-27T22:33:29+00:00",
+        "--end",
+        "2026-07-28T06:47:41+00:00",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=error_payload,
+            )
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
 def test_run_json_refreshes_cache_before_retrying_dws_discovery_code(monkeypatch):
     calls = []
     sleeps = []

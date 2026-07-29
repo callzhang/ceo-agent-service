@@ -48,6 +48,8 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 
 当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取仍以临时网络错误失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。
 
+DWS 可能同时返回通用错误码和更具体的服务端错误码；服务始终按具体服务端错误码分类。日历、消息和通讯录等只读命令遇到临时 `ERROR` 会在当前调用内重试，写操作不使用这条通用重试规则。
+
 `blocked` 只表示缺少权限、依赖、材料或安全条件，后续条件恢复后仍应进入修复/恢复口径。确定不可恢复的阻塞必须写入 `send_status=blocked` 且 `send_error` 以 `blocked_unrecoverable_` 开头；这类记录在审计页显示为 terminal blocked，不再作为待修复 backlog。
 
 同一 Universal Plan 的 `execution_generation` 固定使用首次规划时持久化的完整 `context_json` 快照；动作重试不会重新读取可能变化的日历卡片、材料正文或任务检索结果，也不使用上下文 hash 比较外部世界是否变化。只有显式创建新的 execution generation 时，服务才重新收集证据并请求 agent 生成新 plan。
