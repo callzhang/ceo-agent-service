@@ -5,6 +5,7 @@ import pytest
 
 from app.weekly_okr_report import (
     CeoAttentionItem,
+    CodexWeeklyOkrAgent,
     DimensionScoreReview,
     DwsWeeklyOkrGateway,
     GroupRoster,
@@ -465,6 +466,100 @@ def test_manager_final_score_uses_business_leadership_and_culture_formula(tmp_pa
     assert cards["甲"].culture_score == 80.0
     assert cards["甲"].culture_coefficient == 1.05
     assert cards["甲"].final_score == 80.9
+
+
+def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
+    import json
+    from pathlib import Path
+
+    roster = managers()
+    source = FakeSource()
+    source_path = tmp_path / "live.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "managers": [
+                    {
+                        "manager": {"name": manager.name, "userId": manager.user_id},
+                        "liveOkr": source.fetch_user_okr(
+                            user_id=manager.user_id,
+                            period_label="2026 Q3",
+                        ),
+                    }
+                    for manager in roster
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    seen = []
+
+    def executor(_command, prompt, _env):
+        source_line = next(
+            line for line in prompt.splitlines() if line.startswith("- 实时叮当 OKR 聚合文件：")
+        )
+        filtered_path = Path(source_line.split("：", 1)[1])
+        filtered = json.loads(filtered_path.read_text(encoding="utf-8"))
+        assert len(filtered["managers"]) == 1
+        name = filtered["managers"][0]["manager"]["name"]
+        seen.append(name)
+        return json.dumps(_weekly_payload_for(name), ensure_ascii=False)
+
+    analysis = CodexWeeklyOkrAgent(
+        workspace=tmp_path,
+        executor=executor,
+    ).analyze(
+        source_path=source_path,
+        managers=roster,
+        period_label="2026 Q3",
+        week_start=datetime(2026, 7, 27).date(),
+        week_end=datetime(2026, 7, 30).date(),
+    )
+
+    assert set(seen) == {"甲", "乙"}
+    assert [review.name for review in analysis.manager_reviews] == ["甲", "乙"]
+
+
+def _weekly_payload_for(name):
+    return {
+        "executive_summary": f"{name}摘要",
+        "company_progress": [f"{name}进展"],
+        "ceo_attention_items": [],
+        "manager_reviews": [
+            {
+                "name": name,
+                "role_level": "总监" if name == "甲" else "经理",
+                "role_level_evidence": "钉钉通讯录当前职务",
+                "progress_summary": "推进中",
+                "key_progress": [],
+                "independent_evidence": [],
+                "evidence_assessment": "已综合判断",
+                "risks": [],
+                "next_week_focus": [],
+                "data_gaps": [],
+                "kr_reviews": [
+                    {
+                        "kr_id": "kr-1",
+                        "objective_title": "O1",
+                        "kr_title": "KR1",
+                        "category": "业务OKR",
+                        "system_progress": "系统 50%",
+                        "independent_evidence": "已读取交付文档",
+                        "evidence_assessment": "结果部分落地",
+                        "base_score": 80,
+                        "time_discount": "未适用",
+                        "score": 80,
+                        "improvement": "补充验收记录",
+                    }
+                ],
+                "leadership_dimensions": [item.model_dump() for item in _dimensions(4, 70)],
+                "culture_dimensions": [item.model_dump() for item in _dimensions(3, 80)],
+            }
+        ],
+        "source_coverage": ["实时叮当 OKR"],
+        "warnings": [],
+    }
 
 
 def json_string(value):

@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -196,9 +197,77 @@ class CodexWeeklyOkrAgent:
         week_start: date,
         week_end: date,
     ) -> WeeklyOkrAnalysis:
+        source_payload = json.loads(source_path.read_text(encoding="utf-8"))
+        source_managers = source_payload.get("managers")
+        if not isinstance(source_managers, list):
+            raise ValueError("weekly OKR source has no manager payloads")
+        payload_by_user_id = {
+            str(item.get("manager", {}).get("userId") or ""): item
+            for item in source_managers
+            if isinstance(item, dict)
+        }
+        jobs: list[tuple[ManagerIdentity, Path]] = []
+        for index, manager in enumerate(managers, start=1):
+            manager_payload = payload_by_user_id.get(manager.user_id)
+            if manager_payload is None:
+                raise ValueError(f"weekly OKR source is missing {manager.name}")
+            manager_source = source_path.with_name(
+                f"{source_path.stem}.manager-{index:02d}{source_path.suffix}"
+            )
+            filtered_payload = dict(source_payload)
+            filtered_payload["managers"] = [manager_payload]
+            manager_source.write_text(
+                json.dumps(filtered_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            jobs.append((manager, manager_source))
+
+        with ThreadPoolExecutor(max_workers=min(3, len(jobs))) as executor:
+            futures = {
+                manager.user_id: executor.submit(
+                    self._analyze_one,
+                    source_path=manager_source,
+                    manager=manager,
+                    period_label=period_label,
+                    week_start=week_start,
+                    week_end=week_end,
+                )
+                for manager, manager_source in jobs
+            }
+            results = [futures[manager.user_id].result() for manager in managers]
+
+        return WeeklyOkrAnalysis(
+            executive_summary=(
+                f"已完成 {len(managers)} 位 CEO-2 成员的逐 KR 综合证据评分；"
+                "系统进度仅作为线索，最终判断以评论/进展、独立证据、实际效果和完成时间为准。"
+            ),
+            company_progress=_unique_strings(
+                item for result in results for item in result.company_progress
+            ),
+            ceo_attention_items=[
+                item for result in results for item in result.ceo_attention_items
+            ],
+            manager_reviews=[result.manager_reviews[0] for result in results],
+            source_coverage=_unique_strings(
+                item for result in results for item in result.source_coverage
+            ),
+            warnings=_unique_strings(
+                item for result in results for item in result.warnings
+            ),
+        )
+
+    def _analyze_one(
+        self,
+        *,
+        source_path: Path,
+        manager: ManagerIdentity,
+        period_label: str,
+        week_start: date,
+        week_end: date,
+    ) -> WeeklyOkrAnalysis:
         prompt = build_weekly_okr_prompt(
             source_path=source_path,
-            managers=managers,
+            managers=[manager],
             period_label=period_label,
             week_start=week_start,
             week_end=week_end,
@@ -226,7 +295,11 @@ class CodexWeeklyOkrAgent:
                     _subprocess_failure_reason(completed.stderr, completed.stdout)
                 )
             raw = completed.stdout
-        return WeeklyOkrAnalysis.model_validate(_extract_report_payload(raw))
+        analysis = WeeklyOkrAnalysis.model_validate(_extract_report_payload(raw))
+        _validate_manager_coverage(analysis, [manager])
+        filtered_payload = json.loads(source_path.read_text(encoding="utf-8"))
+        _validate_kr_coverage(analysis, filtered_payload["managers"])
+        return analysis
 
 
 class DwsWeeklyOkrGateway:
@@ -963,7 +1036,7 @@ def render_group_summary(
     lines = [
         f"## {title}",
         "",
-        f"已按综合证据口径更新：系统进度仅作线索，结合评论/进展和独立证据逐 KR 评分。",
+        "已按综合证据口径更新：系统进度仅作线索，结合评论/进展和独立证据逐 KR 评分。",
         f"评分概览：{manager_count} 人中 {len(finalized)} 人形成最终分，{pending} 人因职级或维度证据待补充暂不形成最终分"
         + (f"；已形成最终分的平均值为 {sum(finalized) / len(finalized):.1f}。" if finalized else "。"),
     ]
@@ -1309,6 +1382,10 @@ def _score_text(value: float | None) -> str:
 
 def _coefficient_text(value: float | None) -> str:
     return "暂不形成" if value is None else f"{value:.2f}"
+
+
+def _unique_strings(items) -> list[str]:
+    return list(dict.fromkeys(str(item) for item in items if str(item).strip()))
 
 
 def _nested_list(payload: object, key: str) -> list[dict[str, Any]]:
