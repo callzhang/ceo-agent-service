@@ -519,6 +519,21 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
 
     assert set(seen) == {"甲", "乙"}
     assert [review.name for review in analysis.manager_reviews] == ["甲", "乙"]
+    assert all(review.kr_reviews[0].kr_id == "kr-1" for review in analysis.manager_reviews)
+
+    cached = CodexWeeklyOkrAgent(
+        workspace=tmp_path,
+        executor=executor,
+    ).analyze(
+        source_path=source_path,
+        managers=roster,
+        period_label="2026 Q3",
+        week_start=datetime(2026, 7, 27).date(),
+        week_end=datetime(2026, 7, 30).date(),
+    )
+
+    assert len(seen) == 2
+    assert [review.name for review in cached.manager_reviews] == ["甲", "乙"]
 
 
 def _weekly_payload_for(name):
@@ -540,7 +555,7 @@ def _weekly_payload_for(name):
                 "data_gaps": [],
                 "kr_reviews": [
                     {
-                        "kr_id": "kr-1",
+                        "kr_id": "wrong-model-id",
                         "objective_title": "O1",
                         "kr_title": "KR1",
                         "category": "业务OKR",
