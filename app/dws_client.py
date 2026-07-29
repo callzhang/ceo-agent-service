@@ -282,7 +282,7 @@ class DwsClient:
         ("contact", "user", "get"),
         ("contact", "user", "search"),
     }
-    GENERIC_BUSINESS_RETRYABLE_ERROR_CODES = {"ERROR"}
+    GENERIC_BUSINESS_RETRYABLE_ERROR_CODES = {"ERROR", "RATE_LIMIT_ERROR"}
     GENERIC_BUSINESS_RETRYABLE_READ_COMMANDS = (
         TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS
     )

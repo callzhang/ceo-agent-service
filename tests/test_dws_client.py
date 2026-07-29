@@ -4747,6 +4747,46 @@ def test_run_json_retries_calendar_read_with_flattened_generic_server_error(
     assert sleeps == [1.0]
 
 
+def test_run_json_retries_message_read_with_flattened_rate_limit_error(
+    monkeypatch,
+):
+    calls = []
+    sleeps = []
+    error_payload = (
+        '{"error.code":1,'
+        '"error.message":"[UNCLASSIFIED] business error: success=false",'
+        '"error.reason":"business_error",'
+        '"error.server_error_code":"RATE_LIMIT_ERROR"}'
+    )
+    command = [
+        "dws",
+        "chat",
+        "message",
+        "list",
+        "--group",
+        "cid-1",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=error_payload,
+            )
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
 def test_run_json_refreshes_cache_before_retrying_dws_discovery_code(monkeypatch):
     calls = []
     sleeps = []
