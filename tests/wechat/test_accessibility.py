@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from app.store import AutoReplyStore
@@ -70,6 +72,26 @@ def test_verified_binding_sends(store):
     outcome = sender.send(delivery, _scope("verified"))
     assert outcome.status == "sent"
     assert runner.calls == [("Alex", "收到", None, "hi")]
+
+
+def test_two_senders_claim_delivery_once(store):
+    runner = FakeRunner(AccessibilityResult(True, True, "fp-1"))
+    delivery = _seed_delivery(store)
+    outcomes = []
+
+    def send() -> None:
+        outcomes.append(
+            WechatSender(store, runner).send(delivery, _scope("verified"))
+        )
+
+    threads = [threading.Thread(target=send) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(runner.calls) == 1
+    assert sorted(item.status for item in outcomes) == ["not_claimed", "sent"]
 
 
 def test_verified_binding_uses_persisted_unique_navigation_query(store):

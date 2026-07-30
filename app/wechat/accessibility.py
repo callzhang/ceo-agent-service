@@ -16,7 +16,7 @@ tests, which inject a fake runner.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -199,7 +199,13 @@ class WechatSender:
             )
             return SendOutcome("failed", "target_binding_unverified")
 
-        self.store.mark_wechat_delivery_sending(delivery.id)
+        claimed = self.store.claim_wechat_delivery(
+            delivery.id,
+            expected_execution_generation=delivery.execution_generation,
+        )
+        if claimed is None:
+            return SendOutcome("not_claimed", "delivery_not_claimed")
+        delivery = claimed
         result = self.runner.send(
             scope.display_name,
             delivery.reply_text,

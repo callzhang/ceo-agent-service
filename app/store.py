@@ -2269,6 +2269,9 @@ class AutoReplyStore:
                 str(existing["execution_generation"]),
                 now_text=now_text,
             )
+            cls._supersede_ready_wechat_delivery(
+                db, int(existing["id"]), execution_generation
+            )
         db.execute(
             """
             insert into reply_tasks (
@@ -4058,6 +4061,9 @@ class AutoReplyStore:
                     current_generation,
                     now_text=now_text,
                 )
+                self._supersede_ready_wechat_delivery(
+                    db, task_id, execution_generation
+                )
                 cursor = db.execute(
                     """
                     update reply_tasks
@@ -4390,6 +4396,33 @@ class AutoReplyStore:
         )
 
     # ---- WeChat channel: deliveries ----
+    @classmethod
+    def _supersede_ready_wechat_delivery(
+        cls,
+        db: sqlite3.Connection,
+        task_id: int,
+        new_generation: str,
+    ) -> None:
+        row = db.execute(
+            "select id from wechat_deliveries "
+            "where reply_task_id=? and status='ready_to_send'",
+            (task_id,),
+        ).fetchone()
+        if row is None:
+            return
+        error = f"superseded_by_generation:{new_generation}"
+        db.execute(
+            "update wechat_deliveries set status='superseded', error=?, "
+            "updated_at=current_timestamp where id=? and status='ready_to_send'",
+            (error, row["id"]),
+        )
+        cls._sync_wechat_delivery_reply_attempt(
+            db,
+            delivery_id=int(row["id"]),
+            delivery_status="superseded",
+            error=error,
+        )
+
     def finalize_wechat_reply_task(
         self,
         *,
@@ -4613,7 +4646,15 @@ class AutoReplyStore:
         from app.wechat.models import WechatDelivery
         with self._connect() as db:
             rows = db.execute(
-                "select * from wechat_deliveries where status=? order by id", (status,)
+                """
+                select wechat_deliveries.* from wechat_deliveries
+                join reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
+                where wechat_deliveries.status=?
+                  and wechat_deliveries.execution_generation=
+                      reply_tasks.execution_generation
+                order by wechat_deliveries.id
+                """,
+                (status,),
             ).fetchall()
         return [
             WechatDelivery(
@@ -4627,8 +4668,84 @@ class AutoReplyStore:
             for row in rows
         ]
 
+    def claim_wechat_delivery(
+        self,
+        delivery_id: int,
+        *,
+        expected_execution_generation: str,
+        now: str = "",
+    ):
+        from app.wechat.models import WechatDelivery
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            cursor = db.execute(
+                """
+                update wechat_deliveries
+                set status='sending', action_started_at=?, error='',
+                    updated_at=current_timestamp
+                where id=? and status='ready_to_send'
+                  and execution_generation=?
+                  and exists (
+                      select 1 from reply_tasks
+                      where reply_tasks.id=wechat_deliveries.reply_task_id
+                        and reply_tasks.execution_generation=?
+                  )
+                """,
+                (
+                    now,
+                    delivery_id,
+                    expected_execution_generation,
+                    expected_execution_generation,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            self._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=delivery_id,
+                delivery_status="sending",
+                error="",
+            )
+            row = db.execute(
+                "select * from wechat_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+        return WechatDelivery(
+            id=row["id"], task_id=row["reply_task_id"],
+            account_id=row["account_id"], target_type=row["target_type"],
+            target_id=row["target_id"], conversation_id=row["conversation_id"],
+            reply_text=row["reply_text"],
+            execution_generation=row["execution_generation"],
+            status=row["status"], evidence=json.loads(row["evidence_json"]),
+            error=row["error"],
+        )
+
     def mark_wechat_delivery_sending(self, delivery_id: int, *, now: str = "") -> None:
-        self.set_wechat_delivery_status(delivery_id, "sending", action_started_at=now)
+        delivery = self.get_wechat_delivery_by_id(delivery_id)
+        if delivery is None or self.claim_wechat_delivery(
+            delivery_id,
+            expected_execution_generation=delivery.execution_generation,
+            now=now,
+        ) is None:
+            raise ValueError("WeChat delivery is not claimable")
+
+    def get_wechat_delivery_by_id(self, delivery_id: int):
+        from app.wechat.models import WechatDelivery
+        with self._connect() as db:
+            row = db.execute(
+                "select * from wechat_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return WechatDelivery(
+            id=row["id"], task_id=row["reply_task_id"],
+            account_id=row["account_id"], target_type=row["target_type"],
+            target_id=row["target_id"], conversation_id=row["conversation_id"],
+            reply_text=row["reply_text"],
+            execution_generation=row["execution_generation"],
+            status=row["status"], evidence=json.loads(row["evidence_json"]),
+            error=row["error"],
+        )
 
     def set_wechat_delivery_status(
         self, delivery_id: int, status: str, *, error: str = "",
@@ -4673,15 +4790,16 @@ class AutoReplyStore:
             return "failed", reason or status
         return None
 
+    @classmethod
     def _sync_wechat_delivery_reply_attempt(
-        self,
+        cls,
         db: sqlite3.Connection,
         *,
         delivery_id: int,
         delivery_status: str,
         error: str,
     ) -> None:
-        next_status = self._wechat_delivery_reply_attempt_status(
+        next_status = cls._wechat_delivery_reply_attempt_status(
             delivery_status,
             error,
         )

@@ -160,6 +160,29 @@ def test_recreating_pre_action_failed_delivery_makes_it_retryable(tmp_path):
     assert delivery.reply_text == "second"
 
 
+def test_generation_rotation_supersedes_ready_delivery_atomically(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="old reply",
+    )
+
+    new_generation = store.rotate_reply_task_execution_generation(1)
+
+    delivery = store.get_wechat_delivery_for_task(1)
+    assert delivery is not None
+    assert delivery.id == delivery_id
+    assert delivery.status == "superseded"
+    assert delivery.error == f"superseded_by_generation:{new_generation}"
+    assert store.list_wechat_deliveries_by_status("ready_to_send") == []
+
+
 def test_new_delivery_supersedes_older_unsent_delivery_for_same_conversation(
     tmp_path,
 ):
