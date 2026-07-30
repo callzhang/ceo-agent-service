@@ -4936,6 +4936,7 @@ def test_audit_mutation_accepts_loopback_origin(tmp_path: Path, monkeypatch):
     env_path = tmp_path / ".env"
     env_path.write_text("CEO_WORKSPACE=/tmp/original\n", encoding="utf-8")
     monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    monkeypatch.setenv("CEO_WORKSPACE", "/tmp/original")
     client = TestClient(
         create_audit_app(tmp_path / "audit.sqlite3"),
         client=("127.0.0.1", 50000),

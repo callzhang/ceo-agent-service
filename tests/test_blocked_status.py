@@ -45,7 +45,7 @@ def test_recoverable_blocked_attempt_does_not_suppress_direct_agent_task(tmp_pat
     assert store.claim_agent_run(task.id, task.execution_generation, owner="worker").claimed
 
 
-def test_unrecoverable_blocked_attempt_is_terminal_but_manual_rerun_is_new_generation(
+def test_unrecoverable_blocked_attempt_manual_rerun_is_idempotent_per_revision(
     tmp_path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -94,4 +94,4 @@ def test_unrecoverable_blocked_attempt_is_terminal_but_manual_rerun_is_new_gener
 
     assert rerun.id == original.id
     assert rerun.status == "pending"
-    assert rerun.execution_generation != original.execution_generation
+    assert rerun.execution_generation == original.execution_generation
