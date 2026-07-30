@@ -8,6 +8,11 @@
     },
     {
       "server": "reconciliation_cli",
+      "tool": "read_skill",
+      "effect": "read_only"
+    },
+    {
+      "server": "reconciliation_cli",
       "tool": "execute_reviewed_write",
       "effect": "effectful"
     },

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import errno
+import os
 import shutil
+import stat
 import subprocess
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -24,7 +27,13 @@ from app.native_cli_metadata import (
 )
 
 MAX_CLI_OUTPUT_BYTES = MAX_PROCESS_OUTPUT_BYTES
+MAX_SKILL_BYTES = 256 * 1024
 CliOutputLimitError = ProcessOutputLimitError
+AGENT_SKILL_ROOTS = (
+    Path.home() / ".agents" / "skills",
+    Path.home() / ".codex" / "skills",
+    Path.home() / ".codex" / "plugins",
+)
 
 
 def _process_failure_receipt(
@@ -72,6 +81,31 @@ def execute_reviewed_write(
         classifier=classifier,
         process_runner=process_runner,
     )
+
+
+def read_skill(path: str) -> dict[str, str]:
+    skill_path = Path(path).expanduser().resolve(strict=True)
+    roots = tuple(root.expanduser().resolve() for root in AGENT_SKILL_ROOTS)
+    if skill_path.name != "SKILL.md" or not any(
+        skill_path.is_relative_to(root) for root in roots
+    ):
+        raise AgentReadOnlyViolationError("skill_path_forbidden")
+    flags = os.O_RDONLY | os.O_NONBLOCK
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    with os.fdopen(os.open(skill_path, flags), "rb") as skill_file:
+        file_stat = os.fstat(skill_file.fileno())
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise AgentReadOnlyViolationError("skill_file_not_regular")
+        if file_stat.st_size > MAX_SKILL_BYTES:
+            raise AgentReadOnlyViolationError("skill_content_too_large")
+        content_bytes = skill_file.read(MAX_SKILL_BYTES + 1)
+        if len(content_bytes) > MAX_SKILL_BYTES:
+            raise AgentReadOnlyViolationError("skill_content_too_large")
+    content = content_bytes.decode("utf-8")
+    return {
+        "content": content,
+        "sha256": hashlib.sha256(content_bytes).hexdigest(),
+    }
 
 
 def _execute_reviewed(
@@ -179,8 +213,24 @@ def _execute_reviewed(
 
 server = FastMCP(
     "reconciliation_cli",
-    instructions="Run DWS or Lark commands only after reviewing installed effect metadata.",
+    instructions=(
+        "Read installed Agent skills and run DWS or Lark commands only after "
+        "reviewing installed effect metadata."
+    ),
 )
+
+
+@server.tool(
+    name="read_skill",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+def read_skill_tool(path: str) -> dict[str, str]:
+    return read_skill(path)
 
 
 @server.tool(

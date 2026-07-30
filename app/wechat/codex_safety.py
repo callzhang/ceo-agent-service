@@ -206,7 +206,7 @@ def make_read_only_with_reviewed_tools(
             "mcp_servers.reconciliation_cli.args="
             + json.dumps(list(controlled_cli_args), ensure_ascii=True),
             "-c",
-            'mcp_servers.reconciliation_cli.enabled_tools=["execute_reviewed_read"]',
+            'mcp_servers.reconciliation_cli.enabled_tools=["execute_reviewed_read","read_skill"]',
         ],
     )
 
@@ -243,7 +243,7 @@ def make_direct_agent_sandbox(
             + json.dumps(list(controlled_cli_args), ensure_ascii=True),
             "-c",
             "mcp_servers.reconciliation_cli.enabled_tools="
-            '["execute_reviewed_read","execute_reviewed_write"]',
+            '["execute_reviewed_read","execute_reviewed_write","read_skill"]',
         ],
     )
 

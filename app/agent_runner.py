@@ -69,6 +69,7 @@ DIRECT_AGENT_DEVELOPER_INSTRUCTIONS = """You are the Direct Agent for one queued
 - Return only one JSON object matching the AgentResult schema supplied to Codex.
 - Never run authentication login, reset, or logout commands. Authentication readiness belongs to the service gate.
 - Never expose credentials, tokens, cookies, authorization codes, signed URLs, or local credential paths.
+- Read an applicable installed SKILL.md with reconciliation_cli.read_skill; do not use shell or exec to read skill files.
 - Execute DWS and Lark commands through reconciliation_cli.execute_reviewed_read or reconciliation_cli.execute_reviewed_write according to the command's published effect metadata; do not execute those CLIs through the shell.
 - Do not infer successful execution from prose. Report completion only when direct execution and verification produced structured evidence."""
 READ_ONLY_DEVELOPER_INSTRUCTION = (
@@ -76,7 +77,8 @@ READ_ONLY_DEVELOPER_INSTRUCTION = (
     "approval, comment, reaction, edit, or other state-changing action. "
     "For exact DWS or Lark commands, call "
     "reconciliation_cli.execute_reviewed_read with the command argv; do not "
-    "execute those CLIs through the shell."
+    "execute those CLIs through the shell. Read applicable installed skills "
+    "with reconciliation_cli.read_skill."
 )
 _NATIVE_READ_ONLY_ITEM_TYPES = frozenset(
     {"tool_search", "tool_search_call", "web_search", "web_search_call"}

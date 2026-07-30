@@ -1,6 +1,7 @@
 import asyncio
 import json
 import hashlib
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -398,7 +399,8 @@ def test_direct_runner_uses_native_codex_and_never_ignores_user_config(
     assert command.count("--sandbox") == 1
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     assert any(
-        'enabled_tools=["execute_reviewed_read","execute_reviewed_write"]' in part
+        'enabled_tools=["execute_reviewed_read","execute_reviewed_write","read_skill"]'
+        in part
         for part in command
     )
     assert "tools.enabled_tools=[]" in command
@@ -1214,6 +1216,7 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert "mcp_servers.passthrough.enabled=false" in executor.commands[0]
     assert "mcp_servers.user_config_only.enabled=false" in executor.commands[0]
     assert any("reconciliation_cli" in part for part in executor.commands[0])
+    assert any("read_skill" in part for part in executor.commands[0])
     assert "read-only" in executor.prompts[0].casefold()
     assert "external write" in executor.prompts[0].casefold()
     developer = _developer_instructions(executor.commands[0])
@@ -1807,6 +1810,7 @@ def test_reconciliation_cli_tools_declare_effect_annotations():
         for candidate in tools
         if candidate.name == "execute_reviewed_write"
     )
+    skill_tool = next(candidate for candidate in tools if candidate.name == "read_skill")
 
     assert read_tool.annotations is not None
     assert read_tool.annotations.readOnlyHint is True
@@ -1818,6 +1822,60 @@ def test_reconciliation_cli_tools_declare_effect_annotations():
     assert write_tool.annotations.destructiveHint is True
     assert write_tool.annotations.idempotentHint is False
     assert write_tool.annotations.openWorldHint is True
+    assert skill_tool.annotations is not None
+    assert skill_tool.annotations.readOnlyHint is True
+    assert skill_tool.annotations.destructiveHint is False
+    assert skill_tool.annotations.idempotentHint is True
+    assert skill_tool.annotations.openWorldHint is False
+
+
+def test_reconciliation_cli_reads_only_installed_skill_files(
+    tmp_path: Path, monkeypatch
+):
+    from app.reconciliation_cli import read_skill
+
+    skill_root = tmp_path / "skills"
+    skill_path = skill_root / "dingtalk-oa" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text("# DingTalk OA\n\nRead live task ownership.\n", encoding="utf-8")
+    outside = tmp_path / "outside" / "SKILL.md"
+    outside.parent.mkdir()
+    outside.write_text("not allowed", encoding="utf-8")
+    escaped_link = skill_root / "escaped" / "SKILL.md"
+    escaped_link.parent.mkdir(parents=True)
+    escaped_link.symlink_to(outside)
+    monkeypatch.setattr("app.reconciliation_cli.AGENT_SKILL_ROOTS", (skill_root,))
+
+    result = read_skill(str(skill_path))
+
+    assert result["content"] == "# DingTalk OA\n\nRead live task ownership.\n"
+    assert result["sha256"] == hashlib.sha256(
+        result["content"].encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(AgentReadOnlyViolationError, match="skill_path_forbidden"):
+        read_skill(str(outside))
+    with pytest.raises(AgentReadOnlyViolationError, match="skill_path_forbidden"):
+        read_skill(str(escaped_link))
+
+
+def test_reconciliation_cli_rejects_oversized_and_non_regular_skills(
+    tmp_path: Path, monkeypatch
+):
+    from app.reconciliation_cli import MAX_SKILL_BYTES, read_skill
+
+    skill_root = tmp_path / "skills"
+    oversized = skill_root / "oversized" / "SKILL.md"
+    oversized.parent.mkdir(parents=True)
+    oversized.write_bytes(b"x" * (MAX_SKILL_BYTES + 1))
+    fifo = skill_root / "fifo" / "SKILL.md"
+    fifo.parent.mkdir(parents=True)
+    os.mkfifo(fifo)
+    monkeypatch.setattr("app.reconciliation_cli.AGENT_SKILL_ROOTS", (skill_root,))
+
+    with pytest.raises(AgentReadOnlyViolationError, match="skill_content_too_large"):
+        read_skill(str(oversized))
+    with pytest.raises(AgentReadOnlyViolationError, match="skill_file_not_regular"):
+        read_skill(str(fifo))
 
 
 def test_reconciliation_proof_rejects_query_with_different_task_on_same_process(

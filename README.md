@@ -402,6 +402,8 @@ CEO reply agent 默认复用本机 Codex MCP/OAuth 配置，但仍显式禁用 h
 
 Direct Agent 只允许 CLI 发布元数据明确标记为只读的原生 DWS/Lark 命令；任意 shell、包装命令、未知命令和写命令都会被拒绝。DWS/Lark 写命令由 agent 根据 CLI 发布的 effect metadata 调用 `reconciliation_cli.execute_reviewed_write`，服务执行已审核命令并持久化结构化回执。Codex 原生加载用户和项目 bootstrap；服务把存在的 `~/.agents/AGENT.md` 规范正文并入 Direct Agent instructions，避免 agent 再通过 shell 或 exec 重读规则文件。Codex CLI 的 JSONL 事件会返回 MCP `server`、`tool`、`arguments`、`result` 和 `status`，但目前不提供可直接信任的读写注解或 `tools/list` 清单。服务因此使用 [`config/mcp-tool-effects.json`](config/mcp-tool-effects.json) 中逐项审核的 `(server, tool) -> effect` 注册表；可用 `CEO_AGENT_MCP_EFFECTS_PATH` 指向部署方维护的同格式文件。未知工具按 fail-closed 处理，不能凭工具名或用户文本推断为已完成写操作。新增 MCP 工具时必须先从实际 `tools/list` 或受版本控制的能力清单核对工具描述并登记。
 
+Direct Agent 通过 `reconciliation_cli.read_skill` 自行读取已安装目录中的 `SKILL.md`；该工具校验解析后的真实路径和文件大小，不允许借此读取任意本地文件。服务不替 agent 选择 skill，也不预读业务材料。
+
 服务启动会先运行 MCP doctor，检查 `memory_connector`、`exa`、`xiaoqing_interview`，状态只使用 `ready`、`needs_login`、`missing_config`、`token_expired`、`network_blocked`、`tool_not_found` 等明确值。`needs_login` 和 `token_expired` 只记录/提醒一次，然后暂停相关任务，不让 agent 自己触发登录循环。手动检查：
 
 ```bash
