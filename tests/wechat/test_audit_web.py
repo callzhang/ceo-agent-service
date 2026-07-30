@@ -103,6 +103,7 @@ def review_client(tmp_path):
 
     class FakeSender:
         def send(self, delivery, scope):
+            store.mark_wechat_delivery_sending(delivery.id)
             store.set_wechat_delivery_status(delivery.id, "sent")
             sent.append(delivery.id)
             return SendOutcome("sent")

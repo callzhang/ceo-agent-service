@@ -143,7 +143,7 @@ def test_recovery_never_resends_sending(store):
     assert recovered[0].status in {"sent", "send_unknown"}
 
 
-def test_recovery_returns_unknown_delivery_to_ready_only_after_read_confirms_no_send(
+def test_recovery_keeps_unknown_when_read_only_history_has_no_confirmation(
     store,
 ):
     delivery = _seed_delivery(store)
@@ -162,8 +162,8 @@ def test_recovery_returns_unknown_delivery_to_ready_only_after_read_confirms_no_
 
     recovered = reconcile_incomplete_deliveries(store, Reader())
 
-    assert recovered[0].status == "ready_to_send"
-    assert recovered[0].error == ""
+    assert recovered[0].status == "send_unknown"
+    assert recovered[0].error == "sender_execution_interrupted"
 
 
 def test_open_target_waits_for_async_composer_after_session_click():

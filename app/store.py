@@ -4842,30 +4842,32 @@ class AutoReplyStore:
         self, delivery_id: int, status: str, *, error: str = "",
         action_started_at: str | None = None,
     ) -> None:
+        expected_statuses = self._wechat_delivery_source_statuses(status, error)
+        placeholders = ",".join("?" for _ in expected_statuses)
+        generation_guard = (
+            "and exists (select 1 from reply_tasks "
+            "where reply_tasks.id=wechat_deliveries.reply_task_id "
+            "and reply_tasks.execution_generation="
+            "wechat_deliveries.execution_generation)"
+        )
         with self._connect() as db:
             if action_started_at is not None:
                 cursor = db.execute(
                     "update wechat_deliveries set status=?, error=?, "
                     "action_started_at=?, updated_at=current_timestamp where id=? "
-                    "and exists (select 1 from reply_tasks "
-                    "where reply_tasks.id=wechat_deliveries.reply_task_id "
-                    "and reply_tasks.execution_generation="
-                    "wechat_deliveries.execution_generation)",
-                    (status, error, action_started_at, delivery_id),
+                    f"and status in ({placeholders}) {generation_guard}",
+                    (status, error, action_started_at, delivery_id, *expected_statuses),
                 )
             else:
                 cursor = db.execute(
                     "update wechat_deliveries set status=?, error=?, "
                     "updated_at=current_timestamp where id=? "
-                    "and exists (select 1 from reply_tasks "
-                    "where reply_tasks.id=wechat_deliveries.reply_task_id "
-                    "and reply_tasks.execution_generation="
-                    "wechat_deliveries.execution_generation)",
-                    (status, error, delivery_id),
+                    f"and status in ({placeholders}) {generation_guard}",
+                    (status, error, delivery_id, *expected_statuses),
                 )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(
-                    f"WeChat delivery superseded: {delivery_id}"
+                    f"WeChat delivery superseded or not in expected state: {delivery_id}"
                 )
             self._sync_wechat_delivery_reply_attempt(
                 db,
@@ -4873,6 +4875,25 @@ class AutoReplyStore:
                 delivery_status=status,
                 error=error,
             )
+
+    @staticmethod
+    def _wechat_delivery_source_statuses(status: str, error: str) -> tuple[str, ...]:
+        if status == "sending":
+            return ("ready_to_send",)
+        if status == "sent":
+            return ("sending", "send_unknown")
+        if status == "send_unknown":
+            return ("sending", "send_unknown")
+        if status == "failed" and error in {
+            "user_rejected",
+            "target_binding_unverified",
+        }:
+            return ("ready_to_send",)
+        if status == "failed" and error == "recalled":
+            return ("sent",)
+        if status == "failed":
+            return ("sending", "send_unknown")
+        raise ValueError(f"Unsupported WeChat delivery transition target: {status}")
 
     @staticmethod
     def _wechat_delivery_reply_attempt_status(

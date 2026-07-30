@@ -260,11 +260,14 @@ def reconcile_incomplete_deliveries(store, reader) -> list:
             refreshed = store.get_wechat_delivery_for_task(delivery.task_id)
             updated.append(refreshed if refreshed is not None else delivery)
             continue
-        status = "sent" if confirmed else "ready_to_send"
+        status = "sent" if confirmed else "send_unknown"
+        error = "" if confirmed else (
+            delivery.error or "read_only_reconciliation_inconclusive"
+        )
         store.set_wechat_delivery_status(
             delivery.id,
             status,
-            action_started_at="" if status == "ready_to_send" else None,
+            error=error,
         )
         refreshed = store.get_wechat_delivery_for_task(delivery.task_id)
         updated.append(refreshed if refreshed is not None else delivery)

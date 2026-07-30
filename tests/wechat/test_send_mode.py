@@ -70,6 +70,7 @@ def test_auto_mode_sends(tmp_path):
 def test_sender_round_reconciles_unknown_before_retrying(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery = _seed(store)
+    store.mark_wechat_delivery_sending(delivery.id)
     store.set_wechat_delivery_status(
         delivery.id,
         "send_unknown",
@@ -97,8 +98,9 @@ def test_sender_round_reconciles_unknown_before_retrying(tmp_path):
         mode="auto",
         sender_enabled=True,
         reader=Reader(),
-    ) == 1
-    assert events == ["reconciled", "sent"]
+    ) == 0
+    assert events == ["reconciled"]
+    assert store.get_wechat_delivery_by_id(delivery.id).status == "send_unknown"
 
 
 def test_auto_mode_holds_delivery_while_sender_session_is_locked(tmp_path):
@@ -173,6 +175,7 @@ def test_reject_marks_failed_without_send(tmp_path):
 def test_delivery_status_updates_history_attempt(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3"); d, attempt_id = _seed_with_attempt(store)
 
+    store.mark_wechat_delivery_sending(d.id)
     store.set_wechat_delivery_status(d.id, "sent")
 
     attempt = store.get_reply_attempt(attempt_id)
@@ -183,6 +186,7 @@ def test_delivery_status_updates_history_attempt(tmp_path):
 def test_unknown_delivery_status_fails_history_attempt(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3"); d, attempt_id = _seed_with_attempt(store)
 
+    store.mark_wechat_delivery_sending(d.id)
     store.set_wechat_delivery_status(d.id, "send_unknown", error="no_visible_confirmation")
 
     attempt = store.get_reply_attempt(attempt_id)
@@ -193,6 +197,8 @@ def test_unknown_delivery_status_fails_history_attempt(tmp_path):
 
 def test_recall_uses_runner_capability_with_text(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3"); d = _seed(store)
+    store.mark_wechat_delivery_sending(d.id)
+    store.set_wechat_delivery_status(d.id, "sent")
 
     class Runner:
         def __init__(self):

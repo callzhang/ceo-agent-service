@@ -237,7 +237,9 @@ def test_new_generation_does_not_replace_started_or_uncertain_delivery(tmp_path)
             reply_task_id=task.id, account_id="acct-1", target_type="direct",
             target_id="u1", conversation_id="u1", reply_text="old reply",
         )
-        store.set_wechat_delivery_status(delivery_id, status)
+        store.mark_wechat_delivery_sending(delivery_id)
+        if status == "send_unknown":
+            store.set_wechat_delivery_status(delivery_id, status)
         with pytest.raises(
             ValueError,
             match="WeChat delivery reconciliation required before rotation",
@@ -342,7 +344,9 @@ def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
         conversation_id="u1",
         reply_text="old reply",
     )
-    store.set_wechat_delivery_status(old_delivery_id, status)
+    store.mark_wechat_delivery_sending(old_delivery_id)
+    if status == "send_unknown":
+        store.set_wechat_delivery_status(old_delivery_id, status)
 
     with pytest.raises(
         ValueError,
@@ -359,6 +363,29 @@ def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
 
     assert store.get_wechat_delivery_by_id(old_delivery_id).status == status
     assert store.get_wechat_delivery_for_task(2) is None
+
+
+def test_reject_cannot_overwrite_delivery_claimed_by_sender(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="reply",
+    )
+    store.mark_wechat_delivery_sending(delivery_id)
+
+    with pytest.raises(AgentRunLeaseLostError, match="not in expected state"):
+        store.set_wechat_delivery_status(
+            delivery_id, "failed", error="user_rejected"
+        )
+
+    store.set_wechat_delivery_status(delivery_id, "sent")
+    assert store.get_wechat_delivery_by_id(delivery_id).status == "sent"
 
 
 def test_replacing_enabled_scope_does_not_clear_its_watermark(tmp_path):
