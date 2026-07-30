@@ -1,5 +1,6 @@
 import json
 import asyncio
+import ipaddress
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from collections import deque
@@ -54,6 +55,7 @@ from app.config import (
     message_recovery_interval,
     poll_interval_seconds,
     principal_name,
+    principal_display_name,
     producer_interval_seconds,
     read_env_file,
     single_chat_read_recovery_limit,
@@ -83,10 +85,7 @@ from app.developer_prompt import (
     write_configurable_prompt_variables,
     write_user_prompt_template,
 )
-from app.dingtalk_models import (
-    DingTalkConversation,
-    DingTalkMessage,
-)
+from app.dingtalk_models import DingTalkMessage
 from app.wechat.models import WechatMessage
 from app.dws_client import DwsClient
 from app.feedback_spike import (
@@ -6488,7 +6487,6 @@ def handle_agent_run_resolution_post(
         "execution_generation",
         "resolution",
         "reason",
-        "actor",
     )
     missing = [name for name in required if payload.get(name) in {None, ""}]
     if missing:
@@ -6498,7 +6496,7 @@ def handle_agent_run_resolution_post(
         expected_execution_generation=str(payload["execution_generation"]),
         resolution=str(payload["resolution"]),
         reason=str(payload["reason"]),
-        actor=str(payload["actor"]),
+        actor=principal_display_name(),
     )
     return {
         "run_id": resolved.run_id,
@@ -6531,97 +6529,67 @@ def _safe_action_return_to(return_to: str, attempt_id: int) -> str:
 
 def handle_reviewed_message_reply(
     store: AutoReplyStore,
-    dws: DwsClient,
     *,
-    user_name: str,
-    group_name: str,
-    message_str: str,
+    attempt_id: int,
     reply_text: str,
     reviewer_feedback: str = "",
 ) -> dict[str, object]:
-    conversations = dws.search_conversations(group_name)
-    exact_conversations = [
-        conversation for conversation in conversations if conversation.title == group_name
-    ]
-    stored_conversation = None
-    if len(exact_conversations) != 1:
-        stored_conversation = store.find_conversation_by_title(group_name)
-    if len(exact_conversations) != 1 and stored_conversation is not None:
-        exact_conversations = [
-            DingTalkConversation(
-                open_conversation_id=stored_conversation.conversation_id,
-                title=stored_conversation.title,
-                single_chat=stored_conversation.single_chat,
-                unread_point=1,
-            )
-        ]
-    if len(exact_conversations) != 1:
-        raise ValueError(
-            f"expected one conversation named {group_name!r}, got {len(exact_conversations)}"
-        )
-    conversation = exact_conversations[0]
-    messages = _reviewed_reply_lookup_messages(dws, conversation)
-    matches = [
-        message
-        for message in messages
-        if message.sender_name == user_name and message.content == message_str
-    ]
-    if not matches:
-        raise ValueError("message not found for user_name/group_name/message_str")
-    trigger = matches[0]
-    store.upsert_conversation(
-        conversation_id=conversation.open_conversation_id,
-        title=conversation.title,
-        single_chat=conversation.single_chat,
-        codex_session_id=None,
+    source = store.get_reply_attempt(attempt_id)
+    if source is None:
+        raise ValueError(f"reply attempt not found: {attempt_id}")
+    if source.channel != "dingtalk":
+        raise ValueError("reviewed reply requires a DingTalk attempt")
+    task = store.get_reply_task_for_message(
+        source.conversation_id,
+        source.trigger_message_id,
+        channel=source.channel,
     )
-    attempt_id, _task = store.record_reviewed_reply_rerun(
-        conversation_id=conversation.open_conversation_id,
-        conversation_title=conversation.title,
-        single_chat=conversation.single_chat,
-        trigger_message_id=trigger.open_message_id,
-        trigger_create_time=trigger.create_time,
-        trigger_sender=trigger.sender_name,
-        trigger_text=trigger.content,
-        trigger_message_json=trigger.model_dump_json(),
+    if task is not None and _is_valid_rerun_trigger_json(task.trigger_message_json):
+        trigger_message_json = task.trigger_message_json
+        trigger_create_time = task.trigger_create_time
+        conversation_title = task.conversation_title
+        single_chat = task.single_chat
+    else:
+        conversation = store.get_conversation(source.conversation_id)
+        single_chat = conversation.single_chat if conversation is not None else False
+        conversation_title = (
+            conversation.title if conversation is not None else source.conversation_title
+        )
+        trigger = DingTalkMessage(
+            open_conversation_id=source.conversation_id,
+            open_message_id=source.trigger_message_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            sender_name=source.trigger_sender,
+            create_time=source.created_at,
+            content=source.trigger_text,
+        )
+        trigger_message_json = trigger.model_dump_json()
+        trigger_create_time = trigger.create_time
+    reviewed_attempt_id, _task = store.record_reviewed_reply_rerun(
+        conversation_id=source.conversation_id,
+        conversation_title=conversation_title,
+        single_chat=single_chat,
+        trigger_message_id=source.trigger_message_id,
+        trigger_create_time=trigger_create_time,
+        trigger_sender=source.trigger_sender,
+        trigger_text=source.trigger_text,
+        trigger_message_json=trigger_message_json,
         suggested_reply_text=reply_text,
         reviewer_feedback=reviewer_feedback,
     )
-    attempt = store.get_reply_attempt(attempt_id)
+    attempt = store.get_reply_attempt(reviewed_attempt_id)
     if attempt is None:
-        raise ValueError(f"reply attempt disappeared: {attempt_id}")
+        raise ValueError(f"reply attempt disappeared: {reviewed_attempt_id}")
     return {
-        "attempt_id": attempt_id,
-        "conversation_title": conversation.title,
-        "trigger_sender": trigger.sender_name,
-        "trigger_text": trigger.content,
+        "attempt_id": reviewed_attempt_id,
+        "conversation_title": conversation_title,
+        "trigger_sender": source.trigger_sender,
+        "trigger_text": source.trigger_text,
         "send_status": "queued",
         "final_reply_text": "",
         "reviewer_feedback": attempt.reviewer_feedback,
     }
-
-
-def _reviewed_reply_lookup_messages(
-    dws: DwsClient,
-    conversation: DingTalkConversation,
-) -> list[DingTalkMessage]:
-    seen_message_ids: set[str] = set()
-    result: list[DingTalkMessage] = []
-    lookup_batches = []
-    if not conversation.single_chat:
-        lookup_batches.append(dws.read_mentioned_messages(conversation, limit=100))
-    lookup_batches.extend(
-        [
-            dws.read_recent_messages(conversation),
-            dws.read_unread_messages(conversation),
-        ]
-    )
-    for message in [message for batch in lookup_batches for message in batch]:
-        if message.open_message_id in seen_message_ids:
-            continue
-        seen_message_ids.add(message.open_message_id)
-        result.append(message)
-    return result
 
 
 def _audit_store(db_path: Path) -> AutoReplyStore:
@@ -6634,6 +6602,15 @@ def _audit_store(db_path: Path) -> AutoReplyStore:
 def _is_sqlite_busy_error(exc: sqlite3.OperationalError) -> bool:
     message = str(exc).lower()
     return "database is locked" in message or "database is busy" in message
+
+
+def _request_is_loopback(request: Request) -> bool:
+    if request.client is None:
+        return False
+    try:
+        return ipaddress.ip_address(request.client.host).is_loopback
+    except ValueError:
+        return False
 
 
 def _render_history_busy_page() -> str:
@@ -7091,6 +7068,8 @@ def create_audit_app(
 
     @app.post("/agent-runs/{run_id}/resolution")
     async def resolve_agent_run(run_id: int, request: Request):
+        if not _request_is_loopback(request):
+            raise HTTPException(status_code=403, detail="loopback access required")
         payload = json.loads((await request.body()).decode("utf-8"))
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="JSON object required")
@@ -7107,17 +7086,17 @@ def create_audit_app(
     @app.post("/messages/reviewed-reply")
     async def reviewed_reply(request: Request):
         payload = json.loads((await request.body()).decode("utf-8"))
-        result = handle_reviewed_message_reply(
-            AutoReplyStore(db_path),
-            DwsClient(ding_robot_code=ding_robot_code, ding_robot_name=ding_robot_name),
-            user_name=str(payload["user_name"]),
-            group_name=str(payload["group_name"]),
-            message_str=str(payload["message_str"]),
-            reply_text=str(payload["reply_text"]),
-            reviewer_feedback=str(
-                payload.get("reviewer_feedback") or payload.get("feedback") or ""
-            ),
-        )
+        try:
+            result = handle_reviewed_message_reply(
+                AutoReplyStore(db_path),
+                attempt_id=int(payload["attempt_id"]),
+                reply_text=str(payload["reply_text"]),
+                reviewer_feedback=str(
+                    payload.get("reviewer_feedback") or payload.get("feedback") or ""
+                ),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return JSONResponse(result)
 
     return app

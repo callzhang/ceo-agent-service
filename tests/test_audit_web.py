@@ -43,7 +43,7 @@ from app.audit_web import (
 )
 from app.developer_prompt import read_developer_prompt_template
 from app.config import load_env_file
-from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.dingtalk_models import DingTalkMessage
 from app.setup_wizard_models import SetupWizardEvent
 from app.store import AutoReplyStore
 from app.wechat.models import WechatMessage
@@ -4753,7 +4753,9 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
         next_attempt_at="",
         suspended=True,
     )
-    client = TestClient(create_audit_app(store.path))
+    client = TestClient(
+        create_audit_app(store.path), client=("127.0.0.1", 50000)
+    )
 
     response = client.post(
         f"/agent-runs/{run.id}/resolution",
@@ -4761,13 +4763,16 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
             "execution_generation": task.execution_generation,
             "resolution": "confirmed_occurred",
             "reason": "已核对执行回执",
-            "actor": "Derek",
+            "actor": "untrusted-client-value",
         },
     )
 
     assert response.status_code == 200
     assert response.json()["resolution"] == "confirmed_occurred"
     assert store.get_reply_task(task.id).status == "done"
+    attempt = store.get_reply_attempt(response.json()["attempt_id"])
+    assert attempt is not None
+    assert "untrusted-client-value" not in attempt.audit_summary
 
 
 def test_agent_run_resolution_handler_rejects_free_text_without_enum(tmp_path: Path):
@@ -4780,9 +4785,26 @@ def test_agent_run_resolution_handler_rejects_free_text_without_enum(tmp_path: P
                 "execution_generation": "initial",
                 "resolution": "看起来应该成功了",
                 "reason": "备注",
-                "actor": "Derek",
             },
         )
+
+
+def test_agent_run_resolution_api_rejects_non_loopback_client(tmp_path: Path):
+    client = TestClient(
+        create_audit_app(tmp_path / "audit.sqlite3"),
+        client=("192.0.2.10", 50000),
+    )
+
+    response = client.post(
+        "/agent-runs/1/resolution",
+        json={
+            "execution_generation": "initial",
+            "resolution": "confirmed_occurred",
+            "reason": "已核对",
+        },
+    )
+
+    assert response.status_code == 403
 
 
 def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
@@ -4810,7 +4832,7 @@ def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
     )
     app = create_audit_app(db_path=store.path)
 
-    response = TestClient(app).post(
+    response = TestClient(app, client=("127.0.0.1", 50000)).post(
         f"/agent-runs/{run.id}/resolution",
         json={
             "execution_generation": "stale-generation",
@@ -5034,537 +5056,59 @@ def test_handle_recall_post_blocks_without_recall_key(tmp_path: Path):
     assert "撤销不可用" in html
 
 
-def test_handle_reviewed_message_reply_matches_sender_group_and_text(
-    monkeypatch,
-    tmp_path: Path,
-):
-    class FakeDws:
-        def __init__(self):
-            self.sent_messages = []
-            self.reply_messages = []
-
-        def search_conversations(self, query):
-            assert query == "【招聘】大模型项目经理/大模型数据解决方案专家"
-            return [
-                DingTalkConversation(
-                    open_conversation_id="cid-1",
-                    title="【招聘】大模型项目经理/大模型数据解决方案专家",
-                    single_chat=False,
-                    unread_point=0,
-                )
-            ]
-
-        def read_mentioned_messages(self, conversation, limit=50):
-            assert conversation.open_conversation_id == "cid-1"
-            assert limit == 100
-            return [
-                DingTalkMessage(
-                    open_conversation_id="cid-1",
-                    open_message_id="msg-1",
-                    conversation_title=conversation.title,
-                    single_chat=False,
-                    sender_name="Mina 邹",
-                    sender_open_dingtalk_id="open-mina",
-                    sender_user_id="user-mina",
-                    create_time="2026-05-25 13:30:26",
-                    content="@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力",
-                )
-            ]
-
-        def read_recent_messages(self, conversation):
-            return [
-                DingTalkMessage(
-                    open_conversation_id=conversation.open_conversation_id,
-                    open_message_id=f"sent-{index}",
-                    conversation_title=conversation.title,
-                    single_chat=conversation.single_chat,
-                    sender_name="Alex Chen(明哥)",
-                    create_time="2026-05-25 13:31:00",
-                    content=reply[3],
-                )
-                for index, reply in enumerate(self.reply_messages, start=1)
-            ]
-
-        def read_unread_messages(self, conversation):
-            return []
-
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            del at_open_dingtalk_names, open_dingtalk_id
-            self.sent_messages.append(
-                (conversation_id, text, at_open_dingtalk_ids or at_users or [], user_id)
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
-        def reply_message(
-            self,
-            conversation_id,
-            ref_message_id,
-            ref_sender_open_dingtalk_id,
-            text,
-            *,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-        ):
-            self.reply_messages.append(
-                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
-        def send_reply_to_trigger(
-            self,
-            conversation,
-            trigger,
-            text,
-            at_users=None,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-        ):
-            del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
-            return self.reply_message(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: None,
-    )
+def test_handle_reviewed_message_reply_uses_immutable_attempt_binding(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    dws = FakeDws()
-
-    result = handle_reviewed_message_reply(
-        store,
-        dws,
-        user_name="Mina 邹",
-        group_name="【招聘】大模型项目经理/大模型数据解决方案专家",
-        message_str="@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力",
-        reply_text="这个岗位核心看业务拆解、模型理解、项目推进和学习速度。",
-    )
-
-    attempt = store.get_reply_attempt(result["attempt_id"])
-    task = store.get_reply_task_for_message("cid-1", "msg-1")
-    sent_reply = store.get_sent_reply("cid-1", "msg-1")
-    assert result["send_status"] == "queued"
-    assert attempt is not None
-    assert attempt.trigger_sender == "Mina 邹"
-    assert attempt.trigger_text == "@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力"
-    assert attempt.draft_reply_text == "这个岗位核心看业务拆解、模型理解、项目推进和学习速度。"
-    assert attempt.final_reply_text == ""
-    assert task is not None
-    assert task.status == "pending"
-    assert task.force_new_decision is True
-    assert task.manual_rerun_attempt_id == attempt.id
-    assert dws.sent_messages == []
-    assert dws.reply_messages == []
-    assert sent_reply is None
-
-    first_generation = task.execution_generation
-    second_result = handle_reviewed_message_reply(
-        store,
-        dws,
-        user_name="Mina 邹",
-        group_name="【招聘】大模型项目经理/大模型数据解决方案专家",
-        message_str="@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力",
-        reply_text="这个岗位核心看业务拆解、模型理解、项目推进和学习速度。",
-    )
-    requeued = store.get_reply_task_for_message("cid-1", "msg-1")
-    assert second_result["send_status"] == "queued"
-    assert requeued is not None
-    assert requeued.id == task.id
-    assert requeued.execution_generation == first_generation
-    assert second_result["attempt_id"] == attempt.id
-    assert requeued.manual_rerun_attempt_id == attempt.id
-    assert store.get_sent_reply("cid-1", "msg-1") is None
-
-
-def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
-    monkeypatch,
-    tmp_path: Path,
-):
-    class FakeDws:
-        def __init__(self):
-            self.sent_messages = []
-            self.reply_messages = []
-
-        def search_conversations(self, query):
-            assert query == "官网迭代群"
-            return []
-
-        def read_mentioned_messages(self, conversation, limit=50):
-            return []
-
-        def read_recent_messages(self, conversation):
-            assert conversation.open_conversation_id == "cid-site"
-            assert conversation.single_chat is False
-            messages = [
-                DingTalkMessage(
-                    open_conversation_id="cid-site",
-                    open_message_id="msg-site-1",
-                    conversation_title=conversation.title,
-                    single_chat=False,
-                    sender_name="Claire",
-                    sender_open_dingtalk_id="open-claire",
-                    sender_user_id="user-claire",
-                    create_time="2026-05-28 04:04:53",
-                    content="@All 新的官网更新一共16页，请大家打开每一个的html文档",
-                )
-            ]
-            messages.extend(
-                DingTalkMessage(
-                    open_conversation_id=conversation.open_conversation_id,
-                    open_message_id=f"sent-{index}",
-                    conversation_title=conversation.title,
-                    single_chat=conversation.single_chat,
-                    sender_name="Alex Chen(明哥)",
-                    create_time="2026-05-28 04:05:00",
-                    content=reply[3],
-                )
-                for index, reply in enumerate(self.reply_messages, start=1)
-            )
-            return messages
-
-        def read_unread_messages(self, conversation):
-            return []
-
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            del at_open_dingtalk_names, open_dingtalk_id
-            self.sent_messages.append(
-                (conversation_id, text, at_open_dingtalk_ids or at_users or [], user_id)
-            )
-            return {"result": {"processQueryKey": "recall-site-1"}}
-
-        def reply_message(
-            self,
-            conversation_id,
-            ref_message_id,
-            ref_sender_open_dingtalk_id,
-            text,
-            *,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-        ):
-            self.reply_messages.append(
-                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
-            )
-            return {"result": {"processQueryKey": "recall-site-1"}}
-
-        def send_reply_to_trigger(
-            self,
-            conversation,
-            trigger,
-            text,
-            at_users=None,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-        ):
-            del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
-            return self.reply_message(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: None,
-    )
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation(
-        "cid-site",
-        title="官网迭代群",
+    store.enqueue_reply_task(
+        conversation_id="cid-stable",
+        conversation_title="同名群",
         single_chat=False,
-        codex_session_id=None,
+        trigger_message_id="msg-stable",
+        trigger_create_time="2026-07-30 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="重复正文",
     )
-    dws = FakeDws()
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-stable",
+        conversation_title="同名群",
+        trigger_message_id="msg-stable",
+        trigger_sender="Mina",
+        trigger_text="重复正文",
+        action="send_reply",
+        sensitivity_kind="normal",
+    )
 
     result = handle_reviewed_message_reply(
         store,
-        dws,
-        user_name="Claire",
-        group_name="官网迭代群",
-        message_str="@All 新的官网更新一共16页，请大家打开每一个的html文档",
-        reply_text="我已经完成审核，会把核心 comment 补到 tracker。",
-        reviewer_feedback=(
-            "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
-        ),
+        attempt_id=attempt_id,
+        reply_text="按审核意见重跑",
+        reviewer_feedback="使用稳定消息身份",
     )
 
-    attempt = store.get_reply_attempt(result["attempt_id"])
-    task = store.get_reply_task_for_message("cid-site", "msg-site-1")
-    assert result["send_status"] == "queued"
-    assert attempt is not None
-    assert attempt.final_reply_text == ""
-    assert (
-        attempt.reviewer_feedback
-        == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
-    )
-    assert attempt.corrected_reply_text == "我已经完成审核，会把核心 comment 补到 tracker。"
+    task = store.get_reply_task_for_message("cid-stable", "msg-stable")
+    reviewed_attempt = store.get_reply_attempt(result["attempt_id"])
+    assert reviewed_attempt is not None
+    assert reviewed_attempt.conversation_id == "cid-stable"
+    assert reviewed_attempt.trigger_message_id == "msg-stable"
     assert task is not None
+    assert task.manual_rerun_attempt_id == result["attempt_id"]
     assert task.status == "pending"
-    assert task.force_new_decision is True
-    assert task.manual_rerun_attempt_id == attempt.id
-    assert dws.sent_messages == []
-    assert dws.reply_messages == []
-    assert store.get_sent_reply("cid-site", "msg-site-1") is None
 
 
-def test_handle_reviewed_message_reply_matches_private_message_without_mention(
-    monkeypatch,
-    tmp_path: Path,
-):
-    class FakeDws:
-        def __init__(self):
-            self.sent_messages = []
-            self.reply_messages = []
-            self.read_mentioned_calls = 0
+def test_reviewed_reply_api_rejects_mutable_text_lookup_payload(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
 
-        def search_conversations(self, query):
-            assert query == "Mina 邹"
-            return [
-                DingTalkConversation(
-                    open_conversation_id="cid-private",
-                    title="Mina 邹",
-                    single_chat=True,
-                    unread_point=1,
-                )
-            ]
-
-        def read_mentioned_messages(self, conversation, limit=50):
-            self.read_mentioned_calls += 1
-            raise AssertionError("private lookup should not use mention list")
-
-        def read_recent_messages(self, conversation):
-            assert conversation.open_conversation_id == "cid-private"
-            return [
-                DingTalkMessage(
-                    open_conversation_id="cid-private",
-                    open_message_id="msg-private-1",
-                    conversation_title=conversation.title,
-                    single_chat=True,
-                    sender_name="Mina 邹",
-                    sender_open_dingtalk_id="open-mina",
-                    sender_user_id="user-mina",
-                    create_time="2026-05-25 13:40:26",
-                    content="明哥分身，大模型项目经理需要具备什么能力",
-                )
-            ]
-
-        def read_unread_messages(self, conversation):
-            return []
-
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            del at_open_dingtalk_ids, at_open_dingtalk_names, open_dingtalk_id
-            self.sent_messages.append((conversation_id, text, at_users, user_id))
-            return {"result": {"processQueryKey": "recall-private-1"}}
-
-        def reply_message(
-            self,
-            conversation_id,
-            ref_message_id,
-            ref_sender_open_dingtalk_id,
-            text,
-            *,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-        ):
-            self.reply_messages.append(
-                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
-            )
-            return {"result": {"processQueryKey": "recall-private-1"}}
-
-        def send_reply_to_trigger(
-            self,
-            conversation,
-            trigger,
-            text,
-            at_users=None,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-        ):
-            del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
-            return self.reply_message(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: None,
-    )
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    dws = FakeDws()
-
-    result = handle_reviewed_message_reply(
-        store,
-        dws,
-        user_name="Mina 邹",
-        group_name="Mina 邹",
-        message_str="明哥分身，大模型项目经理需要具备什么能力",
-        reply_text="这个岗位核心看业务拆解、模型理解、项目推进和学习速度。",
+    response = client.post(
+        "/messages/reviewed-reply",
+        json={
+            "group_name": "同名群",
+            "user_name": "Mina",
+            "message_str": "重复正文",
+            "reply_text": "不应按文本反查",
+        },
     )
 
-    attempt = store.get_reply_attempt(result["attempt_id"])
-    task = store.get_reply_task_for_message("cid-private", "msg-private-1")
-    sent_reply = store.get_sent_reply("cid-private", "msg-private-1")
-    assert result["send_status"] == "queued"
-    assert attempt is not None
-    assert attempt.trigger_sender == "Mina 邹"
-    assert attempt.trigger_text == "明哥分身，大模型项目经理需要具备什么能力"
-    assert attempt.final_reply_text == ""
-    assert task is not None
-    assert task.status == "pending"
-    assert task.force_new_decision is True
-    assert task.manual_rerun_attempt_id == attempt.id
-    assert dws.sent_messages == []
-    assert dws.reply_messages == []
-    assert sent_reply is None
+    assert response.status_code == 409
 
-
-def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_search_misses(
-    monkeypatch,
-    tmp_path: Path,
-):
-    class FakeDws:
-        def __init__(self):
-            self.sent_messages = []
-            self.reply_messages = []
-
-        def search_conversations(self, query):
-            assert query == "Mina 邹"
-            return []
-
-        def read_recent_messages(self, conversation):
-            assert conversation.open_conversation_id == "cid-private"
-            assert conversation.single_chat is True
-            return [
-                DingTalkMessage(
-                    open_conversation_id="cid-private",
-                    open_message_id="msg-private-1",
-                    conversation_title=conversation.title,
-                    single_chat=True,
-                    sender_name="Mina 邹",
-                    sender_open_dingtalk_id="open-mina",
-                    sender_user_id="user-mina",
-                    create_time="2026-05-25 13:40:26",
-                    content="好",
-                )
-            ]
-
-        def read_unread_messages(self, conversation):
-            return []
-
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            del at_open_dingtalk_ids, at_open_dingtalk_names, open_dingtalk_id
-            self.sent_messages.append((conversation_id, text, at_users, user_id))
-            return {"result": {"processQueryKey": "recall-private-1"}}
-
-        def reply_message(
-            self,
-            conversation_id,
-            ref_message_id,
-            ref_sender_open_dingtalk_id,
-            text,
-            *,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-        ):
-            self.reply_messages.append(
-                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
-            )
-            return {"result": {"processQueryKey": "recall-private-1"}}
-
-        def send_reply_to_trigger(
-            self,
-            conversation,
-            trigger,
-            text,
-            at_users=None,
-            at_open_dingtalk_ids=None,
-            at_open_dingtalk_names=None,
-        ):
-            del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
-            return self.reply_message(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                trigger.sender_open_dingtalk_id,
-                text,
-            )
-
-    monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: None,
-    )
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation(
-        "cid-private",
-        title="Mina 邹",
-        single_chat=True,
-        codex_session_id=None,
-    )
-    dws = FakeDws()
-
-    result = handle_reviewed_message_reply(
-        store,
-        dws,
-        user_name="Mina 邹",
-        group_name="Mina 邹",
-        message_str="好",
-        reply_text="收到，那你先按这个口径推进。",
-    )
-
-    attempt = store.get_reply_attempt(result["attempt_id"])
-    task = store.get_reply_task_for_message("cid-private", "msg-private-1")
-    assert result["send_status"] == "queued"
-    assert attempt is not None
-    assert attempt.final_reply_text == ""
-    assert task is not None
-    assert task.status == "pending"
-    assert task.force_new_decision is True
-    assert task.manual_rerun_attempt_id == attempt.id
-    assert dws.sent_messages == []
-    assert dws.reply_messages == []
-    assert store.get_sent_reply("cid-private", "msg-private-1") is None
 
 
 def test_render_log_list_shows_recent_operations(tmp_path: Path):

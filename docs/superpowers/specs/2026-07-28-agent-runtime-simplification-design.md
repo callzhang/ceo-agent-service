@@ -289,6 +289,13 @@ Operational diagnostics expose:
 - completed tool calls and safe receipt summaries;
 - failed versus unknown side-effect state.
 
+Audit mutations bind reviewed replies to an immutable attempt ID, which in turn
+identifies the exact conversation and trigger message. They never rediscover a
+target from a group title, display name, or message text. Manual resolution of
+an unknown side effect is loopback-only unless the Audit service gains a real
+authentication layer; its audit actor always comes from the configured service
+principal and never from request data.
+
 ## Migration
 
 The rollout order is:
