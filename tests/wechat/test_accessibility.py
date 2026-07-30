@@ -27,6 +27,11 @@ class FakeRunner:
         return self.result
 
 
+class RaisingRunner:
+    def send(self, *_args, **_kwargs):
+        raise RuntimeError("sender transport stopped after action may have started")
+
+
 def _scope(binding_status):
     return WechatReplyScope(
         account_id="acct-1", target_type="direct", target_id="u9",
@@ -117,11 +122,46 @@ def test_post_action_ambiguity_becomes_send_unknown(store):
     assert store.get_wechat_delivery_for_task(1).status == "send_unknown"
 
 
+def test_sender_exception_after_claim_becomes_send_unknown(store):
+    sender = WechatSender(store, RaisingRunner())
+    delivery = _seed_delivery(store)
+
+    outcome = sender.send(delivery, _scope("verified"))
+
+    assert outcome.status == "send_unknown"
+    persisted = store.get_wechat_delivery_for_task(1)
+    assert persisted.status == "send_unknown"
+    assert persisted.error == "sender_execution_interrupted"
+
+
 def test_recovery_never_resends_sending(store):
     delivery = _seed_delivery(store)
     store.mark_wechat_delivery_sending(delivery.id)
     recovered = reconcile_incomplete_deliveries(store, reader=None)
     assert recovered[0].status in {"sent", "send_unknown"}
+
+
+def test_recovery_returns_unknown_delivery_to_ready_only_after_read_confirms_no_send(
+    store,
+):
+    delivery = _seed_delivery(store)
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "send_unknown",
+        error="sender_execution_interrupted",
+    )
+
+    class Reader:
+        account = object()
+
+        def read_messages(self, *_args, **_kwargs):
+            return []
+
+    recovered = reconcile_incomplete_deliveries(store, Reader())
+
+    assert recovered[0].status == "ready_to_send"
+    assert recovered[0].error == ""
 
 
 def test_open_target_waits_for_async_composer_after_session_click():

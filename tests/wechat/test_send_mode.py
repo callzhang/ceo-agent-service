@@ -67,6 +67,40 @@ def test_auto_mode_sends(tmp_path):
     assert sender.sent == [1]
 
 
+def test_sender_round_reconciles_unknown_before_retrying(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery = _seed(store)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "send_unknown",
+        error="sender_execution_interrupted",
+    )
+    events = []
+
+    class Reader:
+        account = object()
+
+        def read_messages(self, *_args, **_kwargs):
+            events.append("reconciled")
+            return []
+
+    class Sender(FakeSender):
+        def send(self, delivery, scope):
+            events.append("sent")
+            return super().send(delivery, scope)
+
+    sender = Sender()
+
+    assert service.process_ready_wechat_deliveries(
+        store,
+        sender,
+        mode="auto",
+        sender_enabled=True,
+        reader=Reader(),
+    ) == 1
+    assert events == ["reconciled", "sent"]
+
+
 def test_auto_mode_holds_delivery_while_sender_session_is_locked(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery = _seed(store)

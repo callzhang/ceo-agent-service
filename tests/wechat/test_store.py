@@ -183,6 +183,83 @@ def test_generation_rotation_supersedes_ready_delivery_atomically(tmp_path):
     assert store.list_wechat_deliveries_by_status("ready_to_send") == []
 
 
+def test_new_generation_replaces_superseded_delivery_with_corrected_reply(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    task = store.claim_reply_tasks(1, channel="wechat")[0]
+    store.create_wechat_delivery(
+        reply_task_id=task.id, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="old reply",
+    )
+    new_generation = store.rotate_reply_task_execution_generation(task.id)
+
+    store.finalize_wechat_reply_task(
+        task_id=task.id,
+        expected_execution_generation=new_generation,
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="reviewed correction",
+        draft_reply_text="corrected reply",
+        audit_summary="corrected reply queued",
+        send_status="pending",
+        account_id="acct-1",
+        target_type="direct",
+        target_id="u1",
+        conversation_id="u1",
+        reply_text="corrected reply",
+    )
+
+    delivery = store.get_wechat_delivery_for_task(task.id)
+    assert delivery.status == "ready_to_send"
+    assert delivery.execution_generation == new_generation
+    assert delivery.reply_text == "corrected reply"
+    assert delivery.error == ""
+
+
+def test_new_generation_does_not_replace_started_or_uncertain_delivery(tmp_path):
+    for status in ("sending", "sent", "send_unknown"):
+        store = AutoReplyStore(tmp_path / f"{status}.sqlite3")
+        store.enqueue_reply_task(
+            channel="wechat", conversation_id="u1", conversation_title="Alex",
+            single_chat=True, trigger_message_id="m1",
+            trigger_create_time="2026-07-30T10:00:00",
+            trigger_sender="Alex", trigger_text="hi",
+        )
+        task = store.claim_reply_tasks(1, channel="wechat")[0]
+        delivery_id = store.create_wechat_delivery(
+            reply_task_id=task.id, account_id="acct-1", target_type="direct",
+            target_id="u1", conversation_id="u1", reply_text="old reply",
+        )
+        store.set_wechat_delivery_status(delivery_id, status)
+        new_generation = store.rotate_reply_task_execution_generation(task.id)
+
+        try:
+            store.finalize_wechat_reply_task(
+                task_id=task.id,
+                expected_execution_generation=new_generation,
+                action="send_reply",
+                sensitivity_kind="general",
+                codex_reason="reviewed correction",
+                draft_reply_text="corrected reply",
+                audit_summary="corrected reply queued",
+                send_status="pending",
+                account_id="acct-1",
+                target_type="direct",
+                target_id="u1",
+                conversation_id="u1",
+                reply_text="corrected reply",
+            )
+        except ValueError as exc:
+            assert str(exc) == "started WeChat delivery cannot be replaced"
+        else:
+            raise AssertionError(f"{status} delivery was replaced")
+
+
 def test_new_delivery_supersedes_older_unsent_delivery_for_same_conversation(
     tmp_path,
 ):

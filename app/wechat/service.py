@@ -153,10 +153,18 @@ def _sender_is_ready(sender) -> bool:
         return False
 
 
-def process_ready_wechat_deliveries(store, sender, *, mode: str, sender_enabled: bool) -> int:
+def process_ready_wechat_deliveries(
+    store,
+    sender,
+    *,
+    mode: str,
+    sender_enabled: bool,
+    reader=None,
+) -> int:
     """Auto mode + sender enabled: send every ready_to_send delivery. Confirm mode
     (or sender disabled): send nothing — hold them for explicit approval. Returns
     the number sent."""
+    recover_before_sender(store, reader)
     if not sender_enabled or mode != "auto":
         return 0
     if not _sender_is_ready(sender):

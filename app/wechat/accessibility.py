@@ -206,12 +206,21 @@ class WechatSender:
         if claimed is None:
             return SendOutcome("not_claimed", "delivery_not_claimed")
         delivery = claimed
-        result = self.runner.send(
-            scope.display_name,
-            delivery.reply_text,
-            search_query=scope.binding_evidence.get("navigation_query") or None,
-            expected_recent_text=delivery.evidence.get("trigger_text") or None,
-        )
+        try:
+            result = self.runner.send(
+                scope.display_name,
+                delivery.reply_text,
+                search_query=scope.binding_evidence.get("navigation_query") or None,
+                expected_recent_text=delivery.evidence.get("trigger_text") or None,
+            )
+        except Exception:
+            error = "sender_execution_interrupted"
+            self.store.set_wechat_delivery_status(
+                delivery.id,
+                "send_unknown",
+                error=error,
+            )
+            return SendOutcome("send_unknown", error)
 
         if result.action_performed and result.visible_confirmation:
             status, error = "sent", ""
@@ -224,27 +233,46 @@ class WechatSender:
 
 
 def reconcile_incomplete_deliveries(store, reader) -> list:
-    """Turn orphaned 'sending' rows into sent/send_unknown. Never resends."""
+    """Reconcile uncertain sends from read-only message history."""
     updated = []
-    for delivery in store.list_wechat_deliveries_by_status("sending"):
-        confirmed = False
+    uncertain = (
+        store.list_wechat_deliveries_by_status("sending")
+        + store.list_wechat_deliveries_by_status("send_unknown")
+    )
+    for delivery in uncertain:
+        if reader is None or getattr(reader, "account", None) is None:
+            store.set_wechat_delivery_status(
+                delivery.id,
+                "send_unknown",
+                error=delivery.error or "read_only_reconciliation_unavailable",
+            )
+            refreshed = store.get_wechat_delivery_for_task(delivery.task_id)
+            updated.append(refreshed if refreshed is not None else delivery)
+            continue
         try:
             confirmed = _outbound_exists(reader, delivery)
         except Exception:
-            confirmed = False
-        status = "sent" if confirmed else "send_unknown"
-        store.set_wechat_delivery_status(delivery.id, status)
+            store.set_wechat_delivery_status(
+                delivery.id,
+                "send_unknown",
+                error=delivery.error or "read_only_reconciliation_failed",
+            )
+            refreshed = store.get_wechat_delivery_for_task(delivery.task_id)
+            updated.append(refreshed if refreshed is not None else delivery)
+            continue
+        status = "sent" if confirmed else "ready_to_send"
+        store.set_wechat_delivery_status(
+            delivery.id,
+            status,
+            action_started_at="" if status == "ready_to_send" else None,
+        )
         refreshed = store.get_wechat_delivery_for_task(delivery.task_id)
         updated.append(refreshed if refreshed is not None else delivery)
     return updated
 
 
 def _outbound_exists(reader, delivery) -> bool:
-    if reader is None:
-        return False
-    account = getattr(reader, "account", None)
-    if account is None:
-        return False
+    account = reader.account
     messages = reader.read_messages(
         account, conversation_id=delivery.conversation_id,
         conversation_type=delivery.target_type, limit=20,

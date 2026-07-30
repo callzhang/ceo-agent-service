@@ -4504,7 +4504,7 @@ class AutoReplyStore:
                 elif (
                     existing["execution_generation"]
                     != expected_execution_generation
-                    and existing["status"] == "ready_to_send"
+                    and existing["status"] in {"ready_to_send", "superseded"}
                 ):
                     db.execute(
                         """
@@ -4514,7 +4514,7 @@ class AutoReplyStore:
                             execution_generation=?, status='ready_to_send',
                             action_started_at='', evidence_json=?, error='',
                             updated_at=current_timestamp
-                        where id=? and status='ready_to_send'
+                        where id=? and status in ('ready_to_send', 'superseded')
                         """,
                         (
                             account_id, target_type, target_id, conversation_id,
