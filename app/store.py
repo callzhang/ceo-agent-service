@@ -4104,6 +4104,21 @@ class AutoReplyStore:
                 current_generation,
                 now_text=now_text,
             )
+            unresolved_wechat_delivery = db.execute(
+                """
+                select 1
+                from wechat_deliveries
+                where reply_task_id=?
+                  and execution_generation=?
+                  and status in ('sending', 'send_unknown')
+                limit 1
+                """,
+                (task_id, current_generation),
+            ).fetchone()
+            if unresolved_wechat_delivery is not None:
+                raise ValueError(
+                    "WeChat delivery reconciliation required before rotation"
+                )
             if blocked:
                 execution_generation = current_generation
             else:
@@ -4805,16 +4820,28 @@ class AutoReplyStore:
     ) -> None:
         with self._connect() as db:
             if action_started_at is not None:
-                db.execute(
+                cursor = db.execute(
                     "update wechat_deliveries set status=?, error=?, "
-                    "action_started_at=?, updated_at=current_timestamp where id=?",
+                    "action_started_at=?, updated_at=current_timestamp where id=? "
+                    "and exists (select 1 from reply_tasks "
+                    "where reply_tasks.id=wechat_deliveries.reply_task_id "
+                    "and reply_tasks.execution_generation="
+                    "wechat_deliveries.execution_generation)",
                     (status, error, action_started_at, delivery_id),
                 )
             else:
-                db.execute(
+                cursor = db.execute(
                     "update wechat_deliveries set status=?, error=?, "
-                    "updated_at=current_timestamp where id=?",
+                    "updated_at=current_timestamp where id=? "
+                    "and exists (select 1 from reply_tasks "
+                    "where reply_tasks.id=wechat_deliveries.reply_task_id "
+                    "and reply_tasks.execution_generation="
+                    "wechat_deliveries.execution_generation)",
                     (status, error, delivery_id),
+                )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"WeChat delivery superseded: {delivery_id}"
                 )
             self._sync_wechat_delivery_reply_attempt(
                 db,

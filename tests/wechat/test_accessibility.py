@@ -1,4 +1,6 @@
+import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -325,16 +327,16 @@ def test_wechat_pid_comes_from_main_bundle_application():
 
 
 def test_request_accessibility_asks_macos_to_show_prompt(monkeypatch):
-    import ApplicationServices
-
     seen = []
-    monkeypatch.setattr(
-        ApplicationServices,
-        "AXIsProcessTrustedWithOptions",
-        lambda options: seen.append(dict(options)) or False,
-    )
-    monkeypatch.setattr(
-        ApplicationServices, "kAXTrustedCheckOptionPrompt", "prompt", raising=False,
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrustedWithOptions=lambda options: (
+                seen.append(dict(options)) or False
+            ),
+            kAXTrustedCheckOptionPrompt="prompt",
+        ),
     )
 
     status = MacWechatAccessibility().request_accessibility()
