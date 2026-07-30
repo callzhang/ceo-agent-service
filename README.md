@@ -6,8 +6,6 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 
 > 这个项目的目标不是替人“随便自动回复”，而是把企业 IM 中可结构化处理的信息流接入一个可审计、可回滚、可人工接管的本地 agent 工作流。
 
-![CEO Agent 系统架构](docs/SYSTEM_DIAGRAM.png)
-
 ## 适用场景
 
 - 管理者每天收到大量钉钉消息，需要区分真正需要本人判断的事项、普通同步、系统通知和可自动处理事项。
@@ -20,7 +18,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **钉钉消息发现**：通过 `dws` 读取未读会话、@ 消息、群聊广播消息、配置机器人私聊消息，并用慢路径补扫防止漏消息。
 - **消息路由**：区分群聊、私聊、文档、图片、日程、会议权限、OA 审批和系统通知。
 - **本地任务队列**：使用 SQLite 保存 `reply_tasks`、`reply_attempts`、`seen_messages`、`sent_replies`，避免重复处理和重复发送。
-- **Codex Agent 决策**：使用结构化 JSON 输出 `send_reply`、`ask_clarifying_question`、`no_reply`、`handoff_to_human`、`stop_with_error`、`oa_approval`。
+- **Direct Agent 执行**：一次原生 `codex exec` 自行读取材料并调用获准工具，最后输出结构化终态、外部动作状态和可核对回执。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
 - **材料与工具上下文**：服务传递材料引用、原始 ID、链接和精确读取命令；Direct Agent 自行决定读取哪些钉钉文档、文件、OA 材料和本地 workspace 资料。
 - **安全和质量检查**：按结构化 result、工具 effect metadata、completed event 和回执校验终态，不从用户文本猜测执行意图。
