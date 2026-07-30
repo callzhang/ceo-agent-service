@@ -27,6 +27,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时，自动发到最匹配的群，1:1 会议才私聊，并默认只真实 @ 参会相关人；非参会人只有会议中明确说到是他的任务时才 @。
 - **审计 Web UI**：本地 FastAPI 页面查看历史、attempt 详情、Codex session、错误、Prompt 模板和路由配置。
 - **自动修复 heartbeat**：定期检查 failed/processing/dry_run backlog，包括 `reply_tasks`、work summary 和结果未知的 agent run；未知写操作只做只读核对，不自动重放。
+- **管理者 OKR 周报**：每周日读取 CEO-2 管理群成员的实时叮当 OKR 和可访问证据，按 `dingtang-okr-review` 生成可审计评分、知识库报告和群内重点摘要。
 
 ## 系统架构
 
@@ -44,6 +45,8 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd 和结果未知写操作的只读核对。
 
 当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取仍以临时网络错误失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。
+
+DWS 可能同时返回通用错误码和更具体的服务端错误码；服务始终按具体服务端错误码分类。日历、消息和通讯录等只读命令遇到临时 `ERROR` 或 `RATE_LIMIT_ERROR` 会在当前调用内重试，写操作不使用这条通用重试规则。
 
 `blocked` 只表示缺少权限、依赖、材料或安全条件，后续条件恢复后仍应进入修复/恢复口径。确定不可恢复的阻塞必须写入 `send_status=blocked` 且 `send_error` 以 `blocked_unrecoverable_` 开头；这类记录在审计页显示为 terminal blocked，不再作为待修复 backlog。
 

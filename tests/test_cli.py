@@ -197,6 +197,16 @@ def test_parser_supports_process_okr_reviews():
     assert args.max_batches == 1
 
 
+def test_parser_supports_forced_weekly_okr_report():
+    args = build_parser().parse_args(
+        ["weekly-okr-report", "--force", "--period-label", "2026 Q3"]
+    )
+
+    assert args.command == "weekly-okr-report"
+    assert args.force is True
+    assert args.period_label == "2026 Q3"
+
+
 def test_parser_supports_channel_doctor():
     args = build_parser().parse_args(["channel-doctor"])
 
@@ -1239,7 +1249,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
             "select status, attempts from work_summary_inputs where id=?",
             (input_id,),
         ).fetchone()
-    assert dict(row) == {"status": "done", "attempts": 2}
+    assert dict(row) == {"status": "done", "attempts": 1}
 
 
 def test_process_work_items_command_does_not_batch_claim_after_failure(
@@ -5290,7 +5300,7 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path
         ).fetchone()
     errors = store.list_errors(limit=10)
     assert claimed.id == input_id
-    assert dict(row) == {"status": "pending", "attempts": 1, "error": ""}
+    assert dict(row) == {"status": "pending", "attempts": 0, "error": ""}
     assert errors == []
     assert calls[-1] == ("wait",)
 

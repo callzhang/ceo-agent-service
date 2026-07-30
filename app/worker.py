@@ -92,6 +92,7 @@ logger = logging.getLogger(__name__)
 
 HANDOFF_ACK = handoff_ack()
 HANDOFF_TEXT_EMOTION = "我去叫"
+HANDOFF_NOTIFICATION_PREFIX = "【CEO Agent 转人工通知】"
 # Historical auto-ack marker. Keep filtering it from context, but do not send
 # new processing acknowledgements before final replies.
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
@@ -852,6 +853,9 @@ class DingTalkAutoReplyWorker:
                 context_messages,
                 candidate_unread_messages,
                 conversation_mentions,
+            )
+            candidate_source_messages = self._discard_service_handoff_notifications(
+                candidate_source_messages
             )
             candidates = self._candidate_messages(
                 conversation,
@@ -3028,6 +3032,7 @@ class DingTalkAutoReplyWorker:
             self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
             self._mark_seen([trigger])
             return trigger.open_message_id
+        trigger = self._restore_richer_rerun_trigger(trigger)
         if force_new_decision:
             task = self.store.enqueue_manual_rerun_reply_task(
                 conversation_id=conversation.open_conversation_id,
@@ -3060,6 +3065,46 @@ class DingTalkAutoReplyWorker:
                 raise RuntimeError("rerun reply task was not persisted")
         self._process_queued_task(conversation, task)
         return trigger.open_message_id
+
+    def _restore_richer_rerun_trigger(
+        self,
+        trigger: DingTalkMessage,
+    ) -> DingTalkMessage:
+        if trigger.content.strip() != "[互动卡片]":
+            return trigger
+
+        persisted_task = self.store.get_reply_task_for_message(
+            trigger.open_conversation_id,
+            trigger.open_message_id,
+        )
+        if persisted_task is not None:
+            try:
+                persisted_message = DingTalkMessage.model_validate_json(
+                    persisted_task.trigger_message_json
+                )
+            except (ValueError, TypeError):
+                persisted_message = None
+            if (
+                persisted_message is not None
+                and persisted_message.open_message_id == trigger.open_message_id
+                and persisted_message.content.strip() != "[互动卡片]"
+            ):
+                return persisted_message
+
+        attempt = self.store.get_latest_reply_attempt_for_trigger(
+            trigger.open_conversation_id,
+            trigger.open_message_id,
+        )
+        if attempt is None or attempt.trigger_text.strip() in {"", "[互动卡片]"}:
+            return trigger
+        raw_payload = dict(trigger.raw_payload)
+        raw_payload["content"] = attempt.trigger_text
+        return trigger.model_copy(
+            update={
+                "content": attempt.trigger_text,
+                "raw_payload": raw_payload,
+            }
+        )
 
     def _lookup_rerun_message_by_id(
         self,
@@ -4004,6 +4049,25 @@ class DingTalkAutoReplyWorker:
             ],
             key=lambda message: message.create_time,
         )
+
+    def _discard_service_handoff_notifications(
+        self,
+        messages: list[DingTalkMessage],
+    ) -> list[DingTalkMessage]:
+        service_notifications: list[DingTalkMessage] = []
+        remaining_messages: list[DingTalkMessage] = []
+        for message in messages:
+            if self._is_service_handoff_notification(message):
+                service_notifications.append(message)
+            else:
+                remaining_messages.append(message)
+        if service_notifications:
+            self._mark_seen(service_notifications)
+        return remaining_messages
+
+    @staticmethod
+    def _is_service_handoff_notification(message: DingTalkMessage) -> bool:
+        return message.content.startswith(HANDOFF_NOTIFICATION_PREFIX)
 
     def _single_chat_candidate_source_messages(
         self,

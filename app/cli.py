@@ -103,6 +103,11 @@ from app.worker import (
     _is_codex_authorization_wait_reason,
     _normalize_codex_stop_error_reason,
 )
+from app.weekly_okr_report import (
+    DEFAULT_SCHEDULE_HOUR,
+    weekly_okr_report_command,
+    weekly_okr_report_window_open,
+)
 
 WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = 3
 WORK_SUMMARY_RETRY_BASE_DELAY_SECONDS = 60
@@ -254,6 +259,7 @@ def build_parser() -> argparse.ArgumentParser:
         "backfill-task-memory-context",
         "backfill-routine-process-todos",
         "process-okr-reviews",
+        "weekly-okr-report",
         "scan-task-sources",
         "scan-oa-approvals",
         "process-follow-ups",
@@ -589,6 +595,17 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if command == "send-attempt":
             subparser.add_argument("--attempt-id", type=int, required=True)
+        if command == "weekly-okr-report":
+            subparser.add_argument(
+                "--force",
+                action="store_true",
+                help="run immediately even when today is not the scheduled Sunday",
+            )
+            subparser.add_argument(
+                "--period-label",
+                default="",
+                help="override the current-quarter OKR period label",
+            )
         if command == "resolve-agent-run":
             subparser.add_argument("--run-id", type=int, required=True)
             subparser.add_argument("--execution-generation", required=True)
@@ -2198,6 +2215,7 @@ def run_task_maintenance_loop(
     follow_up_interval_seconds: int,
     sleep: Callable[[int], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
@@ -2218,6 +2236,17 @@ def run_task_maintenance_loop(
             continue
         run_step("process_work_items", lambda: process_work_items_command(settings))
         run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
+        weekly_hour = int(
+            os.getenv("CEO_WEEKLY_OKR_REPORT_HOUR", str(DEFAULT_SCHEDULE_HOUR))
+        )
+        if weekly_okr_report_window_open(
+            wall_clock(),
+            schedule_hour=weekly_hour,
+        ):
+            run_step(
+                "weekly_okr_report",
+                lambda: weekly_okr_report_command(settings, quiet_not_due=True),
+            )
         now = monotonic()
         if now >= next_daily_run:
             run_step(
@@ -2765,6 +2794,13 @@ def main() -> None:
     elif args.command == "process-okr-reviews":
         ensure_live_send_allowed(settings)
         process_okr_reviews_command(settings)
+    elif args.command == "weekly-okr-report":
+        ensure_live_send_allowed(settings)
+        weekly_okr_report_command(
+            settings,
+            force=args.force,
+            period_label=args.period_label,
+        )
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
     elif args.command == "scan-oa-approvals":

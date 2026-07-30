@@ -81,6 +81,13 @@ Service 不替 agent 阅读业务文档、选择业务材料、恢复 OA target�
 - 只有 gate 明确返回 `needs_login` 时，Login Coordinator 才可启动一次对应 CLI 的登录流程；同一通道一小时内抑制重复启动，并持久化协调状态。
 - 网络故障、命令异常或不可读 status 不得被猜成需要登录。
 
+## 外部依赖重试
+
+- DWS 是按操作使用的依赖，不是整个服务的启动闸门；本机网络不可用时暂停轮询，单个 DWS 接口失败只影响当前任务。
+- `DwsClient` 负责命令级超时、只读操作重试、进程并发控制和结构化错误分类。通用错误码和具体服务端错误码并存时，以具体错误码为准。
+- 日历、消息、通讯录、文档和钉盘下载等只读命令遇到可识别的临时 `ERROR`、`RATE_LIMIT_ERROR` 或网络错误时可有限重试；发送、审批等写操作没有幂等键时不得走通用重试。
+- 调用层重试耗尽后保留结构化外部依赖错误；队列层按状态把任务退回待处理或 retry，不从错误文案猜测是否可恢复。
+
 ## 终态与恢复
 
 `agent_runs` 保存一次 Direct Agent generation 的状态和最终 result；`agent_run_events` 按 sequence 追加 CLI/MCP 开始、完成和回执事件。
@@ -136,6 +143,7 @@ Direct Agent 按 OA skill 工作：
 - 工作事项由 scanners、task agent、project/TODO store 和 follow-up 流程处理。
 - 微信 reader/producer/consumer/sender 使用独立组件，但复用 generation、审计和投递幂等原则。
 - Memory Connector、DWS、Lark 和其他 MCP/CLI 调用必须出现在 agent event 审计中。
+- Task maintenance loop 每轮做本地周报到期检查；管理者 OKR 周报默认周日 18:00 后执行一次，失败按 `CEO_WEEKLY_OKR_RETRY_SECONDS` 重试。只有实时 OKR 获取、文档创建回读和群消息发送都确认后，才记录当周完成。
 
 ## 安全边界
 

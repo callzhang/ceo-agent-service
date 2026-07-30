@@ -1640,6 +1640,20 @@ def test_send_message_command_shape():
     ]
 
 
+def test_send_message_command_supports_dws_idempotency_uuid():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text="收到（by明哥分身）",
+        idempotency_uuid="f04f7dd0-d614-4f4f-814c-ec8f65e094e1",
+    )
+
+    assert command[command.index("--uuid") + 1] == (
+        "f04f7dd0-d614-4f4f-814c-ec8f65e094e1"
+    )
+
+
 def test_build_mail_reply_command_shape():
     client = DwsClient(dws_bin="dws")
 
@@ -3289,6 +3303,16 @@ def test_dws_error_treats_missing_agent_code_as_authorization_not_login():
     assert error.needs_login is False
 
 
+def test_dws_error_treats_keychain_access_token_failure_as_login_required():
+    error = DwsError(
+        "resolve access token: load from keychain: "
+        "read DEK from macOS Keychain: exit status 152",
+        code="5",
+    )
+
+    assert error.needs_login is True
+
+
 def test_get_user_profile_keeps_base_profile_when_title_enrichment_needs_agent_code():
     client = SequenceRecordingDwsClient(
         [
@@ -4648,6 +4672,58 @@ def test_run_json_retries_transient_network_error(monkeypatch):
     assert sleeps == [1.0]
 
 
+def test_run_json_retries_zero_exit_structured_network_error(monkeypatch):
+    calls = []
+    sleeps = []
+    network_payload = (
+        '{"error":{"category":"api","code":1,'
+        '"server_error_code":"NETWORK_ERROR","retryable":true,'
+        '"message":"分片 10 写入失败: business error"}}'
+    )
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        calls.append(command)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=0, stdout=network_payload, stderr="")
+        return SimpleNamespace(returncode=0, stdout='{"success":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    command = [
+        "dws",
+        "doc",
+        "update",
+        "--node",
+        "doc-1",
+        "--mode",
+        "overwrite",
+    ]
+    assert DwsClient().run_json(command) == {"success": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
+def test_run_json_does_not_retry_zero_exit_doc_create_error(monkeypatch):
+    calls = []
+    network_payload = (
+        '{"error":{"category":"api","code":1,'
+        '"server_error_code":"NETWORK_ERROR","retryable":true,'
+        '"message":"create response unavailable"}}'
+    )
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=network_payload, stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    command = ["dws", "doc", "create", "--name", "report"]
+    with pytest.raises(DwsError, match="NETWORK_ERROR"):
+        DwsClient().run_json(command)
+    assert calls == [command]
+
+
 def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
     monkeypatch,
 ):
@@ -4668,6 +4744,88 @@ def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
 
     assert DwsClient().run_json(["dws", "chat", "message", "list"]) == {"ok": True}
     assert len(calls) == 2
+
+
+def test_run_json_retries_calendar_read_with_flattened_generic_server_error(
+    monkeypatch,
+):
+    calls = []
+    sleeps = []
+    error_payload = (
+        '{"error.code":1,'
+        '"error.message":"[UNCLASSIFIED] business error: success=false",'
+        '"error.reason":"business_error",'
+        '"error.server_error_code":"ERROR"}'
+    )
+    command = [
+        "dws",
+        "calendar",
+        "event",
+        "list",
+        "--start",
+        "2026-07-27T22:33:29+00:00",
+        "--end",
+        "2026-07-28T06:47:41+00:00",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=error_payload,
+            )
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
+def test_run_json_retries_message_read_with_flattened_rate_limit_error(
+    monkeypatch,
+):
+    calls = []
+    sleeps = []
+    error_payload = (
+        '{"error.code":1,'
+        '"error.message":"[UNCLASSIFIED] business error: success=false",'
+        '"error.reason":"business_error",'
+        '"error.server_error_code":"RATE_LIMIT_ERROR"}'
+    )
+    command = [
+        "dws",
+        "chat",
+        "message",
+        "list",
+        "--group",
+        "cid-1",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=error_payload,
+            )
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
 
 
 def test_run_json_refreshes_cache_before_retrying_dws_discovery_code(monkeypatch):
@@ -4790,6 +4948,32 @@ def test_run_json_does_not_retry_chat_message_send_timeout(monkeypatch):
     with pytest.raises(DwsError, match="timed out"):
         DwsClient(transient_retry_attempts=2).run_json(command)
     assert calls == [command]
+
+
+def test_run_json_retries_chat_message_send_timeout_with_uuid(monkeypatch):
+    calls = []
+    command = [
+        "dws",
+        "chat",
+        "message",
+        "send",
+        "--group",
+        "cid-1",
+        "--uuid",
+        "f04f7dd0-d614-4f4f-814c-ec8f65e094e1",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(command_arg, timeout)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    assert DwsClient(transient_retry_attempts=1).run_json(command) == {"ok": True}
+    assert calls == [command, command]
 
 
 def test_run_json_does_not_retry_chat_message_send_retryable_network_error(
@@ -5171,6 +5355,69 @@ def test_run_json_retries_calendar_event_get_token_verified_failed(monkeypatch):
     assert DwsClient().run_json(command) == {"ok": True}
     assert calls == [command, command]
     assert sleeps == [1.0]
+
+
+def test_run_json_retries_minutes_info_pat_auth_call_failed(monkeypatch):
+    calls = []
+    sleeps = []
+    auth_error_payload = (
+        '{"error":{"code":1,"server_error_code":"PAT_AUTH_CALL_FAILED",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+    command = [
+        "dws",
+        "minutes",
+        "get",
+        "info",
+        "--id",
+        "minutes-1",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=auth_error_payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
+def test_run_json_does_not_retry_oa_write_pat_auth_call_failed(monkeypatch):
+    calls = []
+    auth_error_payload = (
+        '{"error":{"code":1,"server_error_code":"PAT_AUTH_CALL_FAILED",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+    command = [
+        "dws",
+        "oa",
+        "approval",
+        "approve",
+        "--instance-id",
+        "instance-1",
+        "--task-id",
+        "task-1",
+        "--yes",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        return SimpleNamespace(returncode=1, stdout="", stderr=auth_error_payload)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    with pytest.raises(DwsError, match="PAT_AUTH_CALL_FAILED"):
+        DwsClient().run_json(command)
+    assert calls == [command]
 
 
 def test_run_json_does_not_retry_chat_message_send_token_verified_failed(

@@ -5035,5 +5035,6 @@ def test_recover_orphaned_processing_reply_tasks_is_generation_aware(
 
     assert [task.id for task in recovered] == [task_ids[0]]
     assert store.get_reply_task(task_ids[0]).status == "pending"
+    assert store.get_reply_task(task_ids[0]).attempts == 0
     assert store.get_reply_task(task_ids[1]).status == "processing"
     assert store.get_reply_task(task_ids[2]).status == "processing"

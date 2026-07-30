@@ -107,6 +107,9 @@ class DwsError(RuntimeError):
         "not authenticated",
         "your session has ended",
         "failed to refresh token",
+        "resolve access token",
+        "load access token",
+        "read dek from macos keychain",
         "未登录",
         "登录态失效",
     )
@@ -259,6 +262,11 @@ class DwsClient:
     MESSAGE_LIST_RETRYABLE_ERROR_CODES = {"SYSTEM_ERROR"}
     MESSAGE_LIST_RETRYABLE_ERROR_SUFFIXES = ("_INVOKE_FAILED",)
     TOKEN_VERIFIED_RETRYABLE_ERROR_CODES = {"TOKEN_VERIFIED_FAILED"}
+    PAT_AUTH_RETRYABLE_ERROR_CODES = {"PAT_AUTH_CALL_FAILED"}
+    PAT_AUTH_RETRYABLE_READ_COMMANDS = {
+        ("minutes", "get"),
+        ("minutes", "list"),
+    }
     MESSAGE_RETRYABLE_READ_COMMANDS = {
         ("chat", "message", "list"),
         ("chat", "message", "list-direct"),
@@ -285,6 +293,10 @@ class DwsClient:
         ("contact", "user", "get"),
         ("contact", "user", "search"),
     }
+    GENERIC_BUSINESS_RETRYABLE_ERROR_CODES = {"ERROR", "RATE_LIMIT_ERROR"}
+    GENERIC_BUSINESS_RETRYABLE_READ_COMMANDS = (
+        TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS
+    )
     TEXT_RETRYABLE_READ_COMMANDS = {
         ("doc", "download"),
         ("drive", "download"),
@@ -497,6 +509,7 @@ class DwsClient:
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
         title: str | None = None,
+        idempotency_uuid: str | None = None,
     ) -> list[str]:
         command = [
             self.dws_bin,
@@ -526,6 +539,8 @@ class DwsClient:
                 ),
             ]
         )
+        if idempotency_uuid:
+            command.extend(["--uuid", idempotency_uuid])
         if at_open_dingtalk_ids:
             if conversation_id is not None:
                 command.extend(
@@ -2640,6 +2655,7 @@ class DwsClient:
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
         title: str | None = None,
+        idempotency_uuid: str | None = None,
     ) -> dict[str, Any]:
         return self.run_json(
             self.build_send_message_command(
@@ -2651,6 +2667,7 @@ class DwsClient:
                 user_id=user_id,
                 open_dingtalk_id=open_dingtalk_id,
                 title=title,
+                idempotency_uuid=idempotency_uuid,
             )
         )
 
@@ -3195,6 +3212,7 @@ class DwsClient:
         attempt_index = 0
         automatic_retry_allowed = self._automatic_retry_allowed(command)
         while True:
+            payload: Any | None = None
             try:
                 result = self._run_cli_process(
                     command,
@@ -3213,12 +3231,16 @@ class DwsClient:
                 )
                 raise error from exc
             if result.returncode == 0:
-                break
-            code = (
-                self._error_code(result.stderr)
-                or self._error_code(result.stdout)
-                or self._process_error_code(result.returncode)
-            )
+                payload = self._json_from_mixed_stdout(result.stdout)
+                if not self._is_structured_error_payload(payload):
+                    return payload
+                code = self._error_code(result.stdout) or "1"
+            else:
+                code = (
+                    self._error_code(result.stderr)
+                    or self._error_code(result.stdout)
+                    or self._process_error_code(result.returncode)
+                )
             retryable_error = automatic_retry_allowed and self._is_retryable_error(
                 command,
                 code,
@@ -3239,7 +3261,24 @@ class DwsClient:
                 retryable_external_dependency=retryable_error,
             )
             raise error
-        return self._json_from_mixed_stdout(result.stdout)
+
+    @staticmethod
+    def _is_structured_error_payload(payload: object) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            return False
+        return any(
+            key in error
+            for key in (
+                "category",
+                "code",
+                "message",
+                "reason",
+                "server_error_code",
+            )
+        )
 
     def run_text(
         self,
@@ -3366,6 +3405,12 @@ class DwsClient:
     def _is_retryable_error(cls, command: list[str], code: str | None) -> bool:
         if code in cls.RETRYABLE_ERROR_CODES:
             return True
+        if code in cls.GENERIC_BUSINESS_RETRYABLE_ERROR_CODES:
+            command_path = tuple(command[1:])
+            return cls._command_path_matches(
+                command_path,
+                cls.GENERIC_BUSINESS_RETRYABLE_READ_COMMANDS,
+            )
         if cls.is_message_read_retryable_error_code(code):
             command_path = tuple(command[1:])
             return cls._command_path_matches(
@@ -3377,6 +3422,12 @@ class DwsClient:
             return cls._command_path_matches(
                 command_path,
                 cls.TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS,
+            )
+        if code in cls.PAT_AUTH_RETRYABLE_ERROR_CODES:
+            command_path = tuple(command[1:])
+            return cls._command_path_matches(
+                command_path,
+                cls.PAT_AUTH_RETRYABLE_READ_COMMANDS,
             )
         return (
             code in cls.DOC_READ_RETRYABLE_ERROR_CODES
@@ -3404,11 +3455,13 @@ class DwsClient:
 
     @staticmethod
     def _automatic_retry_allowed(command: list[str]) -> bool:
+        if len(command) >= 3 and command[1:3] == ["doc", "create"]:
+            return False
         if len(command) < 4 or command[1:4] != ["chat", "message", "send"]:
             return True
         return any(
-            argument == "--idempotency-key"
-            or argument.startswith("--idempotency-key=")
+            argument in {"--idempotency-key", "--uuid"}
+            or argument.startswith(("--idempotency-key=", "--uuid="))
             for argument in command[4:]
         )
 
@@ -3550,6 +3603,12 @@ class DwsClient:
             return None
         if not isinstance(payload, dict):
             return None
+        dotted_server_error_code = payload.get("error.server_error_code")
+        if (
+            isinstance(dotted_server_error_code, str)
+            and dotted_server_error_code
+        ):
+            return dotted_server_error_code
         dotted_error_code = payload.get("error.code")
         if isinstance(dotted_error_code, str) and dotted_error_code:
             return dotted_error_code

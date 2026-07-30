@@ -1128,7 +1128,7 @@ def test_startup_recovery_only_requeues_processing_and_unlocks_ready(tmp_path):
 
     processing_after = store.get_meeting_alignment_job(processing_id)
     assert processing_after.status == "retry"
-    assert processing_after.attempts == 1
+    assert processing_after.attempts == 0
     assert processing_after.decision_json == '{"preserve":"analysis"}'
     assert processing_after.send_result_json == '{"preserve":"send"}'
     assert json.loads(processing_after.error)["kind"] == (

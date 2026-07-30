@@ -31,7 +31,7 @@ def test_local_service_script_runs_single_main_service():
     assert "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS" not in content
     assert "CEO_TASK_DAILY_INTERVAL_SECONDS" not in content
     assert "CEO_OKR_LIVE_SOURCE_COMMAND" in content
-    assert "scripts/dingteam_okr_live_source.py --user-id {user_id} --period-label {period_label}" in content
+    assert "dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}" in content
     assert "CEO_PRINCIPAL_NAME" not in content
     assert "CEO_MENTION_ALIASES" not in content
     assert "CEO_ASSISTANT_SIGNATURE" not in content
@@ -79,7 +79,7 @@ def test_main_launch_agent_runs_single_keepalive_service():
         'CEO_CODEX_MODEL_REASONING_EFFORT="${CEO_CODEX_MODEL_REASONING_EFFORT:-medium}"'
         in command[2]
     )
-    assert "scripts/dingteam_okr_live_source.py --user-id {user_id} --period-label {period_label}" in command[2]
+    assert "dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}" in command[2]
     env = plist["EnvironmentVariables"]
     assert "HOME" not in env
     assert "CODEX_HOME" not in env

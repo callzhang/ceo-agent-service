@@ -215,7 +215,7 @@ def test_meeting_job_retry_and_startup_recovery_preserve_attempts(tmp_path):
     )
     assert (recovered.status, recovered.attempts, recovered.locked_at) == (
         "retry",
-        1,
+        0,
         None,
     )
 

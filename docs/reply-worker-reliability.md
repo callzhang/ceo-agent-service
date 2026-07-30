@@ -11,6 +11,15 @@ can restart the whole service.
 Per-conversation read failures are recorded and notified without blocking other
 conversations in the same producer pass.
 
+Service startup recovers durable work before any producer or consumer thread
+starts. Claimed reply tasks return to `pending`, work-summary inputs return to
+`pending`, meeting analysis jobs return to `retry`, and claimed meeting delivery
+jobs are unlocked. Recovery subtracts the interrupted claim from each queue's
+attempt counter because process termination is not a business execution failure.
+Persisted universal action execution IDs and verified terminal receipts remain
+unchanged, so recovery can reconcile completed external actions without sending
+them again.
+
 External dependencies use two retry levels. The call boundary performs a small
 number of immediate retries, then raises a typed external-dependency failure
 instead of flattening it into a generic runtime error. The reply, work-summary,
@@ -38,6 +47,12 @@ worker stores the rolling count under `service_state.dws_transient_error_count:*
 and only writes an `errors` row when the threshold is reached. Message sends,
 calendar responses, approvals, and other write actions are not retried through
 this path.
+
+DWS may also return `PAT_AUTH_CALL_FAILED` for a temporary authenticated backend
+failure even while the local profile remains valid. AI-minutes list and get
+commands retry this code at the call boundary because they are reads and have no
+external side effect. Approval actions and other writes do not use this retry
+path, so an ambiguous write result cannot be duplicated.
 
 DWS message reads also treat server error codes ending in `_INVOKE_FAILED` as
 transient dependency failures. This covers infrastructure-side validation or
@@ -88,10 +103,17 @@ it does not bind a click action to DingTalk, so conversation jump remains
 available through the browser bridge when an audit page is open.
 
 Handoff notifications use DING first so they can reach the operator inside
-DingTalk. If DING is unavailable, for example because the DING server quota is
-exhausted, the worker falls back to the same local notification path instead of
-failing the reply attempt. The original chat acknowledgement remains the delivery
-source of truth; the local notification only replaces the operator alert.
+DingTalk. Every service-generated handoff alert begins with the exact
+`【CEO Agent 转人工通知】` protocol marker. If that alert later appears in the
+operator's single-chat inbox, the producer marks it seen and removes it before
+candidate routing, so the service cannot treat its own alert as a new user
+trigger or recursively include earlier handoff text.
+
+If DING is unavailable, for example because the DING server quota is exhausted,
+the worker tries the configured robot direct-message path and then falls back to
+the local notification path instead of failing the reply attempt. The original
+chat acknowledgement remains the delivery source of truth; these operator
+alerts do not become reply candidates.
 
 ## No-reply side effects
 
@@ -293,6 +315,15 @@ context contains an earlier OA approval card from the same sender, the consumer
 uses that card's OA URL as the approval target. This keeps `OA card -> please
 review this link` sequences on the OA handler path even when the unread read only
 returns the final follow-up message.
+
+Group-chat OA follow-ups use a narrower trust boundary. The consumer may reuse
+an OA URL from the same sender's immediately preceding message only when that
+message contains or explicitly quotes exactly one approval target and is no more
+than 30 minutes old. A newer same-sender message without an approval target, an
+ambiguous target set, a different sender, or an older card prevents inheritance.
+This lets `quoted approval card -> approval instruction` reach the Universal
+planner with frozen trusted IDs without allowing stale group approvals to leak
+into unrelated messages.
 
 The OA target is bound before the trigger sender is enriched from
 `open_dingtalk_id` to `user_id`. Recent message cards may still carry only the

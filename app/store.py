@@ -3988,7 +3988,8 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """
                     update reply_tasks
-                    set status='pending', locked_at=null, available_at='',
+                    set status='pending', attempts=max(attempts - 1, 0),
+                        locked_at=null, available_at='',
                         error='orphaned_before_agent_start',
                         updated_at=current_timestamp
                     where id=? and status='processing' and execution_generation=?
@@ -5492,6 +5493,7 @@ class AutoReplyStore:
                 """
                 update meeting_alignment_jobs
                 set status='retry',
+                    attempts=max(attempts - 1, 0),
                     locked_at=null,
                     updated_at=current_timestamp
                 where status='processing'
@@ -8705,6 +8707,7 @@ class AutoReplyStore:
                 """
                 update work_summary_inputs
                 set status='pending',
+                    attempts=max(attempts - 1, 0),
                     error='',
                     updated_at=current_timestamp
                 where status='processing'
@@ -8733,6 +8736,7 @@ class AutoReplyStore:
                 f"""
                 update work_summary_inputs
                 set status='pending',
+                    attempts=max(attempts - 1, 0),
                     error='',
                     updated_at=current_timestamp
                 where id in ({placeholders})

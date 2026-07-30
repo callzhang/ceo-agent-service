@@ -12,6 +12,7 @@ from app.dingtalk_models import (
 INTERNAL_PERSONNEL_PRIVATE_REFUSAL = "这个涉及其他人的人事信息，我不能直接回答。"
 INTERNAL_PERSONNEL_GROUP_REFUSAL = "这个涉及个人敏感信息，不适合在群里展开，单独同步我。"
 CANDIDATE_DEPARTMENT_REFUSAL = "这个候选人信息只回答相关部门的人。"
+PERSONNEL_PRIVILEGED_ORG_LABELS = {"管理层"}
 
 
 class PermissionAction(StrEnum):
@@ -61,6 +62,8 @@ class PermissionGate:
                 return PermissionResult(action=PermissionAction.ALLOW)
         except Exception:
             pass
+        if self._is_personnel_privileged_requester(requester_user_id):
+            return PermissionResult(action=PermissionAction.ALLOW)
         if not decision.personnel_subject_user_id:
             return PermissionResult(
                 action=PermissionAction.ERROR,
@@ -84,6 +87,20 @@ class PermissionGate:
             reply_text=INTERNAL_PERSONNEL_PRIVATE_REFUSAL,
             reason="private requester is not personnel subject",
         )
+
+    def _is_personnel_privileged_requester(self, requester_user_id: str) -> bool:
+        get_user_profile = getattr(self.dws, "get_user_profile", None)
+        if get_user_profile is None:
+            return False
+        try:
+            profile = get_user_profile(requester_user_id)
+        except Exception:
+            return False
+        labels = {
+            str(label).rsplit(":", 1)[-1].strip()
+            for label in getattr(profile, "org_labels", ())
+        }
+        return bool(labels & PERSONNEL_PRIVILEGED_ORG_LABELS)
 
     def _invalid_internal_personnel_subject_reason(
         self, personnel_subject_user_id: str

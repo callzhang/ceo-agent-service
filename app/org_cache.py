@@ -86,6 +86,9 @@ class CachedDwsClient:
         self.dws = dws
         self.org_directory = org_directory
 
+    def __getattr__(self, name: str):
+        return getattr(self.dws, name)
+
     def list_unread_conversations(self, count: int):
         return self.dws.list_unread_conversations(count)
 
@@ -297,16 +300,18 @@ class CachedDwsClient:
         at_open_dingtalk_names: list[str] | None = None,
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
+        idempotency_uuid: str | None = None,
     ):
-        return self.dws.send_message(
-            conversation_id,
-            text,
-            at_users=at_users,
-            at_open_dingtalk_ids=at_open_dingtalk_ids,
-            at_open_dingtalk_names=at_open_dingtalk_names,
-            user_id=user_id,
-            open_dingtalk_id=open_dingtalk_id,
-        )
+        kwargs = {
+            "at_users": at_users,
+            "at_open_dingtalk_ids": at_open_dingtalk_ids,
+            "at_open_dingtalk_names": at_open_dingtalk_names,
+            "user_id": user_id,
+            "open_dingtalk_id": open_dingtalk_id,
+        }
+        if idempotency_uuid is not None:
+            kwargs["idempotency_uuid"] = idempotency_uuid
+        return self.dws.send_message(conversation_id, text, **kwargs)
 
     def send_direct_message_by_bot(self, user_id: str, text: str):
         return self.dws.send_direct_message_by_bot(user_id, text)
