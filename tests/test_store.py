@@ -2221,7 +2221,9 @@ def test_reply_task_state_writes_reject_stale_generation_before_run_creation(
     task = store.get_reply_task(task_id)
     assert task is not None
     assert task.execution_generation == new_generation
-    assert task.status == "processing"
+    assert task.status == "pending"
+    assert task.locked_at is None
+    assert task.error == "execution_generation_rotated"
 
 
 def test_completed_reconciliation_atomically_finishes_processing_task(
@@ -2350,6 +2352,11 @@ def test_generation_switch_revokes_old_run_write_access_and_only_new_run_claims(
     assert superseded.lease_owner == ""
     assert superseded.lease_expires_at == ""
 
+    claimed_task = store.claim_reply_task(
+        task_id,
+        now="2026-07-29 09:00:01",
+    )
+    assert claimed_task is not None
     new_claim = store.claim_agent_run(
         task_id,
         new_generation,

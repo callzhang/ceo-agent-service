@@ -4136,6 +4136,10 @@ class AutoReplyStore:
                     update reply_tasks
                     set force_new_decision=1,
                         execution_generation=?,
+                        status='pending',
+                        locked_at=null,
+                        available_at='',
+                        error='execution_generation_rotated',
                         updated_at=current_timestamp
                     where id=? and status in ('processing', 'pending')
                       and execution_generation=?
