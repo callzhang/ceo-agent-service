@@ -24,7 +24,7 @@ from app.agent_result import (
     parse_agent_result,
 )
 from app.codex_runner import CodexRunner
-from app.codex_history import count_codex_session_lines
+from app.codex_history import count_codex_session_lines, find_codex_session_path
 from app.channel_gate import ChannelGateState
 from app.dws_client import DwsClient
 from app.history import safe_observability_error
@@ -362,6 +362,7 @@ class DirectAgentRunner:
         owner: str | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
+        codex_session_exists: Callable[[str], bool] | None = None,
     ) -> None:
         self.store = store
         self.codex = CodexRunner(workspace=workspace, codex_bin=codex_bin)
@@ -371,6 +372,9 @@ class DirectAgentRunner:
             native_cli_classifier or NativeCliMetadataClassifier()
         )
         self.mcp_effect_registry = mcp_effect_registry or McpToolEffectRegistry.default()
+        self.codex_session_exists = codex_session_exists or (
+            lambda session_id: find_codex_session_path(session_id) is not None
+        )
 
     def run(
         self,
@@ -399,6 +403,9 @@ class DirectAgentRunner:
             or self.store.get_codex_session_id(task.conversation_id)
             or None
         )
+        if session_id and not self.codex_session_exists(session_id):
+            self.store.clear_codex_session(task.conversation_id)
+            session_id = None
         transcript_start_line = count_codex_session_lines(session_id) if session_id else 0
         prompt = context.render()
         developer_instructions = direct_agent_developer_instructions()

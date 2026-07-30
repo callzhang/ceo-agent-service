@@ -186,6 +186,7 @@ def test_direct_runner_reuses_one_codex_session_for_the_conversation(
         store=store,
         workspace=tmp_path,
         executor=executor,
+        codex_session_exists=lambda _session_id: True,
     ).run(task, _context(task.id))
 
     assert executor.commands[0][1:3] == ["exec", "resume"]
@@ -232,11 +233,33 @@ def test_direct_runner_persists_new_session_for_later_conversation_messages(
         store=store,
         workspace=tmp_path,
         executor=executor,
+        codex_session_exists=lambda _session_id: True,
     ).run(second, second_context)
 
     assert store.get_codex_session_id("cid") == "conversation-session"
     assert executor.commands[0][1:3] == ["exec", "resume"]
     assert executor.commands[0][-2:] == ["conversation-session", "-"]
+
+
+def test_direct_runner_starts_fresh_when_conversation_session_is_missing(
+    tmp_path: Path,
+    store: AutoReplyStore,
+):
+    store.upsert_conversation("cid", "产品群", False, "missing-session")
+    task = _task(store)
+    executor = RecordingExecutor(_jsonl(session_id="replacement-session"))
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=executor,
+        codex_session_exists=lambda _session_id: False,
+    ).run(task, _context(task.id))
+
+    assert executor.commands[0][1] == "exec"
+    assert "resume" not in executor.commands[0]
+    assert store.get_codex_session_id("cid") == "replacement-session"
+    assert store.get_agent_run(result.run_id).codex_session_id == "replacement-session"
 
 
 def test_direct_runner_only_persists_codex_session_pointer_not_tool_event_copy(
