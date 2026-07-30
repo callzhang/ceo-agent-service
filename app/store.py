@@ -4615,6 +4615,30 @@ class AutoReplyStore:
         evidence: dict[str, str] | None = None,
     ) -> int:
         with self._connect() as db:
+            unresolved = db.execute(
+                """
+                select 1
+                from wechat_deliveries
+                where reply_task_id!=?
+                  and account_id=?
+                  and target_type=?
+                  and target_id=?
+                  and conversation_id=?
+                  and status in ('sending', 'send_unknown')
+                limit 1
+                """,
+                (
+                    reply_task_id,
+                    account_id,
+                    target_type,
+                    target_id,
+                    conversation_id,
+                ),
+            ).fetchone()
+            if unresolved is not None:
+                raise ValueError(
+                    "WeChat delivery reconciliation required before a newer trigger"
+                )
             superseded_error = (
                 f"superseded_by_newer_wechat_trigger:{reply_task_id}"
             )
@@ -4627,7 +4651,7 @@ class AutoReplyStore:
                   and target_type=?
                   and target_id=?
                   and conversation_id=?
-                  and status in ('ready_to_send', 'failed', 'send_unknown')
+                  and status in ('ready_to_send', 'failed')
                   and error!='user_rejected'
                 """,
                 (

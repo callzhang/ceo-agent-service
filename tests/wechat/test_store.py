@@ -317,6 +317,50 @@ def test_new_delivery_supersedes_older_unsent_delivery_for_same_conversation(
     assert new_attempt.send_status == "pending"
 
 
+@pytest.mark.parametrize("status", ["sending", "send_unknown"])
+def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
+    tmp_path,
+    status,
+):
+    store = _store(tmp_path)
+    for task_id, message_id in ((1, "m1"), (2, "m2")):
+        store.enqueue_reply_task(
+            channel="wechat",
+            conversation_id="u1",
+            conversation_title="Alex",
+            single_chat=True,
+            trigger_message_id=message_id,
+            trigger_create_time=f"2026-07-28T10:0{task_id}:00",
+            trigger_sender="Alex",
+            trigger_text=f"message {task_id}",
+        )
+    old_delivery_id = store.create_wechat_delivery(
+        reply_task_id=1,
+        account_id="acct-1",
+        target_type="direct",
+        target_id="u1",
+        conversation_id="u1",
+        reply_text="old reply",
+    )
+    store.set_wechat_delivery_status(old_delivery_id, status)
+
+    with pytest.raises(
+        ValueError,
+        match="WeChat delivery reconciliation required before a newer trigger",
+    ):
+        store.create_wechat_delivery(
+            reply_task_id=2,
+            account_id="acct-1",
+            target_type="direct",
+            target_id="u1",
+            conversation_id="u1",
+            reply_text="new reply",
+        )
+
+    assert store.get_wechat_delivery_by_id(old_delivery_id).status == status
+    assert store.get_wechat_delivery_for_task(2) is None
+
+
 def test_replacing_enabled_scope_does_not_clear_its_watermark(tmp_path):
     store = _store(tmp_path)
     scope = WechatReplyScope(
