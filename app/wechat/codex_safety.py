@@ -197,10 +197,6 @@ def make_read_only_with_reviewed_tools(
             "features.plugins=false",
             "-c",
             "features.apps=false",
-            "-c",
-            "features.shell_tool=false",
-            "-c",
-            "features.unified_exec=false",
             "--sandbox",
             "read-only",
             "-c",
@@ -228,7 +224,7 @@ def make_direct_agent_sandbox(
     controlled_cli_args: tuple[str, ...],
     controlled_cli_cwd: str,
 ) -> None:
-    """Disable native tools and expose only reviewed external capabilities."""
+    """Expose sandboxed local reads and only reviewed external capabilities."""
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     _remove_command_options(command, names=("--sandbox",))
@@ -260,10 +256,6 @@ def make_direct_agent_sandbox(
             "features.plugins=false",
             "-c",
             "features.apps=false",
-            "-c",
-            "features.shell_tool=false",
-            "-c",
-            "features.unified_exec=false",
             "--sandbox",
             "read-only",
             "-c",

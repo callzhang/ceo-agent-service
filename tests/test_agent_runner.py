@@ -410,8 +410,8 @@ def test_direct_runner_uses_native_codex_and_never_ignores_user_config(
     assert "tools.enabled_tools=[]" not in command
     assert "features.plugins=false" in command
     assert "features.apps=false" in command
-    assert "features.shell_tool=false" in command
-    assert "features.unified_exec=false" in command
+    assert "features.shell_tool=false" not in command
+    assert "features.unified_exec=false" not in command
     assert str(AGENT_RESULT_SCHEMA_PATH) in command
     assert result.result.outcome is AgentOutcome.COMPLETED
     assert executor.kwargs[0]["total_timeout_seconds"] == 1200
@@ -448,8 +448,8 @@ def test_direct_runner_exposes_only_registry_reviewed_mcp_tools(
     command = executor.commands[0]
     assert "features.plugins=false" in command
     assert "features.apps=false" in command
-    assert "features.shell_tool=false" in command
-    assert "features.unified_exec=false" in command
+    assert "features.shell_tool=false" not in command
+    assert "features.unified_exec=false" not in command
     assert (
         'mcp_servers.exa.enabled_tools=["web_fetch_exa","web_search_exa"]'
         in command
@@ -1253,8 +1253,8 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert executor.commands[0].count("--sandbox") == 1
     assert "danger-full-access" not in executor.commands[0]
     assert "tools.enabled_tools=[]" not in executor.commands[0]
-    assert "features.shell_tool=false" in executor.commands[0]
-    assert "features.unified_exec=false" in executor.commands[0]
+    assert "features.shell_tool=false" not in executor.commands[0]
+    assert "features.unified_exec=false" not in executor.commands[0]
     assert 'web_search="disabled"' in executor.commands[0]
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_get","memory_recall","timeline_get","user_get"]' in executor.commands[0]
     assert (
@@ -1282,10 +1282,14 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert "system_actions" not in developer
 
 
-def test_read_only_run_rejects_shell_event(
+def test_read_only_run_allows_local_read_only_shell_pipeline(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
+    command = (
+        "sed -n '1,40p' /rules/AGENT.md && "
+        "rg -n 'approval|policy' /rules | head -80"
+    )
     output = "\n".join(
         (
             json.dumps(
@@ -1294,7 +1298,7 @@ def test_read_only_run_rejects_shell_event(
                     "item": {
                         "id": "read-rules",
                         "type": "command_execution",
-                        "command": ["sed", "-n", "1,40p", "/rules/AGENT.md"],
+                        "command": command,
                         "status": "in_progress",
                     },
                 }
@@ -1305,7 +1309,7 @@ def test_read_only_run_rejects_shell_event(
                     "item": {
                         "id": "read-rules",
                         "type": "command_execution",
-                        "command": ["sed", "-n", "1,40p", "/rules/AGENT.md"],
+                        "command": command,
                         "status": "completed",
                         "exit_code": 0,
                     },
@@ -1315,19 +1319,57 @@ def test_read_only_run_rejects_shell_event(
         )
     )
 
-    with pytest.raises(AgentReadOnlyViolationError, match="direct_agent_shell_forbidden"):
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id), read_only=True)
+
+    assert result.result.outcome is AgentOutcome.COMPLETED
+    assert any(
+        event.get("item", {}).get("metadata", {}).get("effect") == "read_only"
+        for event in result.events
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "sed -i '' 's/old/new/' /rules/AGENT.md",
+        "rg --pre 'sh -c touch /tmp/owned' pattern /rules",
+        "find /rules -exec sh -c 'touch /tmp/owned' ';'",
+        "find /rules -delete",
+        "cat /rules/AGENT.md > /tmp/copied-rules",
+        "python3 -c 'print(1)'",
+        "curl https://example.com",
+    ),
+)
+def test_read_only_run_rejects_effectful_or_unreviewed_shell(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    command: str,
+):
+    task = _task(store)
+    output = json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "id": "unsafe-command",
+                "type": "command_execution",
+                "command": command,
+                "status": "in_progress",
+            },
+        }
+    )
+
+    with pytest.raises(
+        AgentReadOnlyViolationError, match="direct_agent_shell_forbidden"
+    ):
         DirectAgentRunner(
             store=store,
             workspace=tmp_path,
             executor=RecordingExecutor(output),
         ).run(task, _context(task.id), read_only=True)
-
-    persisted = store.get_agent_run_for_task_generation(
-        task.id, task.execution_generation
-    )
-    assert persisted is not None
-    assert persisted.status == "failed"
-    assert persisted.side_effect_state == "none"
 
 
 def test_read_only_resume_places_all_safety_options_before_session_id(

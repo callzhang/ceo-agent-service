@@ -400,11 +400,11 @@ CEO reply agent 默认复用本机 Codex MCP/OAuth 配置，但仍显式禁用 h
 
 为了避免把个人密钥写进进程命令行，MCP 透传只复制 URL、OAuth resource、command、args、startup timeout 和 bearer token 环境变量名，不复制 `[mcp_servers.*.env]` 里的密钥值。需要 API key 的 stdio MCP 应把密钥放在 launchd 或 shell 环境中。
 
-Direct Agent 只允许 CLI 发布元数据明确标记为只读的原生 DWS/Lark 命令；任意 shell、包装命令、未知命令和写命令都会被拒绝。DWS/Lark 写命令由 agent 根据 CLI 发布的 effect metadata 调用 `reconciliation_cli.execute_reviewed_write`，服务执行已审核命令并持久化结构化回执。Codex 原生加载用户和项目 bootstrap；服务把存在的 `~/.agents/AGENT.md` 规范正文并入 Direct Agent instructions，避免 agent 再通过 shell 或 exec 重读规则文件。Codex CLI 的 JSONL 事件会返回 MCP `server`、`tool`、`arguments`、`result` 和 `status`，但目前不提供可直接信任的读写注解或 `tools/list` 清单。服务因此使用 [`config/mcp-tool-effects.json`](config/mcp-tool-effects.json) 中逐项审核的 `(server, tool) -> effect` 注册表；可用 `CEO_AGENT_MCP_EFFECTS_PATH` 指向部署方维护的同格式文件。未知工具按 fail-closed 处理，不能凭工具名或用户文本推断为已完成写操作。新增 MCP 工具时必须先从实际 `tools/list` 或受版本控制的能力清单核对工具描述并登记。
+Direct Agent 允许 `read-only` sandbox 中经过分类的本地只读 shell 命令，并只允许 CLI 发布元数据明确标记为只读的原生 DWS/Lark 命令；未知命令、写命令以及可执行脚本或网络访问的包装命令都会被拒绝。DWS/Lark 写命令由 agent 根据 CLI 发布的 effect metadata 调用 `reconciliation_cli.execute_reviewed_write`，服务执行已审核命令并持久化结构化回执。Codex 原生加载用户和项目 bootstrap；服务把存在的 `~/.agents/AGENT.md` 规范正文并入 Direct Agent instructions，避免 agent 再通过 shell 或 exec 重读规则文件。Codex CLI 的 JSONL 事件会返回 MCP `server`、`tool`、`arguments`、`result` 和 `status`，但目前不提供可直接信任的读写注解或 `tools/list` 清单。服务因此使用 [`config/mcp-tool-effects.json`](config/mcp-tool-effects.json) 中逐项审核的 `(server, tool) -> effect` 注册表；可用 `CEO_AGENT_MCP_EFFECTS_PATH` 指向部署方维护的同格式文件。未知工具按 fail-closed 处理，不能凭工具名或用户文本推断为已完成写操作。新增 MCP 工具时必须先从实际 `tools/list` 或受版本控制的能力清单核对工具描述并登记。
 
-Direct Agent 通过 `reconciliation_cli.read_skill` 自行读取已安装目录中的 `SKILL.md`；该工具校验解析后的真实路径和文件大小，不允许借此读取任意本地文件。服务不替 agent 选择 skill，也不预读业务材料。
+Direct Agent 可通过本地只读 shell 或 `reconciliation_cli.read_skill` 自行读取已安装目录中的 `SKILL.md`；后者校验解析后的真实路径和文件大小。服务不替 agent 选择 skill，也不预读业务材料。
 
-允许 reviewed MCP 的运行模式不设置全局 `tools.enabled_tools=[]`，否则 Codex 会把已配置 MCP 一并从模型工具列表中移除。运行时显式关闭 Codex 插件、App、`shell_tool` 和 `unified_exec`，并按 MCP effect registry 为每个 server 生成精确的 `enabled_tools`；未登记的 server 被禁用。受控 CLI 的 stdio MCP 固定以服务仓库为 `cwd`，因此即使 Agent workspace 是独立的资料目录，也能加载服务模块。这样保留本机 Codex 登录、模型配置、Exa 和受控 DWS/Lark 通路，同时避免 Agent 绕过 MCP 调用原生 shell。完全无工具的独立只读任务继续使用全局空列表。
+允许 reviewed MCP 的运行模式不设置全局 `tools.enabled_tools=[]`，否则 Codex 会把已配置 MCP 一并从模型工具列表中移除。运行时关闭 Codex 插件和 App，并按 MCP effect registry 为每个 server 生成精确的 `enabled_tools`；未登记的 server 被禁用。原生 shell 保留在 `read-only` sandbox 中，只允许经过分类的本地只读发现命令（例如 `sed`、`rg`、`find`、`cat`），拒绝重定向、写入选项、脚本解释器、网络客户端和未知命令。DWS/Lark 外部读写仍必须经过 reviewed 工具及回执校验。受控 CLI 的 stdio MCP 固定以服务仓库为 `cwd`，因此即使 Agent workspace 是独立的资料目录，也能加载服务模块。完全无工具的独立只读任务继续使用全局空列表。
 
 服务启动会先运行 MCP doctor，检查 `memory_connector`、`exa`、`xiaoqing_interview`，状态只使用 `ready`、`needs_login`、`missing_config`、`token_expired`、`network_blocked`、`tool_not_found` 等明确值。`needs_login` 和 `token_expired` 只记录/提醒一次，然后暂停相关任务，不让 agent 自己触发登录循环。手动检查：
 

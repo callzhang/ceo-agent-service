@@ -14,6 +14,47 @@ from app.history import safe_observability_error
 from app.leak_check import contains_credential
 
 
+_LOCAL_READ_ONLY_COMMANDS = frozenset(
+    {
+        "basename",
+        "cat",
+        "cut",
+        "dirname",
+        "du",
+        "file",
+        "find",
+        "grep",
+        "head",
+        "jq",
+        "ls",
+        "pwd",
+        "readlink",
+        "rg",
+        "sed",
+        "sort",
+        "stat",
+        "tail",
+        "tr",
+        "uniq",
+        "wc",
+    }
+)
+_SHELL_CONNECTORS = frozenset({"&&", "||", "|", ";"})
+_FIND_EFFECTFUL_ACTIONS = frozenset(
+    {
+        "-delete",
+        "-exec",
+        "-execdir",
+        "-fls",
+        "-fprint",
+        "-fprint0",
+        "-fprintf",
+        "-ok",
+        "-okdir",
+    }
+)
+
+
 class AgentReadOnlyViolationError(RuntimeError):
     pass
 
@@ -180,6 +221,9 @@ class NativeCliMetadataClassifier:
                 self._discovery_errors.pop(cli, None)
 
     def classify(self, item: dict[str, object]) -> NativeCliCommand | None:
+        local_read = _classify_local_read_only_command(item)
+        if local_read is not None:
+            return local_read
         argv = native_command_argv(item)
         if argv is None or "--dry-run" in argv:
             return None
@@ -200,6 +244,9 @@ class NativeCliMetadataClassifier:
         return None
 
     def classify_cached(self, item: dict[str, object]) -> NativeCliCommand | None:
+        local_read = _classify_local_read_only_command(item)
+        if local_read is not None:
+            return local_read
         argv = native_command_argv(item)
         if argv is None or "--dry-run" in argv:
             return None
@@ -317,6 +364,131 @@ def native_command_argv(item: dict[str, object]) -> tuple[str, ...] | None:
                     return native_command_argv({"command": argv[index + 1]})
         return None
     return argv if executable in {"dws", "lark-cli"} else None
+
+
+def _classify_local_read_only_command(
+    item: dict[str, object],
+) -> NativeCliCommand | None:
+    segments = _local_read_only_segments(item)
+    if segments is None:
+        return None
+    command_path = " ; ".join(Path(segment[0]).name for segment in segments)
+    normalized = "\x1e".join(shlex.join(segment) for segment in segments)
+    return NativeCliCommand(
+        cli="local-shell",
+        command_path=command_path,
+        effect=EffectKind.READ_ONLY,
+        command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+        target_identifiers={},
+    )
+
+
+def _local_read_only_segments(
+    item: dict[str, object],
+) -> tuple[tuple[str, ...], ...] | None:
+    raw_command = item.get("argv") or item.get("command")
+    if isinstance(raw_command, list) and all(
+        isinstance(part, str) for part in raw_command
+    ):
+        argv = tuple(raw_command)
+        if not argv:
+            return None
+        executable = Path(argv[0]).name
+        if executable in {"bash", "sh", "zsh"}:
+            for flag in ("-lc", "-c"):
+                if flag in argv:
+                    index = argv.index(flag)
+                    if index + 1 < len(argv):
+                        return _local_read_only_segments(
+                            {"command": argv[index + 1]}
+                        )
+            return None
+        return (argv,) if _is_local_read_only_segment(argv) else None
+    if not isinstance(raw_command, str) or _contains_shell_command_substitution(
+        raw_command
+    ):
+        return None
+    try:
+        lexer = shlex.shlex(
+            raw_command,
+            posix=True,
+            punctuation_chars="|&;<>\n",
+        )
+        lexer.whitespace = " \t\r\n"
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = tuple(lexer)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    segments: list[tuple[str, ...]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in _SHELL_CONNECTORS:
+            if not current:
+                return None
+            segment = tuple(current)
+            if not _is_local_read_only_segment(segment):
+                return None
+            segments.append(segment)
+            current = []
+            continue
+        if token and all(character in "|&;<>\n" for character in token):
+            return None
+        current.append(token)
+    if not current:
+        return None
+    segment = tuple(current)
+    if not _is_local_read_only_segment(segment):
+        return None
+    segments.append(segment)
+    return tuple(segments)
+
+
+def _is_local_read_only_segment(argv: tuple[str, ...]) -> bool:
+    if not argv:
+        return False
+    executable = Path(argv[0]).name
+    if executable not in _LOCAL_READ_ONLY_COMMANDS:
+        return False
+    options = argv[1:]
+    if executable == "sed" and any(
+        option == "-i"
+        or option.startswith("-i.")
+        or option == "--in-place"
+        or option.startswith("--in-place=")
+        for option in options
+    ):
+        return False
+    if executable in {"rg", "grep"} and any(
+        option == "--pre"
+        or option.startswith("--pre=")
+        or option == "--generate"
+        or option.startswith("--generate=")
+        for option in options
+    ):
+        return False
+    if executable == "find" and any(
+        option in _FIND_EFFECTFUL_ACTIONS for option in options
+    ):
+        return False
+    if executable == "sort" and any(
+        option == "-o"
+        or option.startswith("--output=")
+        or option == "--output"
+        for option in options
+    ):
+        return False
+    if executable == "tail" and any(
+        option == "-f"
+        or option.startswith("-f")
+        or option == "--follow"
+        or option.startswith("--follow=")
+        for option in options
+    ):
+        return False
+    return True
 
 
 def structured_target_identifiers(value: object) -> dict[str, str]:
