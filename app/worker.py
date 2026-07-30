@@ -137,6 +137,7 @@ logger = logging.getLogger(__name__)
 
 HANDOFF_ACK = handoff_ack()
 HANDOFF_TEXT_EMOTION = "我去叫"
+HANDOFF_NOTIFICATION_PREFIX = "【CEO Agent 转人工通知】"
 # Historical auto-ack marker. Keep filtering it from context, but do not send
 # new processing acknowledgements before final replies.
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
@@ -4328,6 +4329,11 @@ class DingTalkAutoReplyWorker:
                 context_messages,
                 candidate_unread_messages,
                 conversation_mentions,
+            )
+            candidate_source_messages = (
+                self._discard_service_handoff_notifications(
+                    candidate_source_messages
+                )
             )
             candidates = self._candidate_messages(
                 conversation,
@@ -8819,6 +8825,25 @@ class DingTalkAutoReplyWorker:
             result.append(message)
         return result
 
+    def _discard_service_handoff_notifications(
+        self,
+        messages: list[DingTalkMessage],
+    ) -> list[DingTalkMessage]:
+        service_notifications: list[DingTalkMessage] = []
+        remaining_messages: list[DingTalkMessage] = []
+        for message in messages:
+            if self._is_service_handoff_notification(message):
+                service_notifications.append(message)
+            else:
+                remaining_messages.append(message)
+        if service_notifications:
+            self._mark_seen(service_notifications)
+        return remaining_messages
+
+    @staticmethod
+    def _is_service_handoff_notification(message: DingTalkMessage) -> bool:
+        return message.content.startswith(HANDOFF_NOTIFICATION_PREFIX)
+
     def _group_recovered_candidate_source_messages(
         self,
         context_messages: list[DingTalkMessage],
@@ -10550,6 +10575,7 @@ class DingTalkAutoReplyWorker:
             context_messages, trigger
         )
         return (
+            f"{HANDOFF_NOTIFICATION_PREFIX}\n"
             f"{conversation.title}\n"
             f"{trigger.sender_name}: {trigger.content[:300]}\n"
             f"previous split-person reply: {previous_split_reply}"

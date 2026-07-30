@@ -35,8 +35,15 @@ from app.feedback_spike import FeedbackReplyText
 from app.external_retry import ExternalDependencyError
 from app.oa_approval import OaApprovalResult
 from app.store import AutoReplyStore
+from app.universal_plan import (
+    PlannedAction,
+    PlannedActionKind,
+    UniversalAudit,
+    UniversalPlan,
+)
 from app.worker import (
     DWS_AUTH_LOGIN_STATE_KEY,
+    HANDOFF_NOTIFICATION_PREFIX,
     PROCESSING_ACK,
     DingTalkAutoReplyWorker,
     DwsAuthorizationRequiredError,
@@ -955,6 +962,35 @@ class FailingUniversalPlanner:
         if isinstance(self.error, Exception):
             raise self.error
         raise RuntimeError(self.error)
+
+
+class FakeHandoffPlanner:
+    last_session_id = None
+
+    def plan(self, context, session_id=None):
+        del session_id
+        self.last_session_id = "session-handoff"
+        return UniversalPlan(
+            task_kind="reply",
+            reason="handoff",
+            dependencies=["dws"],
+            actions=[
+                PlannedAction(
+                    kind=PlannedActionKind.HANDOFF_TO_HUMAN,
+                    reason="handoff",
+                    target={
+                        "conversation_id": context.conversation_id,
+                        "trigger_message_id": context.trigger_message_id,
+                    },
+                    payload={},
+                )
+            ],
+            audit=UniversalAudit(
+                summary="handoff",
+                documents=[],
+                confidence=0.9,
+            ),
+        )
 
 
 class FakeEnvelopeCodex:
@@ -12564,15 +12600,21 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setenv("CEO_MENTION_ALIASES", "@Alex Chen(明哥)")
     monkeypatch.setattr(
         "app.worker.send_macos_notification", lambda **_: None
     )
     trigger = message("@Alex Chen(明哥) 不要分身，真人看一下")
+    trigger.mentioned_user_ids = ["principal-user-1"]
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
     worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+        store=store,
+        dws=dws,
+        codex=codex,
+        now_provider=fixed_worker_now,
+        universal_planner=FakeHandoffPlanner(),
     )
     worker.store.set_service_state(
         "message_recovery_checked_at",
@@ -12588,17 +12630,54 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
         ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
     ]
     assert len(dws.dings) == 1
+    assert dws.dings[0].startswith(HANDOFF_NOTIFICATION_PREFIX)
     assert "Friday" in dws.dings[0]
     assert "不要分身" in dws.dings[0]
     assert "previous split-person reply: none" in dws.dings[0]
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.final_reply_text == ""
-    assert attempt.send_status == "reacted"
-    assert attempt.send_error == "text_emotion: 我去叫"
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "handoff_to_human: handoff"
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is None
     assert store.count_errors() == 0
+
+
+def test_service_handoff_notification_is_not_enqueued_from_self_chat(
+    tmp_path: Path, monkeypatch
+):
+    handoff = message(
+        (
+            f"{HANDOFF_NOTIFICATION_PREFIX}\n"
+            "[会议群]晋升答辩 张静: @所有人 请评委填写评分\n"
+            "previous split-person reply: none"
+        ),
+        message_id="handoff-notification",
+        single_chat=True,
+        sender_user_id=None,
+    )
+    handoff.sender_name = "磊哥"
+    handoff.sender_open_dingtalk_id = "ding-robot-open-id"
+    direct = conversation(single_chat=True)
+    direct.title = "磊哥"
+    dws = FakeDws(
+        [direct],
+        {"cid-1": [handoff]},
+        unread_messages={"cid-1": [handoff]},
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 0
+    assert worker.store.has_seen("handoff-notification") is True
+    assert worker.store.count_reply_tasks() == 0
 
 
 def test_new_principal_mention_is_processed(
@@ -14249,24 +14328,32 @@ def test_handoff_ding_failure_does_not_block_ack(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setenv("CEO_MENTION_ALIASES", "@Alex Chen(明哥)")
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
+    trigger = message("@Alex Chen(明哥) 不要分身，真人看一下")
+    trigger.mentioned_user_ids = ["principal-user-1"]
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Alex Chen(明哥) 不要分身，真人看一下")]},
+        {"cid-1": [trigger]},
         ding_error=RuntimeError("ding failed"),
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
     worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+        store=store,
+        dws=dws,
+        codex=codex,
+        now_provider=fixed_worker_now,
+        universal_planner=FakeHandoffPlanner(),
     )
 
     worker.run_once()
 
     expected_handoff_text = (
+        f"{HANDOFF_NOTIFICATION_PREFIX}\n"
         "Friday\n"
         "周俊杰: @Alex Chen(明哥) 不要分身，真人看一下\n"
         "previous split-person reply: none"
@@ -14288,7 +14375,8 @@ def test_handoff_ding_failure_does_not_block_ack(
     assert notifications[0]["title"] == "CEO handoff: Friday"
     assert (
         notifications[0]["url"]
-        == "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1"
+        == "http://127.0.0.1:8765/open-dingtalk"
+        "?conversation_id=cid-1&attempt_id=1"
     )
     assert notifications[0]["message"] == "@Alex Chen(明哥) 不要分身，真人看一下"
     assert "不要分身" in notifications[0]["message"]
@@ -14298,20 +14386,26 @@ def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setenv("CEO_MENTION_ALIASES", "@Alex Chen(明哥)")
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
+    trigger = message("@Alex Chen(明哥) 不要分身，真人看一下")
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Alex Chen(明哥) 不要分身，真人看一下")]},
+        {"cid-1": [trigger]},
         ding_error=RuntimeError("ding failed"),
         send_error=RuntimeError("bot failed"),
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
     worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+        store=store,
+        dws=dws,
+        codex=codex,
+        now_provider=fixed_worker_now,
+        universal_planner=FakeHandoffPlanner(),
     )
 
     worker.run_once()
@@ -14329,9 +14423,11 @@ def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setenv("CEO_MENTION_ALIASES", "@Alex Chen(明哥)")
+    trigger = message("@Alex Chen(明哥) 不要分身，真人看一下")
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Alex Chen(明哥) 不要分身，真人看一下")]},
+        {"cid-1": [trigger]},
     )
     dws.text_emotion_error = DwsError(
         "token verified failed",
@@ -14345,6 +14441,7 @@ def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
         monkeypatch,
         max_task_attempts=1,
     )
+    worker._injected_universal_planner = FakeHandoffPlanner()
     worker.produce_once()
 
     assert worker.consume_once(max_tasks=1) == 1
@@ -14358,8 +14455,12 @@ def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
     assert attempt is not None
     assert attempt.action == "handoff_to_human"
     assert attempt.send_status == "skipped"
-    assert "handoff_notification_only" in attempt.send_error
-    assert "token verified failed" in attempt.send_error
+    assert attempt.send_error == "handoff_to_human: handoff"
+    audit_events = json.loads(attempt.audit_tool_events_json)
+    handoff_audit = next(
+        event for event in audit_events if event.get("tool") == "universal_handoff"
+    )
+    assert json.loads(handoff_audit["output"])["reaction_succeeded"] is False
     assert "不要分身" in dws.dings[0]
 
 

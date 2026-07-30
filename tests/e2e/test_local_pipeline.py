@@ -20,7 +20,11 @@ from app.universal_plan import (
     UniversalAudit,
     UniversalPlan,
 )
-from app.worker import DingTalkAutoReplyWorker, PROCESSING_ACK
+from app.worker import (
+    HANDOFF_NOTIFICATION_PREFIX,
+    PROCESSING_ACK,
+    DingTalkAutoReplyWorker,
+)
 from app.dws_client import DwsUserProfile
 from app.dws_client import DwsCalendarAttendee, DwsCalendarEvent
 from app.audit_web import render_attempt_list
@@ -569,6 +573,8 @@ def test_local_pipeline_handoff_reacts_and_dings_without_runtime_org_calls(
     assert raw_dws.dings == [
         (
             "principal-user",
-            "HR direct\nHR: 不要分身，真人看一下\nprevious split-person reply: none",
+            f"{HANDOFF_NOTIFICATION_PREFIX}\n"
+            "HR direct\nHR: 不要分身，真人看一下\n"
+            "previous split-person reply: none",
         )
     ]

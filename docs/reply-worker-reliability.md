@@ -88,10 +88,17 @@ it does not bind a click action to DingTalk, so conversation jump remains
 available through the browser bridge when an audit page is open.
 
 Handoff notifications use DING first so they can reach the operator inside
-DingTalk. If DING is unavailable, for example because the DING server quota is
-exhausted, the worker falls back to the same local notification path instead of
-failing the reply attempt. The original chat acknowledgement remains the delivery
-source of truth; the local notification only replaces the operator alert.
+DingTalk. Every service-generated handoff alert begins with the exact
+`【CEO Agent 转人工通知】` protocol marker. If that alert later appears in the
+operator's single-chat inbox, the producer marks it seen and removes it before
+candidate routing, so the service cannot treat its own alert as a new user
+trigger or recursively include earlier handoff text.
+
+If DING is unavailable, for example because the DING server quota is exhausted,
+the worker tries the configured robot direct-message path and then falls back to
+the local notification path instead of failing the reply attempt. The original
+chat acknowledgement remains the delivery source of truth; these operator
+alerts do not become reply candidates.
 
 ## No-reply side effects
 
