@@ -403,12 +403,50 @@ def test_direct_runner_uses_native_codex_and_never_ignores_user_config(
         in part
         for part in command
     )
-    assert "tools.enabled_tools=[]" in command
+    assert "tools.enabled_tools=[]" not in command
+    assert "features.plugins=false" in command
+    assert "features.apps=false" in command
     assert str(AGENT_RESULT_SCHEMA_PATH) in command
     assert result.result.outcome is AgentOutcome.COMPLETED
     assert executor.kwargs[0]["total_timeout_seconds"] == 1200
     assert executor.kwargs[0]["idle_timeout_seconds"] == 900
     assert DWS_AGENT_CODE_ENV not in executor.kwargs[0]["env"]
+
+
+def test_direct_runner_exposes_only_registry_reviewed_mcp_tools(
+    tmp_path: Path, store: AutoReplyStore, monkeypatch: pytest.MonkeyPatch
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            (
+                "[mcp_servers.exa]",
+                'url = "https://exa.example/mcp"',
+                "",
+                "[mcp_servers.user_config_only]",
+                'url = "https://other.example/mcp"',
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", "exa")
+    task = _task(store)
+    executor = RecordingExecutor(_jsonl())
+
+    DirectAgentRunner(store=store, workspace=tmp_path, executor=executor).run(
+        task, _context(task.id)
+    )
+
+    command = executor.commands[0]
+    assert "features.plugins=false" in command
+    assert "features.apps=false" in command
+    assert (
+        'mcp_servers.exa.enabled_tools=["web_fetch_exa","web_search_exa"]'
+        in command
+    )
+    assert "mcp_servers.user_config_only.enabled=false" in command
 
 
 def test_failed_agent_result_persists_failed_run(tmp_path: Path, store: AutoReplyStore):
@@ -1206,7 +1244,7 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert "--sandbox read-only" in command_text
     assert executor.commands[0].count("--sandbox") == 1
     assert "danger-full-access" not in executor.commands[0]
-    assert "tools.enabled_tools=[]" in executor.commands[0]
+    assert "tools.enabled_tools=[]" not in executor.commands[0]
     assert 'web_search="disabled"' in executor.commands[0]
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_get","memory_recall","timeline_get","user_get"]' in executor.commands[0]
     assert (
@@ -1317,7 +1355,7 @@ def test_read_only_resume_places_all_safety_options_before_session_id(
     session_index = command.index("existing-session")
     assert command[-2:] == ["existing-session", "-"]
     assert command.index("--sandbox") < session_index
-    assert command.index("tools.enabled_tools=[]") < session_index
+    assert "tools.enabled_tools=[]" not in command
     assert command.index('web_search="disabled"') < session_index
     assert (
         command.index(
@@ -1558,7 +1596,7 @@ def test_reconciliation_runs_reviewed_live_dws_read_and_binds_proof_to_original_
     result = runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
 
     assert result.result.outcome.value == "completed"
-    assert "tools.enabled_tools=[]" in executor.commands[0]
+    assert "tools.enabled_tools=[]" not in executor.commands[0]
     assert any("reconciliation_cli" in part for part in executor.commands[0])
     assert any(
         event.get("item", {}).get("metadata", {}).get("effect") == "read_only"
@@ -1587,7 +1625,7 @@ def test_reconciliation_rejects_write_before_accepting_result(
         runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
 
     command = executor.commands[0]
-    assert "tools.enabled_tools=[]" in command
+    assert "tools.enabled_tools=[]" not in command
     assert 'approval_policy="never"' in command
 
 

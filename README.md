@@ -404,6 +404,8 @@ Direct Agent 只允许 CLI 发布元数据明确标记为只读的原生 DWS/Lar
 
 Direct Agent 通过 `reconciliation_cli.read_skill` 自行读取已安装目录中的 `SKILL.md`；该工具校验解析后的真实路径和文件大小，不允许借此读取任意本地文件。服务不替 agent 选择 skill，也不预读业务材料。
 
+允许 reviewed MCP 的运行模式不设置全局 `tools.enabled_tools=[]`，否则 Codex 会把已配置 MCP 一并从模型工具列表中移除。运行时显式关闭 Codex 插件和 App，并按 MCP effect registry 为每个 server 生成精确的 `enabled_tools`；未登记的 server 被禁用。这样保留本机 Codex 登录、模型配置、Exa 和受控 DWS/Lark 通路，同时不暴露其他用户插件能力。完全无工具的独立只读任务继续使用全局空列表。
+
 服务启动会先运行 MCP doctor，检查 `memory_connector`、`exa`、`xiaoqing_interview`，状态只使用 `ready`、`needs_login`、`missing_config`、`token_expired`、`network_blocked`、`tool_not_found` 等明确值。`needs_login` 和 `token_expired` 只记录/提醒一次，然后暂停相关任务，不让 agent 自己触发登录循环。手动检查：
 
 ```bash

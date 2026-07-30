@@ -192,12 +192,14 @@ def make_read_only_with_reviewed_tools(
     _insert_command_options(
         command,
         [
+            "-c",
+            "features.plugins=false",
+            "-c",
+            "features.apps=false",
             "--sandbox",
             "read-only",
             "-c",
             'approval_policy="never"',
-            "-c",
-            "tools.enabled_tools=[]",
             "-c",
             'web_search="disabled"',
             "-c",
@@ -214,6 +216,7 @@ def make_read_only_with_reviewed_tools(
 def make_direct_agent_sandbox(
     command: list[str],
     *,
+    reviewed_mcp_tools: dict[str, tuple[str, ...]],
     controlled_cli_command: str,
     controlled_cli_args: tuple[str, ...],
 ) -> None:
@@ -225,15 +228,34 @@ def make_direct_agent_sandbox(
         command,
         prefixes=("approval_policy=", "tools.enabled_tools=", "web_search="),
     )
+    configured = configured_transport_server_names(
+        command,
+        include_all_configured=True,
+    )
+    for name in configured:
+        tools = reviewed_mcp_tools.get(name, ())
+        if not tools:
+            _insert_command_options(
+                command,
+                ["-c", f"mcp_servers.{name}.enabled=false"],
+            )
+            continue
+        encoded = json.dumps(list(tools), ensure_ascii=True, separators=(",", ":"))
+        _insert_command_options(
+            command,
+            ["-c", f"mcp_servers.{name}.enabled_tools={encoded}"],
+        )
     _insert_command_options(
         command,
         [
+            "-c",
+            "features.plugins=false",
+            "-c",
+            "features.apps=false",
             "--sandbox",
             "read-only",
             "-c",
             'approval_policy="never"',
-            "-c",
-            "tools.enabled_tools=[]",
             "-c",
             'web_search="disabled"',
             "-c",

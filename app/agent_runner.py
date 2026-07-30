@@ -345,6 +345,12 @@ class McpToolEffectRegistry:
                 grouped.setdefault(server, []).append(tool)
         return {server: tuple(sorted(tools)) for server, tools in grouped.items()}
 
+    def reviewed_tools(self) -> dict[str, tuple[str, ...]]:
+        grouped: dict[str, list[str]] = {}
+        for server, tool in self._effects:
+            grouped.setdefault(server, []).append(tool)
+        return {server: tuple(sorted(tools)) for server, tools in grouped.items()}
+
 
 ProcessExecutor = Callable[..., ProcessRunResult]
 
@@ -422,6 +428,7 @@ class DirectAgentRunner:
         else:
             make_direct_agent_sandbox(
                 command,
+                reviewed_mcp_tools=self.mcp_effect_registry.reviewed_tools(),
                 controlled_cli_command=sys.executable,
                 controlled_cli_args=("-m", "app.reconciliation_cli"),
             )
