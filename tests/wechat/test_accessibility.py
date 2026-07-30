@@ -1,5 +1,6 @@
 import pytest
 
+import app.wechat.accessibility as accessibility
 from app.store import AutoReplyStore
 from app.wechat.accessibility import (
     AccessibilityResult, MacWechatAccessibility, WechatSender, _open_target,
@@ -163,6 +164,125 @@ def test_open_target_selects_unique_sidebar_row_by_recent_message():
 
     assert opened is composer
     assert clicked == [(expected_row, 1)]
+
+
+def test_open_target_waits_for_delayed_matching_sidebar_row():
+    expected_row = object()
+    composer = object()
+    clicked = []
+    scans = 0
+
+    def first(*, role=None, id_eq=None, title_contains=None):
+        if id_eq == "chat_input_field":
+            return composer
+        return None
+
+    def find_all(*, role=None, id_eq=None, title_contains=None):
+        nonlocal scans
+        scans += 1
+        return [] if scans < 3 else [expected_row]
+
+    opened = _open_target(
+        "Melody",
+        first=first,
+        find_all=find_all,
+        subtree_has_text=lambda row, text: (
+            row is expected_row and text == "latest inbound"
+        ),
+        click=lambda element, n=1: clicked.append((element, n)),
+        type_fn=lambda _text: None,
+        settle=0,
+        sleep=lambda _seconds: None,
+        expected_recent_text="latest inbound",
+    )
+
+    assert opened is composer
+    assert scans == 3
+    assert clicked == [(expected_row, 1)]
+
+
+def test_open_target_retries_same_verified_row_when_first_click_is_ignored():
+    expected_row = object()
+    composer = object()
+    clicked = []
+
+    def first(*, role=None, id_eq=None, title_contains=None):
+        if id_eq == "chat_input_field" and len(clicked) >= 2:
+            return composer
+        return None
+
+    opened = _open_target(
+        "Melody",
+        first=first,
+        find_all=lambda **_kwargs: [expected_row],
+        subtree_has_text=lambda row, text: (
+            row is expected_row and text == "latest inbound"
+        ),
+        click=lambda element, n=1: clicked.append((element, n)),
+        type_fn=lambda _text: None,
+        settle=0,
+        sleep=lambda _seconds: None,
+        expected_recent_text="latest inbound",
+    )
+
+    assert opened is composer
+    assert clicked == [(expected_row, 1), (expected_row, 1)]
+
+
+def test_open_and_identify_refreshes_ax_root_after_activation(monkeypatch):
+    stale_root = object()
+    fresh_root = object()
+    row = object()
+    composer = object()
+    roots = iter((stale_root, fresh_root))
+
+    def get_attr(element, attribute, _default):
+        values = {
+            (stale_root, "AXChildren"): [],
+            (fresh_root, "AXChildren"): [row],
+            (row, "AXChildren"): [],
+            (row, "AXIdentifier"): "session_item_Melody",
+            (composer, "AXTitle"): "Melody",
+        }
+        return 0, values.get((element, attribute))
+
+    class Runner(MacWechatAccessibility):
+        @staticmethod
+        def _wechat_pid(running_applications=None):
+            return 123
+
+        def _ax(self):
+            fake_time = type("FakeTime", (), {"sleep": staticmethod(lambda _seconds: None)})
+            return (
+                fake_time,
+                lambda: True,
+                lambda _pid: next(roots),
+                get_attr,
+                None,
+                None,
+                None,
+            )
+
+        @staticmethod
+        def _frontmost_app():
+            return None
+
+        @staticmethod
+        def _reactivate(_app_ref):
+            return None
+
+        def _wait_until_idle(self):
+            return None
+
+    monkeypatch.setattr(accessibility, "_activate_wait", lambda *args, **kwargs: True)
+
+    def open_target(_label, **kwargs):
+        rows = kwargs["find_all"](id_eq="session_item_Melody")
+        return composer if rows == [row] else None
+
+    monkeypatch.setattr(accessibility, "_open_target", open_target)
+
+    assert Runner().open_and_identify("Melody", expected_recent_text="latest") == "Melody"
 
 
 def test_open_target_does_not_search_when_recent_message_is_not_in_sidebar():

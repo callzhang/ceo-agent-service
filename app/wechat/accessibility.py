@@ -144,28 +144,38 @@ def _open_target(
     navigation_query = search_query or target_label
     row = None
     if expected_recent_text:
-        rows = (
-            find_all(id_eq=f"session_item_{target_label}")
-            if find_all is not None else []
-        )
-        matching = [
-            candidate for candidate in rows
-            if subtree_has_text is not None
-            and subtree_has_text(candidate, expected_recent_text)
-        ]
-        if len(matching) != 1:
+        def unique_matching_row():
+            rows = (
+                find_all(id_eq=f"session_item_{target_label}")
+                if find_all is not None else []
+            )
+            matching = [
+                candidate for candidate in rows
+                if subtree_has_text is not None
+                and subtree_has_text(candidate, expected_recent_text)
+            ]
+            return matching[0] if len(matching) == 1 else None
+
+        row = _poll_value(unique_matching_row, sleep=sleep)
+        if row is None:
             return None
-        row = matching[0]
     elif navigation_query == target_label:
         row = first(id_eq=f"session_item_{target_label}")
     if row is not None:
-        click(row)
-        composer = _poll_value(
-            lambda: first(id_eq="chat_input_field", title_contains=target_label),
-            sleep=sleep,
-        )
-        if composer is not None:
-            return composer
+        for attempt in range(3):
+            if attempt and expected_recent_text:
+                refreshed_row = _poll_value(unique_matching_row, sleep=sleep)
+                if refreshed_row is None:
+                    return None
+                row = refreshed_row
+            click(row)
+            composer = _poll_value(
+                lambda: first(id_eq="chat_input_field", title_contains=target_label),
+                sleep=sleep,
+                attempts=10,
+            )
+            if composer is not None:
+                return composer
     # A direct-chat evidence match must come from the recent-session row. Search
     # results expose duplicate display names without a stable target identifier.
     if expected_recent_text:
@@ -404,7 +414,7 @@ class MacWechatAccessibility:
             )
 
         def first(role=None, id_eq=None, title_contains=None):
-            for el in walk(app):
+            for el in walk(mk_app(pid)):
                 if role and g(el, "AXRole") != role:
                     continue
                 if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:
@@ -416,7 +426,7 @@ class MacWechatAccessibility:
 
         def find_all(role=None, id_eq=None, title_contains=None):
             matches = []
-            for el in walk(app):
+            for el in walk(mk_app(pid)):
                 if role and g(el, "AXRole") != role:
                     continue
                 if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:
@@ -541,7 +551,7 @@ class MacWechatAccessibility:
             )
 
         def first(role=None, id_eq=None, title_contains=None):
-            for el in walk(app):
+            for el in walk(mk_app(pid)):
                 if role and g(el, "AXRole") != role:
                     continue
                 if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:
@@ -553,7 +563,7 @@ class MacWechatAccessibility:
 
         def find_all(role=None, id_eq=None, title_contains=None):
             matches = []
-            for el in walk(app):
+            for el in walk(mk_app(pid)):
                 if role and g(el, "AXRole") != role:
                     continue
                 if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:
