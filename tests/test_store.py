@@ -4986,3 +4986,47 @@ def test_removed_runtime_migration_rolls_back_every_change_on_failure(
     assert "universal_action_executions" in tables
     assert attempts == 0
     assert auth_state is not None
+
+
+def test_recover_orphaned_processing_reply_tasks_is_generation_aware(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_ids = []
+    for index in range(3):
+        store.enqueue_reply_task(
+            conversation_id=f"cid-{index}",
+            conversation_title=f"Conversation {index}",
+            single_chat=False,
+            trigger_message_id=f"msg-{index}",
+            trigger_create_time="2026-07-30 09:00:00",
+            trigger_sender="Derek",
+            trigger_text="handle this",
+        )
+        task_ids.append(store.claim_reply_tasks(1)[0].id)
+
+    running_task = store.get_reply_task(task_ids[1])
+    unknown_task = store.get_reply_task(task_ids[2])
+    assert running_task is not None and unknown_task is not None
+    store.claim_agent_run(
+        running_task.id,
+        running_task.execution_generation,
+        owner="running-worker",
+    )
+    unknown_run = store.claim_agent_run(
+        unknown_task.id,
+        unknown_task.execution_generation,
+        owner="unknown-worker",
+    ).run
+    store.mark_agent_run_unknown(
+        unknown_run.id,
+        {"code": "effect_completion_missing"},
+        owner="unknown-worker",
+    )
+
+    recovered = store.recover_orphaned_processing_reply_tasks(limit=10)
+
+    assert [task.id for task in recovered] == [task_ids[0]]
+    assert store.get_reply_task(task_ids[0]).status == "pending"
+    assert store.get_reply_task(task_ids[1]).status == "processing"
+    assert store.get_reply_task(task_ids[2]).status == "processing"

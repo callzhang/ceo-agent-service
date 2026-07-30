@@ -4249,6 +4249,38 @@ def test_consumer_does_not_claim_task_when_required_gate_is_not_ready(
     assert task.attempts == 0
 
 
+def test_channel_gate_preserves_last_success_when_later_check_fails(
+    tmp_path, monkeypatch
+):
+    gate = FixedGate("dingtalk", ChannelGateState.READY)
+    worker = make_worker(
+        tmp_path,
+        FakeDws([], {}),
+        FakeCodex([]),
+        monkeypatch,
+        channel_gates={"dingtalk": gate},
+    )
+
+    worker._channel_result("dingtalk")
+    last_success = worker.store.get_service_state(
+        "channel_gate_last_success:dingtalk"
+    )
+
+    gate.state = ChannelGateState.UNAVAILABLE
+    worker._pass_channel_results.clear()
+    worker._channel_result("dingtalk")
+
+    assert last_success == "2026-05-13T17:00:00+00:00"
+    assert (
+        worker.store.get_service_state("channel_gate_last_success:dingtalk")
+        == last_success
+    )
+    gate_state = json.loads(
+        worker.store.get_service_state("channel_gate:dingtalk")
+    )
+    assert gate_state["status"] == "unavailable"
+
+
 def test_lark_non_ready_keeps_referencing_task_pending_and_checks_each_gate_once(
     tmp_path, monkeypatch
 ):
@@ -4675,7 +4707,8 @@ def test_old_worker_finalize_is_atomic_after_generation_switch(
     task = worker.store.get_reply_task(1)
     assert task is not None
     assert task.execution_generation == runner.new_generation
-    assert task.status == "processing"
+    assert task.status == "pending"
+    assert task.error == "orphaned_before_agent_start"
     assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
 
 
@@ -4739,8 +4772,8 @@ def test_old_worker_cannot_write_context_or_authorization_failure_after_rotation
     task = worker.store.get_reply_task(1)
     assert task is not None
     assert task.execution_generation == worker._test_new_generation
-    assert task.status == "processing"
-    assert task.error == ""
+    assert task.status == "pending"
+    assert task.error == "orphaned_before_agent_start"
     assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
 
 
@@ -4777,8 +4810,8 @@ def test_active_run_defer_cannot_overwrite_rotated_generation(
     task = worker.store.get_reply_task(1)
     assert task is not None
     assert task.execution_generation == worker._test_new_generation
-    assert task.status == "processing"
-    assert task.error == ""
+    assert task.status == "pending"
+    assert task.error == "orphaned_before_agent_start"
 
 
 def test_consume_once_completes_generation_mismatch_after_terminal_at_max_attempts(
@@ -4894,7 +4927,37 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
     assert run.codex_session_id == "session-stale-1"
 
 
-def test_consume_once_completes_older_single_chat_processing_task_after_newer_reply(
+def test_startup_recovery_requeues_processing_task_without_current_run(
+    tmp_path: Path,
+    monkeypatch,
+):
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": []}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-orphan",
+        conversation_title="Orphan",
+        single_chat=False,
+        trigger_message_id="msg-orphan",
+        trigger_create_time="2026-07-30 09:00:00",
+        trigger_sender="Derek",
+        trigger_text="handle this",
+    )
+    orphan = worker.store.claim_reply_tasks(1)[0]
+
+    worker._recover_orphaned_agent_reply_tasks()
+
+    recovered = worker.store.get_reply_task(orphan.id)
+    assert recovered is not None
+    assert recovered.status == "pending"
+    assert recovered.execution_generation == orphan.execution_generation
+    assert recovered.error == "orphaned_before_agent_start"
+
+
+def test_consume_once_recovers_older_single_chat_orphan_after_newer_reply(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -4938,12 +5001,13 @@ def test_consume_once_completes_older_single_chat_processing_task_after_newer_re
 
     tasks = {
         task.trigger_message_id: task
-        for task in worker.store.list_reply_tasks(statuses=("done", "processing"))
+        for task in worker.store.list_reply_tasks(statuses=("done", "pending", "processing"))
     }
     assert tasks["msg-single-1"].id == old_task.id
-    assert tasks["msg-single-1"].status == "processing"
-    assert tasks["msg-single-1"].locked_at is not None
+    assert tasks["msg-single-1"].status == "pending"
+    assert tasks["msg-single-1"].locked_at is None
     assert tasks["msg-single-2"].status == "done"
+    assert worker.store.count_reply_tasks(status="processing") == 0
     assert not any(
         error.kind == "reply_task_superseded"
         for error in worker.store.list_errors()

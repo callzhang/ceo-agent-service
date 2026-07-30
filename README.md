@@ -104,6 +104,8 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - Channel gate 在 Agent 前运行结构化 status 和 live authenticated probe。
 - 只有明确 `needs_login` 时，Login Coordinator 才启动一次相应 CLI 登录；并发和抑制窗口内不会重复启动。
 - 网络错误、status 不可读或一般命令失败不会触发登录。
+- `Config → Channels` 展示 status、live probe、最近成功时间和登录抑制状态，不展示 PID、session、token 或凭证路径。
+- History 只展示用户可理解的触发、回复、终态和安全结果摘要；运行时内部规划字段不进入页面。
 
 ## OKR 审核数据源
 

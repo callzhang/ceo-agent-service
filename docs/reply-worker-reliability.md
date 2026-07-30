@@ -175,6 +175,17 @@ records the coordinator state in SQLite; concurrent processes and repeated
 checks within the suppression window cannot open another login flow. Network
 errors and unreadable auth status never trigger login.
 
+The Config channel page shows the current gate state, the status and live-probe
+commands that were executed, the most recent successful gate time, and whether
+an interactive login request is active or suppressed. It deliberately omits
+process IDs, session IDs, tokens, credential paths, and raw signed URLs.
+
+History is outcome-oriented. Each row links to its complete audit detail and
+shows the channel, conversation, sender, trigger, generated or sent text,
+terminal state, and the safe Direct Agent summary. Planner labels, action
+indexes, dependency graphs, confidence scores, and target-normalization details
+are not user-facing runtime concepts.
+
 ## Processing acknowledgement
 
 The worker no longer sends `收到，我正在处理（by 分身）` before a final reply. Final

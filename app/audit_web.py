@@ -70,6 +70,7 @@ from app.config import (
     workspace_path,
 )
 from app.embedding import EmbeddingClient
+from app.history import safe_observability_error
 from app.developer_prompt import (
     configurable_prompt_variable_pairs,
     DeveloperPromptTemplateError,
@@ -2223,9 +2224,12 @@ def _render_channel_config(store: AutoReplyStore) -> str:
         "<tr>"
         f"<td>{escape(status.channel)}</td>"
         f"<td><span class=\"setup-step-status setup-status-{escape(status.state.value)}\">"
-        f"{escape(status.state.value)}</span></td>"
+        f"{escape(_channel_gate_state_label(status.state.value))}</span></td>"
         f"<td>{escape(status.reason_code)}"
         f"{_channel_gate_detail_html(status.detail)}</td>"
+        f"<td>{_channel_gate_command_html(status.commands, 0)}</td>"
+        f"<td>{_channel_gate_command_html(status.commands, 1)}</td>"
+        f"<td>{_channel_gate_last_success_html(store, status.channel, status.state.value)}</td>"
         f"<td>{_safe_channel_login_state_html(store, status.channel)}</td>"
         "</tr>"
         for status in statuses
@@ -2235,11 +2239,43 @@ def _render_channel_config(store: AutoReplyStore) -> str:
         "<h2>Channel doctor</h2>"
         '<p class="muted">Reusable reply channels and their local CLI readiness.</p>'
         '<table class="column-sized-table">'
-        "<thead><tr><th>Channel</th><th>Status</th><th>Reason</th><th>Login</th></tr></thead>"
+        "<thead><tr><th>Channel</th><th>状态</th><th>原因</th>"
+        "<th>Status 检查</th><th>Live probe</th><th>最近成功</th><th>登录处理</th></tr></thead>"
         f"<tbody>{rows}</tbody>"
         "</table>"
         "</section>"
     )
+
+
+def _channel_gate_state_label(state: str) -> str:
+    return {
+        "ready": "已就绪",
+        "needs_login": "需要登录",
+        "blocked": "已阻断",
+        "unavailable": "暂不可用",
+    }.get(state, "未知")
+
+
+def _channel_gate_command_html(commands: tuple[tuple[str, ...], ...], index: int) -> str:
+    if index >= len(commands) or not commands[index]:
+        return '<span class="muted">未执行</span>'
+    command = commands[index]
+    binary = Path(command[0]).name
+    safe_command = " ".join((binary, *command[1:]))
+    return f'<code class="config-value">{escape(safe_command)}</code>'
+
+
+def _channel_gate_last_success_html(
+    store: AutoReplyStore,
+    channel: str,
+    current_state: str,
+) -> str:
+    if current_state == "ready":
+        return "本次检查"
+    last_success = store.get_service_state(f"channel_gate_last_success:{channel}")
+    if last_success:
+        return escape(last_success)
+    return '<span class="muted">尚无成功记录</span>'
 
 
 def _safe_channel_login_state_html(store: AutoReplyStore, channel: str) -> str:
@@ -2252,9 +2288,24 @@ def _safe_channel_login_state_html(store: AutoReplyStore, channel: str) -> str:
         return '<span class="muted">unknown</span>'
     if not isinstance(state, dict):
         return '<span class="muted">unknown</span>'
-    safe_fields = ("status", "reason_code", "started_at", "checked_at", "exited_at")
-    values = [str(state[field]) for field in safe_fields if state.get(field)]
-    return escape(" | ".join(values)) if values else '<span class="muted">unknown</span>'
+    status = str(state.get("status") or "")
+    status_label = {
+        "healthy": "无需登录",
+        "running": "授权页已打开",
+        "reserved": "登录请求处理中",
+        "suppressed": "已避免重复弹出授权页",
+        "failed": "登录启动失败",
+        "exited": "授权流程已结束",
+        "blocked": "登录不可用",
+        "unavailable": "登录不可用",
+    }.get(status, "登录状态未知")
+    values = [status_label]
+    if status in {"running", "reserved"}:
+        values.append("已避免重复弹出授权页")
+    for field in ("started_at", "checked_at", "exited_at"):
+        if state.get(field):
+            values.append(str(state[field]))
+    return escape(" | ".join(values))
 
 
 def _channel_gate_detail_html(detail: str) -> str:
@@ -3691,6 +3742,7 @@ def render_attempt_list(
             "<div class=\"attempt-lines\">"
             f"{_attempt_text_line('问', attempt.trigger_text, 260)}"
             f"{_attempt_reply_line(attempt)}"
+            f"{_attempt_outcome_line(attempt)}"
             "</div>"
             f"{_attempt_feedback_summary(feedback_events, sent_reply)}"
             f"{foot_section}"
@@ -8025,6 +8077,13 @@ def _attempt_reply_line(attempt: ReplyAttempt) -> str:
             "</div>"
         )
     return _attempt_text_line("答", _reply_preview_text(attempt), 320)
+
+
+def _attempt_outcome_line(attempt: ReplyAttempt) -> str:
+    summary = safe_observability_error(attempt.audit_summary, limit=240)
+    if not summary:
+        return ""
+    return _attempt_text_line("结果", summary, 240)
 
 
 def _reply_preview_text(attempt: ReplyAttempt) -> str:

@@ -684,18 +684,24 @@ class DingTalkAutoReplyWorker:
             )
         )
         self._pass_channel_results[channel] = result
+        checked_at = self._now().astimezone(timezone.utc).isoformat()
         self.store.set_service_state(
             f"channel_gate:{channel}",
             json.dumps(
                 {
                     "status": result.state.value,
                     "reason_code": result.reason_code,
-                    "checked_at": self._now().astimezone(timezone.utc).isoformat(),
+                    "checked_at": checked_at,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
             ),
         )
+        if result.state is ChannelGateState.READY:
+            self.store.set_service_state(
+                f"channel_gate_last_success:{channel}",
+                checked_at,
+            )
         self.login_coordinator.handle(result)
         return result
 
@@ -1552,7 +1558,11 @@ class DingTalkAutoReplyWorker:
                 continue
             if completed:
                 processed_tasks += 1
+        self._recover_orphaned_agent_reply_tasks()
         return processed_tasks
+
+    def _recover_orphaned_agent_reply_tasks(self) -> None:
+        self.store.recover_orphaned_processing_reply_tasks()
 
     def _recover_stale_agent_reply_tasks(self) -> None:
         stale_tasks = self.store.list_stale_processing_reply_tasks(

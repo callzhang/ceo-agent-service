@@ -202,6 +202,34 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "/codex/session-1" not in html
 
 
+def test_history_hides_runtime_internals_and_shows_agent_outcome(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-direct-agent",
+        conversation_title="产品群",
+        trigger_message_id="msg-direct-agent",
+        trigger_sender="Mina",
+        trigger_text="请确认发布结果",
+        action="send_reply",
+        sensitivity_kind="general",
+        audit_summary="已在群内回复并确认发送成功。",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text="发布结果已确认。",
+        permission_action="allow",
+        send_status="sent",
+    )
+
+    html = render_attempt_list(store)
+
+    assert "已在群内回复并确认发送成功。" in html
+    assert f'data-history-detail-href="/attempts/{attempt_id}"' in html
+    assert "Universal" not in html
+    assert "planner" not in html.casefold()
+    assert "action index" not in html.casefold()
+
+
 def test_render_attempt_list_marks_oa_history_type(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
@@ -2951,7 +2979,10 @@ def test_render_config_page_shows_channel_doctor(tmp_path, monkeypatch):
             channel="dingtalk",
             state=ChannelGateState.READY,
             reason_code="ready",
-            commands=(("dws", "auth", "status"),),
+            commands=(
+                ("dws", "auth", "status"),
+                ("dws", "contact", "user", "get-self"),
+            ),
         ),
     )
     monkeypatch.setattr(
@@ -2973,13 +3004,23 @@ def test_render_config_page_shows_channel_doctor(tmp_path, monkeypatch):
     assert "Channel doctor" in html
     assert "dingtalk" in html
     assert "lark" in html
+    assert "已就绪" in html
+    assert "已阻断" in html
     assert "executable_missing" in html
     assert "lark-cli command not found" in html
+    assert "dws auth status" in html
+    assert "dws contact user get-self" in html
+    assert "lark-cli auth status" in html
+    assert "本次检查" in html
+    assert "尚无成功记录" in html
+    assert "已避免重复弹出授权页" in html
     assert "2026-07-28T12:00:00+00:00" in html
     assert "4242" not in html
     assert "must-not-render" not in html
     assert "/private/auth" not in html
-    assert "<th>Probe</th>" not in html
+    assert "<th>Status 检查</th>" in html
+    assert "<th>Live probe</th>" in html
+    assert "auth archive" not in html.casefold()
 
 
 def test_handle_system_config_post_saves_runtime_params_to_env_file(

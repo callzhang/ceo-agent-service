@@ -3958,6 +3958,58 @@ class AutoReplyStore:
             ).fetchall()
             return [self._reply_task_from_row(row) for row in rows]
 
+    def recover_orphaned_processing_reply_tasks(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and not exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                  )
+                order by tasks.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', locked_at=null, available_at='',
+                        error='orphaned_before_agent_start',
+                        updated_at=current_timestamp
+                    where id=? and status='processing' and execution_generation=?
+                      and not exists (
+                          select 1
+                          from agent_runs
+                          where reply_task_id=reply_tasks.id
+                            and execution_generation=reply_tasks.execution_generation
+                      )
+                    """,
+                    (row["id"], row["execution_generation"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                updated = db.execute(
+                    "select * from reply_tasks where id=?",
+                    (row["id"],),
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
     def complete_reply_task(
         self,
         task_id: int,
