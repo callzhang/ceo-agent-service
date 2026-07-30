@@ -1516,15 +1516,12 @@ class DingTalkAutoReplyWorker:
                             conversation=conversation,
                     )
                     continue
-                self._record_agent_runtime_failure_attempt(task, error)
-                if task.attempts < self.max_task_attempts:
-                    self.store.requeue_reply_task(
-                        task.id,
-                        error,
-                        available_at=self._reply_task_retry_available_at(
-                            task.attempts
-                        ),
-                    )
+                task_status = self._record_agent_runtime_failure_attempt(
+                    task,
+                    error,
+                    retryable=True,
+                )
+                if task_status == "pending":
                     self.store.record_error(
                         task.conversation_id,
                         task.trigger_message_id,
@@ -1532,7 +1529,6 @@ class DingTalkAutoReplyWorker:
                         error,
                     )
                     continue
-                self.store.fail_reply_task(task.id, error)
                 self.store.record_error(
                     task.conversation_id,
                     task.trigger_message_id,
@@ -1620,16 +1616,13 @@ class DingTalkAutoReplyWorker:
                     )
                     recovered += 1
                     continue
-                if retryable and task.attempts < self.max_task_attempts:
-                    self.store.requeue_reply_task(
-                        task.id,
-                        error,
-                        available_at=self._reply_task_retry_available_at(task.attempts),
-                    )
+                task_status = self._record_agent_runtime_failure_attempt(
+                    task,
+                    error,
+                    retryable=retryable,
+                )
+                if task_status == "pending":
                     recovered += 1
-                    continue
-                self.store.fail_reply_task(task.id, error)
-                self._record_agent_runtime_failure_attempt(task, error)
                 continue
             if run.status != "running":
                 self.store.fail_reply_task(task.id, f"invalid_agent_run_state:{run.status}")
@@ -1652,10 +1645,10 @@ class DingTalkAutoReplyWorker:
                     {"code": "stale_agent_run_missing_session"},
                     now=self._sqlite_timestamp(self._now()),
                 )
-                self.store.fail_reply_task(task.id, "stale_agent_run_missing_session")
                 self._record_agent_runtime_failure_attempt(
                     task,
                     "stale_agent_run_missing_session",
+                    retryable=False,
                 )
                 continue
             self.store.requeue_reply_task(task.id, "stale_agent_run_resume")
@@ -1855,6 +1848,7 @@ class DingTalkAutoReplyWorker:
                 ),
             },
             owner=owner,
+            expected_execution_generation=run.execution_generation,
             next_attempt_at=next_attempt,
             suspended=not retryable,
             now=self._sqlite_timestamp(self._now()),
@@ -1894,11 +1888,51 @@ class DingTalkAutoReplyWorker:
         self,
         task: ReplyTask,
         error: str,
-    ) -> int:
+        *,
+        retryable: bool,
+    ) -> str:
         run = self.store.get_agent_run_for_task_generation(
             task.id,
             task.execution_generation,
         )
+        task_status = (
+            "pending"
+            if retryable and task.attempts < self.max_task_attempts
+            else "failed"
+        )
+        available_at = (
+            self._reply_task_retry_available_at(task.attempts)
+            if task_status == "pending"
+            else ""
+        )
+        if run is not None and run.status == "failed":
+            self.store.finalize_agent_reply_task(
+                task_id=task.id,
+                expected_execution_generation=task.execution_generation,
+                run_id=run.id,
+                task_status=task_status,
+                task_error=error,
+                available_at=available_at,
+                conversation_id=task.conversation_id,
+                conversation_title=task.conversation_title,
+                trigger_message_id=task.trigger_message_id,
+                trigger_sender=task.trigger_sender,
+                trigger_text=task.trigger_text,
+                codex_reason=error,
+                codex_session_id=run.codex_session_id,
+                codex_transcript_start_line=run.transcript_start_line,
+                codex_transcript_end_line=run.transcript_end_line,
+                audit_tool_events_json=json.dumps(
+                    run.tool_events,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                audit_summary=error,
+                send_status="failed",
+                send_error=error,
+                channel=task.channel,
+            )
+            return task_status
         attempt_id = self.store.record_reply_attempt(
             conversation_id=task.conversation_id,
             conversation_title=task.conversation_title,
@@ -1923,7 +1957,15 @@ class DingTalkAutoReplyWorker:
             channel=task.channel,
         )
         self.store.update_reply_attempt(attempt_id, send_error=error)
-        return attempt_id
+        if task_status == "pending":
+            self.store.requeue_reply_task(
+                task.id,
+                error,
+                available_at=available_at,
+            )
+        else:
+            self.store.fail_reply_task(task.id, error)
+        return task_status
 
     def _pending_reply_task_candidates(
         self, *, page_size: int, now: str, max_id: int | None
@@ -1997,8 +2039,20 @@ class DingTalkAutoReplyWorker:
         )
         if existing_run is not None:
             if existing_run.status == "completed":
-                self.store.complete_reply_task(task.id)
-                return True
+                result = AgentResult.model_validate_json(existing_run.final_result_json)
+                try:
+                    return self._apply_agent_result(
+                        task,
+                        DirectAgentRunResult(
+                            run_id=existing_run.id,
+                            result=result,
+                            transcript_start_line=existing_run.transcript_start_line,
+                            transcript_end_line=existing_run.transcript_end_line,
+                            events=tuple(existing_run.tool_events),
+                        ),
+                    )
+                except AgentRunLeaseLostError:
+                    return False
             if existing_run.status == "unknown":
                 self._apply_unknown_agent_run(
                     task,
@@ -2019,9 +2073,10 @@ class DingTalkAutoReplyWorker:
                     and existing_run.side_effect_state == "none"
                 )
                 if not retryable or task.attempts > self.max_task_attempts:
-                    self.store.fail_reply_task(
-                        task.id,
+                    self._record_agent_runtime_failure_attempt(
+                        task,
                         str(structured_error.get("code") or "agent_run_failed"),
+                        retryable=False,
                     )
                     return False
             if (
@@ -2056,7 +2111,10 @@ class DingTalkAutoReplyWorker:
                 self._apply_unknown_agent_run(task, run, str(exc))
                 return False
             raise
-        return self._apply_agent_result(task, run_result)
+        try:
+            return self._apply_agent_result(task, run_result)
+        except AgentRunLeaseLostError:
+            return False
 
     def _build_agent_task_context(
         self,
@@ -2417,13 +2475,13 @@ class DingTalkAutoReplyWorker:
                 receipts=receipts,
             )
         except InconsistentAgentResultError:
-            self._record_agent_attempt(
+            self._finalize_agent_attempt_and_task(
                 task,
                 run_result,
                 send_status="failed",
                 send_error="completion_evidence_inconsistent",
+                task_status="failed",
             )
-            self.store.fail_reply_task(task.id, "completion_evidence_inconsistent")
             return False
         if (
             evidence_state is SideEffectState.UNKNOWN
@@ -2464,27 +2522,62 @@ class DingTalkAutoReplyWorker:
                 task_status = "pending" if result.error.retryable else "failed"
                 send_error = send_error or "agent_failed"
 
-        self._record_agent_attempt(
+        available_at = ""
+        if task_status == "pending" and task.attempts < self.max_task_attempts:
+            available_at = self._reply_task_retry_available_at(task.attempts)
+        elif task_status == "pending":
+            task_status = "failed"
+        self._finalize_agent_attempt_and_task(
             task,
             run_result,
             send_status=send_status,
             send_error=send_error,
+            task_status=task_status,
+            available_at=available_at,
         )
         if task_status == "done":
-            self.store.complete_reply_task(task.id)
             return True
-        if task_status == "pending":
-            if task.attempts < self.max_task_attempts:
-                self.store.requeue_reply_task(
-                    task.id,
-                    send_error,
-                    available_at=self._reply_task_retry_available_at(task.attempts),
-                )
-            else:
-                self.store.fail_reply_task(task.id, send_error)
-            return False
-        self.store.fail_reply_task(task.id, send_error)
         return False
+
+    def _finalize_agent_attempt_and_task(
+        self,
+        task: ReplyTask,
+        run_result: DirectAgentRunResult,
+        *,
+        send_status: str,
+        send_error: str,
+        task_status: str,
+        available_at: str = "",
+    ) -> int:
+        run = self.store.get_agent_run(run_result.run_id)
+        if run is None:
+            raise RuntimeError("agent run was not persisted")
+        return self.store.finalize_agent_reply_task(
+            task_id=task.id,
+            expected_execution_generation=task.execution_generation,
+            run_id=run.id,
+            task_status=task_status,
+            task_error=send_error,
+            available_at=available_at,
+            conversation_id=task.conversation_id,
+            conversation_title=task.conversation_title,
+            trigger_message_id=task.trigger_message_id,
+            trigger_sender=task.trigger_sender,
+            trigger_text=task.trigger_text,
+            codex_reason=run_result.result.summary,
+            codex_session_id=run.codex_session_id,
+            codex_transcript_start_line=run_result.transcript_start_line,
+            codex_transcript_end_line=run_result.transcript_end_line,
+            audit_tool_events_json=json.dumps(
+                run_result.events,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            audit_summary=run_result.result.summary,
+            send_status=send_status,
+            send_error=send_error,
+            channel=task.channel,
+        )
 
     def _record_agent_attempt(
         self,

@@ -72,6 +72,48 @@ def test_existing_database_adds_agent_runs_without_rewriting_reply_tasks(
     assert "idx_agent_runs_status" in indexes
 
 
+def test_channel_identity_migration_accepts_quoted_index_names(tmp_path: Path):
+    db_path = tmp_path / "task.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.executescript(
+            """
+            create table reply_tasks (
+                id integer primary key autoincrement,
+                conversation_id text not null,
+                conversation_title text not null,
+                single_chat integer not null,
+                trigger_message_id text not null,
+                trigger_create_time text not null,
+                trigger_sender text not null,
+                trigger_text text not null,
+                status text not null default 'pending',
+                attempts integer not null default 0,
+                locked_at text,
+                error text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp
+            );
+            create unique index "legacy user's trigger"
+                on reply_tasks(conversation_id, trigger_message_id);
+            insert into reply_tasks (
+                conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text
+            ) values (
+                'cid-quoted', 'Quoted', 0, 'msg-quoted',
+                '2026-07-29 00:00:00', 'Derek', 'quoted index'
+            );
+            """
+        )
+
+    store = AutoReplyStore(db_path)
+
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.channel == "dingtalk"
+    assert task.trigger_message_id == "msg-quoted"
+
+
 def _work_item() -> WorkItem:
     return WorkItem.model_validate(
         {

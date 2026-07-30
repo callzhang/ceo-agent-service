@@ -1912,7 +1912,8 @@ class AutoReplyStore:
             tuple(
                 row["name"]
                 for row in db.execute(
-                    f"pragma index_info('{index['name']}')"
+                    "select name from pragma_index_info(?) order by seqno",
+                    (index["name"],),
                 ).fetchall()
             )
             for index in db.execute("pragma index_list(reply_tasks)").fetchall()
@@ -2135,10 +2136,11 @@ class AutoReplyStore:
         attempt_id: int = 0,
         channel: str = "dingtalk",
     ) -> ReplyTask:
+        task: ReplyTask | None
         with self._connect() as db:
             db.execute("begin immediate")
             revision_key = self._manual_rerun_revision_key(db, attempt_id)
-            return self._enqueue_manual_rerun_reply_task_in_connection(
+            task = self._enqueue_manual_rerun_reply_task_in_connection(
                 db,
                 conversation_id=conversation_id,
                 conversation_title=conversation_title,
@@ -2153,6 +2155,9 @@ class AutoReplyStore:
                 revision_key=revision_key,
                 channel=channel,
             )
+        if task is None:
+            raise ValueError("agent side effect reconciliation required before rotation")
+        return task
 
     @staticmethod
     def _manual_rerun_revision_key(
@@ -2206,7 +2211,7 @@ class AutoReplyStore:
         attempt_id: int,
         revision_key: str,
         channel: str,
-    ) -> ReplyTask:
+    ) -> ReplyTask | None:
         existing = db.execute(
             """
             select * from reply_tasks
@@ -2224,6 +2229,13 @@ class AutoReplyStore:
         execution_generation = uuid4().hex
         if existing is not None:
             now_text = str(db.execute("select current_timestamp").fetchone()[0])
+            if cls._hold_generation_for_unknown_effects(
+                db,
+                int(existing["id"]),
+                str(existing["execution_generation"]),
+                now_text=now_text,
+            ):
+                return None
             cls._supersede_running_agent_runs(
                 db,
                 int(existing["id"]),
@@ -2455,24 +2467,50 @@ class AutoReplyStore:
         db.execute(
             """
             update agent_runs
-            set status=case
-                    when side_effect_state='none' then 'failed'
-                    else 'unknown'
-                end,
+            set status='failed',
                 structured_error_json=?,
-                side_effect_state=case
-                    when side_effect_state='none' then 'none'
-                    else 'unknown'
-                end,
+                side_effect_state='none',
                 lease_owner='', lease_expires_at='',
-                completed_at=case
-                    when side_effect_state='none' then ? else completed_at
-                end,
+                completed_at=?,
                 updated_at=?
             where reply_task_id=? and execution_generation=? and status='running'
+              and side_effect_state='none'
             """,
             (error_json, now_text, now_text, task_id, current_generation),
         )
+
+    @staticmethod
+    def _hold_generation_for_unknown_effects(
+        db: sqlite3.Connection,
+        task_id: int,
+        execution_generation: str,
+        *,
+        now_text: str,
+    ) -> bool:
+        error_json = json.dumps(
+            {"code": "generation_rotation_requires_reconciliation"},
+            separators=(",", ":"),
+        )
+        db.execute(
+            """
+            update agent_runs
+            set status='unknown', structured_error_json=?,
+                side_effect_state='unknown', lease_owner='', lease_expires_at='',
+                updated_at=?
+            where reply_task_id=? and execution_generation=? and status='running'
+              and side_effect_state<>'none'
+            """,
+            (error_json, now_text, task_id, execution_generation),
+        )
+        row = db.execute(
+            """
+            select 1 from agent_runs
+            where reply_task_id=? and execution_generation=? and status='unknown'
+            limit 1
+            """,
+            (task_id, execution_generation),
+        ).fetchone()
+        return row is not None
 
     def claim_agent_run(
         self,
@@ -3514,14 +3552,25 @@ class AutoReplyStore:
         structured_error: dict[str, object],
         *,
         owner: str,
+        expected_execution_generation: str,
         next_attempt_at: str,
         suspended: bool = False,
         now: str | datetime | None = None,
     ) -> AgentRun:
         if not owner.strip():
             raise ValueError("owner must be non-empty")
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
         error_json = _json_object_text(structured_error, field="structured_error")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                expected_status="unknown",
+                status_error="agent run reconciliation requires unknown status",
+            )
             cursor = db.execute(
                 """
                 update agent_runs
@@ -3530,6 +3579,7 @@ class AutoReplyStore:
                     lease_owner='', lease_expires_at='', updated_at=?
                 where id=? and status='unknown' and lease_owner=?
                   and lease_expires_at>?
+                  and execution_generation=?
                 """,
                 (
                     error_json,
@@ -3539,6 +3589,7 @@ class AutoReplyStore:
                     run_id,
                     owner,
                     now_text,
+                    expected_execution_generation,
                 ),
             )
             if cursor.rowcount != 1:
@@ -4013,6 +4064,8 @@ class AutoReplyStore:
 
     def rotate_reply_task_execution_generation(self, task_id: int) -> str:
         execution_generation = uuid4().hex
+        blocked = False
+        current_generation = ""
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             task = db.execute(
                 "select execution_generation from reply_tasks where id=? "
@@ -4021,24 +4074,37 @@ class AutoReplyStore:
             ).fetchone()
             if task is None:
                 raise ValueError("retryable reply task was not found")
-            self._supersede_running_agent_runs(
+            current_generation = str(task["execution_generation"])
+            blocked = self._hold_generation_for_unknown_effects(
                 db,
                 task_id,
-                str(task["execution_generation"]),
+                current_generation,
                 now_text=now_text,
             )
-            cursor = db.execute(
-                """
-                update reply_tasks
-                set force_new_decision=1,
-                    execution_generation=?,
-                    updated_at=current_timestamp
-                where id=? and status in ('processing', 'pending')
-                """,
-                (execution_generation, task_id),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("retryable reply task was not found")
+            if blocked:
+                execution_generation = current_generation
+            else:
+                self._supersede_running_agent_runs(
+                    db,
+                    task_id,
+                    current_generation,
+                    now_text=now_text,
+                )
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set force_new_decision=1,
+                        execution_generation=?,
+                        updated_at=current_timestamp
+                    where id=? and status in ('processing', 'pending')
+                      and execution_generation=?
+                    """,
+                    (execution_generation, task_id, current_generation),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("retryable reply task was not found")
+        if blocked:
+            raise ValueError("agent side effect reconciliation required before rotation")
         return execution_generation
 
     def defer_reply_task(
@@ -6909,6 +6975,110 @@ class AutoReplyStore:
                 (task_id,),
             )
 
+    def finalize_agent_reply_task(
+        self,
+        *,
+        task_id: int,
+        expected_execution_generation: str,
+        run_id: int,
+        task_status: str,
+        task_error: str,
+        available_at: str,
+        conversation_id: str,
+        conversation_title: str,
+        trigger_message_id: str,
+        trigger_sender: str,
+        trigger_text: str,
+        codex_reason: str,
+        codex_session_id: str,
+        codex_transcript_start_line: int,
+        codex_transcript_end_line: int,
+        audit_tool_events_json: str,
+        audit_summary: str,
+        send_status: str,
+        send_error: str,
+        channel: str,
+    ) -> int:
+        """Persist one Direct Agent result and its task transition atomically."""
+        if task_status not in {"done", "failed", "pending", "unchanged"}:
+            raise ValueError("invalid reply task terminal status")
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                """
+                select agent_runs.status as run_status,
+                       agent_runs.execution_generation as run_generation,
+                       reply_tasks.execution_generation as task_generation
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=? and reply_tasks.id=?
+                """,
+                (run_id, task_id),
+            ).fetchone()
+            if (
+                row is None
+                or row["run_generation"] != expected_execution_generation
+                or row["task_generation"] != expected_execution_generation
+                or row["run_status"] not in {"completed", "failed", "unknown"}
+            ):
+                raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
+            cursor = db.execute(
+                """
+                insert into reply_attempts (
+                    conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    codex_reason, codex_session_id,
+                    codex_transcript_start_line, codex_transcript_end_line,
+                    audit_tool_events_json, audit_summary, send_status,
+                    send_error, channel
+                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_text,
+                    codex_reason,
+                    codex_session_id,
+                    codex_transcript_start_line,
+                    codex_transcript_end_line,
+                    audit_tool_events_json,
+                    audit_summary,
+                    send_status,
+                    send_error,
+                    channel,
+                ),
+            )
+            attempt_id = int(cursor.lastrowid)
+            self._record_memory_write_events_in_connection(
+                db,
+                attempt_id,
+                audit_tool_events_json,
+            )
+            if task_status != "unchanged":
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status=?, locked_at=null, available_at=?, error=?,
+                        updated_at=current_timestamp
+                    where id=? and execution_generation=?
+                      and status in ('processing', 'pending')
+                    """,
+                    (
+                        task_status,
+                        available_at if task_status == "pending" else "",
+                        task_error if task_status != "done" else "",
+                        task_id,
+                        expected_execution_generation,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            return attempt_id
+
     def reply_task_is_done(self, task_id: int) -> bool:
         with self._connect() as db:
             row = db.execute(
@@ -7194,6 +7364,8 @@ class AutoReplyStore:
         """Atomically persist one reviewed instruction and queue its generation."""
         feedback = reviewer_feedback.strip()
         suggestion = suggested_reply_text.strip()
+        task: ReplyTask | None = None
+        attempt_id = 0
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
@@ -7222,59 +7394,83 @@ class AutoReplyStore:
             if existing is not None:
                 return int(existing["attempt_id"]), self._reply_task_from_row(existing)
 
-            audit_summary = (
-                "Reviewer feedback: "
-                + feedback
-                + "\nSuggested response: "
-                + suggestion
-            ).strip()
-            cursor = db.execute(
+            current_task = db.execute(
                 """
-                insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, draft_reply_text, audit_tool_events_json,
-                    audit_summary, reviewer_feedback, corrected_reply_text,
-                    reviewed_at, send_status, channel
-                ) values (?, ?, ?, ?, ?, 'send_reply', 'general',
-                          'reviewed_message_reply', ?, ?, ?, ?, ?,
-                          current_timestamp, 'pending', ?)
+                select * from reply_tasks
+                where channel=? and conversation_id=? and trigger_message_id=?
                 """,
-                (
-                    conversation_id,
-                    conversation_title,
-                    trigger_message_id,
-                    trigger_sender,
-                    trigger_text,
-                    suggestion,
-                    json.dumps(
-                        [{"tool": "audit_review", "result": "queued"}],
-                        ensure_ascii=False,
+                (channel, conversation_id, trigger_message_id),
+            ).fetchone()
+            if current_task is not None:
+                now_text = str(db.execute("select current_timestamp").fetchone()[0])
+                if self._hold_generation_for_unknown_effects(
+                    db,
+                    int(current_task["id"]),
+                    str(current_task["execution_generation"]),
+                    now_text=now_text,
+                ):
+                    task = None
+                else:
+                    task = self._reply_task_from_row(current_task)
+
+            if current_task is not None and task is None:
+                attempt_id = 0
+            else:
+                audit_summary = (
+                    "Reviewer feedback: "
+                    + feedback
+                    + "\nSuggested response: "
+                    + suggestion
+                ).strip()
+                cursor = db.execute(
+                    """
+                    insert into reply_attempts (
+                        conversation_id, conversation_title, trigger_message_id,
+                        trigger_sender, trigger_text, action, sensitivity_kind,
+                        codex_reason, draft_reply_text, audit_tool_events_json,
+                        audit_summary, reviewer_feedback, corrected_reply_text,
+                        reviewed_at, send_status, channel
+                    ) values (?, ?, ?, ?, ?, 'send_reply', 'general',
+                              'reviewed_message_reply', ?, ?, ?, ?, ?,
+                              current_timestamp, 'pending', ?)
+                    """,
+                    (
+                        conversation_id,
+                        conversation_title,
+                        trigger_message_id,
+                        trigger_sender,
+                        trigger_text,
+                        suggestion,
+                        json.dumps(
+                            [{"tool": "audit_review", "result": "queued"}],
+                            ensure_ascii=False,
+                        ),
+                        audit_summary,
+                        feedback,
+                        suggestion,
+                        channel,
                     ),
-                    audit_summary,
-                    feedback,
-                    suggestion,
-                    channel,
-                ),
-            )
-            attempt_id = int(cursor.lastrowid)
-            revision_key = self._manual_rerun_revision_key(db, attempt_id)
-            task = self._enqueue_manual_rerun_reply_task_in_connection(
-                db,
-                conversation_id=conversation_id,
-                conversation_title=conversation_title,
-                single_chat=single_chat,
-                trigger_message_id=trigger_message_id,
-                trigger_create_time=trigger_create_time,
-                trigger_sender=trigger_sender,
-                trigger_text=trigger_text,
-                trigger_message_json=trigger_message_json,
-                oa_url="",
-                attempt_id=attempt_id,
-                revision_key=revision_key,
-                channel=channel,
-            )
-            return attempt_id, task
+                )
+                attempt_id = int(cursor.lastrowid)
+                revision_key = self._manual_rerun_revision_key(db, attempt_id)
+                task = self._enqueue_manual_rerun_reply_task_in_connection(
+                    db,
+                    conversation_id=conversation_id,
+                    conversation_title=conversation_title,
+                    single_chat=single_chat,
+                    trigger_message_id=trigger_message_id,
+                    trigger_create_time=trigger_create_time,
+                    trigger_sender=trigger_sender,
+                    trigger_text=trigger_text,
+                    trigger_message_json=trigger_message_json,
+                    oa_url="",
+                    attempt_id=attempt_id,
+                    revision_key=revision_key,
+                    channel=channel,
+                )
+        if task is None:
+            raise ValueError("agent side effect reconciliation required before rotation")
+        return attempt_id, task
 
     def get_reply_attempt(self, attempt_id: int) -> ReplyAttempt | None:
         with self._connect() as db:

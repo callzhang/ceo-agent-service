@@ -704,6 +704,92 @@ def test_manual_rerun_changed_attempt_revision_rotates_processing_generation(
     assert revised.execution_generation == repeated.execution_generation
 
 
+def test_generation_rotation_waits_for_unknown_effect_reconciliation(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-07-29 09:00:00",
+    ).run
+    store.append_agent_run_event(
+        run.id,
+        {
+            "type": "item.started",
+            "item": {
+                "id": "send-1",
+                "type": "command_execution",
+                "metadata": {"effect": "effectful"},
+            },
+        },
+        owner="worker-1",
+        now="2026-07-29 09:00:01",
+    )
+
+    with pytest.raises(ValueError, match="reconciliation required"):
+        store.rotate_reply_task_execution_generation(task_id)
+
+    task = store.get_reply_task(task_id)
+    unresolved = store.get_agent_run(run.id)
+    assert task is not None and task.execution_generation == "initial"
+    assert task.status == "processing"
+    assert unresolved is not None and unresolved.status == "unknown"
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+    assert store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="new-worker",
+    ).claimed is False
+
+
+def test_reconciliation_defer_rejects_stale_generation_even_with_live_lease(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-07-29 09:00:00",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker-1",
+        now="2026-07-29 09:00:01",
+    )
+    claim = store.claim_unknown_agent_run(
+        run.id,
+        owner="reconciler-1",
+        now="2026-07-29 09:00:02",
+    )
+    assert claim.claimed
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set execution_generation='new-generation' where id=?",
+            (task_id,),
+        )
+
+    with pytest.raises(AgentRunLeaseLostError):
+        store.defer_unknown_agent_run_reconciliation(
+            run.id,
+            {"code": "temporary_failure"},
+            owner="reconciler-1",
+            expected_execution_generation="initial",
+            next_attempt_at="2026-07-29 09:10:00",
+            now="2026-07-29 09:00:03",
+        )
+
+    unchanged = store.get_agent_run(run.id)
+    assert unchanged is not None
+    assert unchanged.reconciliation_next_attempt_at == ""
+    assert unchanged.lease_owner == "reconciler-1"
+
+
 def test_reviewed_reply_and_rerun_roll_back_together(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
@@ -1934,9 +2020,8 @@ def test_completed_reconciliation_recovers_processing_task_from_terminal_run(
     assert store.get_reply_task(task_id).status == "done"
 
 
-@pytest.mark.parametrize("outcome", ["confirmed", "absent"])
-def test_stale_generation_reconciliation_cannot_mutate_run_or_task(
-    tmp_path: Path, outcome: str
+def test_unknown_reconciliation_must_finish_before_generation_rotation(
+    tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
@@ -1954,30 +2039,21 @@ def test_stale_generation_reconciliation_cannot_mutate_run_or_task(
         owner="reconciler-1",
         now="2026-07-29 09:00:02",
     )
-    new_generation = store.rotate_reply_task_execution_generation(task_id)
+    with pytest.raises(ValueError, match="reconciliation required"):
+        store.rotate_reply_task_execution_generation(task_id)
 
-    with pytest.raises(AgentRunLeaseLostError):
-        if outcome == "confirmed":
-            store.resolve_unknown_agent_run_confirmed(
-                run.id,
-                task_id,
-                {"outcome": "completed", "summary": "stale proof"},
-                owner="reconciler-1",
-                now="2026-07-29 09:00:03",
-            )
-        else:
-            store.resolve_unknown_agent_run_absent(
-                run.id,
-                task_id,
-                code="reconciliation_confirmed_no_effect",
-                owner="reconciler-1",
-                now="2026-07-29 09:00:03",
-            )
+    store.resolve_unknown_agent_run_absent(
+        run.id,
+        task_id,
+        code="reconciliation_confirmed_no_effect",
+        owner="reconciler-1",
+        now="2026-07-29 09:00:03",
+    )
 
-    assert store.get_agent_run(run.id).status == "unknown"
+    assert store.get_agent_run(run.id).status == "failed"
     task = store.get_reply_task(task_id)
-    assert task.status == "processing"
-    assert task.execution_generation == new_generation
+    assert task.status == "pending"
+    assert task.execution_generation != "initial"
 
 
 def test_generation_switch_revokes_old_run_write_access_and_only_new_run_claims(
@@ -2046,7 +2122,7 @@ def test_generation_switch_revokes_old_run_write_access_and_only_new_run_claims(
     assert new_claim.run.execution_generation == new_generation
 
 
-def test_stale_generation_unknown_run_is_not_due_or_claimable(tmp_path: Path):
+def test_rotation_request_keeps_unknown_run_due_and_claimable(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = store.claim_agent_run(
@@ -2058,7 +2134,8 @@ def test_stale_generation_unknown_run_is_not_due_or_claimable(tmp_path: Path):
         owner="worker-1",
         now="2026-07-29 09:00:01",
     )
-    store.rotate_reply_task_execution_generation(task_id)
+    with pytest.raises(ValueError, match="reconciliation required"):
+        store.rotate_reply_task_execution_generation(task_id)
     before = store.get_agent_run(run.id)
 
     due = store.list_unknown_agent_runs(now="2026-07-29 09:00:02")
@@ -2068,10 +2145,104 @@ def test_stale_generation_unknown_run_is_not_due_or_claimable(tmp_path: Path):
         now="2026-07-29 09:00:02",
     )
 
-    assert [item.id for item in due] == []
-    assert claim.claimed is False
-    assert claim.run == before
-    assert store.get_agent_run(run.id) == before
+    assert [item.id for item in due] == [run.id]
+    assert claim.claimed is True
+    assert claim.run.execution_generation == "initial"
+    assert before is not None and before.execution_generation == "initial"
+
+
+def test_manual_rerun_waits_for_running_unknown_effect(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-universal",
+        conversation_title="Universal",
+        trigger_message_id="msg-universal",
+        trigger_sender="ET",
+        trigger_text="请处理",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    run = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-07-29 09:00:00",
+    ).run
+    store.append_agent_run_event(
+        run.id,
+        {
+            "type": "item.started",
+            "item": {
+                "id": "send-1",
+                "type": "command_execution",
+                "metadata": {"effect": "effectful"},
+            },
+        },
+        owner="worker-1",
+        now="2026-07-29 09:00:01",
+    )
+
+    with pytest.raises(ValueError, match="reconciliation required"):
+        store.enqueue_manual_rerun_reply_task(
+            conversation_id="cid-universal",
+            conversation_title="Universal",
+            single_chat=False,
+            trigger_message_id="msg-universal",
+            trigger_create_time="2026-07-29 09:00:00",
+            trigger_sender="ET",
+            trigger_text="请处理",
+            trigger_message_json="{}",
+            attempt_id=attempt_id,
+        )
+
+    task = store.get_reply_task(task_id)
+    assert task is not None and task.execution_generation == "initial"
+    assert store.get_agent_run(run.id).status == "unknown"
+
+
+def test_reviewed_rerun_does_not_persist_instruction_before_reconciliation(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = store.claim_agent_run(
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-07-29 09:00:00",
+    ).run
+    store.append_agent_run_event(
+        run.id,
+        {
+            "type": "item.started",
+            "item": {
+                "id": "send-1",
+                "type": "command_execution",
+                "metadata": {"effect": "effectful"},
+            },
+        },
+        owner="worker-1",
+        now="2026-07-29 09:00:01",
+    )
+
+    with pytest.raises(ValueError, match="reconciliation required"):
+        store.record_reviewed_reply_rerun(
+            conversation_id="cid-universal",
+            conversation_title="Universal",
+            single_chat=False,
+            trigger_message_id="msg-universal",
+            trigger_create_time="2026-07-29 09:00:00",
+            trigger_sender="ET",
+            trigger_text="请处理",
+            trigger_message_json="{}",
+            suggested_reply_text="修正版",
+            reviewer_feedback="请修正",
+        )
+
+    assert store.count_reply_attempts() == 0
+    assert store.get_agent_run(run.id).status == "unknown"
 
 
 @pytest.mark.parametrize("outcome", ["completed", "absent"])

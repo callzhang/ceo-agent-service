@@ -4646,6 +4646,39 @@ def test_consume_once_retries_task_failure_before_final_failure(
     assert attempt.send_error == "temporary_agent_failure"
 
 
+def test_old_worker_finalize_is_atomic_after_generation_switch(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    result = explicit_agent_result(AgentOutcome.COMPLETED, "处理完成")
+
+    class TerminalThenRotateRunner(FakeAgentResultRunner):
+        def run(self, task, context, **kwargs):
+            run_result = super().run(task, context, **kwargs)
+            self.new_generation = self.store.rotate_reply_task_execution_generation(
+                task.id
+            )
+            return run_result
+
+    runner = TerminalThenRotateRunner(
+        worker.store,
+        [(result, (), "old-session")],
+    )
+    worker.direct_agent_runner = runner
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.execution_generation == runner.new_generation
+    assert task.status == "processing"
+    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
+
+
 def test_consume_once_retries_execution_generation_mismatch(
     tmp_path: Path, monkeypatch
 ):
