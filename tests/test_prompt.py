@@ -7,6 +7,7 @@ from app.config import profile_evidence_dir
 from app.config import repo_root
 from app.config import work_profile_path
 from app.developer_prompt import (
+    SEED_DEVELOPER_PROMPT_TEMPLATE,
     developer_prompt_template_path,
     read_developer_prompt_template,
     read_user_prompt_template,
@@ -71,6 +72,13 @@ def test_read_prompt_templates_seed_missing_configured_files(tmp_path, monkeypat
     assert "<code: app.prompt:work_profile_instruction()>" in developer_template
     assert "<code: app.user_prompt_blocks:current_message_block()>" in user_template
     assert "CEO Agent Prompt" not in user_template
+
+
+def test_default_developer_prompt_assigns_tool_execution_to_direct_agent():
+    prompt = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "你必须自行读取材料并直接调用获准的 CLI/MCP 工具完成任务" in prompt
+    assert "AI 只负责生成结构化计划" not in prompt
 
 
 def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeypatch):
