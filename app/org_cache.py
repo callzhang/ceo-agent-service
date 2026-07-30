@@ -311,16 +311,16 @@ class CachedDwsClient:
         open_dingtalk_id: str | None = None,
         idempotency_uuid: str | None = None,
     ):
-        return self.dws.send_message(
-            conversation_id,
-            text,
-            at_users=at_users,
-            at_open_dingtalk_ids=at_open_dingtalk_ids,
-            at_open_dingtalk_names=at_open_dingtalk_names,
-            user_id=user_id,
-            open_dingtalk_id=open_dingtalk_id,
-            idempotency_uuid=idempotency_uuid,
-        )
+        kwargs = {
+            "at_users": at_users,
+            "at_open_dingtalk_ids": at_open_dingtalk_ids,
+            "at_open_dingtalk_names": at_open_dingtalk_names,
+            "user_id": user_id,
+            "open_dingtalk_id": open_dingtalk_id,
+        }
+        if idempotency_uuid is not None:
+            kwargs["idempotency_uuid"] = idempotency_uuid
+        return self.dws.send_message(conversation_id, text, **kwargs)
 
     def send_direct_message_by_bot(self, user_id: str, text: str):
         return self.dws.send_direct_message_by_bot(user_id, text)

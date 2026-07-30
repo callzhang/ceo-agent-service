@@ -2161,7 +2161,7 @@ def test_history_keeps_blocked_side_effects_visible_after_terminal_reply(
     assert store.count_recoverable_blocked_reply_attempts() == 2
 
 
-def test_history_treats_superseded_meeting_failure_as_skipped(tmp_path: Path):
+def test_history_keeps_superseded_meeting_failure_visible(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = store.upsert_meeting_alignment_job(
         meeting_id="meeting-1",
@@ -2202,8 +2202,8 @@ def test_history_treats_superseded_meeting_failure_as_skipped(tmp_path: Path):
     sent_items = store.list_history_items(send_statuses=("sent",))
 
     assert failed_run_id != sent_run_id
-    assert [item.source_id for item in failed_items] == []
-    assert [item.source_id for item in skipped_items] == [failed_run_id]
+    assert [item.source_id for item in failed_items] == [failed_run_id]
+    assert [item.source_id for item in skipped_items] == []
     assert [item.source_id for item in sent_items] == [sent_run_id]
 
 

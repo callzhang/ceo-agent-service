@@ -785,7 +785,6 @@ class DingTalkAutoReplyWorker:
             planner_context_messages.append(
                 self._universal_calendar_prompt_message(calendar_prompt_message)
             )
-
         planner_context_messages.extend(
             self._universal_todo_prompt_messages(conversation, trigger)
         )
@@ -1511,6 +1510,10 @@ class DingTalkAutoReplyWorker:
                 )
                 return True
             attempt = self.store.get_reply_attempt(attempt_id)
+            if self._is_authorization_error(exc):
+                error = attempt.send_error or str(exc) if attempt else str(exc)
+                self.store.mark_universal_action_execution_failed(execution, error)
+                raise
             if self._is_definite_universal_send_failure(attempt):
                 error = attempt.send_error or str(exc)
                 self.store.mark_universal_action_execution_failed(execution, error)
@@ -2718,10 +2721,19 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _universal_capability_outcome_may_be_unknown(error: Exception) -> bool:
         current: BaseException | None = error
+        causes: list[BaseException] = []
         while current is not None:
+            causes.append(current)
+            current = current.__cause__
+        if any(
+            bool(getattr(cause, "needs_authorization", False))
+            or bool(getattr(cause, "needs_login", False))
+            for cause in causes
+        ):
+            return False
+        for current in causes:
             if isinstance(current, (TimeoutError, ConnectionError)):
                 return True
-            current = current.__cause__
         text = str(error).casefold()
         return any(
             marker in text
@@ -3916,8 +3928,15 @@ class DingTalkAutoReplyWorker:
             ),
             codex_reason=execution.action.reason,
             draft_reply_text=draft_reply_text,
+            audit_documents_json=json.dumps(
+                list(execution.planner_audit_documents),
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
             audit_tool_events_json=self._universal_audit_tool_events_json(execution),
-            audit_summary=execution.action.reason,
+            audit_summary=(
+                execution.planner_audit_summary or execution.action.reason
+            ),
             send_status=send_status,
         )
         if send_error:

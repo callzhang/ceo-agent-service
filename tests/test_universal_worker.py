@@ -390,6 +390,7 @@ def _execution(
     trusted_calendar_target: tuple[str, str, str] | None = None,
     trusted_document_url: str = "",
     force_new_decision: bool = False,
+    audit_documents: list[dict[str, str]] | None = None,
 ) -> UniversalActionExecution:
     inserted = store.enqueue_reply_task(
         conversation_id="cid-context",
@@ -489,6 +490,7 @@ def _execution(
         actions=[action],
         audit=UniversalAudit(
             summary="Universal action test",
+            documents=audit_documents or [],
             confidence=0.9,
         ),
     )
@@ -1965,6 +1967,39 @@ def test_universal_reply_exception_without_delivery_marks_unknown(
     assert "universal_action_outcome_unknown" in attempt.send_error
 
 
+def test_universal_reply_authorization_failure_remains_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class AuthorizationError(RuntimeError):
+        needs_authorization = True
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.SEND_REPLY,
+        payload={"text": "Retry after authorization"},
+    )
+    worker = _worker(store)
+
+    def fake_send_reply(*args, **kwargs) -> None:
+        raise AuthorizationError("authorization required")
+
+    monkeypatch.setattr(worker, "_send_reply", fake_send_reply)
+
+    with pytest.raises(AuthorizationError, match="authorization required"):
+        worker.execute_universal_send_reply(execution)
+
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "pending"
+    assert attempt.send_error == ""
+
+
 def test_universal_reply_permission_refusal_is_sent_and_audited(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2542,6 +2577,31 @@ def test_universal_terminal_unknown_fails_closed_without_new_attempt(
         worker.execute_universal_terminal_action(execution)
 
     assert store.list_reply_attempts() == []
+
+
+def test_universal_attempt_preserves_plan_audit_snapshot(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    documents = [
+        {
+            "title": "Trusted material",
+            "url": "https://example.invalid/material",
+            "relevance": "Supports the decision",
+        }
+    ]
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.NO_REPLY,
+        audit_documents=documents,
+    )
+
+    assert _worker(store).execute_universal_terminal_action(execution) is True
+
+    attempt = store.get_latest_reply_attempt_for_trigger(
+        "cid-context", "msg-context"
+    )
+    assert attempt is not None
+    assert attempt.audit_summary == "Universal action test"
+    assert json.loads(attempt.audit_documents_json) == documents
 
 
 def test_universal_terminal_preserves_unrelated_prior_attempt(

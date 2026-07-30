@@ -39,6 +39,8 @@ class UniversalActionExecution:
     context: UniversalTaskContext
     action_index: int
     action: PlannedAction
+    planner_audit_summary: str = ""
+    planner_audit_documents: tuple[dict[str, str], ...] = ()
     planner_tool_events: tuple[dict[str, Any], ...] = ()
 
 
@@ -85,6 +87,10 @@ def build_universal_action_execution(
         context=context,
         action_index=action_index,
         action=action.model_copy(deep=True),
+        planner_audit_summary=plan_execution.plan.audit.summary,
+        planner_audit_documents=tuple(
+            deepcopy(document) for document in plan_execution.plan.audit.documents
+        ),
         planner_tool_events=tuple(
             deepcopy(event) for event in plan_execution.plan.audit.tool_events
         ),

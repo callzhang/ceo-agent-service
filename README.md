@@ -310,7 +310,10 @@ http://127.0.0.1:8765/
 常用页面：
 
 - `/`：回复历史和待处理任务；“检索对象”可分别筛选普通钉钉回复、微信、审批、task 和 meeting，状态筛选支持 sent、reacted、skipped、blocked、failed 和 done
-- History 的状态筛选按当前可处理性展示：同一触发消息或同一会后任务已经有后续 terminal 结果时，旧 `failed` / `blocked` / `ready_to_send` 行保留为审计证据，但不再进入 active failed/blocked/pending 筛选；`blocked_unrecoverable_` 记录显示为 terminal blocked。
+- History 保留不可变审计语义：会后任务的某次 `retry` / `failed` run 即使后续成功，仍显示在 failed 筛选中；当前是否还需修复由 job/backlog 去重状态判断。普通回复同一 trigger 已有后续 terminal 结果时，旧 `failed` / `blocked` / `pending` / `dry_run` 显示为 `skipped`；`blocked_unrecoverable_` 记录显示为 terminal blocked。
+- DWS 缓存包装器只在调用方明确提供幂等 UUID 时向底层传参，保持不支持新参数的旧适配器兼容。
+- Universal Planner 在移除 legacy `AgentEnvelope` 输出协议后会显式重新注入 `work_profile_instruction()`，确保唯一 consumer 路径仍使用当前工作人格。
+- Universal action execution 会把 `plan.audit.summary/documents` 作为不可变快照写入 reply attempt，History 不会用 action reason 丢失计划阶段的审计依据。
 - `/tasks`：work projects、状态、category filter、Priority/Risk 排序、TODO checklist、实时全文检索和分页
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录
 - `/attempts/{id}`：单次处理详情；同一触发消息后续重跑成功时，旧记录顶部会链接到后续 attempt 并展示其最新动作，原始状态仍保留在详情字段中供审计

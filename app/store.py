@@ -5705,6 +5705,7 @@ class AutoReplyStore:
         sensitivity_kind: str,
         codex_reason: str = "",
         draft_reply_text: str = "",
+        audit_documents_json: str = "[]",
         audit_tool_events_json: str = "[]",
         audit_summary: str = "",
         send_status: str = "pending",
@@ -5742,6 +5743,7 @@ class AutoReplyStore:
                     "sensitivity_kind": sensitivity_kind,
                     "codex_reason": codex_reason,
                     "draft_reply_text": draft_reply_text,
+                    "audit_documents_json": audit_documents_json,
                 }
                 mismatched_fields = [
                     field_name
@@ -5783,12 +5785,13 @@ class AutoReplyStore:
                     sensitivity_kind,
                     codex_reason,
                     draft_reply_text,
+                    audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
                     universal_execution_id,
                     universal_execution_scope_id,
                     send_status
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -5800,6 +5803,7 @@ class AutoReplyStore:
                     sensitivity_kind,
                     codex_reason,
                     draft_reply_text,
+                    audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
                     execution.execution_id,
@@ -6722,10 +6726,6 @@ class AutoReplyStore:
                     end as action,
                     case
                         when runs.status='no_action' then 'skipped'
-                        when runs.status in ('retry', 'failed') and exists (
-                            select 1 from meeting_alignment_runs as later_runs
-                            where later_runs.job_id=runs.job_id and later_runs.id>runs.id
-                        ) then 'skipped'
                         when runs.status in ('retry', 'failed') then 'failed'
                         when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
                         when runs.status='ready_to_send' and exists (

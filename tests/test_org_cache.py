@@ -280,6 +280,28 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
     assert cached.is_current_user_message(message(sender_user_id="principal-user")) is True
 
 
+def test_cached_dws_client_passes_explicit_idempotency_uuid(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.idempotency_uuids = []
+
+        def send_message(self, conversation_id, text, **kwargs):
+            self.idempotency_uuids.append(kwargs.get("idempotency_uuid"))
+            return {"success": True}
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    cached = CachedDwsClient(FakeDws(), CachedOrgDirectory(store))
+
+    result = cached.send_message(
+        "cid-1",
+        "ok",
+        idempotency_uuid="stable-follow-up-id",
+    )
+
+    assert result == {"success": True}
+    assert cached.dws.idempotency_uuids == ["stable-follow-up-id"]
+
+
 def test_cached_dws_client_delegates_auth_archives(tmp_path):
     class FakeDws:
         def __init__(self):

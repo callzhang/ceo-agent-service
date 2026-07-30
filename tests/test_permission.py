@@ -117,6 +117,32 @@ def test_internal_personnel_hr_private_requester_can_review_multiple_subjects():
     assert result.reply_text == ""
 
 
+def test_internal_personnel_management_requester_can_review_without_subject_id():
+    class Profile:
+        org_labels = ["管理层: 管理层", "默认: 主管"]
+
+    class Dws:
+        def resolve_message_sender(self, message):
+            return message.sender_user_id
+
+        def is_hr_user(self, user_id):
+            return False
+
+        def get_user_profile(self, user_id):
+            return Profile()
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ALLOW
+    assert result.reason == ""
+
+
 def test_internal_personnel_private_request_without_subject_errors_instead_of_replying():
     class Dws:
         def resolve_message_sender(self, message):

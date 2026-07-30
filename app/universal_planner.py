@@ -17,6 +17,7 @@ from app.codex_runner import (
     passthrough_mcp_server_config_options,
 )
 from app.external_retry import ExternalDependencyError
+from app.prompt import work_profile_instruction
 from app.process_runner import run_process_with_idle_timeout
 from app.task_retrieval import tokenize
 from app.universal_context import UniversalTaskContext
@@ -61,6 +62,9 @@ UNIVERSAL_PLANNER_RETRIEVED_EXAMPLES = (
 def universal_planner_developer_instructions() -> str:
     shared = codex_developer_instructions()
     shared = shared.split("\n输出协议：", 1)[0].rstrip()
+    work_profile = work_profile_instruction().strip()
+    if work_profile:
+        shared = f"{shared}\n\n{work_profile}"
     shared = shared.replace(
         "在输出最终 JSON 前调用 memory_write 记录一条业务 episode",
         "在 UniversalPlan 中追加 memory_write action 记录一条业务 episode",
