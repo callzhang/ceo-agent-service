@@ -4,6 +4,7 @@ from app.store import AutoReplyStore
 from app.dingtalk_models import CodexAction, CodexDecision
 from app.wechat.models import WechatAccount
 from app.wechat.consumer import WechatReplyConsumer
+from app.store import AgentRunLeaseLostError
 
 
 class FakeCodexRunner:
@@ -96,3 +97,62 @@ def test_stop_with_error_records_failed_attempt(fake_codex, consumer, store):
     assert attempt is not None
     assert attempt.send_status == "failed"
     assert attempt.send_error == "missing_wechat_context"
+
+
+def test_corrected_generation_replaces_unsent_wechat_delivery(
+    fake_codex, consumer, store
+):
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.SEND_REPLY,
+        reply_text="旧回复",
+        reason="first",
+        audit_summary="first",
+    )
+    assert consumer.run_once(limit=1) == 1
+    first = store.get_reply_task(1)
+    assert first is not None
+
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='pending', execution_generation='corrected' "
+            "where id=1"
+        )
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.SEND_REPLY,
+        reply_text="修正版回复",
+        reason="corrected",
+        audit_summary="corrected",
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    delivery = store.get_wechat_delivery_for_task(1)
+    assert delivery is not None
+    assert delivery.reply_text == "修正版回复"
+    assert delivery.execution_generation == "corrected"
+
+
+def test_stale_wechat_worker_cannot_persist_attempt_or_delivery(
+    fake_codex, consumer, store
+):
+    [claimed] = store.claim_reply_tasks(1, channel="wechat")
+
+    class RotatingRunner:
+        def decide(self, *_args, **_kwargs):
+            store.rotate_reply_task_execution_generation(claimed.id)
+            return CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="旧 worker 回复",
+                reason="stale",
+                audit_summary="stale",
+            )
+
+    stale_consumer = WechatReplyConsumer(
+        store, RotatingRunner(), reader=None, account=consumer.account
+    )
+
+    with pytest.raises(AgentRunLeaseLostError):
+        stale_consumer.process(claimed)
+
+    assert store.get_wechat_delivery_for_task(claimed.id) is None
+    assert store.get_latest_reply_attempt_for_trigger("u9", "m1") is None

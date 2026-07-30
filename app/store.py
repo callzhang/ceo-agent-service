@@ -921,6 +921,7 @@ class AutoReplyStore:
                     target_id text not null,
                     conversation_id text not null default '',
                     reply_text text not null,
+                    execution_generation text not null default 'initial',
                     status text not null default 'ready_to_send',
                     action_started_at text not null default '',
                     evidence_json text not null default '{}',
@@ -1590,6 +1591,15 @@ class AutoReplyStore:
                 db.execute(
                     "alter table wechat_memory_candidates add column "
                     "memory_write_error text not null default ''"
+                )
+            wechat_delivery_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(wechat_deliveries)").fetchall()
+            }
+            if "execution_generation" not in wechat_delivery_columns:
+                db.execute(
+                    "alter table wechat_deliveries add column "
+                    "execution_generation text not null default 'initial'"
                 )
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
@@ -4372,6 +4382,125 @@ class AutoReplyStore:
         )
 
     # ---- WeChat channel: deliveries ----
+    def finalize_wechat_reply_task(
+        self,
+        *,
+        task_id: int,
+        expected_execution_generation: str,
+        action: str,
+        sensitivity_kind: str,
+        codex_reason: str,
+        draft_reply_text: str,
+        audit_summary: str,
+        send_status: str,
+        send_error: str = "",
+        task_status: str = "done",
+        account_id: str = "",
+        target_type: str = "",
+        target_id: str = "",
+        conversation_id: str = "",
+        reply_text: str = "",
+        evidence: dict[str, str] | None = None,
+    ) -> int:
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        if task_status not in {"done", "failed"}:
+            raise ValueError("invalid WeChat task terminal status")
+        has_delivery = bool(reply_text)
+        if has_delivery and not all(
+            value.strip()
+            for value in (account_id, target_type, target_id, conversation_id)
+        ):
+            raise ValueError("WeChat delivery target must be complete")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            task = db.execute(
+                "select * from reply_tasks where id=? and status='processing' "
+                "and execution_generation=? and channel='wechat'",
+                (task_id, expected_execution_generation),
+            ).fetchone()
+            if task is None:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            cursor = db.execute(
+                """
+                insert into reply_attempts (
+                    conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    codex_reason, draft_reply_text, audit_summary,
+                    send_status, send_error, channel
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'wechat')
+                """,
+                (
+                    task["conversation_id"], task["conversation_title"],
+                    task["trigger_message_id"], task["trigger_sender"],
+                    task["trigger_text"], action, sensitivity_kind,
+                    codex_reason, draft_reply_text, audit_summary,
+                    send_status, send_error,
+                ),
+            )
+            attempt_id = int(cursor.lastrowid)
+            if has_delivery:
+                existing = db.execute(
+                    "select * from wechat_deliveries where reply_task_id=?",
+                    (task_id,),
+                ).fetchone()
+                evidence_json = json.dumps(evidence or {}, ensure_ascii=False)
+                if existing is None:
+                    db.execute(
+                        """
+                        insert into wechat_deliveries (
+                            reply_task_id, account_id, target_type, target_id,
+                            conversation_id, reply_text, execution_generation,
+                            evidence_json
+                        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            task_id, account_id, target_type, target_id,
+                            conversation_id, reply_text,
+                            expected_execution_generation, evidence_json,
+                        ),
+                    )
+                elif (
+                    existing["execution_generation"]
+                    != expected_execution_generation
+                    and existing["status"] == "ready_to_send"
+                ):
+                    db.execute(
+                        """
+                        update wechat_deliveries
+                        set account_id=?, target_type=?, target_id=?,
+                            conversation_id=?, reply_text=?,
+                            execution_generation=?, status='ready_to_send',
+                            action_started_at='', evidence_json=?, error='',
+                            updated_at=current_timestamp
+                        where id=? and status='ready_to_send'
+                        """,
+                        (
+                            account_id, target_type, target_id, conversation_id,
+                            reply_text, expected_execution_generation,
+                            evidence_json, existing["id"],
+                        ),
+                    )
+                elif existing["execution_generation"] != expected_execution_generation:
+                    raise ValueError("started WeChat delivery cannot be replaced")
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status=?, locked_at=null, available_at='', error=?,
+                    updated_at=current_timestamp
+                where id=? and status='processing' and execution_generation=?
+                """,
+                (
+                    task_status,
+                    send_error if task_status == "failed" else "",
+                    task_id,
+                    expected_execution_generation,
+                ),
+            )
+            if task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            return attempt_id
+
     def create_wechat_delivery(
         self, *, reply_task_id: int, account_id: str, target_type: str,
         target_id: str, conversation_id: str, reply_text: str,
@@ -4420,14 +4549,17 @@ class AutoReplyStore:
                 """
                 insert into wechat_deliveries (
                     reply_task_id, account_id, target_type, target_id,
-                    conversation_id, reply_text, evidence_json
-                ) values (?, ?, ?, ?, ?, ?, ?)
+                    conversation_id, reply_text, execution_generation, evidence_json
+                ) values (?, ?, ?, ?, ?, ?, coalesce((
+                    select execution_generation from reply_tasks where id=?
+                ), 'initial'), ?)
                 on conflict(reply_task_id) do update set
                     account_id=excluded.account_id,
                     target_type=excluded.target_type,
                     target_id=excluded.target_id,
                     conversation_id=excluded.conversation_id,
                     reply_text=excluded.reply_text,
+                    execution_generation=excluded.execution_generation,
                     status='ready_to_send',
                     evidence_json=excluded.evidence_json,
                     error='',
@@ -4441,7 +4573,7 @@ class AutoReplyStore:
                 """,
                 (
                     reply_task_id, account_id, target_type, target_id,
-                    conversation_id, reply_text,
+                    conversation_id, reply_text, reply_task_id,
                     json.dumps(evidence or {}, ensure_ascii=False),
                 ),
             )
@@ -4464,6 +4596,7 @@ class AutoReplyStore:
             id=row["id"], task_id=row["reply_task_id"], account_id=row["account_id"],
             target_type=row["target_type"], target_id=row["target_id"],
             conversation_id=row["conversation_id"], reply_text=row["reply_text"],
+            execution_generation=row["execution_generation"],
             status=row["status"], evidence=json.loads(row["evidence_json"]),
             error=row["error"],
         )
@@ -4479,6 +4612,7 @@ class AutoReplyStore:
                 id=row["id"], task_id=row["reply_task_id"], account_id=row["account_id"],
                 target_type=row["target_type"], target_id=row["target_id"],
                 conversation_id=row["conversation_id"], reply_text=row["reply_text"],
+                execution_generation=row["execution_generation"],
                 status=row["status"], evidence=json.loads(row["evidence_json"]),
                 error=row["error"],
             )

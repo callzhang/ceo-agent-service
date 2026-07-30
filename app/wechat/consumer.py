@@ -71,47 +71,33 @@ class WechatReplyConsumer:
         prompt = build_wechat_turn_prompt(trigger, context)
         decision = self.runner.decide(prompt, None)
 
-        # Record a history attempt so WeChat activity appears in the audit feed
-        # (the DingTalk worker does this per decision; WeChat previously only wrote
-        # wechat_deliveries, so it was invisible on the history page).
-        attempt_id = 0
-        try:
-            attempt_id = self.store.record_reply_attempt(
-                conversation_id=trigger.conversation_id,
-                conversation_title=task.conversation_title,
-                trigger_message_id=trigger.message_id,
-                trigger_sender=trigger.sender_display_name,
-                trigger_text=trigger.text,
+        if decision.action in (CodexAction.SEND_REPLY, CodexAction.ASK_CLARIFYING_QUESTION):
+            if getattr(decision, "system_actions", None):
+                self.store.finalize_wechat_reply_task(
+                    task_id=task.id,
+                    expected_execution_generation=task.execution_generation,
+                    action=getattr(decision.action, "value", str(decision.action)),
+                    sensitivity_kind=getattr(decision, "sensitivity_kind", "") or "normal",
+                    codex_reason=decision.reason or "",
+                    draft_reply_text=decision.reply_text or "",
+                    audit_summary=getattr(decision, "audit_summary", "") or "",
+                    send_status="failed",
+                    send_error="dingtalk_only_system_actions_rejected",
+                    task_status="failed",
+                )
+                return
+            text = decision.reply_text or ""
+            if self.leak_check is not None:
+                text = self.leak_check(text)
+            self.store.finalize_wechat_reply_task(
+                task_id=task.id,
+                expected_execution_generation=task.execution_generation,
                 action=getattr(decision.action, "value", str(decision.action)),
                 sensitivity_kind=getattr(decision, "sensitivity_kind", "") or "normal",
                 codex_reason=decision.reason or "",
                 draft_reply_text=decision.reply_text or "",
                 audit_summary=getattr(decision, "audit_summary", "") or "",
                 send_status="pending",
-                channel="wechat",
-            )
-        except Exception:
-            pass
-
-        if decision.action in (CodexAction.SEND_REPLY, CodexAction.ASK_CLARIFYING_QUESTION):
-            if getattr(decision, "system_actions", None):
-                if attempt_id:
-                    self.store.update_reply_attempt(
-                        attempt_id,
-                        send_status="failed",
-                        send_error="dingtalk_only_system_actions_rejected",
-                    )
-                self.store.fail_reply_task(
-                    task.id,
-                    "dingtalk_only_system_actions_rejected",
-                    expected_execution_generation=task.execution_generation,
-                )
-                return
-            text = decision.reply_text or ""
-            if self.leak_check is not None:
-                text = self.leak_check(text)
-            self.store.create_wechat_delivery(
-                reply_task_id=task.id,
                 account_id=self.account.account_id,
                 target_type="direct" if task.single_chat else "group",
                 target_id=trigger.conversation_id,
@@ -123,30 +109,28 @@ class WechatReplyConsumer:
                     "trigger_text": trigger.text,
                 },
             )
-            self.store.complete_reply_task(
-                task.id,
-                expected_execution_generation=task.execution_generation,
-            )
         elif decision.action in (CodexAction.NO_REPLY, CodexAction.HANDOFF_TO_HUMAN):
-            if attempt_id:
-                self.store.update_reply_attempt(
-                    attempt_id,
-                    send_status="skipped",
-                    send_error=getattr(decision.action, "value", str(decision.action)),
-                )
-            self.store.complete_reply_task(
-                task.id,
+            self.store.finalize_wechat_reply_task(
+                task_id=task.id,
                 expected_execution_generation=task.execution_generation,
+                action=getattr(decision.action, "value", str(decision.action)),
+                sensitivity_kind=getattr(decision, "sensitivity_kind", "") or "normal",
+                codex_reason=decision.reason or "",
+                draft_reply_text=decision.reply_text or "",
+                audit_summary=getattr(decision, "audit_summary", "") or "",
+                send_status="skipped",
+                send_error=getattr(decision.action, "value", str(decision.action)),
             )
         else:  # STOP_WITH_ERROR (and anything unexpected) -> bounded retry via fail
-            if attempt_id:
-                self.store.update_reply_attempt(
-                    attempt_id,
-                    send_status="failed",
-                    send_error=decision.reason or "stop_with_error",
-                )
-            self.store.fail_reply_task(
-                task.id,
-                decision.reason or "stop_with_error",
+            self.store.finalize_wechat_reply_task(
+                task_id=task.id,
                 expected_execution_generation=task.execution_generation,
+                action=getattr(decision.action, "value", str(decision.action)),
+                sensitivity_kind=getattr(decision, "sensitivity_kind", "") or "normal",
+                codex_reason=decision.reason or "",
+                draft_reply_text=decision.reply_text or "",
+                audit_summary=getattr(decision, "audit_summary", "") or "",
+                send_status="failed",
+                send_error=decision.reason or "stop_with_error",
+                task_status="failed",
             )
