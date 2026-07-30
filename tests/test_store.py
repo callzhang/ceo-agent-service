@@ -894,7 +894,7 @@ def test_reconcile_resolved_universal_action_failure_uses_superseding_attempt(
         store.claim_universal_action_execution(execution)
         is UniversalActionExecutionState.NOT_STARTED
     )
-    failed_attempt_id = store.record_universal_reply_attempt(
+    store.record_universal_reply_attempt(
         execution,
         conversation_id=execution.context.conversation_id,
         conversation_title=execution.context.conversation_title,
@@ -920,12 +920,6 @@ def test_reconcile_resolved_universal_action_failure_uses_superseding_attempt(
         sent_attempt_id,
         final_reply_text="covered by newer attempt",
     )
-    store.update_reply_attempt(
-        failed_attempt_id,
-        send_status="skipped",
-        send_error=f"superseded_by_sent_attempt:{sent_attempt_id}",
-    )
-
     assert store.reconcile_resolved_universal_action_failures() == 1
 
     assert (
@@ -938,6 +932,77 @@ def test_reconcile_resolved_universal_action_failure_uses_superseding_attempt(
     result = json.loads(row["result_json"])
     assert result["outcome"] == "superseded_by_terminal_attempt"
     assert result["superseded_attempt_id"] == sent_attempt_id
+
+
+def test_reconcile_started_oa_action_uses_newer_applied_attempt(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    context = _universal_context(task_id)
+    plan = UniversalPlan(
+        task_kind="oa_approval",
+        reason="Process the approval",
+        actions=[
+            PlannedAction(
+                kind=PlannedActionKind.OA_APPROVAL,
+                reason="Approve the request",
+                payload={"action": "同意", "remark": "信息完整，同意。"},
+            )
+        ],
+        audit=UniversalAudit(summary="Approve", confidence=0.9),
+    )
+    plan_execution = store.create_universal_plan_execution(context, plan)
+    execution = build_universal_action_execution(
+        context,
+        plan_execution,
+        plan_execution.plan.actions[0],
+        0,
+    )
+    assert (
+        store.claim_universal_action_execution(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    store.record_universal_reply_attempt(
+        execution,
+        conversation_id=context.conversation_id,
+        conversation_title=context.conversation_title,
+        trigger_message_id=context.trigger_message_id,
+        trigger_sender=context.trigger_sender,
+        trigger_text=context.trigger_text,
+        action="oa_approval",
+        sensitivity_kind="general",
+        send_status="pending",
+    )
+    applied_attempt_id = store.record_reply_attempt(
+        conversation_id=context.conversation_id,
+        conversation_title=context.conversation_title,
+        trigger_message_id=context.trigger_message_id,
+        trigger_sender=context.trigger_sender,
+        trigger_text=context.trigger_text,
+        action="oa_approval",
+        sensitivity_kind="general",
+        send_status="skipped",
+        oa_process_instance_id="process-1",
+        oa_task_id="task-1",
+        oa_action="同意",
+        oa_action_result_json=json.dumps(
+            {"outcome": "applied", "dws_action_result": {"success": True}}
+        ),
+    )
+
+    assert store.reconcile_resolved_universal_action_failures() == 1
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        db.row_factory = sqlite3.Row
+        row = db.execute(
+            "select attempt_id, result_json from universal_action_executions"
+        ).fetchone()
+    assert row["attempt_id"] == applied_attempt_id
+    assert json.loads(row["result_json"])["outcome"] == (
+        "superseded_by_terminal_attempt"
+    )
 
 
 def test_count_unresolved_universal_action_executions_counts_failed(

@@ -2644,12 +2644,14 @@ class AutoReplyStore:
                        attempts.id as attempt_id,
                        attempts.send_status,
                        attempts.send_error,
+                       attempts.action,
                        attempts.conversation_id,
-                       attempts.trigger_message_id
+                       attempts.trigger_message_id,
+                       attempts.oa_process_instance_id
                 from universal_action_executions as actions
                 join reply_attempts as attempts
                   on attempts.universal_execution_id=actions.execution_id
-                where actions.status='failed'
+                where actions.status in ('failed', 'unknown', 'started', 'recovering')
                 order by attempts.updated_at desc, attempts.id desc
                 """
             ).fetchall()
@@ -2695,6 +2697,22 @@ class AutoReplyStore:
                                 superseded_attempt_id=superseded_attempt_id,
                             ),
                         )
+                        continue
+                newer = self._newer_terminal_attempt_for_universal_action(
+                    db,
+                    row,
+                    resolved_statuses=resolved_statuses,
+                )
+                if newer is not None:
+                    newer_attempt_id = int(newer["id"])
+                    resolved[execution_id] = (
+                        newer_attempt_id,
+                        self._universal_action_reconciled_result_json(
+                            row,
+                            reason="superseded_by_terminal_attempt",
+                            superseded_attempt_id=newer_attempt_id,
+                        ),
+                    )
             if not resolved:
                 return 0
             for execution_id, (attempt_id, result_json) in resolved.items():
@@ -2707,11 +2725,65 @@ class AutoReplyStore:
                         error='',
                         completed_at=current_timestamp,
                         updated_at=current_timestamp
-                    where execution_id=? and status='failed'
+                    where execution_id=?
+                      and status in ('failed', 'unknown', 'started', 'recovering')
                     """,
                     (attempt_id, result_json, execution_id),
                 )
             return len(resolved)
+
+    @classmethod
+    def _newer_terminal_attempt_for_universal_action(
+        cls,
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        resolved_statuses: set[str],
+    ) -> sqlite3.Row | None:
+        newer_rows = db.execute(
+            """
+            select id, send_status, oa_action_result_json
+            from reply_attempts
+            where conversation_id=?
+              and trigger_message_id=?
+              and action=?
+              and id>?
+              and universal_execution_id!=?
+            order by id desc
+            """,
+            (
+                row["conversation_id"],
+                row["trigger_message_id"],
+                row["action"],
+                row["attempt_id"],
+                row["execution_id"],
+            ),
+        ).fetchall()
+        for newer in newer_rows:
+            if str(newer["send_status"] or "").strip() in resolved_statuses:
+                return newer
+            if row["action"] == "oa_approval" and cls._oa_action_result_succeeded(
+                str(newer["oa_action_result_json"] or "")
+            ):
+                return newer
+        return None
+
+    @staticmethod
+    def _oa_action_result_succeeded(value: str) -> bool:
+        try:
+            payload = json.loads(value or "{}")
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("outcome") == "applied":
+            return True
+        result = payload.get("dws_action_result")
+        return bool(
+            isinstance(result, dict)
+            and result.get("success") is True
+            and result.get("result") is True
+        )
 
     @staticmethod
     def _superseded_sent_attempt_id(error: str) -> int | None:

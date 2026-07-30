@@ -74,6 +74,8 @@ DWS 是按操作使用的外部依赖，不是整个服务的启动或运行闸�
 
 Follow-up 发送使用草稿 ID 派生的稳定 DWS `--uuid`。只有带该幂等键的发送才允许调用层自动重试；认证或瞬时依赖故障耗尽短重试后回到 `draft`，不直接落成终态 `failed`。
 
+同一 trigger/action 创建更新 execution generation 后，若更新 attempt 已发送成功或 OA action result 明确为 applied，启动恢复会把旧的 `failed/unknown/started/recovering` action execution 对账为 succeeded。旧执行不得继续污染未解决 backlog，也不得再次执行外部动作。
+
 Codex planner、task agent、meeting agent、structured agent，以及允许自动重试的 DWS 只读/幂等命令都必须遵守该契约。权限缺失继续进入授权流程；业务输入、目标绑定、脱敏和 schema 校验失败继续使用终态失败或明确 blocked。
 
 已经发起外部写操作但无法确认结果时，不适用自动重放。该状态必须保持 `unknown` 或隔离失败，先用回执、任务 ID 或查询接口核对；只有确认上次操作失败后才能重新执行，避免重复回复、重复审批或重复写入。
