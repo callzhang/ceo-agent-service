@@ -252,10 +252,10 @@ class CodexWeeklyOkrAgent:
                 "系统进度仅作为线索，最终判断以评论/进展、独立证据、实际效果和完成时间为准。"
             ),
             company_progress=_unique_strings(
-                item for result in results for item in result.company_progress
+                item for result in results for item in result.company_progress[:1]
             ),
             ceo_attention_items=[
-                item for result in results for item in result.ceo_attention_items
+                item for result in results for item in result.ceo_attention_items[:1]
             ],
             manager_reviews=[result.manager_reviews[0] for result in results],
             source_coverage=_unique_strings(
@@ -928,6 +928,10 @@ def render_weekly_okr_report(
     }
     reviews = {review.name: review for review in analysis.manager_reviews}
     scorecards = _manager_scorecards(analysis, manager_payloads)
+    finalized_scores = [
+        card.final_score for card in scorecards.values() if card.final_score is not None
+    ]
+    pending_count = len(managers) - len(finalized_scores)
     lines = [
         f"# {title}",
         "",
@@ -936,25 +940,52 @@ def render_weekly_okr_report(
         "- 数据口径：实时叮当 OKR 目标、KR 评论/进展，以及文档、知识库、AI听记、群聊等可读取的独立证据",
         "- 综合证据评分：系统进度仅作为线索；每个 KR 按实际结果、证据强度和完成时间评分",
         "- 评分公式：业务 OKR 按 O 权重×KR 权重汇总；管理者最终分 =（业务 OKR×70% + 领导力×30%）×文化系数",
+        "- 使用提醒：这是截至本周的证据完成度快照，不是季度末绩效预测；管理会应重点审阅证据缺口、风险和下周检查点",
         "",
-        "## 管理摘要",
+        "## 管理会审阅页",
         "",
         analysis.executive_summary,
+        "",
+        "### 评分概览",
+        "",
+        f"- 已形成最终分：{len(finalized_scores)} 人；暂不形成：{pending_count} 人",
+        f"- 已形成最终分平均值：{sum(finalized_scores) / len(finalized_scores):.1f}"
+        if finalized_scores
+        else "- 已形成最终分平均值：暂不形成",
+        f"- 低于 60 分：{sum(score < 60 for score in finalized_scores)} 人；"
+        "当前主要原因是结果证据、业务效果或系统回填尚未闭环",
     ]
     if analysis.company_progress:
-        lines.extend(["", "### 本周整体进展", ""])
-        lines.extend(f"- {item}" for item in analysis.company_progress)
-    lines.extend(["", "## 需要 CEO 关注", ""])
+        lines.extend(["", "### 本周重点进展", ""])
+        lines.extend(f"- {item}" for item in analysis.company_progress[:6])
+    lines.extend(["", "### 管理会待决策与主要风险", ""])
     if analysis.ceo_attention_items:
         lines.extend(
             f"- **{item.topic}**（{ '、'.join(item.owner_names) or '责任人待明确' }）："
             f"{item.issue} 建议决策：{item.recommended_decision}"
-            for item in analysis.ceo_attention_items
+            for item in analysis.ceo_attention_items[:8]
         )
     else:
-        lines.append("- 本周未发现需要 CEO 立即决策的新增事项。")
+        lines.append("- 本周未发现需要管理会立即决策的新增事项。")
 
-    lines.extend(["", "## 管理者评分概览", ""])
+    lines.extend(["", "### 管理者审阅表", ""])
+    lines.extend(
+        [
+            "| 管理者 | 最终分/状态 | 本周重点进展 | 主要风险 | 下周检查点 |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
+    for manager in managers:
+        review = reviews[manager.name]
+        scorecard = scorecards[manager.name]
+        lines.append(
+            f"| {_md_cell(manager.name)} | "
+            f"{_score_text(scorecard.final_score)} / {_md_cell(scorecard.final_status)} | "
+            f"{_brief_cell(review.key_progress)} | {_brief_cell(review.risks)} | "
+            f"{_brief_cell(review.next_week_focus)} |"
+        )
+
+    lines.extend(["", "### 分项评分表", ""])
     lines.extend(
         [
             "| 管理者 | 职级 | 业务 OKR | 领导力 | 文化价值观 | 文化系数 | 最终分 | 状态 |",
@@ -973,7 +1004,7 @@ def render_weekly_okr_report(
             f"{_score_text(scorecard.final_score)} | {_md_cell(scorecard.final_status)} |"
         )
 
-    lines.extend(["", "## 管理者进展与逐 KR 评分", ""])
+    lines.extend(["", "## 附录：逐人证据与逐 KR 评分", ""])
     for manager in managers:
         review = reviews[manager.name]
         manager_stats = stats[manager.name]
@@ -1450,6 +1481,15 @@ def _dimension_row(item: DimensionScoreReview) -> str:
 
 def _md_cell(value: object) -> str:
     return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", "<br>")
+
+
+def _brief_cell(items: list[str], *, limit: int = 120) -> str:
+    if not items:
+        return "无"
+    text = str(items[0]).strip()
+    if len(text) > limit:
+        text = text[: limit - 1].rstrip() + "…"
+    return _md_cell(text)
 
 
 def _score_text(value: float | None) -> str:

@@ -271,7 +271,12 @@ def test_force_run_publishes_verified_document_then_group_summary(tmp_path):
     assert result.send_state == "sent"
     assert source.calls == [("u1", "2026 Q3"), ("u2", "2026 Q3")]
     assert gateway.published and gateway.sent
-    assert "甲｜总监" in gateway.published[0][1]
+    published = gateway.published[0][1]
+    assert "## 管理会审阅页" in published
+    assert "### 管理者审阅表" in published
+    assert "这是截至本周的证据完成度快照，不是季度末绩效预测" in published
+    assert "## 附录：逐人证据与逐 KR 评分" in published
+    assert "甲｜总监" in published
     assert store.state["weekly_okr_report:last_success_date"] == "2026-07-30"
 
 
