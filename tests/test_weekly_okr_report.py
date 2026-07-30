@@ -70,6 +70,8 @@ class CreateDecodeRecoveryDws:
             }
         if command[1:3] == ["doc", "create"]:
             raise UnicodeDecodeError("utf-8", b"\xe5", 0, 1, "invalid")
+        if command[1:3] == ["doc", "update"]:
+            return {"success": True}
         if command[1:3] == ["doc", "read"]:
             return {"title": self.marker}
         raise AssertionError(command)
@@ -133,7 +135,6 @@ class FakeGateway:
     ):
         assert workspace_id == "wiki-1"
         assert folder_id == "folder-1"
-        assert verification_marker == "数据覆盖与限制"
         content = content_file.read_text(encoding="utf-8")
         assert verification_marker in content
         self.published.append((name, content))
@@ -272,12 +273,25 @@ def test_force_run_publishes_verified_document_then_group_summary(tmp_path):
     assert result.send_state == "sent"
     assert source.calls == [("u1", "2026 Q3"), ("u2", "2026 Q3")]
     assert gateway.published and gateway.sent
-    published = gateway.published[0][1]
+    assert len(gateway.published) == 3
+    published = next(
+        content
+        for name, content in gateway.published
+        if "评分附录" not in name
+    )
     assert "## 管理会审阅页" in published
     assert "### 管理者审阅表" in published
     assert "这是截至本周的证据完成度快照，不是季度末绩效预测" in published
-    assert "## 附录：逐人证据与逐 KR 评分" in published
-    assert "甲｜总监" in published
+    assert "## 逐人评分附录" in published
+    assert "## 附录：逐人证据与逐 KR 评分" not in published
+    assert "[甲｜总监](https://alidocs.example/doc-1)" in published
+    appendix = next(
+        content
+        for name, content in gateway.published
+        if name.endswith("评分附录｜甲")
+    )
+    assert "### 甲｜总监" in appendix
+    assert "## 附录校验：甲" in appendix
     assert store.state["weekly_okr_report:last_success_date"] == "2026-07-30"
 
 

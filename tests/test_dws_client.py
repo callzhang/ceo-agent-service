@@ -4739,6 +4739,26 @@ def test_run_json_retries_zero_exit_structured_network_error(monkeypatch):
     assert sleeps == [1.0]
 
 
+def test_run_json_does_not_retry_zero_exit_doc_create_error(monkeypatch):
+    calls = []
+    network_payload = (
+        '{"error":{"category":"api","code":1,'
+        '"server_error_code":"NETWORK_ERROR","retryable":true,'
+        '"message":"create response unavailable"}}'
+    )
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=network_payload, stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    command = ["dws", "doc", "create", "--name", "report"]
+    with pytest.raises(DwsError, match="NETWORK_ERROR"):
+        DwsClient().run_json(command)
+    assert calls == [command]
+
+
 def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
     monkeypatch,
 ):

@@ -577,14 +577,12 @@ class DwsWeeklyOkrGateway:
                     name,
                     "--folder",
                     folder_id,
-                    "--content-file",
-                    str(content_file),
                     "--format",
                     "json",
                 ],
                 timeout_seconds=180,
             )
-        except UnicodeDecodeError:
+        except (UnicodeDecodeError, DwsError):
             recovered = self._find_documents(
                 workspace_id=workspace_id,
                 folder_id=folder_id,
@@ -597,6 +595,23 @@ class DwsWeeklyOkrGateway:
         url = _find_nested_string(payload, {"docUrl", "url"})
         if not node_id:
             raise DwsError("doc create did not return a nodeId")
+        self.dws.run_json(
+            [
+                self.dws.dws_bin,
+                "doc",
+                "update",
+                "--node",
+                node_id,
+                "--content-file",
+                str(content_file),
+                "--mode",
+                "overwrite",
+                "--yes",
+                "--format",
+                "json",
+            ],
+            timeout_seconds=180,
+        )
         readback = self.dws.run_json(
             [
                 self.dws.dws_bin,
@@ -790,7 +805,32 @@ def run_weekly_okr_report(
         managers=roster.managers,
         manager_payloads=manager_payloads,
     )
-    report_path.write_text(report_markdown, encoding="utf-8")
+    master_path = run_dir / "管理者OKR进度周报-完整底稿.md"
+    master_path.write_text(report_markdown, encoding="utf-8")
+    summary_prefix, limits_section, appendices = _report_publication_parts(
+        report_markdown,
+        title=report_title,
+        period_label=resolved_period,
+        managers=roster.managers,
+    )
+    appendix_dir = run_dir / "评分附录"
+    appendix_dir.mkdir(parents=True, exist_ok=True)
+    appendix_paths: dict[str, Path] = {}
+    for manager in roster.managers:
+        appendix_path = appendix_dir / (
+            f"manager-{hashlib.sha256(manager.user_id.encode('utf-8')).hexdigest()[:16]}.md"
+        )
+        appendix_path.write_text(appendices[manager.name], encoding="utf-8")
+        appendix_paths[manager.name] = appendix_path
+    report_path.write_text(
+        _render_management_report(
+            summary_prefix=summary_prefix,
+            limits_section=limits_section,
+            managers=roster.managers,
+            appendix_documents={},
+        ),
+        encoding="utf-8",
+    )
     if not deliver:
         return WeeklyOkrReportResult(
             status="dry_run",
@@ -804,6 +844,24 @@ def run_weekly_okr_report(
     folder_id = gateway.ensure_folder(
         workspace_id=workspace_id,
         folder_name=folder_name,
+    )
+    appendix_documents: dict[str, PublishedDocument] = {}
+    for manager in roster.managers:
+        appendix_documents[manager.name] = gateway.publish_document(
+            workspace_id=workspace_id,
+            folder_id=folder_id,
+            name=f"{report_title}｜评分附录｜{manager.name}",
+            content_file=appendix_paths[manager.name],
+            verification_marker=f"附录校验：{manager.name}",
+        )
+    report_path.write_text(
+        _render_management_report(
+            summary_prefix=summary_prefix,
+            limits_section=limits_section,
+            managers=roster.managers,
+            appendix_documents=appendix_documents,
+        ),
+        encoding="utf-8",
     )
     document = gateway.publish_document(
         workspace_id=workspace_id,
@@ -1112,6 +1170,70 @@ def render_group_summary(
                 ]
             )
     lines.extend(["", f"完整周报：{document_url}"])
+    return "\n".join(lines)
+
+
+def _report_publication_parts(
+    report_markdown: str,
+    *,
+    title: str,
+    period_label: str,
+    managers: list[ManagerIdentity],
+) -> tuple[str, str, dict[str, str]]:
+    summary_prefix, appendix_marker, remainder = report_markdown.partition(
+        "## 附录：逐人证据与逐 KR 评分"
+    )
+    if not appendix_marker:
+        raise ValueError("weekly OKR report is missing the appendix marker")
+    manager_details, limits_marker, limits_body = remainder.partition(
+        "## 数据覆盖与限制"
+    )
+    if not limits_marker:
+        raise ValueError("weekly OKR report is missing the limits marker")
+
+    appendices: dict[str, str] = {}
+    for index, manager in enumerate(managers):
+        start_marker = f"### {manager.name}｜"
+        start = manager_details.find(start_marker)
+        if start < 0:
+            raise ValueError(f"weekly OKR report is missing appendix for {manager.name}")
+        if index + 1 < len(managers):
+            next_marker = f"### {managers[index + 1].name}｜"
+            end = manager_details.find(next_marker, start + len(start_marker))
+            if end < 0:
+                raise ValueError(
+                    f"weekly OKR report is missing appendix boundary for {manager.name}"
+                )
+        else:
+            end = len(manager_details)
+        section = manager_details[start:end].strip()
+        appendices[manager.name] = (
+            f"# {title}｜评分附录｜{manager.name}\n\n"
+            f"- OKR 周期：{period_label}\n"
+            "- 评分口径：综合系统评论/进展、独立证据、实际效果和完成时间；系统进度仅作为线索\n\n"
+            f"{section}\n\n"
+            f"## 附录校验：{manager.name}\n"
+        )
+    limits_section = f"## 数据覆盖与限制{limits_body}".strip() + "\n"
+    return summary_prefix.strip() + "\n", limits_section, appendices
+
+
+def _render_management_report(
+    *,
+    summary_prefix: str,
+    limits_section: str,
+    managers: list[ManagerIdentity],
+    appendix_documents: dict[str, PublishedDocument],
+) -> str:
+    lines = [summary_prefix.rstrip(), "", "## 逐人评分附录", ""]
+    for manager in managers:
+        label = f"{manager.name}｜{manager.title}"
+        document = appendix_documents.get(manager.name)
+        if document is None:
+            lines.append(f"- {label}（发布时生成线上链接）")
+        else:
+            lines.append(f"- [{label}]({document.url})")
+    lines.extend(["", limits_section.rstrip(), ""])
     return "\n".join(lines)
 
 

@@ -3476,6 +3476,8 @@ class DwsClient:
 
     @staticmethod
     def _automatic_retry_allowed(command: list[str]) -> bool:
+        if len(command) >= 3 and command[1:3] == ["doc", "create"]:
+            return False
         if len(command) < 4 or command[1:4] != ["chat", "message", "send"]:
             return True
         return any(
