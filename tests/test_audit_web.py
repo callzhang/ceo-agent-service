@@ -55,7 +55,11 @@ def task_script_json(html: str, element_id: str):
 
 
 def loopback_test_client(app) -> TestClient:
-    return TestClient(app, client=("127.0.0.1", 50000))
+    return TestClient(
+        app,
+        client=("127.0.0.1", 50000),
+        headers={"Host": "127.0.0.1:8765"},
+    )
 
 
 def seed_attempt(store: AutoReplyStore) -> int:
@@ -3121,7 +3125,7 @@ def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch
     )
     client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
-    response = client.get("/open-dingtalk?cid=75217569357")
+    response = client.post("/open-dingtalk?cid=75217569357")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -3155,7 +3159,7 @@ def test_open_dingtalk_bridge_opens_pc_jsapi_bridge_for_open_conversation_id(
     )
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
 
-    response = client.get("/open-dingtalk?conversation_id=cid-1")
+    response = client.post("/open-dingtalk?conversation_id=cid-1")
 
     assert response.status_code == 200
     payload = response.json()
@@ -3187,7 +3191,10 @@ def test_open_dingtalk_popup_fetches_open_route_and_auto_closes(tmp_path: Path):
 
     assert response.status_code == 200
     assert "正在打开钉钉消息" in response.text
-    assert 'fetch("/open-dingtalk?conversation_id=cid-1", {cache: "no-store"})' in response.text
+    assert (
+        'fetch("/open-dingtalk?conversation_id=cid-1", '
+        '{method: "POST", cache: "no-store"})'
+    ) in response.text
     assert "window.close()" in response.text
 
 
@@ -3208,7 +3215,7 @@ def test_open_dingtalk_bridge_rejects_missing_cid(tmp_path: Path, monkeypatch):
     )
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
 
-    response = client.get("/open-dingtalk?cid=")
+    response = client.post("/open-dingtalk?cid=")
 
     assert response.status_code == 400
     assert response.json() == {"ok": False, "error": "missing_cid"}
@@ -4820,7 +4827,9 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
         suspended=True,
     )
     client = TestClient(
-        create_audit_app(store.path), client=("127.0.0.1", 50000)
+        create_audit_app(store.path),
+        client=("127.0.0.1", 50000),
+        headers={"Host": "127.0.0.1:8765"},
     )
 
     response = client.post(
@@ -4932,6 +4941,28 @@ def test_all_audit_mutations_reject_external_origin_even_with_forged_host(
     assert env_path.read_text(encoding="utf-8") == "CEO_WORKSPACE=/tmp/original\n"
 
 
+def test_audit_get_rejects_non_loopback_host(tmp_path: Path):
+    client = TestClient(
+        create_audit_app(tmp_path / "audit.sqlite3"),
+        client=("127.0.0.1", 50000),
+    )
+
+    response = client.get("/config", headers={"Host": "attacker.example"})
+
+    assert response.status_code == 403
+
+
+def test_audit_get_accepts_loopback_host(tmp_path: Path):
+    client = TestClient(
+        create_audit_app(tmp_path / "audit.sqlite3"),
+        client=("127.0.0.1", 50000),
+    )
+
+    response = client.get("/config", headers={"Host": "127.0.0.1:8765"})
+
+    assert response.status_code == 200
+
+
 def test_audit_mutation_accepts_loopback_origin(tmp_path: Path, monkeypatch):
     env_path = tmp_path / ".env"
     env_path.write_text("CEO_WORKSPACE=/tmp/original\n", encoding="utf-8")
@@ -4947,6 +4978,7 @@ def test_audit_mutation_accepts_loopback_origin(tmp_path: Path, monkeypatch):
         content="system_key=CEO_WORKSPACE&system_value=/tmp/changed",
         headers={
             "Content-Type": "application/x-www-form-urlencoded",
+            "Host": "127.0.0.1:8765",
             "Origin": "http://127.0.0.1:8765",
         },
         follow_redirects=False,
@@ -4981,7 +5013,11 @@ def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
     )
     app = create_audit_app(db_path=store.path)
 
-    response = TestClient(app, client=("127.0.0.1", 50000)).post(
+    response = TestClient(
+        app,
+        client=("127.0.0.1", 50000),
+        headers={"Host": "127.0.0.1:8765"},
+    ).post(
         f"/agent-runs/{run.id}/resolution",
         json={
             "execution_generation": "stale-generation",
@@ -5257,6 +5293,7 @@ def test_reviewed_reply_api_rejects_mutable_text_lookup_payload(tmp_path: Path):
             "message_str": "重复正文",
             "reply_text": "不应按文本反查",
         },
+        headers={"Host": "127.0.0.1:8765"},
     )
 
     assert response.status_code == 409

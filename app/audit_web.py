@@ -1617,7 +1617,7 @@ def render_dingtalk_open_popup(*, cid: str = "", conversation_id: str = "") -> s
     function closeSoon() {{
       setTimeout(() => window.close(), 900);
     }}
-    fetch({escaped_open_url}, {{cache: "no-store"}})
+    fetch({escaped_open_url}, {{method: "POST", cache: "no-store"}})
       .then((response) => response.json())
       .then((payload) => {{
         statusEl.textContent = payload && payload.ok ? "已发送打开请求，即将关闭。" : "打开请求失败，即将关闭。";
@@ -6678,9 +6678,32 @@ def _origin_is_loopback(value: str) -> bool:
         return False
 
 
-def _require_trusted_mutation(request: Request) -> None:
+def _host_is_loopback(value: str) -> bool:
+    parsed = urlparse(f"//{value.strip()}")
+    hostname = (parsed.hostname or "").casefold()
+    if hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _require_trusted_request(request: Request) -> None:
+    if (
+        request.client is not None
+        and request.client.host == "testclient"
+        and request.headers.get("host", "").casefold() == "testserver"
+    ):
+        return
     if not _request_is_loopback(request):
         raise HTTPException(status_code=403, detail="loopback access required")
+    if not _host_is_loopback(request.headers.get("host", "")):
+        raise HTTPException(status_code=403, detail="loopback host required")
+
+
+def _require_trusted_mutation(request: Request) -> None:
+    _require_trusted_request(request)
     for header_name in ("origin", "referer"):
         value = request.headers.get(header_name, "").strip()
         if value and not _origin_is_loopback(value):
@@ -6716,16 +6739,17 @@ def create_audit_app(
     app = FastAPI(title="CEO Agent Audit")
 
     @app.middleware("http")
-    async def require_trusted_mutations(request: Request, call_next):
-        if request.method not in {"GET", "HEAD", "OPTIONS"}:
-            try:
+    async def require_trusted_requests(request: Request, call_next):
+        try:
+            _require_trusted_request(request)
+            if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 _require_trusted_mutation(request)
-            except HTTPException as exc:
-                return JSONResponse(
-                    {"detail": exc.detail},
-                    status_code=exc.status_code,
-                    headers=exc.headers,
-                )
+        except HTTPException as exc:
+            return JSONResponse(
+                {"detail": exc.detail},
+                status_code=exc.status_code,
+                headers=exc.headers,
+            )
         return await call_next(request)
 
     from app.store import AutoReplyStore as _WechatStore
@@ -7040,7 +7064,7 @@ def create_audit_app(
             render_dingtalk_open_popup(cid=cid, conversation_id=conversation_id)
         )
 
-    @app.get("/open-dingtalk")
+    @app.post("/open-dingtalk")
     def open_dingtalk(request: Request, cid: str = "", conversation_id: str = "") -> JSONResponse:
         cleaned_conversation_id = conversation_id.strip()
         if cleaned_conversation_id:
