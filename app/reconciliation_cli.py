@@ -7,6 +7,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from app.agent_result import EffectKind
 from app.bounded_process import (
@@ -60,7 +61,7 @@ def execute_reviewed_read(
         raise AgentReadOnlyViolationError("reconciliation_command_invalid")
     try:
         reviewed.prewarm()
-        command = reviewed.classify_cached(item)
+        command = reviewed.classify(item)
     except NativeCliMetadataUnavailableError as exc:
         return _process_failure_receipt(
             descriptor,
@@ -153,7 +154,15 @@ server = FastMCP(
 )
 
 
-@server.tool(name="execute_reviewed_read")
+@server.tool(
+    name="execute_reviewed_read",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 def execute_reviewed_read_tool(argv: list[str]) -> dict[str, object]:
     return execute_reviewed_read(argv)
 

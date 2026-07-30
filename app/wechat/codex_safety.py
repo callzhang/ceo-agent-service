@@ -199,6 +199,8 @@ def make_read_only_with_reviewed_tools(
             "-c",
             "tools.enabled_tools=[]",
             "-c",
+            'web_search="disabled"',
+            "-c",
             f"mcp_servers.reconciliation_cli.command={json.dumps(controlled_cli_command)}",
             "-c",
             "mcp_servers.reconciliation_cli.args="

@@ -42,7 +42,6 @@ from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRun, AgentRunLeaseLostError, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import (
     make_read_only_with_reviewed_tools,
-    make_read_only_without_tools,
 )
 
 
@@ -71,7 +70,10 @@ DIRECT_AGENT_DEVELOPER_INSTRUCTIONS = """You are the Direct Agent for one queued
 - Do not infer successful execution from prose. Report completion only when direct execution and verification produced structured evidence."""
 READ_ONLY_DEVELOPER_INSTRUCTION = (
     "This invocation is read-only. Do not perform any external write, send, "
-    "approval, comment, reaction, edit, or other state-changing action."
+    "approval, comment, reaction, edit, or other state-changing action. "
+    "For exact DWS or Lark commands, call "
+    "reconciliation_cli.execute_reviewed_read with the command argv; do not "
+    "execute those CLIs through the shell."
 )
 _NATIVE_READ_ONLY_ITEM_TYPES = frozenset(
     {"tool_search", "tool_search_call", "web_search", "web_search_call"}
@@ -385,7 +387,12 @@ class DirectAgentRunner:
             preserve_native_model_config=True,
         )
         if read_only:
-            make_read_only_without_tools(command)
+            make_read_only_with_reviewed_tools(
+                command,
+                reviewed_mcp_tools=self.mcp_effect_registry.reviewed_read_tools(),
+                controlled_cli_command=sys.executable,
+                controlled_cli_args=("-m", "app.reconciliation_cli"),
+            )
         self.native_cli_classifier.prewarm()
         saw_json = False
 
@@ -424,7 +431,11 @@ class DirectAgentRunner:
                     mcp_call=mcp_call,
                 )
                 if native_command is not None or mcp_call is not None
-                else _safe_event(payload)
+                else (
+                    _read_only_sandbox_event(payload)
+                    if read_only and _is_command_execution(payload)
+                    else _safe_event(payload)
+                )
             )
             self.store.append_agent_run_event(
                 run.id,
@@ -1500,6 +1511,23 @@ def _effect_evidence_event(
         mcp_call=mcp_call,
         completion_payload=payload,
     )
+
+
+def _is_command_execution(payload: dict[str, object]) -> bool:
+    item = payload.get("item")
+    return isinstance(item, dict) and item.get("type") == "command_execution"
+
+
+def _read_only_sandbox_event(payload: dict[str, object]) -> dict[str, object]:
+    safe_event = _safe_event(payload)
+    item = safe_event.get("item")
+    if not isinstance(item, dict):
+        return safe_event
+    item["metadata"] = {
+        "effect": EffectKind.READ_ONLY.value,
+        "execution_boundary": "codex_read_only_sandbox",
+    }
+    return safe_event
 
 
 def _safe_event(

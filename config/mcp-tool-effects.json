@@ -2,6 +2,11 @@
   "version": 1,
   "tools": [
     {
+      "server": "reconciliation_cli",
+      "tool": "execute_reviewed_read",
+      "effect": "read_only"
+    },
+    {
       "server": "memory_connector",
       "tool": "user_get",
       "effect": "read_only"

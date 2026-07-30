@@ -55,7 +55,7 @@ Terminal result mapping
 
 Direct Agent 的输入包括原始 trigger、已有对话事实、材料引用、process/task ID、链接和精确读取命令。已有事实必须复用，不能再次追问。OA 详情、当前任务归属、表单、评论和附件由 agent 通过 live DWS read 获取；service 不按申请人或标题猜目标，不预读正文，也不搜索同名材料作为替代。
 
-工具流一开始就持久化保守 effect 类型。未命中已审阅 CLI/MCP registry 的调用记为 `unreviewed`，不能默认为无副作用；只有完整结构化完成事件能够证明 read-only 时才降级为无副作用。无法确认的结果进入 `unknown`，禁止 generation rotation 和写操作重放。
+工具流一开始就持久化保守 effect 类型。正常 Direct Agent run 中，未命中已审阅 CLI/MCP registry 的调用记为 `unreviewed`，不能默认为无副作用；只有完整结构化完成事件能够证明 read-only 时才降级为无副作用。专门的只读 run 使用 Codex 强制 `read-only` sandbox、`approval_policy=never` 和禁用网络工具；其中普通 shell 事件按这个受信任执行边界记录为 read-only，DWS/Lark 只能经声明为只读且幂等的 `reconciliation_cli.execute_reviewed_read` 执行。无法确认的正常写操作结果进入 `unknown`，禁止 generation rotation 和写操作重放。
 
 ## 模块边界
 

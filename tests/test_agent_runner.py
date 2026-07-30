@@ -1,3 +1,4 @@
+import asyncio
 import json
 import hashlib
 from pathlib import Path
@@ -1693,19 +1694,81 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert 'approval_policy="never"' in command_text
     assert "--dangerously-bypass-approvals-and-sandbox" not in executor.commands[0]
     assert "--sandbox read-only" in command_text
+    assert executor.commands[0].count("--sandbox") == 1
+    assert "danger-full-access" not in executor.commands[0]
     assert "tools.enabled_tools=[]" in executor.commands[0]
     assert 'web_search="disabled"' in executor.commands[0]
-    assert "mcp_servers.memory_connector.enabled=false" in executor.commands[0]
+    assert 'mcp_servers.memory_connector.enabled_tools=["memory_get","memory_recall","timeline_get","user_get"]' in executor.commands[0]
     assert "mcp_servers.exa.enabled=false" in executor.commands[0]
     assert "mcp_servers.passthrough.enabled=false" in executor.commands[0]
     assert "mcp_servers.user_config_only.enabled=false" in executor.commands[0]
+    assert any("reconciliation_cli" in part for part in executor.commands[0])
     assert "read-only" in executor.prompts[0].casefold()
     assert "external write" in executor.prompts[0].casefold()
     developer = _developer_instructions(executor.commands[0])
     assert "Direct Agent" in developer
     assert "read-only" in developer.casefold()
     assert "Do not perform any external write" in developer
+    assert "reconciliation_cli.execute_reviewed_read" in developer
     assert "system_actions" not in developer
+
+
+def test_read_only_run_records_sandboxed_shell_as_read_only(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "read-rules",
+                        "type": "command_execution",
+                        "command": ["sed", "-n", "1,40p", "/rules/AGENT.md"],
+                        "status": "in_progress",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "read-rules",
+                        "type": "command_execution",
+                        "command": ["sed", "-n", "1,40p", "/rules/AGENT.md"],
+                        "status": "completed",
+                        "exit_code": 0,
+                    },
+                }
+            ),
+            _result_line(),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+    ).run(task, _context(task.id), read_only=True)
+
+    persisted = store.get_agent_run(result.run_id)
+    assert persisted is not None
+    assert persisted.status == "completed"
+    assert persisted.side_effect_state == "none"
+    command_events = [
+        event
+        for event in persisted.tool_events
+        if event.get("item", {}).get("type") == "command_execution"
+    ]
+    assert command_events
+    assert all(
+        event["item"]["metadata"] == {
+            "effect": "read_only",
+            "execution_boundary": "codex_read_only_sandbox",
+        }
+        for event in command_events
+    )
 
 
 def test_read_only_resume_places_all_safety_options_before_session_id(
@@ -1750,6 +1813,7 @@ def test_read_only_resume_places_all_safety_options_before_session_id(
     assert command.index("tools.enabled_tools=[]") < session_index
     assert command.index('web_search="disabled"') < session_index
     assert command.index("mcp_servers.exa.enabled=false") < session_index
+    assert any("reconciliation_cli" in part for part in command)
     assert 'approval_policy="untrusted"' not in command
     assert 'approvals_reviewer="auto_review"' not in command
 
@@ -2087,6 +2151,74 @@ def test_reconciliation_cli_runs_reviewed_read_through_trusted_executable(
         "instance-id": "proc-1",
         "task-id": "task-1",
     }
+
+
+def test_reconciliation_cli_uses_dynamic_reviewed_metadata(monkeypatch):
+    from app.native_cli_metadata import NativeCliCommand
+    from app.reconciliation_cli import execute_reviewed_read
+
+    class DynamicClassifier:
+        def prewarm(self):
+            return None
+
+        def classify(self, item):
+            assert item["argv"] == [
+                "lark-cli",
+                "contact",
+                "+get-user",
+                "--as",
+                "user",
+                "--json",
+            ]
+            return NativeCliCommand(
+                cli="lark-cli",
+                command_path="contact +get-user",
+                effect=EffectKind.READ_ONLY,
+                command_digest="reviewed-command",
+                target_identifiers={},
+            )
+
+    monkeypatch.setattr(
+        "app.reconciliation_cli.shutil.which",
+        lambda cli: f"/trusted/{cli}",
+    )
+    receipt = execute_reviewed_read(
+        [
+            "lark-cli",
+            "contact",
+            "+get-user",
+            "--as",
+            "user",
+            "--json",
+        ],
+        classifier=DynamicClassifier(),
+        process_runner=lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv,
+            returncode=0,
+            stdout='{"ok":true}',
+            stderr="",
+        ),
+    )
+
+    assert receipt["operation"] == "contact +get-user"
+    assert receipt["stdout"] == '{"ok":true}'
+
+
+def test_reconciliation_cli_tool_declares_read_only_annotations():
+    from app.reconciliation_cli import server
+
+    tools = asyncio.run(server.list_tools())
+    tool = next(
+        candidate
+        for candidate in tools
+        if candidate.name == "execute_reviewed_read"
+    )
+
+    assert tool.annotations is not None
+    assert tool.annotations.readOnlyHint is True
+    assert tool.annotations.destructiveHint is False
+    assert tool.annotations.idempotentHint is True
+    assert tool.annotations.openWorldHint is True
 
 
 def test_reconciliation_proof_rejects_query_with_different_task_on_same_process(
