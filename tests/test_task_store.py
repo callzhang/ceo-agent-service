@@ -79,7 +79,7 @@ def test_reset_stale_processing_work_summary_inputs_requeues_orphans(tmp_path: P
 
     assert reset_count == 1
     assert reclaimed[0].id == input_id
-    assert reclaimed[0].attempts == 2
+    assert reclaimed[0].attempts == 1
 
 
 def test_reset_stale_processing_work_summary_inputs_keeps_fresh_processing(

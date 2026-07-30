@@ -762,7 +762,7 @@ def test_reset_stale_processing_reply_tasks_requeues_orphans(tmp_path: Path):
     assert reset_count == 1
     assert store.acquire_codex_session_lock("cid-1", "reply:msg-1")
     assert reclaimed[0].id == claimed[0].id
-    assert reclaimed[0].attempts == 2
+    assert reclaimed[0].attempts == 1
 
 
 def test_reset_recoverable_reply_tasks_requeues_stale_lock_failure(
@@ -834,7 +834,7 @@ def test_reset_processing_reply_tasks_requeues_all_processing_on_startup(
     assert store.acquire_codex_session_lock("cid-1", "reply:msg-1")
     assert reclaimed[0].id == claimed[0].id
     assert reclaimed[0].status == "processing"
-    assert reclaimed[0].attempts == 2
+    assert reclaimed[0].attempts == 1
 
 
 def test_reconcile_resolved_universal_action_failure_uses_terminal_attempt(

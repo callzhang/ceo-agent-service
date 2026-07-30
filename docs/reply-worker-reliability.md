@@ -11,6 +11,15 @@ can restart the whole service.
 Per-conversation read failures are recorded and notified without blocking other
 conversations in the same producer pass.
 
+Service startup recovers durable work before any producer or consumer thread
+starts. Claimed reply tasks return to `pending`, work-summary inputs return to
+`pending`, meeting analysis jobs return to `retry`, and claimed meeting delivery
+jobs are unlocked. Recovery subtracts the interrupted claim from each queue's
+attempt counter because process termination is not a business execution failure.
+Persisted universal action execution IDs and verified terminal receipts remain
+unchanged, so recovery can reconcile completed external actions without sending
+them again.
+
 External dependencies use two retry levels. The call boundary performs a small
 number of immediate retries, then raises a typed external-dependency failure
 instead of flattening it into a generic runtime error. The reply, work-summary,

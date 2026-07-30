@@ -2533,6 +2533,7 @@ class AutoReplyStore:
                 f"""
                 update reply_tasks
                 set status='pending',
+                    attempts=max(attempts - 1, 0),
                     locked_at=null,
                     error='',
                     updated_at=current_timestamp
@@ -2623,6 +2624,7 @@ class AutoReplyStore:
                 f"""
                 update reply_tasks
                 set status='pending',
+                    attempts=max(attempts - 1, 0),
                     locked_at=null,
                     error='',
                     updated_at=current_timestamp
@@ -4116,6 +4118,7 @@ class AutoReplyStore:
                 """
                 update meeting_alignment_jobs
                 set status='retry',
+                    attempts=max(attempts - 1, 0),
                     locked_at=null,
                     updated_at=current_timestamp
                 where status='processing'
@@ -7321,6 +7324,7 @@ class AutoReplyStore:
                 """
                 update work_summary_inputs
                 set status='pending',
+                    attempts=max(attempts - 1, 0),
                     error='',
                     updated_at=current_timestamp
                 where status='processing'
@@ -7349,6 +7353,7 @@ class AutoReplyStore:
                 f"""
                 update work_summary_inputs
                 set status='pending',
+                    attempts=max(attempts - 1, 0),
                     error='',
                     updated_at=current_timestamp
                 where id in ({placeholders})

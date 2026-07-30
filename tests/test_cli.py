@@ -6009,7 +6009,7 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path
         ).fetchone()
     errors = store.list_errors(limit=10)
     assert claimed.id == input_id
-    assert dict(row) == {"status": "pending", "attempts": 1, "error": ""}
+    assert dict(row) == {"status": "pending", "attempts": 0, "error": ""}
     assert errors == []
     assert calls[-1] == ("wait",)
 
