@@ -51,6 +51,18 @@ def _completed_confirmed(*, summary: str = "work completed") -> AgentResult:
     )
 
 
+def test_agent_result_schema_requires_every_declared_property():
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    assert set(schema["required"]) == set(schema["properties"])
+    error_schema = schema["$defs"]["AgentError"]
+    assert set(error_schema["required"]) == set(error_schema["properties"])
+    assert all(
+        "default" not in property_schema
+        for property_schema in error_schema["properties"].values()
+    )
+
+
 def test_parse_agent_result_from_last_agent_message():
     raw = json.dumps(
         {

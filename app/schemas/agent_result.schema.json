@@ -4,25 +4,27 @@
       "additionalProperties": false,
       "properties": {
         "code": {
-          "default": "",
           "title": "Code",
           "type": "string"
         },
         "retryable": {
-          "default": false,
           "title": "Retryable",
           "type": "boolean"
         },
         "authorization_required": {
-          "default": false,
           "title": "Authorization Required",
           "type": "boolean"
         },
         "side_effect_state": {
-          "$ref": "#/$defs/SideEffectState",
-          "default": "none"
+          "$ref": "#/$defs/SideEffectState"
         }
       },
+      "required": [
+        "code",
+        "retryable",
+        "authorization_required",
+        "side_effect_state"
+      ],
       "title": "AgentError",
       "type": "object"
     },
@@ -62,7 +64,8 @@
   },
   "required": [
     "outcome",
-    "summary"
+    "summary",
+    "error"
   ],
   "title": "AgentResult",
   "type": "object"

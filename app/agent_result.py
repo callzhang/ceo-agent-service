@@ -5,6 +5,16 @@ from typing import Iterable
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
+def _strict_agent_error_json_schema(schema: dict[str, object]) -> None:
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return
+    for property_schema in properties.values():
+        if isinstance(property_schema, dict):
+            property_schema.pop("default", None)
+    schema["required"] = list(properties)
+
+
 class AgentOutcome(StrEnum):
     COMPLETED = "completed"
     NO_ACTION = "no_action"
@@ -19,7 +29,11 @@ class SideEffectState(StrEnum):
 
 
 class AgentError(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        json_schema_extra=_strict_agent_error_json_schema,
+    )
 
     code: str = ""
     retryable: bool = False
@@ -28,7 +42,11 @@ class AgentError(BaseModel):
 
 
 class AgentResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        json_schema_extra={"required": ["outcome", "summary", "error"]},
+    )
 
     outcome: AgentOutcome
     summary: str = Field(min_length=1)
