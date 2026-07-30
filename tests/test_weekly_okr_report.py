@@ -57,7 +57,7 @@ class CreateDecodeRecoveryDws:
     def run_json(self, command, **_kwargs):
         if command[1:4] == ["wiki", "node", "list"]:
             self.list_calls += 1
-            if self.list_calls == 1:
+            if self.list_calls <= 2:
                 return {"nodes": []}
             return {
                 "nodes": [
@@ -113,10 +113,57 @@ class ExistingDocumentUpdateDecodeDws(ExistingDocumentDws):
         return super().run_json(command, **kwargs)
 
 
+class RelocateExistingDocumentDws:
+    dws_bin = "dws"
+
+    def __init__(self, marker):
+        self.marker = marker
+        self.commands = []
+        self.target_list_calls = 0
+        self.read_calls = 0
+
+    def run_json(self, command, **_kwargs):
+        self.commands.append(command)
+        if command[1:4] == ["wiki", "node", "list"]:
+            folder_id = command[command.index("--folder") + 1]
+            if folder_id == "doc-main":
+                self.target_list_calls += 1
+                if self.target_list_calls == 1:
+                    return {"nodes": []}
+                return {
+                    "nodes": [
+                        {
+                            "name": "weekly-title｜评分附录｜甲",
+                            "nodeId": "doc-appendix",
+                            "docUrl": "https://alidocs.example/doc-appendix",
+                        }
+                    ]
+                }
+            if folder_id == "folder-old":
+                return {
+                    "nodes": [
+                        {
+                            "name": "weekly-title｜评分附录｜甲",
+                            "nodeId": "doc-appendix",
+                            "docUrl": "https://alidocs.example/doc-appendix",
+                        }
+                    ]
+                }
+        if command[1:4] == ["wiki", "node", "move"]:
+            return {"success": True}
+        if command[1:3] == ["doc", "read"]:
+            self.read_calls += 1
+            return {"content": "旧内容" if self.read_calls == 1 else self.marker}
+        if command[1:3] == ["doc", "update"]:
+            return {"success": True}
+        raise AssertionError(command)
+
+
 class FakeGateway:
     def __init__(self, managers):
         self.managers = managers
         self.published = []
+        self.ensured = []
         self.sent = []
 
     def resolve_group_roster(self, group_name):
@@ -132,6 +179,12 @@ class FakeGateway:
         assert folder_name == "管理者 OKR 进度周报"
         return "folder-1"
 
+    def ensure_document(self, *, workspace_id, folder_id, name):
+        assert workspace_id == "wiki-1"
+        assert folder_id == "folder-1"
+        self.ensured.append((folder_id, name))
+        return PublishedDocument("doc-main", "https://alidocs.example/doc-main")
+
     def publish_document(
         self,
         *,
@@ -140,18 +193,29 @@ class FakeGateway:
         name,
         content_file,
         verification_marker,
+        migration_folder_id="",
     ):
         assert workspace_id == "wiki-1"
-        assert folder_id == "folder-1"
+        if "评分附录" in name:
+            assert folder_id == "doc-main"
+            assert migration_folder_id == "folder-1"
+        else:
+            assert folder_id == "folder-1"
+            assert migration_folder_id == ""
         content = content_file.read_text(encoding="utf-8")
         assert verification_marker in content
-        self.published.append((name, content))
-        return PublishedDocument("doc-1", "https://alidocs.example/doc-1")
+        self.published.append((name, content, folder_id))
+        if "评分附录" in name:
+            slug = name.rsplit("｜", 1)[-1]
+            return PublishedDocument(
+                f"doc-{slug}", f"https://alidocs.example/doc-{slug}"
+            )
+        return PublishedDocument("doc-main", "https://alidocs.example/doc-main")
 
     def send_group_summary(self, *, conversation_id, title, text):
         assert conversation_id == "cid-ceo-2"
         assert title in text
-        assert "https://alidocs.example/doc-1" in text
+        assert "https://alidocs.example/doc-main" in text
         self.sent.append(text)
         return "sent"
 
@@ -284,7 +348,7 @@ def test_force_run_publishes_verified_document_then_group_summary(tmp_path):
     assert len(gateway.published) == 3
     published = next(
         content
-        for name, content in gateway.published
+        for name, content, _folder_id in gateway.published
         if "评分附录" not in name
     )
     assert "## 管理会审阅页" in published
@@ -292,14 +356,25 @@ def test_force_run_publishes_verified_document_then_group_summary(tmp_path):
     assert "这是截至本周的证据完成度快照，不是季度末绩效预测" in published
     assert "## 逐人评分附录" in published
     assert "## 附录：逐人证据与逐 KR 评分" not in published
-    assert "[甲｜总监](https://alidocs.example/doc-1)" in published
+    assert "[甲｜总监](https://alidocs.example/doc-甲)" in published
     appendix = next(
         content
-        for name, content in gateway.published
+        for name, content, _folder_id in gateway.published
         if name.endswith("评分附录｜甲")
     )
     assert "### 甲｜总监" in appendix
     assert "## 附录校验：甲" in appendix
+    assert gateway.ensured == [
+        (
+            "folder-1",
+            "CEO-2 管理者 OKR 进度周报（2026-07-27—2026-07-30）",
+        )
+    ]
+    assert {
+        folder_id
+        for name, _content, folder_id in gateway.published
+        if "评分附录" in name
+    } == {"doc-main"}
     assert store.state["weekly_okr_report:last_success_date"] == "2026-07-30"
 
 
@@ -481,6 +556,42 @@ def test_existing_weekly_document_uses_readback_after_update_decode_error(tmp_pa
     )
 
     assert published.node_id == "doc-existing"
+    assert dws.read_calls == 2
+
+
+def test_existing_appendix_is_moved_under_main_document_and_read_back(tmp_path):
+    content_file = tmp_path / "appendix.md"
+    content_file.write_text("# 甲\n\n附录校验：甲\n", encoding="utf-8")
+    dws = RelocateExistingDocumentDws("附录校验：甲")
+
+    published = DwsWeeklyOkrGateway(dws).publish_document(
+        workspace_id="wiki-target",
+        folder_id="doc-main",
+        migration_folder_id="folder-old",
+        name="weekly-title｜评分附录｜甲",
+        content_file=content_file,
+        verification_marker="附录校验：甲",
+    )
+
+    assert published.node_id == "doc-appendix"
+    move = next(
+        command for command in dws.commands if command[1:4] == ["wiki", "node", "move"]
+    )
+    assert move == [
+        "dws",
+        "wiki",
+        "node",
+        "move",
+        "--workspace",
+        "wiki-target",
+        "--node",
+        "doc-appendix",
+        "--folder",
+        "doc-main",
+        "--format",
+        "json",
+    ]
+    assert dws.target_list_calls == 2
     assert dws.read_calls == 2
 
 

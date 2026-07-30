@@ -156,6 +156,14 @@ class WeeklyOkrGateway(Protocol):
         folder_name: str,
     ) -> str: ...
 
+    def ensure_document(
+        self,
+        *,
+        workspace_id: str,
+        folder_id: str,
+        name: str,
+    ) -> PublishedDocument: ...
+
     def publish_document(
         self,
         *,
@@ -164,6 +172,7 @@ class WeeklyOkrGateway(Protocol):
         name: str,
         content_file: Path,
         verification_marker: str,
+        migration_folder_id: str = "",
     ) -> PublishedDocument: ...
 
     def send_group_summary(
@@ -504,6 +513,7 @@ class DwsWeeklyOkrGateway:
         name: str,
         content_file: Path,
         verification_marker: str,
+        migration_folder_id: str = "",
     ) -> PublishedDocument:
         existing = self._find_documents(
             workspace_id=workspace_id,
@@ -512,7 +522,14 @@ class DwsWeeklyOkrGateway:
         )
         if len(existing) > 1:
             raise DwsError(
-                f"weekly OKR folder contains duplicate documents named {name!r}"
+                f"weekly OKR parent contains duplicate documents named {name!r}"
+            )
+        if not existing and migration_folder_id and migration_folder_id != folder_id:
+            existing = self._move_existing_document(
+                workspace_id=workspace_id,
+                source_folder_id=migration_folder_id,
+                target_folder_id=folder_id,
+                name=name,
             )
         if existing:
             node_id = str(existing[0].get("nodeId") or "").strip()
@@ -554,6 +571,61 @@ class DwsWeeklyOkrGateway:
                 url=url or f"https://alidocs.dingtalk.com/i/nodes/{node_id}",
             )
 
+        document = self.ensure_document(
+            workspace_id=workspace_id,
+            folder_id=folder_id,
+            name=name,
+        )
+        node_id = document.node_id
+        url = document.url
+        self._overwrite_document(
+            node_id=node_id,
+            content_file=content_file,
+        )
+        readback = self.dws.run_json(
+            [
+                self.dws.dws_bin,
+                "doc",
+                "read",
+                "--node",
+                node_id,
+                "--format",
+                "json",
+            ],
+            timeout_seconds=180,
+        )
+        if not _contains_text(readback, verification_marker):
+            raise DwsError("created weekly OKR document failed content readback")
+        if not url:
+            url = f"https://alidocs.dingtalk.com/i/nodes/{node_id}"
+        return PublishedDocument(node_id=node_id, url=url)
+
+    def ensure_document(
+        self,
+        *,
+        workspace_id: str,
+        folder_id: str,
+        name: str,
+    ) -> PublishedDocument:
+        existing = self._find_documents(
+            workspace_id=workspace_id,
+            folder_id=folder_id,
+            name=name,
+        )
+        if len(existing) > 1:
+            raise DwsError(
+                f"weekly OKR parent contains duplicate documents named {name!r}"
+            )
+        if existing:
+            node_id = str(existing[0].get("nodeId") or "").strip()
+            url = str(existing[0].get("docUrl") or "").strip()
+            if not node_id:
+                raise DwsError("existing weekly OKR document is missing nodeId")
+            return PublishedDocument(
+                node_id=node_id,
+                url=url or f"https://alidocs.dingtalk.com/i/nodes/{node_id}",
+            )
+
         try:
             payload = self.dws.run_json(
                 [
@@ -582,27 +654,57 @@ class DwsWeeklyOkrGateway:
         url = _find_nested_string(payload, {"docUrl", "url"})
         if not node_id:
             raise DwsError("doc create did not return a nodeId")
-        self._overwrite_document(
+        return PublishedDocument(
             node_id=node_id,
-            content_file=content_file,
+            url=url or f"https://alidocs.dingtalk.com/i/nodes/{node_id}",
         )
-        readback = self.dws.run_json(
+
+    def _move_existing_document(
+        self,
+        *,
+        workspace_id: str,
+        source_folder_id: str,
+        target_folder_id: str,
+        name: str,
+    ) -> list[dict[str, Any]]:
+        source_documents = self._find_documents(
+            workspace_id=workspace_id,
+            folder_id=source_folder_id,
+            name=name,
+        )
+        if len(source_documents) > 1:
+            raise DwsError(
+                f"weekly OKR source contains duplicate documents named {name!r}"
+            )
+        if not source_documents:
+            return []
+        source_node_id = str(source_documents[0].get("nodeId") or "").strip()
+        if not source_node_id:
+            raise DwsError("weekly OKR source document is missing nodeId")
+        self.dws.run_json(
             [
                 self.dws.dws_bin,
-                "doc",
-                "read",
+                "wiki",
+                "node",
+                "move",
+                "--workspace",
+                workspace_id,
                 "--node",
-                node_id,
+                source_node_id,
+                "--folder",
+                target_folder_id,
                 "--format",
                 "json",
-            ],
-            timeout_seconds=180,
+            ]
         )
-        if not _contains_text(readback, verification_marker):
-            raise DwsError("created weekly OKR document failed content readback")
-        if not url:
-            url = f"https://alidocs.dingtalk.com/i/nodes/{node_id}"
-        return PublishedDocument(node_id=node_id, url=url)
+        moved = self._find_documents(
+            workspace_id=workspace_id,
+            folder_id=target_folder_id,
+            name=name,
+        )
+        if len(moved) != 1 or str(moved[0].get("nodeId") or "") != source_node_id:
+            raise DwsError("weekly OKR document move failed hierarchy readback")
+        return moved
 
     def _overwrite_document(self, *, node_id: str, content_file: Path) -> None:
         try:
@@ -844,14 +946,20 @@ def run_weekly_okr_report(
         workspace_id=workspace_id,
         folder_name=folder_name,
     )
+    document = gateway.ensure_document(
+        workspace_id=workspace_id,
+        folder_id=folder_id,
+        name=report_title,
+    )
     appendix_documents: dict[str, PublishedDocument] = {}
     for manager in roster.managers:
         appendix_documents[manager.name] = gateway.publish_document(
             workspace_id=workspace_id,
-            folder_id=folder_id,
+            folder_id=document.node_id,
             name=f"{report_title}｜评分附录｜{manager.name}",
             content_file=appendix_paths[manager.name],
             verification_marker=f"附录校验：{manager.name}",
+            migration_folder_id=folder_id,
         )
     report_path.write_text(
         _render_management_report(
