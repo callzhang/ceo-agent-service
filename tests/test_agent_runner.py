@@ -1509,45 +1509,48 @@ def test_transport_failure_without_open_effect_is_retryable(
     assert error == {"code": error_code, "retryable": True}
 
 
-def test_native_metadata_lookup_runs_after_stdout_is_drained(
+def test_effectful_native_command_blocks_rotation_as_soon_as_it_starts(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
     command = "dws chat message send --group cid --text hello --yes"
-    output = "\n".join(
-        (
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "id": "native-send-1",
-                        "type": "command_execution",
-                        "command": command,
-                        "exit_code": 0,
-                        "status": "completed",
-                    },
-                }
-            ),
-            _result_line(side_effect_state="confirmed"),
-        )
+    started = json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "id": "native-send-1",
+                "type": "command_execution",
+                "command": command,
+                "status": "in_progress",
+            },
+        }
     )
-    executor = CompletionAwareExecutor(output)
 
-    class Classifier(NativeCliMetadataClassifier):
-        def classify(self, item):
-            assert executor.finished_streaming is True
-            return super().classify(item)
+    def executor(_command, *, on_stdout_line, **_kwargs):
+        on_stdout_line(started)
+        with pytest.raises(
+            ValueError, match="side effect reconciliation required"
+        ):
+            store.rotate_reply_task_execution_generation(task.id)
+        raise OSError("transport closed while command was running")
 
-    DirectAgentRunner(
+    with pytest.raises(AgentRunUnknownError, match="codex_process_failed"):
+        DirectAgentRunner(
         store=store,
         workspace=tmp_path,
         executor=executor,
-        native_cli_classifier=Classifier(
+        native_cli_classifier=NativeCliMetadataClassifier(
             reviewed_effects={
                 ("dws", "chat message send"): EffectKind.EFFECTFUL,
             }
         ),
-    ).run(task, _context(task.id))
+        ).run(task, _context(task.id))
+
+    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
+    assert run is not None
+    assert run.status == "unknown"
+    assert run.side_effect_state == "unknown"
+    assert run.tool_events[0]["item"]["metadata"]["effect"] == "effectful"
 
 
 def test_native_metadata_cache_contains_command_path_not_message_text():

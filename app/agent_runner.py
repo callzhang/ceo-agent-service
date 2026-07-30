@@ -411,11 +411,32 @@ class DirectAgentRunner:
                     transcript_start_line=run.transcript_start_line,
                     now=now,
                 )
-            safe_event = _safe_event(payload)
+            native_command = _native_cli_command(
+                payload,
+                self.native_cli_classifier,
+                cached_only=True,
+            )
+            mcp_call = _mcp_tool_call(payload, self.mcp_effect_registry)
+            safe_event = (
+                _effect_evidence_event(
+                    payload,
+                    native_command=native_command,
+                    mcp_call=mcp_call,
+                )
+                if native_command is not None or mcp_call is not None
+                else _safe_event(payload)
+            )
             self.store.append_agent_run_event(
                 run.id,
                 safe_event,
                 owner=self.owner,
+                now=now,
+            )
+            self._record_stream_receipt(
+                run.id,
+                payload,
+                native_command=native_command,
+                mcp_call=mcp_call,
                 now=now,
             )
 
@@ -431,7 +452,6 @@ class DirectAgentRunner:
         except AgentRunLeaseLostError:
             raise
         except AgentStreamError as exc:
-            self._classify_persisted_execution_events(run.id, now=now)
             self._record_failure(
                 run.id,
                 "codex_stream_invalid",
@@ -441,7 +461,6 @@ class DirectAgentRunner:
                 raise AgentRunUnknownError("codex_stream_invalid", run.id) from exc
             raise RuntimeError("codex_stream_invalid") from exc
         except Exception as exc:
-            self._classify_persisted_execution_events(run.id, now=now)
             self._record_failure(
                 run.id,
                 "codex_process_failed",
@@ -450,12 +469,6 @@ class DirectAgentRunner:
             if self.store.get_agent_run(run.id).status == "unknown":
                 raise AgentRunUnknownError("codex_process_failed", run.id) from exc
             raise RuntimeError("codex_process_failed") from exc
-
-        self._persist_deferred_execution_evidence(
-            run.id,
-            process.stdout,
-            now=now,
-        )
 
         if process.timed_out:
             self._record_failure(
@@ -539,6 +552,51 @@ class DirectAgentRunner:
             events=tuple(completed_run.tool_events),
             receipts=tuple(all_receipts),
         )
+
+    def _record_stream_receipt(
+        self,
+        run_id: int,
+        payload: dict[str, object],
+        *,
+        native_command: NativeCliCommand | None,
+        mcp_call: McpToolCall | None,
+        now: str | None,
+    ) -> None:
+        call_id = _native_call_id(payload)
+        if (
+            native_command is not None
+            and native_command.effect is EffectKind.EFFECTFUL
+            and call_id
+            and _native_command_completed(payload)
+        ):
+            self.store.record_agent_execution_receipt(
+                run_id,
+                receipt_id=f"native-cli:{run_id}:{call_id}",
+                operation_id=call_id,
+                cli=native_command.cli,
+                command_path=native_command.command_path,
+                command_digest=native_command.command_digest,
+                exit_code=0,
+                owner=self.owner,
+                now=now,
+            )
+        if (
+            mcp_call is not None
+            and mcp_call.effect is EffectKind.EFFECTFUL
+            and call_id
+            and _mcp_call_completed(payload)
+        ):
+            self.store.record_agent_execution_receipt(
+                run_id,
+                receipt_id=f"mcp:{run_id}:{call_id}",
+                operation_id=call_id,
+                cli=f"mcp:{mcp_call.server}",
+                command_path=mcp_call.tool,
+                command_digest=mcp_call.operation_digest,
+                exit_code=0,
+                owner=self.owner,
+                now=now,
+            )
 
     def reconcile(
         self,
@@ -739,6 +797,8 @@ class DirectAgentRunner:
         persisted = self.store.get_agent_run(run_id)
         if persisted is None:
             raise RuntimeError("agent run was not persisted")
+        if persisted.status == "unknown":
+            return
         events, embedded_receipts = structured_execution_evidence(
             persisted.tool_events
         )
