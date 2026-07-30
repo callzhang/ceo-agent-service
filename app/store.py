@@ -2162,6 +2162,7 @@ class AutoReplyStore:
         oa_url: str = "",
         attempt_id: int = 0,
         channel: str = "dingtalk",
+        force_rotation: bool = False,
     ) -> ReplyTask:
         task: ReplyTask | None
         with self._connect() as db:
@@ -2181,6 +2182,7 @@ class AutoReplyStore:
                 attempt_id=attempt_id,
                 revision_key=revision_key,
                 channel=channel,
+                force_rotation=force_rotation,
             )
         if task is None:
             raise ValueError("agent side effect reconciliation required before rotation")
@@ -2238,6 +2240,7 @@ class AutoReplyStore:
         attempt_id: int,
         revision_key: str,
         channel: str,
+        force_rotation: bool = False,
     ) -> ReplyTask | None:
         existing = db.execute(
             """
@@ -2248,6 +2251,7 @@ class AutoReplyStore:
         ).fetchone()
         if (
             existing is not None
+            and not force_rotation
             and existing["status"] in {"pending", "processing"}
             and int(existing["manual_rerun_attempt_id"] or 0) == attempt_id
             and str(existing["manual_rerun_revision_key"] or "") == revision_key
@@ -2256,6 +2260,20 @@ class AutoReplyStore:
         execution_generation = uuid4().hex
         if existing is not None:
             now_text = str(db.execute("select current_timestamp").fetchone()[0])
+            if force_rotation:
+                active_run = db.execute(
+                    """
+                    select 1 from agent_runs
+                    where reply_task_id=? and execution_generation=?
+                      and status='running'
+                    limit 1
+                    """,
+                    (int(existing["id"]), str(existing["execution_generation"])),
+                ).fetchone()
+                if active_run is not None:
+                    raise ValueError(
+                        "active agent run must finish before forced rerun"
+                    )
             if cls._hold_generation_for_unknown_effects(
                 db,
                 int(existing["id"]),

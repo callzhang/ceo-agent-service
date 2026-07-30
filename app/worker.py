@@ -3085,6 +3085,7 @@ class DingTalkAutoReplyWorker:
                 trigger_text=trigger.content,
                 trigger_message_json=trigger.model_dump_json(),
                 oa_url=oa_url,
+                force_rotation=True,
             )
         else:
             self.store.enqueue_reply_task(

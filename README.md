@@ -52,6 +52,8 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 一次 reply task generation 对应一次 Direct Agent run。工具调用从流式开始就记录 effect；未命中已审阅 registry 的 command/tool 记为 `unreviewed`，不能默认为无副作用。完整结构化完成事件证明 read-only 时可以降级；否则不确定结果进入 `unknown`，禁止 generation rotation 和自动重放。只有持久化事件证明从未尝试过 effectful 或 unreviewed 操作，旧 run 才会以 `side_effect_state=none` 终止并换 generation 安全重跑；已关闭但缺回执、身份不完整或未审阅的操作绝不按无副作用处理。只读核对得到不可重试结论时，run 和 task 原子终止为明确 blocked/failed，不会永久停在 `processing`。
 
+`rerun-message --force-new-decision` 会在确认当前 generation 已结束且没有未知副作用后原子创建新 generation 和新 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
+
 执行安全由明确证据保证：`completed + confirmed` 必须有持久化的 completed effectful event 或执行回执；只有诊断没有动作时返回 `needs_human` 或 `failed`。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
 
 重复发送保护命中已有 `sent_replies` 时，新的发送 attempt 记为 `skipped`，不记为 `blocked`，也不写入 service error；这表示同一触发消息已处理完成，只是跳过了重复投递。

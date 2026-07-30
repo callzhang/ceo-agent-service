@@ -586,6 +586,73 @@ def test_manual_rerun_dedupes_same_pending_source_attempt(tmp_path: Path):
     assert first.id == second.id
 
 
+def test_forced_manual_rerun_rotates_failed_pending_generation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    original = store.get_reply_task(task_id)
+    assert original is not None
+    run = store.claim_agent_run(
+        task_id,
+        original.execution_generation,
+        owner="worker-1",
+    ).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="worker-1",
+    )
+    store.defer_reply_task(
+        task_id,
+        "codex_process_failed",
+        expected_execution_generation=original.execution_generation,
+    )
+
+    rerun = store.enqueue_manual_rerun_reply_task(
+        conversation_id="cid-universal",
+        conversation_title="Universal",
+        single_chat=False,
+        trigger_message_id="msg-universal",
+        trigger_create_time="2026-07-20 10:01:00",
+        trigger_sender="Derek",
+        trigger_text="Run it again",
+        trigger_message_json="{}",
+        force_rotation=True,
+    )
+
+    assert rerun.id == task_id
+    assert rerun.execution_generation != original.execution_generation
+    assert rerun.status == "pending"
+
+
+def test_forced_manual_rerun_does_not_supersede_active_agent_run(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    original = store.get_reply_task(task_id)
+    assert original is not None
+    store.claim_agent_run(
+        task_id,
+        original.execution_generation,
+        owner="worker-1",
+    )
+
+    with pytest.raises(ValueError, match="active agent run must finish"):
+        store.enqueue_manual_rerun_reply_task(
+            conversation_id="cid-universal",
+            conversation_title="Universal",
+            single_chat=False,
+            trigger_message_id="msg-universal",
+            trigger_create_time="2026-07-20 10:01:00",
+            trigger_sender="Derek",
+            trigger_text="Run it again",
+            trigger_message_json="{}",
+            force_rotation=True,
+        )
+
+    unchanged = store.get_reply_task(task_id)
+    assert unchanged is not None
+    assert unchanged.execution_generation == original.execution_generation
+
+
 def test_manual_rerun_dedupes_same_attempt_across_processes(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
