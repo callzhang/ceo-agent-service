@@ -199,6 +199,9 @@ def test_new_generation_replaces_superseded_delivery_with_corrected_reply(tmp_pa
         target_id="u1", conversation_id="u1", reply_text="old reply",
     )
     new_generation = store.rotate_reply_task_execution_generation(task.id)
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    assert claimed.execution_generation == new_generation
 
     store.finalize_wechat_reply_task(
         task_id=task.id,
