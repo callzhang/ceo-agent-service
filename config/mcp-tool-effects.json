@@ -7,6 +7,11 @@
       "effect": "read_only"
     },
     {
+      "server": "reconciliation_cli",
+      "tool": "execute_reviewed_write",
+      "effect": "effectful"
+    },
+    {
       "server": "memory_connector",
       "tool": "user_get",
       "effect": "read_only"
@@ -35,6 +40,16 @@
       "server": "memory_connector",
       "tool": "document_upload",
       "effect": "effectful"
+    },
+    {
+      "server": "exa",
+      "tool": "web_search_exa",
+      "effect": "read_only"
+    },
+    {
+      "server": "exa",
+      "tool": "web_fetch_exa",
+      "effect": "read_only"
     },
     {
       "server": "xiaoqing_interview",

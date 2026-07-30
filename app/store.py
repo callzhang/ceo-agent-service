@@ -3469,6 +3469,118 @@ class AutoReplyStore:
             ).fetchall()
             return [self._agent_run_from_row(row, db=db) for row in rows]
 
+    def resume_suspended_unknown_agent_run(
+        self,
+        run_id: int,
+        *,
+        expected_execution_generation: str,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            cursor = db.execute(
+                """
+                update agent_runs
+                set reconciliation_suspended=0,
+                    reconciliation_next_attempt_at='', updated_at=?
+                where id=? and status='unknown' and reconciliation_suspended=1
+                  and execution_generation=?
+                  and exists (
+                      select 1 from reply_tasks
+                      where reply_tasks.id=agent_runs.reply_task_id
+                        and reply_tasks.status='processing'
+                        and reply_tasks.execution_generation=
+                            agent_runs.execution_generation
+                  )
+                """,
+                (now_text, run_id, expected_execution_generation),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"suspended agent run is stale: {run_id}"
+                )
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(row, db=db)
+
+    def terminate_unknown_agent_run_unrecoverable(
+        self,
+        run_id: int,
+        *,
+        owner: str,
+        code: str,
+        expected_execution_generation: str,
+        structured_error: dict[str, object],
+        now: str | datetime | None = None,
+    ) -> int:
+        if not owner.strip():
+            raise ValueError("owner must be non-empty")
+        if not code.strip():
+            raise ValueError("code must be non-empty")
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        error_json = _json_object_text(structured_error, field="structured_error")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select agent_runs.reply_task_id
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=? and agent_runs.status='unknown'
+                  and agent_runs.execution_generation=?
+                  and agent_runs.lease_owner=? and agent_runs.lease_expires_at>?
+                  and reply_tasks.status='processing'
+                  and reply_tasks.execution_generation=agent_runs.execution_generation
+                """,
+                (run_id, expected_execution_generation, owner, now_text),
+            ).fetchone()
+            if row is None:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            task_id = int(row["reply_task_id"])
+            run_cursor = db.execute(
+                """
+                update agent_runs
+                set status='failed', final_result_json='', structured_error_json=?,
+                    side_effect_state='unknown', reconciliation_suspended=0,
+                    reconciliation_next_attempt_at='', lease_owner='',
+                    lease_expires_at='', completed_at=?, updated_at=?
+                where id=? and status='unknown' and execution_generation=?
+                  and lease_owner=? and lease_expires_at>?
+                """,
+                (
+                    error_json,
+                    now_text,
+                    now_text,
+                    run_id,
+                    expected_execution_generation,
+                    owner,
+                    now_text,
+                ),
+            )
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status='failed', locked_at=null, available_at='', error=?,
+                    updated_at=?
+                where id=? and status='processing' and execution_generation=?
+                """,
+                (code, now_text, task_id, expected_execution_generation),
+            )
+            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            return self._insert_reconciliation_attempt_in_connection(
+                db,
+                run_id=run_id,
+                task_id=task_id,
+                codex_reason=code,
+                audit_summary=code,
+                send_status="blocked",
+                send_error=code,
+            )
+
     def resolve_unknown_agent_run_manually(
         self,
         run_id: int,

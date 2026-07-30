@@ -50,7 +50,7 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 `blocked` 只表示缺少权限、依赖、材料或安全条件，后续条件恢复后仍应进入修复/恢复口径。确定不可恢复的阻塞必须写入 `send_status=blocked` 且 `send_error` 以 `blocked_unrecoverable_` 开头；这类记录在审计页显示为 terminal blocked，不再作为待修复 backlog。
 
-一次 reply task generation 对应一次 Direct Agent run。工具调用从流式开始就记录 effect；未命中已审阅 registry 的 command/tool 记为 `unreviewed`，不能默认为无副作用。完整结构化完成事件证明 read-only 时可以降级；否则不确定结果进入 `unknown`，禁止 generation rotation 和自动重放。
+一次 reply task generation 对应一次 Direct Agent run。工具调用从流式开始就记录 effect；未命中已审阅 registry 的 command/tool 记为 `unreviewed`，不能默认为无副作用。完整结构化完成事件证明 read-only 时可以降级；否则不确定结果进入 `unknown`，禁止 generation rotation 和自动重放。只有持久化事件证明从未尝试过 effectful 或 unreviewed 操作，旧 run 才会以 `side_effect_state=none` 终止并换 generation 安全重跑；已关闭但缺回执、身份不完整或未审阅的操作绝不按无副作用处理。只读核对得到不可重试结论时，run 和 task 原子终止为明确 blocked/failed，不会永久停在 `processing`。
 
 执行安全由明确证据保证：`completed + confirmed` 必须有持久化的 completed effectful event 或执行回执；只有诊断没有动作时返回 `needs_human` 或 `failed`。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
 
@@ -398,7 +398,7 @@ CEO reply agent 默认复用本机 Codex MCP/OAuth 配置，但仍显式禁用 h
 
 为了避免把个人密钥写进进程命令行，MCP 透传只复制 URL、OAuth resource、command、args、startup timeout 和 bearer token 环境变量名，不复制 `[mcp_servers.*.env]` 里的密钥值。需要 API key 的 stdio MCP 应把密钥放在 launchd 或 shell 环境中。
 
-Codex CLI 的 JSONL 事件会返回 MCP `server`、`tool`、`arguments`、`result` 和 `status`，但目前不提供可直接信任的读写注解或 `tools/list` 清单。服务因此使用 [`config/mcp-tool-effects.json`](config/mcp-tool-effects.json) 中逐项审核的 `(server, tool) -> effect` 注册表；可用 `CEO_AGENT_MCP_EFFECTS_PATH` 指向部署方维护的同格式文件。未知工具按 fail-closed 处理，不能凭工具名或用户文本推断为已完成写操作。新增 effectful MCP 工具时必须先审核其安装描述并登记，否则它不会产生可确认的执行回执。
+Direct Agent 不暴露原生 shell 工具，只能调用已审阅 MCP。DWS/Lark 命令由 agent 根据 CLI 发布的 effect metadata，分别调用 `reconciliation_cli.execute_reviewed_read` 或 `reconciliation_cli.execute_reviewed_write`；服务只执行这条已审核命令并持久化结构化结果。Codex CLI 的 JSONL 事件会返回 MCP `server`、`tool`、`arguments`、`result` 和 `status`，但目前不提供可直接信任的读写注解或 `tools/list` 清单。服务因此使用 [`config/mcp-tool-effects.json`](config/mcp-tool-effects.json) 中逐项审核的 `(server, tool) -> effect` 注册表；可用 `CEO_AGENT_MCP_EFFECTS_PATH` 指向部署方维护的同格式文件。未知工具按 fail-closed 处理，不能凭工具名或用户文本推断为已完成写操作。新增 MCP 工具时必须先从实际 `tools/list` 或受版本控制的能力清单核对工具描述并登记。
 
 服务启动会先运行 MCP doctor，检查 `memory_connector`、`exa`、`xiaoqing_interview`，状态只使用 `ready`、`needs_login`、`missing_config`、`token_expired`、`network_blocked`、`tool_not_found` 等明确值。`needs_login` 和 `token_expired` 只记录/提醒一次，然后暂停相关任务，不让 agent 自己触发登录循环。手动检查：
 

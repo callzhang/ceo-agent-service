@@ -55,7 +55,7 @@ Terminal result mapping
 
 Direct Agent 的输入包括原始 trigger、已有对话事实、材料引用、process/task ID、链接和精确读取命令。已有事实必须复用，不能再次追问。OA 详情、当前任务归属、表单、评论和附件由 agent 通过 live DWS read 获取；service 不按申请人或标题猜目标，不预读正文，也不搜索同名材料作为替代。
 
-工具流一开始就持久化保守 effect 类型。正常 Direct Agent run 中，未命中已审阅 CLI/MCP registry 的调用记为 `unreviewed`，不能默认为无副作用；只有完整结构化完成事件能够证明 read-only 时才降级为无副作用。专门的只读 run 使用 Codex 强制 `read-only` sandbox、`approval_policy=never` 和禁用网络工具；其中普通 shell 事件按这个受信任执行边界记录为 read-only，DWS/Lark 只能经声明为只读且幂等的 `reconciliation_cli.execute_reviewed_read` 执行。无法确认的正常写操作结果进入 `unknown`，禁止 generation rotation 和写操作重放。
+Direct Agent 不暴露原生 shell 工具，只能调用已审阅 MCP。DWS/Lark 命令由 agent 根据 CLI 发布的 effect metadata，分别通过 `reconciliation_cli.execute_reviewed_read` 或 `reconciliation_cli.execute_reviewed_write` 直接读取或执行。服务只校验 metadata、运行该精确 argv、持久化结构化结果和写操作回执，不代替 agent 选择命令或做业务判断。其他 MCP 工具必须命中已审核 registry；未知调用记为 `unreviewed`。无法确认的写操作结果进入 `unknown`，禁止 generation rotation 和写操作重放。专门的只读 reconciliation 额外使用 `approval_policy=never`、禁用网络工具，并只暴露审核过的读取能力。只有事件历史从未尝试 effectful 或 unreviewed 操作时，系统才确认旧 run 无副作用并换 generation 重跑；已关闭但缺回执、身份不完整或未审阅的操作保持禁止重放。若核对结果不可重试，系统将 run、task 和 blocked attempt 原子落到终态，避免 reconciliation backlog 永久占用 `processing`。
 
 ## 模块边界
 

@@ -1,4 +1,5 @@
 import json
+import shlex
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ from app.agent_context import AgentTaskContext
 from app.agent_result import AgentError, AgentOutcome, AgentResult, SideEffectState
 from app.agent_runner import (
     AgentReconciliationRunResult,
+    AgentRunNoEffectEvidenceError,
     DirectAgentRunner,
     DirectAgentRunResult,
     ReconciliationDependencyError,
@@ -337,6 +339,18 @@ class FailingReconciliationRunner(ScriptedDirectAgentRunner):
         raise self.error
 
 
+class NoEffectEvidenceReconciliationRunner(ScriptedDirectAgentRunner):
+    def reconcile(self, run, context, **kwargs):
+        claim = self.store.claim_unknown_agent_run(
+            run.id,
+            owner=self.owner,
+            lease_seconds=1800,
+            now=kwargs.get("now") or NOW,
+        )
+        assert claim.claimed
+        raise AgentRunNoEffectEvidenceError("unknown_run_has_no_incomplete_effect")
+
+
 def _seed_unknown_run(store: AutoReplyStore, task_id: int):
     task = store.get_reply_task(task_id)
     assert task is not None
@@ -383,24 +397,32 @@ def _agent_result_event(result: AgentResult) -> dict[str, object]:
     }
 
 
-def _command_event(
+def _reviewed_cli_event(
     event_type: str,
     call_id: str,
     command: str,
     *,
     output: str = "",
+    effectful: bool = False,
+    succeeded: bool = True,
 ) -> dict[str, object]:
     item: dict[str, object] = {
         "id": call_id,
-        "type": "command_execution",
-        "command": command,
+        "type": "mcp_tool_call",
+        "server": "reconciliation_cli",
+        "tool": "execute_reviewed_write" if effectful else "execute_reviewed_read",
+        "arguments": {"argv": shlex.split(command)},
+        "status": "in_progress",
     }
     if event_type == "item.completed":
         item.update(
             {
-                "exit_code": 0,
-                "status": "completed",
-                "aggregated_output": output,
+                "status": "completed" if succeeded else "failed",
+                "result": {
+                    "content": [{"type": "text", "text": output}],
+                    "structuredContent": {"stdout": output},
+                    "isError": not succeeded,
+                },
             }
         )
     return {"type": event_type, "item": item}
@@ -496,8 +518,8 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
             output = self.native_executor(command)
             records.extend(
                 (
-                    _command_event("item.started", f"oa-read-{index}", command),
-                    _command_event(
+                    _reviewed_cli_event("item.started", f"oa-read-{index}", command),
+                    _reviewed_cli_event(
                         "item.completed",
                         f"oa-read-{index}",
                         command,
@@ -540,12 +562,18 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
                 output = self.native_executor(write_command)
                 records.extend(
                     (
-                        _command_event("item.started", "oa-write", write_command),
-                        _command_event(
+                        _reviewed_cli_event(
+                            "item.started",
+                            "oa-write",
+                            write_command,
+                            effectful=True,
+                        ),
+                        _reviewed_cli_event(
                             "item.completed",
                             "oa-write",
                             write_command,
                             output=output,
+                            effectful=True,
                         ),
                     )
                 )
@@ -575,8 +603,8 @@ class DiagnosisOnlyProtocolExecutor(ProtocolCodexExecutor):
         )
         output = self.native_executor(command)
         return [
-            _command_event("item.started", "diagnostic-read", command),
-            _command_event(
+            _reviewed_cli_event("item.started", "diagnostic-read", command),
+            _reviewed_cli_event(
                 "item.completed",
                 "diagnostic-read",
                 command,
@@ -594,10 +622,18 @@ class DiagnosisOnlyProtocolExecutor(ProtocolCodexExecutor):
 class FailedWriteProtocolExecutor(ProtocolCodexExecutor):
     def records(self, _prompt: str) -> list[dict[str, object]]:
         command = "dws chat message send --group cid-1 --text 'hello' --yes"
-        failed = _command_event("item.completed", "send-failed", command)
-        failed["item"].update({"exit_code": 1, "status": "failed"})
+        failed = _reviewed_cli_event(
+            "item.completed",
+            "send-failed",
+            command,
+            output='{"error":"send_failed"}',
+            effectful=True,
+            succeeded=False,
+        )
         return [
-            _command_event("item.started", "send-failed", command),
+            _reviewed_cli_event(
+                "item.started", "send-failed", command, effectful=True
+            ),
             failed,
             _agent_result_event(
                 _result(
@@ -962,10 +998,65 @@ def test_non_retryable_reconciliation_is_never_selected_by_due_scan(tmp_path: Pa
 
     assert worker.reconcile_unknown_agent_runs(limit=1) == 0
     deferred = store.get_agent_run(unknown.id)
-    assert deferred.status == "unknown"
-    assert deferred.reconciliation_next_attempt_at == ""
-    assert deferred.reconciliation_suspended is True
+    task = store.get_reply_task(task_id)
+    assert deferred.status == "failed"
+    assert deferred.side_effect_state == "unknown"
+    assert task is not None and task.status == "failed"
     assert store.list_unknown_agent_runs(now="2099-01-01 00:00:00") == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "blocked"
+    assert attempt.send_error == "oa_task_not_current_user"
+
+
+def test_unknown_run_without_incomplete_effect_is_rotated_for_safe_rerun(
+    tmp_path: Path,
+):
+    trigger = _message(raw_payload={"processInstanceId": "proc-1"})
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    unknown = _seed_unknown_run(store, task_id)
+    claim = store.claim_unknown_agent_run(
+        unknown.id,
+        owner="suspender",
+        now=NOW,
+    )
+    assert claim.claimed
+    store.defer_unknown_agent_run_reconciliation(
+        unknown.id,
+        {"code": "reconciliation_evidence_invalid", "retryable": False},
+        owner="suspender",
+        expected_execution_generation=unknown.execution_generation,
+        next_attempt_at="",
+        suspended=True,
+        now=NOW,
+    )
+    with store._connect() as db:
+        db.execute(
+            "delete from agent_run_events where agent_run_id=?",
+            (unknown.id,),
+        )
+    runner = NoEffectEvidenceReconciliationRunner(store, [])
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        direct_agent_runner=runner,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.reconcile_unknown_agent_runs(limit=1) == 1
+
+    resolved = store.get_agent_run(unknown.id)
+    task = store.get_reply_task(task_id)
+    assert resolved.status == "failed"
+    assert resolved.side_effect_state == "none"
+    assert task is not None and task.status == "pending"
+    assert task.execution_generation != unknown.execution_generation
+    assert task.force_new_decision is True
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "failed"
+    assert attempt.send_error == "unknown_run_has_no_incomplete_effect"
 
 
 @pytest.mark.parametrize(
@@ -1010,8 +1101,15 @@ def test_worker_persists_and_schedules_typed_reconciliation_dependency_error(
         "gate_state": gate_state.value,
         "retryable": should_retry,
     }
-    assert deferred.reconciliation_suspended is (not should_retry)
-    assert bool(deferred.reconciliation_next_attempt_at) is should_retry
+    if should_retry:
+        assert deferred.status == "unknown"
+        assert deferred.reconciliation_suspended is False
+        assert bool(deferred.reconciliation_next_attempt_at) is True
+    else:
+        assert deferred.status == "failed"
+        assert deferred.side_effect_state == "unknown"
+        task = store.get_reply_task(task_id)
+        assert task is not None and task.status == "failed"
 
 
 @pytest.mark.parametrize(
@@ -1858,7 +1956,7 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
 
 
 @pytest.mark.parametrize(
-    ("gate_state", "suspended", "has_retry", "login_calls"),
+    ("gate_state", "terminal", "has_retry", "login_calls"),
     [
         (ChannelGateState.NEEDS_LOGIN, False, True, 1),
         (ChannelGateState.BLOCKED, True, False, 0),
@@ -1868,7 +1966,7 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
 def test_reconciliation_dependency_uses_typed_gate_and_login_once(
     tmp_path: Path,
     gate_state: ChannelGateState,
-    suspended: bool,
+    terminal: bool,
     has_retry: bool,
     login_calls: int,
 ):
@@ -1897,7 +1995,8 @@ def test_reconciliation_dependency_uses_typed_gate_and_login_once(
     assert worker.reconcile_unknown_agent_runs(limit=1) == 0
 
     deferred = store.get_agent_run(unknown.id)
-    assert deferred.reconciliation_suspended is suspended
+    assert deferred.status == ("failed" if terminal else "unknown")
+    assert deferred.reconciliation_suspended is False
     assert bool(deferred.reconciliation_next_attempt_at) is has_retry
     actual_login_calls = sum(
         result.state is ChannelGateState.NEEDS_LOGIN for result in login.results

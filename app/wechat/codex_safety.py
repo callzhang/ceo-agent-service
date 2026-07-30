@@ -211,6 +211,43 @@ def make_read_only_with_reviewed_tools(
     )
 
 
+def make_direct_agent_sandbox(
+    command: list[str],
+    *,
+    controlled_cli_command: str,
+    controlled_cli_args: tuple[str, ...],
+) -> None:
+    """Disable native tools and expose only reviewed external capabilities."""
+    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
+        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
+    _remove_command_options(command, names=("--sandbox",))
+    _remove_config_options(
+        command,
+        prefixes=("approval_policy=", "tools.enabled_tools=", "web_search="),
+    )
+    _insert_command_options(
+        command,
+        [
+            "--sandbox",
+            "read-only",
+            "-c",
+            'approval_policy="never"',
+            "-c",
+            "tools.enabled_tools=[]",
+            "-c",
+            'web_search="disabled"',
+            "-c",
+            f"mcp_servers.reconciliation_cli.command={json.dumps(controlled_cli_command)}",
+            "-c",
+            "mcp_servers.reconciliation_cli.args="
+            + json.dumps(list(controlled_cli_args), ensure_ascii=True),
+            "-c",
+            "mcp_servers.reconciliation_cli.enabled_tools="
+            '["execute_reviewed_read","execute_reviewed_write"]',
+        ],
+    )
+
+
 def _insert_command_options(command: list[str], options: list[str]) -> None:
     prompt_index = len(command) - 1
     if command[1:3] == ["exec", "resume"]:
@@ -222,6 +259,15 @@ def _remove_config_options(command: list[str], *, prefixes: tuple[str, ...]) -> 
     index = 0
     while index + 1 < len(command):
         if command[index] == "-c" and command[index + 1].startswith(prefixes):
+            del command[index : index + 2]
+            continue
+        index += 1
+
+
+def _remove_command_options(command: list[str], *, names: tuple[str, ...]) -> None:
+    index = 0
+    while index + 1 < len(command):
+        if command[index] in names:
             del command[index : index + 2]
             continue
         index += 1

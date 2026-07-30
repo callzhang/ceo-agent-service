@@ -13823,7 +13823,14 @@ def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monke
 
     assert dws.mail_replies == []
     assert len(worker.store.list_agent_execution_receipts(run.id)) == 1
-    assert worker.store.count_reply_attempts() == 1
+    assert worker.store.count_reply_attempts() == 2
+    terminal = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert terminal is not None and terminal.send_status == "blocked"
+    assert terminal.send_error == "reconciliation_tool_unavailable"
+    persisted = worker.store.get_agent_run(run.id)
+    assert persisted is not None and persisted.status == "failed"
+    task = worker.store.get_reply_task(run.reply_task_id)
+    assert task is not None and task.status == "failed"
     assert worker.store.get_agent_run_for_task_generation(
         run.reply_task_id,
         run.execution_generation,

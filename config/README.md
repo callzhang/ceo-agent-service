@@ -13,6 +13,8 @@ For an effectful tool whose published schema exposes a boolean validation-only
 mode, set `dry_run_argument` to that exact argument name. A call with that
 argument set to `true` is read-only and cannot produce a write receipt.
 
-The Xiaoqing entries mirror the capability manifest in the installed
-`xiaoqing_interview` service. `upload_interview_result` is effectful; its other
-listed tools are reads.
+The Exa entries mirror the live `tools/list` descriptors published by the
+configured Exa MCP endpoint. Refresh those exact names and annotations before
+changing the entries. The Xiaoqing entries mirror the capability manifest in
+the installed `xiaoqing_interview` service. `upload_interview_result` is
+effectful; its other listed tools are reads.

@@ -14,6 +14,7 @@ from app.agent_runner import (
     AGENT_RESULT_SCHEMA_PATH,
     DEFAULT_MCP_EFFECTS_PATH,
     AgentReadOnlyViolationError,
+    AgentRunNoEffectEvidenceError,
     AgentRunUnknownError,
     DirectAgentRunner,
     McpToolEffectRegistry,
@@ -25,6 +26,7 @@ from app.agent_runner import (
     _MAX_MCP_RESULT_NODES,
     _mcp_result_explicitly_succeeded,
     _target_key_matches,
+    unknown_effect_reference,
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRunLeaseLostError, AutoReplyStore
@@ -233,6 +235,108 @@ def _controlled_cli_read_item(
     }
 
 
+def test_reconciliation_requires_no_model_call_when_no_effect_is_incomplete(
+    tmp_path: Path,
+    store: AutoReplyStore,
+):
+    task, run = _unknown_run(store)
+    with store._connect() as db:
+        db.execute("delete from agent_run_events where agent_run_id=?", (run.id,))
+
+    def unexpected_executor(*_args, **_kwargs):
+        raise AssertionError("reconciliation model must not run without an effect")
+
+    runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=unexpected_executor,
+        owner="reconcile-owner",
+    )
+
+    with pytest.raises(
+        AgentRunNoEffectEvidenceError,
+        match="unknown_run_has_no_incomplete_effect",
+    ):
+        runner.reconcile(run, _context(task.id), now="2026-07-29 09:01:00")
+
+    claimed = store.get_agent_run(run.id)
+    assert claimed is not None and claimed.lease_owner == "reconcile-owner"
+
+
+@pytest.mark.parametrize(
+    ("events", "error"),
+    (
+        (
+            [
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "write-1",
+                        "metadata": {"effect": "effectful"},
+                    },
+                }
+            ],
+            "unknown_run_effect_identity_missing",
+        ),
+        (
+            [
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "write-1",
+                        "metadata": {"effect": "effectful"},
+                    },
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "write-1",
+                        "metadata": {"effect": "effectful"},
+                    },
+                },
+            ],
+            "unknown_run_effect_identity_missing",
+        ),
+        (
+            [
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "opaque-1",
+                        "metadata": {"effect": "unreviewed"},
+                    },
+                }
+            ],
+            "unknown_run_contains_unreviewed_effect",
+        ),
+        (
+            [
+                {
+                    "type": "item.completed",
+                    "item": {"metadata": {"effect": "effectful"}},
+                }
+            ],
+            "unknown_run_effect_identity_missing",
+        ),
+        (
+            [
+                {
+                    "type": "item.completed",
+                    "item": {"metadata": {"effect": "unreviewed"}},
+                }
+            ],
+            "unknown_run_contains_unreviewed_effect",
+        ),
+    ),
+)
+def test_unknown_effect_reference_never_treats_closed_or_unreviewed_as_absent(
+    events: list[dict[str, object]],
+    error: str,
+):
+    with pytest.raises(ValueError, match=error):
+        unknown_effect_reference(events)
+
+
 class RecordingExecutor:
     def __init__(self, output: str, *, returncode: int = 0, timed_out: bool = False):
         self.output = output
@@ -290,6 +394,14 @@ def test_direct_runner_uses_native_codex_and_never_ignores_user_config(
     assert command[:2] == ["codex", "exec"]
     assert "resume" not in command
     assert "--ignore-user-config" not in command
+    assert "--sandbox read-only" in " ".join(command)
+    assert command.count("--sandbox") == 1
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert any(
+        'enabled_tools=["execute_reviewed_read","execute_reviewed_write"]' in part
+        for part in command
+    )
+    assert "tools.enabled_tools=[]" in command
     assert str(AGENT_RESULT_SCHEMA_PATH) in command
     assert result.result.outcome is AgentOutcome.COMPLETED
     assert executor.kwargs[0]["total_timeout_seconds"] == 1200
@@ -957,526 +1069,6 @@ def test_expired_run_with_persisted_completed_effect_is_not_resumed_writable(
     assert persisted.side_effect_state == "unknown"
 
 
-def test_native_dws_completed_write_creates_trusted_persisted_receipt(
-    tmp_path: Path, store: AutoReplyStore
-):
-    task = _task(store)
-    output = "\n".join(
-        (
-            json.dumps({"type": "thread.started", "thread_id": "session-1"}),
-            json.dumps(
-                {
-                    "type": "item.started",
-                    "item": {
-                        "id": "native-send-1",
-                        "type": "command_execution",
-                        "command": (
-                            "dws chat message send --group cid --text hello "
-                            "--format json --yes"
-                        ),
-                    },
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "id": "native-send-1",
-                        "type": "command_execution",
-                        "command": (
-                            "dws chat message send --group cid --text hello "
-                            "--format json --yes"
-                        ),
-                        "exit_code": 0,
-                        "status": "completed",
-                        "aggregated_output": '{"success":true}',
-                    },
-                }
-            ),
-            _result_line(side_effect_state="confirmed"),
-        )
-    )
-
-    result = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-    ).run(task, _context(task.id))
-
-    receipts = store.list_agent_execution_receipts(result.run_id)
-    assert len(receipts) == 1
-    assert receipts[0].operation_id == "native-send-1"
-    assert receipts[0].completed is True
-    assert receipts[0].persisted is True
-    assert receipts[0].safe_to_confirm is True
-
-
-@pytest.mark.parametrize(
-    ("command_path", "command"),
-    (
-        (
-            "chat message send",
-            "dws chat message send --group cid --text 'hello' --format json --yes",
-        ),
-        (
-            "chat message add-emoji",
-            "dws chat message add-emoji --group cid --message-id mid --emoji '👍' --format json --yes",
-        ),
-        (
-            "doc create",
-            "dws doc create --title 'Review' --format json --yes",
-        ),
-        (
-            "doc update",
-            "dws doc update --node-id node-1 --content 'Reviewed' --format json --yes",
-        ),
-        (
-            "oa approval approve",
-            "dws oa approval approve --instance-id proc-1 --task-id task-1 --remark 'Reviewed' --format json --yes",
-        ),
-        (
-            "oa approval oa-comments",
-            "dws oa approval oa-comments --instance-id proc-1 --format json --yes",
-        ),
-    ),
-)
-def test_direct_agent_production_jsonl_write_protocols_persist_receipts(
-    tmp_path: Path,
-    store: AutoReplyStore,
-    command_path: str,
-    command: str,
-):
-    task = _task(store)
-    call_id = "effect-1"
-    output = "\n".join(
-        (
-            json.dumps(
-                {
-                    "type": "item.started",
-                    "item": {
-                        "id": call_id,
-                        "type": "command_execution",
-                        "command": command,
-                    },
-                },
-                ensure_ascii=False,
-            ),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "id": call_id,
-                        "type": "command_execution",
-                        "command": command,
-                        "aggregated_output": '{"success":true}',
-                        "exit_code": 0,
-                        "status": "completed",
-                    },
-                },
-                ensure_ascii=False,
-            ),
-            _result_line(side_effect_state="confirmed"),
-        )
-    )
-    classifier = NativeCliMetadataClassifier(
-        reviewed_effects={("dws", command_path): EffectKind.EFFECTFUL}
-    )
-
-    result = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-        native_cli_classifier=classifier,
-    ).run(task, _context(task.id))
-
-    receipts = store.list_agent_execution_receipts(result.run_id)
-    assert [(receipt.operation_id, receipt.command_path) for receipt in receipts] == [
-        (call_id, command_path)
-    ]
-
-
-def test_native_lark_completed_write_creates_trusted_persisted_receipt(
-    tmp_path: Path, store: AutoReplyStore
-):
-    task = _task(store)
-    command = (
-        "lark-cli im +messages-send --chat-id oc_1 --text hello "
-        "--idempotency-key task-1"
-    )
-    output = "\n".join(
-        (
-            json.dumps(
-                {
-                    "type": "item.started",
-                    "item": {
-                        "id": "native-lark-send-1",
-                        "type": "command_execution",
-                        "command": command,
-                    },
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "id": "native-lark-send-1",
-                        "type": "command_execution",
-                        "command": command,
-                        "exit_code": 0,
-                        "status": "completed",
-                    },
-                }
-            ),
-            _result_line(side_effect_state="confirmed"),
-        )
-    )
-
-    result = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-        native_cli_classifier=NativeCliMetadataClassifier(
-            reviewed_effects={
-                ("lark-cli", "im +messages-send"): EffectKind.EFFECTFUL
-            }
-        ),
-    ).run(task, _context(task.id))
-
-    receipts = store.list_agent_execution_receipts(result.run_id)
-    assert [(item.cli, item.command_path) for item in receipts] == [
-        ("lark-cli", "im +messages-send")
-    ]
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "dws chat message send --group cid --text 'first line\nsecond line' --yes",
-        "dws chat message send --group cid --text '| A | B |\n| - | - |' --yes",
-        "dws chat message send --group cid --text '<@user> please review' --yes",
-        "dws chat message send --group cid --text 'quoted ; | < > && value' --yes",
-        "dws chat message send --group cid --text 'budget is $100' --yes",
-        r'dws chat message send --group cid --text "\$(literal)" --yes',
-        [
-            "dws",
-            "chat",
-            "message",
-            "send",
-            "--group",
-            "cid",
-            "--text",
-            "array argv shape",
-            "--yes",
-        ],
-        "/bin/zsh -lc "
-        + shlex.quote("dws chat message send --group cid --text '<@user> a | b' --yes"),
-    ],
-    ids=[
-        "multiline-body",
-        "markdown-table",
-        "angle-bracket-mention",
-        "quoted-shell-metacharacters",
-        "literal-currency",
-        "escaped-command-substitution-literal",
-        "argv-array",
-        "codex-shell-wrapper",
-    ],
-)
-def test_native_write_parser_accepts_metacharacters_inside_arguments(
-    tmp_path: Path,
-    store: AutoReplyStore,
-    command,
-):
-    task = _task(store)
-    output = "\n".join(
-        (
-            json.dumps(
-                {
-                    "type": "item.started",
-                    "item": {
-                        "id": "native-send-1",
-                        "type": "command_execution",
-                        "command": command,
-                    },
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "id": "native-send-1",
-                        "type": "command_execution",
-                        "command": command,
-                        "exit_code": 0,
-                        "status": "completed",
-                    },
-                }
-            ),
-            _result_line(side_effect_state="confirmed"),
-        )
-    )
-
-    result = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-    ).run(task, _context(task.id))
-
-    receipts = store.list_agent_execution_receipts(result.run_id)
-    assert len(receipts) == 1
-    assert receipts[0].command_path == "chat message send"
-
-
-@pytest.mark.parametrize(
-    "command",
-    (
-        'dws chat message send --group cid --text "$(whoami)" --yes',
-        "dws chat message send --group cid --text '`whoami`' --yes",
-        "/bin/zsh -lc "
-        + shlex.quote("dws chat message send --group cid --text '$(whoami)' --yes"),
-    ),
-    ids=("dollar-parens", "backticks", "codex-shell-wrapper"),
-)
-def test_native_parser_rejects_command_substitution_before_metadata_lookup(
-    tmp_path: Path,
-    store: AutoReplyStore,
-    monkeypatch,
-    command: str,
-):
-    task = _task(store)
-    schema_calls = []
-
-    def schema_lookup(*args, **kwargs):
-        schema_calls.append((args, kwargs))
-        return ProcessRunResult(
-            returncode=0,
-            stdout=json.dumps({"effect": "write"}),
-            stderr="",
-        )
-
-    monkeypatch.setattr("app.native_cli_metadata.run_bounded_process", schema_lookup)
-
-    output = "\n".join(
-        (
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "id": "native-command-1",
-                        "type": "command_execution",
-                        "command": command,
-                        "exit_code": 0,
-                        "status": "completed",
-                    },
-                }
-            ),
-            _result_line(side_effect_state="confirmed"),
-        )
-    )
-
-    with pytest.raises(RuntimeError, match="codex_result_invalid"):
-        DirectAgentRunner(
-            store=store,
-            workspace=tmp_path,
-            executor=RecordingExecutor(output),
-            native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
-        ).run(task, _context(task.id))
-
-    assert schema_calls == []
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "dws doc read --node node-1 | cat",
-        "dws doc read --node node-1 > output.json",
-        "dws doc read --node node-1; dws doc read --node node-2",
-        "dws doc read --node node-1\ndws doc read --node node-2",
-        "dws doc read --node node-1 && dws doc read --node node-2",
-        "dws chat message send --text <(whoami)",
-        "dws chat message send --text >(whoami)",
-    ],
-    ids=[
-        "pipeline",
-        "redirection",
-        "multiple-commands",
-        "newline-command",
-        "and-list",
-        "input-process-substitution",
-        "output-process-substitution",
-    ],
-)
-def test_native_write_parser_rejects_shell_composition_without_executing_it(
-    tmp_path: Path,
-    store: AutoReplyStore,
-    command: str,
-    monkeypatch,
-):
-    task = _task(store)
-    schema_calls = []
-    monkeypatch.setattr(
-        "app.native_cli_metadata.run_bounded_process",
-        lambda *args, **kwargs: schema_calls.append((args, kwargs)),
-    )
-    output = "\n".join(
-        (
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "id": "native-command-1",
-                        "type": "command_execution",
-                        "command": command,
-                        "exit_code": 0,
-                        "status": "completed",
-                    },
-                }
-            ),
-            _result_line(side_effect_state="confirmed"),
-        )
-    )
-
-    with pytest.raises(RuntimeError, match="codex_result_invalid"):
-        DirectAgentRunner(
-            store=store,
-            workspace=tmp_path,
-            executor=RecordingExecutor(output),
-            native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
-        ).run(task, _context(task.id))
-
-    assert schema_calls == []
-
-
-@pytest.mark.parametrize("terminal_event_type", ["item.completed", "item.failed"])
-def test_failed_native_write_terminal_event_is_failed_and_has_no_success_receipt(
-    tmp_path: Path,
-    store: AutoReplyStore,
-    terminal_event_type: str,
-):
-    task = _task(store)
-    command = "dws chat message send --group cid --text hello --format json --yes"
-    output = "\n".join(
-        (
-            json.dumps(
-                {
-                    "type": "item.started",
-                    "item": {
-                        "id": "native-send-1",
-                        "type": "command_execution",
-                        "command": command,
-                    },
-                }
-            ),
-            json.dumps(
-                {
-                    "type": terminal_event_type,
-                    "item": {
-                        "id": "native-send-1",
-                        "type": "command_execution",
-                        "command": command,
-                        "exit_code": 1,
-                        "status": "failed",
-                    },
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "type": "agent_message",
-                        "text": json.dumps(
-                            {
-                                "outcome": "failed",
-                                "summary": "The native write returned a nonzero exit code.",
-                                "error": {
-                                    "code": "native_write_failed",
-                                    "retryable": True,
-                                    "authorization_required": False,
-                                    "side_effect_state": "none",
-                                },
-                            }
-                        ),
-                    },
-                }
-            ),
-        )
-    )
-
-    result = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-    ).run(task, _context(task.id))
-
-    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
-    assert run is not None and run.status == "failed"
-    assert run.side_effect_state == "none"
-    assert store.list_agent_execution_receipts(result.run_id) == []
-    assert store.list_agent_execution_receipts(run.id) == []
-
-
-@pytest.mark.parametrize(
-    ("failure_kind", "error_code"),
-    (
-        ("nonzero", "codex_process_failed"),
-        ("timeout", "codex_process_timeout"),
-        ("stream", "codex_stream_invalid"),
-    ),
-)
-def test_failed_native_write_terminal_closes_effect_on_abnormal_codex_exit(
-    tmp_path: Path,
-    store: AutoReplyStore,
-    failure_kind: str,
-    error_code: str,
-):
-    task = _task(store)
-    command = "dws chat message send --group cid --text hello --yes"
-    lines = [
-        json.dumps(
-            {
-                "type": "item.started",
-                "item": {
-                    "id": "native-send-1",
-                    "type": "command_execution",
-                    "command": command,
-                },
-            }
-        ),
-        json.dumps(
-            {
-                "type": "item.completed",
-                "item": {
-                    "id": "native-send-1",
-                    "type": "command_execution",
-                    "command": command,
-                    "exit_code": 1,
-                    "status": "failed",
-                },
-            }
-        ),
-    ]
-    if failure_kind == "stream":
-        lines.append("{")
-    executor = RecordingExecutor(
-        "\n".join(lines),
-        returncode=1 if failure_kind == "nonzero" else 0,
-        timed_out=failure_kind == "timeout",
-    )
-
-    with pytest.raises(RuntimeError, match=error_code):
-        DirectAgentRunner(
-            store=store,
-            workspace=tmp_path,
-            executor=executor,
-        ).run(task, _context(task.id))
-
-    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
-    assert run is not None and run.status == "failed"
-    assert run.side_effect_state == "none"
-    assert error_code in run.structured_error_json
-    assert store.list_agent_execution_receipts(run.id) == []
-
-
 @pytest.mark.parametrize(
     ("failure_kind", "error_code"),
     (
@@ -1515,50 +1107,6 @@ def test_transport_failure_without_open_effect_is_retryable(
     assert error == {"code": error_code, "retryable": True}
 
 
-def test_effectful_native_command_blocks_rotation_as_soon_as_it_starts(
-    tmp_path: Path, store: AutoReplyStore
-):
-    task = _task(store)
-    command = "dws chat message send --group cid --text hello --yes"
-    started = json.dumps(
-        {
-            "type": "item.started",
-            "item": {
-                "id": "native-send-1",
-                "type": "command_execution",
-                "command": command,
-                "status": "in_progress",
-            },
-        }
-    )
-
-    def executor(_command, *, on_stdout_line, **_kwargs):
-        on_stdout_line(started)
-        with pytest.raises(
-            ValueError, match="side effect reconciliation required"
-        ):
-            store.rotate_reply_task_execution_generation(task.id)
-        raise OSError("transport closed while command was running")
-
-    with pytest.raises(AgentRunUnknownError, match="codex_process_failed"):
-        DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=executor,
-        native_cli_classifier=NativeCliMetadataClassifier(
-            reviewed_effects={
-                ("dws", "chat message send"): EffectKind.EFFECTFUL,
-            }
-        ),
-        ).run(task, _context(task.id))
-
-    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
-    assert run is not None
-    assert run.status == "unknown"
-    assert run.side_effect_state == "unknown"
-    assert run.tool_events[0]["item"]["metadata"]["effect"] == "effectful"
-
-
 def test_native_metadata_cache_contains_command_path_not_message_text():
     classifier = NativeCliMetadataClassifier(
         reviewed_effects={
@@ -1583,52 +1131,6 @@ def test_native_metadata_cache_contains_command_path_not_message_text():
     assert classifier.cache_keys == (("dws", "chat message send"),)
     assert "first-secret" not in repr(classifier.cache_keys)
     assert "second-secret" not in repr(classifier.cache_keys)
-
-
-def test_persisted_native_event_redacts_message_text_but_keeps_receipt_digest(
-    tmp_path: Path, store: AutoReplyStore
-):
-    task = _task(store)
-    message = "private-message-4827"
-    command_output = "private-command-output-9912"
-    command = f"dws chat message send --group cid --text '{message}' --yes"
-    output = "\n".join(
-        (
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "id": "send-1",
-                        "type": "command_execution",
-                        "command": command,
-                        "exit_code": 0,
-                        "status": "completed",
-                        "aggregated_output": command_output,
-                    },
-                }
-            ),
-            _result_line(side_effect_state="confirmed"),
-        )
-    )
-
-    result = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-        native_cli_classifier=NativeCliMetadataClassifier(
-            reviewed_effects={
-                ("dws", "chat message send"): EffectKind.EFFECTFUL,
-            }
-        ),
-    ).run(task, _context(task.id))
-
-    persisted = store.get_agent_run(result.run_id)
-    serialized = json.dumps(persisted.tool_events, ensure_ascii=False)
-    assert message not in serialized
-    assert command_output not in serialized
-    receipts = store.list_agent_execution_receipts(result.run_id)
-    assert len(receipts) == 1
-    assert len(receipts[0].command_digest) == 64
 
 
 def test_direct_runner_persists_each_jsonl_event_before_final_parse(
@@ -1699,7 +1201,10 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert "tools.enabled_tools=[]" in executor.commands[0]
     assert 'web_search="disabled"' in executor.commands[0]
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_get","memory_recall","timeline_get","user_get"]' in executor.commands[0]
-    assert "mcp_servers.exa.enabled=false" in executor.commands[0]
+    assert (
+        'mcp_servers.exa.enabled_tools=["web_fetch_exa","web_search_exa"]'
+        in executor.commands[0]
+    )
     assert "mcp_servers.passthrough.enabled=false" in executor.commands[0]
     assert "mcp_servers.user_config_only.enabled=false" in executor.commands[0]
     assert any("reconciliation_cli" in part for part in executor.commands[0])
@@ -1713,7 +1218,7 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert "system_actions" not in developer
 
 
-def test_read_only_run_records_sandboxed_shell_as_read_only(
+def test_read_only_run_rejects_shell_event(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
@@ -1746,29 +1251,19 @@ def test_read_only_run_records_sandboxed_shell_as_read_only(
         )
     )
 
-    result = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-    ).run(task, _context(task.id), read_only=True)
+    with pytest.raises(AgentReadOnlyViolationError, match="direct_agent_shell_forbidden"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id), read_only=True)
 
-    persisted = store.get_agent_run(result.run_id)
-    assert persisted is not None
-    assert persisted.status == "completed"
-    assert persisted.side_effect_state == "none"
-    command_events = [
-        event
-        for event in persisted.tool_events
-        if event.get("item", {}).get("type") == "command_execution"
-    ]
-    assert command_events
-    assert all(
-        event["item"]["metadata"] == {
-            "effect": "read_only",
-            "execution_boundary": "codex_read_only_sandbox",
-        }
-        for event in command_events
+    persisted = store.get_agent_run_for_task_generation(
+        task.id, task.execution_generation
     )
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.side_effect_state == "none"
 
 
 def test_read_only_resume_places_all_safety_options_before_session_id(
@@ -1812,7 +1307,12 @@ def test_read_only_resume_places_all_safety_options_before_session_id(
     assert command.index("--sandbox") < session_index
     assert command.index("tools.enabled_tools=[]") < session_index
     assert command.index('web_search="disabled"') < session_index
-    assert command.index("mcp_servers.exa.enabled=false") < session_index
+    assert (
+        command.index(
+            'mcp_servers.exa.enabled_tools=["web_fetch_exa","web_search_exa"]'
+        )
+        < session_index
+    )
     assert any("reconciliation_cli" in part for part in command)
     assert 'approval_policy="untrusted"' not in command
     assert 'approvals_reviewer="auto_review"' not in command
@@ -1934,7 +1434,7 @@ def test_runner_rejects_old_effect_completion_after_generation_switch(
     assert new_claim.claimed is True
 
 
-def test_corrupt_stream_after_effect_start_marks_run_unknown(
+def test_corrupt_stream_after_controlled_write_start_marks_run_unknown(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
@@ -1946,8 +1446,21 @@ def test_corrupt_stream_after_effect_start_marks_run_unknown(
                     "type": "item.started",
                     "item": {
                         "id": "write-1",
-                        "type": "command_execution",
-                        "command": "dws chat message send --conversation cid --text hello",
+                        "type": "mcp_tool_call",
+                        "server": "reconciliation_cli",
+                        "tool": "execute_reviewed_write",
+                        "arguments": {
+                            "argv": [
+                                "dws",
+                                "chat",
+                                "message",
+                                "send",
+                                "--conversation",
+                                "cid",
+                                "--text",
+                                "hello",
+                            ]
+                        },
                     },
                 }
             ),
@@ -1960,11 +1473,6 @@ def test_corrupt_stream_after_effect_start_marks_run_unknown(
             store=store,
             workspace=tmp_path,
             executor=RecordingExecutor(output),
-            native_cli_classifier=NativeCliMetadataClassifier(
-                reviewed_effects={
-                    ("dws", "chat message send"): EffectKind.EFFECTFUL,
-                }
-            ),
         ).run(task, _context(task.id))
 
     persisted = store.get_agent_run_for_task_generation(
@@ -2071,7 +1579,9 @@ def test_reconciliation_rejects_write_before_accepting_result(
     assert 'approval_policy="never"' in command
 
 
-def test_reconciliation_cli_rejects_write_before_subprocess_start(monkeypatch):
+def test_reconciliation_cli_rejects_write_from_read_tool_before_subprocess_start(
+    monkeypatch,
+):
     from app.reconciliation_cli import execute_reviewed_read
 
     started: list[tuple[str, ...]] = []
@@ -2103,6 +1613,76 @@ def test_reconciliation_cli_rejects_write_before_subprocess_start(monkeypatch):
         )
 
     assert started == []
+
+
+def test_reconciliation_cli_runs_reviewed_write_through_trusted_executable(
+    monkeypatch,
+):
+    from app.reconciliation_cli import execute_reviewed_write
+
+    started: list[tuple[str, ...]] = []
+
+    def process_runner(argv, **kwargs):
+        started.append(tuple(argv))
+        return subprocess.CompletedProcess(
+            argv,
+            returncode=0,
+            stdout='{"success":true}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "app.reconciliation_cli.shutil.which", lambda cli: f"/trusted/{cli}"
+    )
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={
+            ("dws", "oa approval approve"): EffectKind.EFFECTFUL,
+        }
+    )
+
+    receipt = execute_reviewed_write(
+        [
+            "/untrusted/dws",
+            "oa",
+            "approval",
+            "approve",
+            "--instance-id",
+            "proc-1",
+            "--task-id",
+            "task-1",
+            "--yes",
+        ],
+        classifier=classifier,
+        process_runner=process_runner,
+    )
+
+    assert started[0][0] == "/trusted/dws"
+    assert receipt["operation"] == "oa approval approve"
+    assert receipt["target_identifiers"] == {
+        "instance-id": "proc-1",
+        "task-id": "task-1",
+    }
+
+
+def test_reconciliation_cli_rejects_read_from_write_tool_before_subprocess_start():
+    from app.reconciliation_cli import execute_reviewed_write
+
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={
+            ("dws", "oa approval detail"): EffectKind.READ_ONLY,
+        }
+    )
+
+    with pytest.raises(
+        AgentReadOnlyViolationError, match="reviewed_cli_effect_mismatch"
+    ):
+        execute_reviewed_write(
+            ["dws", "oa", "approval", "detail", "--instance-id", "proc-1"],
+            classifier=classifier,
+            process_runner=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("read command must never start through write tool")
+            ),
+        )
 
 
 def test_reconciliation_cli_runs_reviewed_read_through_trusted_executable(
@@ -2204,21 +1784,31 @@ def test_reconciliation_cli_uses_dynamic_reviewed_metadata(monkeypatch):
     assert receipt["stdout"] == '{"ok":true}'
 
 
-def test_reconciliation_cli_tool_declares_read_only_annotations():
+def test_reconciliation_cli_tools_declare_effect_annotations():
     from app.reconciliation_cli import server
 
     tools = asyncio.run(server.list_tools())
-    tool = next(
+    read_tool = next(
         candidate
         for candidate in tools
         if candidate.name == "execute_reviewed_read"
     )
+    write_tool = next(
+        candidate
+        for candidate in tools
+        if candidate.name == "execute_reviewed_write"
+    )
 
-    assert tool.annotations is not None
-    assert tool.annotations.readOnlyHint is True
-    assert tool.annotations.destructiveHint is False
-    assert tool.annotations.idempotentHint is True
-    assert tool.annotations.openWorldHint is True
+    assert read_tool.annotations is not None
+    assert read_tool.annotations.readOnlyHint is True
+    assert read_tool.annotations.destructiveHint is False
+    assert read_tool.annotations.idempotentHint is True
+    assert read_tool.annotations.openWorldHint is True
+    assert write_tool.annotations is not None
+    assert write_tool.annotations.readOnlyHint is False
+    assert write_tool.annotations.destructiveHint is True
+    assert write_tool.annotations.idempotentHint is False
+    assert write_tool.annotations.openWorldHint is True
 
 
 def test_reconciliation_proof_rejects_query_with_different_task_on_same_process(
@@ -2987,40 +2577,6 @@ def test_reconciliation_allows_reviewed_mcp_read_and_denies_reviewed_mcp_write(
         )
 
 
-def test_persisted_events_redact_secret_values(tmp_path: Path, store: AutoReplyStore):
-    task = _task(store)
-    secret = "super-secret-token"
-    output = "\n".join(
-        (
-            json.dumps({"type": "thread.started", "thread_id": "session-1"}),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "id": "secret-command-1",
-                        "type": "command_execution",
-                        "command": f"tool --token {secret} --api-key={secret}",
-                        "output": f"Authorization: Bearer {secret}",
-                    },
-                }
-            ),
-            _jsonl().splitlines()[-1],
-        )
-    )
-
-    with pytest.raises(AgentRunUnknownError):
-        DirectAgentRunner(
-            store=store,
-            workspace=tmp_path,
-            executor=RecordingExecutor(output),
-        ).run(task, _context(task.id))
-
-    persisted = store.get_agent_run_for_task_generation(
-        task.id, task.execution_generation
-    )
-    assert secret not in json.dumps(persisted.tool_events)
-
-
 def test_persisted_events_recursively_redact_sensitive_keys_and_arguments(
     tmp_path: Path, store: AutoReplyStore
 ):
@@ -3175,18 +2731,16 @@ def test_persisted_mcp_event_omits_business_arguments_and_results(
 
 
 @pytest.mark.parametrize(
-    ("item_type", "detail"),
+    "detail",
     (
-        ("mcp_tool_call", {"tool": "memory_recall"}),
-        ("mcp_tool_call", {"tool": "exa_search"}),
-        ("command_execution", {"command": "arbitrary write command"}),
-        ("mcp_tool_call", {"tool": "memory_write"}),
+        {"tool": "memory_recall"},
+        {"tool": "unknown_search"},
+        {"tool": "memory_write"},
     ),
 )
 def test_unreviewed_native_execution_requires_unknown_reconciliation(
     tmp_path: Path,
     store: AutoReplyStore,
-    item_type: str,
     detail: dict[str, str],
 ):
     task = _task(store)
@@ -3197,7 +2751,7 @@ def test_unreviewed_native_execution_requires_unknown_reconciliation(
                     "type": "item.started",
                     "item": {
                         "id": "native-call-1",
-                        "type": item_type,
+                            "type": "mcp_tool_call",
                         **detail,
                     },
                 }
@@ -3207,7 +2761,7 @@ def test_unreviewed_native_execution_requires_unknown_reconciliation(
                     "type": "item.completed",
                     "item": {
                         "id": "native-call-1",
-                        "type": item_type,
+                            "type": "mcp_tool_call",
                         **detail,
                     },
                 }
@@ -3230,7 +2784,7 @@ def test_unreviewed_native_execution_requires_unknown_reconciliation(
     assert persisted.side_effect_state == "unknown"
 
 
-def test_unreviewed_command_completion_requires_unknown_reconciliation(
+def test_direct_agent_rejects_shell_before_completion(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
@@ -3260,27 +2814,20 @@ def test_unreviewed_command_completion_requires_unknown_reconciliation(
         )
     )
 
-    with pytest.raises(AgentRunUnknownError):
+    with pytest.raises(AgentReadOnlyViolationError, match="direct_agent_shell_forbidden"):
         DirectAgentRunner(
             store=store,
             workspace=tmp_path,
             executor=RecordingExecutor(output),
         ).run(task, _context(task.id))
 
-    run = store.get_agent_run_for_task_generation(
-        task.id, task.execution_generation
-    )
+    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
     assert run is not None
-    assert run.status == "unknown"
-    assert run.side_effect_state == "unknown"
-    assert any(
-        event.get("item", {}).get("metadata", {}).get("effect")
-        == "unreviewed"
-        for event in run.tool_events
-    )
+    assert run.status == "failed"
+    assert run.side_effect_state == "none"
 
 
-def test_unreviewed_command_start_blocks_generation_rotation(
+def test_direct_agent_rejects_arbitrary_shell_start(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
@@ -3295,7 +2842,7 @@ def test_unreviewed_command_start_blocks_generation_rotation(
         }
     )
 
-    with pytest.raises(RuntimeError, match="codex_process_failed"):
+    with pytest.raises(AgentReadOnlyViolationError, match="direct_agent_shell_forbidden"):
         DirectAgentRunner(
             store=store,
             workspace=tmp_path,
@@ -3306,9 +2853,65 @@ def test_unreviewed_command_start_blocks_generation_rotation(
         task.id, task.execution_generation
     )
     assert run is not None
-    assert run.status == "unknown"
-    with pytest.raises(ValueError, match="reconciliation required"):
-        store.rotate_reply_task_execution_generation(task.id)
+    assert run.status == "failed"
+    assert run.side_effect_state == "none"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    (
+        ["env", "dws", "chat", "message", "send", "--text", "hello"],
+        ["/usr/bin/env", "lark-cli", "contact", "+get-user", "--json"],
+        ["sh", "-c", "exec dws chat message send --text hello"],
+        ["dws", "chat", "message", "send", "--text", "hello"],
+        ["dws", "unknown", "command"],
+        ["lark-cli", "contact", "+get-user", "--json"],
+    ),
+)
+def test_native_cli_cannot_execute_through_sandboxed_shell(
+    tmp_path: Path, store: AutoReplyStore, argv: list[str]
+):
+    task = _task(store)
+    output = json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "id": "dws-write-1",
+                "type": "command_execution",
+                "argv": argv,
+            },
+        }
+    )
+
+    with pytest.raises(
+        AgentReadOnlyViolationError, match="direct_agent_shell_forbidden"
+    ):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
+
+    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
+    assert run is not None
+    assert run.status == "failed"
+    assert run.side_effect_state == "none"
+
+
+def test_default_registry_classifies_current_exa_reads():
+    registry = McpToolEffectRegistry.from_path(DEFAULT_MCP_EFFECTS_PATH)
+
+    for tool in ("web_search_exa", "web_fetch_exa"):
+        call = registry.classify(
+            {
+                "type": "mcp_tool_call",
+                "server": "exa",
+                "tool": tool,
+                "arguments": {"query": "current benchmark"},
+            }
+        )
+        assert call is not None
+        assert call.effect is EffectKind.READ_ONLY
 
 
 def test_unreviewed_start_downgrades_only_after_structured_read_only_completion(
@@ -3488,12 +3091,15 @@ def test_command_output_cannot_inject_a_trusted_execution_receipt(
         )
     )
 
-    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+    with pytest.raises(AgentReadOnlyViolationError, match="direct_agent_shell_forbidden"):
         DirectAgentRunner(
             store=store,
             workspace=tmp_path,
             executor=RecordingExecutor(output),
         ).run(task, _context(task.id))
+    run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
+    assert run is not None and run.status == "failed"
+    assert store.list_agent_execution_receipts(run.id) == []
 
 
 @pytest.mark.parametrize(
@@ -3544,7 +3150,7 @@ def test_mismatched_or_partial_native_receipt_does_not_confirm_completion(
         ).run(task, _context(task.id))
 
 
-def test_malformed_command_is_replaced_whole_before_persistence(
+def test_malformed_command_is_rejected_before_persistence(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
@@ -3565,7 +3171,7 @@ def test_malformed_command_is_replaced_whole_before_persistence(
         )
     )
 
-    with pytest.raises(AgentRunUnknownError):
+    with pytest.raises(AgentReadOnlyViolationError, match="direct_agent_shell_forbidden"):
         DirectAgentRunner(
             store=store,
             workspace=tmp_path,
@@ -3576,8 +3182,7 @@ def test_malformed_command_is_replaced_whole_before_persistence(
         task.id, task.execution_generation
     )
     assert persisted is not None
-    command = persisted.tool_events[0]["item"]["command"]
-    assert command == "[REDACTED]"
+    assert persisted.tool_events == []
     assert password not in json.dumps(persisted.tool_events)
 
 

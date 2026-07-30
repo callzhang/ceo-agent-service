@@ -1,9 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-import app.native_cli_metadata as native_cli_metadata_module
-from app.agent_result import EffectKind
-from app.agent_runner import DirectAgentRunner, NativeCliMetadataClassifier
+from app.agent_runner import DirectAgentRunner
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.dingtalk_models import DingTalkMessage
 from app.store import AutoReplyStore
@@ -230,8 +228,6 @@ def _direct_agent_pipeline(
     tmp_path,
     *,
     fixture_name: str,
-    command_paths: tuple[str, ...],
-    native_cli_classifier: NativeCliMetadataClassifier | None = None,
 ):
     store = AutoReplyStore(tmp_path / "direct-agent.sqlite3")
     trigger = DingTalkMessage(
@@ -262,15 +258,6 @@ def _direct_agent_pipeline(
             Path(__file__).parents[1] / "fixtures" / "codex_exec" / fixture_name
         ),
         owner="local-pipeline-agent",
-        native_cli_classifier=(
-            native_cli_classifier
-            or NativeCliMetadataClassifier(
-                reviewed_effects={
-                    ("dws", command_path): EffectKind.EFFECTFUL
-                    for command_path in command_paths
-                }
-            )
-        ),
     )
     worker = DingTalkAutoReplyWorker(
         store=store,
@@ -290,7 +277,6 @@ def test_direct_agent_local_pipeline_send_uses_jsonl_and_persisted_receipt(tmp_p
     worker, store = _direct_agent_pipeline(
         tmp_path,
         fixture_name="dingtalk_send.jsonl",
-        command_paths=("chat message send",),
     )
 
     assert worker.consume_once(max_tasks=1) == 1
@@ -303,55 +289,12 @@ def test_direct_agent_local_pipeline_send_uses_jsonl_and_persisted_receipt(tmp_p
     ]
 
 
-def test_direct_agent_pipeline_discovers_dws_effect_from_production_metadata(
-    tmp_path,
-    monkeypatch,
-):
-    calls: list[str] = []
-
-    def dws_metadata():
-        calls.append("dws")
-        return {("dws", "chat message send"): EffectKind.EFFECTFUL}
-
-    def lark_metadata():
-        calls.append("lark-cli")
-        return {}
-
-    monkeypatch.setattr(
-        native_cli_metadata_module,
-        "_load_reviewed_dws_effects",
-        dws_metadata,
-    )
-    monkeypatch.setattr(
-        native_cli_metadata_module,
-        "_load_reviewed_lark_effects",
-        lark_metadata,
-    )
-    worker, store = _direct_agent_pipeline(
-        tmp_path,
-        fixture_name="dingtalk_send.jsonl",
-        command_paths=(),
-        native_cli_classifier=NativeCliMetadataClassifier(),
-    )
-
-    assert worker.consume_once(max_tasks=1) == 1
-
-    task = store.get_reply_task_for_message("cid-1", "msg-1")
-    run = store.get_agent_run_for_task_generation(task.id, "g1")
-    assert calls == ["dws", "lark-cli"]
-    assert [
-        (item.operation_id, item.command_path)
-        for item in store.list_agent_execution_receipts(run.id)
-    ] == [("effect-1", "chat message send")]
-
-
 def test_direct_agent_local_pipeline_handoff_reaction_and_ding_use_jsonl_receipts(
     tmp_path,
 ):
     worker, store = _direct_agent_pipeline(
         tmp_path,
         fixture_name="dingtalk_handoff.jsonl",
-        command_paths=("chat message add-text-emotion", "ding message send"),
     )
 
     assert worker.consume_once(max_tasks=1) == 1

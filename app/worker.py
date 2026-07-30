@@ -29,12 +29,14 @@ from app.agent_result import (
 from app.agent_runner import (
     LEASE_SECONDS,
     AgentReadOnlyViolationError,
+    AgentRunNoEffectEvidenceError,
     AgentRunUnavailableError,
     ReconciliationResult,
     ReconciliationDependencyError,
     DirectAgentRunResult,
     DirectAgentRunner,
     structured_execution_evidence,
+    unknown_effect_reference,
 )
 from app.channel_gate import (
     ChannelGate,
@@ -1684,6 +1686,20 @@ class DingTalkAutoReplyWorker:
     def reconcile_unknown_agent_runs(self, *, limit: int = 50) -> int:
         resolved = 0
         now = self._sqlite_timestamp(self._now())
+        for run in self.store.list_suspended_unknown_agent_runs(limit=limit):
+            try:
+                unknown_effect_reference(run.tool_events)
+            except AgentRunNoEffectEvidenceError:
+                try:
+                    self.store.resume_suspended_unknown_agent_run(
+                        run.id,
+                        expected_execution_generation=run.execution_generation,
+                        now=now,
+                    )
+                except AgentRunLeaseLostError:
+                    continue
+            except ValueError:
+                continue
         unknown_runs = self.store.list_unknown_agent_runs(limit=limit, now=now)
         if not unknown_runs:
             return 0
@@ -1714,6 +1730,19 @@ class DingTalkAutoReplyWorker:
             try:
                 result = reconcile(run, context, now=now)
             except (AgentRunUnavailableError, AgentRunLeaseLostError):
+                continue
+            except AgentRunNoEffectEvidenceError as exc:
+                try:
+                    self.store.resolve_unknown_agent_run_absent(
+                        run.id,
+                        task.id,
+                        code=str(exc),
+                        owner=runner.owner,
+                        now=now,
+                    )
+                except AgentRunLeaseLostError:
+                    continue
+                resolved += 1
                 continue
             except AgentReadOnlyViolationError:
                 self._defer_agent_reconciliation(
@@ -1799,21 +1828,22 @@ class DingTalkAutoReplyWorker:
                 if outcome is AgentOutcome.NEEDS_HUMAN
                 else "reconciliation_failed"
             )
-            self._defer_agent_reconciliation(
+            terminalized = self._defer_agent_reconciliation(
                 run.id,
                 runner.owner,
                 code=code,
                 retryable=result.result.error.retryable,
                 authorization_required=result.result.error.authorization_required,
             )
-            self._record_agent_attempt(
-                task,
-                result,
-                send_status=(
-                    "blocked" if outcome is AgentOutcome.NEEDS_HUMAN else "failed"
-                ),
-                send_error=code,
-            )
+            if not terminalized:
+                self._record_agent_attempt(
+                    task,
+                    result,
+                    send_status=(
+                        "blocked" if outcome is AgentOutcome.NEEDS_HUMAN else "failed"
+                    ),
+                    send_error=code,
+                )
         return resolved
 
     def _defer_agent_reconciliation(
@@ -1825,36 +1855,47 @@ class DingTalkAutoReplyWorker:
         retryable: bool,
         authorization_required: bool = False,
         gate_state: ChannelGateState | None = None,
-    ) -> None:
+    ) -> bool:
         run = self.store.get_agent_run(run_id)
         if run is None:
-            return
+            return False
+        structured_error = {
+            "code": code,
+            "retryable": retryable,
+            **(
+                {"gate_state": gate_state.value}
+                if gate_state is not None
+                else {"authorization_required": authorization_required}
+            ),
+        }
+        if not retryable:
+            self.store.terminate_unknown_agent_run_unrecoverable(
+                run_id,
+                owner=owner,
+                code=code,
+                expected_execution_generation=run.execution_generation,
+                structured_error=structured_error,
+                now=self._sqlite_timestamp(self._now()),
+            )
+            return True
         next_attempt = ""
-        if retryable:
-            delay_seconds = min(
-                3600,
-                60 * (2 ** max(run.reconciliation_attempts - 1, 0)),
-            )
-            next_attempt = self._sqlite_timestamp(
-                self._now() + timedelta(seconds=delay_seconds)
-            )
+        delay_seconds = min(
+            3600,
+            60 * (2 ** max(run.reconciliation_attempts - 1, 0)),
+        )
+        next_attempt = self._sqlite_timestamp(
+            self._now() + timedelta(seconds=delay_seconds)
+        )
         self.store.defer_unknown_agent_run_reconciliation(
             run_id,
-            {
-                "code": code,
-                "retryable": retryable,
-                **(
-                    {"gate_state": gate_state.value}
-                    if gate_state is not None
-                    else {"authorization_required": authorization_required}
-                ),
-            },
+            structured_error,
             owner=owner,
             expected_execution_generation=run.execution_generation,
             next_attempt_at=next_attempt,
-            suspended=not retryable,
+            suspended=False,
             now=self._sqlite_timestamp(self._now()),
         )
+        return False
 
     def _build_agent_reconciliation_context(
         self,

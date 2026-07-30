@@ -52,6 +52,35 @@ def execute_reviewed_read(
     classifier: NativeCliMetadataClassifier | None = None,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, object]:
+    return _execute_reviewed(
+        argv,
+        expected_effect=EffectKind.READ_ONLY,
+        classifier=classifier,
+        process_runner=process_runner,
+    )
+
+
+def execute_reviewed_write(
+    argv: Sequence[str],
+    *,
+    classifier: NativeCliMetadataClassifier | None = None,
+    process_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> dict[str, object]:
+    return _execute_reviewed(
+        argv,
+        expected_effect=EffectKind.EFFECTFUL,
+        classifier=classifier,
+        process_runner=process_runner,
+    )
+
+
+def _execute_reviewed(
+    argv: Sequence[str],
+    *,
+    expected_effect: EffectKind,
+    classifier: NativeCliMetadataClassifier | None,
+    process_runner: Callable[..., subprocess.CompletedProcess[str]] | None,
+) -> dict[str, object]:
     if not argv:
         raise AgentReadOnlyViolationError("reconciliation_command_invalid")
     reviewed = classifier or NativeCliMetadataClassifier()
@@ -70,8 +99,8 @@ def execute_reviewed_read(
         )
     if command is None:
         raise AgentReadOnlyViolationError("reconciliation_command_unreviewed")
-    if command.effect is not EffectKind.READ_ONLY:
-        raise AgentReadOnlyViolationError("reconciliation_write_forbidden")
+    if command.effect is not expected_effect:
+        raise AgentReadOnlyViolationError("reviewed_cli_effect_mismatch")
     executable = shutil.which(command.cli)
     if executable is None:
         return _process_failure_receipt(
@@ -150,7 +179,7 @@ def execute_reviewed_read(
 
 server = FastMCP(
     "reconciliation_cli",
-    instructions="Run reviewed DWS or Lark read commands only.",
+    instructions="Run DWS or Lark commands only after reviewing installed effect metadata.",
 )
 
 
@@ -165,6 +194,19 @@ server = FastMCP(
 )
 def execute_reviewed_read_tool(argv: list[str]) -> dict[str, object]:
     return execute_reviewed_read(argv)
+
+
+@server.tool(
+    name="execute_reviewed_write",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+def execute_reviewed_write_tool(argv: list[str]) -> dict[str, object]:
+    return execute_reviewed_write(argv)
 
 
 if __name__ == "__main__":

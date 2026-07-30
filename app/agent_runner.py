@@ -41,6 +41,7 @@ from app.native_cli_metadata import (
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRun, AgentRunLeaseLostError, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import (
+    make_direct_agent_sandbox,
     make_read_only_with_reviewed_tools,
 )
 
@@ -67,6 +68,7 @@ DIRECT_AGENT_DEVELOPER_INSTRUCTIONS = """You are the Direct Agent for one queued
 - Return only one JSON object matching the AgentResult schema supplied to Codex.
 - Never run authentication login, reset, or logout commands. Authentication readiness belongs to the service gate.
 - Never expose credentials, tokens, cookies, authorization codes, signed URLs, or local credential paths.
+- Execute DWS and Lark commands through reconciliation_cli.execute_reviewed_read or reconciliation_cli.execute_reviewed_write according to the command's published effect metadata; do not execute those CLIs through the shell.
 - Do not infer successful execution from prose. Report completion only when direct execution and verification produced structured evidence."""
 READ_ONLY_DEVELOPER_INSTRUCTION = (
     "This invocation is read-only. Do not perform any external write, send, "
@@ -147,6 +149,10 @@ class AgentRunUnknownError(RuntimeError):
         super().__init__(code)
 
 
+class AgentRunNoEffectEvidenceError(RuntimeError):
+    pass
+
+
 class ReconciliationDependencyError(RuntimeError):
     def __init__(
         self,
@@ -219,8 +225,10 @@ class McpToolCall:
     server: str
     tool: str
     effect: EffectKind
+    operation: str
     operation_digest: str
     target_identifiers: dict[str, str]
+    native_cli: str = ""
 
 
 class McpToolEffectRegistry:
@@ -308,6 +316,7 @@ class McpToolEffectRegistry:
             server=server,
             tool=tool,
             effect=effect,
+            operation=tool,
             operation_digest=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             target_identifiers=structured_target_identifiers(arguments),
         )
@@ -393,7 +402,12 @@ class DirectAgentRunner:
                 controlled_cli_command=sys.executable,
                 controlled_cli_args=("-m", "app.reconciliation_cli"),
             )
-        self.native_cli_classifier.prewarm()
+        else:
+            make_direct_agent_sandbox(
+                command,
+                controlled_cli_command=sys.executable,
+                controlled_cli_args=("-m", "app.reconciliation_cli"),
+            )
         saw_json = False
 
         def persist_line(line: str) -> None:
@@ -418,24 +432,23 @@ class DirectAgentRunner:
                     transcript_start_line=run.transcript_start_line,
                     now=now,
                 )
-            native_command = _native_cli_command(
-                payload,
-                self.native_cli_classifier,
-                cached_only=True,
-            )
+            item = payload.get("item")
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "command_execution"
+            ):
+                raise AgentReadOnlyViolationError(
+                    "direct_agent_shell_forbidden"
+                )
             mcp_call = _mcp_tool_call(payload, self.mcp_effect_registry)
             safe_event = (
                 _effect_evidence_event(
                     payload,
-                    native_command=native_command,
+                    native_command=None,
                     mcp_call=mcp_call,
                 )
-                if native_command is not None or mcp_call is not None
-                else (
-                    _read_only_sandbox_event(payload)
-                    if read_only and _is_command_execution(payload)
-                    else _safe_event(payload)
-                )
+                if mcp_call is not None
+                else _safe_event(payload)
             )
             self.store.append_agent_run_event(
                 run.id,
@@ -446,7 +459,6 @@ class DirectAgentRunner:
             self._record_stream_receipt(
                 run.id,
                 payload,
-                native_command=native_command,
                 mcp_call=mcp_call,
                 now=now,
             )
@@ -460,6 +472,9 @@ class DirectAgentRunner:
                 idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
                 on_stdout_line=persist_line,
             )
+        except AgentReadOnlyViolationError as exc:
+            self._record_failure(run.id, str(exc), now=now)
+            raise
         except AgentRunLeaseLostError:
             raise
         except AgentStreamError as exc:
@@ -573,28 +588,10 @@ class DirectAgentRunner:
         run_id: int,
         payload: dict[str, object],
         *,
-        native_command: NativeCliCommand | None,
         mcp_call: McpToolCall | None,
         now: str | None,
     ) -> None:
         call_id = _native_call_id(payload)
-        if (
-            native_command is not None
-            and native_command.effect is EffectKind.EFFECTFUL
-            and call_id
-            and _native_command_completed(payload)
-        ):
-            self.store.record_agent_execution_receipt(
-                run_id,
-                receipt_id=f"native-cli:{run_id}:{call_id}",
-                operation_id=call_id,
-                cli=native_command.cli,
-                command_path=native_command.command_path,
-                command_digest=native_command.command_digest,
-                exit_code=0,
-                owner=self.owner,
-                now=now,
-            )
         if (
             mcp_call is not None
             and mcp_call.effect is EffectKind.EFFECTFUL
@@ -605,8 +602,8 @@ class DirectAgentRunner:
                 run_id,
                 receipt_id=f"mcp:{run_id}:{call_id}",
                 operation_id=call_id,
-                cli=f"mcp:{mcp_call.server}",
-                command_path=mcp_call.tool,
+                cli=mcp_call.native_cli or f"mcp:{mcp_call.server}",
+                command_path=mcp_call.operation,
                 command_digest=mcp_call.operation_digest,
                 exit_code=0,
                 owner=self.owner,
@@ -635,7 +632,7 @@ class DirectAgentRunner:
                 f"agent reconciliation is not available: {existing_run.id}"
             )
         run = claim.run
-        original = _unknown_effect_reference(run.tool_events)
+        original = unknown_effect_reference(run.tool_events)
         prompt = _reconciliation_prompt(context, original)
         command = self.codex.build_command(
             prompt=prompt,
@@ -928,29 +925,44 @@ class DirectAgentRunner:
         self._persist_deferred_execution_evidence(run_id, serialized, now=now)
 
 
-def _unknown_effect_reference(
+def unknown_effect_reference(
     events: list[dict[str, object]] | tuple[dict[str, object], ...],
 ) -> UnknownEffectReference:
     started: dict[str, dict[str, object]] = {}
     closed: set[str] = set()
+    saw_effectful = False
+    saw_unreviewed = False
     for event in events:
         item = event.get("item")
         if not isinstance(item, dict):
             continue
         metadata = item.get("metadata")
+        effect = metadata.get("effect") if isinstance(metadata, dict) else None
+        if effect == EffectKind.EFFECTFUL.value:
+            saw_effectful = True
+        elif effect == EffectKind.UNREVIEWED.value:
+            saw_unreviewed = True
         call_id = item.get("call_id") or item.get("id")
         if not isinstance(call_id, str) or not call_id:
             continue
         if event.get("type") == "item.started" and isinstance(metadata, dict):
-            if metadata.get("effect") == EffectKind.EFFECTFUL.value:
+            if effect == EffectKind.EFFECTFUL.value:
                 started[call_id] = metadata
         elif event.get("type") in {"item.completed", "item.failed"}:
             closed.add(call_id)
     incomplete = [
         (call_id, data) for call_id, data in started.items() if call_id not in closed
     ]
+    if not incomplete and not saw_effectful and not saw_unreviewed:
+        raise AgentRunNoEffectEvidenceError(
+            "unknown_run_has_no_incomplete_effect"
+        )
+    if saw_unreviewed:
+        raise ValueError("unknown_run_contains_unreviewed_effect")
+    if not incomplete:
+        raise ValueError("unknown_run_effect_identity_missing")
     if len(incomplete) != 1:
-        raise ValueError("unknown run must contain one incomplete effectful call")
+        raise ValueError("unknown_run_effect_count_invalid")
     call_id, metadata = incomplete[0]
     digest = metadata.get("command_digest") or metadata.get("operation_digest")
     operation = metadata.get("operation")
@@ -959,7 +971,7 @@ def _unknown_effect_reference(
     if not all(
         isinstance(value, str) and value for value in (digest, operation, transport)
     ):
-        raise ValueError("unknown effect identity is incomplete")
+        raise ValueError("unknown_effect_identity_incomplete")
     target_identifiers = (
         {
             str(key): str(value)
@@ -1294,7 +1306,29 @@ def _mcp_tool_call(
     }:
         return None
     item = payload.get("item")
-    return registry.classify(item) if isinstance(item, dict) else None
+    if not isinstance(item, dict):
+        return None
+    call = registry.classify(item)
+    if call is None or call.server != "reconciliation_cli":
+        return call
+    if call.tool not in {"execute_reviewed_read", "execute_reviewed_write"}:
+        return call
+    arguments = item.get("arguments")
+    argv = arguments.get("argv") if isinstance(arguments, dict) else None
+    descriptor = describe_native_command(
+        {"type": "command_execution", "argv": argv}
+    )
+    if descriptor is None:
+        return call
+    return McpToolCall(
+        server=call.server,
+        tool=call.tool,
+        effect=call.effect,
+        operation=descriptor.command_path,
+        operation_digest=descriptor.command_digest,
+        target_identifiers=descriptor.target_identifiers,
+        native_cli=descriptor.cli,
+    )
 
 
 def _native_call_id(payload: dict[str, object]) -> str:
@@ -1513,23 +1547,6 @@ def _effect_evidence_event(
     )
 
 
-def _is_command_execution(payload: dict[str, object]) -> bool:
-    item = payload.get("item")
-    return isinstance(item, dict) and item.get("type") == "command_execution"
-
-
-def _read_only_sandbox_event(payload: dict[str, object]) -> dict[str, object]:
-    safe_event = _safe_event(payload)
-    item = safe_event.get("item")
-    if not isinstance(item, dict):
-        return safe_event
-    item["metadata"] = {
-        "effect": EffectKind.READ_ONLY.value,
-        "execution_boundary": "codex_read_only_sandbox",
-    }
-    return safe_event
-
-
 def _safe_event(
     payload: dict[str, object],
     *,
@@ -1587,11 +1604,13 @@ def _safe_event(
             {
                 "effect": mcp_call.effect.value,
                 "mcp_server": mcp_call.server,
-                "operation": mcp_call.tool,
+                "operation": mcp_call.operation,
                 "operation_digest": mcp_call.operation_digest,
                 "target_identifiers": mcp_call.target_identifiers,
             }
         )
+        if mcp_call.native_cli:
+            metadata["native_cli"] = mcp_call.native_cli
         result_digest = _mcp_read_result_digest(completion_payload)
         if result_digest:
             metadata["result_digest"] = result_digest
