@@ -39,6 +39,12 @@ and only writes an `errors` row when the threshold is reached. Message sends,
 calendar responses, approvals, and other write actions are not retried through
 this path.
 
+DWS may also return `PAT_AUTH_CALL_FAILED` for a temporary authenticated backend
+failure even while the local profile remains valid. AI-minutes list and get
+commands retry this code at the call boundary because they are reads and have no
+external side effect. Approval actions and other writes do not use this retry
+path, so an ambiguous write result cannot be duplicated.
+
 DWS message reads also treat server error codes ending in `_INVOKE_FAILED` as
 transient dependency failures. This covers infrastructure-side validation or
 gateway invocation changes without coupling recovery to one exact DWS error

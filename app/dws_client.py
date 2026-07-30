@@ -256,6 +256,11 @@ class DwsClient:
     MESSAGE_LIST_RETRYABLE_ERROR_CODES = {"SYSTEM_ERROR"}
     MESSAGE_LIST_RETRYABLE_ERROR_SUFFIXES = ("_INVOKE_FAILED",)
     TOKEN_VERIFIED_RETRYABLE_ERROR_CODES = {"TOKEN_VERIFIED_FAILED"}
+    PAT_AUTH_RETRYABLE_ERROR_CODES = {"PAT_AUTH_CALL_FAILED"}
+    PAT_AUTH_RETRYABLE_READ_COMMANDS = {
+        ("minutes", "get"),
+        ("minutes", "list"),
+    }
     MESSAGE_RETRYABLE_READ_COMMANDS = {
         ("chat", "message", "list"),
         ("chat", "message", "list-direct"),
@@ -3419,6 +3424,12 @@ class DwsClient:
             return cls._command_path_matches(
                 command_path,
                 cls.TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS,
+            )
+        if code in cls.PAT_AUTH_RETRYABLE_ERROR_CODES:
+            command_path = tuple(command[1:])
+            return cls._command_path_matches(
+                command_path,
+                cls.PAT_AUTH_RETRYABLE_READ_COMMANDS,
             )
         return (
             code in cls.DOC_READ_RETRYABLE_ERROR_CODES
