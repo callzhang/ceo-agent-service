@@ -1914,7 +1914,7 @@ def test_reconciliation_dependency_uses_typed_gate_and_login_once(
         )
 
 
-def test_stale_recovery_does_not_parse_completed_reconciliation_as_direct_result(
+def test_stale_recovery_does_not_revisit_atomically_completed_reconciliation(
     tmp_path: Path,
 ):
     trigger = _message(raw_payload={"processInstanceId": "proc-1"})
@@ -1928,15 +1928,15 @@ def test_stale_recovery_does_not_parse_completed_reconciliation_as_direct_result
         )
     unknown = _seed_unknown_run(store, task_id)
     store.claim_unknown_agent_run(unknown.id, owner="reconciler", now=NOW)
-    store.complete_unknown_agent_run(
+    store.resolve_unknown_agent_run_confirmed(
         unknown.id,
+        task_id,
         {
             "outcome": "completed",
             "summary": "Live state confirms the effect.",
             "proof": {"observed_state": "effect_present"},
         },
         owner="reconciler",
-        side_effect_state="confirmed",
         now=NOW,
     )
     worker = DingTalkAutoReplyWorker(

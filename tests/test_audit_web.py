@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app.audit_web as audit_web_module
@@ -17,6 +18,7 @@ from app.audit_web import (
     handle_user_prompt_post,
     handle_feedback_post,
     handle_rerun_attempt_post,
+    handle_agent_run_resolution_post,
     handle_user_feedback_resolve_post,
     handle_user_feedback_sync_post,
     handle_recall_post,
@@ -3566,7 +3568,13 @@ def test_render_attempt_list_does_not_pin_failed_reply_tasks(tmp_path: Path):
         trigger_sender="Mina",
         trigger_text="@Alex Chen(明哥) 这个候选人怎么看？",
     )
-    store.fail_reply_task(1, "delivery failed")
+    task = store.claim_reply_task(1)
+    assert task is not None
+    store.fail_reply_task(
+        1,
+        "delivery failed",
+        expected_execution_generation=task.execution_generation,
+    )
 
     html = render_attempt_list(store)
 
@@ -4720,6 +4728,100 @@ def test_handle_rerun_attempt_post_requeues_task_and_redirects(tmp_path: Path):
     trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
     assert trigger.open_message_id == "msg-1"
     assert trigger.content == "@Alex Chen 这个怎么处理？"
+
+
+def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-07-29 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="请处理",
+    )
+    task = store.claim_reply_tasks(1)[0]
+    run = store.claim_agent_run(task.id, task.execution_generation, owner="worker").run
+    store.mark_agent_run_unknown(run.id, {"code": "unknown"}, owner="worker")
+    store.claim_unknown_agent_run(run.id, owner="reconciler")
+    store.defer_unknown_agent_run_reconciliation(
+        run.id,
+        {"code": "needs_human", "retryable": False},
+        owner="reconciler",
+        expected_execution_generation=task.execution_generation,
+        next_attempt_at="",
+        suspended=True,
+    )
+    client = TestClient(create_audit_app(store.path))
+
+    response = client.post(
+        f"/agent-runs/{run.id}/resolution",
+        json={
+            "execution_generation": task.execution_generation,
+            "resolution": "confirmed_occurred",
+            "reason": "已核对执行回执",
+            "actor": "Derek",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["resolution"] == "confirmed_occurred"
+    assert store.get_reply_task(task.id).status == "done"
+
+
+def test_agent_run_resolution_handler_rejects_free_text_without_enum(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with pytest.raises(ValueError, match="invalid manual reconciliation resolution"):
+        handle_agent_run_resolution_post(
+            store,
+            {
+                "run_id": 1,
+                "execution_generation": "initial",
+                "resolution": "看起来应该成功了",
+                "reason": "备注",
+                "actor": "Derek",
+            },
+        )
+
+
+def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "audit.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-07-29 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="请处理",
+    )
+    task = store.claim_reply_tasks(1)[0]
+    run = store.claim_agent_run(task.id, task.execution_generation, owner="worker").run
+    store.mark_agent_run_unknown(run.id, {"code": "unknown"}, owner="worker")
+    store.claim_unknown_agent_run(run.id, owner="reconciler")
+    store.defer_unknown_agent_run_reconciliation(
+        run.id,
+        {"code": "needs_human", "retryable": False},
+        owner="reconciler",
+        expected_execution_generation=task.execution_generation,
+        next_attempt_at="",
+        suspended=True,
+    )
+    app = create_audit_app(db_path=store.path)
+
+    response = TestClient(app).post(
+        f"/agent-runs/{run.id}/resolution",
+        json={
+            "execution_generation": "stale-generation",
+            "resolution": "confirmed_not_occurred",
+            "reason": "operator verified no effect",
+            "actor": "operator@example.com",
+        },
+    )
+
+    assert response.status_code == 409
+    assert store.get_agent_run(run.id).status == "unknown"
 
 
 def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation(

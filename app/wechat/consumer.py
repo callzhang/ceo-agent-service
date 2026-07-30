@@ -101,7 +101,11 @@ class WechatReplyConsumer:
                         send_status="failed",
                         send_error="dingtalk_only_system_actions_rejected",
                     )
-                self.store.fail_reply_task(task.id, "dingtalk_only_system_actions_rejected")
+                self.store.fail_reply_task(
+                    task.id,
+                    "dingtalk_only_system_actions_rejected",
+                    expected_execution_generation=task.execution_generation,
+                )
                 return
             text = decision.reply_text or ""
             if self.leak_check is not None:
@@ -119,7 +123,10 @@ class WechatReplyConsumer:
                     "trigger_text": trigger.text,
                 },
             )
-            self.store.complete_reply_task(task.id)
+            self.store.complete_reply_task(
+                task.id,
+                expected_execution_generation=task.execution_generation,
+            )
         elif decision.action in (CodexAction.NO_REPLY, CodexAction.HANDOFF_TO_HUMAN):
             if attempt_id:
                 self.store.update_reply_attempt(
@@ -127,7 +134,10 @@ class WechatReplyConsumer:
                     send_status="skipped",
                     send_error=getattr(decision.action, "value", str(decision.action)),
                 )
-            self.store.complete_reply_task(task.id)
+            self.store.complete_reply_task(
+                task.id,
+                expected_execution_generation=task.execution_generation,
+            )
         else:  # STOP_WITH_ERROR (and anything unexpected) -> bounded retry via fail
             if attempt_id:
                 self.store.update_reply_attempt(
@@ -135,4 +145,8 @@ class WechatReplyConsumer:
                     send_status="failed",
                     send_error=decision.reason or "stop_with_error",
                 )
-            self.store.fail_reply_task(task.id, decision.reason or "stop_with_error")
+            self.store.fail_reply_task(
+                task.id,
+                decision.reason or "stop_with_error",
+                expected_execution_generation=task.execution_generation,
+            )

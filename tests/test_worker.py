@@ -4711,6 +4711,76 @@ def test_consume_once_retries_execution_generation_mismatch(
     ]
 
 
+@pytest.mark.parametrize("authorization", [False, True])
+def test_old_worker_cannot_write_context_or_authorization_failure_after_rotation(
+    tmp_path: Path, monkeypatch, authorization: bool
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    worker.produce_once()
+
+    class AuthorizationFailure(RuntimeError):
+        needs_authorization = True
+
+    def rotate_then_fail(_conversation, task):
+        new_generation = worker.store.rotate_reply_task_execution_generation(task.id)
+        worker._test_new_generation = new_generation
+        error_type = AuthorizationFailure if authorization else RuntimeError
+        raise error_type("authorization required" if authorization else "context failed")
+
+    monkeypatch.setattr(worker, "_process_queued_task", rotate_then_fail)
+
+    assert worker.consume_once(max_tasks=1) == 0
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.execution_generation == worker._test_new_generation
+    assert task.status == "processing"
+    assert task.error == ""
+    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
+
+
+def test_active_run_defer_cannot_overwrite_rotated_generation(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    worker.produce_once()
+    pending = worker.store.get_reply_task(1)
+    assert pending is not None
+    worker.store.claim_agent_run(
+        pending.id,
+        pending.execution_generation,
+        owner="active-worker",
+        now="2026-05-29 08:00:00",
+    )
+    original_defer = worker.store.defer_reply_task
+
+    def rotate_then_defer(task_id, error, **kwargs):
+        worker._test_new_generation = worker.store.rotate_reply_task_execution_generation(
+            task_id
+        )
+        return original_defer(task_id, error, **kwargs)
+
+    monkeypatch.setattr(worker.store, "defer_reply_task", rotate_then_defer)
+
+    assert worker.consume_once(max_tasks=1) == 0
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.execution_generation == worker._test_new_generation
+    assert task.status == "processing"
+    assert task.error == ""
+
+
 def test_consume_once_completes_generation_mismatch_after_terminal_at_max_attempts(
     tmp_path: Path, monkeypatch
 ):
@@ -9692,12 +9762,6 @@ def test_stale_processing_task_with_terminal_attempt_is_requeued_not_completed(
             "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
             (claimed.id,),
         )
-    monkeypatch.setattr(
-        worker.store,
-        "reset_stale_processing_reply_tasks",
-        lambda _max_age_seconds: 0,
-    )
-
     script_no_action(worker)
     assert worker.consume_once(max_tasks=1) == 1
 
@@ -10396,7 +10460,12 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
     )
     original_task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
     assert original_task is not None
-    worker.store.complete_reply_task(original_task.id)
+    claimed_original = worker.store.claim_reply_task(original_task.id)
+    assert claimed_original is not None
+    worker.store.complete_reply_task(
+        original_task.id,
+        expected_execution_generation=claimed_original.execution_generation,
+    )
     old_attempt_id = worker.store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Friday",

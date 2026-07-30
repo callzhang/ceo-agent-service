@@ -369,6 +369,15 @@ class AgentRunClaim:
     claimed: bool
 
 
+@dataclass(frozen=True)
+class ManualAgentRunResolution:
+    run_id: int
+    task_id: int
+    attempt_id: int
+    resolution: str
+    execution_generation: str
+
+
 class AgentRunLeaseLostError(RuntimeError):
     pass
 
@@ -3141,9 +3150,12 @@ class AutoReplyStore:
         run_id: int,
         structured_error: dict[str, object],
         *,
+        expected_execution_generation: str,
         now: str | datetime | None = None,
     ) -> AgentRun:
         """Move an expired run with an incomplete effect into reconciliation."""
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
         error_json = _json_object_text(structured_error, field="structured_error")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
@@ -3156,10 +3168,24 @@ class AutoReplyStore:
                     lease_expires_at='',
                     updated_at=?
                 where id=? and status='running'
+                  and execution_generation=?
                   and side_effect_state='unknown'
                   and lease_expires_at<=?
+                  and exists (
+                      select 1 from reply_tasks
+                      where reply_tasks.id=agent_runs.reply_task_id
+                        and reply_tasks.status='processing'
+                        and reply_tasks.execution_generation=?
+                  )
                 """,
-                (error_json, now_text, run_id, now_text),
+                (
+                    error_json,
+                    now_text,
+                    run_id,
+                    expected_execution_generation,
+                    now_text,
+                    expected_execution_generation,
+                ),
             )
             if cursor.rowcount != 1:
                 raise ValueError("expired agent run is not eligible for reconciliation")
@@ -3174,8 +3200,11 @@ class AutoReplyStore:
         run_id: int,
         structured_error: dict[str, object],
         *,
+        expected_execution_generation: str,
         now: str | datetime | None = None,
     ) -> AgentRun:
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
         error_json = _json_object_text(structured_error, field="structured_error")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
@@ -3188,10 +3217,25 @@ class AutoReplyStore:
                     completed_at=?,
                     updated_at=?
                 where id=? and status='running'
+                  and execution_generation=?
                   and side_effect_state='none'
                   and lease_expires_at<=?
+                  and exists (
+                      select 1 from reply_tasks
+                      where reply_tasks.id=agent_runs.reply_task_id
+                        and reply_tasks.status='processing'
+                        and reply_tasks.execution_generation=?
+                  )
                 """,
-                (error_json, now_text, now_text, run_id, now_text),
+                (
+                    error_json,
+                    now_text,
+                    now_text,
+                    run_id,
+                    expected_execution_generation,
+                    now_text,
+                    expected_execution_generation,
+                ),
             )
             if cursor.rowcount != 1:
                 raise ValueError("expired agent run is not a definite failure")
@@ -3200,56 +3244,6 @@ class AutoReplyStore:
                 (run_id,),
             ).fetchone()
             return self._agent_run_from_row(row, db=db)
-
-    def complete_unknown_agent_run(
-        self,
-        run_id: int,
-        final_result: dict[str, object],
-        *,
-        owner: str,
-        side_effect_state: str = "none",
-        transcript_end_line: int | None = None,
-        now: str | datetime | None = None,
-    ) -> AgentRun:
-        return self._transition_agent_run(
-            run_id,
-            expected_status="unknown",
-            owner=owner,
-            target_status="completed",
-            final_result_json=_json_object_text(
-                final_result,
-                field="final_result",
-            ),
-            structured_error_json="",
-            side_effect_state=side_effect_state,
-            transcript_end_line=transcript_end_line,
-            now=now,
-        )
-
-    def fail_unknown_agent_run(
-        self,
-        run_id: int,
-        structured_error: dict[str, object],
-        *,
-        owner: str,
-        transcript_end_line: int | None = None,
-        side_effect_state: str = "none",
-        now: str | datetime | None = None,
-    ) -> AgentRun:
-        return self._transition_agent_run(
-            run_id,
-            expected_status="unknown",
-            owner=owner,
-            target_status="failed",
-            final_result_json="",
-            structured_error_json=_json_object_text(
-                structured_error,
-                field="structured_error",
-            ),
-            side_effect_state=side_effect_state,
-            transcript_end_line=transcript_end_line,
-            now=now,
-        )
 
     def resolve_unknown_agent_run_confirmed(
         self,
@@ -3299,6 +3293,15 @@ class AutoReplyStore:
             )
             if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            self._insert_reconciliation_attempt_in_connection(
+                db,
+                run_id=run_id,
+                task_id=task_id,
+                codex_reason=str(final_result.get("summary") or "effect confirmed"),
+                audit_summary=str(final_result.get("summary") or "effect confirmed"),
+                send_status="completed",
+                send_error="",
+            )
             row = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
             return self._agent_run_from_row(row, db=db)
 
@@ -3354,86 +3357,241 @@ class AutoReplyStore:
             )
             if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
-        return generation
-
-    def recover_absent_reconciliation_task(
-        self,
-        run_id: int,
-        task_id: int,
-        *,
-        code: str,
-        now: str | datetime | None = None,
-    ) -> str:
-        generation = uuid4().hex
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            row = db.execute(
-                "select * from agent_runs where id=? and reply_task_id=?",
-                (run_id, task_id),
-            ).fetchone()
-            if row is None or row["status"] != "failed":
-                raise ValueError("failed reconciliation run was not found")
-            try:
-                error = json.loads(row["structured_error_json"] or "{}")
-            except json.JSONDecodeError as exc:
-                raise ValueError("failed reconciliation error is malformed") from exc
-            if not isinstance(error, dict) or error.get("code") != code:
-                raise ValueError("failed reconciliation error does not match")
-            task = db.execute(
-                "select execution_generation from reply_tasks where id=?",
-                (task_id,),
-            ).fetchone()
-            if task is None or task["execution_generation"] != row["execution_generation"]:
-                raise ValueError("reconciliation generation mismatch")
-            cursor = db.execute(
-                """
-                update reply_tasks
-                set status='pending', locked_at=null, force_new_decision=1,
-                    execution_generation=?, available_at='', error=?, updated_at=?
-                where id=? and status in ('processing', 'pending')
-                  and execution_generation=?
-                """,
-                (generation, code, now_text, task_id, row["execution_generation"]),
+            self._insert_reconciliation_attempt_in_connection(
+                db,
+                run_id=run_id,
+                task_id=task_id,
+                codex_reason=code,
+                audit_summary=code,
+                send_status="failed",
+                send_error=code,
             )
-            if cursor.rowcount != 1:
-                raise ValueError("retryable reply task was not found")
         return generation
 
-    def recover_completed_reconciliation_task(
-        self,
+    @staticmethod
+    def _insert_reconciliation_attempt_in_connection(
+        db: sqlite3.Connection,
+        *,
         run_id: int,
         task_id: int,
+        codex_reason: str,
+        audit_summary: str,
+        send_status: str,
+        send_error: str,
+    ) -> int:
+        row = db.execute(
+            """
+            select reply_tasks.channel, reply_tasks.conversation_id,
+                   reply_tasks.conversation_title, reply_tasks.trigger_message_id,
+                   reply_tasks.trigger_sender, reply_tasks.trigger_text,
+                   agent_runs.codex_session_id, agent_runs.transcript_start_line,
+                   agent_runs.transcript_end_line, agent_runs.tool_events_json
+            from reply_tasks
+            join agent_runs on agent_runs.reply_task_id=reply_tasks.id
+            where reply_tasks.id=? and agent_runs.id=?
+            """,
+            (task_id, run_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("reconciliation run and task were not found")
+        cursor = db.execute(
+            """
+            insert into reply_attempts (
+                conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, action, sensitivity_kind,
+                codex_reason, codex_session_id,
+                codex_transcript_start_line, codex_transcript_end_line,
+                audit_tool_events_json, audit_summary, send_status,
+                send_error, channel
+            ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["conversation_id"],
+                row["conversation_title"],
+                row["trigger_message_id"],
+                row["trigger_sender"],
+                row["trigger_text"],
+                codex_reason,
+                row["codex_session_id"],
+                row["transcript_start_line"],
+                row["transcript_end_line"],
+                row["tool_events_json"],
+                audit_summary,
+                send_status,
+                send_error,
+                row["channel"],
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def list_suspended_unknown_agent_runs(
+        self,
         *,
+        limit: int = 100,
+    ) -> list[AgentRun]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select agent_runs.*
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.status='unknown'
+                  and agent_runs.reconciliation_suspended=1
+                  and reply_tasks.status='processing'
+                  and reply_tasks.execution_generation=agent_runs.execution_generation
+                order by agent_runs.updated_at, agent_runs.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [self._agent_run_from_row(row, db=db) for row in rows]
+
+    def resolve_unknown_agent_run_manually(
+        self,
+        run_id: int,
+        *,
+        expected_execution_generation: str,
+        resolution: str,
+        reason: str,
+        actor: str,
         now: str | datetime | None = None,
-    ) -> None:
+    ) -> ManualAgentRunResolution:
+        allowed = {
+            "confirmed_occurred",
+            "confirmed_not_occurred",
+            "terminate_unrecoverable",
+        }
+        if resolution not in allowed:
+            raise ValueError("invalid manual reconciliation resolution")
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        if not reason.strip():
+            raise ValueError("manual reconciliation reason must be non-empty")
+        if not actor.strip():
+            raise ValueError("manual reconciliation actor must be non-empty")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
-                "select * from agent_runs where id=? and reply_task_id=?",
-                (run_id, task_id),
+                """
+                select agent_runs.*, reply_tasks.status as task_status,
+                       reply_tasks.execution_generation as task_generation
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=?
+                """,
+                (run_id,),
             ).fetchone()
             if (
                 row is None
-                or row["status"] != "completed"
-                or row["side_effect_state"] != "confirmed"
-                or not row["final_result_json"]
+                or row["status"] != "unknown"
+                or not row["reconciliation_suspended"]
+                or row["task_status"] != "processing"
+                or row["execution_generation"] != expected_execution_generation
+                or row["task_generation"] != expected_execution_generation
             ):
-                raise ValueError("completed reconciliation run was not found")
-            task = db.execute(
-                "select execution_generation from reply_tasks where id=?",
-                (task_id,),
-            ).fetchone()
-            if task is None or task["execution_generation"] != row["execution_generation"]:
-                raise ValueError("reconciliation generation mismatch")
-            cursor = db.execute(
+                raise AgentRunLeaseLostError(
+                    f"manual reconciliation target is stale: {run_id}"
+                )
+            task_id = int(row["reply_task_id"])
+            code = f"manual_reconciliation_{resolution}"
+            audit_summary = f"{actor}: {reason}"
+            next_generation = expected_execution_generation
+            if resolution == "confirmed_occurred":
+                run_status = "completed"
+                side_effect_state = "confirmed"
+                task_status = "done"
+                send_status = "completed"
+                final_result_json = json.dumps(
+                    {
+                        "outcome": "completed",
+                        "summary": reason,
+                        "manual_resolution": resolution,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            elif resolution == "confirmed_not_occurred":
+                run_status = "failed"
+                side_effect_state = "none"
+                task_status = "pending"
+                send_status = "failed"
+                final_result_json = ""
+                next_generation = uuid4().hex
+            else:
+                run_status = "failed"
+                side_effect_state = "unknown"
+                task_status = "failed"
+                send_status = "blocked"
+                final_result_json = ""
+            structured_error_json = json.dumps(
+                {
+                    "code": code,
+                    "retryable": False,
+                    "reason": reason,
+                    "actor": actor,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            run_cursor = db.execute(
                 """
-                update reply_tasks
-                set status='done', locked_at=null, error='', available_at='', updated_at=?
-                where id=? and status in ('processing', 'pending')
+                update agent_runs
+                set status=?, final_result_json=?, structured_error_json=?,
+                    side_effect_state=?, reconciliation_suspended=0,
+                    reconciliation_next_attempt_at='', lease_owner='',
+                    lease_expires_at='', completed_at=?, updated_at=?
+                where id=? and status='unknown' and reconciliation_suspended=1
                   and execution_generation=?
                 """,
-                (now_text, task_id, row["execution_generation"]),
+                (
+                    run_status,
+                    final_result_json,
+                    "" if resolution == "confirmed_occurred" else structured_error_json,
+                    side_effect_state,
+                    now_text,
+                    now_text,
+                    run_id,
+                    expected_execution_generation,
+                ),
             )
-            if cursor.rowcount != 1:
-                raise ValueError("reconciliation reply task was not recoverable")
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status=?, execution_generation=?, force_new_decision=?,
+                    locked_at=null, available_at='', error=?, updated_at=?
+                where id=? and status='processing' and execution_generation=?
+                """,
+                (
+                    task_status,
+                    next_generation,
+                    int(resolution == "confirmed_not_occurred"),
+                    "" if task_status == "done" else code,
+                    now_text,
+                    task_id,
+                    expected_execution_generation,
+                ),
+            )
+            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"manual reconciliation target is stale: {run_id}"
+                )
+            attempt_id = self._insert_reconciliation_attempt_in_connection(
+                db,
+                run_id=run_id,
+                task_id=task_id,
+                codex_reason=reason,
+                audit_summary=audit_summary,
+                send_status=send_status,
+                send_error=code,
+            )
+            return ManualAgentRunResolution(
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                resolution=resolution,
+                execution_generation=next_generation,
+            )
 
     @staticmethod
     def _claimed_unknown_run_end_line(
@@ -3760,138 +3918,6 @@ class AutoReplyStore:
             ).fetchall()
             return [self._reply_task_from_row(row) for row in claimed_rows]
 
-    def reset_stale_processing_reply_tasks(self, max_age_seconds: int) -> int:
-        if max_age_seconds <= 0:
-            return 0
-        with self._connect() as db:
-            db.execute("begin immediate")
-            rows = db.execute(
-                """
-                select *
-                from reply_tasks
-                where status='processing'
-                  and locked_at is not null
-                  and datetime(locked_at) <= datetime('now', ?)
-                order by locked_at, id
-                """,
-                (f"-{int(max_age_seconds)} seconds",),
-            ).fetchall()
-            task_ids = [row["id"] for row in rows]
-            if not task_ids:
-                return 0
-            conversation_ids = [row["conversation_id"] for row in rows]
-            conversation_placeholders = ",".join("?" for _ in conversation_ids)
-            db.execute(
-                f"""
-                delete from codex_session_locks
-                where conversation_id in ({conversation_placeholders})
-                """,
-                conversation_ids,
-            )
-            task_placeholders = ",".join("?" for _ in task_ids)
-            db.execute(
-                f"""
-                update reply_tasks
-                set status='pending',
-                    locked_at=null,
-                    error='',
-                    updated_at=current_timestamp
-                where id in ({task_placeholders})
-                """,
-                task_ids,
-            )
-            return len(task_ids)
-
-    def reset_recoverable_reply_tasks(self) -> list[ReplyTask]:
-        with self._connect() as db:
-            db.execute("begin immediate")
-            rows = db.execute(
-                """
-                select *
-                from reply_tasks
-                where status='failed'
-                  and error like 'codex session locked:%'
-                  and not exists (
-                      select 1
-                      from codex_session_locks
-                      where codex_session_locks.conversation_id =
-                            reply_tasks.conversation_id
-                        and datetime(codex_session_locks.locked_at) >
-                            datetime('now', ?)
-                  )
-                order by updated_at, id
-                """,
-                (f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",),
-            ).fetchall()
-            task_ids = [row["id"] for row in rows]
-            if not task_ids:
-                return []
-            conversation_ids = [row["conversation_id"] for row in rows]
-            conversation_placeholders = ",".join("?" for _ in conversation_ids)
-            db.execute(
-                f"""
-                delete from codex_session_locks
-                where conversation_id in ({conversation_placeholders})
-                  and datetime(locked_at) <= datetime('now', ?)
-                """,
-                [
-                    *conversation_ids,
-                    f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",
-                ],
-            )
-            task_placeholders = ",".join("?" for _ in task_ids)
-            db.execute(
-                f"""
-                update reply_tasks
-                set status='pending',
-                    attempts=0,
-                    locked_at=null,
-                    available_at='',
-                    error='',
-                    updated_at=current_timestamp
-                where id in ({task_placeholders})
-                """,
-                task_ids,
-            )
-            return [self._reply_task_from_row(row) for row in rows]
-
-    def reset_processing_reply_tasks(self) -> list[ReplyTask]:
-        with self._connect() as db:
-            db.execute("begin immediate")
-            rows = db.execute(
-                """
-                select *
-                from reply_tasks
-                where status='processing'
-                order by locked_at, id
-                """
-            ).fetchall()
-            task_ids = [row["id"] for row in rows]
-            if not task_ids:
-                return []
-            conversation_ids = [row["conversation_id"] for row in rows]
-            conversation_placeholders = ",".join("?" for _ in conversation_ids)
-            db.execute(
-                f"""
-                delete from codex_session_locks
-                where conversation_id in ({conversation_placeholders})
-                """,
-                conversation_ids,
-            )
-            placeholders = ",".join("?" for _ in task_ids)
-            db.execute(
-                f"""
-                update reply_tasks
-                set status='pending',
-                    locked_at=null,
-                    error='',
-                    updated_at=current_timestamp
-                where id in ({placeholders})
-                """,
-                task_ids,
-            )
-            return [self._reply_task_from_row(row) for row in rows]
-
     def list_stale_processing_reply_tasks(
         self, max_age_seconds: int
     ) -> list[ReplyTask]:
@@ -3911,109 +3937,14 @@ class AutoReplyStore:
             ).fetchall()
             return [self._reply_task_from_row(row) for row in rows]
 
-    def complete_unfinished_reply_tasks_before_trigger(
+    def complete_reply_task(
         self,
+        task_id: int,
         *,
-        conversation_id: str,
-        trigger_create_time: str,
-        exclude_task_id: int,
-        channel: str = "dingtalk",
-    ) -> list[ReplyTask]:
-        with self._connect() as db:
-            db.execute("begin immediate")
-            rows = db.execute(
-                """
-                select *
-                from reply_tasks
-                where channel=?
-                  and conversation_id=?
-                  and status in ('pending', 'processing')
-                  and trigger_create_time < ?
-                  and id != ?
-                order by trigger_create_time, id
-                """,
-                (channel, conversation_id, trigger_create_time, exclude_task_id),
-            ).fetchall()
-            task_ids = [row["id"] for row in rows]
-            if not task_ids:
-                return []
-            placeholders = ",".join("?" for _ in task_ids)
-            db.execute(
-                f"""
-                update reply_tasks
-                set status='done',
-                    locked_at=null,
-                    error='',
-                    available_at='',
-                    updated_at=current_timestamp
-                where id in ({placeholders})
-                """,
-                task_ids,
-            )
-            return [self._reply_task_from_row(row) for row in rows]
-
-    def complete_unfinished_reply_tasks_for_messages(
-        self,
-        *,
-        conversation_id: str,
-        trigger_message_ids: list[str],
-        exclude_task_id: int,
-        channel: str = "dingtalk",
-    ) -> list[ReplyTask]:
-        if not trigger_message_ids:
-            return []
-        with self._connect() as db:
-            db.execute("begin immediate")
-            placeholders = ",".join("?" for _ in trigger_message_ids)
-            rows = db.execute(
-                f"""
-                select *
-                from reply_tasks
-                where channel=?
-                  and conversation_id=?
-                  and status in ('pending', 'processing')
-                  and trigger_message_id in ({placeholders})
-                  and id != ?
-                order by trigger_create_time, id
-                """,
-                [channel, conversation_id, *trigger_message_ids, exclude_task_id],
-            ).fetchall()
-            task_ids = [row["id"] for row in rows]
-            if not task_ids:
-                return []
-            task_placeholders = ",".join("?" for _ in task_ids)
-            db.execute(
-                f"""
-                update reply_tasks
-                set status='done',
-                    locked_at=null,
-                    error='',
-                    available_at='',
-                    updated_at=current_timestamp
-                where id in ({task_placeholders})
-                """,
-                task_ids,
-            )
-            return [self._reply_task_from_row(row) for row in rows]
-
-    def complete_reply_task(self, task_id: int) -> None:
-        with self._connect() as db:
-            db.execute(
-                """
-                update reply_tasks
-                set status='done',
-                    error='',
-                    available_at='',
-                    updated_at=current_timestamp
-                where id=?
-                """,
-                (task_id,),
-            )
-
-    def complete_reply_task_for_message(
-        self, conversation_id: str, trigger_message_id: str, *,
-        channel: str = "dingtalk",
-    ) -> int:
+        expected_execution_generation: str,
+    ) -> None:
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
         with self._connect() as db:
             cursor = db.execute(
                 """
@@ -4023,33 +3954,50 @@ class AutoReplyStore:
                     error='',
                     available_at='',
                     updated_at=current_timestamp
-                where channel=?
-                  and conversation_id=?
-                  and trigger_message_id=?
+                where id=? and status='processing' and execution_generation=?
                 """,
-                (channel, conversation_id, trigger_message_id),
+                (task_id, expected_execution_generation),
             )
-            return cursor.rowcount
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
-    def fail_reply_task(self, task_id: int, error: str) -> None:
+    def fail_reply_task(
+        self,
+        task_id: int,
+        error: str,
+        *,
+        expected_execution_generation: str,
+    ) -> None:
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
         with self._connect() as db:
-            db.execute(
+            cursor = db.execute(
                 """
                 update reply_tasks
                 set status='failed',
+                    locked_at=null,
                     error=?,
                     available_at='',
                     updated_at=current_timestamp
-                where id=?
+                where id=? and status='processing' and execution_generation=?
                 """,
-                (error, task_id),
+                (error, task_id, expected_execution_generation),
             )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
     def requeue_reply_task(
-        self, task_id: int, error: str, *, available_at: str = ""
+        self,
+        task_id: int,
+        error: str,
+        *,
+        expected_execution_generation: str,
+        available_at: str = "",
     ) -> None:
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
         with self._connect() as db:
-            db.execute(
+            cursor = db.execute(
                 """
                 update reply_tasks
                 set status='pending',
@@ -4057,10 +4005,12 @@ class AutoReplyStore:
                     available_at=?,
                     error=?,
                     updated_at=current_timestamp
-                where id=?
+                where id=? and status='processing' and execution_generation=?
                 """,
-                (available_at, error, task_id),
+                (available_at, error, task_id, expected_execution_generation),
             )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
     def rotate_reply_task_execution_generation(self, task_id: int) -> str:
         execution_generation = uuid4().hex
@@ -4108,10 +4058,17 @@ class AutoReplyStore:
         return execution_generation
 
     def defer_reply_task(
-        self, task_id: int, error: str, *, available_at: str = ""
+        self,
+        task_id: int,
+        error: str,
+        *,
+        expected_execution_generation: str,
+        available_at: str = "",
     ) -> None:
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
         with self._connect() as db:
-            db.execute(
+            cursor = db.execute(
                 """
                 update reply_tasks
                 set status='pending',
@@ -4120,15 +4077,27 @@ class AutoReplyStore:
                     available_at=?,
                     error=?,
                     updated_at=current_timestamp
-                where id=?
+                where id=? and status='processing' and execution_generation=?
                 """,
-                (available_at, error, task_id),
+                (available_at, error, task_id, expected_execution_generation),
             )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
     def defer_reply_task_for_authorization(
-        self, task_id: int, error: str, *, available_at: str = ""
+        self,
+        task_id: int,
+        error: str,
+        *,
+        expected_execution_generation: str,
+        available_at: str = "",
     ) -> None:
-        self.defer_reply_task(task_id, error, available_at=available_at)
+        self.defer_reply_task(
+            task_id,
+            error,
+            expected_execution_generation=expected_execution_generation,
+            available_at=available_at,
+        )
 
     def count_reply_tasks(
         self, status: str | None = None, *, channel: str | None = None
@@ -6941,40 +6910,6 @@ class AutoReplyStore:
                     audit_tool_events_json,
                 )
 
-    def update_reply_attempt_and_complete_task(
-        self,
-        attempt_id: int,
-        task_id: int,
-        **updates: object,
-    ) -> None:
-        update_values = self._reply_attempt_update_values(**updates)
-        with self._connect() as db:
-            if update_values:
-                self._update_reply_attempt_in_connection(
-                    db,
-                    attempt_id,
-                    update_values,
-                )
-                audit_tool_events_json = update_values.get("audit_tool_events_json")
-                if isinstance(audit_tool_events_json, str):
-                    self._record_memory_write_events_in_connection(
-                        db,
-                        attempt_id,
-                        audit_tool_events_json,
-                    )
-            db.execute(
-                """
-                update reply_tasks
-                set status='done',
-                    locked_at=null,
-                    error='',
-                    available_at='',
-                    updated_at=current_timestamp
-                where id=?
-                """,
-                (task_id,),
-            )
-
     def finalize_agent_reply_task(
         self,
         *,
@@ -7077,6 +7012,87 @@ class AutoReplyStore:
                 )
                 if cursor.rowcount != 1:
                     raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            return attempt_id
+
+    def finalize_reply_task_without_run(
+        self,
+        *,
+        task_id: int,
+        expected_execution_generation: str,
+        task_status: str,
+        task_error: str,
+        available_at: str,
+        conversation_id: str,
+        conversation_title: str,
+        trigger_message_id: str,
+        trigger_sender: str,
+        trigger_text: str,
+        codex_reason: str,
+        audit_summary: str,
+        send_status: str,
+        send_error: str,
+        channel: str,
+    ) -> int:
+        """Persist a pre-run failure and its generation-bound task transition."""
+        if task_status not in {"failed", "pending"}:
+            raise ValueError("invalid pre-run reply task status")
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            task = db.execute(
+                """
+                select execution_generation, status
+                from reply_tasks
+                where id=?
+                """,
+                (task_id,),
+            ).fetchone()
+            if (
+                task is None
+                or task["status"] != "processing"
+                or task["execution_generation"] != expected_execution_generation
+            ):
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            cursor = db.execute(
+                """
+                insert into reply_attempts (
+                    conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    codex_reason, audit_summary, send_status, send_error, channel
+                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_text,
+                    codex_reason,
+                    audit_summary,
+                    send_status,
+                    send_error,
+                    channel,
+                ),
+            )
+            attempt_id = int(cursor.lastrowid)
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status=?, locked_at=null, available_at=?, error=?,
+                    updated_at=current_timestamp
+                where id=? and status='processing' and execution_generation=?
+                """,
+                (
+                    task_status,
+                    available_at if task_status == "pending" else "",
+                    task_error,
+                    task_id,
+                    expected_execution_generation,
+                ),
+            )
+            if task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
             return attempt_id
 
     def reply_task_is_done(self, task_id: int) -> bool:

@@ -20,6 +20,7 @@ from app.cli import (
     export_feedback_command,
     probe_dws,
     rerun_message_command,
+    resolve_agent_run_command,
     reset_codex_sessions_command,
     run_consumer_loop,
     run_task_maintenance_loop,
@@ -85,6 +86,62 @@ def test_parser_supports_worker_commands():
     assert args.command == "run-once"
     assert args.dry_run is True
     assert args.db == "/tmp/worker.sqlite3"
+
+
+def test_parser_requires_structured_agent_run_resolution():
+    args = build_parser().parse_args(
+        [
+            "resolve-agent-run",
+            "--run-id",
+            "7",
+            "--execution-generation",
+            "gen-1",
+            "--resolution",
+            "confirmed_not_occurred",
+            "--reason",
+            "已核对外部系统",
+            "--actor",
+            "Derek",
+        ]
+    )
+
+    assert args.run_id == 7
+    assert args.resolution == "confirmed_not_occurred"
+
+
+def test_resolve_agent_run_command_records_manual_resolution(tmp_path, capsys):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    store = AutoReplyStore(settings.db_path)
+    enqueue_trigger_task(store)
+    task = store.claim_reply_tasks(1)[0]
+    run = store.claim_agent_run(task.id, task.execution_generation, owner="worker").run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "unknown"},
+        owner="worker",
+    )
+    store.claim_unknown_agent_run(run.id, owner="reconciler")
+    store.defer_unknown_agent_run_reconciliation(
+        run.id,
+        {"code": "needs_human", "retryable": False},
+        owner="reconciler",
+        expected_execution_generation=task.execution_generation,
+        next_attempt_at="",
+        suspended=True,
+    )
+
+    result = resolve_agent_run_command(
+        settings,
+        run_id=run.id,
+        execution_generation=task.execution_generation,
+        resolution="terminate_unrecoverable",
+        reason="无法核实且禁止重放",
+        actor="Derek",
+    )
+
+    assert result["resolution"] == "terminate_unrecoverable"
+    assert store.get_reply_task(task.id).status == "failed"
+    assert '"resolution": "terminate_unrecoverable"' in capsys.readouterr().out
 
 
 def test_parser_supports_recent_meeting_replay():
@@ -3597,7 +3654,7 @@ def test_rerun_message_command_loads_conversation_and_calls_worker(
     assert "rerun-message processed conversation_id=cid-1" in capsys.readouterr().out
 
 
-def test_rerun_message_command_marks_matching_failed_task_done(
+def test_rerun_message_command_does_not_overwrite_worker_task_state(
     monkeypatch, tmp_path, capsys
 ):
     settings = WorkerSettings(
@@ -3617,7 +3674,11 @@ def test_rerun_message_command_marks_matching_failed_task_done(
         trigger_text="@Alex 这个怎么处理？",
     )
     task = store.claim_reply_tasks(1)[0]
-    store.fail_reply_task(task.id, "old failure")
+    store.fail_reply_task(
+        task.id,
+        "old failure",
+        expected_execution_generation=task.execution_generation,
+    )
 
     class FakeWorker:
         def rerun_message(
@@ -3641,8 +3702,8 @@ def test_rerun_message_command_marks_matching_failed_task_done(
 
     loaded = cli.AutoReplyStore(settings.db_path)
     tasks = loaded.list_reply_tasks(limit=1)
-    assert tasks[0].status == "done"
-    assert tasks[0].error == ""
+    assert tasks[0].status == "failed"
+    assert tasks[0].error == "old failure"
     assert "rerun-message processed conversation_id=cid-1" in capsys.readouterr().out
 
 

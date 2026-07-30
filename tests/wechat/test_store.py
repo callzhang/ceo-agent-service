@@ -317,7 +317,11 @@ def test_dingtalk_message_operations_do_not_modify_same_identity_wechat_task(tmp
         "shared", "same", channel="wechat"
     ).trigger_text == "original"
 
-    assert store.complete_reply_task_for_message("shared", "same") == 1
+    dingtalk_task = store.claim_reply_tasks(limit=1, channel="dingtalk")[0]
+    store.complete_reply_task(
+        dingtalk_task.id,
+        expected_execution_generation=dingtalk_task.execution_generation,
+    )
     assert store.get_reply_task_for_message(
         "shared", "same", channel="dingtalk"
     ).status == "done"
@@ -326,7 +330,7 @@ def test_dingtalk_message_operations_do_not_modify_same_identity_wechat_task(tmp
     ).status == "pending"
 
 
-def test_dingtalk_supersede_operations_leave_wechat_pending_tasks_untouched(tmp_path):
+def test_dingtalk_pending_replacement_leaves_wechat_pending_tasks_untouched(tmp_path):
     store = _store(tmp_path)
     for channel in ("dingtalk", "wechat"):
         for message_id, created_at in (
@@ -340,19 +344,6 @@ def test_dingtalk_supersede_operations_leave_wechat_pending_tasks_untouched(tmp_
                 trigger_text=message_id,
             )
 
-    completed = store.complete_unfinished_reply_tasks_before_trigger(
-        conversation_id="shared", trigger_create_time="2026-07-20T10:00:30+08:00",
-        exclude_task_id=-1,
-    )
-    assert [task.channel for task in completed] == ["dingtalk"]
-    completed = store.complete_unfinished_reply_tasks_for_messages(
-        conversation_id="shared", trigger_message_ids=["quoted"], exclude_task_id=-1,
-    )
-    assert [task.channel for task in completed] == ["dingtalk"]
-    assert all(
-        task.status == "pending"
-        for task in store.list_reply_tasks(channel="wechat")
-    )
     for channel in ("dingtalk", "wechat"):
         assert store.enqueue_reply_task(
             channel=channel, conversation_id="shared", conversation_title="Shared",

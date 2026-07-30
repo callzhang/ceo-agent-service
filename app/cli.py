@@ -271,6 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
         "test-ding",
         "rerun-message",
         "send-attempt",
+        "resolve-agent-run",
         "reset-codex-sessions",
         "build-work-profile",
         "replay-recent-meetings",
@@ -587,6 +588,20 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if command == "send-attempt":
             subparser.add_argument("--attempt-id", type=int, required=True)
+        if command == "resolve-agent-run":
+            subparser.add_argument("--run-id", type=int, required=True)
+            subparser.add_argument("--execution-generation", required=True)
+            subparser.add_argument(
+                "--resolution",
+                required=True,
+                choices=(
+                    "confirmed_occurred",
+                    "confirmed_not_occurred",
+                    "terminate_unrecoverable",
+                ),
+            )
+            subparser.add_argument("--reason", required=True)
+            subparser.add_argument("--actor", required=True)
         if command == "build-work-profile":
             include_dingtalk_messages_default = not _env_bool(
                 "CEO_PROFILE_SKIP_DINGTALK_MESSAGES", False
@@ -1529,9 +1544,6 @@ def rerun_message_command(
             force_new_decision=force_new_decision,
             oa_url=oa_url,
         )
-        store.complete_reply_task_for_message(
-            conversation_id, processed_message_id, channel="dingtalk"
-        )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     print(
@@ -1601,6 +1613,33 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         "send_status": "queued",
         "task_id": queued_task.id,
         "execution_generation": queued_task.execution_generation,
+    }
+    print(json.dumps(result, ensure_ascii=False), flush=True)
+    return result
+
+
+def resolve_agent_run_command(
+    settings: WorkerSettings,
+    *,
+    run_id: int,
+    execution_generation: str,
+    resolution: str,
+    reason: str,
+    actor: str,
+) -> dict[str, object]:
+    resolved = AutoReplyStore(settings.db_path).resolve_unknown_agent_run_manually(
+        run_id,
+        expected_execution_generation=execution_generation,
+        resolution=resolution,
+        reason=reason,
+        actor=actor,
+    )
+    result = {
+        "run_id": resolved.run_id,
+        "task_id": resolved.task_id,
+        "attempt_id": resolved.attempt_id,
+        "resolution": resolved.resolution,
+        "execution_generation": resolved.execution_generation,
     }
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return result
@@ -2330,7 +2369,6 @@ def run_service(
     exit_process: Callable[[int], None] = os._exit,
 ) -> None:
     _initialize_meeting_discovery_on_service_start(settings)
-    _recover_processing_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
     _recover_okr_review_requests_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
@@ -2441,12 +2479,6 @@ def _recover_meeting_alignment_jobs_on_service_start(
     settings: WorkerSettings,
 ) -> int:
     return recover_meeting_alignment_jobs(AutoReplyStore(settings.db_path))
-
-
-def _recover_processing_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
-    store = AutoReplyStore(settings.db_path)
-    recovered_tasks = store.reset_processing_reply_tasks()
-    return len(recovered_tasks)
 
 
 def _recover_processing_work_summary_inputs_on_service_start(
@@ -2811,6 +2843,15 @@ def main() -> None:
     elif args.command == "send-attempt":
         ensure_live_send_allowed(settings)
         send_attempt_command(settings, attempt_id=args.attempt_id)
+    elif args.command == "resolve-agent-run":
+        resolve_agent_run_command(
+            settings,
+            run_id=args.run_id,
+            execution_generation=args.execution_generation,
+            resolution=args.resolution,
+            reason=args.reason,
+            actor=args.actor,
+        )
     elif args.command == "reset-codex-sessions":
         reset_codex_sessions_command(settings)
     elif args.command == "replay-recent-meetings":

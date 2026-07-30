@@ -100,6 +100,7 @@ from app.feedback_events import (
 )
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
+    AgentRunLeaseLostError,
     AutoReplyStore,
     FeedbackEvent,
     OperationLog,
@@ -6478,6 +6479,36 @@ def handle_rerun_attempt_post(
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
 
 
+def handle_agent_run_resolution_post(
+    store: AutoReplyStore,
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    required = (
+        "run_id",
+        "execution_generation",
+        "resolution",
+        "reason",
+        "actor",
+    )
+    missing = [name for name in required if payload.get(name) in {None, ""}]
+    if missing:
+        raise ValueError(f"missing manual reconciliation fields: {', '.join(missing)}")
+    resolved = store.resolve_unknown_agent_run_manually(
+        int(payload["run_id"]),
+        expected_execution_generation=str(payload["execution_generation"]),
+        resolution=str(payload["resolution"]),
+        reason=str(payload["reason"]),
+        actor=str(payload["actor"]),
+    )
+    return {
+        "run_id": resolved.run_id,
+        "task_id": resolved.task_id,
+        "attempt_id": resolved.attempt_id,
+        "resolution": resolved.resolution,
+        "execution_generation": resolved.execution_generation,
+    }
+
+
 def _is_valid_rerun_trigger_json(
     trigger_message_json: str, *, channel: str = "dingtalk",
 ) -> bool:
@@ -7057,6 +7088,21 @@ def create_audit_app(
             return_to=request.query_params.get("return_to", ""),
         )
         return _fastapi_post_response(status, headers, html)
+
+    @app.post("/agent-runs/{run_id}/resolution")
+    async def resolve_agent_run(run_id: int, request: Request):
+        payload = json.loads((await request.body()).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="JSON object required")
+        payload["run_id"] = run_id
+        try:
+            result = handle_agent_run_resolution_post(
+                AutoReplyStore(db_path),
+                payload,
+            )
+        except (AgentRunLeaseLostError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return JSONResponse(result)
 
     @app.post("/messages/reviewed-reply")
     async def reviewed_reply(request: Request):

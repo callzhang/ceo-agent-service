@@ -1471,6 +1471,8 @@ class DingTalkAutoReplyWorker:
             )
             try:
                 completed = self._process_queued_task(conversation, task)
+            except AgentRunLeaseLostError:
+                continue
             except Exception as exc:
                 error = str(exc)
                 authorization_wait_error = _normalize_codex_stop_error_reason(error)
@@ -1485,15 +1487,19 @@ class DingTalkAutoReplyWorker:
                     )
                     if self._dws_authorization_required_scopes(exc):
                         self._ensure_dws_pat_authorization(exc)
-                    self.store.defer_reply_task_for_authorization(
-                        task.id,
-                        authorization_wait_error,
-                        available_at=(
-                            self._reply_task_retry_available_at(task.attempts)
-                            if provider_recovery
-                            else self._reply_task_authorization_available_at()
-                        ),
-                    )
+                    try:
+                        self.store.defer_reply_task_for_authorization(
+                            task.id,
+                            authorization_wait_error,
+                            expected_execution_generation=task.execution_generation,
+                            available_at=(
+                                self._reply_task_retry_available_at(task.attempts)
+                                if provider_recovery
+                                else self._reply_task_authorization_available_at()
+                            ),
+                        )
+                    except AgentRunLeaseLostError:
+                        continue
                     self.store.record_error(
                         task.conversation_id,
                         task.trigger_message_id,
@@ -1516,11 +1522,14 @@ class DingTalkAutoReplyWorker:
                             conversation=conversation,
                     )
                     continue
-                task_status = self._record_agent_runtime_failure_attempt(
-                    task,
-                    error,
-                    retryable=True,
-                )
+                try:
+                    task_status = self._record_agent_runtime_failure_attempt(
+                        task,
+                        error,
+                        retryable=True,
+                    )
+                except AgentRunLeaseLostError:
+                    continue
                 if task_status == "pending":
                     self.store.record_error(
                         task.conversation_id,
@@ -1558,7 +1567,11 @@ class DingTalkAutoReplyWorker:
                 task.execution_generation,
             )
             if run is None:
-                self.store.requeue_reply_task(task.id, "stale_before_agent_start")
+                self.store.requeue_reply_task(
+                    task.id,
+                    "stale_before_agent_start",
+                    expected_execution_generation=task.execution_generation,
+                )
                 recovered += 1
                 continue
             if run.status == "unknown":
@@ -1566,22 +1579,11 @@ class DingTalkAutoReplyWorker:
             if run.status == "completed" and run.final_result_json:
                 payload = json.loads(run.final_result_json)
                 if isinstance(payload, dict) and "proof" in payload:
-                    reconciliation = ReconciliationResult.model_validate_json(
-                        run.final_result_json
-                    )
-                    if (
-                        reconciliation.outcome is AgentOutcome.COMPLETED
-                        and run.side_effect_state == "confirmed"
-                    ):
-                        self.store.recover_completed_reconciliation_task(
-                            run.id,
-                            task.id,
-                            now=self._sqlite_timestamp(self._now()),
-                        )
-                        recovered += 1
-                        continue
+                    ReconciliationResult.model_validate_json(run.final_result_json)
                     self.store.fail_reply_task(
-                        task.id, "invalid_completed_reconciliation_result"
+                        task.id,
+                        "inconsistent_terminal_reconciliation_state",
+                        expected_execution_generation=task.execution_generation,
                     )
                     continue
                 result = AgentResult.model_validate(payload)
@@ -1607,15 +1609,6 @@ class DingTalkAutoReplyWorker:
                     and run.side_effect_state == "none"
                 )
                 error = str(structured_error.get("code") or "agent_run_failed")
-                if error == "reconciliation_confirmed_no_effect":
-                    self.store.recover_absent_reconciliation_task(
-                        run.id,
-                        task.id,
-                        code=error,
-                        now=self._sqlite_timestamp(self._now()),
-                    )
-                    recovered += 1
-                    continue
                 task_status = self._record_agent_runtime_failure_attempt(
                     task,
                     error,
@@ -1625,12 +1618,17 @@ class DingTalkAutoReplyWorker:
                     recovered += 1
                 continue
             if run.status != "running":
-                self.store.fail_reply_task(task.id, f"invalid_agent_run_state:{run.status}")
+                self.store.fail_reply_task(
+                    task.id,
+                    f"invalid_agent_run_state:{run.status}",
+                    expected_execution_generation=task.execution_generation,
+                )
                 continue
             if run.side_effect_state == "unknown":
                 run = self.store.mark_expired_agent_run_unknown(
                     run.id,
                     {"code": "agent_side_effect_unknown"},
+                    expected_execution_generation=task.execution_generation,
                     now=self._sqlite_timestamp(self._now()),
                 )
                 self._apply_unknown_agent_run(
@@ -1643,6 +1641,7 @@ class DingTalkAutoReplyWorker:
                 self.store.fail_expired_agent_run(
                     run.id,
                     {"code": "stale_agent_run_missing_session"},
+                    expected_execution_generation=task.execution_generation,
                     now=self._sqlite_timestamp(self._now()),
                 )
                 self._record_agent_runtime_failure_attempt(
@@ -1651,7 +1650,11 @@ class DingTalkAutoReplyWorker:
                     retryable=False,
                 )
                 continue
-            self.store.requeue_reply_task(task.id, "stale_agent_run_resume")
+            self.store.requeue_reply_task(
+                task.id,
+                "stale_agent_run_resume",
+                expected_execution_generation=task.execution_generation,
+            )
             recovered += 1
             self.store.record_error(
                 task.conversation_id,
@@ -1764,11 +1767,6 @@ class DingTalkAutoReplyWorker:
                     )
                 except AgentRunLeaseLostError:
                     continue
-                self._record_agent_attempt(
-                    task,
-                    result,
-                    send_status="completed",
-                )
                 resolved += 1
                 continue
             if outcome is AgentOutcome.NO_ACTION:
@@ -1784,12 +1782,6 @@ class DingTalkAutoReplyWorker:
                     )
                 except AgentRunLeaseLostError:
                     continue
-                self._record_agent_attempt(
-                    task,
-                    result,
-                    send_status="failed",
-                    send_error=code,
-                )
                 resolved += 1
                 continue
             code = result.result.error.code or (
@@ -1933,38 +1925,23 @@ class DingTalkAutoReplyWorker:
                 channel=task.channel,
             )
             return task_status
-        attempt_id = self.store.record_reply_attempt(
+        self.store.finalize_reply_task_without_run(
+            task_id=task.id,
+            expected_execution_generation=task.execution_generation,
+            task_status=task_status,
+            task_error=error,
+            available_at=available_at,
             conversation_id=task.conversation_id,
             conversation_title=task.conversation_title,
             trigger_message_id=task.trigger_message_id,
             trigger_sender=task.trigger_sender,
             trigger_text=task.trigger_text,
-            action="agent_run",
-            sensitivity_kind="general",
             codex_reason=error,
-            codex_session_id=run.codex_session_id if run is not None else "",
-            codex_transcript_start_line=(
-                run.transcript_start_line if run is not None else 0
-            ),
-            codex_transcript_end_line=run.transcript_end_line if run is not None else 0,
-            audit_tool_events_json=json.dumps(
-                run.tool_events if run is not None else [],
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
             audit_summary=error,
             send_status="failed",
+            send_error=error,
             channel=task.channel,
         )
-        self.store.update_reply_attempt(attempt_id, send_error=error)
-        if task_status == "pending":
-            self.store.requeue_reply_task(
-                task.id,
-                error,
-                available_at=available_at,
-            )
-        else:
-            self.store.fail_reply_task(task.id, error)
         return task_status
 
     def _pending_reply_task_candidates(
@@ -2087,6 +2064,7 @@ class DingTalkAutoReplyWorker:
                 self.store.defer_reply_task(
                     task.id,
                     "agent_run_active",
+                    expected_execution_generation=task.execution_generation,
                     available_at=existing_run.lease_expires_at,
                 )
                 return False
@@ -3074,9 +3052,7 @@ class DingTalkAutoReplyWorker:
             )
             if task is None:
                 raise RuntimeError("rerun reply task was not persisted")
-        processed = self._process_queued_task(conversation, task)
-        if processed and not self.store.reply_task_is_done(task.id):
-            self.store.complete_reply_task(task.id)
+        self._process_queued_task(conversation, task)
         return trigger.open_message_id
 
     def _lookup_rerun_message_by_id(
