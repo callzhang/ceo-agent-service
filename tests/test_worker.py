@@ -7664,7 +7664,8 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert '"completed": true' in agent_prompt(worker)
+    assert "Safe prior execution receipts" not in agent_prompt(worker)
+    assert "dws oa approval detail --instance-id proc-1" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
     assert worker.store.count_reply_attempts() == 2
@@ -7720,7 +7721,7 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert "Safe prior execution receipts\n[]" in agent_prompt(worker)
+    assert "Safe prior execution receipts" not in agent_prompt(worker)
     assert '"kind": "dingtalk_oa"' not in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     attempts = worker.store.list_reply_attempts(limit=2)
@@ -10593,7 +10594,7 @@ def test_sent_reply_prevents_retry_when_latest_attempt_failed(
     assert latest is not None
     assert latest.action == "agent_run"
     assert latest.send_status == "skipped"
-    assert "Before repeating a prior side effect, query live state" in agent_prompt(worker)
+    assert "Before repeating an external action, query live state" in agent_prompt(worker)
 
 
 def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
@@ -11595,12 +11596,12 @@ def test_queued_okr_review_ack_delivery_failure_requeues_after_agent_queue_actio
 
     assert codex.calls == []
     assert worker.store.count_reply_tasks(status="done") == 0
-    assert worker.store.count_reply_tasks(status="processing") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 1
     assert worker.store.claim_reply_tasks(limit=1) == []
     assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "failed"
     assert attempt.send_error == "okr_ack_side_effect_unknown"
     assert worker.store.get_agent_run(1).status == "unknown"
 
@@ -13556,12 +13557,12 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
     assert store.count_errors() == 0
-    assert store.count_reply_tasks(status="processing") == 1
+    assert store.count_reply_tasks(status="failed") == 1
     assert dws.send_attempt_count == 0
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "failed"
     assert attempt.retry_count == 0
     assert attempt.send_error == "send_result_unknown"
     run = store.get_agent_run(1)
@@ -13950,7 +13951,7 @@ def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monke
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "failed"
     assert attempt.send_error == "chat_result_unknown"
     run = worker.store.get_agent_run(1)
     assert run is not None
@@ -13960,13 +13961,12 @@ def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monke
     assert worker.consume_once(max_tasks=1) == 0
 
     assert dws.mail_replies == []
-    assert len(worker.store.list_agent_execution_receipts(run.id)) == 1
-    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_attempts() == 1
     terminal = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert terminal is not None and terminal.send_status == "blocked"
-    assert terminal.send_error == "reconciliation_tool_unavailable"
+    assert terminal is not None and terminal.send_status == "failed"
+    assert terminal.send_error == "chat_result_unknown"
     persisted = worker.store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "failed"
+    assert persisted is not None and persisted.status == "unknown"
     task = worker.store.get_reply_task(run.reply_task_id)
     assert task is not None and task.status == "failed"
     assert worker.store.get_agent_run_for_task_generation(

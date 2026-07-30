@@ -273,7 +273,7 @@ def _direct_agent_pipeline(
     return worker, store
 
 
-def test_direct_agent_local_pipeline_send_uses_jsonl_and_persisted_receipt(tmp_path):
+def test_direct_agent_local_pipeline_send_uses_codex_session_audit(tmp_path):
     worker, store = _direct_agent_pipeline(
         tmp_path,
         fixture_name="dingtalk_send.jsonl",
@@ -284,12 +284,11 @@ def test_direct_agent_local_pipeline_send_uses_jsonl_and_persisted_receipt(tmp_p
     task = store.get_reply_task_for_message("cid-1", "msg-1")
     run = store.get_agent_run_for_task_generation(task.id, "g1")
     assert task.status == "done"
-    assert [(item.operation_id, item.command_path) for item in store.list_agent_execution_receipts(run.id)] == [
-        ("effect-1", "chat message send")
-    ]
+    assert store.list_agent_execution_receipts(run.id) == []
+    assert run.codex_session_id
 
 
-def test_direct_agent_local_pipeline_handoff_reaction_and_ding_use_jsonl_receipts(
+def test_direct_agent_local_pipeline_handoff_uses_codex_session_audit(
     tmp_path,
 ):
     worker, store = _direct_agent_pipeline(
@@ -302,7 +301,5 @@ def test_direct_agent_local_pipeline_handoff_reaction_and_ding_use_jsonl_receipt
     task = store.get_reply_task_for_message("cid-1", "msg-1")
     run = store.get_agent_run_for_task_generation(task.id, "g1")
     assert task.status == "done"
-    assert [item.command_path for item in store.list_agent_execution_receipts(run.id)] == [
-        "chat message add-text-emotion",
-        "ding message send",
-    ]
+    assert store.list_agent_execution_receipts(run.id) == []
+    assert run.codex_session_id

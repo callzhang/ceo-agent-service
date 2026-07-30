@@ -5,6 +5,7 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
+from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.setup_wizard import (
     SETUP_WIZARD_STEPS,
     build_wizard_status,
@@ -31,6 +32,8 @@ def test_setup_wizard_steps_are_ordered_and_gated():
     assert [step.id for step in SETUP_WIZARD_STEPS] == [
         "preflight",
         "cli_components",
+        "dingtalk_cli",
+        "lark_cli",
         "mcp",
         "service_config",
         "wechat_connection",
@@ -41,6 +44,8 @@ def test_setup_wizard_steps_are_ordered_and_gated():
         "live_send",
     ]
     assert get_step_definition("mcp").depends_on == ("cli_components",)
+    assert get_step_definition("dingtalk_cli").depends_on == ("preflight",)
+    assert get_step_definition("lark_cli").depends_on == ("preflight",)
     # Memory Connector is optional for local channel setup, and WeChat can be
     # connected as soon as the local checkout passes preflight.
     assert get_step_definition("service_config").depends_on == ("cli_components",)
@@ -101,6 +106,28 @@ def test_setup_wizard_action_metadata_is_gated():
                 "run",
                 False,
                 False,
+            ),
+        ],
+        "dingtalk_cli": [
+            ("check_dingtalk_cli", "Check", "dingtalk_cli", "check", False, False),
+            (
+                "setup_dingtalk_cli",
+                "Install or configure",
+                "dingtalk_cli",
+                "run",
+                False,
+                True,
+            ),
+        ],
+        "lark_cli": [
+            ("check_lark_cli", "Check", "lark_cli", "check", False, False),
+            (
+                "setup_lark_cli",
+                "Install or configure",
+                "lark_cli",
+                "run",
+                False,
+                True,
             ),
         ],
         "mcp": [
@@ -744,6 +771,118 @@ def test_run_setup_cli_components_records_bootstrap_failure(
     assert event.summary == "missing dws"
     assert event.evidence["returncode"] == 1
     assert event.stderr_excerpt == "cannot install [REDACTED_PATH]"
+
+
+def test_check_dingtalk_cli_reports_missing_binary(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "app.setup_wizard.shutil.which",
+        lambda name: None if name == "dws" else f"/usr/bin/{name}",
+    )
+
+    status = check_setup_step("dingtalk_cli", repo_root=tmp_path)
+
+    assert status.status == "needs_action"
+    assert status.evidence["installed"] is False
+
+
+def test_setup_lark_cli_installs_then_launches_configuration(
+    monkeypatch,
+    tmp_path: Path,
+):
+    installed = False
+
+    def fake_which(name):
+        if name == "lark-cli":
+            return "/usr/local/bin/lark-cli" if installed else None
+        if name == "npm":
+            return "/usr/local/bin/npm"
+        return f"/usr/bin/{name}"
+
+    def fake_run(args, **kwargs):
+        nonlocal installed
+        assert args == [
+            "/usr/local/bin/npm",
+            "install",
+            "-g",
+            "@larksuite/cli",
+        ]
+        installed = True
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    class FakeGate:
+        def check(self):
+            return ChannelGateResult(
+                channel="lark",
+                state=ChannelGateState.NEEDS_LOGIN,
+                reason_code="status_auth_invalid",
+            )
+
+    launched = []
+
+    class FakeProcess:
+        pid = 123
+
+    monkeypatch.setattr("app.setup_wizard.shutil.which", fake_which)
+    monkeypatch.setattr("app.setup_wizard.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "app.setup_wizard.default_channel_gates",
+        lambda **kwargs: {"lark": FakeGate()},
+    )
+    monkeypatch.setattr(
+        "app.setup_wizard.subprocess.Popen",
+        lambda args, **kwargs: launched.append((args, kwargs)) or FakeProcess(),
+    )
+
+    event = run_setup_action("setup_lark_cli", repo_root=tmp_path, env={})
+
+    assert event.status == "done"
+    assert event.next_step_status == "needs_action"
+    assert launched[0][0] == ["lark-cli", "auth", "login"]
+    assert event.evidence["login_started"] is True
+
+
+def test_setup_dingtalk_cli_uses_configured_installer_and_finishes_when_ready(
+    monkeypatch,
+    tmp_path: Path,
+):
+    installed = False
+
+    def fake_which(name):
+        if name == "dws":
+            return "/usr/local/bin/dws" if installed else None
+        return f"/usr/bin/{name}"
+
+    def fake_run(args, **kwargs):
+        nonlocal installed
+        assert args == ["/bin/zsh", "-lc", "install-company-dws"]
+        installed = True
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    class FakeGate:
+        def check(self):
+            return ChannelGateResult(
+                channel="dingtalk",
+                state=ChannelGateState.READY,
+                reason_code="ready",
+            )
+
+    monkeypatch.setattr("app.setup_wizard.shutil.which", fake_which)
+    monkeypatch.setattr("app.setup_wizard.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "app.setup_wizard.default_channel_gates",
+        lambda **kwargs: {"dingtalk": FakeGate()},
+    )
+
+    event = run_setup_action(
+        "setup_dingtalk_cli",
+        repo_root=tmp_path,
+        env={"DWS_INSTALL_COMMAND": "install-company-dws"},
+    )
+
+    assert event.status == "done"
+    assert event.next_step_status == "done"
+    assert event.evidence["installed"] is True
+    assert event.evidence["channel_state"] == "ready"
 
 
 def test_run_setup_mcp_uses_os_config_path_and_redacts_output(

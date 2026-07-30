@@ -4,20 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.agent_result import (
-    AgentError,
-    AgentOutcome,
-    AgentResult,
-    EffectEventStatus,
-    EffectKind,
-    ExecutionReceipt,
-    InconsistentAgentResultError,
-    ResultParseError,
-    SideEffectState,
-    ToolEffectEvent,
-    parse_agent_result,
-    validate_completion_evidence,
-)
+from app.agent_result import AgentOutcome, AgentResult, ResultParseError, parse_agent_result
 
 
 SCHEMA_PATH = Path(__file__).parents[1] / "app" / "schemas" / "agent_result.schema.json"
@@ -27,7 +14,6 @@ def _result_json(
     *,
     outcome: str = "completed",
     summary: str = "work completed",
-    side_effect_state: str = "none",
 ) -> str:
     return json.dumps(
         {
@@ -37,17 +23,8 @@ def _result_json(
                 "code": "",
                 "retryable": False,
                 "authorization_required": False,
-                "side_effect_state": side_effect_state,
             },
         }
-    )
-
-
-def _completed_confirmed(*, summary: str = "work completed") -> AgentResult:
-    return AgentResult(
-        outcome=AgentOutcome.COMPLETED,
-        summary=summary,
-        error=AgentError(side_effect_state=SideEffectState.CONFIRMED),
     )
 
 
@@ -57,10 +34,15 @@ def test_agent_result_schema_requires_every_declared_property():
     assert set(schema["required"]) == set(schema["properties"])
     error_schema = schema["$defs"]["AgentError"]
     assert set(error_schema["required"]) == set(error_schema["properties"])
+    assert "side_effect_state" not in error_schema["properties"]
     assert all(
         "default" not in property_schema
         for property_schema in error_schema["properties"].values()
     )
+
+
+def test_committed_schema_matches_model():
+    assert json.loads(SCHEMA_PATH.read_text()) == AgentResult.model_json_schema()
 
 
 def test_parse_agent_result_from_last_agent_message():
@@ -94,7 +76,7 @@ def test_parse_agent_result_accepts_message_fields(payload, expected):
     assert parse_agent_result(json.dumps(payload)).summary == expected
 
 
-def test_agent_result_forbids_extra_fields_at_every_model_level():
+def test_agent_result_forbids_extra_fields():
     with pytest.raises(ValidationError):
         AgentResult.model_validate_json(
             json.dumps(
@@ -106,16 +88,21 @@ def test_agent_result_forbids_extra_fields_at_every_model_level():
             )
         )
 
-    with pytest.raises(ValidationError):
-        AgentResult.model_validate_json(
-            json.dumps(
-                {
-                    "outcome": "completed",
-                    "summary": "done",
-                    "error": {"unexpected": True},
-                }
-            )
+    compatible = AgentResult.model_validate_json(
+        json.dumps(
+            {
+                "outcome": "completed",
+                "summary": "done",
+                "error": {
+                    "code": "",
+                    "retryable": False,
+                    "authorization_required": False,
+                    "side_effect_state": "confirmed",
+                },
+            }
         )
+    )
+    assert "side_effect_state" not in compatible.model_dump()["error"]
 
 
 @pytest.mark.parametrize(
@@ -125,7 +112,6 @@ def test_agent_result_forbids_extra_fields_at_every_model_level():
         (("summary",), 123),
         (("error", "retryable"), "false"),
         (("error", "authorization_required"), 0),
-        (("error", "side_effect_state"), False),
     ],
 )
 def test_agent_result_rejects_wrong_runtime_types(path, wrong_value):
@@ -151,13 +137,6 @@ def test_parse_agent_result_strips_markdown_json_fence():
     )
 
     assert parse_agent_result(raw).summary == "fenced"
-
-
-def test_parse_agent_result_extracts_first_balanced_object_with_escaped_braces():
-    result_json = _result_json(summary='kept string: "}" and { brace')
-    raw = json.dumps({"message": f"Result follows. {result_json} trailing text {{"})
-
-    assert parse_agent_result(raw).summary == 'kept string: "}" and { brace'
 
 
 def test_parse_agent_result_selects_latest_jsonl_agent_result():
@@ -220,241 +199,3 @@ def test_parse_agent_result_skips_later_non_agent_message_event():
     )
 
     assert parse_agent_result(raw).summary == "agent result"
-
-
-def test_committed_schema_matches_model_and_forbids_all_object_extras():
-    schema = json.loads(SCHEMA_PATH.read_text())
-
-    assert schema == AgentResult.model_json_schema()
-    object_nodes = []
-
-    def collect(node):
-        if isinstance(node, dict):
-            if node.get("type") == "object":
-                object_nodes.append(node)
-            for value in node.values():
-                collect(value)
-        elif isinstance(node, list):
-            for value in node:
-                collect(value)
-
-    collect(schema)
-    assert object_nodes
-    assert all(node.get("additionalProperties") is False for node in object_nodes)
-
-
-def test_tool_effect_event_schema_uses_call_id_as_lifecycle_key():
-    schema = ToolEffectEvent.model_json_schema()
-
-    assert "call_id" in schema["properties"]
-    assert "event_id" not in schema["properties"]
-    with pytest.raises(ValidationError):
-        ToolEffectEvent.model_validate(
-            {
-                "event_id": "event-record-1",
-                "effect": "effectful",
-                "status": "started",
-            }
-        )
-
-
-def test_completed_confirmed_with_no_evidence_is_rejected():
-    with pytest.raises(InconsistentAgentResultError):
-        validate_completion_evidence(_completed_confirmed(), events=[])
-
-
-def test_read_only_completed_event_does_not_confirm_completion():
-    event = ToolEffectEvent(
-        call_id="read-1",
-        effect=EffectKind.READ_ONLY,
-        status=EffectEventStatus.COMPLETED,
-    )
-
-    with pytest.raises(InconsistentAgentResultError):
-        validate_completion_evidence(_completed_confirmed(), events=[event])
-
-
-def test_completed_effectful_event_confirms_completion():
-    event = ToolEffectEvent(
-        call_id="write-1",
-        effect=EffectKind.EFFECTFUL,
-        status=EffectEventStatus.COMPLETED,
-    )
-
-    assert (
-        validate_completion_evidence(_completed_confirmed(), events=[event])
-        is SideEffectState.CONFIRMED
-    )
-
-
-def test_safe_persisted_completed_receipt_confirms_completion():
-    receipt = ExecutionReceipt(
-        receipt_id="receipt-1",
-        operation_id="write-1",
-        completed=True,
-        persisted=True,
-        safe_to_confirm=True,
-    )
-
-    assert (
-        validate_completion_evidence(
-            _completed_confirmed(), events=[], receipts=[receipt]
-        )
-        is SideEffectState.CONFIRMED
-    )
-
-
-def test_no_action_rejects_completed_side_effect_receipt():
-    receipt = ExecutionReceipt(
-        receipt_id="receipt-1",
-        operation_id="operation-1",
-        completed=True,
-        persisted=True,
-        safe_to_confirm=True,
-    )
-    result = AgentResult(
-        outcome=AgentOutcome.NO_ACTION,
-        summary="无需动作。",
-    )
-
-    with pytest.raises(InconsistentAgentResultError):
-        validate_completion_evidence(result, events=[], receipts=[receipt])
-
-
-def test_effectful_started_without_completion_cannot_confirm_completion():
-    event = ToolEffectEvent(
-        call_id="write-1",
-        effect=EffectKind.EFFECTFUL,
-        status=EffectEventStatus.STARTED,
-    )
-
-    with pytest.raises(InconsistentAgentResultError) as exc_info:
-        validate_completion_evidence(_completed_confirmed(), events=[event])
-
-    assert exc_info.value.evidence_state is SideEffectState.UNKNOWN
-
-
-def test_failed_effectful_terminal_closes_started_without_confirming_success():
-    events = [
-        ToolEffectEvent(
-            call_id="write-1",
-            effect=EffectKind.EFFECTFUL,
-            status=EffectEventStatus.STARTED,
-        ),
-        ToolEffectEvent(
-            call_id="write-1",
-            effect=EffectKind.EFFECTFUL,
-            status=EffectEventStatus.FAILED,
-        ),
-    ]
-    failed = AgentResult(
-        outcome=AgentOutcome.FAILED,
-        summary="The write command returned a nonzero exit code.",
-        error=AgentError(code="native_write_failed", retryable=True),
-    )
-
-    assert (
-        validate_completion_evidence(failed, events=events)
-        is SideEffectState.NONE
-    )
-    with pytest.raises(InconsistentAgentResultError) as exc_info:
-        validate_completion_evidence(_completed_confirmed(), events=events)
-    assert exc_info.value.evidence_state is SideEffectState.NONE
-
-
-def test_completed_different_operation_does_not_mask_incomplete_effect():
-    events = [
-        ToolEffectEvent(
-            call_id="write-incomplete",
-            effect=EffectKind.EFFECTFUL,
-            status=EffectEventStatus.STARTED,
-        ),
-        ToolEffectEvent(
-            call_id="write-complete",
-            effect=EffectKind.EFFECTFUL,
-            status=EffectEventStatus.COMPLETED,
-        ),
-    ]
-
-    with pytest.raises(InconsistentAgentResultError) as exc_info:
-        validate_completion_evidence(_completed_confirmed(), events=events)
-
-    assert exc_info.value.evidence_state is SideEffectState.UNKNOWN
-
-
-def test_receipt_for_different_operation_does_not_mask_incomplete_effect():
-    event = ToolEffectEvent(
-        call_id="write-incomplete",
-        effect=EffectKind.EFFECTFUL,
-        status=EffectEventStatus.STARTED,
-    )
-    receipt = ExecutionReceipt(
-        receipt_id="receipt-1",
-        operation_id="write-complete",
-        completed=True,
-        persisted=True,
-        safe_to_confirm=True,
-    )
-
-    with pytest.raises(InconsistentAgentResultError) as exc_info:
-        validate_completion_evidence(
-            _completed_confirmed(), events=[event], receipts=[receipt]
-        )
-
-    assert exc_info.value.evidence_state is SideEffectState.UNKNOWN
-
-
-def test_matching_receipt_completes_started_operation():
-    event = ToolEffectEvent(
-        call_id="write-1",
-        effect=EffectKind.EFFECTFUL,
-        status=EffectEventStatus.STARTED,
-    )
-    receipt = ExecutionReceipt(
-        receipt_id="receipt-1",
-        operation_id="write-1",
-        completed=True,
-        persisted=True,
-        safe_to_confirm=True,
-    )
-
-    assert (
-        validate_completion_evidence(
-            _completed_confirmed(), events=[event], receipts=[receipt]
-        )
-        is SideEffectState.CONFIRMED
-    )
-
-
-def test_realistic_lifecycle_events_correlate_by_call_id():
-    events = [
-        ToolEffectEvent(
-            call_id="write-1",
-            effect=EffectKind.EFFECTFUL,
-            status=EffectEventStatus.COMPLETED,
-        ),
-        ToolEffectEvent(
-            call_id="write-1",
-            effect=EffectKind.EFFECTFUL,
-            status=EffectEventStatus.STARTED,
-        ),
-        ToolEffectEvent(
-            call_id="write-1",
-            effect=EffectKind.EFFECTFUL,
-            status=EffectEventStatus.STARTED,
-        ),
-    ]
-
-    assert (
-        validate_completion_evidence(_completed_confirmed(), events=events)
-        is SideEffectState.CONFIRMED
-    )
-
-
-def test_completion_validation_never_infers_evidence_from_summary_text():
-    result = _completed_confirmed(
-        summary="The write was requested and I definitely sent and verified it."
-    )
-
-    with pytest.raises(InconsistentAgentResultError):
-        validate_completion_evidence(result, events=[])

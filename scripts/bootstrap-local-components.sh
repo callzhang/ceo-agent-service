@@ -106,52 +106,6 @@ ensure_terminal_notifier() {
   fi
 }
 
-ensure_dws() {
-  local path version upgrade_detail
-  path="$(command_path dws)"
-  if [[ -n "${path}" ]]; then
-    version="$(short_version dws --version)"
-    upgrade_detail="upgrade check skipped"
-    if dws upgrade --check --format json >/dev/null 2>&1; then
-      if dws upgrade -y --format json >/dev/null 2>&1; then
-        upgrade_detail="upgrade command completed"
-      else
-        upgrade_detail="upgrade command failed; existing dws remains available"
-      fi
-    else
-      upgrade_detail="upgrade check failed; existing dws remains available"
-    fi
-    record "dws" "done" "available at ${path}${version:+ (${version})}; ${upgrade_detail}"
-    return
-  fi
-
-  if [[ -n "${DWS_INSTALLER_PATH:-}" ]]; then
-    if "${DWS_INSTALLER_PATH}"; then
-      path="$(command_path dws)"
-      if [[ -n "${path}" ]]; then
-        record "dws" "done" "installed with DWS_INSTALLER_PATH at ${path}"
-        return
-      fi
-      record "dws" "failed" "DWS_INSTALLER_PATH completed but dws is still not on PATH."
-      return
-    fi
-    record "dws" "failed" "DWS_INSTALLER_PATH failed."
-    return
-  fi
-
-  if install_with_command "DWS_INSTALL_COMMAND"; then
-    path="$(command_path dws)"
-    if [[ -n "${path}" ]]; then
-      record "dws" "done" "installed with DWS_INSTALL_COMMAND at ${path}"
-      return
-    fi
-    record "dws" "failed" "DWS_INSTALL_COMMAND completed but dws is still not on PATH."
-    return
-  fi
-
-  record "dws" "failed" "Missing dws and no approved DWS_INSTALLER_PATH or DWS_INSTALL_COMMAND was provided."
-}
-
 ensure_codex() {
   local path version
   path="$(command_path codex)"
@@ -210,7 +164,6 @@ ensure_nvwa() {
 }
 
 ensure_terminal_notifier
-ensure_dws
 ensure_codex
 ensure_nvwa
 

@@ -61,13 +61,13 @@ def test_context_renders_reference_and_command_without_resolved_body():
     assert "dws doc info" in rendered
     assert "resolved_content" not in rendered
     assert "Trusted" not in rendered
-    assert "评论已提交" in rendered
+    assert "评论已提交" not in rendered
 
 
 def test_context_contains_only_the_agreed_business_rules():
     rendered = _context().render()
 
-    assert "current OA task owner" in rendered
+    assert "query live detail" in rendered
     assert "internal_personnel" in rendered
     assert "HR conversation may skip counterpart identity matching" in rendered
     assert "Never expose credentials" in rendered
@@ -135,7 +135,7 @@ def _assert_no_service_oa_resolution_fields(rendered: str) -> None:
         assert field not in rendered
 
 
-def test_oa_complete_form_fields_still_require_live_detail_and_ownership_read():
+def test_oa_complete_form_fields_still_require_live_detail_read():
     context = _oa_context(
         reference="process_instance_id=pid-1; task_id=tid-1",
         read_commands=(
@@ -151,7 +151,7 @@ def test_oa_complete_form_fields_still_require_live_detail_and_ownership_read():
     assert "task_id=tid-1" in rendered
     assert "dws oa approval detail" in rendered
     assert "dws oa approval task list --instance-id pid-1 --format json" in rendered
-    assert "query live task ownership" in rendered
+    assert "query live detail" in rendered
     assert "do not select by applicant or title similarity" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
@@ -166,11 +166,11 @@ def test_oa_instance_id_only_still_requires_agent_live_detail_read():
     assert "process_instance_id=pid-only" in rendered
     assert command in rendered
     assert "execute the provided read commands" in rendered
-    assert "current OA task owner" in rendered
+    assert "query live detail" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
-def test_oa_ambiguous_candidates_require_needs_human_without_write():
+def test_oa_ambiguous_candidates_require_needs_human():
     rendered = _oa_context(
         reference="pending OA candidates",
         read_commands=("dws oa approval task list --status pending --format json",),
@@ -178,11 +178,10 @@ def test_oa_ambiguous_candidates_require_needs_human_without_write():
 
     assert "multiple OA candidates remain" in rendered
     assert "return needs_human" in rendered
-    assert "do not execute an approval write" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
-def test_oa_completed_task_requires_no_approval_write():
+def test_oa_completed_task_requires_no_action():
     rendered = _oa_context(
         reference="process_instance_id=pid-completed",
         read_commands=(
@@ -192,11 +191,10 @@ def test_oa_completed_task_requires_no_approval_write():
 
     assert "already completed" in rendered
     assert "return no_action" in rendered
-    assert "do not execute an approval write" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
-def test_oa_not_current_user_requires_no_approval_write():
+def test_oa_lets_live_api_enforce_task_ownership():
     rendered = _oa_context(
         reference="process_instance_id=pid-foreign; task_id=tid-foreign",
         read_commands=(
@@ -204,16 +202,15 @@ def test_oa_not_current_user_requires_no_approval_write():
         ),
     ).render()
 
-    assert "belongs to another user" in rendered
-    assert "return needs_human" in rendered
-    assert "do not execute an approval write" in rendered
+    assert "Let the OA API enforce task ownership" in rendered
+    assert "belongs to another user" not in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
 def test_context_forbids_diagnosis_only_completion_for_execution_requests():
     rendered = _context().render()
 
-    assert "execute and verify" in rendered
+    assert "execute the requested action" in rendered
     assert "diagnosis-only" in rendered
     assert "needs_human or failed" in rendered
 

@@ -18,10 +18,10 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **钉钉消息发现**：通过 `dws` 读取未读会话、@ 消息、群聊广播消息、配置机器人私聊消息，并用慢路径补扫防止漏消息。
 - **消息路由**：区分群聊、私聊、文档、图片、日程、会议权限、OA 审批和系统通知。
 - **本地任务队列**：使用 SQLite 保存 `reply_tasks`、`reply_attempts`、`seen_messages`、`sent_replies`，避免重复处理和重复发送。
-- **Direct Agent 执行**：一次原生 `codex exec` 自行读取材料并调用获准工具；服务只允许元数据明确标记为只读的 DWS/Lark CLI 命令，外部写入必须走可核对回执的 MCP，最后输出结构化终态。
+- **Direct Agent 执行**：原生 `codex exec` 自行读取材料并使用当前 Codex 配置中的 CLI、MCP、plugin 和 skill，最后输出结构化终态；服务不再维护第二套 MCP 白名单、工具事件审计或副作用回执协议。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
 - **材料与工具上下文**：服务传递材料引用、原始 ID、链接和精确读取命令；Direct Agent 自行决定读取哪些钉钉文档、文件、OA 材料和本地 workspace 资料。
-- **安全和质量检查**：按结构化 result、工具 effect metadata、completed event 和回执校验终态，不从用户文本猜测执行意图。
+- **安全和质量检查**：服务校验严格结构化 result、队列 generation 和精确重复投递；业务判断、工具选择和动作核对由 Direct Agent 使用实时系统完成。
 - **人工接管**：对需要本人处理的消息发送 handoff，并暂停该会话的自动回复直到检测到真人回复。
 - **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时，自动发到最匹配的群，1:1 会议才私聊，并默认只真实 @ 参会相关人；非参会人只有会议中明确说到是他的任务时才 @。
@@ -49,8 +49,8 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 3. **Producer Routing 路由判断层**：群聊必须 @ 触发；私聊不需要 @；系统通知跳过；OA/日程/会议权限进入专门 handler。
 4. **SQLite Queue 状态层**：保存待处理任务、处理尝试、已读消息、已发送回复。
 5. **Channel Gate 层**：用 CLI status 和 authenticated probe 确认通道可用；只有明确 `needs_login` 才协调一次登录流程。
-6. **Direct Agent 层**：一次原生 `codex exec` 自行读取材料、判断并调用获准的 CLI/MCP 工具。
-7. **事件、回执与投递层**：增量持久化工具事件，验证外部动作回执，并用 generation-aware claim 防止重复或过时投递。
+6. **Direct Agent 层**：同一对话复用一个原生 Codex session；每条消息形成独立 run，并在该对话内串行读取材料、判断和执行。
+7. **会话与投递层**：保存 Codex session 指针和 transcript 范围，并用 generation-aware claim 与 `sent_replies` 防止重复或过时投递。
 8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd 和结果未知写操作的只读核对。
 
 当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取仍以临时网络错误失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。
@@ -59,11 +59,11 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 `blocked` 只表示缺少权限、依赖、材料或安全条件，后续条件恢复后仍应进入修复/恢复口径。确定不可恢复的阻塞必须写入 `send_status=blocked` 且 `send_error` 以 `blocked_unrecoverable_` 开头；这类记录在审计页显示为 terminal blocked，不再作为待修复 backlog。
 
-一次 reply task generation 对应一次 Direct Agent run。工具调用从流式开始就记录 effect；未命中已审阅 registry 的 command/tool 记为 `unreviewed`，不能默认为无副作用。完整结构化完成事件证明 read-only 时可以降级；否则不确定结果进入 `unknown`，禁止 generation rotation 和自动重放。只有持久化事件证明从未尝试过 effectful 或 unreviewed 操作，旧 run 才会以 `side_effect_state=none` 终止并换 generation 安全重跑；已关闭但缺回执、身份不完整或未审阅的操作绝不按无副作用处理。只读核对得到不可重试结论时，run 和 task 原子终止为明确 blocked/failed，不会永久停在 `processing`。
+一次 reply task generation 对应一次 Direct Agent run，同一 `conversation_id` 的 run 通过锁串行执行并复用 `conversations.codex_session_id`。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID 和本次 transcript 行范围，不复制工具事件或生成服务自定义回执。任务终态直接采用严格 `AgentResult`；精确重复发送仍由 trigger 和 `sent_replies` 幂等记录阻止，人工修订后的新内容不被旧结果拦截。
 
-`rerun-message --force-new-decision` 会在确认当前 generation 已结束且没有未知副作用后原子创建新 generation 和新 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
+`rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
-执行安全由明确证据保证：`completed + confirmed` 必须有持久化的 completed effectful event 或执行回执；只有诊断没有动作时返回 `needs_human` 或 `failed`。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
+Agent 必须如实返回动作结果；只完成诊断时返回 `needs_human` 或 `failed`。服务不再根据复制的工具事件二次判断 Agent 结论。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
 
 重复发送保护命中已有 `sent_replies` 时，新的发送 attempt 记为 `skipped`，不记为 `blocked`，也不写入 service error；这表示同一触发消息已处理完成，只是跳过了重复投递。
 
@@ -149,9 +149,10 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 scripts/bootstrap-local-components.sh --format json
 ```
 
-该脚本会自动安装 `terminal-notifier`、检查并升级已安装的 `dws`，并检查 Codex CLI 与 Nvwa skill。
-如果新机器缺少内部组件来源，先通过 `DWS_INSTALLER_PATH` / `DWS_INSTALL_COMMAND`、
-`CODEX_INSTALL_COMMAND`、`NVWA_SKILL_SOURCE` 提供组织批准的安装入口，再由 agent 继续执行，不要求用户逐条复制命令。
+该脚本会安装 `terminal-notifier`，并检查 Codex CLI 与 Nvwa skill。DWS 和 Lark 已拆成 Tutorial
+中的独立配置步骤：页面先检查 CLI 和登录状态；缺少 CLI 时点击对应按钮自动安装，未配置时再打开一次
+CLI 自带的授权流程。DWS 的内部安装来源通过 `DWS_INSTALLER_PATH` 或 `DWS_INSTALL_COMMAND` 提供；
+Lark 可通过 `LARK_CLI_INSTALL_COMMAND` 覆盖默认 npm 安装命令。
 
 不要让使用者逐条复制终端命令完成安装。agent 应该自己执行命令、检查输出、编辑本机配置，只在需要用户完成
 登录授权、扫码确认、macOS 权限点击、安装来源确认或 live-send 决策时打断用户。
@@ -199,7 +200,6 @@ cp .env.example .env
 | `CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS` | 会后对齐队列消费周期，默认 10 秒 |
 | `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex 模型配置；默认 `gpt-5.5` + `medium`，避免服务继承用户全局 `~/.codex/config.toml` 的模型 |
-| `CEO_CODEX_PASSTHROUGH_MCP_SERVERS` | 允许显式透传给 agent 的 MCP 白名单；默认保留 `xiaoqing_interview,exa`。`memory_connector` 会优先复用本机 Codex MCP 配置；飞书走本地 CLI，不是默认 MCP |
 | `CEO_FEISHU_CLI_BINARY` | 飞书 CLI 二进制名，默认 `lark` |
 | `CEO_FEISHU_LIVE_SEND_ENABLED` | 飞书 CLI 真实发送开关，默认 `0`；未显式设为 `1` 时 `send_reply` 只返回 blocked，不会发送 |
 | `data/mcp-doctor-state.json` | MCP doctor 的一次性提醒状态文件；用于避免 `needs_login` / `token_expired` 状态重复弹授权提醒 |
@@ -287,7 +287,7 @@ cd /path/to/ceo-agent-service
   --dingtalk-kb-workspace '<workspace-id-or-url>'
 ```
 
-普通运行时不需要预先同步整个外部知识库。消息中出现钉钉在线文档、OA、日程、图片或文件材料时，worker 会先尽量读取可访问正文和附件，再把材料区块交给 agent。读不到关键材料时，应追问、评论要求补材料或返回可审计错误，而不是猜测。
+普通运行时不需要预先同步整个外部知识库。消息中出现钉钉在线文档、OA、日程、图片或文件材料时，worker 只把原始引用和精确读取命令交给 Direct Agent；Agent 决定读取、展开和核对哪些材料。读不到关键材料时，应追问、评论要求补材料或返回明确错误，而不是猜测。
 
 ### 5. 数据准备：CEO 人格蒸馏
 
@@ -409,11 +409,9 @@ CEO reply agent 默认复用本机 Codex MCP/OAuth 配置，但仍显式禁用 h
 
 为了避免把个人密钥写进进程命令行，MCP 透传只复制 URL、OAuth resource、command、args、startup timeout 和 bearer token 环境变量名，不复制 `[mcp_servers.*.env]` 里的密钥值。需要 API key 的 stdio MCP 应把密钥放在 launchd 或 shell 环境中。
 
-Direct Agent 允许 `read-only` sandbox 中经过分类的本地只读 shell 命令，并只允许 CLI 发布元数据明确标记为只读的原生 DWS/Lark 命令；未知命令、写命令以及可执行脚本或网络访问的包装命令都会被拒绝。DWS/Lark 写命令由 agent 根据 CLI 发布的 effect metadata 调用 `reconciliation_cli.execute_reviewed_write`，服务执行已审核命令并持久化结构化回执。Codex 原生加载用户和项目 bootstrap；服务把存在的 `~/.agents/AGENT.md` 规范正文并入 Direct Agent instructions，避免 agent 再通过 shell 或 exec 重读规则文件。Codex CLI 的 JSONL 事件会返回 MCP `server`、`tool`、`arguments`、`result` 和 `status`，但目前不提供可直接信任的读写注解或 `tools/list` 清单。服务因此使用 [`config/mcp-tool-effects.json`](config/mcp-tool-effects.json) 中逐项审核的 `(server, tool) -> effect` 注册表；可用 `CEO_AGENT_MCP_EFFECTS_PATH` 指向部署方维护的同格式文件。未知工具按 fail-closed 处理，不能凭工具名或用户文本推断为已完成写操作。新增 MCP 工具时必须先从实际 `tools/list` 或受版本控制的能力清单核对工具描述并登记。
+Direct Agent 原样使用本机 Codex 配置中的 MCP、plugin、App、shell 和已安装 skill；服务不再生成 MCP `enabled_tools` 白名单，也不关闭用户配置。Agent 可直接读取适用的 `SKILL.md`，并直接调用 DWS/Lark CLI 或 MCP。认证登录仍由服务 gate 和 Tutorial 管理，Agent 不执行 login/reset/logout。
 
-Direct Agent 可通过本地只读 shell 或 `reconciliation_cli.read_skill` 自行读取已安装目录中的 `SKILL.md`；后者校验解析后的真实路径和文件大小。服务不替 agent 选择 skill，也不预读业务材料。
-
-允许 reviewed MCP 的运行模式不设置全局 `tools.enabled_tools=[]`，否则 Codex 会把已配置 MCP 一并从模型工具列表中移除。运行时关闭 Codex 插件和 App，并按 MCP effect registry 为每个 server 生成精确的 `enabled_tools`；未登记的 server 被禁用。原生 shell 保留在 `read-only` sandbox 中，只允许经过分类的本地只读发现命令（例如 `sed`、`rg`、`find`、`cat`），拒绝重定向、写入选项、脚本解释器、网络客户端和未知命令。DWS/Lark 外部读写仍必须经过 reviewed 工具及回执校验。受控 CLI 的 stdio MCP 固定以服务仓库为 `cwd`，因此即使 Agent workspace 是独立的资料目录，也能加载服务模块。完全无工具的独立只读任务继续使用全局空列表。
+Codex CLI 的原生 session JSONL 是运行审计。服务只保存 session ID 和每个 run 的 transcript 起止行，避免复制工具参数、结果和另一套回执状态机。
 
 服务启动会先运行 MCP doctor，检查 `memory_connector`、`exa`、`xiaoqing_interview`，状态只使用 `ready`、`needs_login`、`missing_config`、`token_expired`、`network_blocked`、`tool_not_found` 等明确值。`needs_login` 和 `token_expired` 只记录/提醒一次，然后暂停相关任务，不让 agent 自己触发登录循环。手动检查：
 

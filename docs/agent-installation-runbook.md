@@ -98,13 +98,15 @@ scripts/bootstrap-local-components.sh --format json
 ```
 
 The bootstrapper automatically installs `terminal-notifier` through Homebrew
-when available, checks and upgrades an existing `dws`, and verifies Codex CLI
-and the Nvwa skill. If an internal component is missing, provide the approved
-source through one of these environment variables and run the same bootstrapper
-again:
+when available and verifies Codex CLI and the Nvwa skill. DWS and Lark are
+separate Tutorial steps because each CLI owns its installation and interactive
+authorization lifecycle. If an internal component is missing, provide the
+approved source through one of these environment variables and click its
+Tutorial setup action:
 
 - `DWS_INSTALLER_PATH`: executable installer for `dws`
 - `DWS_INSTALL_COMMAND`: approved shell command for installing `dws`
+- `LARK_CLI_INSTALL_COMMAND`: approved override for installing `lark-cli`
 - `CODEX_INSTALL_COMMAND`: approved shell command for installing Codex CLI
 - `NVWA_SKILL_SOURCE`: approved local directory containing the Nvwa skill
 
@@ -134,12 +136,10 @@ decisions.
    dws upgrade -y --format json
    ```
 
-4. If `dws` is missing, install it through
-   `scripts/bootstrap-local-components.sh --format json` after setting
-   `DWS_INSTALLER_PATH` or `DWS_INSTALL_COMMAND` to the organization's approved
-   installer or package command. Do not invent a download URL. If the source is
-   unknown, ask the user for the approved installer or internal distribution
-   path, then let the agent run the install.
+4. If `dws` is missing, set `DWS_INSTALLER_PATH` or `DWS_INSTALL_COMMAND` to
+   the organization's approved installer or package command, then click
+   `Tutorial -> DingTalk CLI -> Install or configure`. Do not invent a download
+   URL.
 
 5. Authenticate `dws`:
 

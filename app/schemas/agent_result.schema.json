@@ -14,16 +14,12 @@
         "authorization_required": {
           "title": "Authorization Required",
           "type": "boolean"
-        },
-        "side_effect_state": {
-          "$ref": "#/$defs/SideEffectState"
         }
       },
       "required": [
         "code",
         "retryable",
-        "authorization_required",
-        "side_effect_state"
+        "authorization_required"
       ],
       "title": "AgentError",
       "type": "object"
@@ -36,15 +32,6 @@
         "failed"
       ],
       "title": "AgentOutcome",
-      "type": "string"
-    },
-    "SideEffectState": {
-      "enum": [
-        "none",
-        "confirmed",
-        "unknown"
-      ],
-      "title": "SideEffectState",
       "type": "string"
     }
   },

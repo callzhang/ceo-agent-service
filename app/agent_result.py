@@ -1,8 +1,7 @@
 import json
 from enum import StrEnum
-from typing import Iterable
-
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic.json_schema import SkipJsonSchema
 
 
 def _strict_agent_error_json_schema(schema: dict[str, object]) -> None:
@@ -38,7 +37,10 @@ class AgentError(BaseModel):
     code: str = ""
     retryable: bool = False
     authorization_required: bool = False
-    side_effect_state: SideEffectState = SideEffectState.NONE
+    side_effect_state: SkipJsonSchema[SideEffectState] = Field(
+        default=SideEffectState.NONE,
+        exclude=True,
+    )
 
 
 class AgentResult(BaseModel):
@@ -87,15 +89,6 @@ class ResultParseError(ValueError):
     pass
 
 
-class InconsistentAgentResultError(ValueError):
-    def __init__(self, evidence_state: SideEffectState) -> None:
-        self.evidence_state = evidence_state
-        super().__init__(
-            "completed result with confirmed side effect has no completed "
-            "effectful event or safe persisted receipt"
-        )
-
-
 def parse_agent_result(raw: str) -> AgentResult:
     payloads = _parse_jsonl_payloads(raw)
     for payload in reversed(payloads):
@@ -110,81 +103,6 @@ def parse_agent_result(raw: str) -> AgentResult:
                 "latest agent result candidate is malformed or does not match the strict schema"
             ) from exc
     raise ResultParseError("no valid AgentResult JSON found in Codex JSONL")
-
-
-def validate_completion_evidence(
-    result: AgentResult,
-    *,
-    events: Iterable[ToolEffectEvent],
-    receipts: Iterable[ExecutionReceipt] = (),
-) -> SideEffectState:
-    evidence_state = completion_evidence_state(events=events, receipts=receipts)
-    if (
-        result.outcome is AgentOutcome.COMPLETED
-        and result.error.side_effect_state is SideEffectState.CONFIRMED
-        and evidence_state is not SideEffectState.CONFIRMED
-    ):
-        raise InconsistentAgentResultError(evidence_state)
-    if (
-        result.outcome is AgentOutcome.NO_ACTION
-        and evidence_state is SideEffectState.CONFIRMED
-    ):
-        raise InconsistentAgentResultError(evidence_state)
-    return evidence_state
-
-
-def completion_evidence_state(
-    *,
-    events: Iterable[ToolEffectEvent],
-    receipts: Iterable[ExecutionReceipt],
-) -> SideEffectState:
-    event_list = tuple(events)
-    receipt_list = tuple(receipts)
-    effectful_started = {
-        event.call_id
-        for event in event_list
-        if event.effect is EffectKind.EFFECTFUL
-        and event.status is EffectEventStatus.STARTED
-    }
-    effectful_completed = {
-        event.call_id
-        for event in event_list
-        if event.effect is EffectKind.EFFECTFUL
-        and event.status is EffectEventStatus.COMPLETED
-    }
-    effectful_failed = {
-        event.call_id
-        for event in event_list
-        if event.effect is EffectKind.EFFECTFUL
-        and event.status is EffectEventStatus.FAILED
-    }
-    unreviewed = {
-        event.call_id
-        for event in event_list
-        if event.effect is EffectKind.UNREVIEWED
-    }
-    proven_read_only = {
-        event.call_id
-        for event in event_list
-        if event.effect is EffectKind.READ_ONLY
-        and event.status is EffectEventStatus.COMPLETED
-    }
-    receipt_completed = {
-        receipt.operation_id
-        for receipt in receipt_list
-        if receipt.completed and receipt.persisted and receipt.safe_to_confirm
-    }
-    completed_operations = effectful_completed | receipt_completed
-
-    # Lifecycle evidence is set-based: duplicates and event order do not matter.
-    # Every started effect must close under the same stable operation ID.
-    if unreviewed - proven_read_only - completed_operations:
-        return SideEffectState.UNKNOWN
-    if effectful_started - completed_operations - effectful_failed:
-        return SideEffectState.UNKNOWN
-    if completed_operations:
-        return SideEffectState.CONFIRMED
-    return SideEffectState.NONE
 
 
 def _parse_jsonl_payloads(raw: str) -> list[dict]:

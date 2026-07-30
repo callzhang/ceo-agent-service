@@ -21,11 +21,10 @@ from app.agent_result import (
     ResultParseError,
     SideEffectState,
     ToolEffectEvent,
-    completion_evidence_state,
     parse_agent_result,
-    validate_completion_evidence,
 )
 from app.codex_runner import CodexRunner
+from app.codex_history import count_codex_session_lines
 from app.channel_gate import ChannelGateState
 from app.dws_client import DwsClient
 from app.history import safe_observability_error
@@ -70,17 +69,12 @@ DIRECT_AGENT_DEVELOPER_INSTRUCTIONS = """You are the Direct Agent for one queued
 - Return only one JSON object matching the AgentResult schema supplied to Codex.
 - Never run authentication login, reset, or logout commands. Authentication readiness belongs to the service gate.
 - Never expose credentials, tokens, cookies, authorization codes, signed URLs, or local credential paths.
-- Use sandboxed local read-only shell commands such as sed, rg, find, and cat to discover and read local context when useful. Never use shell for local writes, network access, script execution, authentication, or external side effects.
-- Read an applicable installed SKILL.md with local read-only shell commands or reconciliation_cli.read_skill.
-- Execute DWS and Lark commands through reconciliation_cli.execute_reviewed_read or reconciliation_cli.execute_reviewed_write according to the command's published effect metadata; do not execute those CLIs through the shell.
-- Do not infer successful execution from prose. Report completion only when direct execution and verification produced structured evidence."""
+- Use the configured MCP tools and installed DWS/Lark CLIs directly. Read an applicable installed SKILL.md before using a business capability.
+- Use the original conversation context and live tool results to decide and execute the task. Report the actual outcome without inventing success."""
 READ_ONLY_DEVELOPER_INSTRUCTION = (
-    "This invocation is read-only. Do not perform any external write, send, "
-    "approval, comment, reaction, edit, or other state-changing action. "
-    "For exact DWS or Lark commands, call "
-    "reconciliation_cli.execute_reviewed_read with the command argv; do not "
-    "execute those CLIs through the shell. Sandboxed local read-only shell "
-    "commands may be used to discover context and read applicable installed skills."
+    "This invocation is read-only. Use configured MCP tools and installed CLIs "
+    "only for reads. Do not perform any external write, send, approval, comment, "
+    "reaction, edit, login, reset, logout, or other state-changing action."
 )
 _NATIVE_READ_ONLY_ITEM_TYPES = frozenset(
     {"tool_search", "tool_search_call", "web_search", "web_search_call"}
@@ -386,6 +380,27 @@ class DirectAgentRunner:
         read_only: bool = False,
         now: str | None = None,
     ) -> DirectAgentRunResult:
+        try:
+            with self.store.codex_session_lock(task.conversation_id, self.owner):
+                return self._run_locked(
+                    task,
+                    context,
+                    read_only=read_only,
+                    now=now,
+                )
+        except RuntimeError as exc:
+            if str(exc).startswith("codex session locked:"):
+                raise AgentRunUnavailableError(str(exc)) from exc
+            raise
+
+    def _run_locked(
+        self,
+        task: ReplyTask,
+        context: AgentTaskContext,
+        *,
+        read_only: bool = False,
+        now: str | None = None,
+    ) -> DirectAgentRunResult:
         if context.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
         claim = self.store.claim_agent_run(
@@ -400,6 +415,12 @@ class DirectAgentRunner:
                 f"agent run is not available for task generation: {task.id}"
             )
         run = claim.run
+        session_id = (
+            run.codex_session_id
+            or self.store.get_codex_session_id(task.conversation_id)
+            or None
+        )
+        transcript_start_line = count_codex_session_lines(session_id) if session_id else 0
         prompt = context.render()
         developer_instructions = direct_agent_developer_instructions()
         approval_policy = "untrusted"
@@ -413,33 +434,18 @@ class DirectAgentRunner:
             developer_instructions += "\n\n" + READ_ONLY_DEVELOPER_INSTRUCTION
         command = self.codex.build_command(
             prompt=prompt,
-            session_id=run.codex_session_id or None,
+            session_id=session_id,
             output_schema_path=AGENT_RESULT_SCHEMA_PATH,
             approval_policy=approval_policy,
             developer_instructions=developer_instructions,
             use_approval_bypass=False,
             preserve_native_model_config=True,
         )
-        if read_only:
-            make_read_only_with_reviewed_tools(
-                command,
-                reviewed_mcp_tools=self.mcp_effect_registry.reviewed_read_tools(),
-                controlled_cli_command=sys.executable,
-                controlled_cli_args=("-m", "app.reconciliation_cli"),
-                controlled_cli_cwd=str(SERVICE_ROOT),
-            )
-        else:
-            make_direct_agent_sandbox(
-                command,
-                reviewed_mcp_tools=self.mcp_effect_registry.reviewed_tools(),
-                controlled_cli_command=sys.executable,
-                controlled_cli_args=("-m", "app.reconciliation_cli"),
-                controlled_cli_cwd=str(SERVICE_ROOT),
-            )
         saw_json = False
+        stream_line_count = 0
 
         def persist_line(line: str) -> None:
-            nonlocal saw_json
+            nonlocal saw_json, stream_line_count
             if not line.strip():
                 return
             try:
@@ -451,55 +457,22 @@ class DirectAgentRunner:
             saw_json = True
             if not isinstance(payload, dict):
                 raise AgentStreamError("codex_stream_invalid")
+            stream_line_count += 1
             session_id = _session_id(payload)
             if session_id:
                 self.store.set_agent_run_session(
                     run.id,
                     session_id,
                     owner=self.owner,
-                    transcript_start_line=run.transcript_start_line,
+                    transcript_start_line=transcript_start_line,
                     now=now,
                 )
-            item = payload.get("item")
-            native_command = None
-            if (
-                isinstance(item, dict)
-                and item.get("type") == "command_execution"
-            ):
-                native_command = _native_cli_command(
-                    payload,
-                    self.native_cli_classifier,
-                    cached_only=False,
+                self.store.upsert_conversation(
+                    task.conversation_id,
+                    task.conversation_title,
+                    task.single_chat,
+                    session_id,
                 )
-                if (
-                    native_command is None
-                    or native_command.effect is not EffectKind.READ_ONLY
-                ):
-                    raise AgentReadOnlyViolationError(
-                        "direct_agent_shell_forbidden"
-                    )
-            mcp_call = _mcp_tool_call(payload, self.mcp_effect_registry)
-            safe_event = (
-                _effect_evidence_event(
-                    payload,
-                    native_command=native_command,
-                    mcp_call=mcp_call,
-                )
-                if native_command is not None or mcp_call is not None
-                else _safe_event(payload)
-            )
-            self.store.append_agent_run_event(
-                run.id,
-                safe_event,
-                owner=self.owner,
-                now=now,
-            )
-            self._record_stream_receipt(
-                run.id,
-                payload,
-                mcp_call=mcp_call,
-                now=now,
-            )
 
         try:
             process = self.executor(
@@ -555,18 +528,8 @@ class DirectAgentRunner:
         persisted = self.store.get_agent_run(run.id)
         if persisted is None:
             raise RuntimeError("agent run was not persisted")
-        all_effect_events, embedded_receipts = structured_execution_evidence(
-            persisted.tool_events
-        )
-        persisted_receipts = _execution_receipts_for_run(self.store, run.id)
-        all_receipts = (*embedded_receipts, *persisted_receipts)
         try:
             result = parse_agent_result(process.stdout)
-            evidence_state = validate_completion_evidence(
-                result,
-                events=all_effect_events,
-                receipts=all_receipts,
-            )
         except (ResultParseError, ValueError) as exc:
             self._record_failure(
                 run.id,
@@ -579,25 +542,20 @@ class DirectAgentRunner:
                 ) from exc
             raise RuntimeError("codex_result_invalid") from exc
 
-        if evidence_state is SideEffectState.UNKNOWN:
-            self.store.mark_agent_run_unknown(
-                run.id,
-                {"code": "agent_side_effect_unknown"},
-                owner=self.owner,
-                transcript_end_line=persisted.transcript_end_line,
-                now=now,
-            )
-            raise AgentRunUnknownError(
-                result.error.code or "agent_side_effect_unknown",
-                run.id,
-            )
-        elif result.outcome is AgentOutcome.FAILED:
+        persisted_session_id = self.store.get_agent_run(run.id).codex_session_id
+        transcript_end_line = max(
+            transcript_start_line + stream_line_count,
+            count_codex_session_lines(persisted_session_id)
+            if persisted_session_id
+            else 0,
+        )
+        if result.outcome is AgentOutcome.FAILED:
             self.store.fail_agent_run(
                 run.id,
                 result.error.model_dump(mode="json"),
                 owner=self.owner,
-                side_effect_state=evidence_state.value,
-                transcript_end_line=persisted.transcript_end_line,
+                side_effect_state=SideEffectState.NONE.value,
+                transcript_end_line=transcript_end_line,
                 now=now,
             )
         else:
@@ -605,8 +563,8 @@ class DirectAgentRunner:
                 run.id,
                 result.model_dump(mode="json"),
                 owner=self.owner,
-                side_effect_state=evidence_state.value,
-                transcript_end_line=persisted.transcript_end_line,
+                side_effect_state=SideEffectState.NONE.value,
+                transcript_end_line=transcript_end_line,
                 now=now,
             )
         completed_run = self.store.get_agent_run(run.id)
@@ -615,38 +573,11 @@ class DirectAgentRunner:
         return DirectAgentRunResult(
             run_id=run.id,
             result=result,
-            transcript_start_line=run.transcript_start_line,
+            transcript_start_line=transcript_start_line,
             transcript_end_line=completed_run.transcript_end_line,
-            events=tuple(completed_run.tool_events),
-            receipts=tuple(all_receipts),
+            events=(),
+            receipts=(),
         )
-
-    def _record_stream_receipt(
-        self,
-        run_id: int,
-        payload: dict[str, object],
-        *,
-        mcp_call: McpToolCall | None,
-        now: str | None,
-    ) -> None:
-        call_id = _native_call_id(payload)
-        if (
-            mcp_call is not None
-            and mcp_call.effect is EffectKind.EFFECTFUL
-            and call_id
-            and _mcp_call_completed(payload)
-        ):
-            self.store.record_agent_execution_receipt(
-                run_id,
-                receipt_id=f"mcp:{run_id}:{call_id}",
-                operation_id=call_id,
-                cli=mcp_call.native_cli or f"mcp:{mcp_call.server}",
-                command_path=mcp_call.operation,
-                command_digest=mcp_call.operation_digest,
-                exit_code=0,
-                owner=self.owner,
-                now=now,
-            )
 
     def reconcile(
         self,
@@ -848,34 +779,14 @@ class DirectAgentRunner:
         persisted = self.store.get_agent_run(run_id)
         if persisted is None:
             raise RuntimeError("agent run was not persisted")
-        if persisted.status == "unknown":
-            return
-        events, embedded_receipts = structured_execution_evidence(
-            persisted.tool_events
-        )
-        receipts = (
-            *embedded_receipts,
-            *_execution_receipts_for_run(self.store, run_id),
-        )
-        evidence_state = completion_evidence_state(
-            events=events,
-            receipts=receipts,
-        )
-        if evidence_state is SideEffectState.UNKNOWN:
-            self.store.mark_agent_run_unknown(
-                run_id,
-                {"code": code},
-                owner=self.owner,
-                transcript_end_line=persisted.transcript_end_line,
-                now=now,
-            )
+        if persisted.status != "running":
             return
         self.store.fail_agent_run(
             run_id,
             {"code": code, "retryable": True},
             owner=self.owner,
             transcript_end_line=persisted.transcript_end_line,
-            side_effect_state=evidence_state.value,
+            side_effect_state=SideEffectState.NONE.value,
             now=now,
         )
 

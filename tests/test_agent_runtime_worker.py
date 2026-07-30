@@ -210,49 +210,21 @@ class ScriptedDirectAgentRunner:
                 owner=self.owner,
                 now=NOW,
             )
-        for event in script.events:
-            run = self.store.append_agent_run_event(
-                run.id,
-                event,
-                owner=self.owner,
-                now=NOW,
-            )
-        for receipt in script.receipts:
-            self.store.record_agent_execution_receipt(
-                run.id,
-                receipt_id=f"native:{receipt.operation_id}:{receipt.command_digest}",
-                operation_id=receipt.operation_id,
-                cli=receipt.cli,
-                command_path=receipt.command_path,
-                command_digest=receipt.command_digest,
-                exit_code=0,
-                owner=self.owner,
-                now=NOW,
-            )
-        if script.result.error.side_effect_state is SideEffectState.UNKNOWN:
-            self.store.mark_agent_run_unknown(
-                run.id,
-                {"code": script.result.error.code or "agent_side_effect_unknown"},
-                owner=self.owner,
-                transcript_end_line=len(script.events),
-                now=NOW,
-            )
-        elif script.result.outcome is AgentOutcome.FAILED:
+        if script.result.outcome is AgentOutcome.FAILED:
             self.store.fail_agent_run(
                 run.id,
                 script.result.error.model_dump(mode="json"),
                 owner=self.owner,
-                side_effect_state=("confirmed" if script.receipts else "none"),
+                side_effect_state="none",
                 transcript_end_line=len(script.events),
                 now=NOW,
             )
         else:
-            evidence_state = "confirmed" if script.receipts else "none"
             self.store.complete_agent_run(
                 run.id,
                 script.result.model_dump(mode="json"),
                 owner=self.owner,
-                side_effect_state=evidence_state,
+                side_effect_state="none",
                 transcript_end_line=len(script.events),
                 now=NOW,
             )
@@ -544,12 +516,6 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
                 result = _result(
                     AgentOutcome.NO_ACTION,
                     summary="Live OA task is already completed.",
-                )
-            elif live_task.get("current_user") is not True:
-                result = _result(
-                    AgentOutcome.NEEDS_HUMAN,
-                    summary="Live OA task does not belong to the current user.",
-                    code="oa_task_not_current_user",
                 )
             else:
                 task_id = str(live_task.get("task_id") or "")
@@ -1254,7 +1220,7 @@ def test_retryable_failure_stops_at_worker_attempt_limit(tmp_path: Path):
     assert worker.store.get_reply_task(task_id).status == "failed"
 
 
-def test_retryable_failure_with_confirmed_receipt_is_terminal_and_never_requeued(
+def test_retryable_failure_is_requeued_without_custom_receipt_logic(
     tmp_path: Path,
 ):
     trigger = _message("请发送回复")
@@ -1279,20 +1245,14 @@ def test_retryable_failure_with_confirmed_receipt_is_terminal_and_never_requeued
     worker.consume_once(max_tasks=1)
 
     task = worker.store.get_reply_task(task_id)
-    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert task is not None and task.status == "failed"
-    assert attempt is not None and attempt.send_status == "failed"
-    assert "confirmed" in attempt.send_error
+    assert task is not None and task.status == "pending"
     assert len(runner.calls) == 1
     run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
-    assert run is not None and run.side_effect_state == "confirmed"
-    assert [
-        receipt.operation_id
-        for receipt in worker.store.list_agent_execution_receipts(run.id)
-    ] == ["send-confirmed"]
+    assert run is not None and run.side_effect_state == "none"
+    assert worker.store.list_agent_execution_receipts(run.id) == []
 
 
-def test_completed_confirmed_without_effectful_evidence_is_rejected(tmp_path: Path):
+def test_completed_result_does_not_require_custom_effect_evidence(tmp_path: Path):
     trigger = _message("请修复服务")
     worker, _runner, _dws = _worker(
         tmp_path,
@@ -1308,11 +1268,10 @@ def test_completed_confirmed_without_effectful_evidence_is_rejected(tmp_path: Pa
 
     worker.consume_once(max_tasks=1)
 
-    assert worker.store.get_reply_task(task_id).status == "failed"
+    assert worker.store.get_reply_task(task_id).status == "done"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "failed"
-    assert "completion_evidence" in attempt.send_error
+    assert attempt.send_status == "completed"
 
 
 def test_diagnosis_only_for_requested_execution_is_blocked_by_agent_result(
@@ -1344,7 +1303,7 @@ def test_diagnosis_only_for_requested_execution_is_blocked_by_agent_result(
     assert attempt.send_error == "execution_not_performed"
 
 
-def test_no_action_with_persisted_effect_receipt_is_rejected(tmp_path: Path):
+def test_no_action_result_does_not_consult_custom_receipts(tmp_path: Path):
     trigger = _message("请检查是否需要处理")
     worker, _runner, _dws = _worker(
         tmp_path,
@@ -1360,14 +1319,18 @@ def test_no_action_with_persisted_effect_receipt_is_rejected(tmp_path: Path):
 
     worker.consume_once(max_tasks=1)
 
-    assert worker.store.get_reply_task(task_id).status == "failed"
+    assert worker.store.get_reply_task(task_id).status == "done"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "failed"
-    assert attempt.send_error == "completion_evidence_inconsistent"
+    assert attempt.send_status == "skipped"
+    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    assert run is not None
+    assert worker.store.list_agent_execution_receipts(run.id) == []
 
 
-def test_incomplete_effect_is_unknown_and_never_replayed(tmp_path: Path):
+def test_failed_result_is_a_regular_failure_without_unknown_effect_state(
+    tmp_path: Path,
+):
     trigger = _message("请发送回复")
     worker, runner, _dws = _worker(
         tmp_path,
@@ -1389,11 +1352,12 @@ def test_incomplete_effect_is_unknown_and_never_replayed(tmp_path: Path):
     worker.consume_once(max_tasks=1)
 
     assert len(runner.calls) == 1
-    assert worker.store.get_reply_task(task_id).status == "processing"
+    assert worker.store.get_reply_task(task_id).status == "failed"
     run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
-    assert run is not None and run.status == "unknown"
+    assert run is not None and run.status == "failed"
+    assert run.side_effect_state == "none"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_status == "blocked"
+    assert attempt is not None and attempt.send_status == "failed"
 
 
 def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path):
@@ -1455,14 +1419,8 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
         rerun.execution_generation,
     )
     assert first_run is not None and second_run is not None
-    assert [
-        receipt.operation_id
-        for receipt in worker.store.list_agent_execution_receipts(first_run.id)
-    ] == ["send-a"]
-    assert [
-        receipt.operation_id
-        for receipt in worker.store.list_agent_execution_receipts(second_run.id)
-    ] == ["send-b"]
+    assert worker.store.list_agent_execution_receipts(first_run.id) == []
+    assert worker.store.list_agent_execution_receipts(second_run.id) == []
 
 
 def test_manual_review_reaches_agent_without_unrelated_attempt_fields(tmp_path: Path):
@@ -1724,7 +1682,7 @@ def test_stale_recovery_allows_one_extra_runtime_retry_then_notifies_failure(
     ]
 
 
-def test_stale_processing_with_incomplete_effect_becomes_unknown_without_rerun(
+def test_stale_processing_ignores_copied_tool_events_and_resumes_same_run(
     tmp_path: Path,
 ):
     trigger = _message("请发送一次通知")
@@ -1762,13 +1720,11 @@ def test_stale_processing_with_incomplete_effect_becomes_unknown_without_rerun(
     assert runner.calls == []
     run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
     assert run is not None
-    assert run.status == "unknown"
+    assert run.status == "running"
     assert run.side_effect_state == "unknown"
-    assert worker.store.get_reply_task(task_id).status == "processing"
+    assert worker.store.get_reply_task(task_id).status == "pending"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None
-    assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt is None or attempt.send_status != "blocked"
 
 
 def test_context_reuses_confirmed_fact_and_does_not_pre_read_material(tmp_path: Path):
@@ -1940,8 +1896,8 @@ def test_calendar_context_passes_raw_event_id_and_exact_live_read_command(
                     {"task_id": "task-1", "status": "running", "current_user": False}
                 ]
             },
-            "blocked",
-            False,
+            "completed",
+            True,
         ),
     ],
 )
@@ -1982,7 +1938,7 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
     run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
     assert run is not None
     assert bool(native_executor.write_calls) is effectful
-    assert bool(worker.store.list_agent_execution_receipts(run.id)) is effectful
+    assert worker.store.list_agent_execution_receipts(run.id) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == attempt_status
@@ -1990,7 +1946,7 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
         assert "task-live" in native_executor.write_calls[0]
 
 
-def test_diagnosis_only_completed_claim_is_rejected_by_real_runner_protocol(
+def test_service_accepts_agent_result_without_reimplementing_agent_judgment(
     tmp_path: Path,
 ):
     trigger = _message(
@@ -2007,18 +1963,18 @@ def test_diagnosis_only_completed_claim_is_rejected_by_real_runner_protocol(
     )
     task_id = _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 1
 
     task = worker.store.get_reply_task(task_id)
-    assert task is not None and task.status == "failed"
+    assert task is not None and task.status == "done"
     run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
     assert run is not None
-    assert run.status == "failed"
+    assert run.status == "completed"
     assert run.side_effect_state == "none"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "failed"
-    assert attempt.send_error == "codex_result_invalid"
+    assert attempt.send_status == "completed"
+    assert attempt.send_error == ""
     assert len(native_executor.calls) == 1
     assert native_executor.write_calls == []
     assert dws.forbidden_material_reads == []

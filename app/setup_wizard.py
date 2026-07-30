@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 
+from app.channel_gate import ChannelGateState, default_channel_gates
 from app.cli import setup_memory_connector_command
 from app.developer_prompt import (
     SEED_DEVELOPER_PROMPT_TEMPLATE,
@@ -56,7 +57,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
         id="cli_components",
         title="CLI Components",
         phase="Phase 2",
-        description="Verify and install dws, Codex CLI, Nvwa skill, and notifications.",
+        description="Verify and install Codex CLI, Nvwa skill, and notifications.",
         depends_on=["preflight"],
         actions=[
             SetupAction(
@@ -70,6 +71,50 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
                 label="Fix automatically",
                 step_id="cli_components",
                 kind="run",
+            ),
+        ],
+    ),
+    SetupStepDefinition(
+        id="dingtalk_cli",
+        title="DingTalk CLI",
+        phase="Phase 2",
+        description="Install DWS and open its official configuration flow when needed.",
+        depends_on=["preflight"],
+        actions=[
+            SetupAction(
+                id="check_dingtalk_cli",
+                label="Check",
+                step_id="dingtalk_cli",
+                kind="check",
+            ),
+            SetupAction(
+                id="setup_dingtalk_cli",
+                label="Install or configure",
+                step_id="dingtalk_cli",
+                kind="run",
+                external_side_effect=True,
+            ),
+        ],
+    ),
+    SetupStepDefinition(
+        id="lark_cli",
+        title="Lark CLI",
+        phase="Phase 2",
+        description="Install Lark CLI and open its official configuration flow when needed.",
+        depends_on=["preflight"],
+        actions=[
+            SetupAction(
+                id="check_lark_cli",
+                label="Check",
+                step_id="lark_cli",
+                kind="check",
+            ),
+            SetupAction(
+                id="setup_lark_cli",
+                label="Install or configure",
+                step_id="lark_cli",
+                kind="run",
+                external_side_effect=True,
             ),
         ],
     ),
@@ -488,6 +533,20 @@ def check_setup_step(
         return _check_preflight(repo_root=repo_root)
     if step_id == "cli_components":
         return _check_cli_components(repo_root=repo_root)
+    if step_id == "dingtalk_cli":
+        return _check_channel_cli(
+            step_id="dingtalk_cli",
+            title="DingTalk CLI",
+            binary="dws",
+            channel="dingtalk",
+        )
+    if step_id == "lark_cli":
+        return _check_channel_cli(
+            step_id="lark_cli",
+            title="Lark CLI",
+            binary="lark-cli",
+            channel="lark",
+        )
     if step_id == "service_config":
         return check_service_config(repo_root=repo_root)
     if step_id == "data_corpus":
@@ -568,7 +627,6 @@ def _check_preflight(*, repo_root: Path) -> SetupStepStatus:
 
 def _check_cli_components(*, repo_root: Path) -> SetupStepStatus:
     del repo_root
-    dws_ready = shutil.which("dws") is not None
     codex_ready = shutil.which("codex") is not None
     terminal_notifier_ready = shutil.which("terminal-notifier") is not None
     nvwa_ready = any(
@@ -581,7 +639,6 @@ def _check_cli_components(*, repo_root: Path) -> SetupStepStatus:
     missing = [
         label
         for label, ready in (
-            ("dws", dws_ready),
             ("codex", codex_ready),
             ("Nvwa skill", nvwa_ready),
             ("terminal-notifier", terminal_notifier_ready),
@@ -595,7 +652,6 @@ def _check_cli_components(*, repo_root: Path) -> SetupStepStatus:
             status="needs_action",
             summary="Missing CLI components: " + ", ".join(missing),
             evidence={
-                "dws": dws_ready,
                 "codex": codex_ready,
                 "nvwa_skill": nvwa_ready,
                 "terminal_notifier": terminal_notifier_ready,
@@ -605,14 +661,184 @@ def _check_cli_components(*, repo_root: Path) -> SetupStepStatus:
         "cli_components",
         title="CLI Components",
         status="done",
-        summary="dws, Codex CLI, Nvwa skill, and terminal-notifier are available.",
+        summary="Codex CLI, Nvwa skill, and terminal-notifier are available.",
         evidence={
-            "dws": True,
             "codex": True,
             "nvwa_skill": True,
             "terminal_notifier": True,
         },
     )
+
+
+def _check_channel_cli(
+    *,
+    step_id: str,
+    title: str,
+    binary: str,
+    channel: str,
+) -> SetupStepStatus:
+    path = shutil.which(binary)
+    if path is None:
+        return _status(
+            step_id,
+            title=title,
+            status="needs_action",
+            summary=f"{binary} is not installed.",
+            evidence={"installed": False},
+        )
+    gates = default_channel_gates(
+        dws_binary=binary if channel == "dingtalk" else "dws",
+        lark_binary=binary if channel == "lark" else "lark-cli",
+    )
+    result = gates[channel].check()
+    ready = result.state is ChannelGateState.READY
+    return _status(
+        step_id,
+        title=title,
+        status="done" if ready else "needs_action",
+        summary=(
+            f"{binary} is installed and configured."
+            if ready
+            else f"{binary} needs configuration: {result.reason_code}."
+        ),
+        evidence={
+            "installed": True,
+            "channel_state": result.state.value,
+            "reason_code": result.reason_code,
+        },
+    )
+
+
+def _setup_channel_cli(
+    *,
+    step_id: str,
+    title: str,
+    binary: str,
+    channel: str,
+    env: dict[str, str],
+) -> SetupWizardEvent:
+    merged_env = os.environ.copy()
+    merged_env.update(env)
+    installed = shutil.which(binary) is not None
+    stdout = ""
+    stderr = ""
+    if not installed:
+        install_command = _channel_install_command(
+            binary=binary,
+            env=merged_env,
+        )
+        if install_command is None:
+            return SetupWizardEvent(
+                step_id=step_id,
+                action_id=f"setup_{step_id}",
+                status="failed",
+                summary=(
+                    "DWS installer is not configured. Set DWS_INSTALLER_PATH "
+                    "or DWS_INSTALL_COMMAND in the service environment."
+                ),
+                evidence={"installed": False},
+            )
+        completed = subprocess.run(
+            install_command,
+            env=merged_env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        stdout = redact_setup_output(completed.stdout or "")
+        stderr = redact_setup_output(completed.stderr or "")
+        installed = completed.returncode == 0 and shutil.which(binary) is not None
+        if not installed:
+            return SetupWizardEvent(
+                step_id=step_id,
+                action_id=f"setup_{step_id}",
+                status="failed",
+                summary=f"{title} installation failed.",
+                evidence={
+                    "installed": False,
+                    "returncode": completed.returncode,
+                },
+                stdout_excerpt=stdout[-4000:],
+                stderr_excerpt=stderr[-4000:],
+            )
+
+    gates = default_channel_gates(
+        dws_binary=binary if channel == "dingtalk" else "dws",
+        lark_binary=binary if channel == "lark" else "lark-cli",
+    )
+    result = gates[channel].check()
+    if result.state is ChannelGateState.READY:
+        return SetupWizardEvent(
+            step_id=step_id,
+            action_id=f"setup_{step_id}",
+            status="done",
+            next_step_status="done",
+            summary=f"{title} is installed and configured.",
+            evidence={
+                "installed": True,
+                "channel_state": result.state.value,
+            },
+            stdout_excerpt=stdout[-4000:],
+            stderr_excerpt=stderr[-4000:],
+        )
+
+    try:
+        process = subprocess.Popen(
+            [binary, "auth", "login"],
+            env=merged_env,
+            text=True,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        return SetupWizardEvent(
+            step_id=step_id,
+            action_id=f"setup_{step_id}",
+            status="failed",
+            summary=f"{title} configuration could not be opened.",
+            evidence={
+                "installed": True,
+                "channel_state": result.state.value,
+            },
+            stderr_excerpt=redact_setup_output(str(exc)),
+        )
+    return SetupWizardEvent(
+        step_id=step_id,
+        action_id=f"setup_{step_id}",
+        status="done",
+        next_step_status="needs_action",
+        summary=(
+            f"{title} is installed. Its configuration window was opened; "
+            "finish authorization, then click Check."
+        ),
+        evidence={
+            "installed": True,
+            "channel_state": result.state.value,
+            "login_started": True,
+            "pid": process.pid,
+        },
+        stdout_excerpt=stdout[-4000:],
+        stderr_excerpt=stderr[-4000:],
+    )
+
+
+def _channel_install_command(
+    *,
+    binary: str,
+    env: dict[str, str],
+) -> list[str] | None:
+    if binary == "dws":
+        installer_path = env.get("DWS_INSTALLER_PATH", "").strip()
+        if installer_path:
+            return [installer_path]
+        configured = env.get("DWS_INSTALL_COMMAND", "").strip()
+        return ["/bin/zsh", "-lc", configured] if configured else None
+    configured = env.get("LARK_CLI_INSTALL_COMMAND", "").strip()
+    if configured:
+        return ["/bin/zsh", "-lc", configured]
+    npm = shutil.which("npm")
+    if npm:
+        return [npm, "install", "-g", "@larksuite/cli"]
+    return None
 
 
 def run_setup_action(
@@ -623,6 +849,22 @@ def run_setup_action(
 ) -> SetupWizardEvent:
     if action_id == "setup_cli_components":
         return _setup_cli_components(repo_root, env or {})
+    if action_id == "setup_dingtalk_cli":
+        return _setup_channel_cli(
+            step_id="dingtalk_cli",
+            title="DingTalk CLI",
+            binary="dws",
+            channel="dingtalk",
+            env=env or {},
+        )
+    if action_id == "setup_lark_cli":
+        return _setup_channel_cli(
+            step_id="lark_cli",
+            title="Lark CLI",
+            binary="lark-cli",
+            channel="lark",
+            env=env or {},
+        )
     if action_id == "setup_service_config":
         return _setup_service_config(repo_root, env or {})
     if action_id == "setup_mcp":

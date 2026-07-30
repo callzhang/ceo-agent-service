@@ -21,10 +21,7 @@ from app.agent_result import (
     AgentError,
     AgentOutcome,
     AgentResult,
-    ExecutionReceipt,
-    InconsistentAgentResultError,
     SideEffectState,
-    validate_completion_evidence,
 )
 from app.agent_runner import (
     LEASE_SECONDS,
@@ -1456,7 +1453,6 @@ class DingTalkAutoReplyWorker:
         self._pass_channel_results = {}
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
-        self.reconcile_unknown_agent_runs(limit=limit)
         self._recover_stale_agent_reply_tasks()
         claimed_tasks = 0
         scan_now = self._sqlite_timestamp(self._now())
@@ -1598,6 +1594,11 @@ class DingTalkAutoReplyWorker:
                 recovered += 1
                 continue
             if run.status == "unknown":
+                self.store.fail_reply_task(
+                    task.id,
+                    "agent_run_unknown",
+                    expected_execution_generation=task.execution_generation,
+                )
                 continue
             if run.status == "completed" and run.final_result_json:
                 payload = json.loads(run.final_result_json)
@@ -1666,19 +1667,6 @@ class DingTalkAutoReplyWorker:
                     task.id,
                     f"invalid_agent_run_state:{run.status}",
                     expected_execution_generation=task.execution_generation,
-                )
-                continue
-            if run.side_effect_state == "unknown":
-                run = self.store.mark_expired_agent_run_unknown(
-                    run.id,
-                    {"code": "agent_side_effect_unknown"},
-                    expected_execution_generation=task.execution_generation,
-                    now=self._sqlite_timestamp(self._now()),
-                )
-                self._apply_unknown_agent_run(
-                    task,
-                    run,
-                    "agent_side_effect_unknown",
                 )
                 continue
             if not run.codex_session_id:
@@ -2119,10 +2107,10 @@ class DingTalkAutoReplyWorker:
                 except AgentRunLeaseLostError:
                     return False
             if existing_run.status == "unknown":
-                self._apply_unknown_agent_run(
+                self._record_agent_runtime_failure_attempt(
                     task,
-                    existing_run,
-                    "agent_side_effect_unknown",
+                    "agent_run_unknown",
+                    retryable=False,
                 )
                 return False
             if existing_run.status == "failed":
@@ -2178,14 +2166,7 @@ class DingTalkAutoReplyWorker:
                 context,
                 read_only=self.dry_run,
             )
-        except Exception as exc:
-            run = self.store.get_agent_run_for_task_generation(
-                task.id,
-                task.execution_generation,
-            )
-            if run is not None and run.status == "unknown":
-                self._apply_unknown_agent_run(task, run, str(exc))
-                return False
+        except Exception:
             raise
         try:
             return self._apply_agent_result(task, run_result)
@@ -2224,7 +2205,6 @@ class DingTalkAutoReplyWorker:
             trigger=trigger,
             context_messages=context_messages,
         )
-        prior_receipts = self._agent_prior_receipts(task)
         manual_rerun = None
         if task.manual_rerun_attempt_id:
             source_attempt = self.store.get_reply_attempt(task.manual_rerun_attempt_id)
@@ -2253,7 +2233,7 @@ class DingTalkAutoReplyWorker:
             trigger_mentioned_user_ids=tuple(trigger.mentioned_user_ids),
             messages=tuple(messages),
             materials=materials,
-            prior_receipts=prior_receipts,
+            prior_receipts=(),
             manual_rerun=manual_rerun,
             trigger_raw_payload=dict(trigger.raw_payload),
         )
@@ -2521,59 +2501,6 @@ class DingTalkAutoReplyWorker:
         task: ReplyTask,
         run_result: DirectAgentRunResult,
     ) -> bool:
-        persisted_run = self.store.get_agent_run(run_result.run_id)
-        if persisted_run is None:
-            raise RuntimeError("agent run was not persisted")
-        effect_events, embedded_receipts = structured_execution_evidence(
-            persisted_run.tool_events
-        )
-        persisted_receipts = tuple(
-            ExecutionReceipt(
-                receipt_id=receipt.receipt_id,
-                operation_id=receipt.operation_id,
-                completed=receipt.completed,
-                persisted=receipt.persisted,
-                safe_to_confirm=receipt.safe_to_confirm,
-            )
-            for receipt in self.store.list_agent_execution_receipts(
-                run_result.run_id
-            )
-        )
-        receipts = (
-            *embedded_receipts,
-            *persisted_receipts,
-            *run_result.receipts,
-        )
-        try:
-            evidence_state = validate_completion_evidence(
-                run_result.result,
-                events=effect_events,
-                receipts=receipts,
-            )
-        except InconsistentAgentResultError:
-            self._finalize_agent_attempt_and_task(
-                task,
-                run_result,
-                send_status="failed",
-                send_error="completion_evidence_inconsistent",
-                task_status="failed",
-            )
-            return False
-        if (
-            evidence_state is SideEffectState.UNKNOWN
-            or run_result.result.error.side_effect_state is SideEffectState.UNKNOWN
-        ):
-            run = self.store.get_agent_run(run_result.run_id)
-            if run is None:
-                raise RuntimeError("agent run was not persisted")
-            self._apply_unknown_agent_run(
-                task,
-                run,
-                run_result.result.error.code or "agent_side_effect_unknown",
-                result=run_result.result,
-            )
-            return False
-
         result = run_result.result
         send_error = result.error.code
         if result.outcome is AgentOutcome.COMPLETED:
@@ -2588,15 +2515,8 @@ class DingTalkAutoReplyWorker:
             send_error = send_error or "needs_human"
         else:
             send_status = "failed"
-            if evidence_state is SideEffectState.CONFIRMED:
-                task_status = "failed"
-                send_error = (
-                    "agent_failed_after_confirmed_effect:"
-                    f"{send_error or 'agent_failed'}"
-                )
-            else:
-                task_status = "pending" if result.error.retryable else "failed"
-                send_error = send_error or "agent_failed"
+            task_status = "pending" if result.error.retryable else "failed"
+            send_error = send_error or "agent_failed"
 
         available_at = ""
         retry_beyond_limit = (

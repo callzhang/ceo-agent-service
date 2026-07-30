@@ -4,15 +4,15 @@
 
 ## 目标
 
-CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 Derek 处理的消息和审批，将原始触发、可用上下文和工具入口交给 Direct Agent，并持久化 agent 的工具事件、终态结果和外部系统回执。
+CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 Derek 处理的消息和审批，将原始触发、可用上下文和工具入口交给 Direct Agent，并保存结构化终态和原生 Codex session 审计指针。
 
 核心原则：
 
 - Producer 只发现触发并入队，不做业务判断。
 - Direct Agent 自行读取材料、判断任务并直接调用获准的 CLI/MCP 工具。
-- Service 只负责依赖 gate、队列生命周期、事件与回执持久化、结果映射、投递幂等和未知副作用核对。
+- Service 只负责依赖 gate、队列生命周期、对话 session 串行复用、结果映射和精确重复投递幂等。
 - 已开始但结果不确定的写操作不自动重放，只进入只读 reconciliation。
-- 诊断不是完成；要求外部动作的任务必须有已完成工具事件或可核对回执，才能记为 `completed + confirmed`。
+- 诊断不是完成；该规则由 Direct Agent 执行并通过严格 AgentResult 返回，service 不再复制工具事件后二次判断。
 
 ## 运行形态
 
@@ -55,7 +55,7 @@ Terminal result mapping
 
 Direct Agent 的输入包括原始 trigger、已有对话事实、材料引用、process/task ID、链接和精确读取命令。已有事实必须复用，不能再次追问。OA 详情、当前任务归属、表单、评论和附件由 agent 通过 live DWS read 获取；service 不按申请人或标题猜目标，不预读正文，也不搜索同名材料作为替代。
 
-Direct Agent 不暴露原生 shell 工具，只能调用已审阅 MCP。DWS/Lark 命令由 agent 根据 CLI 发布的 effect metadata，分别通过 `reconciliation_cli.execute_reviewed_read` 或 `reconciliation_cli.execute_reviewed_write` 直接读取或执行。服务只校验 metadata、运行该精确 argv、持久化结构化结果和写操作回执，不代替 agent 选择命令或做业务判断。其他 MCP 工具必须命中已审核 registry；未知调用记为 `unreviewed`。无法确认的写操作结果进入 `unknown`，禁止 generation rotation 和写操作重放。专门的只读 reconciliation 额外使用 `approval_policy=never`、禁用网络工具，并只暴露审核过的读取能力。只有事件历史从未尝试 effectful 或 unreviewed 操作时，系统才确认旧 run 无副作用并换 generation 重跑；已关闭但缺回执、身份不完整或未审阅的操作保持禁止重放。若核对结果不可重试，系统将 run、task 和 blocked attempt 原子落到终态，避免 reconciliation backlog 永久占用 `processing`。
+Direct Agent 使用本机 Codex 原生配置暴露的 MCP、plugin、App、shell、skill 和 DWS/Lark CLI。Service 不维护第二套 MCP registry、effect 分类器、工具事件副本或写操作回执。认证由 channel gate 管理；Agent 不执行 login/reset/logout。
 
 ## 模块边界
 
@@ -64,13 +64,13 @@ Direct Agent 不暴露原生 shell 工具，只能调用已审阅 MCP。DWS/Lark
 | `app.channel_gate` | 在 agent 启动前检查 DWS/Lark 等通道可用性并协调一次性登录请求 |
 | `app.worker.DingTalkAutoReplyWorker` | 发现、入队、领取、结果映射和恢复调度 |
 | `app.agent_context` | 向 Direct Agent 提供原始事实、材料引用和明确命令 |
-| `app.agent_runner.DirectAgentRunner` | 运行原生 `codex exec`，流式记录工具事件并校验终态证据 |
+| `app.agent_runner.DirectAgentRunner` | 串行复用对话 Codex session，运行原生 `codex exec` 并保存终态与 transcript 范围 |
 | `app.native_cli_metadata` | 为已审阅 CLI/MCP 能力提供结构化 effect metadata |
 | `app.store.AutoReplyStore` | 持久化任务、agent run、append-only events、attempt、delivery 和回执 |
 | `app.audit_web` | 本地审计、人工核对和受保护的 mutation API |
 | `app.wechat.sender` | 通过 generation-aware 原子 claim 发送当前微信 delivery |
 
-Service 不替 agent 阅读业务文档、选择业务材料、恢复 OA target、判断申请人或执行 agent 本应完成的外部动作。Service 只验证结构化 result、事件 effect metadata、回执、当前 generation 和重复投递事实，不从用户文本推断执行意图。
+Service 不替 agent 阅读业务文档、选择业务材料、恢复 OA target、判断申请人或执行 agent 本应完成的外部动作。Service 只验证结构化 result、当前 generation 和重复投递事实，不从用户文本推断执行意图。
 
 ## 凭证规则
 
