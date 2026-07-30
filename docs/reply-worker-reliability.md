@@ -25,11 +25,11 @@ never replayed merely because its transport failed; the service must reconcile
 the existing operation first so retries cannot duplicate a message, approval,
 or other visible side effect.
 
-When a DWS failure does not carry a recognized login error code, the worker
-checks the structured `dws auth status` response before classifying the failure.
-An explicitly unhealthy token state enters the existing auth-backup restore and
-interactive login flow; an unavailable auth-status check remains an ordinary
-dependency failure and does not guess that login is required.
+Before starting an agent, the channel gate checks structured CLI auth status and
+one authenticated live probe. Only an explicit `needs_login` state may ask the
+login coordinator to launch the corresponding CLI login once. An unavailable
+status check, network failure, or command error remains a dependency failure and
+must not be guessed to mean that login is required.
 
 Short DWS read-path token verification failures are treated like transient read
 failures. The DWS client retries read-only commands such as message reads and
@@ -95,37 +95,24 @@ source of truth; the local notification only replaces the operator alert.
 
 ## No-reply side effects
 
-Universal plans treat `no_reply` as "do not send a formal chat text reply", not
-as "do nothing". It may be combined with non-text side effects that do not create
-a separate business commitment, such as a lightweight message reaction, a trusted
-calendar/OA action, or `memory_write`. The validator must still block plans that
-combine `no_reply` with another formal chat reply, handoff, blocked, or
-stop-with-error action because those outcomes conflict at the user-visible
-conversation level.
+A Direct Agent result may use `no_reply` after completing a non-chat action such
+as a reaction, calendar/OA operation, or `memory_write`. The action must still
+have a completed effectful tool event or an execution receipt. `no_reply` cannot
+be combined with another formal chat reply, handoff, blocked, or stop-with-error
+outcome because those results conflict at the conversation level.
 
-## Memory write MCP inheritance
+## Memory MCP inheritance
 
-Service-owned `memory_write` actions are executed by a restricted Codex child
-agent. The child agent inherits the installed Codex `memory_connector` MCP
-configuration and plugin login state, but its prompt and command-line config only
-allow the `memory_write` tool for that invocation. The reply worker must not
-create or refresh a separate Memory OAuth client for this path; otherwise the CEO
-service and Codex can diverge on identity and authorization state.
-When Codex exposes MCP tools through deferred discovery, the child may call
-`tool_search` only to load `memory_connector.memory_write`. Audit ignores that
-read-only discovery event but still requires exactly one matching memory write
-receipt before recording success.
+The Direct Agent inherits the installed Codex `memory_connector` MCP
+configuration and plugin login state. The reply worker does not create or
+refresh a separate Memory OAuth client. Deferred `tool_search` discovery is a
+read-only event; a claimed successful `memory_write` still requires its own
+completed tool event and receipt.
 
-If a universal `memory_write` action fails because the Memory backend is
-temporarily unavailable, the action is marked failed with a retryable
-`memory_backend_unavailable` error. Daily task maintenance restores the original
-universal context and plan from SQLite, reruns only that `memory_write` action,
-and does not replan or resend the chat reply. Recovery is limited to one action
-per daily pass and uses the same stable memory source description, so duplicate
-Memory writes can be detected by the Memory layer.
-Legacy action rows recorded as `blocked` are also recoverable only when their
-error starts with `memory_backend_unavailable:`; other blocked actions remain
-ineligible for automatic execution.
+If Memory is unavailable before a write starts, the run may fail or request
+human action according to the returned error. If a write starts but its result
+cannot be confirmed, the run becomes `unknown` and recovery is read-only. The
+service does not replay the write from a cached action list.
 
 ## DWS upgrade check
 
@@ -174,41 +161,19 @@ Follow-up dispatch is guarded separately from draft generation. Dry-run records
 the draft state without sending. Live CLI sends require the same
 `CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1` override as normal DingTalk replies.
 
-## DWS auth environment
+## CLI credential ownership
 
-The LaunchAgents keep work data under the configured `CEO_WORKSPACE` and use the
-current user `HOME` unless `CEO_SERVICE_HOME` is explicitly set. The service
-forces DWS file-backed auth with `DWS_DISABLE_KEYCHAIN=1` and defaults
-`DWS_KEYCHAIN_DIR` to
-`${service_root}/data/dws-keychain`. This keeps the service's DWS login state
-inside the service runtime data boundary, exportable and restorable instead of
-depending on macOS Keychain state. The diagnostic script
-`scripts/check-dws-auth-env.sh` verifies the default user auth path first and
-then compares the file-keychain probe.
+LaunchAgents run under the current macOS user and reuse the normal credential
+stores maintained by DWS and Lark CLI. The service does not export, import,
+copy, decrypt, restore, or maintain a second set of CLI credentials.
 
-After successful DWS calls, the worker periodically writes a local auth archive
-to `data/dws-auth-backup/dws-auth.tar.gz` by calling `dws auth export`. The DWS
-export format contains the refresh token and keychain material needed for
-recovery, but not token plaintext. The archive is a runtime secret and remains
-under ignored `data/`; the worker sets file mode `0600` after export.
-
-On macOS, DWS may store its encryption key in the system Keychain if launched
-without the file-backed environment. In that mode, `dws auth export` can refuse
-to create a portable auth archive. The worker does not read or decrypt Keychain
-items itself; it records `dws_auth_backup=unsupported` and keeps using the
-existing login state without blocking replies. Completing one DWS login in the
-service's file-backed environment gives the worker an exportable auth state and
-lets backup/restore become fully active.
-
-When a DWS call reports a login/session-loss error, the worker first imports
-that local archive with `dws auth import --force`, then retries the failed DWS
-call once. It starts the interactive `dws auth login` flow only if no archive is
-available or the archive restore does not recover a usable login state. Backup
-cadence defaults to 30 minutes and can be adjusted with
-`CEO_DWS_AUTH_BACKUP_INTERVAL`. The worker also checks `dws auth status` after
-successful DWS calls and immediately writes a fresh archive when
-`refresh_expires_at` changes, so refresh-token rotation is captured before the
-next periodic backup window.
+The channel gate performs structured status checks and a live authenticated
+probe before starting the Direct Agent. The agent is forbidden from running
+auth login, reset, or logout commands. When the gate explicitly reports
+`needs_login`, the login coordinator may launch one interactive CLI login and
+records the coordinator state in SQLite; concurrent processes and repeated
+checks within the suppression window cannot open another login flow. Network
+errors and unreadable auth status never trigger login.
 
 ## Processing acknowledgement
 
@@ -251,18 +216,14 @@ The worker still preprocesses:
 - Images, because Codex receives local image paths rather than DingTalk media
   IDs.
 
-OA detail collection extracts document and attachment references from both form
-fields and approval operation records, including applicant comments. Those OA
-references are promoted into the same top-level material-reference section used
-by ordinary messages. For DingTalk document references, the service resolves the
-material through its authenticated read-only DWS client before planning. Folder
-references are expanded into their child nodes; online documents, online sheets,
-and downloaded XLSX files are converted to bounded text and stored as trusted
-`resolved_content`. The planner consumes that body directly and does not rerun
-the DWS command from its restricted shell. Read failures remain explicit on the
-individual material so an approval cannot mistake missing evidence for an empty
-document. Externally visible approval and comment actions still run only through
-the service executor.
+For OA work, the service passes only the original process/task identifiers,
+links, known form/card fields, and exact DWS read commands. The Direct Agent
+performs live reads for approval detail, current-user task ownership, comments,
+folders, documents, sheets, and attachments, then decides whether the evidence
+is sufficient. The service does not recover a target by applicant/title match,
+choose among ambiguous candidates, pre-read business content, or substitute a
+same-named document. Approval and comment actions are executed by the agent and
+must produce completed events or receipts.
 
 ## Mail review and reply
 
@@ -273,18 +234,10 @@ materials before making a decision. If a required result or attachment is still
 missing, the agent asks for that specific material instead of approving from the
 preview.
 
-The decision agent never sends mail directly. When the trigger explicitly
-authorizes a reply and the review is complete, it emits a structured
-`dws_mail_reply` action with the selected mailbox, original message ID, subject,
-and reply body. The worker persists those fields on `reply_attempts`, executes the
-mail action before the DingTalk acknowledgement, and stores the DWS result. If
-mail succeeds but the DingTalk acknowledgement fails, a retry sees the stored
-mail result and retries only the chat delivery. This prevents duplicate email
-replies while keeping the two externally visible actions auditable.
-- OA approvals, because approval ownership, task state, comments, and action
-  execution are handled by the OA handler. The handler uses the unified
-  structured Codex runner with the OA skill injected, then performs the
-  service-owned approval action or comment.
+When the trigger explicitly authorizes a reply and review is complete, the
+Direct Agent replies through DWS. The mail tool event and receipt are persisted
+before any DingTalk acknowledgement is considered complete. A retry reconciles
+the existing mail operation instead of blindly sending it again.
 
 If a historical calendar event id can no longer be read from DWS, the DWS client
 returns no event detail instead of failing the whole producer pass. The worker
@@ -334,8 +287,7 @@ The OA target is bound before the trigger sender is enriched from
 `open_dingtalk_id` to `user_id`. Recent message cards may still carry only the
 open DingTalk identity, so enriching one side first must not prevent the worker
 from recognizing the card and follow-up as messages from the same person. Sender
-enrichment still happens before the universal context is rendered for the
-planner.
+enrichment still happens before Direct Agent context is rendered.
 
 ## Consumer retry behavior
 

@@ -22,37 +22,36 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **本地任务队列**：使用 SQLite 保存 `reply_tasks`、`reply_attempts`、`seen_messages`、`sent_replies`，避免重复处理和重复发送。
 - **Codex Agent 决策**：使用结构化 JSON 输出 `send_reply`、`ask_clarifying_question`、`no_reply`、`handoff_to_human`、`stop_with_error`、`oa_approval`。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
-- **文档和图片上下文**：读取钉钉在线文档、普通文件正文、图片附件和本地 workspace 资料后再交给 agent 判断。
-- **安全和质量检查**：发送前检查 `final_reply_text`、敏感路径泄漏、审计摘要、审计文档、权限/SOP。
+- **材料与工具上下文**：服务传递材料引用、原始 ID、链接和精确读取命令；Direct Agent 自行决定读取哪些钉钉文档、文件、OA 材料和本地 workspace 资料。
+- **安全和质量检查**：按结构化 result、工具 effect metadata、completed event 和回执校验终态，不从用户文本猜测执行意图。
 - **人工接管**：对需要本人处理的消息发送 handoff，并暂停该会话的自动回复直到检测到真人回复。
 - **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时，自动发到最匹配的群，1:1 会议才私聊，并默认只真实 @ 参会相关人；非参会人只有会议中明确说到是他的任务时才 @。
 - **审计 Web UI**：本地 FastAPI 页面查看历史、attempt 详情、Codex session、错误、Prompt 模板和路由配置。
-- **自动修复 heartbeat**：定期检查 failed/processing/dry_run backlog，包括 `reply_tasks`、work summary 和通用 action 执行状态；修复后必须把受影响信息处理到最终状态。
+- **自动修复 heartbeat**：定期检查 failed/processing/dry_run backlog，包括 `reply_tasks`、work summary 和结果未知的 agent run；未知写操作只做只读核对，不自动重放。
 
 ## 系统架构
 
 维护总览见 [docs/architecture.md](docs/architecture.md)。下面是产品视角的简版架构说明。
 
-系统由九层组成：
+系统由八层组成：
 
 1. **DingTalk Inputs**：群聊、私聊、配置机器人私聊、在线文档、文件、图片、OA、日程、会议权限请求。
 2. **Producer 消息发现层**：快路径每分钟看未读；慢路径每小时补扫近期单聊和群聊。
 3. **Producer Routing 路由判断层**：群聊必须 @ 触发；私聊不需要 @；系统通知跳过；OA/日程/会议权限进入专门 handler。
 4. **SQLite Queue 状态层**：保存待处理任务、处理尝试、已读消息、已发送回复。
-5. **Consumer 处理层**：领取 pending task，读取上下文、钉钉文档、图片附件、OA/日程详情和本地 workspace。
-6. **Prompt + Agent 决策层**：Developer Prompt、User Prompt、动态变量和 Codex Agent 共同生成结构化决策。
-7. **安全与质量检查层**：检查回复文本、泄漏、审计字段、权限和 SOP。
-8. **动作执行层**：群聊 reply 原消息、私聊 direct message、OA 通过/拒绝/退回、日程接受/追问/跳过；OA 无可退回节点时会单聊通知审批申请人补充或修改，不会用拒绝冒充退回，也不会把该情况记为 blocked。
-9. **Audit / Observability / Heartbeat Repair**：审计页面、macOS 通知、launchd 进程和定时错误修复。
+5. **Channel Gate 层**：用 CLI status 和 authenticated probe 确认通道可用；只有明确 `needs_login` 才协调一次登录流程。
+6. **Direct Agent 层**：一次原生 `codex exec` 自行读取材料、判断并调用获准的 CLI/MCP 工具。
+7. **事件、回执与投递层**：增量持久化工具事件，验证外部动作回执，并用 generation-aware claim 防止重复或过时投递。
+8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd 和结果未知写操作的只读核对。
 
 当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取仍以临时网络错误失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。
 
 `blocked` 只表示缺少权限、依赖、材料或安全条件，后续条件恢复后仍应进入修复/恢复口径。确定不可恢复的阻塞必须写入 `send_status=blocked` 且 `send_error` 以 `blocked_unrecoverable_` 开头；这类记录在审计页显示为 terminal blocked，不再作为待修复 backlog。
 
-同一 Universal Plan 的 `execution_generation` 固定使用首次规划时持久化的完整 `context_json` 快照；动作重试不会重新读取可能变化的日历卡片、材料正文或任务检索结果，也不使用上下文 hash 比较外部世界是否变化。只有显式创建新的 execution generation 时，服务才重新收集证据并请求 agent 生成新 plan。
+一次 reply task generation 对应一次 Direct Agent run。工具调用从流式开始就记录 effect；未命中已审阅 registry 的 command/tool 记为 `unreviewed`，不能默认为无副作用。完整结构化完成事件证明 read-only 时可以降级；否则不确定结果进入 `unknown`，禁止 generation rotation 和自动重放。
 
-执行安全由明确边界保证：reply task 与 execution generation 必须匹配，动作必须来自持久化 plan，发送或审批目标必须与持久化上下文一致，同一动作由 `execution_id` 和 `action_hash` 做幂等保护。
+执行安全由明确证据保证：`completed + confirmed` 必须有持久化的 completed effectful event 或执行回执；只有诊断没有动作时返回 `needs_human` 或 `failed`。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
 
 重复发送保护命中已有 `sent_replies` 时，新的发送 attempt 记为 `skipped`，不记为 `blocked`，也不写入 service error；这表示同一触发消息已处理完成，只是跳过了重复投递。
 
@@ -97,6 +96,14 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - live send 仍需要 `CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1` 作为显式确认开关。
 - 回复不得暴露本地文件路径、session id、token、cookie、签名 URL 或工具原始输出。
 - OA 审批必须读取完整审批材料、流程节点、附件和 SOP；无法确定时评论追问或 handoff。
+
+## CLI 凭证
+
+- DWS 和 Lark CLI 复用安装用户在各 CLI 标准位置维护的本地登录状态；服务不维护第二套凭证。
+- Agent 不得执行 auth login/reset/logout，也不能自行弹出授权页面。
+- Channel gate 在 Agent 前运行结构化 status 和 live authenticated probe。
+- 只有明确 `needs_login` 时，Login Coordinator 才启动一次相应 CLI 登录；并发和抑制窗口内不会重复启动。
+- 网络错误、status 不可读或一般命令失败不会触发登录。
 
 ## OKR 审核数据源
 
