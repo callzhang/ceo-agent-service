@@ -64,7 +64,7 @@ Direct Agent 使用本机 Codex 原生配置暴露的 MCP、plugin、App、shell
 | `app.channel_gate` | 在 agent 启动前检查 DWS/Lark 等通道可用性并协调一次性登录请求 |
 | `app.worker.DingTalkAutoReplyWorker` | 发现、入队、领取、结果映射和恢复调度 |
 | `app.agent_context` | 向 Direct Agent 提供原始事实、材料引用和明确命令 |
-| `app.agent_runner.DirectAgentRunner` | 通过 `codex exec resume` 向对话 Codex session 追加消息，并保存终态与 transcript 范围 |
+| `app.agent_runner.DirectAgentRunner` | 复用仍存在的对话 Codex session；若持久化指针对应的本地 session 已缺失，则清理旧指针并从新 session 继续，避免 `codex exec resume` 在任务启动前失败 |
 | `app.native_cli_metadata` | 为已审阅 CLI/MCP 能力提供结构化 effect metadata |
 | `app.store.AutoReplyStore` | 持久化任务、agent run、append-only events、attempt、delivery 和回执 |
 | `app.audit_web` | 本地审计、人工核对和受保护的 mutation API |
