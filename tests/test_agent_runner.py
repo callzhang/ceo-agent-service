@@ -410,6 +410,8 @@ def test_direct_runner_uses_native_codex_and_never_ignores_user_config(
     assert "tools.enabled_tools=[]" not in command
     assert "features.plugins=false" in command
     assert "features.apps=false" in command
+    assert "features.shell_tool=false" in command
+    assert "features.unified_exec=false" in command
     assert str(AGENT_RESULT_SCHEMA_PATH) in command
     assert result.result.outcome is AgentOutcome.COMPLETED
     assert executor.kwargs[0]["total_timeout_seconds"] == 1200
@@ -446,6 +448,8 @@ def test_direct_runner_exposes_only_registry_reviewed_mcp_tools(
     command = executor.commands[0]
     assert "features.plugins=false" in command
     assert "features.apps=false" in command
+    assert "features.shell_tool=false" in command
+    assert "features.unified_exec=false" in command
     assert (
         'mcp_servers.exa.enabled_tools=["web_fetch_exa","web_search_exa"]'
         in command
@@ -1249,6 +1253,8 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert executor.commands[0].count("--sandbox") == 1
     assert "danger-full-access" not in executor.commands[0]
     assert "tools.enabled_tools=[]" not in executor.commands[0]
+    assert "features.shell_tool=false" in executor.commands[0]
+    assert "features.unified_exec=false" in executor.commands[0]
     assert 'web_search="disabled"' in executor.commands[0]
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_get","memory_recall","timeline_get","user_get"]' in executor.commands[0]
     assert (
