@@ -16,7 +16,7 @@ starts. Claimed reply tasks return to `pending`, work-summary inputs return to
 `pending`, meeting analysis jobs return to `retry`, and claimed meeting delivery
 jobs are unlocked. Recovery subtracts the interrupted claim from each queue's
 attempt counter because process termination is not a business execution failure.
-Persisted universal action execution IDs and verified terminal receipts remain
+Persisted Direct Agent run events and verified terminal receipts remain
 unchanged, so recovery can reconcile completed external actions without sending
 them again.
 
@@ -310,26 +310,15 @@ still active but later context shows the principal already replied after it, the
 task is also skipped. Otherwise the consumer can claim the task and move it to
 `processing`, even if the unread badge has already cleared.
 
-If a single-chat fast-path task only captured a follow-up sentence and DWS recent
-context contains an earlier OA approval card from the same sender, the consumer
-uses that card's OA URL as the approval target. This keeps `OA card -> please
-review this link` sequences on the OA handler path even when the unread read only
-returns the final follow-up message.
+OA follow-ups preserve recent messages as raw conversation context. The service
+does not inherit or bind an approval target from an earlier card. It passes each
+available card URL, process/task identifier, and exact live-read command to the
+Direct Agent. The Agent resolves the current task through DWS, verifies current
+ownership, and stops without an approval write when the evidence is ambiguous,
+completed, or belongs to another user.
 
-Group-chat OA follow-ups use a narrower trust boundary. The consumer may reuse
-an OA URL from the same sender's immediately preceding message only when that
-message contains or explicitly quotes exactly one approval target and is no more
-than 30 minutes old. A newer same-sender message without an approval target, an
-ambiguous target set, a different sender, or an older card prevents inheritance.
-This lets `quoted approval card -> approval instruction` reach the Universal
-planner with frozen trusted IDs without allowing stale group approvals to leak
-into unrelated messages.
-
-The OA target is bound before the trigger sender is enriched from
-`open_dingtalk_id` to `user_id`. Recent message cards may still carry only the
-open DingTalk identity, so enriching one side first must not prevent the worker
-from recognizing the card and follow-up as messages from the same person. Sender
-enrichment still happens before Direct Agent context is rendered.
+Sender enrichment may replace `open_dingtalk_id` with `user_id` before Direct
+Agent context is rendered, but it does not choose or validate an OA target.
 
 ## Consumer retry behavior
 
