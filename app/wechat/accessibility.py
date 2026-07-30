@@ -64,10 +64,16 @@ def _poll_value(probe, *, sleep, attempts=20, interval=0.2):
 
 
 def _text_evidence_matches(candidate: str, expected: str) -> bool:
-    candidate_text = " ".join(candidate.split()).rstrip("…").strip()
     expected_text = " ".join(expected.split()).strip()
+    candidate_lines = [
+        " ".join(line.split()).rstrip("…").strip()
+        for line in candidate.splitlines()
+    ]
+    candidate_text = " ".join(candidate.split()).rstrip("…").strip()
     if not candidate_text or not expected_text:
         return False
+    if expected_text in candidate_lines:
+        return True
     if candidate_text == expected_text:
         return True
     minimum_partial_length = 12

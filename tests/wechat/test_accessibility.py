@@ -198,6 +198,17 @@ def test_text_evidence_match_allows_ui_prefix_and_long_truncation():
     assert not _text_evidence_matches("嗯，我知道了", "嗯")
 
 
+def test_text_evidence_match_allows_exact_short_preview_line():
+    assert _text_evidence_matches(
+        "Melody\n我去通州了\n17:31\n",
+        "我去通州了",
+    )
+    assert not _text_evidence_matches(
+        "Melody\n我去通州了吗\n17:31\n",
+        "我去通州了",
+    )
+
+
 def test_attribute_text_match_checks_nonstandard_wechat_preview_attribute():
     values = {
         "AXTitle": "Melody",
