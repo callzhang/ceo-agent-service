@@ -105,6 +105,14 @@ class ExistingDocumentDws:
         raise AssertionError(command)
 
 
+class ExistingDocumentUpdateDecodeDws(ExistingDocumentDws):
+    def run_json(self, command, **kwargs):
+        if command[1:3] == ["doc", "update"]:
+            self.commands.append(command)
+            raise UnicodeDecodeError("utf-8", b"\xe4", 0, 1, "invalid")
+        return super().run_json(command, **kwargs)
+
+
 class FakeGateway:
     def __init__(self, managers):
         self.managers = managers
@@ -457,6 +465,23 @@ def test_existing_weekly_document_is_overwritten_and_read_back(tmp_path):
     update = next(command for command in dws.commands if command[1:3] == ["doc", "update"])
     assert ["--mode", "overwrite"] == update[update.index("--mode") : update.index("--mode") + 2]
     assert "--yes" in update
+
+
+def test_existing_weekly_document_uses_readback_after_update_decode_error(tmp_path):
+    content_file = tmp_path / "report.md"
+    content_file.write_text("# weekly-title\n\n末尾校验\n", encoding="utf-8")
+    dws = ExistingDocumentUpdateDecodeDws("末尾校验")
+
+    published = DwsWeeklyOkrGateway(dws).publish_document(
+        workspace_id="wiki-target",
+        folder_id="folder-target",
+        name="weekly-title",
+        content_file=content_file,
+        verification_marker="末尾校验",
+    )
+
+    assert published.node_id == "doc-existing"
+    assert dws.read_calls == 2
 
 
 def test_manager_final_score_uses_business_leadership_and_culture_formula(tmp_path):

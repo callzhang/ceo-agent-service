@@ -531,22 +531,9 @@ class DwsWeeklyOkrGateway:
                 ],
                 timeout_seconds=180,
             )
-            self.dws.run_json(
-                [
-                    self.dws.dws_bin,
-                    "doc",
-                    "update",
-                    "--node",
-                    node_id,
-                    "--content-file",
-                    str(content_file),
-                    "--mode",
-                    "overwrite",
-                    "--yes",
-                    "--format",
-                    "json",
-                ],
-                timeout_seconds=180,
+            self._overwrite_document(
+                node_id=node_id,
+                content_file=content_file,
             )
             readback = self.dws.run_json(
                 [
@@ -595,22 +582,9 @@ class DwsWeeklyOkrGateway:
         url = _find_nested_string(payload, {"docUrl", "url"})
         if not node_id:
             raise DwsError("doc create did not return a nodeId")
-        self.dws.run_json(
-            [
-                self.dws.dws_bin,
-                "doc",
-                "update",
-                "--node",
-                node_id,
-                "--content-file",
-                str(content_file),
-                "--mode",
-                "overwrite",
-                "--yes",
-                "--format",
-                "json",
-            ],
-            timeout_seconds=180,
+        self._overwrite_document(
+            node_id=node_id,
+            content_file=content_file,
         )
         readback = self.dws.run_json(
             [
@@ -629,6 +603,31 @@ class DwsWeeklyOkrGateway:
         if not url:
             url = f"https://alidocs.dingtalk.com/i/nodes/{node_id}"
         return PublishedDocument(node_id=node_id, url=url)
+
+    def _overwrite_document(self, *, node_id: str, content_file: Path) -> None:
+        try:
+            self.dws.run_json(
+                [
+                    self.dws.dws_bin,
+                    "doc",
+                    "update",
+                    "--node",
+                    node_id,
+                    "--content-file",
+                    str(content_file),
+                    "--mode",
+                    "overwrite",
+                    "--yes",
+                    "--format",
+                    "json",
+                ],
+                timeout_seconds=180,
+            )
+        except UnicodeDecodeError:
+            # Long-document progress previews can contain malformed UTF-8 even
+            # after the write completed. The mandatory readback below is the
+            # source of truth for whether all chunks reached DingTalk.
+            return
 
     def _find_documents(
         self,
