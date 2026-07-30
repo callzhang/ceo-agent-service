@@ -2370,6 +2370,7 @@ def run_service(
     exit_process: Callable[[int], None] = os._exit,
 ) -> None:
     _initialize_meeting_discovery_on_service_start(settings)
+    _recover_orphaned_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
     _recover_okr_review_requests_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
@@ -2488,6 +2489,10 @@ def _recover_processing_work_summary_inputs_on_service_start(
     store = AutoReplyStore(settings.db_path)
     recovered_inputs = store.reset_processing_work_summary_inputs()
     return len(recovered_inputs)
+
+
+def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
+    return len(AutoReplyStore(settings.db_path).recover_orphaned_processing_reply_tasks())
 
 
 def _recover_okr_review_requests_on_service_start(settings: WorkerSettings) -> int:
