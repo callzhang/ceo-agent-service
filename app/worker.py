@@ -1558,11 +1558,7 @@ class DingTalkAutoReplyWorker:
                 continue
             if completed:
                 processed_tasks += 1
-        self._recover_orphaned_agent_reply_tasks()
         return processed_tasks
-
-    def _recover_orphaned_agent_reply_tasks(self) -> None:
-        self.store.recover_orphaned_processing_reply_tasks()
 
     def _recover_stale_agent_reply_tasks(self) -> None:
         stale_tasks = self.store.list_stale_processing_reply_tasks(

@@ -4927,7 +4927,7 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
     assert run.codex_session_id == "session-stale-1"
 
 
-def test_startup_recovery_requeues_processing_task_without_current_run(
+def test_consumer_cycle_does_not_requeue_task_claimed_by_another_worker(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -4948,13 +4948,12 @@ def test_startup_recovery_requeues_processing_task_without_current_run(
     )
     orphan = worker.store.claim_reply_tasks(1)[0]
 
-    worker._recover_orphaned_agent_reply_tasks()
+    worker.consume_once(max_tasks=1)
 
-    recovered = worker.store.get_reply_task(orphan.id)
-    assert recovered is not None
-    assert recovered.status == "pending"
-    assert recovered.execution_generation == orphan.execution_generation
-    assert recovered.error == "orphaned_before_agent_start"
+    current = worker.store.get_reply_task(orphan.id)
+    assert current is not None
+    assert current.status == "processing"
+    assert current.execution_generation == orphan.execution_generation
 
 
 def test_consume_once_recovers_older_single_chat_orphan_after_newer_reply(
