@@ -112,6 +112,13 @@ STALE_PROCESSING_TASK_SECONDS = 30 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
 REPLY_TASK_RETRY_BASE_DELAY_SECONDS = 60
 REPLY_TASK_RETRY_MAX_DELAY_SECONDS = 15 * 60
+PERSISTENT_AGENT_RUNTIME_DEPENDENCY_ERRORS = frozenset(
+    {
+        "codex_process_failed",
+        "codex_process_timeout",
+        "codex_stream_invalid",
+    }
+)
 STALE_CODEX_RESUME_ATTEMPTS = 2
 CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
 CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
@@ -1539,6 +1546,9 @@ class DingTalkAutoReplyWorker:
                         task,
                         error,
                         retryable=True,
+                        retry_beyond_limit=(
+                            error in PERSISTENT_AGENT_RUNTIME_DEPENDENCY_ERRORS
+                        ),
                     )
                 except AgentRunLeaseLostError:
                     continue
@@ -1933,6 +1943,7 @@ class DingTalkAutoReplyWorker:
         error: str,
         *,
         retryable: bool,
+        retry_beyond_limit: bool = False,
     ) -> str:
         run = self.store.get_agent_run_for_task_generation(
             task.id,
@@ -1940,7 +1951,11 @@ class DingTalkAutoReplyWorker:
         )
         task_status = (
             "pending"
-            if retryable and task.attempts < self.max_task_attempts
+            if retryable
+            and (
+                retry_beyond_limit
+                or task.attempts < self.max_task_attempts
+            )
             else "failed"
         )
         available_at = (
@@ -2100,10 +2115,19 @@ class DingTalkAutoReplyWorker:
                     and structured_error.get("retryable") is True
                     and existing_run.side_effect_state == "none"
                 )
-                if not retryable or task.attempts > self.max_task_attempts:
+                error_code = str(
+                    structured_error.get("code") or "agent_run_failed"
+                )
+                retry_beyond_limit = (
+                    error_code in PERSISTENT_AGENT_RUNTIME_DEPENDENCY_ERRORS
+                )
+                if not retryable or (
+                    task.attempts > self.max_task_attempts
+                    and not retry_beyond_limit
+                ):
                     self._record_agent_runtime_failure_attempt(
                         task,
-                        str(structured_error.get("code") or "agent_run_failed"),
+                        error_code,
                         retryable=False,
                     )
                     return False
@@ -2552,7 +2576,12 @@ class DingTalkAutoReplyWorker:
                 send_error = send_error or "agent_failed"
 
         available_at = ""
-        if task_status == "pending" and task.attempts < self.max_task_attempts:
+        retry_beyond_limit = (
+            send_error in PERSISTENT_AGENT_RUNTIME_DEPENDENCY_ERRORS
+        )
+        if task_status == "pending" and (
+            retry_beyond_limit or task.attempts < self.max_task_attempts
+        ):
             available_at = self._reply_task_retry_available_at(task.attempts)
         elif task_status == "pending":
             task_status = "failed"

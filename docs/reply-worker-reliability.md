@@ -335,7 +335,12 @@ failures after the reply attempt has recorded the failed send. This keeps the
 original message retryable instead of completing the task with a failed attempt.
 
 When the maximum is reached, the task is marked `failed`, the final error is
-recorded, and a local notification is sent.
+recorded, and a local notification is sent. The exception is a Codex runtime
+dependency failure (`codex_process_failed`, `codex_process_timeout`, or
+`codex_stream_invalid`) with no external side effect: it remains `pending` with
+capped exponential backoff beyond the ordinary business-attempt limit. The
+persisted Agent run and generation make this restart-resumable, and no terminal
+failure notification is sent while recovery remains safe.
 
 Codex CLI login failures, explicit selected-provider authentication failures,
 and Codex Responses API transport failures are classified as wait states rather

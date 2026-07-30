@@ -9787,6 +9787,80 @@ def test_retryable_codex_timeout_does_not_notify_before_final_failure(
     assert notifications == []
 
 
+def test_codex_process_failure_recovers_after_normal_attempt_limit_without_alert(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=1,
+    )
+
+    class ProcessFailureThenSuccessRunner(FakeAgentResultRunner):
+        def run(self, task, context, **kwargs):
+            if not self.calls:
+                claim = self.store.claim_agent_run(
+                    task.id,
+                    task.execution_generation,
+                    owner=self.owner,
+                )
+                assert claim.claimed
+                self.calls.append(
+                    (
+                        task.id,
+                        task.execution_generation,
+                        context,
+                        claim.run.codex_session_id,
+                    )
+                )
+                self.store.fail_agent_run(
+                    claim.run.id,
+                    {"code": "codex_process_failed", "retryable": True},
+                    owner=self.owner,
+                )
+                raise RuntimeError("codex_process_failed")
+            return super().run(task, context, **kwargs)
+
+    worker.direct_agent_runner = ProcessFailureThenSuccessRunner(
+        worker.store,
+        [
+            (
+                explicit_agent_result(AgentOutcome.NO_ACTION, "无需回复"),
+                (),
+                "session-recovered",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.produce_once()
+    assert worker.consume_once(max_tasks=1) == 0
+    pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    assert pending.attempts == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert notifications == []
+
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
+            (pending.id,),
+        )
+
+    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert notifications == []
+
+
 def test_codex_stop_with_error_retry_waits_for_backoff(
     tmp_path: Path, monkeypatch
 ):
