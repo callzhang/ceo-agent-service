@@ -1134,6 +1134,11 @@ def test_native_lark_completed_write_creates_trusted_persisted_receipt(
         store=store,
         workspace=tmp_path,
         executor=RecordingExecutor(output),
+        native_cli_classifier=NativeCliMetadataClassifier(
+            reviewed_effects={
+                ("lark-cli", "im +messages-send"): EffectKind.EFFECTFUL
+            }
+        ),
     ).run(task, _context(task.id))
 
     receipts = store.list_agent_execution_receipts(result.run_id)
@@ -2860,6 +2865,7 @@ def test_persisted_events_redact_secret_values(tmp_path: Path, store: AutoReplyS
                 {
                     "type": "item.completed",
                     "item": {
+                        "id": "secret-command-1",
                         "type": "command_execution",
                         "command": f"tool --token {secret} --api-key={secret}",
                         "output": f"Authorization: Bearer {secret}",
@@ -2870,11 +2876,12 @@ def test_persisted_events_redact_secret_values(tmp_path: Path, store: AutoReplyS
         )
     )
 
-    DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-    ).run(task, _context(task.id))
+    with pytest.raises(AgentRunUnknownError):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
 
     persisted = store.get_agent_run_for_task_generation(
         task.id, task.execution_generation
@@ -2932,11 +2939,12 @@ def test_persisted_events_recursively_redact_sensitive_keys_and_arguments(
         )
     )
 
-    DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-    ).run(task, _context(task.id))
+    with pytest.raises(AgentRunUnknownError):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
 
     persisted = store.get_agent_run_for_task_generation(
         task.id, task.execution_generation
@@ -3037,14 +3045,13 @@ def test_persisted_mcp_event_omits_business_arguments_and_results(
 @pytest.mark.parametrize(
     ("item_type", "detail"),
     (
-        ("command_execution", {"command": "dws doc read --node-id node-1"}),
         ("mcp_tool_call", {"tool": "memory_recall"}),
         ("mcp_tool_call", {"tool": "exa_search"}),
         ("command_execution", {"command": "arbitrary write command"}),
         ("mcp_tool_call", {"tool": "memory_write"}),
     ),
 )
-def test_unannotated_native_reads_and_writes_do_not_confirm_completion(
+def test_unreviewed_native_execution_requires_unknown_reconciliation(
     tmp_path: Path,
     store: AutoReplyStore,
     item_type: str,
@@ -3077,7 +3084,7 @@ def test_unannotated_native_reads_and_writes_do_not_confirm_completion(
         )
     )
 
-    with pytest.raises(RuntimeError, match="codex_result_invalid"):
+    with pytest.raises(AgentRunUnknownError):
         DirectAgentRunner(
             store=store,
             workspace=tmp_path,
@@ -3087,11 +3094,11 @@ def test_unannotated_native_reads_and_writes_do_not_confirm_completion(
     persisted = store.get_agent_run_for_task_generation(
         task.id, task.execution_generation
     )
-    assert persisted.status == "failed"
-    assert persisted.side_effect_state == "none"
+    assert persisted.status == "unknown"
+    assert persisted.side_effect_state == "unknown"
 
 
-def test_unannotated_native_event_does_not_upgrade_successful_none_result(
+def test_unreviewed_command_completion_requires_unknown_reconciliation(
     tmp_path: Path, store: AutoReplyStore
 ):
     task = _task(store)
@@ -3121,13 +3128,103 @@ def test_unannotated_native_event_does_not_upgrade_successful_none_result(
         )
     )
 
-    run = DirectAgentRunner(
+    with pytest.raises(AgentRunUnknownError):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
+
+    run = store.get_agent_run_for_task_generation(
+        task.id, task.execution_generation
+    )
+    assert run is not None
+    assert run.status == "unknown"
+    assert run.side_effect_state == "unknown"
+    assert any(
+        event.get("item", {}).get("metadata", {}).get("effect")
+        == "unreviewed"
+        for event in run.tool_events
+    )
+
+
+def test_unreviewed_command_start_blocks_generation_rotation(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    started = json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "id": "unreviewed-command-1",
+                "type": "command_execution",
+                "argv": ["custom-cli", "opaque-operation"],
+            },
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(started, returncode=1),
+        ).run(task, _context(task.id))
+
+    run = store.get_agent_run_for_task_generation(
+        task.id, task.execution_generation
+    )
+    assert run is not None
+    assert run.status == "unknown"
+    with pytest.raises(ValueError, match="reconciliation required"):
+        store.rotate_reply_task_execution_generation(task.id)
+
+
+def test_unreviewed_start_downgrades_only_after_structured_read_only_completion(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    registry = McpToolEffectRegistry(
+        {("evidence", "lookup"): EffectKind.READ_ONLY}
+    )
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "late-classified-read-1",
+                        "type": "mcp_tool_call",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "late-classified-read-1",
+                        "type": "mcp_tool_call",
+                        "server": "evidence",
+                        "tool": "lookup",
+                        "status": "completed",
+                        "result": {"content": []},
+                    },
+                }
+            ),
+            _jsonl().splitlines()[-1],
+        )
+    )
+
+    result = DirectAgentRunner(
         store=store,
         workspace=tmp_path,
         executor=RecordingExecutor(output),
+        mcp_effect_registry=registry,
     ).run(task, _context(task.id))
 
-    assert store.get_agent_run(run.run_id).side_effect_state == "none"
+    run = store.get_agent_run(result.run_id)
+    assert run is not None
+    assert run.status == "completed"
+    assert run.side_effect_state == "none"
 
 
 def test_completed_native_web_search_is_read_only_evidence(
@@ -3229,7 +3326,7 @@ def test_untrusted_event_effectful_metadata_cannot_confirm_completion(
         ).run(task, _context(task.id))
 
     run = store.get_agent_run_for_task_generation(task.id, task.execution_generation)
-    assert run.side_effect_state == "none"
+    assert run.side_effect_state == "unknown"
 
 
 def test_command_output_cannot_inject_a_trusted_execution_receipt(
@@ -3336,13 +3433,17 @@ def test_malformed_command_is_replaced_whole_before_persistence(
         )
     )
 
-    run = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=RecordingExecutor(output),
-    ).run(task, _context(task.id))
+    with pytest.raises(AgentRunUnknownError):
+        DirectAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=RecordingExecutor(output),
+        ).run(task, _context(task.id))
 
-    persisted = store.get_agent_run(run.run_id)
+    persisted = store.get_agent_run_for_task_generation(
+        task.id, task.execution_generation
+    )
+    assert persisted is not None
     command = persisted.tool_events[0]["item"]["command"]
     assert command == "[REDACTED]"
     assert password not in json.dumps(persisted.tool_events)

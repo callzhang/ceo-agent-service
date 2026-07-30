@@ -461,7 +461,7 @@ def _agent_event_columns(event: dict[str, object]) -> tuple[str, str, str, str]:
     effect_kind = ""
     if isinstance(metadata, dict):
         candidate = metadata.get("effect")
-        if candidate in {"read_only", "effectful"}:
+        if candidate in {"read_only", "effectful", "unreviewed"}:
             effect_kind = str(candidate)
     receipt_ids = _persisted_agent_receipt_ids(event)
     receipt_operation_id = next(iter(receipt_ids), "")
@@ -483,17 +483,25 @@ def _agent_effect_state_from_rows(
         (run_id,),
     ).fetchall():
         call_id = row["call_id"]
-        if row["effect_kind"] == "effectful" and call_id:
-            if row["event_type"] == "item.started":
-                states[call_id] = "started"
-            elif row["event_type"] == "item.completed":
-                states[call_id] = "completed"
-            elif row["event_type"] == "item.failed":
-                states[call_id] = "failed"
+        if call_id:
+            if row["effect_kind"] == "unreviewed":
+                states[call_id] = "unreviewed"
+            elif (
+                row["effect_kind"] == "read_only"
+                and row["event_type"] == "item.completed"
+            ):
+                states[call_id] = "read_only"
+            elif row["effect_kind"] == "effectful":
+                if row["event_type"] == "item.started":
+                    states[call_id] = "started"
+                elif row["event_type"] == "item.completed":
+                    states[call_id] = "completed"
+                elif row["event_type"] == "item.failed":
+                    states[call_id] = "failed"
         receipt_operation_id = row["receipt_operation_id"]
         if receipt_operation_id:
             states[receipt_operation_id] = "completed"
-    if "started" in states.values():
+    if {"started", "unreviewed"} & set(states.values()):
         return "unknown"
     if "completed" in states.values():
         return "confirmed"

@@ -509,6 +509,10 @@ class DirectAgentRunner:
                 "codex_result_invalid",
                 now=now,
             )
+            if self.store.get_agent_run(run.id).status == "unknown":
+                raise AgentRunUnknownError(
+                    "codex_result_invalid", run.id
+                ) from exc
             raise RuntimeError("codex_result_invalid") from exc
 
         if evidence_state is SideEffectState.UNKNOWN:
@@ -1258,11 +1262,14 @@ def _native_cli_command(
     item = payload.get("item")
     if not isinstance(item, dict) or item.get("type") != "command_execution":
         return None
-    return (
-        classifier.classify_cached(item)
-        if cached_only
-        else classifier.classify(item)
-    )
+    try:
+        return (
+            classifier.classify_cached(item)
+            if cached_only
+            else classifier.classify(item)
+        )
+    except NativeCliMetadataUnavailableError:
+        return None
 
 
 def _mcp_tool_call(
@@ -1516,6 +1523,8 @@ def _safe_event(
     ):
         item.pop("metadata", None)
         item.pop("annotations", None)
+        metadata: dict[str, object] = {"effect": EffectKind.UNREVIEWED.value}
+        item["metadata"] = metadata
     if native_command is not None and isinstance(item, dict):
         metadata = item.get("metadata")
         if not isinstance(metadata, dict):
@@ -1781,7 +1790,11 @@ def _native_effect_kind(
     metadata = item.get("metadata")
     if isinstance(metadata, dict):
         effect = metadata.get("effect")
-        if effect in {EffectKind.READ_ONLY.value, EffectKind.EFFECTFUL.value}:
+        if effect in {
+            EffectKind.READ_ONLY.value,
+            EffectKind.EFFECTFUL.value,
+            EffectKind.UNREVIEWED.value,
+        }:
             return EffectKind(effect)
     for annotations in _annotation_candidates(item, metadata):
         effect = _mcp_annotation_effect(annotations)

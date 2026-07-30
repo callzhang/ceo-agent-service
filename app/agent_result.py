@@ -38,6 +38,7 @@ class AgentResult(BaseModel):
 class EffectKind(StrEnum):
     READ_ONLY = "read_only"
     EFFECTFUL = "effectful"
+    UNREVIEWED = "unreviewed"
 
 
 class EffectEventStatus(StrEnum):
@@ -139,6 +140,17 @@ def completion_evidence_state(
         if event.effect is EffectKind.EFFECTFUL
         and event.status is EffectEventStatus.FAILED
     }
+    unreviewed = {
+        event.call_id
+        for event in event_list
+        if event.effect is EffectKind.UNREVIEWED
+    }
+    proven_read_only = {
+        event.call_id
+        for event in event_list
+        if event.effect is EffectKind.READ_ONLY
+        and event.status is EffectEventStatus.COMPLETED
+    }
     receipt_completed = {
         receipt.operation_id
         for receipt in receipt_list
@@ -148,6 +160,8 @@ def completion_evidence_state(
 
     # Lifecycle evidence is set-based: duplicates and event order do not matter.
     # Every started effect must close under the same stable operation ID.
+    if unreviewed - proven_read_only - completed_operations:
+        return SideEffectState.UNKNOWN
     if effectful_started - completed_operations - effectful_failed:
         return SideEffectState.UNKNOWN
     if completed_operations:

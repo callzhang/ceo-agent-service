@@ -5,7 +5,7 @@ import threading
 from collections.abc import Sequence
 
 
-MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
+MAX_PROCESS_OUTPUT_BYTES = 2 * 1024 * 1024
 
 
 class ProcessOutputLimitError(RuntimeError):
