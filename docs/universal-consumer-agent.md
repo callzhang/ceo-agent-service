@@ -10,6 +10,11 @@ The universal consumer separates decision making from side effects:
 4. The service persists the plan identity and executes each action through a capability-specific executor.
 5. Every action has a durable execution row. History and attempt detail read a redacted projection containing only planner kind, capability, dependency names, action kinds, states, and safe error summaries.
 
+Opaque department identifiers may arrive from DWS or the planner as JSON strings
+or integers. The plan boundary normalizes integer department IDs to decimal
+strings before permission validation; booleans, objects, and other malformed
+identifier types remain validation errors.
+
 Structured AI-minutes permission requests and system notifications are handled by
 deterministic ingress capabilities before planning. They are protocol handling,
 not semantic routing. OKR review requests use the explicit `queue_okr_review`

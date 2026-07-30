@@ -139,6 +139,18 @@ class PlannedAction(UniversalPlanBase):
 
     _reason_non_empty = field_validator("reason")(_non_empty)
 
+    @field_validator("candidate_department_ids", mode="before")
+    @classmethod
+    def normalize_candidate_department_ids(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        return [
+            str(item)
+            if isinstance(item, int) and not isinstance(item, bool)
+            else item
+            for item in value
+        ]
+
     @model_validator(mode="after")
     def validate_payload(self) -> "PlannedAction":
         if self.kind in {

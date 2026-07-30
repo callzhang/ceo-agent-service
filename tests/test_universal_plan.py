@@ -306,6 +306,19 @@ def test_reply_action_preserves_permission_metadata() -> None:
     assert action.candidate_department_ids == ["dept-1", "dept-2"]
 
 
+def test_reply_action_normalizes_numeric_department_ids() -> None:
+    action = PlannedAction(
+        kind="send_reply",
+        reason="Answer a candidate question",
+        sensitivity_kind="external_candidate",
+        candidate_context_known=True,
+        candidate_department_ids=[841194866, "dept-2"],
+        payload={"text": "Candidate response."},
+    )
+
+    assert action.candidate_department_ids == ["841194866", "dept-2"]
+
+
 def test_blocked_action_with_dws_authorization_blocker_validates() -> None:
     action = PlannedAction(
         kind="blocked",
