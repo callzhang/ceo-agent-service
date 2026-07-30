@@ -309,6 +309,7 @@ class CachedDwsClient:
         at_open_dingtalk_names: list[str] | None = None,
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
+        idempotency_uuid: str | None = None,
     ):
         return self.dws.send_message(
             conversation_id,
@@ -318,6 +319,7 @@ class CachedDwsClient:
             at_open_dingtalk_names=at_open_dingtalk_names,
             user_id=user_id,
             open_dingtalk_id=open_dingtalk_id,
+            idempotency_uuid=idempotency_uuid,
         )
 
     def send_direct_message_by_bot(self, user_id: str, text: str):

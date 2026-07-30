@@ -70,7 +70,9 @@ DWS 是按操作使用的外部依赖，不是整个服务的启动或运行闸�
 外部依赖失败使用两层恢复，不消耗业务任务的终态尝试次数：
 
 1. 调用层先执行有限次数的短退避重试。`app.external_retry` 在重试耗尽后保留 `ExternalDependencyError` 类型；DWS 在 `DwsError.retryable_external_dependency` 上保留同等信息。
-2. 队列层根据错误类型把 `reply_tasks` 恢复为 `pending`、把 `work_summary_inputs` 保持为 `pending`、把会议分析任务保持为 `retry`，并安排下一次退避。队列不再通过外部服务错误文案判断是否可恢复。
+2. 队列层根据错误类型把 `reply_tasks` 恢复为 `pending`、把 `work_summary_inputs` 保持为 `pending`、把会议分析任务保持为 `retry`、把未发送的 follow-up 恢复为 `draft`，并安排下一次退避。队列不再通过外部服务错误文案判断是否可恢复。
+
+Follow-up 发送使用草稿 ID 派生的稳定 DWS `--uuid`。只有带该幂等键的发送才允许调用层自动重试；认证或瞬时依赖故障耗尽短重试后回到 `draft`，不直接落成终态 `failed`。
 
 Codex planner、task agent、meeting agent、structured agent，以及允许自动重试的 DWS 只读/幂等命令都必须遵守该契约。权限缺失继续进入授权流程；业务输入、目标绑定、脱敏和 schema 校验失败继续使用终态失败或明确 blocked。
 

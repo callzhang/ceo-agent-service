@@ -100,6 +100,9 @@ class DwsError(RuntimeError):
         "not authenticated",
         "your session has ended",
         "failed to refresh token",
+        "resolve access token",
+        "load access token",
+        "read dek from macos keychain",
         "未登录",
         "登录态失效",
     )
@@ -521,6 +524,7 @@ class DwsClient:
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
         title: str | None = None,
+        idempotency_uuid: str | None = None,
     ) -> list[str]:
         command = [
             self.dws_bin,
@@ -550,6 +554,8 @@ class DwsClient:
                 ),
             ]
         )
+        if idempotency_uuid:
+            command.extend(["--uuid", idempotency_uuid])
         if at_open_dingtalk_ids:
             if conversation_id is not None:
                 command.extend(
@@ -2676,6 +2682,7 @@ class DwsClient:
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
         title: str | None = None,
+        idempotency_uuid: str | None = None,
     ) -> dict[str, Any]:
         return self.run_json(
             self.build_send_message_command(
@@ -2687,6 +2694,7 @@ class DwsClient:
                 user_id=user_id,
                 open_dingtalk_id=open_dingtalk_id,
                 title=title,
+                idempotency_uuid=idempotency_uuid,
             )
         )
 
@@ -3449,8 +3457,8 @@ class DwsClient:
         if len(command) < 4 or command[1:4] != ["chat", "message", "send"]:
             return True
         return any(
-            argument == "--idempotency-key"
-            or argument.startswith("--idempotency-key=")
+            argument in {"--idempotency-key", "--uuid"}
+            or argument.startswith(("--idempotency-key=", "--uuid="))
             for argument in command[4:]
         )
 

@@ -1,8 +1,10 @@
 import json
 from datetime import datetime, timedelta, timezone
+from uuid import NAMESPACE_URL, uuid5
 from zoneinfo import ZoneInfo
 
 from app.dws_client import DwsError
+from app.external_retry import is_external_dependency_error
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.store import AutoReplyStore
 from app.task_models import ProjectStatus, TodoStatus
@@ -304,6 +306,10 @@ def _recoverable_retry_at(now: str) -> str:
     return (current + RECOVERABLE_AUTH_RETRY_DELAY).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _follow_up_idempotency_uuid(draft_id: int) -> str:
+    return str(uuid5(NAMESPACE_URL, f"ceo-agent-service:follow-up:{draft_id}"))
+
+
 def _defer_recoverable_follow_up(
     store: AutoReplyStore,
     draft,
@@ -525,13 +531,31 @@ def process_due_follow_ups(
     auto_send: bool,
     feedback_base_url: str = "",
     limit: int = 50,
+    draft_ids: tuple[int, ...] | None = None,
 ) -> int:
     sent = 0
-    drafts = store.list_follow_up_drafts(
-        statuses=("draft", "approved"),
-        due_before=now,
-        limit=limit,
-    )
+    if draft_ids is None:
+        drafts = store.list_follow_up_drafts(
+            statuses=("draft", "approved"),
+            due_before=now,
+            limit=limit,
+        )
+    else:
+        current = _parse_follow_up_datetime(now)
+        drafts = []
+        for draft_id in draft_ids[:limit]:
+            draft = store.get_follow_up_draft(draft_id)
+            scheduled = (
+                _parse_follow_up_datetime(draft.scheduled_at) if draft is not None else None
+            )
+            if (
+                draft is not None
+                and draft.status in {"draft", "approved"}
+                and scheduled is not None
+                and current is not None
+                and scheduled <= current
+            ):
+                drafts.append(draft)
     for draft in drafts:
         if not auto_send:
             continue
@@ -682,6 +706,7 @@ def process_due_follow_ups(
                     at_users=at_users,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
                     at_open_dingtalk_names=at_open_dingtalk_names,
+                    idempotency_uuid=_follow_up_idempotency_uuid(draft.id),
                 )
             else:
                 result = dws.send_message(
@@ -690,14 +715,22 @@ def process_due_follow_ups(
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
                     user_id=None if open_dingtalk_id else owner_user_id or None,
                     open_dingtalk_id=open_dingtalk_id or None,
+                    idempotency_uuid=_follow_up_idempotency_uuid(draft.id),
                 )
         except Exception as exc:
-            if isinstance(exc, DwsError) and exc.needs_login:
+            if (isinstance(exc, DwsError) and exc.needs_login) or (
+                is_external_dependency_error(exc)
+            ):
+                reason = (
+                    "dws_login_required"
+                    if isinstance(exc, DwsError) and exc.needs_login
+                    else "external_dependency_unavailable"
+                )
                 _defer_recoverable_follow_up(
                     store,
                     draft,
                     now=now,
-                    reason="dws_login_required",
+                    reason=reason,
                     error=str(exc),
                 )
                 store.record_error(
