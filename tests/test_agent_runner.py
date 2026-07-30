@@ -169,10 +169,18 @@ def test_direct_runner_uses_native_codex_config_without_mcp_whitelist(
 def test_direct_runner_reuses_one_codex_session_for_the_conversation(
     tmp_path: Path,
     store: AutoReplyStore,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     store.upsert_conversation("cid", "产品群", False, "conversation-session")
     task = _task(store)
     executor = RecordingExecutor(_jsonl(session_id="conversation-session"))
+    monkeypatch.setattr(
+        store,
+        "codex_session_lock",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Direct Agent must not manage a conversation lock")
+        ),
+    )
 
     DirectAgentRunner(
         store=store,
@@ -229,22 +237,6 @@ def test_direct_runner_persists_new_session_for_later_conversation_messages(
     assert store.get_codex_session_id("cid") == "conversation-session"
     assert executor.commands[0][1:3] == ["exec", "resume"]
     assert executor.commands[0][-2:] == ["conversation-session", "-"]
-
-
-def test_direct_runner_serializes_runs_for_the_same_conversation(
-    tmp_path: Path,
-    store: AutoReplyStore,
-):
-    task = _task(store)
-    assert store.acquire_codex_session_lock("cid", "other-worker")
-
-    with pytest.raises(AgentRunUnavailableError, match="codex session locked"):
-        DirectAgentRunner(
-            store=store,
-            workspace=tmp_path,
-            executor=RecordingExecutor(_jsonl()),
-            owner="current-worker",
-        ).run(task, _context(task.id))
 
 
 def test_direct_runner_only_persists_codex_session_pointer_not_tool_event_copy(

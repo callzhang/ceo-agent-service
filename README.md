@@ -49,7 +49,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 3. **Producer Routing 路由判断层**：群聊必须 @ 触发；私聊不需要 @；系统通知跳过；OA/日程/会议权限进入专门 handler。
 4. **SQLite Queue 状态层**：保存待处理任务、处理尝试、已读消息、已发送回复。
 5. **Channel Gate 层**：用 CLI status 和 authenticated probe 确认通道可用；只有明确 `needs_login` 才协调一次登录流程。
-6. **Direct Agent 层**：同一对话复用一个原生 Codex session；每条消息形成独立 run，并在该对话内串行读取材料、判断和执行。
+6. **Direct Agent 层**：同一对话复用一个原生 Codex session；每条新消息通过 `codex exec resume` 追加到该 session，并形成独立 run。
 7. **会话与投递层**：保存 Codex session 指针和 transcript 范围，并用 generation-aware claim 与 `sent_replies` 防止重复或过时投递。
 8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd 和结果未知写操作的只读核对。
 
@@ -59,7 +59,7 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 `blocked` 只表示缺少权限、依赖、材料或安全条件，后续条件恢复后仍应进入修复/恢复口径。确定不可恢复的阻塞必须写入 `send_status=blocked` 且 `send_error` 以 `blocked_unrecoverable_` 开头；这类记录在审计页显示为 terminal blocked，不再作为待修复 backlog。
 
-一次 reply task generation 对应一次 Direct Agent run，同一 `conversation_id` 的 run 通过锁串行执行并复用 `conversations.codex_session_id`。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID 和本次 transcript 行范围，不复制工具事件或生成服务自定义回执。任务终态直接采用严格 `AgentResult`；精确重复发送仍由 trigger 和 `sent_replies` 幂等记录阻止，人工修订后的新内容不被旧结果拦截。
+一次 reply task generation 对应一次 Direct Agent run，同一 `conversation_id` 的 run 复用 `conversations.codex_session_id`。Reply consumer 本身按队列逐条处理消息，不再额外维护对话锁。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID 和本次 transcript 行范围，不复制工具事件或生成服务自定义回执。任务终态直接采用严格 `AgentResult`；精确重复发送仍由 trigger 和 `sent_replies` 幂等记录阻止，人工修订后的新内容不被旧结果拦截。
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 

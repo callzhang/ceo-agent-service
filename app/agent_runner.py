@@ -380,27 +380,6 @@ class DirectAgentRunner:
         read_only: bool = False,
         now: str | None = None,
     ) -> DirectAgentRunResult:
-        try:
-            with self.store.codex_session_lock(task.conversation_id, self.owner):
-                return self._run_locked(
-                    task,
-                    context,
-                    read_only=read_only,
-                    now=now,
-                )
-        except RuntimeError as exc:
-            if str(exc).startswith("codex session locked:"):
-                raise AgentRunUnavailableError(str(exc)) from exc
-            raise
-
-    def _run_locked(
-        self,
-        task: ReplyTask,
-        context: AgentTaskContext,
-        *,
-        read_only: bool = False,
-        now: str | None = None,
-    ) -> DirectAgentRunResult:
         if context.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
         claim = self.store.claim_agent_run(

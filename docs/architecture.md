@@ -10,7 +10,7 @@ CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 D
 
 - Producer 只发现触发并入队，不做业务判断。
 - Direct Agent 自行读取材料、判断任务并直接调用获准的 CLI/MCP 工具。
-- Service 只负责依赖 gate、队列生命周期、对话 session 串行复用、结果映射和精确重复投递幂等。
+- Service 只负责依赖 gate、队列生命周期、对话 session ID 复用、结果映射和精确重复投递幂等。
 - 已开始但结果不确定的写操作不自动重放，只进入只读 reconciliation。
 - 诊断不是完成；该规则由 Direct Agent 执行并通过严格 AgentResult 返回，service 不再复制工具事件后二次判断。
 
@@ -64,7 +64,7 @@ Direct Agent 使用本机 Codex 原生配置暴露的 MCP、plugin、App、shell
 | `app.channel_gate` | 在 agent 启动前检查 DWS/Lark 等通道可用性并协调一次性登录请求 |
 | `app.worker.DingTalkAutoReplyWorker` | 发现、入队、领取、结果映射和恢复调度 |
 | `app.agent_context` | 向 Direct Agent 提供原始事实、材料引用和明确命令 |
-| `app.agent_runner.DirectAgentRunner` | 串行复用对话 Codex session，运行原生 `codex exec` 并保存终态与 transcript 范围 |
+| `app.agent_runner.DirectAgentRunner` | 通过 `codex exec resume` 向对话 Codex session 追加消息，并保存终态与 transcript 范围 |
 | `app.native_cli_metadata` | 为已审阅 CLI/MCP 能力提供结构化 effect metadata |
 | `app.store.AutoReplyStore` | 持久化任务、agent run、append-only events、attempt、delivery 和回执 |
 | `app.audit_web` | 本地审计、人工核对和受保护的 mutation API |
