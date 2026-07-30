@@ -1164,6 +1164,12 @@ def test_direct_runner_persists_each_jsonl_event_before_final_parse(
 def test_read_only_run_uses_never_policy_and_no_write_instruction(
     tmp_path: Path, store: AutoReplyStore, monkeypatch
 ):
+    shared_rules_path = tmp_path / "AGENT.md"
+    shared_rules_path.write_text(
+        "# Shared Agent Policy\n\n- Preserve verified source-of-truth state.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("app.agent_runner.SHARED_AGENT_RULES_PATH", shared_rules_path)
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
     (codex_home / "config.toml").write_text(
@@ -1212,6 +1218,9 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert "external write" in executor.prompts[0].casefold()
     developer = _developer_instructions(executor.commands[0])
     assert "Direct Agent" in developer
+    assert "already loaded into this invocation" in developer
+    assert "Do not re-read agent rule files" in developer
+    assert "Preserve verified source-of-truth state" in developer
     assert "read-only" in developer.casefold()
     assert "Do not perform any external write" in developer
     assert "reconciliation_cli.execute_reviewed_read" in developer
@@ -2865,10 +2874,9 @@ def test_direct_agent_rejects_arbitrary_shell_start(
         ["sh", "-c", "exec dws chat message send --text hello"],
         ["dws", "chat", "message", "send", "--text", "hello"],
         ["dws", "unknown", "command"],
-        ["lark-cli", "contact", "+get-user", "--json"],
     ),
 )
-def test_native_cli_cannot_execute_through_sandboxed_shell(
+def test_native_cli_write_or_wrapper_cannot_execute_through_sandboxed_shell(
     tmp_path: Path, store: AutoReplyStore, argv: list[str]
 ):
     task = _task(store)
@@ -2896,6 +2904,57 @@ def test_native_cli_cannot_execute_through_sandboxed_shell(
     assert run is not None
     assert run.status == "failed"
     assert run.side_effect_state == "none"
+
+
+def test_direct_agent_allows_reviewed_native_cli_read(
+    tmp_path: Path, store: AutoReplyStore
+):
+    task = _task(store)
+    argv = ["dws", "doc", "read", "--node", "node-1", "--format", "json"]
+    output = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "dws-read-1",
+                        "type": "command_execution",
+                        "argv": argv,
+                        "status": "in_progress",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "dws-read-1",
+                        "type": "command_execution",
+                        "argv": argv,
+                        "status": "completed",
+                        "exit_code": 0,
+                    },
+                }
+            ),
+            _result_line(),
+        )
+    )
+
+    result = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(output),
+        native_cli_classifier=NativeCliMetadataClassifier(
+            reviewed_effects={("dws", "doc read"): EffectKind.READ_ONLY}
+        ),
+    ).run(task, _context(task.id))
+
+    assert result.result.outcome is AgentOutcome.COMPLETED
+    persisted = store.get_agent_run(result.run_id)
+    assert any(
+        event.get("item", {}).get("metadata", {}).get("effect") == "read_only"
+        for event in persisted.tool_events
+    )
 
 
 def test_default_registry_classifies_current_exa_reads():

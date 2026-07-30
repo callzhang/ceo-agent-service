@@ -57,6 +57,7 @@ AGENT_RECONCILIATION_SCHEMA_PATH = (
 DEFAULT_MCP_EFFECTS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "mcp-tool-effects.json"
 )
+SHARED_AGENT_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 TOTAL_TIMEOUT_SECONDS = 1200
 IDLE_TIMEOUT_SECONDS = 900
 LEASE_SECONDS = TOTAL_TIMEOUT_SECONDS + 300
@@ -89,6 +90,20 @@ _NATIVE_CLASSIFIABLE_ITEM_TYPES = frozenset(
         "tool_call",
     }
 )
+
+
+def direct_agent_developer_instructions() -> str:
+    if not SHARED_AGENT_RULES_PATH.is_file():
+        return DIRECT_AGENT_DEVELOPER_INSTRUCTIONS
+    shared_rules = SHARED_AGENT_RULES_PATH.read_text(encoding="utf-8").strip()
+    if not shared_rules:
+        return DIRECT_AGENT_DEVELOPER_INSTRUCTIONS
+    return (
+        DIRECT_AGENT_DEVELOPER_INSTRUCTIONS
+        + "\n\nCanonical shared agent rules already loaded into this invocation. "
+        "Do not re-read agent rule files through shell or exec.\n\n"
+        + shared_rules
+    )
 _SENSITIVE_KEY_NAMES = frozenset(
     {
         "authorization",
@@ -376,7 +391,7 @@ class DirectAgentRunner:
             )
         run = claim.run
         prompt = context.render()
-        developer_instructions = DIRECT_AGENT_DEVELOPER_INSTRUCTIONS
+        developer_instructions = direct_agent_developer_instructions()
         approval_policy = "untrusted"
         if read_only:
             approval_policy = "never"
@@ -433,21 +448,31 @@ class DirectAgentRunner:
                     now=now,
                 )
             item = payload.get("item")
+            native_command = None
             if (
                 isinstance(item, dict)
                 and item.get("type") == "command_execution"
             ):
-                raise AgentReadOnlyViolationError(
-                    "direct_agent_shell_forbidden"
+                native_command = _native_cli_command(
+                    payload,
+                    self.native_cli_classifier,
+                    cached_only=False,
                 )
+                if (
+                    native_command is None
+                    or native_command.effect is not EffectKind.READ_ONLY
+                ):
+                    raise AgentReadOnlyViolationError(
+                        "direct_agent_shell_forbidden"
+                    )
             mcp_call = _mcp_tool_call(payload, self.mcp_effect_registry)
             safe_event = (
                 _effect_evidence_event(
                     payload,
-                    native_command=None,
+                    native_command=native_command,
                     mcp_call=mcp_call,
                 )
-                if mcp_call is not None
+                if native_command is not None or mcp_call is not None
                 else _safe_event(payload)
             )
             self.store.append_agent_run_event(
@@ -640,7 +665,7 @@ class DirectAgentRunner:
             output_schema_path=AGENT_RECONCILIATION_SCHEMA_PATH,
             approval_policy="never",
             developer_instructions=(
-                DIRECT_AGENT_DEVELOPER_INSTRUCTIONS
+                direct_agent_developer_instructions()
                 + "\n\n"
                 + READ_ONLY_DEVELOPER_INSTRUCTION
             ),
