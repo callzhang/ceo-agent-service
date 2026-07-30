@@ -29,6 +29,15 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **自动修复 heartbeat**：定期检查 failed/processing/dry_run backlog，包括 `reply_tasks`、work summary 和结果未知的 agent run；未知写操作只做只读核对，不自动重放。
 - **管理者 OKR 周报**：每周日读取 CEO-2 管理群成员的实时叮当 OKR 和可访问证据，按 `dingtang-okr-review` 生成可审计评分、知识库报告和群内重点摘要。
 
+## 按角色使用
+
+推荐一位管理者部署一套本地服务，使用自己的 DWS/Lark/Codex 登录身份、SQLite、workspace、工作画像和反馈服务。
+同事、HR、审批人员和项目人员不需要安装代码，只需在钉钉里按规则 @ 管理者或配置的 Agent 名称。飞书 CLI
+是可选的材料读取和回复通路，不是默认启用的通用飞书收件箱。
+
+安装者、管理者本人、普通同事、HR、OA 审批人员和运维审计人员的完整操作方式见
+[docs/user-guide.md](docs/user-guide.md)。
+
 ## 系统架构
 
 维护总览见 [docs/architecture.md](docs/architecture.md)。下面是产品视角的简版架构说明。
@@ -546,6 +555,7 @@ Live smoke tests 默认跳过，只有显式设置环境变量时才会访问真
 
 ## 文档
 
+- [docs/user-guide.md](docs/user-guide.md)：按安装者、管理者、同事、HR、OA 和运维角色组织的使用教程。
 - [docs/agent-installation-runbook.md](docs/agent-installation-runbook.md)：给 agent 执行的端到端安装流程。
 - [docs/product-logic.md](docs/product-logic.md)：产品逻辑、审计、安全默认值。
 - [docs/message-routing-rules.md](docs/message-routing-rules.md)：消息类型、路由条件和已实现规则。
