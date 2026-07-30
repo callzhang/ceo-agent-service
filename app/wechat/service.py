@@ -44,20 +44,8 @@ def wechat_loop_names(*, reader_enabled: bool, capability_ready: bool) -> list[s
     return []
 
 
-def build_reader(
-    mirror_dir=None,
-    passphrase_file=None,
-    *,
-    self_username: str = "",
-    socket_path=None,
-):
-    """Build the IPC facade; legacy arguments are ignored for compatibility.
-
-    Keeping the old positional parameters temporarily avoids breaking CLI and
-    loop callers while ensuring this process never imports the WCDB backend or
-    opens either path.
-    """
-    del mirror_dir, passphrase_file, self_username
+def build_reader(*, socket_path=None):
+    """Build the IPC facade used for all WeChat reads."""
     from app import config
     from app.wechat.reader_ipc import WechatReaderClient
 
@@ -83,7 +71,7 @@ def build_setup_service(store):
     from app import config
     from app.wechat.setup import WechatSetupService
 
-    reader = build_reader(config.wechat_mirror_dir(), config.wechat_passphrase_file())
+    reader = build_reader()
     sender = build_sender()
 
     def _preflight() -> str:

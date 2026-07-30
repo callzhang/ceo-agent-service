@@ -2295,10 +2295,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
     if state is None:
         return
     account = _wx.account_from_state(state)
-    reader = _wx.build_reader(
-        _cfg.wechat_mirror_dir(), _cfg.wechat_passphrase_file(),
-        self_username=account.self_user_id,
-    )
+    reader = _wx.build_reader()
     runner = None
     if role == "consumer":
         runner = CodexDecisionRunner(

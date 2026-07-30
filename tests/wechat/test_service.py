@@ -46,12 +46,8 @@ def test_ready_account_requires_self_user_id(tmp_path):
     assert ready_account_state(store) is None
 
 
-def test_build_reader_is_an_ipc_client_and_ignores_legacy_db_credentials(tmp_path):
-    reader = build_reader(
-        tmp_path / "legacy-plain-mirror",
-        tmp_path / "legacy-passphrase.hex",
-        socket_path=tmp_path / "reader.sock",
-    )
+def test_build_reader_is_an_ipc_client(tmp_path):
+    reader = build_reader(socket_path=tmp_path / "reader.sock")
 
     assert reader.socket_path == tmp_path / "reader.sock"
     assert not hasattr(reader, "backend")

@@ -24,11 +24,8 @@ from app.wechat.memory import (
 DEFAULT_DB = "data/auto-reply.sqlite3"
 
 
-def _reader(*, self_username: str = ""):
-    return service.build_reader(
-        config.wechat_mirror_dir(), config.wechat_passphrase_file(),
-        self_username=self_username,
-    )
+def _reader():
+    return service.build_reader()
 
 
 def cmd_status(args) -> int:
@@ -64,7 +61,7 @@ def cmd_consume_once(args) -> int:
 
     runner = CodexDecisionRunner(workspace=config.workspace_path())
     n = service.run_consume_once(
-        store, runner, _reader(self_username=account.self_user_id), account
+        store, runner, _reader(), account
     )
     print(f"processed {n} wechat reply task(s)")
     return 0
@@ -92,7 +89,7 @@ def cmd_read_recent(args) -> int:
             capability_reason=state.get("capability_reason", ""),
         )
     account = account.model_copy(update={"self_user_id": self_user_id})
-    reader = _reader(self_username=self_user_id)
+    reader = _reader()
     messages = reader.read_messages(
         account, conversation_id=args.target_id, conversation_type=args.type,
         limit=args.limit,
@@ -114,7 +111,7 @@ def cmd_produce_once(args) -> int:
         return 1
     account = service.account_from_state(state)
     n = service.run_produce_once(
-        store, _reader(self_username=account.self_user_id), account,
+        store, _reader(), account,
         self_user_id=account.self_user_id,
     )
     print(f"enqueued {n} wechat reply task(s)")
@@ -160,7 +157,7 @@ def cmd_import_memory(args) -> int:
         return 1
     account = service.account_from_state(state)
     importer = WechatMemoryImporter(
-        store, _reader(self_username=account.self_user_id),
+        store, _reader(),
         CodexMemoryExtractionRunner(config.workspace_path()),
         CodexMemoryRecallMatcher(config.workspace_path()),
     )

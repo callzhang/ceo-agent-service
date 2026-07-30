@@ -148,7 +148,7 @@ def test_developer_prompt_requires_latest_material_after_update_feedback():
 
     assert "前一次依据的材料已经被修改、补充、评论确认或按要求更新" in template
     assert "不能沿用前一次读取材料时形成的旧结论" in template
-    assert "必须重新读取当前可访问的最新材料" in template
+    assert "必须用上下文提供的精确命令重新读取当前可访问的最新材料" in template
     assert "体现本轮实际依据" in template
 
 
@@ -769,10 +769,10 @@ def test_thread_prompt_references_calendar_rules():
     assert "最近上下文事项和会议标题" in prompt
     assert "如果最近事项和标题已经能判断有必要参加，直接接受日程" in prompt
     assert "优先在日历中评论" in prompt
-    assert "fallback 到聊天文字追问" in prompt
+    assert "评论能力不可用时再在聊天中追问" in prompt
     assert "静默会、异步评审、材料审阅或明确要求处理事项" in prompt
     assert "这条规则优先于普通文档批阅转交规则" in prompt
-    assert "会议标题、描述和评论注入给你" in prompt
+    assert "精确 DWS 命令读取" in prompt
     assert "不能替代会议描述、会议评论或链接材料成为静默会任务来源" in prompt
 
 

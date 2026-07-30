@@ -70,14 +70,14 @@ def test_read_recent_uses_persisted_ready_account_self_id(tmp_path, monkeypatch)
     built_with = []
     reader = RecordingReader("self-1")
 
-    def build_reader(*, self_username=""):
-        built_with.append(self_username)
+    def build_reader():
+        built_with.append(True)
         return reader
 
     monkeypatch.setattr(cli, "_reader", build_reader)
 
     assert cli.cmd_read_recent(_args(db)) == 0
-    assert built_with == ["self-1"]
+    assert built_with == [True]
     assert reader.read_account.self_user_id == "self-1"
 
 
@@ -94,14 +94,16 @@ def test_read_recent_detects_missing_self_id_for_unique_ready_account(
     reader = RecordingReader("self-1")
     built_with = []
 
-    def build_reader(*, self_username=""):
-        built_with.append(self_username)
-        return detector if not self_username else reader
+    readers = iter((detector, reader))
+
+    def build_reader():
+        built_with.append(True)
+        return next(readers)
 
     monkeypatch.setattr(cli, "_reader", build_reader)
 
     assert cli.cmd_read_recent(_args(db)) == 0
-    assert built_with == ["", "self-1"]
+    assert built_with == [True, True]
     assert reader.read_account.self_user_id == "self-1"
     assert AutoReplyStore(db).get_wechat_read_state("acct-1")["self_user_id"] == "self-1"
 
@@ -238,7 +240,7 @@ def test_produce_once_builds_direction_aware_reader(tmp_path, monkeypatch):
     captured = []
     monkeypatch.setattr(
         cli, "_reader",
-        lambda *, self_username="": built_with.append(self_username) or reader,
+        lambda: built_with.append(True) or reader,
     )
     monkeypatch.setattr(
         cli.service, "run_produce_once",
@@ -248,7 +250,7 @@ def test_produce_once_builds_direction_aware_reader(tmp_path, monkeypatch):
     )
 
     assert cli.cmd_produce_once(SimpleNamespace(db=str(db))) == 0
-    assert built_with == ["self-1"]
+    assert built_with == [True]
     assert captured == [(reader, "self-1", "self-1")]
 
 
@@ -267,7 +269,7 @@ def test_consume_once_builds_direction_aware_reader(tmp_path, monkeypatch):
     monkeypatch.setattr(codex_decision, "CodexDecisionRunner", lambda **kwargs: object())
     monkeypatch.setattr(
         cli, "_reader",
-        lambda *, self_username="": built_with.append(self_username) or reader,
+        lambda: built_with.append(True) or reader,
     )
     monkeypatch.setattr(
         cli.service, "run_consume_once",
@@ -277,7 +279,7 @@ def test_consume_once_builds_direction_aware_reader(tmp_path, monkeypatch):
     )
 
     assert cli.cmd_consume_once(SimpleNamespace(db=str(db))) == 0
-    assert built_with == ["self-1"]
+    assert built_with == [True]
     assert captured == [(reader, "self-1")]
 
 
