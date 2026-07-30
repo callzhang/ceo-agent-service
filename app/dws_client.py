@@ -3239,6 +3239,7 @@ class DwsClient:
         attempt_index = 0
         automatic_retry_allowed = self._automatic_retry_allowed(command)
         while True:
+            payload: Any | None = None
             try:
                 result = self._run_cli_process(
                     command,
@@ -3257,12 +3258,16 @@ class DwsClient:
                 )
                 raise error from exc
             if result.returncode == 0:
-                break
-            code = (
-                self._error_code(result.stderr)
-                or self._error_code(result.stdout)
-                or self._process_error_code(result.returncode)
-            )
+                payload = self._json_from_mixed_stdout(result.stdout)
+                if not self._is_structured_error_payload(payload):
+                    return payload
+                code = self._error_code(result.stdout) or "1"
+            else:
+                code = (
+                    self._error_code(result.stderr)
+                    or self._error_code(result.stdout)
+                    or self._process_error_code(result.returncode)
+                )
             retryable_error = automatic_retry_allowed and self._is_retryable_error(
                 command,
                 code,
@@ -3283,7 +3288,24 @@ class DwsClient:
                 retryable_external_dependency=retryable_error,
             )
             raise error
-        return self._json_from_mixed_stdout(result.stdout)
+
+    @staticmethod
+    def _is_structured_error_payload(payload: object) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            return False
+        return any(
+            key in error
+            for key in (
+                "category",
+                "code",
+                "message",
+                "reason",
+                "server_error_code",
+            )
+        )
 
     def run_text(
         self,

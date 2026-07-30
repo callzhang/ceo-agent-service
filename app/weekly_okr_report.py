@@ -810,7 +810,7 @@ def run_weekly_okr_report(
         folder_id=folder_id,
         name=report_title,
         content_file=report_path,
-        verification_marker="综合证据评分",
+        verification_marker="数据覆盖与限制",
     )
     summary = render_group_summary(
         title=report_title,

@@ -4707,6 +4707,38 @@ def test_run_json_retries_transient_network_error(monkeypatch):
     assert sleeps == [1.0]
 
 
+def test_run_json_retries_zero_exit_structured_network_error(monkeypatch):
+    calls = []
+    sleeps = []
+    network_payload = (
+        '{"error":{"category":"api","code":1,'
+        '"server_error_code":"NETWORK_ERROR","retryable":true,'
+        '"message":"分片 10 写入失败: business error"}}'
+    )
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        calls.append(command)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=0, stdout=network_payload, stderr="")
+        return SimpleNamespace(returncode=0, stdout='{"success":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    command = [
+        "dws",
+        "doc",
+        "update",
+        "--node",
+        "doc-1",
+        "--mode",
+        "overwrite",
+    ]
+    assert DwsClient().run_json(command) == {"success": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
 def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
     monkeypatch,
 ):

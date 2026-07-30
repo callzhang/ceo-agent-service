@@ -133,6 +133,7 @@ class FakeGateway:
     ):
         assert workspace_id == "wiki-1"
         assert folder_id == "folder-1"
+        assert verification_marker == "数据覆盖与限制"
         content = content_file.read_text(encoding="utf-8")
         assert verification_marker in content
         self.published.append((name, content))
