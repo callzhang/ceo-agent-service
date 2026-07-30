@@ -112,7 +112,7 @@ STALE_PROCESSING_TASK_SECONDS = 30 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
 REPLY_TASK_RETRY_BASE_DELAY_SECONDS = 60
 REPLY_TASK_RETRY_MAX_DELAY_SECONDS = 15 * 60
-PERSISTENT_AGENT_RUNTIME_DEPENDENCY_ERRORS = frozenset(
+RECOVERABLE_AGENT_RUNTIME_ERRORS = frozenset(
     {
         "codex_process_failed",
         "codex_process_timeout",
@@ -1547,7 +1547,8 @@ class DingTalkAutoReplyWorker:
                         error,
                         retryable=True,
                         retry_beyond_limit=(
-                            error in PERSISTENT_AGENT_RUNTIME_DEPENDENCY_ERRORS
+                            error in RECOVERABLE_AGENT_RUNTIME_ERRORS
+                            and task.attempts == self.max_task_attempts
                         ),
                     )
                 except AgentRunLeaseLostError:
@@ -1635,9 +1636,30 @@ class DingTalkAutoReplyWorker:
                     task,
                     error,
                     retryable=retryable,
+                    retry_beyond_limit=(
+                        error in RECOVERABLE_AGENT_RUNTIME_ERRORS
+                        and task.attempts == self.max_task_attempts
+                    ),
                 )
                 if task_status == "pending":
                     recovered += 1
+                    continue
+                self.store.record_error(
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    "reply_task",
+                    error,
+                )
+                self._notify(
+                    title=f"CEO task failed: {task.conversation_title}",
+                    message=error[:120],
+                    conversation=DingTalkConversation(
+                        open_conversation_id=task.conversation_id,
+                        title=task.conversation_title,
+                        single_chat=task.single_chat,
+                        unread_point=1,
+                    ),
+                )
                 continue
             if run.status != "running":
                 self.store.fail_reply_task(
@@ -2119,7 +2141,8 @@ class DingTalkAutoReplyWorker:
                     structured_error.get("code") or "agent_run_failed"
                 )
                 retry_beyond_limit = (
-                    error_code in PERSISTENT_AGENT_RUNTIME_DEPENDENCY_ERRORS
+                    error_code in RECOVERABLE_AGENT_RUNTIME_ERRORS
+                    and task.attempts <= self.max_task_attempts + 1
                 )
                 if not retryable or (
                     task.attempts > self.max_task_attempts
@@ -2577,7 +2600,8 @@ class DingTalkAutoReplyWorker:
 
         available_at = ""
         retry_beyond_limit = (
-            send_error in PERSISTENT_AGENT_RUNTIME_DEPENDENCY_ERRORS
+            send_error in RECOVERABLE_AGENT_RUNTIME_ERRORS
+            and task.attempts == self.max_task_attempts
         )
         if task_status == "pending" and (
             retry_beyond_limit or task.attempts < self.max_task_attempts

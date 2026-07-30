@@ -9861,6 +9861,70 @@ def test_codex_process_failure_recovers_after_normal_attempt_limit_without_alert
     assert notifications == []
 
 
+def test_codex_process_failure_becomes_terminal_after_one_extra_recovery_claim(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=1,
+    )
+
+    class PersistentProcessFailureRunner(FakeAgentResultRunner):
+        def run(self, task, context, **kwargs):
+            claim = self.store.claim_agent_run(
+                task.id,
+                task.execution_generation,
+                owner=self.owner,
+            )
+            assert claim.claimed
+            self.calls.append(
+                (
+                    task.id,
+                    task.execution_generation,
+                    context,
+                    claim.run.codex_session_id,
+                )
+            )
+            self.store.fail_agent_run(
+                claim.run.id,
+                {"code": "codex_process_failed", "retryable": True},
+                owner=self.owner,
+            )
+            raise RuntimeError("codex_process_failed")
+
+    worker.direct_agent_runner = PersistentProcessFailureRunner(worker.store, [])
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.produce_once()
+    assert worker.consume_once(max_tasks=1) == 0
+    pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    assert pending.attempts == 1
+    assert notifications == []
+
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
+            (pending.id,),
+        )
+
+    assert worker.consume_once(max_tasks=1) == 0
+    failed = worker.store.list_reply_tasks(statuses=("failed",), limit=1)[0]
+    assert failed.attempts == 2
+    assert failed.error == "codex_process_failed"
+    assert len(notifications) == 1
+    assert notifications[0]["title"] == "CEO task failed: Friday"
+
+
 def test_codex_stop_with_error_retry_waits_for_backoff(
     tmp_path: Path, monkeypatch
 ):

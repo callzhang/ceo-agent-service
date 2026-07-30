@@ -719,6 +719,8 @@ def _worker(
     tmp_path: Path,
     messages: list[DingTalkMessage],
     scripts: list[ScriptedRun],
+    *,
+    max_task_attempts: int = 3,
 ) -> tuple[DingTalkAutoReplyWorker, ScriptedDirectAgentRunner, ContextOnlyDws]:
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
     dws = ContextOnlyDws(messages)
@@ -733,6 +735,7 @@ def _worker(
             "lark": ReadyGate("lark"),
         },
         now_provider=lambda: NOW,
+        max_task_attempts=max_task_attempts,
     )
     return worker, runner, dws
 
@@ -1626,6 +1629,99 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
     assert runner.resume_session_ids == ["session-retry-after-restart"]
     assert [generation for _task, generation, _context in runner.calls] == ["g1"]
     assert worker.store.get_reply_task(task_id).status == "done"
+
+
+def test_stale_recovery_allows_one_extra_runtime_retry_then_notifies_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    trigger = _message("请读取材料后完成回复")
+    worker, _runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [],
+        max_task_attempts=1,
+    )
+    notifications: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        worker,
+        "_notify",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    task_id = _enqueue(worker.store, trigger)
+
+    first_task = worker.store.claim_reply_task(
+        task_id,
+        now="2026-07-28 07:00:00",
+    )
+    assert first_task is not None and first_task.attempts == 1
+    first_claim = worker.store.claim_agent_run(
+        first_task.id,
+        first_task.execution_generation,
+        owner="dead-worker-1",
+        lease_seconds=60,
+        now="2026-07-28 07:00:00",
+    )
+    worker.store.fail_agent_run(
+        first_claim.run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="dead-worker-1",
+        now="2026-07-28 07:00:01",
+    )
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
+            (task_id,),
+        )
+
+    worker._recover_stale_agent_reply_tasks()
+
+    recovered_task = worker.store.get_reply_task(task_id)
+    assert recovered_task is not None and recovered_task.status == "pending"
+    assert recovered_task.attempts == 1
+    assert [notification["title"] for notification in notifications] == [
+        "CEO task retrying stale tasks"
+    ]
+    notifications.clear()
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set available_at='' where id=?",
+            (task_id,),
+        )
+
+    second_task = worker.store.claim_reply_task(
+        task_id,
+        now="2026-07-28 07:01:00",
+    )
+    assert second_task is not None and second_task.attempts == 2
+    second_claim = worker.store.claim_agent_run(
+        second_task.id,
+        second_task.execution_generation,
+        owner="dead-worker-2",
+        lease_seconds=60,
+        now="2026-07-28 07:01:00",
+    )
+    assert second_claim.claimed
+    worker.store.fail_agent_run(
+        second_claim.run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="dead-worker-2",
+        now="2026-07-28 07:01:01",
+    )
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
+            (task_id,),
+        )
+
+    worker._recover_stale_agent_reply_tasks()
+
+    failed_task = worker.store.get_reply_task(task_id)
+    assert failed_task is not None and failed_task.status == "failed"
+    assert failed_task.attempts == 2
+    assert [notification["title"] for notification in notifications] == [
+        "CEO task failed: 测试群"
+    ]
 
 
 def test_stale_processing_with_incomplete_effect_becomes_unknown_without_rerun(
