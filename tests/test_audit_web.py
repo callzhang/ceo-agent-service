@@ -4807,6 +4807,39 @@ def test_agent_run_resolution_api_rejects_non_loopback_client(tmp_path: Path):
     assert response.status_code == 403
 
 
+def test_agent_run_resolution_api_rejects_text_plain_csrf(tmp_path: Path):
+    client = TestClient(
+        create_audit_app(tmp_path / "audit.sqlite3"),
+        client=("127.0.0.1", 50000),
+    )
+
+    response = client.post(
+        "/agent-runs/1/resolution",
+        content='{"execution_generation":"initial"}',
+        headers={
+            "Content-Type": "text/plain",
+            "Origin": "https://attacker.example",
+        },
+    )
+
+    assert response.status_code == 415
+
+
+def test_reviewed_reply_api_rejects_cross_origin_browser_request(tmp_path: Path):
+    client = TestClient(
+        create_audit_app(tmp_path / "audit.sqlite3"),
+        client=("127.0.0.1", 50000),
+    )
+
+    response = client.post(
+        "/messages/reviewed-reply",
+        json={"attempt_id": 1, "reply_text": "reviewed"},
+        headers={"Origin": "https://attacker.example"},
+    )
+
+    assert response.status_code == 403
+
+
 def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "audit.sqlite3")
     store.enqueue_reply_task(
@@ -5095,7 +5128,10 @@ def test_handle_reviewed_message_reply_uses_immutable_attempt_binding(tmp_path: 
 
 
 def test_reviewed_reply_api_rejects_mutable_text_lookup_payload(tmp_path: Path):
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = TestClient(
+        create_audit_app(tmp_path / "worker.sqlite3"),
+        client=("127.0.0.1", 50000),
+    )
 
     response = client.post(
         "/messages/reviewed-reply",

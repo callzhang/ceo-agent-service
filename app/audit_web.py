@@ -6613,6 +6613,26 @@ def _request_is_loopback(request: Request) -> bool:
         return False
 
 
+def _origin_tuple(value: str) -> tuple[str, str, int | None] | None:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    return parsed.scheme, parsed.hostname, parsed.port
+
+
+def _require_trusted_json_mutation(request: Request) -> None:
+    if not _request_is_loopback(request):
+        raise HTTPException(status_code=403, detail="loopback access required")
+    media_type = request.headers.get("content-type", "").split(";", 1)[0]
+    if media_type.strip().casefold() != "application/json":
+        raise HTTPException(status_code=415, detail="application/json required")
+    request_origin = _origin_tuple(str(request.base_url))
+    for header_name in ("origin", "referer"):
+        value = request.headers.get(header_name, "").strip()
+        if value and _origin_tuple(value) != request_origin:
+            raise HTTPException(status_code=403, detail="same-origin request required")
+
+
 def _render_history_busy_page() -> str:
     return render_page(
         "CEO Agent Audit",
@@ -7068,8 +7088,7 @@ def create_audit_app(
 
     @app.post("/agent-runs/{run_id}/resolution")
     async def resolve_agent_run(run_id: int, request: Request):
-        if not _request_is_loopback(request):
-            raise HTTPException(status_code=403, detail="loopback access required")
+        _require_trusted_json_mutation(request)
         payload = json.loads((await request.body()).decode("utf-8"))
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="JSON object required")
@@ -7085,6 +7104,7 @@ def create_audit_app(
 
     @app.post("/messages/reviewed-reply")
     async def reviewed_reply(request: Request):
+        _require_trusted_json_mutation(request)
         payload = json.loads((await request.body()).decode("utf-8"))
         try:
             result = handle_reviewed_message_reply(
