@@ -2468,19 +2468,13 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "慢路径私聊恢复扫描最多读取多少个会话。",
         ),
     ]
-    descriptions = {key: description for key, _, description in known_rows}
-    values = {key: value for key, value, _ in known_rows}
-    ordered_keys = [key for key, _, _ in known_rows]
-    for key in env_values:
-        if key not in values:
-            ordered_keys.append(key)
     return [
         (
             key,
-            env_values.get(key, values.get(key, "")),
-            descriptions.get(key, "来自 .env；服务启动或 prompt/config 渲染时读取。"),
+            env_values.get(key, value),
+            description,
         )
-        for key in ordered_keys
+        for key, value, description in known_rows
     ]
 
 
@@ -2599,7 +2593,6 @@ def _editable_system_config_keys() -> set[str]:
         "MESSAGE_RECOVERY_INTERVAL",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
-        *read_env_file().keys(),
     }
 
 
@@ -6672,17 +6665,33 @@ def _origin_tuple(value: str) -> tuple[str, str, int | None] | None:
     return parsed.scheme, parsed.hostname, parsed.port
 
 
-def _require_trusted_json_mutation(request: Request) -> None:
+def _origin_is_loopback(value: str) -> bool:
+    origin = _origin_tuple(value)
+    if origin is None:
+        return False
+    hostname = origin[1].casefold()
+    if hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _require_trusted_mutation(request: Request) -> None:
     if not _request_is_loopback(request):
         raise HTTPException(status_code=403, detail="loopback access required")
+    for header_name in ("origin", "referer"):
+        value = request.headers.get(header_name, "").strip()
+        if value and not _origin_is_loopback(value):
+            raise HTTPException(status_code=403, detail="loopback origin required")
+
+
+def _require_trusted_json_mutation(request: Request) -> None:
+    _require_trusted_mutation(request)
     media_type = request.headers.get("content-type", "").split(";", 1)[0]
     if media_type.strip().casefold() != "application/json":
         raise HTTPException(status_code=415, detail="application/json required")
-    request_origin = _origin_tuple(str(request.base_url))
-    for header_name in ("origin", "referer"):
-        value = request.headers.get(header_name, "").strip()
-        if value and _origin_tuple(value) != request_origin:
-            raise HTTPException(status_code=403, detail="same-origin request required")
 
 
 def _render_history_busy_page() -> str:
@@ -6705,6 +6714,19 @@ def create_audit_app(
     ding_robot_name: str | None = None,
 ) -> FastAPI:
     app = FastAPI(title="CEO Agent Audit")
+
+    @app.middleware("http")
+    async def require_trusted_mutations(request: Request, call_next):
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            try:
+                _require_trusted_mutation(request)
+            except HTTPException as exc:
+                return JSONResponse(
+                    {"detail": exc.detail},
+                    status_code=exc.status_code,
+                    headers=exc.headers,
+                )
+        return await call_next(request)
 
     from app.store import AutoReplyStore as _WechatStore
     from app.wechat import service as _wechat_service

@@ -54,6 +54,10 @@ def task_script_json(html: str, element_id: str):
     return json.loads(html.split(marker, 1)[1].split("</script>", 1)[0])
 
 
+def loopback_test_client(app) -> TestClient:
+    return TestClient(app, client=("127.0.0.1", 50000))
+
+
 def seed_attempt(store: AutoReplyStore) -> int:
     store.upsert_conversation(
         "cid-1",
@@ -1027,7 +1031,7 @@ def test_history_route_reads_page_query(tmp_path: Path):
         if index == 0:
             first_id = attempt_id
     app = create_audit_app(store.path)
-    client = TestClient(app)
+    client = loopback_test_client(app)
 
     response = client.get("/?page=2&limit=50")
 
@@ -1070,7 +1074,7 @@ def test_history_route_reads_multi_type_query(tmp_path: Path):
         send_status="skipped",
     )
     app = create_audit_app(store.path)
-    client = TestClient(app)
+    client = loopback_test_client(app)
 
     response = client.get("/?type=sent&type=reacted&limit=1")
 
@@ -1476,7 +1480,7 @@ def test_user_feedback_resolve_route_redirects_to_feedback_page(tmp_path: Path):
         received_at="2026-06-02T08:00:00.000Z",
     )
     app = create_audit_app(store.path)
-    client = TestClient(app)
+    client = loopback_test_client(app)
 
     response = client.post(
         "/user-feedback/resolve",
@@ -1508,7 +1512,7 @@ def test_user_feedback_sync_route_redirects_to_feedback_page(
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)
     app = create_audit_app(store.path)
-    client = TestClient(app)
+    client = loopback_test_client(app)
     calls = []
 
     def fake_sync(_store, sent_replies, **kwargs):
@@ -1808,7 +1812,7 @@ def test_history_route_renders_chart_on_default_page(tmp_path: Path):
 
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
-    client = TestClient(create_audit_app(db_path))
+    client = loopback_test_client(create_audit_app(db_path))
 
     response = client.post("/tutorial/check/preflight")
 
@@ -1835,7 +1839,7 @@ def test_tutorial_run_route_records_action_event(monkeypatch, tmp_path: Path):
     store = AutoReplyStore(db_path)
     for step_id in ("preflight", "cli_components", "mcp"):
         store.upsert_setup_wizard_step(step_id=step_id, status="done", summary="ok")
-    client = TestClient(create_audit_app(db_path))
+    client = loopback_test_client(create_audit_app(db_path))
 
     response = client.post("/tutorial/run/setup_service_config")
 
@@ -1846,7 +1850,7 @@ def test_tutorial_run_route_records_action_event(monkeypatch, tmp_path: Path):
 
 
 def test_tutorial_run_route_rejects_blocked_action(tmp_path: Path):
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
     response = client.post("/tutorial/run/setup_service_config")
 
@@ -1867,7 +1871,7 @@ def test_tutorial_run_route_persists_failed_action_status(
         status="done",
         summary="ok",
     )
-    client = TestClient(create_audit_app(db_path))
+    client = loopback_test_client(create_audit_app(db_path))
 
     response = client.post("/tutorial/run/setup_mcp")
 
@@ -1883,7 +1887,7 @@ def test_tutorial_confirm_route_accepts_form_submission(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     store.upsert_setup_wizard_step(step_id="dry_run", status="done", summary="ok")
-    client = TestClient(create_audit_app(db_path))
+    client = loopback_test_client(create_audit_app(db_path))
 
     response = client.post(
         "/tutorial/confirm/live_send",
@@ -1899,7 +1903,7 @@ def test_tutorial_confirm_route_accepts_form_submission(tmp_path: Path):
 
 
 def test_tutorial_confirm_route_rejects_non_confirmable_step(tmp_path: Path):
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
     response = client.post("/tutorial/confirm/service_config")
 
@@ -2696,7 +2700,7 @@ def test_task_project_detail_route_renders_project(tmp_path: Path):
 
 
 def test_task_project_detail_route_returns_404_for_missing_project(tmp_path: Path):
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
     response = client.get("/tasks/999")
 
@@ -2955,6 +2959,27 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "保存位置" in system_section
 
 
+def test_system_config_hides_and_rejects_unknown_env_keys(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_WORKSPACE=/tmp/memory\nPRIVATE_SERVICE_TOKEN=do-not-render\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    html = render_config_page(active_tab="system")
+    status, _, _ = handle_system_config_post(
+        b"system_key=PRIVATE_SERVICE_TOKEN&system_value=changed"
+    )
+
+    assert status == 303
+    assert "PRIVATE_SERVICE_TOKEN" not in html
+    assert "do-not-render" not in html
+    assert "PRIVATE_SERVICE_TOKEN=do-not-render" in env_path.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_render_config_page_shows_channel_doctor(tmp_path, monkeypatch):
     from app.channel_gate import ChannelGateResult, ChannelGateState
 
@@ -3094,7 +3119,7 @@ def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch
         "app.audit_web.subprocess.run",
         fake_run,
     )
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
     response = client.get("/open-dingtalk?cid=75217569357")
 
@@ -3212,7 +3237,7 @@ def test_dingtalk_open_chat_bridge_calls_open_conversation_jsapi(tmp_path: Path)
 
 
 def test_dingtalk_bridge_status_records_events(tmp_path: Path):
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
     response = client.post(
         "/dingtalk/bridge-status",
@@ -3280,7 +3305,7 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
 
 
 def test_browser_notification_post_reports_no_subscribers(tmp_path: Path):
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
     response = client.post(
         "/browser-notifications",
@@ -3343,7 +3368,7 @@ def test_render_config_dynamic_functions_do_not_hardcode_principal_name(monkeypa
 
 def test_config_route_is_available(tmp_path: Path):
     app = create_audit_app(tmp_path / "worker.sqlite3")
-    client = TestClient(app)
+    client = loopback_test_client(app)
 
     response = client.get("/config")
 
@@ -4080,7 +4105,7 @@ def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
     app = create_audit_app(store.path)
-    client = TestClient(app)
+    client = loopback_test_client(app)
 
     response = client.post(
         f"/attempts/{attempt_id}/feedback",
@@ -4863,7 +4888,7 @@ def test_agent_run_resolution_api_rejects_text_plain_csrf(tmp_path: Path):
         },
     )
 
-    assert response.status_code == 415
+    assert response.status_code == 403
 
 
 def test_reviewed_reply_api_rejects_cross_origin_browser_request(tmp_path: Path):
@@ -4879,6 +4904,55 @@ def test_reviewed_reply_api_rejects_cross_origin_browser_request(tmp_path: Path)
     )
 
     assert response.status_code == 403
+
+
+def test_all_audit_mutations_reject_external_origin_even_with_forged_host(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_WORKSPACE=/tmp/original\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    client = TestClient(
+        create_audit_app(tmp_path / "audit.sqlite3"),
+        client=("127.0.0.1", 50000),
+    )
+
+    response = client.post(
+        "/config/system",
+        content="system_key=CEO_WORKSPACE&system_value=/tmp/changed",
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Host": "attacker.example",
+            "Origin": "https://attacker.example",
+        },
+    )
+
+    assert response.status_code == 403
+    assert env_path.read_text(encoding="utf-8") == "CEO_WORKSPACE=/tmp/original\n"
+
+
+def test_audit_mutation_accepts_loopback_origin(tmp_path: Path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_WORKSPACE=/tmp/original\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    client = TestClient(
+        create_audit_app(tmp_path / "audit.sqlite3"),
+        client=("127.0.0.1", 50000),
+    )
+
+    response = client.post(
+        "/config/system",
+        content="system_key=CEO_WORKSPACE&system_value=/tmp/changed",
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": "http://127.0.0.1:8765",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "CEO_WORKSPACE=/tmp/changed" in env_path.read_text(encoding="utf-8")
 
 
 def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
