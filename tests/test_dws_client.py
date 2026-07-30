@@ -5392,6 +5392,69 @@ def test_run_json_retries_calendar_event_get_token_verified_failed(monkeypatch):
     assert sleeps == [1.0]
 
 
+def test_run_json_retries_minutes_info_pat_auth_call_failed(monkeypatch):
+    calls = []
+    sleeps = []
+    auth_error_payload = (
+        '{"error":{"code":1,"server_error_code":"PAT_AUTH_CALL_FAILED",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+    command = [
+        "dws",
+        "minutes",
+        "get",
+        "info",
+        "--id",
+        "minutes-1",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=auth_error_payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
+def test_run_json_does_not_retry_oa_write_pat_auth_call_failed(monkeypatch):
+    calls = []
+    auth_error_payload = (
+        '{"error":{"code":1,"server_error_code":"PAT_AUTH_CALL_FAILED",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+    command = [
+        "dws",
+        "oa",
+        "approval",
+        "approve",
+        "--instance-id",
+        "instance-1",
+        "--task-id",
+        "task-1",
+        "--yes",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        return SimpleNamespace(returncode=1, stdout="", stderr=auth_error_payload)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    with pytest.raises(DwsError, match="PAT_AUTH_CALL_FAILED"):
+        DwsClient().run_json(command)
+    assert calls == [command]
+
+
 def test_run_json_does_not_retry_chat_message_send_token_verified_failed(
     monkeypatch,
 ):
