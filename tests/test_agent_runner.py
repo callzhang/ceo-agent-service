@@ -403,6 +403,10 @@ def test_direct_runner_uses_native_codex_and_never_ignores_user_config(
         in part
         for part in command
     )
+    assert (
+        f"mcp_servers.reconciliation_cli.cwd={json.dumps(str(Path(__file__).resolve().parents[1]))}"
+        in command
+    )
     assert "tools.enabled_tools=[]" not in command
     assert "features.plugins=false" in command
     assert "features.apps=false" in command
@@ -1254,6 +1258,10 @@ def test_read_only_run_uses_never_policy_and_no_write_instruction(
     assert "mcp_servers.passthrough.enabled=false" in executor.commands[0]
     assert "mcp_servers.user_config_only.enabled=false" in executor.commands[0]
     assert any("reconciliation_cli" in part for part in executor.commands[0])
+    assert (
+        f"mcp_servers.reconciliation_cli.cwd={json.dumps(str(Path(__file__).resolve().parents[1]))}"
+        in executor.commands[0]
+    )
     assert any("read_skill" in part for part in executor.commands[0])
     assert "read-only" in executor.prompts[0].casefold()
     assert "external write" in executor.prompts[0].casefold()

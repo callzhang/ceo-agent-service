@@ -164,6 +164,7 @@ def make_read_only_with_reviewed_tools(
     reviewed_mcp_tools: dict[str, tuple[str, ...]],
     controlled_cli_command: str,
     controlled_cli_args: tuple[str, ...],
+    controlled_cli_cwd: str,
 ) -> None:
     """Use a read-only sandbox and expose only explicitly reviewed MCP reads."""
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
@@ -208,6 +209,8 @@ def make_read_only_with_reviewed_tools(
             "mcp_servers.reconciliation_cli.args="
             + json.dumps(list(controlled_cli_args), ensure_ascii=True),
             "-c",
+            f"mcp_servers.reconciliation_cli.cwd={json.dumps(controlled_cli_cwd)}",
+            "-c",
             'mcp_servers.reconciliation_cli.enabled_tools=["execute_reviewed_read","read_skill"]',
         ],
     )
@@ -219,6 +222,7 @@ def make_direct_agent_sandbox(
     reviewed_mcp_tools: dict[str, tuple[str, ...]],
     controlled_cli_command: str,
     controlled_cli_args: tuple[str, ...],
+    controlled_cli_cwd: str,
 ) -> None:
     """Disable native tools and expose only reviewed external capabilities."""
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
@@ -263,6 +267,8 @@ def make_direct_agent_sandbox(
             "-c",
             "mcp_servers.reconciliation_cli.args="
             + json.dumps(list(controlled_cli_args), ensure_ascii=True),
+            "-c",
+            f"mcp_servers.reconciliation_cli.cwd={json.dumps(controlled_cli_cwd)}",
             "-c",
             "mcp_servers.reconciliation_cli.enabled_tools="
             '["execute_reviewed_read","execute_reviewed_write","read_skill"]',

@@ -57,6 +57,7 @@ AGENT_RECONCILIATION_SCHEMA_PATH = (
 DEFAULT_MCP_EFFECTS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "mcp-tool-effects.json"
 )
+SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SHARED_AGENT_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 TOTAL_TIMEOUT_SECONDS = 1200
 IDLE_TIMEOUT_SECONDS = 900
@@ -424,6 +425,7 @@ class DirectAgentRunner:
                 reviewed_mcp_tools=self.mcp_effect_registry.reviewed_read_tools(),
                 controlled_cli_command=sys.executable,
                 controlled_cli_args=("-m", "app.reconciliation_cli"),
+                controlled_cli_cwd=str(SERVICE_ROOT),
             )
         else:
             make_direct_agent_sandbox(
@@ -431,6 +433,7 @@ class DirectAgentRunner:
                 reviewed_mcp_tools=self.mcp_effect_registry.reviewed_tools(),
                 controlled_cli_command=sys.executable,
                 controlled_cli_args=("-m", "app.reconciliation_cli"),
+                controlled_cli_cwd=str(SERVICE_ROOT),
             )
         saw_json = False
 
@@ -686,6 +689,7 @@ class DirectAgentRunner:
             reviewed_mcp_tools=self.mcp_effect_registry.reviewed_read_tools(),
             controlled_cli_command=sys.executable,
             controlled_cli_args=("-m", "app.reconciliation_cli"),
+            controlled_cli_cwd=str(SERVICE_ROOT),
         )
         self.native_cli_classifier.prewarm()
         appended_events: list[dict[str, object]] = []
