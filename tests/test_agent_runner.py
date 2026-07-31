@@ -160,6 +160,7 @@ def test_direct_runner_uses_native_codex_config_without_mcp_whitelist(
     assert "features.plugins=false" not in command_text
     assert "features.apps=false" not in command_text
     assert "reconciliation_cli" not in command_text
+    assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert str(AGENT_RESULT_SCHEMA_PATH) in command
     assert result.result.outcome is AgentOutcome.COMPLETED
     assert result.events == ()
@@ -295,6 +296,7 @@ def test_read_only_run_uses_native_tools_with_never_approval_policy(
 
     command_text = " ".join(executor.commands[0])
     assert 'approval_policy="never"' in command_text
+    assert "--dangerously-bypass-approvals-and-sandbox" not in executor.commands[0]
     assert "reconciliation_cli" not in command_text
     assert "enabled_tools=" not in command_text
     assert "Read-only invocation" in executor.prompts[0]

@@ -424,7 +424,7 @@ class DirectAgentRunner:
             output_schema_path=AGENT_RESULT_SCHEMA_PATH,
             approval_policy=approval_policy,
             developer_instructions=developer_instructions,
-            use_approval_bypass=False,
+            use_approval_bypass=not read_only,
             preserve_native_model_config=True,
         )
         saw_json = False
