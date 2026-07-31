@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Analyze every reported service problem as an existing-behavior bug or a new feature request, automatically repair reproducible bugs on isolated branches with TDD and a complete audit trail, and place feature requests on a new approval page without implementing them before Derek approves.
+**Goal:** Analyze every reported service problem as an existing-behavior bug or a new feature request, repair reproducible bugs in an authorized repository or tracked shared skill on isolated branches with TDD and independent review, and place feature requests on a new approval page without implementing them before Derek approves.
 
-**Architecture:** Keep business and code judgment in the existing Codex automation that already inherits the installed Codex MCP configuration. The service only persists issue, repair, and approval state and exposes safe transitions; it does not add another provider client or a self-modifying background Agent. Bugs run in isolated Git worktrees through an explicit red-test, fix, green-test, merge, resumability-check, restart, and live-verification sequence. Feature requests stop at a durable approval record.
+**Architecture:** Keep business and code judgment in the existing Codex automation that already inherits the installed Codex MCP configuration. The service persists issue, repair, review, and approval state and exposes safe transitions; it does not add another provider client or a self-modifying background Agent. A repair target is an explicitly registered Git repository or tracked shared skill, and bugs run in that target's isolated worktree through red-test, fix, green-test, independent review, merge, and target-appropriate live verification. Feature requests stop at a durable approval record.
 
-**Tech Stack:** Python 3.12, SQLite, Pydantic v2, FastAPI audit UI, native Codex CLI, Git worktrees, pytest, launchd.
+**Tech Stack:** Python 3.12, SQLite, Pydantic v2, FastAPI audit UI, native Codex CLI, Git worktrees, pytest, launchd, target-specific test commands.
 
 ---
 
@@ -15,21 +15,28 @@
 This revision incorporates Derek's 2026-07-31 feedback:
 
 1. Confirmed-fact behavior is a prompt-only change. It is implemented by `docs/superpowers/plans/2026-07-30-agent-confirmed-fact-grounding.md` and must not add another response schema or service-side fact structure.
-2. Every service problem, whether caused by this repository or an external dependency, is analyzed before development starts.
+2. Every service problem, whether caused by this repository, another owned code repository, a tracked shared skill, or an external dependency, is analyzed before development starts.
 3. A problem is a **bug** only when current behavior violates an existing contract in code, prompt, configuration, documentation, test, or external-integration expectations.
 4. A request is a **feature** when it asks for behavior that is not currently promised by an existing contract.
 5. A transient dependency incident that the existing retry and recovery contract handles correctly is neither a bug nor a feature. It is recorded as a recovered incident and closed without code changes.
-6. Every bug fix uses a new branch and worktree, adds a regression test first, proves the test fails before the fix, proves it passes after the fix, merges to `main`, and records the evidence.
+6. Every bug fix names one registered repair target, uses a new branch and worktree in that target, adds a regression test first, proves the test fails before the fix, proves it passes after the fix, receives an independent code-review verdict, merges to that target's configured primary branch, and records the evidence.
 7. Every feature request is saved to a new `需求审批` page. Approval changes only the request status; implementation requires a separate approved execution plan.
+8. The homepage does not render a `待处理服务修复` banner. The `服务问题` navigation tab displays a red badge containing only issues that need an analysis, review, or Derek decision.
+9. A repair is directly merged only when its existing contract, failing regression test, target scope, and fix are deterministic, all required tests pass, and independent review returns `approved`. A review finding returns the run to the repair branch; ambiguity returns it to Derek rather than guessing.
 
 ## Safety And Ownership Boundary
 
-- The service must not switch the launchd checkout away from `main`. Bug branches live in `.worktrees/service-repair-<candidate-id>`.
-- Branch names use `codex/service-repair-<candidate-id>-<slug>`.
+- The service must not switch the launchd checkout away from `main`. A repair target is selected from a versioned target registry; a target must resolve to an owned Git checkout, a configured primary branch, and a canonical remote URL before a repair run can start. Unregistered paths, arbitrary local files, and targets with no traceable remote stop at `needs_review`.
+- The CEO service target's worktrees live in `.worktrees/service-repair-<candidate-id>`. Other targets use `<target-root>/.worktrees/service-repair-<candidate-id>` and leave the target's primary checkout unchanged.
+- Branch names use `codex/service-repair-<candidate-id>-<slug>` in every target.
 - The repair automation reuses the installed `codex` executable and configured MCP inheritance. Do not introduce `MemoryConnectorClient`, provider wrappers, direct Responses API calls, or another Agent client.
 - The repair automation may inspect code, tests, logs, live database state, and external dependency health. It must not expose secrets or persist raw tool output.
 - No bug is merged unless the regression test demonstrably fails on the pre-fix branch state and passes after the fix.
 - If a bug cannot be reproduced automatically, mark it `needs_review`; do not write an untested patch.
+- A repair has a separate review phase after green tests. Its reviewer is either a fresh read-only Codex review task or the project's deterministic review command; it cannot be the implementation task or reuse its Codex session.
+- The review record stores reviewer kind, reviewed base/head SHAs, command or review prompt fingerprint, verdict, redacted findings, and timestamp. It stores no raw model transcript, credentials, or private message payload.
+- `approved` permits merge only when all required tests are green. `changes_requested` prohibits merge and returns the run to `fixing`. `needs_derek_review` prohibits merge and creates a visible Derek decision item.
+- Git commit links are derived from the registered target's canonical remote and the stored commit SHA; manually supplied links are never trusted or rendered.
 - If `main` advances after the repair worktree is created, update the worktree from current `main`, rerun all required tests, and merge only when conflict-free. Never force-push or rewrite history.
 - Before restarting runtime code, verify claimed reply tasks, work-summary inputs, meeting jobs, and persisted external actions are resumable and idempotent.
 - Feature approval never calls Codex, edits code, creates a branch, or restarts the service inside the HTTP request.
@@ -46,6 +53,7 @@ Extend `service_bugfix_candidates` with these states and fields instead of creat
 - `evidence_json`: redacted identifiers for linked attempt, task, run, error, test, document, or dependency-health evidence.
 - `feature_request_id`: linked request when `problem_kind=feature`.
 - `repair_run_id`: linked repair when `problem_kind=bug`.
+- `target_key`: registered target selected by analysis for a bug; empty for feature and recovered incident records.
 - `resolved_at`: terminal timestamp.
 
 ### Service repair run
@@ -53,12 +61,13 @@ Extend `service_bugfix_candidates` with these states and fields instead of creat
 Create `service_repair_runs` with:
 
 - identity: `id`, `candidate_id`, `status`;
-- Git evidence: `base_sha`, `branch_name`, `worktree_path`, `test_commit_sha`, `fix_commit_sha`, `merge_commit_sha`;
+- Target and Git evidence: `target_key`, `target_kind` (`repository` or `skill`), `target_repo_path`, `target_primary_branch`, `target_remote_url`, `base_sha`, `branch_name`, `worktree_path`, `test_commit_sha`, `fix_commit_sha`, `merge_commit_sha`;
 - TDD evidence: `regression_test_paths_json`, `red_command`, `red_exit_code`, `green_command`, `green_exit_code`, `full_test_command`, `full_test_exit_code`;
+- Independent review evidence: `reviewer_kind` (`codex` or `project_command`), `review_base_sha`, `review_head_sha`, `review_command`, `review_exit_code`, `review_status`, `review_summary`, `reviewed_at`;
 - deployment evidence: `resumability_summary`, `restart_required`, `old_pid`, `new_pid`, `live_verification_summary`;
 - failure evidence: `error`, `created_at`, `updated_at`, `completed_at`.
 
-Repair statuses are `queued`, `reproducing`, `fixing`, `verifying`, `merging`, `restarting`, `resolved`, `needs_review`, or `failed`.
+Repair statuses are `queued`, `reproducing`, `fixing`, `verifying`, `reviewing`, `merging`, `restarting`, `resolved`, `needs_review`, or `failed`. Review statuses are `pending`, `approved`, `changes_requested`, or `needs_derek_review`.
 
 ### Feature request
 
@@ -73,7 +82,9 @@ The table must not store feedback tokens, raw feedback JSON, credentials, signed
 ## File Map
 
 - Modify: `app/store.py`
-  - Add issue fields, repair-run and feature-request tables, migrations, models, and atomic transitions.
+  - Add issue fields, repair-run, review, feature-request tables, migrations, models, and atomic transitions.
+- Create: `app/repair_targets.py`
+  - Load and validate the versioned registry of authorized repository and shared-skill repair targets; derive canonical commit links.
 - Replace: `app/feedback_bugfix.py`
   - Remove all text marker lists. Keep only evidence assembly and state validation for the Codex automation.
 - Create: `app/service_issue_workflow.py`
@@ -81,11 +92,13 @@ The table must not store feedback tokens, raw feedback JSON, credentials, signed
 - Modify: `app/cli.py`
   - Add explicit commands used by the existing automation to record analysis and TDD/deployment evidence.
 - Modify: `app/audit_web.py`
-  - Replace the old pending-only service-fix page with service issue/repair history and add the `需求审批` page.
+  - Replace the old pending-only service-fix page with service issue/repair history, add the `需求审批` page, and render action-required counts as navigation badges rather than homepage banners.
 - Modify: `tests/test_store.py`
   - Cover migrations, idempotency, and state transitions.
 - Create: `tests/test_service_issue_workflow.py`
   - Cover bug/feature/incident transition rules and redaction.
+- Create: `tests/test_repair_targets.py`
+  - Cover target registry validation, branch/worktree scope, and canonical commit-link derivation.
 - Modify: `tests/test_cli.py`
   - Cover recording analysis, red/green evidence, merge, and restart results.
 - Modify: `tests/test_audit_web.py`
@@ -99,11 +112,13 @@ The table must not store feedback tokens, raw feedback JSON, credentials, signed
 
 **Files:**
 - Modify: `app/store.py`
+- Create: `app/repair_targets.py`
 - Test: `tests/test_store.py`
+- Test: `tests/test_repair_targets.py`
 
 - [ ] **Step 1: Write failing migration and model tests**
 
-Add tests that open a pre-change database, preserve current candidates, create one repair run and one feature request, and reject duplicate links:
+Add tests that open a pre-change database, preserve current candidates, create one repair run for an authorized target and one feature request, and reject duplicate or unregistered target links:
 
 ```python
 def test_service_issue_schema_preserves_candidates_and_links_one_outcome(tmp_path):
@@ -116,11 +131,20 @@ def test_service_issue_schema_preserves_candidates_and_links_one_outcome(tmp_pat
         analysis_summary="Existing retry contract was not applied.",
         evidence={"attempt_id": candidate.attempt_id},
     )
-    repair = store.create_service_repair_run(candidate.id, base_sha="a" * 40)
+    repair = store.create_service_repair_run(
+        candidate.id,
+        target=repair_target("ceo-agent-service"),
+        base_sha="a" * 40,
+    )
 
     assert analyzed.problem_kind == "bug"
     assert repair.candidate_id == candidate.id
-    assert store.create_service_repair_run(candidate.id, base_sha="b" * 40).id == repair.id
+    assert repair.target_key == "ceo-agent-service"
+    assert store.create_service_repair_run(
+        candidate.id,
+        target=repair_target("ceo-agent-service"),
+        base_sha="b" * 40,
+    ).id == repair.id
     assert store.create_feature_request_from_candidate(candidate.id, **_feature_fields()) is None
 ```
 
@@ -144,14 +168,17 @@ Add Pydantic models `ServiceRepairRun` and `FeatureRequest`. Extend `ServiceBugf
 
 Existing `pending` rows migrate to `pending_analysis` without losing their title, reason, feedback comment, attempt link, or timestamps.
 
+Create `app/repair_targets.py` with a small checked-in registry keyed by stable target name. A registry entry declares only `key`, `kind`, `repository_path`, `primary_branch`, `remote_name`, `test_command`, and optional `review_command`. Validate at runtime that the repository path has the configured remote and primary branch; derive a commit link only from that remote plus a 40-character SHA. The initial registry contains the CEO service and any shared-skill repository already owned by Derek; adding another target is a reviewed repository configuration change, not an Agent-discovered filesystem path.
+
 - [ ] **Step 4: Add atomic store transitions**
 
 Implement:
 
 ```python
-record_service_issue_analysis(candidate_id, *, problem_kind, analysis_summary, evidence)
-create_service_repair_run(candidate_id, *, base_sha)
+record_service_issue_analysis(candidate_id, *, problem_kind, analysis_summary, evidence, target_key=None)
+create_service_repair_run(candidate_id, *, target, base_sha)
 update_service_repair_run(repair_run_id, *, expected_status, status, **evidence)
+record_service_repair_review(repair_run_id, *, reviewer_kind, base_sha, head_sha, command, exit_code, verdict, summary)
 create_feature_request_from_candidate(candidate_id, **request_fields)
 review_feature_request(request_id, *, decision, reviewer_note)
 resolve_recovered_incident(candidate_id, *, summary)
@@ -165,6 +192,7 @@ Run:
 
 ```bash
 .venv/bin/python -m pytest -q tests/test_store.py -k 'service_issue or service_repair or feature_request'
+.venv/bin/python -m pytest -q tests/test_repair_targets.py
 ```
 
 Expected: PASS.
@@ -273,12 +301,13 @@ service-issue classify --id <id> --kind bug --analysis-file <path> --evidence-fi
 service-repair start --candidate-id <id> --base-sha <sha>
 service-repair record-red --id <id> --commit <sha> --tests-file <path> --command <command> --exit-code <nonzero>
 service-repair record-green --id <id> --commit <sha> --command <command> --exit-code 0
+service-repair record-review --id <id> --reviewer codex --base <sha> --head <sha> --command <command> --exit-code 0 --verdict approved --summary-file <path>
 service-repair record-merge --id <id> --merge-commit <sha>
 service-repair record-restart --id <id> --old-pid <pid> --new-pid <pid> --verification-file <path>
 feature-request create --candidate-id <id> --request-file <path>
 ```
 
-Tests must assert that `record-red` rejects exit code 0, `record-green` rejects a missing red record, and `record-merge` rejects a non-green repair.
+Tests must assert that `record-red` rejects exit code 0, `record-green` rejects a missing red record, `record-review` rejects a reviewer that shares the implementation session, and `record-merge` rejects a non-green or non-approved repair.
 
 - [ ] **Step 2: Run the tests and verify they fail**
 
@@ -292,7 +321,7 @@ Expected: FAIL because the commands do not exist.
 
 - [ ] **Step 3: Implement thin CLI adapters**
 
-Each command parses files, validates paths and SHA formats, calls one store method, and prints a redacted status summary. It must not run Codex, Git, tests, launchctl, or external writes itself. This keeps execution ownership in the existing automation and persistence ownership in the service.
+Each command parses files, validates target key, paths, SHA formats, and allowed review verdicts, calls one store method, and prints a redacted status summary. It must not run Codex, Git, tests, launchctl, or external writes itself. This keeps execution ownership in the existing automation and persistence ownership in the service.
 
 - [ ] **Step 4: Run CLI tests**
 
@@ -319,11 +348,14 @@ git commit -m "feat: record service repair evidence"
 
 Add tests asserting:
 
-- the primary navigation contains `需求审批` and its pending count;
+- the primary navigation contains `服务问题` and `需求审批`, each with a red badge only when it has action-required rows;
+- the homepage does not contain `待处理服务修复`, its banner, or a duplicate service-issue count;
 - `/feature-requests` lists pending, approved, and rejected requests;
 - each pending row shows problem, expected behavior, acceptance plan, risk, and source summary;
 - POST approve changes only `status`, `reviewed_at`, and `reviewer_note`;
 - POST reject changes only the same review fields;
+- `/service-issues` separates `Bug`, `Feature request`, and `已恢复` rows and shows the target, solution, regression test, independent-review verdict, branch, and canonical Git links for test/fix/merge commits;
+- a `changes_requested` repair exposes the review finding and no merge link; a `needs_derek_review` repair exposes a Derek decision item;
 - neither route creates a branch, repair run, reply task, Agent run, external action, or service restart;
 - tokens, raw JSON, signed URLs, and private message bodies are absent.
 
@@ -349,7 +381,7 @@ Use the existing page shell, compact table style, local POST protection, and saf
 
 - [ ] **Step 4: Replace the pending-only service repair page**
 
-Replace `/service-bugfix-candidates` with `/service-issues`. Show classification, current repair state, branch, red/green test evidence, merge commit, restart status, and terminal error. Do not retain an alias route; update all internal navigation and tests to the new path.
+Replace `/service-bugfix-candidates` with `/service-issues`; remove the homepage `_pending_service_bugfix_card` call and helper; add a `服务问题` navigation badge sourced from only `pending_analysis`, `needs_review`, and `review_status=needs_derek_review` records. Show classification, current repair state, target, solution, branch, red/green test evidence, independent-review verdict and finding summary, canonical Git links for test/fix/merge commits, restart status, and terminal error. Do not retain an alias route; update all internal navigation and tests to the new path.
 
 - [ ] **Step 5: Run audit UI tests**
 
@@ -369,23 +401,23 @@ git commit -m "feat: add service issue and feature approval pages"
 ### Task 5: Execute One Bug Through Branch-Based TDD
 
 **Files:**
-- Runtime evidence only; the exact source and test files depend on the selected reproducible bug.
+- Runtime evidence only; the exact source and test files depend on the selected reproducible bug and its registered target.
 
 - [ ] **Step 1: Select one analyzed bug with no active repair**
 
-The candidate must name the existing contract, observed violation, reproduction evidence, and affected module. Record `problem_kind=bug` before creating development work.
+The candidate must name the existing contract, observed violation, reproduction evidence, affected module, and registered target key. Record `problem_kind=bug` before creating development work. If the target is another code repository or a shared skill, confirm its registry entry resolves to a clean Git checkout with its configured remote and primary branch. Otherwise record `needs_review`; do not create a worktree from an arbitrary path.
 
 - [ ] **Step 2: Create the isolated branch and worktree**
 
-Run with the recorded candidate ID and slug:
+Run from the recorded target root with the candidate ID and slug:
 
 ```bash
 git fetch origin main
 git worktree add -b codex/service-repair-<candidate-id>-<slug> \
-  .worktrees/service-repair-<candidate-id> origin/main
+  .worktrees/service-repair-<candidate-id> origin/<target-primary-branch>
 ```
 
-Record the exact `origin/main` SHA as `base_sha`. The launchd checkout remains on `main`.
+Record the exact `origin/<target-primary-branch>` SHA as `base_sha`, target key, target remote, and primary branch. For the CEO service target, the launchd checkout remains on `main`; a separate target has no CEO service restart.
 
 - [ ] **Step 3: Add only the regression test**
 
@@ -440,7 +472,30 @@ Before restart, verify active task/run state and persisted external effects can 
 
 Mark the repair and candidate `resolved` only when red, green, merge, restart, and live evidence are complete. Otherwise use `needs_review` or `failed` with the exact missing gate.
 
-### Task 6: Record One Feature Without Implementing It
+### Task 6: Independently Review Before Merge
+
+**Files:**
+- Runtime evidence only; the review sees the repair target's `base_sha..HEAD` diff and its recorded tests.
+
+- [ ] **Step 1: Start a fresh read-only review task**
+
+Use either a new Codex code-review session with no write permission or the target's registry `review_command`. The review input includes the existing-contract statement, reproduction, changed paths, `base_sha..HEAD` diff, red/green commands and results, and target-specific risks. It must not reuse the implementation Codex session or modify the branch.
+
+- [ ] **Step 2: Record a deterministic verdict**
+
+Record one of:
+
+- `approved`: no unresolved correctness, security, data-loss, idempotency, or contract finding, and all required tests are green;
+- `changes_requested`: a concrete finding identifies a path and corrective action; return the repair to `fixing` and rerun red/green plus review after the change;
+- `needs_derek_review`: the reviewer cannot determine the intended behavior, blast radius, or acceptance criteria; do not merge.
+
+The review summary must be concise, redacted, and evidence-based. It must contain no raw prompts, private messages, or tool transcripts.
+
+- [ ] **Step 3: Enforce the merge gate**
+
+Amend Task 5 Step 6 so it runs only when `review_status=approved`. For `changes_requested` or `needs_derek_review`, record the verdict, preserve the worktree, update the service issue page, and stop. Neither result may create a merge commit or trigger a restart.
+
+### Task 7: Record One Feature Without Implementing It
 
 **Files:**
 - Runtime evidence only.
@@ -461,7 +516,7 @@ Open `/feature-requests` on the live audit service and verify the pending reques
 
 Confirm no branch, worktree, repair run, reply task, Agent run, commit, push, or restart was created by feature intake.
 
-### Task 7: Document, Test, Deploy, And Verify
+### Task 8: Document, Test, Deploy, And Verify
 
 **Files:**
 - Modify: `docs/reply-worker-reliability.md`
@@ -469,7 +524,7 @@ Confirm no branch, worktree, repair run, reply task, Agent run, commit, push, or
 
 - [ ] **Step 1: Document the three outcomes**
 
-Document bug, feature, and recovered-incident definitions; the Bug TDD gates; feature approval semantics; branch/worktree naming; audit fields; restart preflight; and crash recovery.
+Document bug, feature, and recovered-incident definitions; repair-target registration; the Bug TDD and independent-review gates; feature approval semantics; branch/worktree naming; audit fields and canonical Git links; CEO-service restart preflight; target-specific verification; and crash recovery.
 
 - [ ] **Step 2: Run focused suites**
 
@@ -509,9 +564,13 @@ Complete the same current-base merge verification and resumability preflight def
 - Confirmed-fact behavior changes only the Direct Agent prompt and adds no new output schema.
 - No feedback keyword list, regular expression, or language-specific classifier remains.
 - Every service issue records an evidence-backed `bug`, `feature`, or `recovered_incident` conclusion.
-- Every bug has a unique worktree/branch, failing regression-test evidence, passing post-fix evidence, commits, merge SHA, restart evidence, and live verification.
+- Every bug has a registered repository or shared-skill target, a unique worktree/branch, failing regression-test evidence, passing post-fix evidence, independent-review verdict, canonical Git links for commits and merge SHA, and target-appropriate verification.
+- A CEO service repair additionally has resumability, restart, and live verification evidence; another target does not restart the CEO service merely because it is repaired.
 - A bug without a reproducible failing test is not automatically patched.
+- A repair without `review_status=approved` is not automatically merged.
+- A review with a concrete finding returns the repair to its branch. An uncertain review is visible as a Derek decision item.
 - Feature requests appear on `/feature-requests` and cannot start development before review.
+- The homepage contains no pending-service-repair banner; the `服务问题` and `需求审批` navigation badges show only action-required work.
 - Feature approval changes only approval state; implementation remains a separate approved plan.
 - No new provider, memory, MCP, or Responses API client is introduced.
 - Runtime restart occurs only after resumability/idempotency checks and ends with a new healthy process.
