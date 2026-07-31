@@ -30,28 +30,6 @@ from app.feedback_policy import FeedbackPressureStats
 from app.history import HistoryItem
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
-UNRECOVERABLE_BLOCKED_ERROR_PREFIX = "blocked_unrecoverable_"
-
-
-def is_unrecoverable_blocked_attempt(attempt: "ReplyAttempt") -> bool:
-    return (
-        attempt.send_status.strip().lower() == "blocked"
-        and attempt.send_error.strip().lower().startswith(
-            UNRECOVERABLE_BLOCKED_ERROR_PREFIX
-        )
-    )
-
-
-def is_terminal_reply_attempt(attempt: "ReplyAttempt") -> bool:
-    status = attempt.send_status.strip().lower()
-    return status in {
-        "sent",
-        "skipped",
-        "commented",
-        "reacted",
-        "calendar",
-        "document",
-    } or is_unrecoverable_blocked_attempt(attempt)
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
@@ -8163,9 +8141,6 @@ class AutoReplyStore:
                               and tasks.trigger_message_id=reply_attempts.trigger_message_id
                             limit 1
                         ), send_status)
-                        when send_status='blocked'
-                             and lower(send_error) like 'blocked_unrecoverable_%'
-                        then 'blocked-terminal'
                         when action in ('memory_write', 'oa_approval')
                              and send_status in ('failed', 'blocked', 'pending', 'dry_run')
                              and exists (
@@ -8678,7 +8653,6 @@ class AutoReplyStore:
                 select count(*) as count
                 from reply_attempts as attempts
                 where attempts.send_status='blocked'
-                  and lower(attempts.send_error) not like ?
                   and (
                       (
                           attempts.action in ('memory_write', 'oa_approval')
@@ -8707,7 +8681,6 @@ class AutoReplyStore:
                       )
                   )
                 """,
-                (f"{UNRECOVERABLE_BLOCKED_ERROR_PREFIX}%",),
             ).fetchone()
             return int(row["count"])
 

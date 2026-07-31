@@ -102,7 +102,6 @@ CRITICAL_INFO_UNAVAILABLE_PREFIX = "critical_info_unavailable:"
 XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER = (
     f"{CRITICAL_INFO_UNAVAILABLE_PREFIX}xiaoqing_interview"
 )
-BLOCKED_UNRECOVERABLE_EXTERNAL_AUTH_PREFIX = "blocked_unrecoverable_external_auth"
 DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
 SPLIT_PERSON_SIGNATURE = assistant_signature()
 STALE_PROCESSING_TASK_SECONDS = 30 * 60
@@ -281,10 +280,6 @@ def _is_dingteam_okr_login_error(reason: str) -> bool:
         and "api error 103" in normalized
         and "未登录" in reason
     )
-
-
-def _blocked_unrecoverable_external_auth_error(reason: str) -> str:
-    return f"{BLOCKED_UNRECOVERABLE_EXTERNAL_AUTH_PREFIX}: {reason}"
 
 
 def _normalize_codex_stop_error_reason(reason: str) -> str:

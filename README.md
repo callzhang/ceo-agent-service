@@ -57,7 +57,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 
 DWS 可能同时返回通用错误码和更具体的服务端错误码；服务始终按具体服务端错误码分类。日历、消息和通讯录等只读命令遇到临时 `ERROR` 或 `RATE_LIMIT_ERROR` 会在当前调用内重试，写操作不使用这条通用重试规则。
 
-`blocked` 只表示缺少权限、依赖、材料或安全条件，后续条件恢复后仍应进入修复/恢复口径。确定不可恢复的阻塞必须写入 `send_status=blocked` 且 `send_error` 以 `blocked_unrecoverable_` 开头；这类记录在审计页显示为 terminal blocked，不再作为待修复 backlog。
+`blocked` 只表示当前缺少权限、依赖、材料或安全条件。记录必须写明当前原因和恢复条件，始终保留在待处理 backlog；条件变化后通过原 trigger 的幂等 rerun 再次处理，不使用错误前缀把 blocked 永久排除。
 
 一次 reply task generation 对应一次 Direct Agent run，同一 `conversation_id` 的 run 复用 `conversations.codex_session_id`。Reply consumer 本身按队列逐条处理消息，不再额外维护对话锁。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID 和本次 transcript 行范围，不复制工具事件或生成服务自定义回执。任务终态直接采用严格 `AgentResult`；精确重复发送仍由 trigger 和 `sent_replies` 幂等记录阻止，人工修订后的新内容不被旧结果拦截。
 
@@ -328,7 +328,7 @@ http://127.0.0.1:8765/
 常用页面：
 
 - `/`：回复历史和待处理任务；“检索对象”可分别筛选普通钉钉回复、微信、审批、task 和 meeting，状态筛选支持 sent、reacted、skipped、blocked、failed 和 done
-- History 的状态筛选按当前可处理性展示：同一触发消息或同一会后任务已经有后续 terminal 结果时，旧 `failed` / `blocked` / `ready_to_send` 行保留为审计证据，但不再进入 active failed/blocked/pending 筛选；`blocked_unrecoverable_` 记录显示为 terminal blocked。
+- History 的状态筛选按当前可处理性展示：同一触发消息或同一会后任务已经有后续结果时，旧 `failed` / `blocked` / `ready_to_send` 行保留为审计证据，但不再进入 active failed/blocked/pending 筛选；尚无后续结果的 blocked 统一显示为可恢复的 `Blocked`。
 - `/tasks`：work projects、状态、category filter、Priority/Risk 排序、TODO checklist、实时全文检索和分页
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录
 - `/attempts/{id}`：单次处理详情；同一触发消息后续重跑成功时，旧记录顶部会链接到后续 attempt 并展示其最新动作，原始状态仍保留在详情字段中供审计
@@ -361,9 +361,10 @@ recruiting, sales, finance, admin, HR, other
 - 每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费一次 reply worker 写入的 Work Item，默认 60 秒。
 - 每 `CEO_TASK_DAILY_INTERVAL_SECONDS` 秒扫描 AI 听记、本地新增文件、拉取钉钉 Todo 完成状态并处理到期 follow-up，默认 86400 秒。
 - 钉钉 OA 待审批扫描默认开启，由 `CEO_OA_PENDING_SCAN_ENABLED` 控制；扫描间隔由
-  `CEO_OA_PENDING_SCAN_INTERVAL_SECONDS` 控制，默认 86400 秒；每次扫描查询最近
-  `CEO_OA_PENDING_SCAN_LOOKBACK_DAYS` 天的待审批，默认 7 天。扫描只会在审批详情中
-  确认当前登录用户存在 RUNNING 审批节点时入队，避免猜测 task id。
+  `CEO_OA_PENDING_SCAN_INTERVAL_SECONDS` 控制，默认 3600 秒；每次扫描查询最近
+  `CEO_OA_PENDING_SCAN_LOOKBACK_DAYS` 天的待审批，默认 365 天。扫描只会在审批详情中
+  确认当前登录用户存在 RUNNING 审批节点时入队，避免猜测 task id；同一审批仅在首次到达
+  当前用户、任务 ID 变化或产生新的审批操作/留言时再次入队。
 
 钉钉 Todo 是 owner 执行层，不替代 `/tasks` 里的内部项目管理视图。只有明确 owner、due time、非敏感且未完成的高置信 TODO 会创建钉钉 Todo；Derek 默认不作为执行人加入。内部 `work_todos` 仍是主数据，钉钉 Todo 只同步创建、完成状态拉取和有强证据时的完成推送。发送 follow-up 前会先检查已关联的钉钉 Todo 状态：如果钉钉侧已经完成，系统会关闭内部 TODO 并跳过提醒，避免重复催办。
 

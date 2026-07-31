@@ -1,5 +1,5 @@
 from app.dingtalk_models import DingTalkMessage
-from app.store import AutoReplyStore, is_terminal_reply_attempt
+from app.store import AutoReplyStore
 
 
 def _message() -> DingTalkMessage:
@@ -45,7 +45,7 @@ def test_recoverable_blocked_attempt_does_not_suppress_direct_agent_task(tmp_pat
     assert store.claim_agent_run(task.id, task.execution_generation, owner="worker").claimed
 
 
-def test_unrecoverable_blocked_attempt_manual_rerun_is_idempotent_per_revision(
+def test_explained_blocked_attempt_remains_recoverable_and_rerun_is_idempotent(
     tmp_path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -65,9 +65,7 @@ def test_unrecoverable_blocked_attempt_manual_rerun_is_idempotent_per_revision(
         send_error="blocked_unrecoverable_external_auth: not current user",
     )
 
-    attempt = store.get_reply_attempt(attempt_id)
-    assert attempt is not None
-    assert is_terminal_reply_attempt(attempt) is True
+    assert store.count_recoverable_blocked_reply_attempts() == 1
 
     original = store.enqueue_manual_rerun_reply_task(
         conversation_id=trigger.open_conversation_id,

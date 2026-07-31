@@ -439,7 +439,7 @@ def test_check_dry_run_reports_recoverable_blocked_attempt(tmp_path: Path):
     assert result.evidence["recoverable_blocked_attempts"] == 1
 
 
-def test_check_dry_run_ignores_unrecoverable_blocked_attempt(tmp_path: Path):
+def test_check_dry_run_reports_explained_blocked_attempt(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_reply_attempt(
         conversation_id="cid-1",
@@ -460,8 +460,8 @@ def test_check_dry_run_ignores_unrecoverable_blocked_attempt(tmp_path: Path):
 
     result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
 
-    assert result.status == "done"
-    assert result.evidence["recoverable_blocked_attempts"] == 0
+    assert result.status == "needs_action"
+    assert result.evidence["recoverable_blocked_attempts"] == 1
 
 
 def test_check_dry_run_reports_due_follow_up_backlog(tmp_path: Path):

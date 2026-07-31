@@ -3917,7 +3917,7 @@ def test_render_attempt_list_uses_failed_action_pill_color(tmp_path: Path):
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
-def test_render_attempt_list_labels_unrecoverable_blocked_as_terminal(
+def test_render_attempt_list_labels_explained_blocked_as_blocked(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -3940,11 +3940,8 @@ def test_render_attempt_list_labels_unrecoverable_blocked_as_terminal(
 
     html = render_attempt_list(store)
 
-    assert (
-        'class="pill status-action action-state-blocked-terminal">'
-        "💬 Blocked terminal</span>"
-    ) in html
-    assert 'class="pill status-action action-state-blocked">💬 Blocked</span>' not in html
+    assert 'class="pill status-action action-state-blocked">💬 Blocked</span>' in html
+    assert "Blocked terminal" not in html
 
 
 def test_render_attempt_detail_allows_explained_empty_documents(tmp_path: Path):
