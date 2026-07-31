@@ -122,7 +122,8 @@ def deliver_meeting_alignment(
         info = dws.get_conversation_info(target.conversation_id)
         if not _sendable_group_info(info, target.conversation_id):
             raise MeetingDeliveryRetry("selected target is not a sendable group")
-        _validate_group_audience(source, target.conversation_id, info, dws)
+        if _requires_participant_only_audience(decision):
+            _validate_group_audience(source, target.conversation_id, info, dws)
         conversation = DingTalkConversation(
             open_conversation_id=target.conversation_id,
             title=str(info.get("title") or target.title),
@@ -253,6 +254,14 @@ def _sendable_group_info(info: dict[str, Any], conversation_id: str) -> bool:
         and isinstance(member_count, int)
         and not isinstance(member_count, bool)
         and member_count > 0
+    )
+
+
+def _requires_participant_only_audience(
+    decision: MeetingAlignmentDecision,
+) -> bool:
+    return not decision.topics or any(
+        topic.state == "unresolved" for topic in decision.topics
     )
 
 

@@ -24,7 +24,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **安全和质量检查**：服务校验严格结构化 result、队列 generation 和精确重复投递；业务判断、工具选择和动作核对由 Direct Agent 使用实时系统完成。
 - **人工接管**：对需要本人处理的消息发送 handoff，并暂停该会话的自动回复直到检测到真人回复。
 - **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
-- **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时，多方会议只允许发到成员范围与参会人完全一致的讨论群，1:1 会议才私聊；没有可验证的参会人群就阻断发送，不会投递到更大的项目群或业务群。
+- **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时生成跟进。已经明确对齐的结论可发到承接该业务的团队群；包含未决议题或只有观点解读时，只允许成员范围与参会人完全一致的讨论群。1:1 会议才私聊。
 - **审计 Web UI**：本地 FastAPI 页面查看历史、attempt 详情、Codex session、错误、Prompt 模板和路由配置。
 - **自动修复 heartbeat**：定期检查 failed/processing/dry_run backlog，包括 `reply_tasks`、work summary 和结果未知的 agent run；未知写操作只做只读核对，不自动重放。
 - **管理者 OKR 周报**：每周日读取 CEO-2 管理群成员的实时叮当 OKR 和可访问证据，按 `dingtang-okr-review` 生成可审计评分、知识库报告和群内重点摘要。
@@ -445,7 +445,7 @@ scripts/install-auto-reply-agents.sh
 - producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。
 - consumer loop：按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。
 - meeting producer loop：读取 AI 听记与日历参会证据，只为 Derek 参会且明确结束至少 `CEO_MEETING_SETTLE_SECONDS` 的会议建队列；没有匹配日程的临时通话，仅在完整转写恰好证明 Derek 和另一位唯一员工时按 1:1 放行；没有触发条件的会议保持安静。
-- meeting consumer loop：独立分析并投递；多方会议在发送前分页读取完整群成员，只有成员集合与参会人集合完全一致才放行，任何未参会人员、成员读取不完整或参会人身份未解析都会阻断；多方会议绝不降级私聊，1:1 才私聊另一位参会人。发送正文固定以 `【会议跟进】会议标题（会议时间）` 开头，便于收件人识别来源会议；真实 @ 默认限于参会人，非参会人只有会议转写明确说到是他的任务、由他负责、交给他确认或跟进时才 @。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
+- meeting consumer loop：独立分析并投递；所有议题都已明确对齐时，可选择有明确业务承接关系的团队群，促进信息和决策透明；只要包含未决议题，或只有观点解读而没有已对齐议题，就在发送前分页读取完整群成员，只有成员集合与参会人集合完全一致才放行。多方会议绝不降级私聊，1:1 才私聊另一位参会人。发送正文固定以 `【会议跟进】会议标题（会议时间）` 开头，便于收件人识别来源会议；真实 @ 默认限于参会人，非参会人只有会议转写明确说到是他的任务、由他负责、交给他确认或跟进时才 @。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
 - task maintenance loop：按 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 处理 Work Item，并按 `CEO_TASK_DAILY_INTERVAL_SECONDS` 扫描 AI 听记、`CEO_WORKSPACE` 文件和到期 follow-up。
 
 这些周期参数统一在审计页 `Config → System Config` 中维护，保存到 `.env` 后由 Python 服务启动时读取；launchd 模板不再在 shell 命令里写死或覆盖这些周期值。

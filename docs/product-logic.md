@@ -114,17 +114,18 @@ discussions are not interviews. The bounded `replay-recent-meetings` command can
 explicitly reopen selected unsent historical `no_action` jobs without changing
 the activation watermark or reopening confirmed sends.
 
-Multi-party meetings are sent only to a group whose complete readable member
-set exactly matches the meeting participant set. The agent may rank several
-verified attendee-only groups, but topic similarity, partial participant overlap,
-and recent shared activity never make a broader project or business group safe.
-If member pagination is incomplete, a participant identity cannot be resolved,
-or any group member did not attend the meeting, delivery is blocked and retried.
-Multi-party meetings never fall back to a direct message. A 1:1 meeting sends
-directly to the other participant. When an ad-hoc call has no matching calendar
-event, it is treated as 1:1 only when the complete transcript contains exactly
-Derek and one uniquely resolved employee; otherwise it remains unqueued. No
-DING or reaction is added by this workflow.
+Multi-party delivery follows decision finality. When every published topic is
+explicitly aligned, the follow-up may go to a broader team group that clearly
+owns or executes the business decision, supporting transparent information and
+decisions. If any topic is unresolved, or the message is only a Derek viewpoint
+explanation with no aligned topic, the complete readable group-member set must
+exactly match the meeting participant set. In that restricted case, incomplete
+pagination, unresolved participant identity, or any non-participant blocks
+delivery. Multi-party meetings never fall back to a direct message. A 1:1
+meeting sends directly to the other participant. When an ad-hoc call has no
+matching calendar event, it is treated as 1:1 only when the complete transcript
+contains exactly Derek and one uniquely resolved employee; otherwise it remains
+unqueued. No DING or reaction is added by this workflow.
 
 Real mentions default to meeting participants. Non-participants can be mentioned
 only when the meeting transcript explicitly says the task is theirs, assigns

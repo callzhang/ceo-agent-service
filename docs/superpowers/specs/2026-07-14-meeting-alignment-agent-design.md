@@ -248,20 +248,24 @@ including:
 
 - an explicit group, message, calendar, or Minutes association;
 - discussion of the meeting title or core topic before and after the meeting;
-- a complete group-member read proving that every group member attended the
-  meeting and every meeting participant belongs to the group.
+- evidence that the group owns or executes the business decision;
+- for an unresolved topic or a viewpoint-only message, a complete group-member
+  read proving that every group member attended the meeting and every meeting
+  participant belongs to the group.
 
 The agent ranks candidates using the evidence and records the basis for the
 ranking. It does not use a fixed business-keyword list to decide group
-ownership. Topic similarity, recent shared activity, partial participant overlap,
-and temporal proximity may help discover a candidate, but they never authorize
-delivery to a broader audience. The delivery executor independently reads the
+ownership. When every topic is explicitly aligned, a broader team group with a
+clear execution relationship is allowed so the decision can be transparent.
+When any topic is unresolved, or the message contains only a viewpoint
+explanation without an aligned topic, topic similarity, recent shared activity,
+partial participant overlap, and temporal proximity never authorize a broader
+audience. In that restricted case the delivery executor independently reads the
 complete member roster and rejects the target when the roster differs from the
 authoritative meeting participant set or cannot be verified.
 
-If no attendee-only sendable group can be found, the job retries without an
-external send. It does not fall back to a direct message or a broader project
-group.
+If no group satisfying the decision-finality rule can be found, the job retries
+without an external send. It does not fall back to a direct message.
 
 ## Mention Resolution
 

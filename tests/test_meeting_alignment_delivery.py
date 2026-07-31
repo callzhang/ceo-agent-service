@@ -126,6 +126,7 @@ class FakeDws:
         self.profiles: dict[str, list[DwsUserProfile]] = {}
         self.recent_messages: list[DingTalkMessage] = []
         self.group_member_open_ids = {"open-derek", "open-a", "open-b"}
+        self.group_member_queries: list[str] = []
         self.send_result = {"success": True, "result": {"openMessageId": "msg-sent"}}
         self.send_status_result = {"success": True, "result": {"status": "SUCCESS"}}
         self.send_error = None
@@ -140,6 +141,7 @@ class FakeDws:
 
     def list_group_member_open_dingtalk_ids(self, conversation_id):
         assert conversation_id == "cid-first"
+        self.group_member_queries.append(conversation_id)
         return set(self.group_member_open_ids)
 
     def search_user_profiles(self, query):
@@ -230,6 +232,29 @@ def test_group_delivery_rejects_audience_with_non_participant():
         deliver_meeting_alignment(send_decision(), meeting_source(), dws)
 
     assert dws.sent == []
+
+
+def test_aligned_decision_can_reach_relevant_team_group():
+    dws = FakeDws()
+    dws.group_member_open_ids.add("open-frontline")
+    dws.conversation_info["memberCount"] = 4
+    payload = send_decision().model_dump()
+    payload["trigger_reasons"] = ["aligned_disagreement"]
+    payload["topics"][0].update(
+        state="aligned",
+        conclusion="先灰度上线",
+        alignment_reason="风险预算已明确",
+    )
+    payload["key_questions"] = []
+
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(payload),
+        meeting_source(),
+        dws,
+    )
+
+    assert result.status == "sent"
+    assert dws.group_member_queries == []
 
 
 def test_one_to_one_direct_delivery_resolves_empty_participant_id_uniquely():
