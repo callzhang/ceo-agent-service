@@ -4,9 +4,9 @@
 
 **Goal:** Make the Direct Agent acknowledge facts already supplied by the user and ask only for genuinely missing or contradictory information.
 
-**Architecture:** Keep semantic judgment inside the single Direct Agent introduced by the runtime-simplification work. Strengthen the shared Agent instructions, preserve raw trigger/context/receipt evidence, and add unit plus live semantic regressions; do not add a service-side fact extractor, keyword router, reply rewriter, or compatibility path.
+**Architecture:** Keep semantic judgment inside the single Direct Agent introduced by the runtime-simplification work. Change only the natural-language Direct Agent prompt and prompt-presence regression tests; do not add a production or test-only output schema, fact extractor, keyword router, reply rewriter, or compatibility path.
 
-**Tech Stack:** Python 3.12, native Codex CLI, Pydantic v2, pytest, JSON fixtures.
+**Tech Stack:** Python 3.12, native Codex CLI, existing AgentResult contract, pytest.
 
 ---
 
@@ -40,15 +40,9 @@ The user-visible behavior is:
 - Modify: `app/agent_context.py`
   - Express the confirmed/missing/contradictory decision rule in the one Direct Agent instruction block.
 - Modify: `tests/test_agent_context.py`
-  - Verify complete, partial, contradictory, and failed-read context rendering.
-- Create: `tests/fixtures/agent_fact_reuse_cases.json`
-  - Store generic semantic regression cases without production keyword logic.
-- Create: `tests/schemas/agent_fact_reuse_eval.schema.json`
-  - Define the test-only structured judgment returned by the live semantic evaluation.
-- Create: `tests/test_agent_fact_reuse_eval.py`
-  - Run the exact rendered production rules through native Codex in read-only evaluation mode.
+  - Verify the natural-language prompt covers complete, partial, contradictory, and failed-read evidence.
 - Modify: `docs/reply-worker-reliability.md`
-  - Document the evidence-reuse acceptance rule and live-eval command.
+  - Document the evidence-reuse acceptance rule and manual live verification.
 
 ### Task 1: Establish The Post-Simplification Baseline
 
@@ -170,126 +164,42 @@ git add app/agent_context.py tests/test_agent_context.py
 git commit -m "fix: ground follow-ups in confirmed facts"
 ```
 
-### Task 3: Add Generic Live Semantic Regressions
+### Task 3: Verify Prompt Behavior Without A New Output Contract
 
 **Files:**
-- Create: `tests/fixtures/agent_fact_reuse_cases.json`
-- Create: `tests/schemas/agent_fact_reuse_eval.schema.json`
-- Create: `tests/test_agent_fact_reuse_eval.py`
+- Verify: `app/agent_context.py`
+- Verify: `tests/test_agent_context.py`
 
-- [ ] **Step 1: Add complete, partial, and contradictory fixtures**
-
-Create `tests/fixtures/agent_fact_reuse_cases.json`:
-
-```json
-[
-  {
-    "id": "all_confirmed",
-    "trigger": "请确认本轮交付状态。",
-    "messages": [
-      "本轮性能提升已经确认达到 15%。",
-      "回归验证已经完成。"
-    ],
-    "expected_action": "acknowledge",
-    "expected_question_count": 0,
-    "expected_confirmed_count": 2,
-    "expected_conflict_count": 0
-  },
-  {
-    "id": "partial_completion",
-    "trigger": "请确认训练和验收是否都完成。",
-    "messages": [
-      "训练已经完成，验收时间还没有提供。"
-    ],
-    "expected_action": "ask_missing",
-    "expected_question_count": 1,
-    "expected_confirmed_count": 1,
-    "expected_conflict_count": 0
-  },
-  {
-    "id": "contradictory_values",
-    "trigger": "请确认最终提升结果。",
-    "messages": [
-      "第一份记录写的是 12%。",
-      "后续记录写的是 15%，但没有说明是否替代前值。"
-    ],
-    "expected_action": "ask_conflict",
-    "expected_question_count": 1,
-    "expected_confirmed_count": 0,
-    "expected_conflict_count": 1
-  }
-]
-```
-
-- [ ] **Step 2: Define the test-only evaluation schema**
-
-Create `tests/schemas/agent_fact_reuse_eval.schema.json`:
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["action", "confirmed", "conflicts", "questions"],
-  "properties": {
-    "action": {
-      "type": "string",
-      "enum": ["acknowledge", "ask_missing", "ask_conflict"]
-    },
-    "confirmed": {"type": "array", "items": {"type": "string"}},
-    "conflicts": {"type": "array", "items": {"type": "string"}},
-    "questions": {"type": "array", "items": {"type": "string"}}
-  }
-}
-```
-
-- [ ] **Step 3: Add a live evaluation that uses the production-rendered rules**
-
-Create `tests/test_agent_fact_reuse_eval.py`. The test must:
-
-1. build `AgentTaskContext` from each fixture;
-2. call `context.render()` so the production `_AGENT_RULES` are evaluated;
-3. invoke native Codex with `approval_policy="never"`, `use_approval_bypass=False`, and the test-only output schema;
-4. prohibit tool use in the test developer instruction;
-5. parse the last Agent JSON object;
-6. assert action and list counts against the fixture.
-
-Use this assertion body:
-
-```python
-@pytest.mark.live
-@pytest.mark.parametrize("case", CASES, ids=lambda case: case["id"])
-def test_direct_agent_reuses_confirmed_facts(case: dict) -> None:
-    result = run_fact_reuse_eval(_context_from_case(case))
-
-    assert result["action"] == case["expected_action"]
-    assert len(result["questions"]) == case["expected_question_count"]
-    assert len(result["confirmed"]) == case["expected_confirmed_count"]
-    assert len(result["conflicts"]) == case["expected_conflict_count"]
-```
-
-The helper must call `CodexRunner.build_command` and `run_process_with_idle_timeout` from the production runtime; it must not introduce a new production client.
-
-- [ ] **Step 4: Run the live evaluation three times**
+- [ ] **Step 1: Scan the implementation diff for structural additions**
 
 Run:
 
 ```bash
-for run in 1 2 3; do
-  .venv/bin/python -m pytest -q -m live tests/test_agent_fact_reuse_eval.py || exit 1
-done
+git diff -- app/agent_context.py tests/test_agent_context.py
 ```
 
-Expected: all three runs PASS. Requiring three clean runs catches unstable prompt behavior before deployment.
+Expected: the production change is limited to natural-language prompt text. No schema, response field, parser, fact model, keyword list, regular expression, or response rewriting is added.
 
-- [ ] **Step 5: Commit the semantic regressions**
+- [ ] **Step 2: Run the existing AgentResult contract tests**
+
+Run:
 
 ```bash
-git add tests/fixtures/agent_fact_reuse_cases.json \
-  tests/schemas/agent_fact_reuse_eval.schema.json \
-  tests/test_agent_fact_reuse_eval.py
-git commit -m "test: cover confirmed fact reuse semantics"
+.venv/bin/python -m pytest -q \
+  tests/test_agent_context.py \
+  tests/test_agent_result.py \
+  tests/test_agent_runner.py
 ```
+
+Expected: PASS using the existing `AgentResult` contract only.
+
+- [ ] **Step 3: Run one isolated live conversation without adding an eval schema**
+
+Use a new test conversation containing one confirmed result and one completed validation. Let the normal Direct Agent runtime produce its normal reply, then verify in History that it acknowledges both facts and asks no question for information already present. Do not add an eval-only schema or replay an already-sent production trigger.
+
+- [ ] **Step 4: Record the live evidence**
+
+Record the test conversation title, attempt ID, observed reply summary, and verification time in the implementation task or pull-request description. Do not persist message IDs, tokens, signed URLs, or raw transcripts in the repository.
 
 ### Task 4: Document And Verify The User-Facing Contract
 
@@ -298,7 +208,7 @@ git commit -m "test: cover confirmed fact reuse semantics"
 
 - [ ] **Step 1: Document the three evidence states and acceptance command**
 
-Add a section named `Confirmed fact grounding` that defines confirmed, missing, and contradictory exactly as this plan does. Include the focused unit command and the three-run live-eval command.
+Add a section named `Confirmed fact grounding` that defines confirmed, missing, and contradictory exactly as this plan does. Include the focused unit command and state that live verification uses the normal Direct Agent output contract without an additional schema.
 
 - [ ] **Step 2: Run focused and broad tests**
 
@@ -339,8 +249,8 @@ Create one new test conversation or a manual rerun generation whose context cont
 ## Acceptance Criteria
 
 - The production prompt has one explicit confirmed/missing/contradictory rule.
-- No production keyword list, regular expression, fact extractor, or response rewriter is added.
+- No production or test-only output schema is added for this behavior.
+- No keyword list, regular expression, fact extractor, or response rewriter is added.
 - Complete, partial, contradictory, and failed-read unit cases pass.
-- The three semantic cases pass three consecutive native Codex runs.
-- The real test conversation does not repeat a request for already confirmed information.
+- The real test conversation uses the normal AgentResult contract and does not repeat a request for already confirmed information.
 - The service is restarted on a new process and the reply-task failed/processing backlog remains empty.
