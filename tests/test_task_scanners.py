@@ -503,18 +503,114 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
         (
             1,
             30,
-            "2026-07-20T09:30:00+08:00",
+            "2025-07-27T09:30:00+08:00",
             "2026-07-27T09:30:00+08:00",
         )
     ]
     assert dws.task_reads == ["proc-1"]
     task = store.claim_reply_tasks(limit=1)[0]
     assert task.conversation_id == "oa_pending_scan"
-    assert task.conversation_title == "每日审批待办"
-    assert task.trigger_message_id == "oa-pending:2026-07-27:proc-1"
+    assert task.conversation_title == "审批待办"
+    assert task.trigger_message_id.startswith("oa-pending:proc-1:")
     assert "张三提交的录用申请" in task.trigger_text
     assert "procInstId=proc-1&taskId=102648910080" in task.oa_url
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
+
+
+def test_scan_pending_oa_approvals_covers_an_old_process_that_reaches_me_now(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.pages = []
+
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            self.pages.append((page, size, start, end))
+            return [
+                DwsOaApprovalCandidate(
+                    process_instance_id="old-proc",
+                    title="刘紫煜提交的供应商付款申请",
+                )
+            ]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_approval_detail(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {"result": {"operationRecords": []}}
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_pending_oa_approvals(
+        store,
+        dws,
+        now=datetime.fromisoformat("2026-07-31T19:00:00+08:00"),
+    ) == 1
+
+    assert dws.pages[0][2] == "2025-07-31T19:00:00+08:00"
+
+
+def test_scan_pending_oa_approvals_requeues_when_a_new_remark_arrives(tmp_path):
+    class FakeDws:
+        latest_operation_time = 1
+
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [DwsOaApprovalCandidate(process_instance_id="proc-1", title="付款申请")]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_approval_detail(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {
+                "result": {
+                    "operationRecords": [
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": self.latest_operation_time,
+                            "userId": "requester",
+                        }
+                    ]
+                }
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    now = datetime.fromisoformat("2026-07-31T19:00:00+08:00")
+
+    assert scan_pending_oa_approvals(store, dws, now=now) == 1
+    dws.latest_operation_time = 2
+    assert scan_pending_oa_approvals(store, dws, now=now) == 1
 
 
 def test_scan_pending_oa_approvals_skips_when_current_task_id_is_missing(tmp_path):

@@ -184,8 +184,8 @@ class WorkerSettings(BaseModel):
     task_daily_interval_seconds: PositiveInt = 86_400
     task_follow_up_interval_seconds: PositiveInt = 3_600
     oa_pending_scan_enabled: bool = True
-    oa_pending_scan_interval_seconds: PositiveInt = 86_400
-    oa_pending_scan_lookback_days: PositiveInt = 7
+    oa_pending_scan_interval_seconds: PositiveInt = 3_600
+    oa_pending_scan_lookback_days: PositiveInt = 365
     meeting_producer_interval_seconds: PositiveInt = 60
     meeting_consumer_poll_interval_seconds: PositiveInt = 10
     meeting_settle_seconds: PositiveInt = 600

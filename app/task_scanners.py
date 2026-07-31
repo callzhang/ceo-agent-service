@@ -290,7 +290,7 @@ def scan_pending_oa_approvals(
     dws,
     *,
     now: datetime | None = None,
-    lookback_days: int = 7,
+    lookback_days: int = 365,
     page_size: int = 30,
     max_pages: int = 10,
     max_new_items: int | None = None,
@@ -298,6 +298,7 @@ def scan_pending_oa_approvals(
     list_pending = getattr(dws, "list_pending_oa_approvals", None)
     read_tasks = getattr(dws, "read_oa_approval_tasks", None)
     read_detail = getattr(dws, "read_oa_approval_detail", None)
+    read_records = getattr(dws, "read_oa_approval_records", None)
     if list_pending is None:
         store.set_daily_scan_state(
             OA_PENDING_SCANNER,
@@ -359,10 +360,25 @@ def scan_pending_oa_approvals(
         except Exception:
             current_user_id = ""
 
+    previous_revisions: dict[str, str] = {}
+    previous_state = store.get_daily_scan_state(OA_PENDING_SCANNER)
+    if previous_state is not None:
+        try:
+            cursor = json.loads(previous_state["cursor_json"])
+            revisions = cursor.get("process_revisions", {})
+            if isinstance(revisions, dict):
+                previous_revisions = {
+                    str(process_id): str(revision)
+                    for process_id, revision in revisions.items()
+                }
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+
     queued = 0
     skipped_missing_task_id: list[str] = []
     seen_process_ids: set[str] = set()
     queued_process_ids: list[str] = []
+    process_revisions: dict[str, str] = {}
     for approval in approvals:
         process_instance_id = str(
             getattr(approval, "process_instance_id", "") or ""
@@ -385,6 +401,16 @@ def scan_pending_oa_approvals(
         if not task_id:
             skipped_missing_task_id.append(process_instance_id)
             continue
+        records_payload: Any = {}
+        if read_records is not None:
+            try:
+                records_payload = read_records(process_instance_id)
+            except Exception:
+                pass
+        revision = _oa_approval_revision(task_id, records_payload)
+        process_revisions[process_instance_id] = revision
+        if previous_revisions.get(process_instance_id) == revision:
+            continue
         title = str(getattr(approval, "title", "") or "").strip()
         process_name = str(getattr(approval, "process_name", "") or "").strip()
         label = title or process_name or process_instance_id
@@ -394,14 +420,14 @@ def scan_pending_oa_approvals(
         )
         trigger = DingTalkMessage(
             open_conversation_id="oa_pending_scan",
-            open_message_id=f"oa-pending:{scan_date}:{process_instance_id}",
-            conversation_title="每日审批待办",
+            open_message_id=f"oa-pending:{process_instance_id}:{revision}",
+            conversation_title="审批待办",
             single_chat=True,
             sender_name="Derek OA",
             message_type="text",
             create_time=scan_timestamp,
             content=(
-                "每日审批待办扫描发现待处理审批："
+                "审批待办扫描发现新增或有新消息的待处理审批："
                 f"{label}\n"
                 f"[查看审批]({oa_url})\n"
                 "请按 dingtalk-oa skill 审阅完整审批材料、历史处理记录和当前节点；"
@@ -441,6 +467,7 @@ def scan_pending_oa_approvals(
                 "window_start": window_start,
                 "seen_process_instance_ids": sorted(seen_process_ids),
                 "queued_process_instance_ids": queued_process_ids,
+                "process_revisions": process_revisions,
                 "skipped_missing_task_id_process_instance_ids": skipped_missing_task_id,
             },
             ensure_ascii=False,
@@ -480,6 +507,45 @@ def _pending_oa_task_id_for_current_user(
         if candidates:
             return candidates[0]
     return ""
+
+
+def _oa_approval_revision(task_id: str, records_payload: Any) -> str:
+    latest_operation = max(
+        _oa_operation_records(records_payload),
+        key=lambda record: (
+            _oa_task_field(record, ("operationTime", "date", "time")),
+            _oa_task_field(record, ("operationType", "type")),
+            _oa_task_field(record, ("userId", "userid", "user_id")),
+        ),
+        default={},
+    )
+    marker = "|".join(
+        (
+            _oa_task_field(latest_operation, ("operationTime", "date", "time")),
+            _oa_task_field(latest_operation, ("operationType", "type")),
+            _oa_task_field(latest_operation, ("userId", "userid", "user_id")),
+            _oa_task_field(latest_operation, ("operationResult", "result")),
+        )
+    )
+    return hashlib.sha256(f"{task_id}|{marker}".encode()).hexdigest()[:16]
+
+
+def _oa_operation_records(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        records: list[dict[str, Any]] = []
+        nested = value.get("operationRecords")
+        if isinstance(nested, list):
+            records.extend(item for item in nested if isinstance(item, dict))
+        for key in ("result", "data"):
+            records.extend(_oa_operation_records(value.get(key)))
+        return records
+    if isinstance(value, list):
+        return [
+            record
+            for item in value
+            for record in _oa_operation_records(item)
+        ]
+    return []
 
 
 def _oa_task_records(value: Any) -> list[dict[str, Any]]:
