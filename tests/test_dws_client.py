@@ -3714,6 +3714,73 @@ def test_get_conversation_info_returns_live_group_evidence():
     ]
 
 
+def test_list_group_member_open_ids_reads_all_pages():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "list": [{"openDingtalkId": "open-a"}],
+                    "hasMore": True,
+                    "nextCursor": "next-1",
+                }
+            },
+            {
+                "result": {
+                    "list": [{"openDingtalkId": "open-b"}],
+                    "hasMore": False,
+                }
+            },
+        ]
+    )
+
+    open_ids = client.list_group_member_open_dingtalk_ids("cid-open")
+
+    assert open_ids == {"open-a", "open-b"}
+    assert client.commands == [
+        [
+            "dws",
+            "chat",
+            "group",
+            "members",
+            "--id",
+            "cid-open",
+            "--cursor",
+            "0",
+            "--format",
+            "json",
+        ],
+        [
+            "dws",
+            "chat",
+            "group",
+            "members",
+            "--id",
+            "cid-open",
+            "--cursor",
+            "next-1",
+            "--format",
+            "json",
+        ],
+    ]
+
+
+def test_list_group_member_open_ids_rejects_repeated_cursor():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "list": [{"openDingtalkId": "open-a"}],
+                    "hasMore": True,
+                    "nextCursor": "0",
+                }
+            }
+        ]
+    )
+
+    with pytest.raises(DwsError, match="repeated a cursor"):
+        client.list_group_member_open_dingtalk_ids("cid-open")
+
+
 def test_verify_message_send_result_extracts_task_and_queries_status():
     client = SequenceRecordingDwsClient(
         [{"success": True, "result": {"status": "SUCCESS"}}]

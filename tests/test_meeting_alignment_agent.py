@@ -161,8 +161,8 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "必须逐字填写 `/configured/work_profile.md`" in prompt
     assert "不得改写、加标题或写成说明性文字" in prompt
     assert "每场会议最多生成一条合并消息" in prompt
-    assert "候选列表第 1 个" in prompt
-    assert "关联较弱也不能降级为私聊" in prompt
+    assert "群内所有人员都属于本次会议参会人" in prompt
+    assert "关联较弱的项目群或业务群一律不能发送" in prompt
     assert "target=null" in prompt
     assert "交给发送层重试" in prompt
     assert "不能改成 no_action" in prompt

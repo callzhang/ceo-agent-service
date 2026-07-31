@@ -248,19 +248,20 @@ including:
 
 - an explicit group, message, calendar, or Minutes association;
 - discussion of the meeting title or core topic before and after the meeting;
-- participant activity in the same group;
-- overlap between the organizer or main speakers and recent group participants;
-- temporal proximity between group discussion and the meeting;
-- group title and recent conversation context.
+- a complete group-member read proving that every group member attended the
+  meeting and every meeting participant belongs to the group.
 
 The agent ranks candidates using the evidence and records the basis for the
 ranking. It does not use a fixed business-keyword list to decide group
-ownership. It always selects the highest-ranked sendable group, even when the
-association is weak. If the initial search yields no group, it expands the
-search to recently accessible groups.
+ownership. Topic similarity, recent shared activity, partial participant overlap,
+and temporal proximity may help discover a candidate, but they never authorize
+delivery to a broader audience. The delivery executor independently reads the
+complete member roster and rejects the target when the roster differs from the
+authoritative meeting participant set or cannot be verified.
 
-If no sendable group can be found at all, the job retries. It does not fall back
-to a direct message.
+If no attendee-only sendable group can be found, the job retries without an
+external send. It does not fall back to a direct message or a broader project
+group.
 
 ## Mention Resolution
 

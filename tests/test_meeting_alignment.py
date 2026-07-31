@@ -162,6 +162,12 @@ class ConsumerDws(FakeDws):
             "memberCount": 3,
         }
 
+    def list_group_member_open_dingtalk_ids(
+        self, conversation_id: str
+    ) -> set[str]:
+        assert conversation_id == "cid-first"
+        return {"open-derek", "open-a", "open-b"}
+
     def search_user_profiles(self, query: str) -> list:
         return []
 

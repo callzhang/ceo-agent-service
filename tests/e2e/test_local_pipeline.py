@@ -90,6 +90,10 @@ class FakeMeetingDws:
             "memberCount": 3,
         }
 
+    def list_group_member_open_dingtalk_ids(self, conversation_id):
+        assert conversation_id == "cid-first"
+        return {"open-derek", "open-a", "open-b"}
+
     def search_user_profiles(self, query):
         return []
 

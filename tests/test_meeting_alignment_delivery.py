@@ -125,6 +125,7 @@ class FakeDws:
         }
         self.profiles: dict[str, list[DwsUserProfile]] = {}
         self.recent_messages: list[DingTalkMessage] = []
+        self.group_member_open_ids = {"open-derek", "open-a", "open-b"}
         self.send_result = {"success": True, "result": {"openMessageId": "msg-sent"}}
         self.send_status_result = {"success": True, "result": {"status": "SUCCESS"}}
         self.send_error = None
@@ -136,6 +137,10 @@ class FakeDws:
     def get_conversation_info(self, conversation_id):
         assert conversation_id == "cid-first"
         return self.conversation_info
+
+    def list_group_member_open_dingtalk_ids(self, conversation_id):
+        assert conversation_id == "cid-first"
+        return set(self.group_member_open_ids)
 
     def search_user_profiles(self, query):
         self.search_queries.append(query)
@@ -211,6 +216,17 @@ def test_group_must_be_sendable_through_conversation_info():
     dws.conversation_info["singleChat"] = True
 
     with pytest.raises(MeetingDeliveryRetry, match="sendable group"):
+        deliver_meeting_alignment(send_decision(), meeting_source(), dws)
+
+    assert dws.sent == []
+
+
+def test_group_delivery_rejects_audience_with_non_participant():
+    dws = FakeDws()
+    dws.group_member_open_ids.add("open-frontline")
+    dws.conversation_info["memberCount"] = 4
+
+    with pytest.raises(MeetingDeliveryRetry, match="non-participant"):
         deliver_meeting_alignment(send_decision(), meeting_source(), dws)
 
     assert dws.sent == []
@@ -374,6 +390,8 @@ def test_non_participant_mention_is_allowed_when_transcript_assigns_task():
 
 def test_duplicate_canonical_participant_names_are_inherently_ambiguous():
     dws = FakeDws()
+    dws.group_member_open_ids.add("open-a-duplicate")
+    dws.conversation_info["memberCount"] = 4
     source_payload = meeting_source().model_dump()
     source_payload["participants"].append(
         {
@@ -398,7 +416,7 @@ def test_duplicate_canonical_participant_names_are_inherently_ambiguous():
     assert dws.search_queries == []
 
 
-def test_participant_user_id_mismatch_is_not_replaced_by_name_match():
+def test_participant_user_id_mismatch_blocks_unverifiable_group_audience():
     dws = FakeDws()
     source = meeting_source()
     payload = source.model_dump()
@@ -411,14 +429,14 @@ def test_participant_user_id_mismatch_is_not_replaced_by_name_match():
         )
     ]
 
-    result = deliver_meeting_alignment(
-        send_decision(mention_names=["A"]),
-        MeetingSource.model_validate(payload),
-        dws,
-    )
+    with pytest.raises(MeetingDeliveryRetry, match="audience is unverifiable"):
+        deliver_meeting_alignment(
+            send_decision(mention_names=["A"]),
+            MeetingSource.model_validate(payload),
+            dws,
+        )
 
-    assert result.resolved_mentions == []
-    assert result.unresolved_mention_names == ["A"]
+    assert dws.sent == []
 
 
 def test_single_fuzzy_name_match_is_not_selected():

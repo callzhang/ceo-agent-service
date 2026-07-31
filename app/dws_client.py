@@ -281,6 +281,7 @@ class DwsClient:
         ("calendar", "event", "get"),
         ("calendar", "event", "list"),
         ("chat", "conversation-info"),
+        ("chat", "group", "members"),
         ("chat", "message", "list"),
         ("chat", "message", "list-direct"),
         ("chat", "message", "list-by-ids"),
@@ -495,6 +496,22 @@ class DwsClient:
             "conversation-info",
             "--group",
             open_conversation_id,
+            "--format",
+            "json",
+        ]
+
+    def build_group_members_command(
+        self, open_conversation_id: str, *, cursor: str = "0"
+    ) -> list[str]:
+        return [
+            self.dws_bin,
+            "chat",
+            "group",
+            "members",
+            "--id",
+            open_conversation_id,
+            "--cursor",
+            cursor,
             "--format",
             "json",
         ]
@@ -1796,6 +1813,56 @@ class DwsClient:
         if not isinstance(info, dict):
             raise DwsError("conversation-info response is missing conversationInfo")
         return info
+
+    def list_group_member_open_dingtalk_ids(
+        self, open_conversation_id: str
+    ) -> set[str]:
+        cursor = "0"
+        seen_cursors: set[str] = set()
+        member_open_ids: set[str] = set()
+        while True:
+            if cursor in seen_cursors:
+                raise DwsError("group members pagination repeated a cursor")
+            seen_cursors.add(cursor)
+            payload = self.run_json(
+                self.build_group_members_command(
+                    open_conversation_id,
+                    cursor=cursor,
+                )
+            )
+            result = payload.get("result")
+            if not isinstance(result, dict):
+                raise DwsError("group members response is missing result")
+            members = result.get("list")
+            if not isinstance(members, list):
+                raise DwsError("group members response is missing list")
+            for member in members:
+                if not isinstance(member, dict):
+                    raise DwsError(
+                        "group members response contains an invalid member"
+                    )
+                open_id = str(
+                    member.get("openDingtalkId")
+                    or member.get("openDingTalkId")
+                    or ""
+                ).strip()
+                if not open_id:
+                    raise DwsError(
+                        "group member is missing openDingTalkId; "
+                        "audience is unverifiable"
+                    )
+                member_open_ids.add(open_id)
+            if not result.get("hasMore"):
+                break
+            next_cursor = result.get("nextCursor")
+            if not isinstance(next_cursor, str) or not next_cursor.strip():
+                raise DwsError(
+                    "group members response has more pages but no nextCursor"
+                )
+            cursor = next_cursor.strip()
+        if not member_open_ids:
+            raise DwsError("group has no readable members")
+        return member_open_ids
 
     def read_recent_messages(
         self, conversation: DingTalkConversation, limit: int = 50

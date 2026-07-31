@@ -214,9 +214,10 @@ def build_meeting_alignment_prompt(
     else:
         target_contract = """这是多人会议：
 - 只允许发群，不允许私聊或在找不到强关联群时降级为私聊。
-- 必须使用 DWS 做群发现并按证据强弱排序：先找会议内明确提及或分享的群链接；再搜会议标题/核心议题消息；再看参会人近期共同活跃；再看组织者/关键发言人重合；再看会前会后时间邻近性；最后查看近期可访问群。
-- 每个 candidate 都必须写具体 evidence。target 必须选择候选列表第 1 个（得分最高的可发送群）；即使关联较弱也选择它，关联较弱也不能降级为私聊。
-- 如果已经穷尽上述群发现仍没有任何可访问且可发送的群，但会议确实命中 send 触发条件，必须保留 action=send、trigger_reasons、topics/derek_viewpoint、key_questions、mention_names 和 final_message，并返回 target=null，交给发送层重试。
+- 必须使用 DWS 做群发现，优先找会议内明确提及或分享的讨论群，再搜会议标题和核心议题消息。
+- 每个候选群都必须读取完整成员列表并核对：群内所有人员都属于本次会议参会人，而且所有参会人都在群内。仅有议题相似、参会人部分重合或近期共同活跃不构成可发送证据；关联较弱的项目群或业务群一律不能发送。
+- 每个 candidate 都必须写清群来源和成员核对结果。只在核验通过的候选中按证据强弱排序，并选择第 1 个。
+- 如果没有成员范围完全等于参会人的可发送群，但会议确实命中 send 触发条件，必须保留 action=send、trigger_reasons、topics/derek_viewpoint、key_questions、mention_names 和 final_message，并返回 target=null，交给发送层重试。
 - target=null 是暂时无法投递的运行状态：不能改成 no_action，也绝不能降级为私聊。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
