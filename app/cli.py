@@ -2228,7 +2228,6 @@ def run_task_maintenance_loop(
 
     now = monotonic()
     next_daily_run = now
-    next_oa_pending_scan_run = now
     next_follow_up_run = now
     while True:
         if not network_ready():
@@ -2263,17 +2262,6 @@ def run_task_maintenance_loop(
                 lambda: check_follow_up_completions_command(settings, limit=1),
             )
             next_daily_run = now + daily_interval_seconds
-        if settings.oa_pending_scan_enabled and now >= next_oa_pending_scan_run:
-            run_step(
-                "scan_oa_approvals",
-                lambda: scan_oa_approvals_command(
-                    settings,
-                    max_new_items=settings.max_batches,
-                ),
-            )
-            run_step("process_work_items", lambda: process_work_items_command(settings))
-            run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
-            next_oa_pending_scan_run = now + settings.oa_pending_scan_interval_seconds
         if now >= next_follow_up_run:
             run_step(
                 "process_follow_ups",
@@ -2285,6 +2273,24 @@ def run_task_maintenance_loop(
             )
             next_follow_up_run = now + follow_up_interval_seconds
         sleep(work_item_interval_seconds)
+
+
+def run_oa_pending_scan_loop(
+    settings: WorkerSettings,
+    interval_seconds: int,
+    *,
+    max_new_items: int | None = None,
+    sleep: Callable[[int], None] = time.sleep,
+    network_ready: Callable[[], bool] = _macos_wifi_connected,
+) -> None:
+    store = AutoReplyStore(settings.db_path)
+    while True:
+        if network_ready():
+            try:
+                scan_oa_approvals_command(settings, max_new_items=max_new_items)
+            except Exception as exc:
+                store.record_error("", "", "oa_pending_scan", str(exc))
+        sleep(interval_seconds)
 
 
 def _wechat_service_components(settings: WorkerSettings) -> tuple:
@@ -2465,6 +2471,18 @@ def run_service(
             ),
         ),
     )
+    if settings.oa_pending_scan_enabled:
+        components += (
+            (
+                "oa-pending-scan",
+                lambda: run_oa_pending_scan_loop(
+                    settings,
+                    settings.oa_pending_scan_interval_seconds,
+                    max_new_items=settings.max_batches,
+                    network_ready=dependency_gate.ready,
+                ),
+            ),
+        )
     components = components + _wechat_service_components(settings)
     for component, target in components:
         thread = thread_factory(
