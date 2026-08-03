@@ -72,6 +72,7 @@ from app.dingtalk_models import (
 from app.codex_runner import selected_codex_model_provider
 from app.notification import (
     dingtalk_conversation_notification_url,
+    send_browser_notification,
     send_macos_notification,
 )
 from app.oa_approval import extract_oa_url
@@ -1969,7 +1970,7 @@ class DingTalkAutoReplyWorker:
             else ""
         )
         if run is not None and run.status == "failed":
-            self.store.finalize_agent_reply_task(
+            attempt_id = self.store.finalize_agent_reply_task(
                 task_id=task.id,
                 expected_execution_generation=task.execution_generation,
                 run_id=run.id,
@@ -1995,23 +1996,29 @@ class DingTalkAutoReplyWorker:
                 send_error=error,
                 channel=task.channel,
             )
-            return task_status
-        self.store.finalize_reply_task_without_run(
-            task_id=task.id,
-            expected_execution_generation=task.execution_generation,
-            task_status=task_status,
-            task_error=error,
-            available_at=available_at,
-            conversation_id=task.conversation_id,
-            conversation_title=task.conversation_title,
-            trigger_message_id=task.trigger_message_id,
-            trigger_sender=task.trigger_sender,
-            trigger_text=task.trigger_text,
-            codex_reason=error,
-            audit_summary=error,
+        else:
+            attempt_id = self.store.finalize_reply_task_without_run(
+                task_id=task.id,
+                expected_execution_generation=task.execution_generation,
+                task_status=task_status,
+                task_error=error,
+                available_at=available_at,
+                conversation_id=task.conversation_id,
+                conversation_title=task.conversation_title,
+                trigger_message_id=task.trigger_message_id,
+                trigger_sender=task.trigger_sender,
+                trigger_text=task.trigger_text,
+                codex_reason=error,
+                audit_summary=error,
+                send_status="failed",
+                send_error=error,
+                channel=task.channel,
+            )
+        self._notify_problem_attempt(
+            task,
+            attempt_id=attempt_id,
             send_status="failed",
-            send_error=error,
-            channel=task.channel,
+            message=error,
         )
         return task_status
 
@@ -2524,7 +2531,7 @@ class DingTalkAutoReplyWorker:
             available_at = self._reply_task_retry_available_at(task.attempts)
         elif task_status == "pending":
             task_status = "failed"
-        self._finalize_agent_attempt_and_task(
+        attempt_id = self._finalize_agent_attempt_and_task(
             task,
             run_result,
             send_status=send_status,
@@ -2532,6 +2539,13 @@ class DingTalkAutoReplyWorker:
             task_status=task_status,
             available_at=available_at,
         )
+        if send_status in {"blocked", "failed"}:
+            self._notify_problem_attempt(
+                task,
+                attempt_id=attempt_id,
+                send_status=send_status,
+                message=result.summary or send_error,
+            )
         if task_status == "done":
             return True
         return False
@@ -2610,6 +2624,13 @@ class DingTalkAutoReplyWorker:
         )
         if send_error:
             self.store.update_reply_attempt(attempt_id, send_error=send_error)
+        if send_status in {"blocked", "failed"}:
+            self._notify_problem_attempt(
+                task,
+                attempt_id=attempt_id,
+                send_status=send_status,
+                message=run_result.result.summary or send_error,
+            )
         return attempt_id
 
     def _apply_unknown_agent_run(
@@ -4583,6 +4604,30 @@ class DingTalkAutoReplyWorker:
             title=title,
             message=message,
             url=self._notification_url(conversation, attempt_id=attempt_id),
+        )
+
+    def _notify_problem_attempt(
+        self,
+        task: ReplyTask,
+        *,
+        attempt_id: int,
+        send_status: str,
+        message: str,
+    ) -> None:
+        if self.dry_run:
+            return
+        conversation = DingTalkConversation(
+            open_conversation_id=task.conversation_id,
+            title=task.conversation_title,
+            single_chat=task.single_chat,
+            unread_point=1,
+        )
+        title = f"CEO task {send_status}: {task.conversation_title}"
+        url = self._notification_url(conversation, attempt_id=attempt_id)
+        send_browser_notification(
+            title=title,
+            message=message[:120],
+            url=url,
         )
 
     def _notification_url(

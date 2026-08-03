@@ -13743,6 +13743,87 @@ def test_handoff_ding_failure_does_not_block_ack(
     assert attempt.send_error == "needs_human"
 
 
+def test_blocked_agent_attempt_publishes_browser_notification(
+    tmp_path: Path, monkeypatch
+):
+    browser_notifications: list[dict[str, str | None]] = []
+    trigger = message("@Alex Chen(明哥) 需要本人确认")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+    script_agent_result(
+        worker,
+        explicit_agent_result(
+            AgentOutcome.NEEDS_HUMAN,
+            "需要本人确认。",
+            code="principal_confirmation_required",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.notification._send_browser_notification",
+        lambda **kwargs: browser_notifications.append(kwargs) or True,
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+
+    worker.run_once()
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert browser_notifications == [
+        {
+            "title": "CEO task blocked: Friday",
+            "message": "需要本人确认。",
+            "url": worker._notification_url(conversation(), attempt_id=attempt.id),
+        }
+    ]
+
+
+def test_retryable_failed_agent_attempt_publishes_browser_notification(
+    tmp_path: Path, monkeypatch
+):
+    browser_notifications: list[dict[str, str | None]] = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        max_task_attempts=3,
+    )
+    script_agent_result(
+        worker,
+        explicit_agent_result(
+            AgentOutcome.FAILED,
+            "provider temporarily unavailable",
+            code="provider_unavailable",
+            retryable=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.notification._send_browser_notification",
+        lambda **kwargs: browser_notifications.append(kwargs) or True,
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+
+    worker.run_once()
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert browser_notifications == [
+        {
+            "title": "CEO task failed: Friday",
+            "message": "provider temporarily unavailable",
+            "url": worker._notification_url(conversation(), attempt_id=attempt.id),
+        }
+    ]
+
+
 def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
     tmp_path: Path, monkeypatch
 ):

@@ -37,6 +37,14 @@ def send_macos_notification(title: str, message: str, url: str | None = None) ->
     subprocess.run(["osascript", "-e", script], check=False)
 
 
+def send_browser_notification(
+    title: str,
+    message: str,
+    url: str | None = None,
+) -> bool:
+    return _send_browser_notification(title=title, message=message, url=url)
+
+
 def _applescript_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
