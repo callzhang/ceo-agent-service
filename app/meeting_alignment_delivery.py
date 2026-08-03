@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsError, DwsUserProfile
 from app.meeting_alignment_models import (
+    DeliveryTarget,
     MeetingAlignmentDecision,
     MeetingParticipant,
     MeetingSource,
@@ -103,11 +104,17 @@ def deliver_meeting_alignment(
     recent_messages: list[DingTalkMessage] = []
     direct_user_id = ""
     direct_open_dingtalk_id = ""
-    if participant_count > 2:
-        if target is None:
+    if target is None:
+        if participant_count > 2:
             raise MeetingDeliveryRetry("multi-party meeting has no sendable group")
-        if target.kind == "direct":
-            raise MeetingDeliveryError("multi-party meeting cannot use direct delivery")
+        raise MeetingDeliveryError(
+            "1:1 meeting requires a direct target for the other participant"
+        )
+    if target.kind == "group":
+        if participant_count == 2:
+            raise MeetingDeliveryError(
+                "1:1 meeting requires a direct target for the other participant"
+            )
         if (
             not target.candidates
             or target.candidates[0].conversation_id != target.conversation_id
@@ -128,19 +135,11 @@ def deliver_meeting_alignment(
         target_kind = "group"
         target_id = target.conversation_id
     else:
-        counterpart = _one_to_one_counterpart(source)
-        if target is None or target.kind != "direct":
-            raise MeetingDeliveryError(
-                "1:1 meeting requires a direct target for the other participant"
-            )
-        if _canonical(target.title) != _canonical(counterpart.name):
-            raise MeetingDeliveryError(
-                "1:1 direct target must name the other participant"
-            )
+        counterpart = _direct_target_participant(source, target)
         if counterpart.user_id:
             if target.direct_user_id != counterpart.user_id:
                 raise MeetingDeliveryError(
-                    "1:1 direct target must use the other participant user id"
+                    "direct target must use the participant user id"
                 )
             direct_user_id = counterpart.user_id
         else:
@@ -251,17 +250,38 @@ def _sendable_group_info(info: dict[str, Any], conversation_id: str) -> bool:
     )
 
 
-def _one_to_one_counterpart(source: MeetingSource) -> MeetingParticipant:
-    counterparts = [
+def _direct_target_participant(
+    source: MeetingSource,
+    target: DeliveryTarget,
+) -> MeetingParticipant:
+    participants = [
         participant
         for participant in source.participants
         if participant.user_id != source.current_user_id
     ]
-    if len(counterparts) != 1:
+    if target.direct_user_id:
+        matches = [
+            participant
+            for participant in participants
+            if participant.user_id == target.direct_user_id
+        ]
+    else:
+        matches = [
+            participant
+            for participant in participants
+            if not participant.user_id
+            and _canonical(participant.name) == _canonical(target.title)
+        ]
+    if len(matches) != 1:
         raise MeetingDeliveryError(
-            "1:1 meeting must identify exactly one other participant"
+            "direct target must identify another meeting participant"
         )
-    return counterparts[0]
+    counterpart = matches[0]
+    if _canonical(target.title) != _canonical(counterpart.name):
+        raise MeetingDeliveryError(
+            "direct target must name the selected meeting participant"
+        )
+    return counterpart
 
 
 def _resolve_mentions(

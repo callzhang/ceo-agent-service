@@ -164,6 +164,10 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "无论议题已经对齐还是仍有未决问题" in prompt
     assert "群内所有人员都必须属于本次会议参会人" not in prompt
     assert "明确承接该业务、决策或后续行动" in prompt
+    assert "涉及个人隐私、个人薪酬或绩效" in prompt
+    assert "对特定个人的严厉负面反馈" in prompt
+    assert "只能私信本次会议中的相关参会人" in prompt
+    assert "找不到群不能作为改发私信的理由" in prompt
     assert "target=null" in prompt
     assert "交给发送层重试" in prompt
     assert "不能改成 no_action" in prompt
@@ -299,7 +303,7 @@ def test_agent_rejects_wrong_name_for_unresolved_counterpart():
         agent.decide(source_with_unresolved_one_to_one_counterpart())
 
 
-def test_agent_rejects_direct_target_for_multi_party_meeting():
+def test_agent_accepts_direct_participant_for_sensitive_multi_party_meeting():
     target = {
         "kind": "direct",
         "conversation_id": "",
@@ -307,12 +311,27 @@ def test_agent_rejects_direct_target_for_multi_party_meeting():
         "title": "Alex",
         "candidates": [],
     }
-    agent = MeetingAlignmentAgent(
+    decision = MeetingAlignmentAgent(
         FakeMeetingCodex(send_payload_with_target(target))
-    )
+    ).decide(source())
+
+    assert decision.target is not None
+    assert decision.target.kind == "direct"
+    assert decision.target.direct_user_id == "alex"
+
+
+def test_agent_rejects_nonparticipant_direct_target_for_multi_party_meeting():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "outsider",
+        "title": "Outsider",
+        "candidates": [],
+    }
+    agent = MeetingAlignmentAgent(FakeMeetingCodex(send_payload_with_target(target)))
     with pytest.raises(
         MeetingAlignmentTargetError,
-        match="multi-party send cannot use a direct target",
+        match="direct target must identify another meeting participant",
     ):
         agent.decide(source())
 

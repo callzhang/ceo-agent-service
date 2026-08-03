@@ -7,7 +7,11 @@ from pydantic import ValidationError
 from app.codex_runner import CodexRunner
 from app.config import work_profile_path
 from app.external_retry import ExternalDependencyError
-from app.meeting_alignment_models import MeetingAlignmentDecision, MeetingSource
+from app.meeting_alignment_models import (
+    DeliveryTarget,
+    MeetingAlignmentDecision,
+    MeetingSource,
+)
 from app.prompt import work_profile_instruction
 from app.store import CodexSessionSearchResult
 
@@ -213,12 +217,13 @@ def build_meeting_alignment_prompt(
 - 禁止搜索或选择群；conversation_id 和 candidates 必须为空。"""
     else:
         target_contract = """这是多人会议：
-- 只允许发群，不允许私聊或在找不到强关联群时降级为私聊。
-- 必须使用 DWS 做群发现，优先找会议内明确提及或分享的讨论群，再搜会议标题和核心议题消息。
+- 默认发到明确承接业务、决策或后续行动的团队群。必须使用 DWS 做群发现，优先找会议内明确提及或分享的讨论群，再搜会议标题和核心议题消息。
 - 无论议题已经对齐还是仍有未决问题，都可以发到明确承接该业务、决策或后续行动的团队群；不能因为群可访问、议题相似、参会人部分重合或近期共同活跃就发送，必须有明确的业务承接证据。
 - 每个 candidate 都必须写清群来源和业务承接关系。只在符合当前投递范围的候选中按证据强弱排序，并选择第 1 个。
+- 如果待发送内容涉及个人隐私、个人薪酬或绩效，或者包含对特定个人的严厉负面反馈，公开到群里会造成不必要暴露，可以改为 direct；只能私信本次会议中的相关参会人，并在 audit_summary 说明为何不适合群聊。
+- 私信是内容边界决定的投递方式，不是群发现失败后的 fallback；找不到群不能作为改发私信的理由。
 - 如果没有符合当前投递范围的可发送群，但会议确实命中 send 触发条件，必须保留 action=send、trigger_reasons、topics/derek_viewpoint、key_questions、mention_names 和 final_message，并返回 target=null，交给发送层重试。
-- target=null 是暂时无法投递的运行状态：不能改成 no_action，也绝不能降级为私聊。"""
+- target=null 是暂时无法投递的运行状态：不能改成 no_action，也不能由服务自动选择私信对象。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
 
@@ -406,9 +411,7 @@ def _validate_source_aware_target(
 
     if participant_count > 2:
         if target is not None and target.kind == "direct":
-            raise MeetingAlignmentTargetError(
-                "multi-party send cannot use a direct target"
-            )
+            _validate_direct_target_participant(source, target)
         return
 
     raise MeetingAlignmentTargetError(
@@ -418,3 +421,32 @@ def _validate_source_aware_target(
 
 def _canonical_person_name(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def _validate_direct_target_participant(
+    source: MeetingSource,
+    target: DeliveryTarget,
+) -> None:
+    participants = [
+        participant
+        for participant in source.participants
+        if participant.user_id != source.current_user_id
+    ]
+    if target.direct_user_id:
+        matches = [
+            participant
+            for participant in participants
+            if participant.user_id == target.direct_user_id
+        ]
+    else:
+        matches = [
+            participant
+            for participant in participants
+            if not participant.user_id
+            and _canonical_person_name(participant.name)
+            == _canonical_person_name(target.title)
+        ]
+    if len(matches) != 1:
+        raise MeetingAlignmentTargetError(
+            "direct target must identify another meeting participant"
+        )

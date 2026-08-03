@@ -259,8 +259,12 @@ delivery. The delivery executor verifies that the selected first-ranked target
 is a sendable group; it does not repeat the agent's business judgment by
 comparing the group-member set with the meeting participant set.
 
-If no group satisfying the business-ownership rule can be found, the job retries
-without an external send. It does not fall back to a direct message.
+When the follow-up contains personal information, compensation or performance
+details, or severe negative feedback about one person that should not be
+published to a group, the agent may select a direct target who is another
+meeting participant. This is a content-based delivery choice, not a fallback:
+if no group satisfying the business-ownership rule can be found for ordinary
+business content, the job retries without an external send.
 
 ## Mention Resolution
 
@@ -472,8 +476,9 @@ After implementation commits that change runtime behavior:
   of decision-completing trade-off questions.
 - Derek viewpoint output explains a view expressed in the meeting and may use
   history for explanation without adding a new position or commitment.
-- A multi-person meeting is sent to the highest-ranked sendable group and never
-  falls back to direct messaging.
+- A multi-person meeting defaults to the highest-ranked sendable owning group;
+  sensitive personal content may instead go directly to a relevant participant,
+  while group-discovery failure never triggers an automatic direct fallback.
 - A one-to-one meeting is sent directly to the other participant.
 - Resolved people receive real DingTalk mentions.
 - One meeting is successfully sent at most once across repeated scans, retries,

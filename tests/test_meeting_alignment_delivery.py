@@ -206,10 +206,31 @@ def test_multi_person_no_group_never_falls_back_to_direct():
     assert dws.sent == []
 
 
-def test_multi_person_direct_target_is_rejected():
-    with pytest.raises(MeetingDeliveryError, match="multi-party.*direct"):
+def test_sensitive_multi_person_followup_can_be_sent_to_participant_directly():
+    dws = FakeDws()
+
+    result = deliver_meeting_alignment(
+        send_decision(target="direct", mention_names=[]), meeting_source(), dws
+    )
+
+    assert result.status == "sent"
+    assert result.target_kind == "direct"
+    assert dws.sent[0]["conversation_id"] is None
+    assert dws.sent[0]["user_id"] == "u-a"
+
+
+def test_multi_person_direct_target_must_be_another_participant():
+    payload = send_decision(target="direct").model_dump()
+    payload["target"].update(direct_user_id="u-outsider", title="Outsider")
+
+    with pytest.raises(
+        MeetingDeliveryError,
+        match="direct target must identify another meeting participant",
+    ):
         deliver_meeting_alignment(
-            send_decision(target="direct"), meeting_source(), FakeDws()
+            MeetingAlignmentDecision.model_validate(payload),
+            meeting_source(),
+            FakeDws(),
         )
 
 

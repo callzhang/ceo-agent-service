@@ -119,8 +119,12 @@ group that clearly owns the business, decision, or follow-up action. Topic
 similarity, participant overlap, or recent activity alone is not enough. The
 delivery layer verifies that the selected first-ranked candidate is a sendable
 group, but it does not require the group-member set to equal the participant
-set. Multi-party meetings never fall back to a direct message. A 1:1 meeting
-sends directly to the other participant. When an ad-hoc call has no matching
+set. Multi-party meetings default to group delivery. The agent may instead
+select a direct target when the message contains personal information,
+compensation or performance details, or severe negative feedback about one
+person that should not be exposed to a group; that target must be another
+meeting participant. Failure to find a group does not authorize a direct-message
+fallback. A 1:1 meeting sends directly to the other participant. When an ad-hoc call has no matching
 calendar event, it is treated as 1:1 only when the complete transcript contains
 exactly Derek and one uniquely resolved employee; otherwise it remains
 unqueued. No DING or reaction is added by this workflow.
