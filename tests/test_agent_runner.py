@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -288,6 +289,43 @@ def test_direct_runner_only_persists_codex_session_pointer_not_tool_event_copy(
     assert run.codex_session_id == "native-audit-session"
     assert run.tool_events == []
     assert result.transcript_end_line >= result.transcript_start_line + 3
+
+
+def test_direct_runner_renews_lease_when_stream_reports_progress(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    claimed_at = datetime(2026, 7, 29, 0, 0, tzinfo=timezone.utc)
+    progress_at = datetime(2026, 7, 29, 0, 35, tzinfo=timezone.utc)
+    times = iter((claimed_at, *([progress_at] * 12)))
+
+    def controlled_store_time(_now=None):
+        value = next(times, progress_at)
+        return value, value.strftime("%Y-%m-%d %H:%M:%S")
+
+    monkeypatch.setattr("app.store._utc_store_time", controlled_store_time)
+    task = _task(store)
+    output = _jsonl(session_id="progress-session")
+    observed_leases: list[str] = []
+
+    def executor(command, *, prompt, on_stdout_line, **_kwargs):
+        for line in output.splitlines():
+            on_stdout_line(line)
+        run = store.get_agent_run_for_task_generation(
+            task.id,
+            task.execution_generation,
+        )
+        assert run is not None
+        observed_leases.append(run.lease_expires_at)
+        return ProcessRunResult(returncode=0, stdout=output, stderr="")
+
+    DirectAgentRunner(store=store, workspace=tmp_path, executor=executor).run(
+        task,
+        _context(task.id),
+    )
+
+    assert observed_leases == ["2026-07-29 01:15:00"]
 
 
 def test_read_only_run_uses_native_tools_with_never_approval_policy(

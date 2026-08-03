@@ -60,7 +60,7 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SHARED_AGENT_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 TOTAL_TIMEOUT_SECONDS = 1200
 IDLE_TIMEOUT_SECONDS = 900
-LEASE_SECONDS = TOTAL_TIMEOUT_SECONDS + 300
+LEASE_SECONDS = TOTAL_TIMEOUT_SECONDS + IDLE_TIMEOUT_SECONDS + 300
 DIRECT_AGENT_DEVELOPER_INSTRUCTIONS = """You are the Direct Agent for one queued task.
 
 - The Agent owns evidence reads, business judgment, direct execution and verification.
@@ -446,6 +446,12 @@ class DirectAgentRunner:
             if not isinstance(payload, dict):
                 raise AgentStreamError("codex_stream_invalid")
             stream_line_count += 1
+            self.store.renew_agent_run_lease(
+                run.id,
+                owner=self.owner,
+                lease_seconds=LEASE_SECONDS,
+                now=now,
+            )
             session_id = _session_id(payload)
             if session_id:
                 self.store.set_agent_run_session(
