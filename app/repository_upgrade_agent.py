@@ -25,10 +25,11 @@ SUGGESTION_FAILURE_REASON = "suggestion_agent_failed"
 REDACTED_CREDENTIAL_LINE = "[redacted credential line]"
 REDACTED_URL_CREDENTIAL_LINE = "[redacted credential URL line]"
 REDACTED_RUNTIME_PATH_LINE = "[redacted local runtime path line]"
+REDACTED_CONTROL_LINE = "[redacted control character line]"
 SUGGESTION_DEVELOPER_INSTRUCTIONS = """
-You suggest editable Git branch and commit names from the supplied change summary.
-This is a read-only naming task. Do not call tools, run commands, inspect files,
-use MCP, write data, mutate Git, reuse a session, or persist a conversation.
+Suggestion only: propose editable Git branch and commit names from the supplied
+change summary. Do not call tools, run commands, inspect files, use MCP, write
+data, mutate Git, reuse a session, or persist a conversation.
 Return only JSON matching the supplied schema. Do not invent change details.
 """.strip()
 
@@ -44,14 +45,26 @@ class RepositoryChangeSummary(BaseModel):
     @classmethod
     def paths_are_repository_relative(cls, paths: tuple[str, ...]) -> tuple[str, ...]:
         for value in paths:
+            _reject_control_characters(value, field_name="change path")
             raw = (
                 unquote_to_bytes(value.removeprefix("path-bytes:"))
                 if value.startswith("path-bytes:")
                 else value.encode("utf-8")
             )
-            if not raw or raw.startswith(b"/") or b".." in raw.split(b"/"):
+            if (
+                not raw
+                or raw.startswith(b"/")
+                or b".." in raw.split(b"/")
+                or _bytes_contain_control(raw)
+            ):
                 raise ValueError("change paths must be repository-relative")
         return paths
+
+    @field_validator("diff_stat")
+    @classmethod
+    def diff_stat_has_no_controls(cls, value: str) -> str:
+        _reject_control_characters(value, field_name="diff stat")
+        return value
 
 
 class PreservationSuggestion(BaseModel):
@@ -71,15 +84,19 @@ SuggestionExecutor = Callable[..., ProcessRunResult]
 
 
 def build_preservation_suggestion_prompt(change: RepositoryChangeSummary) -> str:
-    redacted_diff = "\n".join(_redact_diff_line(line) for line in change.diff.splitlines())
+    redacted_paths = [_redact_prompt_line(path) for path in change.paths]
+    redacted_stat = _redact_prompt_line(change.diff_stat)
+    redacted_diff = "\n".join(
+        _redact_prompt_line(line) for line in change.diff.splitlines()
+    )
     prompt = "\n".join(
         [
             "Suggest editable preservation metadata for these repository changes.",
             "Return exactly branch_name and commit_message as JSON.",
             "Paths:",
-            *change.paths,
+            *redacted_paths,
             "Diff stat:",
-            change.diff_stat,
+            redacted_stat,
             "Redacted diff:",
             redacted_diff,
         ]
@@ -87,14 +104,32 @@ def build_preservation_suggestion_prompt(change: RepositoryChangeSummary) -> str
     return _truncate_utf8(prompt, SUGGESTION_PROMPT_MAX_BYTES)
 
 
-def _redact_diff_line(line: str) -> str:
-    if contains_credential(line):
-        return REDACTED_CREDENTIAL_LINE
+def _redact_prompt_line(line: str) -> str:
+    if _contains_control_characters(line):
+        return REDACTED_CONTROL_LINE
     if _contains_credential_url(line):
         return REDACTED_URL_CREDENTIAL_LINE
+    if contains_credential(line):
+        return REDACTED_CREDENTIAL_LINE
     if contains_local_runtime_leak(line):
         return REDACTED_RUNTIME_PATH_LINE
     return line
+
+
+def _reject_control_characters(value: str, *, field_name: str) -> None:
+    if _contains_control_characters(value):
+        raise ValueError(f"{field_name} must not contain control characters")
+
+
+def _contains_control_characters(value: str) -> bool:
+    return len(value.splitlines()) > 1 or any(
+        ord(character) < 32 or 127 <= ord(character) <= 159
+        for character in value
+    )
+
+
+def _bytes_contain_control(value: bytes) -> bool:
+    return any(byte < 32 or 127 <= byte <= 159 for byte in value)
 
 
 def _contains_credential_url(line: str) -> bool:
@@ -133,6 +168,11 @@ def _truncate_utf8(value: str, max_bytes: int) -> str:
 
 def extract_final_agent_message(raw: str) -> str:
     candidate: str | None = None
+    event_seen = False
+    thread_started = False
+    turn_started = False
+    turn_completed = False
+    item_seen = False
     for line in raw.splitlines():
         if not line.strip():
             continue
@@ -142,39 +182,102 @@ def extract_final_agent_message(raw: str) -> str:
             raise SuggestionError() from None
         if not isinstance(payload, dict):
             raise SuggestionError()
-        found = _result_candidate(payload)
-        if found is not None:
-            candidate = found
+        if turn_completed:
+            raise SuggestionError()
+
+        event_type = payload.get("type")
+        if event_type == "thread.started":
+            if (
+                event_seen
+                or thread_started
+                or candidate is not None
+                or _contains_suggestion_payload(payload)
+            ):
+                raise SuggestionError()
+            thread_started = True
+        elif event_type == "turn.started":
+            if (
+                turn_started
+                or item_seen
+                or candidate is not None
+                or _contains_suggestion_payload(payload)
+            ):
+                raise SuggestionError()
+            turn_started = True
+        elif event_type in {"item.started", "item.completed"}:
+            item = payload.get("item")
+            if not isinstance(item, dict):
+                raise SuggestionError()
+            item_type = item.get("type")
+            if item_type == "reasoning":
+                if candidate is not None or _contains_suggestion_payload(item):
+                    raise SuggestionError()
+            elif item_type == "agent_message" and event_type == "item.completed":
+                text = item.get("text")
+                if (
+                    candidate is not None
+                    or not isinstance(text, str)
+                    or any(
+                        key in item
+                        for key in ("message", "result", "last_agent_message")
+                    )
+                ):
+                    raise SuggestionError()
+                candidate = text
+            else:
+                raise SuggestionError()
+            item_seen = True
+        elif event_type == "turn.completed":
+            if candidate is None or _contains_suggestion_payload(payload):
+                raise SuggestionError()
+            turn_completed = True
+        else:
+            raise SuggestionError()
+        event_seen = True
     if candidate is None:
         raise SuggestionError()
     return candidate
 
 
-def _result_candidate(payload: dict[str, object]) -> str | None:
-    item = payload.get("item")
-    if isinstance(item, dict) and item.get("type") == "agent_message":
-        for key in ("text", "message"):
-            value = item.get(key)
-            if isinstance(value, str):
-                return value
+def _contains_suggestion_payload(value: object) -> bool:
+    if isinstance(value, dict):
+        if "branch_name" in value or "commit_message" in value:
+            return True
+        return any(_contains_suggestion_payload(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_suggestion_payload(item) for item in value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return False
+        return _contains_suggestion_payload(parsed)
+    return False
 
-    last_agent_message = payload.get("last_agent_message")
-    if isinstance(last_agent_message, str):
-        return last_agent_message
 
-    payload_type = payload.get("type")
-    if payload_type in {"agent_message", "task_complete"}:
-        message = payload.get("message")
-        if isinstance(message, str):
-            return message
+def _harden_read_only_command(command: list[str]) -> list[str]:
+    hardened: list[str] = []
+    index = 0
+    while index < len(command):
+        if (
+            command[index] == "-c"
+            and index + 1 < len(command)
+            and command[index + 1].startswith("mcp_servers.")
+        ):
+            index += 2
+            continue
+        hardened.append(command[index])
+        index += 1
 
-    if payload_type in {"result", "turn.completed", "response.completed"}:
-        result = payload.get("result")
-        if isinstance(result, str):
-            return result
-        if isinstance(result, dict):
-            return json.dumps(result, ensure_ascii=False)
-    return None
+    insertion_index = len(hardened) - 1 if hardened[-1:] == ["-"] else len(hardened)
+    hardened[insertion_index:insertion_index] = [
+        "--ephemeral",
+        "--sandbox",
+        "read-only",
+        "-c",
+        "mcp_servers={}",
+    ]
+    return hardened
 
 
 def validate_suggested_branch(
@@ -230,14 +333,16 @@ class RepositoryUpgradeSuggestionAgent:
     def suggest(self, change: RepositoryChangeSummary) -> PreservationSuggestion:
         prompt = build_preservation_suggestion_prompt(change)
         try:
-            command = self.runner.build_command(
-                prompt=prompt,
-                session_id=None,
-                output_schema_path=SUGGESTION_SCHEMA_PATH,
-                approval_policy="never",
-                use_approval_bypass=False,
-                preserve_native_model_config=True,
-                developer_instructions=SUGGESTION_DEVELOPER_INSTRUCTIONS,
+            command = _harden_read_only_command(
+                self.runner.build_command(
+                    prompt=prompt,
+                    session_id=None,
+                    output_schema_path=SUGGESTION_SCHEMA_PATH,
+                    approval_policy="never",
+                    use_approval_bypass=False,
+                    preserve_native_model_config=True,
+                    developer_instructions=SUGGESTION_DEVELOPER_INSTRUCTIONS,
+                )
             )
             result = self.executor(
                 command,
