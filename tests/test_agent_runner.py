@@ -173,6 +173,7 @@ def test_direct_agent_requires_oa_applicant_notification_after_confirmed_action(
 
     assert "notify that applicant through DingTalk before returning AgentResult" in instructions
     assert "real originator identifier" in instructions
+    assert "does not approve, reject, or return the approval" in instructions
 
 
 def test_direct_runner_reuses_one_codex_session_for_the_conversation(
