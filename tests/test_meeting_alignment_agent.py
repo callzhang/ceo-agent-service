@@ -169,6 +169,8 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "对特定个人的严厉负面反馈" in prompt
     assert "找不到可发送群时，默认私信会议创建人 Alex" in prompt
     assert "只保留该收件人完成对齐所需的内容" in prompt
+    assert "conversation_id 为空、candidates 为空" in prompt
+    assert "群发现和排除依据只写入 audit_summary" in prompt
     assert "DWS 读取失败" in prompt
     assert "不能降级私信" in prompt
     assert "target=null" in prompt

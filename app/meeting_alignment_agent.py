@@ -241,6 +241,7 @@ def build_meeting_alignment_prompt(
 - 每个 candidate 都必须写清群来源和业务承接关系。只在符合当前投递范围的候选中按证据强弱排序，并选择第 1 个。
 - 如果待发送内容涉及个人隐私、个人薪酬或绩效，或者包含对特定个人的严厉负面反馈，公开到群里会造成不必要暴露，改为私信会议创建人，并只保留该收件人完成对齐所需的内容。
 - 只有 DWS 群发现完整成功、确认没有可发送群时，才默认私信会议创建人。{creator_contract}
+- 私信创建人时，target 必须是纯 direct target：conversation_id 为空、candidates 为空；群发现和排除依据只写入 audit_summary，不能放进 target。
 - DWS 读取失败、网络失败或群元数据不完整时，不能降级私信；停止本轮并返回依赖错误，让队列重试原群发现。
 - 找不到可发送群时，默认私信会议创建人 {creator_name}；不能改成 no_action。
 - target=null 只用于创建人证据缺失、不唯一或无法验证的可恢复状态，不能由服务猜测收件人。"""

@@ -162,9 +162,9 @@ class MeetingAlignmentDecision(StrictModel):
             raise ValueError("send requires final_message")
         if not self.trigger_reasons:
             raise ValueError("send requires trigger_reasons")
-        # A genuine multi-party trigger can outlive temporary group discovery
-        # failure. The consumer keeps the decision and retries delivery rather
-        # than converting it to no_action or falling back to a direct message.
+        # A genuine trigger can outlive incomplete delivery evidence. The
+        # consumer keeps the decision and retries instead of changing it to
+        # no_action or guessing a recipient.
         if self.target is None:
             return self
         if self.target.kind == "group":
