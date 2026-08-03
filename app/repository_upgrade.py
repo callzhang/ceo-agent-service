@@ -10,9 +10,11 @@ import os
 from pathlib import Path
 import subprocess
 from typing import Iterator, Literal, Protocol
-from urllib.parse import quote_from_bytes
+from urllib.parse import quote_from_bytes, unquote_plus, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.leak_check import contains_credential, redact_forbidden_leak_markers
 
 
 REPOSITORY_UPGRADE_STATE_KEY = "repository_upgrade_state:v1"
@@ -20,6 +22,48 @@ LOCK_FILENAME = "ceo-agent-upgrade.lock"
 MAX_RELEASE_COMMITS = 20
 MAX_RELEASE_SUBJECT_LENGTH = 200
 DEFAULT_GIT_TIMEOUT_SECONDS = 30.0
+PATH_BYTES_PREFIX = "path-bytes:"
+REDACTED_RELEASE_SUBJECT = "[redacted release subject]"
+
+
+def _sanitize_release_subject(subject: str) -> str:
+    if contains_credential(subject) or _has_credential_url(subject):
+        return REDACTED_RELEASE_SUBJECT
+    return redact_forbidden_leak_markers(
+        subject,
+        replacement="[redacted release marker]",
+    )[:MAX_RELEASE_SUBJECT_LENGTH]
+
+
+def _has_credential_url(subject: str) -> bool:
+    lowered = subject.lower()
+    cursor = 0
+    while cursor < len(subject):
+        starts = [
+            index
+            for scheme in ("http://", "https://")
+            if (index := lowered.find(scheme, cursor)) >= 0
+        ]
+        if not starts:
+            return False
+        start = min(starts)
+        end = next(
+            (
+                index
+                for index in range(start, len(subject))
+                if subject[index].isspace()
+            ),
+            len(subject),
+        )
+        candidate = subject[start:end].strip("<>()[]{}\"',.;")
+        parsed = urlsplit(candidate)
+        if parsed.username is not None or parsed.password is not None:
+            return True
+        query_assignments = unquote_plus(parsed.query).replace("&", " ")
+        if query_assignments and contains_credential(query_assignments):
+            return True
+        cursor = start + 1
+    return False
 
 
 class UpgradeStatus(StrEnum):
@@ -54,7 +98,7 @@ class RepositorySnapshot(BaseModel):
     remote_commit: str = ""
     commits_behind: int = Field(default=0, ge=0)
     release_summary: list[str] = Field(default_factory=list)
-    dirty_paths: list[str] = Field(default_factory=list)
+    dirty_paths: tuple[str, ...] = ()
     fingerprint: str = ""
     error: RepositoryDiagnostic | None = None
 
@@ -229,7 +273,7 @@ class GitRepository:
             category="release_summary",
         )
         return [
-            subject.decode("utf-8", errors="replace")[:MAX_RELEASE_SUBJECT_LENGTH]
+            _sanitize_release_subject(subject.decode("utf-8", errors="replace"))
             for subject in output.splitlines()
             if subject
         ]
@@ -241,11 +285,8 @@ class GitRepository:
         )
 
     @staticmethod
-    def _display_path(raw_path: bytes) -> str:
-        try:
-            return raw_path.decode("utf-8")
-        except UnicodeDecodeError:
-            return "bytes:" + quote_from_bytes(raw_path, safe="/-._~")
+    def _persisted_path(raw_path: bytes) -> str:
+        return PATH_BYTES_PREFIX + quote_from_bytes(raw_path, safe="/-._~")
 
     def status_records(self) -> list[GitStatusRecord]:
         fields = self._status_bytes().split(b"\x00")
@@ -277,11 +318,11 @@ class GitRepository:
                     )
                 original_bytes = fields[index]
                 raw += original_bytes + b"\x00"
-                original_path = self._display_path(original_bytes)
+                original_path = self._persisted_path(original_bytes)
             records.append(
                 GitStatusRecord(
                     code=code,
-                    path=self._display_path(path_bytes),
+                    path=self._persisted_path(path_bytes),
                     original_path=original_path,
                     raw=raw,
                 )
@@ -290,14 +331,16 @@ class GitRepository:
         return records
 
     @staticmethod
-    def dirty_paths(records: list[GitStatusRecord]) -> list[str]:
-        return sorted(
-            {
-                path
-                for record in records
-                for path in (record.path, record.original_path)
-                if path is not None
-            }
+    def dirty_paths(records: list[GitStatusRecord]) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {
+                    path
+                    for record in records
+                    for path in (record.path, record.original_path)
+                    if path is not None
+                }
+            )
         )
 
     def fingerprint(
@@ -394,9 +437,20 @@ class RepositoryUpgradeService:
     def check(self) -> RepositorySnapshot:
         checked_at = datetime.now(timezone.utc)
         try:
-            self._save_snapshot(
-                RepositorySnapshot(status=UpgradeStatus.CHECKING, checked_at=checked_at)
+            with self.repository.mutex():
+                return self._check_unlocked(checked_at)
+        except GitCommandError as exc:
+            return RepositorySnapshot(
+                status=UpgradeStatus.CHECK_FAILED,
+                checked_at=checked_at,
+                error=exc.diagnostic,
             )
+
+    def _check_unlocked(self, checked_at: datetime) -> RepositorySnapshot:
+        self._save_snapshot_unlocked(
+            RepositorySnapshot(status=UpgradeStatus.CHECKING, checked_at=checked_at)
+        )
+        try:
             self.repository.fetch(self.remote)
             local_commit = self.repository.resolve_ref(self.local_ref)
             remote_commit = self.repository.resolve_ref(self.remote_ref)
@@ -439,14 +493,7 @@ class RepositoryUpgradeService:
                 checked_at=checked_at,
                 error=exc.diagnostic,
             )
-        try:
-            self._save_snapshot(snapshot)
-        except GitCommandError as exc:
-            return RepositorySnapshot(
-                status=UpgradeStatus.CHECK_FAILED,
-                checked_at=checked_at,
-                error=exc.diagnostic,
-            )
+        self._save_snapshot_unlocked(snapshot)
         return snapshot
 
     def _load_state_unlocked(self) -> RepositoryUpgradeState:
@@ -456,6 +503,18 @@ class RepositoryUpgradeService:
         return RepositoryUpgradeState.model_validate_json(raw)
 
     def _save_state_unlocked(self, state: RepositoryUpgradeState) -> None:
+        if state.snapshot is not None:
+            safe_summary = [
+                _sanitize_release_subject(subject)
+                for subject in state.snapshot.release_summary
+            ]
+            state = state.model_copy(
+                update={
+                    "snapshot": state.snapshot.model_copy(
+                        update={"release_summary": safe_summary}
+                    )
+                }
+            )
         self.store.set_service_state(
             REPOSITORY_UPGRADE_STATE_KEY,
             state.model_dump_json(),
@@ -511,7 +570,6 @@ class RepositoryUpgradeService:
                 operation=operation,
             )
 
-    def _save_snapshot(self, snapshot: RepositorySnapshot) -> None:
-        with self.repository.mutex():
-            state = self._load_state_unlocked()
-            self._save_state_unlocked(state.model_copy(update={"snapshot": snapshot}))
+    def _save_snapshot_unlocked(self, snapshot: RepositorySnapshot) -> None:
+        state = self._load_state_unlocked()
+        self._save_state_unlocked(state.model_copy(update={"snapshot": snapshot}))
