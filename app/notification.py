@@ -72,7 +72,7 @@ def _send_terminal_notifier_notification(
         command.extend(
             [
                 "-execute",
-                f"/usr/bin/curl -fsS {shlex.quote(url)} >/dev/null 2>&1",
+                f"/usr/bin/curl -fsS -X POST {shlex.quote(url)} >/dev/null 2>&1",
             ]
         )
     completed = subprocess.run(command, check=False)

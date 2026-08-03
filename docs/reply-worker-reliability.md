@@ -102,6 +102,11 @@ AppleScript `display notification` call. That fallback is only a visibility path
 it does not bind a click action to DingTalk, so conversation jump remains
 available through the browser bridge when an audit page is open.
 
+When `terminal-notifier` is available, its click action sends a `POST` request
+to the same local `/open-dingtalk` bridge. The bridge owns the desktop
+`dingtalk://` launch, so terminal-notifier and browser notifications use the
+same conversation-opening route.
+
 Handoff notifications use DING first so they can reach the operator inside
 DingTalk. Every service-generated handoff alert begins with the exact
 `【CEO Agent 转人工通知】` protocol marker. If that alert later appears in the
