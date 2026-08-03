@@ -84,6 +84,31 @@ def test_dingtalk_system_actions_rejected(fake_codex, consumer, store):
     assert attempt.send_error == "dingtalk_only_system_actions_rejected"
 
 
+def test_reply_transport_action_creates_ready_wechat_delivery(
+    fake_codex, consumer, store
+):
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.SEND_REPLY,
+        reply_text="我也去餐厅吃饭。",
+        system_actions=[
+            {
+                "type": "send_dingtalk_reply",
+                "reply_text_ref": "user_response.text",
+            }
+        ],
+        audit_summary="基于同一对话上下文澄清晚饭安排。",
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    delivery = store.get_wechat_delivery_for_task(1)
+    assert delivery is not None
+    assert delivery.status == "ready_to_send"
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "pending"
+
+
 def test_stop_with_error_records_failed_attempt(fake_codex, consumer, store):
     fake_codex.decision = CodexDecision(
         action=CodexAction.STOP_WITH_ERROR,

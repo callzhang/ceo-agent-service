@@ -10,9 +10,21 @@ from __future__ import annotations
 
 from typing import Callable
 
+from pydantic import ValidationError
+
+from app.agent_envelope import SendDingTalkReplyAction
 from app.dingtalk_models import CodexAction
 from app.wechat.models import WechatAccount, WechatMessage
 from app.wechat.prompt import build_wechat_turn_prompt
+
+
+def _is_reply_transport_action(action: object) -> bool:
+    """Whether an action only materializes the already-decided chat response."""
+    try:
+        SendDingTalkReplyAction.model_validate(action)
+    except ValidationError:
+        return False
+    return True
 
 
 class WechatReplyConsumer:
@@ -72,7 +84,12 @@ class WechatReplyConsumer:
         decision = self.runner.decide(prompt, None)
 
         if decision.action in (CodexAction.SEND_REPLY, CodexAction.ASK_CLARIFYING_QUESTION):
-            if getattr(decision, "system_actions", None):
+            unsupported_actions = [
+                action
+                for action in decision.system_actions
+                if not _is_reply_transport_action(action)
+            ]
+            if unsupported_actions:
                 self.store.finalize_wechat_reply_task(
                     task_id=task.id,
                     expected_execution_generation=task.execution_generation,
