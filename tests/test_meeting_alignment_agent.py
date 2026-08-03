@@ -161,10 +161,9 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "必须逐字填写 `/configured/work_profile.md`" in prompt
     assert "不得改写、加标题或写成说明性文字" in prompt
     assert "每场会议最多生成一条合并消息" in prompt
-    assert "只要包含 unresolved 议题" in prompt
-    assert "群内所有人员都必须属于本次会议参会人" in prompt
-    assert "如果所有议题都是 aligned" in prompt
-    assert "促进信息和决策透明" in prompt
+    assert "无论议题已经对齐还是仍有未决问题" in prompt
+    assert "群内所有人员都必须属于本次会议参会人" not in prompt
+    assert "明确承接该业务、决策或后续行动" in prompt
     assert "target=null" in prompt
     assert "交给发送层重试" in prompt
     assert "不能改成 no_action" in prompt

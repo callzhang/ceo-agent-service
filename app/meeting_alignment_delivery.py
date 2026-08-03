@@ -73,10 +73,6 @@ def meeting_followup_message(
 class MeetingDeliveryDws(Protocol):
     def get_conversation_info(self, conversation_id: str) -> dict[str, Any]: ...
 
-    def list_group_member_open_dingtalk_ids(
-        self, conversation_id: str
-    ) -> set[str]: ...
-
     def search_user_profiles(self, query: str) -> list[DwsUserProfile]: ...
 
     def read_recent_messages(
@@ -122,8 +118,6 @@ def deliver_meeting_alignment(
         info = dws.get_conversation_info(target.conversation_id)
         if not _sendable_group_info(info, target.conversation_id):
             raise MeetingDeliveryRetry("selected target is not a sendable group")
-        if _requires_participant_only_audience(decision):
-            _validate_group_audience(source, target.conversation_id, info, dws)
         conversation = DingTalkConversation(
             open_conversation_id=target.conversation_id,
             title=str(info.get("title") or target.title),
@@ -255,60 +249,6 @@ def _sendable_group_info(info: dict[str, Any], conversation_id: str) -> bool:
         and not isinstance(member_count, bool)
         and member_count > 0
     )
-
-
-def _requires_participant_only_audience(
-    decision: MeetingAlignmentDecision,
-) -> bool:
-    return not decision.topics or any(
-        topic.state == "unresolved" for topic in decision.topics
-    )
-
-
-def _validate_group_audience(
-    source: MeetingSource,
-    conversation_id: str,
-    info: dict[str, Any],
-    dws: MeetingDeliveryDws,
-) -> None:
-    try:
-        group_member_open_ids = dws.list_group_member_open_dingtalk_ids(
-            conversation_id
-        )
-        participant_open_ids: set[str] = set()
-        for participant in source.participants:
-            open_id = participant.open_dingtalk_id.strip()
-            if not open_id:
-                profile = _resolve_profile(participant.name, participant, dws, [])
-                open_id = (
-                    (profile.open_dingtalk_id or "").strip()
-                    if profile is not None
-                    else ""
-                )
-            if not open_id:
-                raise MeetingDeliveryRetry(
-                    "meeting participant identity is unresolved; "
-                    "group audience is unverifiable"
-                )
-            participant_open_ids.add(open_id)
-    except DwsError as exc:
-        raise MeetingDeliveryRetry(
-            "group audience could not be verified"
-        ) from exc
-
-    member_count = info.get("memberCount")
-    if member_count != len(group_member_open_ids):
-        raise MeetingDeliveryRetry(
-            "group audience member count is incomplete; delivery blocked"
-        )
-    if group_member_open_ids - participant_open_ids:
-        raise MeetingDeliveryRetry(
-            "group audience includes a non-participant; delivery blocked"
-        )
-    if participant_open_ids - group_member_open_ids:
-        raise MeetingDeliveryRetry(
-            "group audience does not include every participant; delivery blocked"
-        )
 
 
 def _one_to_one_counterpart(source: MeetingSource) -> MeetingParticipant:

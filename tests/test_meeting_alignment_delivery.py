@@ -223,15 +223,16 @@ def test_group_must_be_sendable_through_conversation_info():
     assert dws.sent == []
 
 
-def test_group_delivery_rejects_audience_with_non_participant():
+def test_unresolved_decision_can_reach_agent_selected_business_group():
     dws = FakeDws()
     dws.group_member_open_ids.add("open-frontline")
     dws.conversation_info["memberCount"] = 4
 
-    with pytest.raises(MeetingDeliveryRetry, match="non-participant"):
-        deliver_meeting_alignment(send_decision(), meeting_source(), dws)
+    result = deliver_meeting_alignment(send_decision(), meeting_source(), dws)
 
-    assert dws.sent == []
+    assert result.status == "sent"
+    assert dws.sent[0]["conversation_id"] == "cid-first"
+    assert dws.group_member_queries == []
 
 
 def test_aligned_decision_can_reach_relevant_team_group():
@@ -441,7 +442,7 @@ def test_duplicate_canonical_participant_names_are_inherently_ambiguous():
     assert dws.search_queries == []
 
 
-def test_participant_user_id_mismatch_blocks_unverifiable_group_audience():
+def test_participant_user_id_mismatch_does_not_mention_wrong_person():
     dws = FakeDws()
     source = meeting_source()
     payload = source.model_dump()
@@ -454,14 +455,16 @@ def test_participant_user_id_mismatch_blocks_unverifiable_group_audience():
         )
     ]
 
-    with pytest.raises(MeetingDeliveryRetry, match="audience is unverifiable"):
-        deliver_meeting_alignment(
-            send_decision(mention_names=["A"]),
-            MeetingSource.model_validate(payload),
-            dws,
-        )
+    result = deliver_meeting_alignment(
+        send_decision(mention_names=["A"]),
+        MeetingSource.model_validate(payload),
+        dws,
+    )
 
-    assert dws.sent == []
+    assert result.status == "sent"
+    assert result.resolved_mentions == []
+    assert result.unresolved_mention_names == ["A"]
+    assert dws.sent[0]["at_open_dingtalk_ids"] == []
 
 
 def test_single_fuzzy_name_match_is_not_selected():
