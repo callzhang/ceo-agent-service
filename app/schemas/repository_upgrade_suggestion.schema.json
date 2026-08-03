@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Repository Upgrade Preservation Suggestion",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "branch_name",
+    "commit_message"
+  ],
+  "properties": {
+    "branch_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "commit_message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  }
+}
