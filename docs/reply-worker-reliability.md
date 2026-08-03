@@ -374,6 +374,11 @@ approval agent as supporting context, but unrelated historical hiring messages
 must not turn a contract or other non-hiring approval into a Xiaoqing-dependent
 task.
 
-Processing tasks older than the stale-task threshold are also moved back to
-`pending`; this recovery path sends a local notification so the operator can see
-that an interrupted task was retried.
+Processing tasks older than the stale-task threshold return to `pending` only
+when their same-generation Direct Agent run has no live lease. The initial
+lease covers the maximum process duration, the idle-read window, and a short
+completion buffer; every valid streaming progress event renews it. A task with
+a live lease remains `processing`, even when its original queue lock is older
+than the stale threshold. This prevents a slow active run from being resumed
+concurrently; an expired lease still allows an interrupted task to recover and
+emits the local retry notification.

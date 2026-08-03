@@ -4056,11 +4056,19 @@ class AutoReplyStore:
             rows = db.execute(
                 """
                 select *
-                from reply_tasks
-                where status='processing'
-                  and locked_at is not null
-                  and datetime(locked_at) <= datetime('now', ?)
-                order by locked_at, id
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and tasks.locked_at is not null
+                  and datetime(tasks.locked_at) <= datetime('now', ?)
+                  and not exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and runs.status='running'
+                        and runs.lease_expires_at>current_timestamp
+                  )
+                order by tasks.locked_at, tasks.id
                 """,
                 (f"-{int(max_age_seconds)} seconds",),
             ).fetchall()

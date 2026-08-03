@@ -11,7 +11,7 @@ import pytest
 from app.agent_context import AgentTaskContext
 from app.agent_envelope import AgentEnvelope
 from app.agent_result import AgentError, AgentOutcome, AgentResult, SideEffectState
-from app.agent_runner import DirectAgentRunResult
+from app.agent_runner import DirectAgentRunResult, LEASE_SECONDS
 import app.worker as worker_module
 from app.codex_decision import (
     CodexDecisionRunner,
@@ -4926,6 +4926,58 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
     )
     assert run is not None
     assert run.codex_session_id == "session-stale-1"
+
+
+def test_consume_once_does_not_requeue_stale_task_with_live_agent_lease(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-29 11:26:41",
+        trigger_sender="ET",
+        trigger_text="@Alex Chen 这个怎么处理？",
+    )
+    claimed = store.claim_reply_tasks(limit=1)
+    agent_claim = store.claim_agent_run(
+        claimed[0].id,
+        claimed[0].execution_generation,
+        owner="active-worker",
+        lease_seconds=3600,
+    )
+    store.set_agent_run_session(
+        agent_claim.run.id,
+        "session-active-1",
+        owner="active-worker",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            (claimed[0].id,),
+        )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([conversation()], {"cid-1": []}),
+        codex=FakeCodex([]),
+        now_provider=lambda: datetime.now().astimezone(),
+        channel_gates=fixed_channel_gates(),
+        direct_agent_runner=FakeAgentResultRunner(store),
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_kwargs: None)
+
+    worker.consume_once(max_tasks=1)
+
+    task = store.get_reply_task(claimed[0].id)
+    assert task is not None
+    assert task.status == "processing"
+    assert not any(error.kind == "reply_task_stale" for error in store.list_errors())
+
+
+def test_agent_run_lease_outlives_stale_task_recovery_window():
+    assert LEASE_SECONDS > worker_module.STALE_PROCESSING_TASK_SECONDS
 
 
 def test_consumer_cycle_does_not_requeue_task_claimed_by_another_worker(
