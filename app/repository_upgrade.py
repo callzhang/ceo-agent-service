@@ -1,23 +1,25 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
+import fcntl
 import hashlib
 import os
 from pathlib import Path
-import re
 import subprocess
-from typing import Literal, Protocol
+from typing import Iterator, Literal, Protocol
+from urllib.parse import quote_from_bytes
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 REPOSITORY_UPGRADE_STATE_KEY = "repository_upgrade_state:v1"
 LOCK_FILENAME = "ceo-agent-upgrade.lock"
-MAX_ERROR_LENGTH = 500
 MAX_RELEASE_COMMITS = 20
 MAX_RELEASE_SUBJECT_LENGTH = 200
+DEFAULT_GIT_TIMEOUT_SECONDS = 30.0
 
 
 class UpgradeStatus(StrEnum):
@@ -28,6 +30,19 @@ class UpgradeStatus(StrEnum):
     LOCAL_CHANGES = "local_changes"
     DIVERGED = "diverged"
     CHECK_FAILED = "check_failed"
+
+
+class RepositoryDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command_category: str
+    code: int | Literal["timeout", "os_error", "invalid_output"]
+    reason: Literal[
+        "git_command_failed",
+        "git_command_timed_out",
+        "git_command_unavailable",
+        "git_output_invalid",
+    ]
 
 
 class RepositorySnapshot(BaseModel):
@@ -41,7 +56,7 @@ class RepositorySnapshot(BaseModel):
     release_summary: list[str] = Field(default_factory=list)
     dirty_paths: list[str] = Field(default_factory=list)
     fingerprint: str = ""
-    error: str | None = None
+    error: RepositoryDiagnostic | None = None
 
 
 class RepositoryUpgradeOperation(BaseModel):
@@ -79,12 +94,10 @@ class ServiceStateStore(Protocol):
 
 
 class GitCommandError(RuntimeError):
-    def __init__(self, args: list[str], returncode: int, stderr: str) -> None:
-        self.git_args = args
-        self.returncode = returncode
-        self.stderr = stderr
+    def __init__(self, diagnostic: RepositoryDiagnostic) -> None:
+        self.diagnostic = diagnostic
         super().__init__(
-            f"git {' '.join(args)} failed with exit code {returncode}: {stderr.strip()}"
+            f"{diagnostic.command_category}: {diagnostic.reason} ({diagnostic.code})"
         )
 
 
@@ -97,61 +110,113 @@ class GitStatusRecord:
 
 
 class GitRepository:
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        timeout_seconds: float = DEFAULT_GIT_TIMEOUT_SECONDS,
+    ) -> None:
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
         self.root = root.resolve()
+        self.timeout_seconds = timeout_seconds
+        self._common_git_dir: Path | None = None
 
-    def _run_bytes(self, args: list[str]) -> bytes:
+    def _run(
+        self,
+        args: list[str],
+        *,
+        category: str,
+        accepted_returncodes: tuple[int, ...] = (0,),
+    ) -> subprocess.CompletedProcess[bytes]:
         try:
             result = subprocess.run(
                 ["git", *args],
                 cwd=self.root,
                 check=False,
                 capture_output=True,
+                timeout=self.timeout_seconds,
             )
-        except OSError as exc:
-            raise GitCommandError(args, -1, str(exc)) from exc
-        if result.returncode != 0:
+        except subprocess.TimeoutExpired:
             raise GitCommandError(
-                args,
-                result.returncode,
-                result.stderr.decode("utf-8", errors="replace"),
+                RepositoryDiagnostic(
+                    command_category=category,
+                    code="timeout",
+                    reason="git_command_timed_out",
+                )
+            ) from None
+        except OSError:
+            raise GitCommandError(
+                RepositoryDiagnostic(
+                    command_category=category,
+                    code="os_error",
+                    reason="git_command_unavailable",
+                )
+            ) from None
+        if result.returncode not in accepted_returncodes:
+            raise GitCommandError(
+                RepositoryDiagnostic(
+                    command_category=category,
+                    code=result.returncode,
+                    reason="git_command_failed",
+                )
             )
-        return result.stdout
+        return result
 
-    def _run_text(self, args: list[str]) -> str:
-        return self._run_bytes(args).decode("utf-8", errors="surrogateescape").strip()
+    def _run_bytes(self, args: list[str], *, category: str) -> bytes:
+        return self._run(args, category=category).stdout
+
+    def _run_text(self, args: list[str], *, category: str) -> str:
+        output = self._run_bytes(args, category=category)
+        try:
+            return output.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            raise GitCommandError(
+                RepositoryDiagnostic(
+                    command_category=category,
+                    code="invalid_output",
+                    reason="git_output_invalid",
+                )
+            ) from None
 
     def fetch(self, remote: str) -> None:
-        self._run_bytes(["fetch", "--prune", remote])
+        self._run(["fetch", "--prune", remote], category="fetch")
 
     def resolve_ref(self, ref: str) -> str:
-        return self._run_text(["rev-parse", "--verify", ref])
-
-    def current_branch(self) -> str:
-        return self._run_text(["rev-parse", "--abbrev-ref", "HEAD"])
-
-    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
-        try:
-            result = subprocess.run(
-                ["git", "merge-base", "--is-ancestor", ancestor, descendant],
-                cwd=self.root,
-                check=False,
-                capture_output=True,
-            )
-        except OSError as exc:
-            raise GitCommandError(["merge-base", "--is-ancestor"], -1, str(exc)) from exc
-        if result.returncode == 0:
-            return True
-        if result.returncode == 1:
-            return False
-        raise GitCommandError(
-            ["merge-base", "--is-ancestor", ancestor, descendant],
-            result.returncode,
-            result.stderr.decode("utf-8", errors="replace"),
+        return self._run_text(
+            ["rev-parse", "--verify", ref],
+            category="resolve_ref",
         )
 
+    def current_branch(self) -> str:
+        return self._run_text(
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+            category="current_branch",
+        )
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        result = self._run(
+            ["merge-base", "--is-ancestor", ancestor, descendant],
+            category="ancestry",
+            accepted_returncodes=(0, 1),
+        )
+        return result.returncode == 0
+
     def commits_behind(self, local_ref: str, remote_ref: str) -> int:
-        return int(self._run_text(["rev-list", "--count", f"{local_ref}..{remote_ref}"]))
+        value = self._run_text(
+            ["rev-list", "--count", f"{local_ref}..{remote_ref}"],
+            category="commit_count",
+        )
+        try:
+            return int(value)
+        except ValueError:
+            raise GitCommandError(
+                RepositoryDiagnostic(
+                    command_category="commit_count",
+                    code="invalid_output",
+                    reason="git_output_invalid",
+                )
+            ) from None
 
     def release_summary(self, local_ref: str, remote_ref: str) -> list[str]:
         output = self._run_bytes(
@@ -160,19 +225,27 @@ class GitRepository:
                 f"--max-count={MAX_RELEASE_COMMITS}",
                 "--format=%s",
                 f"{local_ref}..{remote_ref}",
-            ]
+            ],
+            category="release_summary",
         )
-        subjects = output.splitlines()
         return [
             subject.decode("utf-8", errors="replace")[:MAX_RELEASE_SUBJECT_LENGTH]
-            for subject in subjects
+            for subject in output.splitlines()
             if subject
         ]
 
     def _status_bytes(self) -> bytes:
         return self._run_bytes(
-            ["status", "--porcelain=v1", "-z", "--untracked-files=all"]
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            category="status",
         )
+
+    @staticmethod
+    def _display_path(raw_path: bytes) -> str:
+        try:
+            return raw_path.decode("utf-8")
+        except UnicodeDecodeError:
+            return "bytes:" + quote_from_bytes(raw_path, safe="/-._~")
 
     def status_records(self) -> list[GitStatusRecord]:
         fields = self._status_bytes().split(b"\x00")
@@ -181,7 +254,13 @@ class GitRepository:
         while index < len(fields) and fields[index]:
             field = fields[index]
             if len(field) < 4 or field[2:3] != b" ":
-                raise ValueError("malformed git porcelain status record")
+                raise GitCommandError(
+                    RepositoryDiagnostic(
+                        command_category="status",
+                        code="invalid_output",
+                        reason="git_output_invalid",
+                    )
+                )
             code = field[:2].decode("ascii")
             path_bytes = field[3:]
             raw = field + b"\x00"
@@ -189,14 +268,20 @@ class GitRepository:
             if "R" in code or "C" in code:
                 index += 1
                 if index >= len(fields) or not fields[index]:
-                    raise ValueError("incomplete git porcelain rename record")
+                    raise GitCommandError(
+                        RepositoryDiagnostic(
+                            command_category="status",
+                            code="invalid_output",
+                            reason="git_output_invalid",
+                        )
+                    )
                 original_bytes = fields[index]
                 raw += original_bytes + b"\x00"
-                original_path = original_bytes.decode("utf-8", errors="surrogateescape")
+                original_path = self._display_path(original_bytes)
             records.append(
                 GitStatusRecord(
                     code=code,
-                    path=path_bytes.decode("utf-8", errors="surrogateescape"),
+                    path=self._display_path(path_bytes),
                     original_path=original_path,
                     raw=raw,
                 )
@@ -206,22 +291,13 @@ class GitRepository:
 
     @staticmethod
     def dirty_paths(records: list[GitStatusRecord]) -> list[str]:
-        paths = {
-            path
-            for record in records
-            for path in (record.path, record.original_path)
-            if path is not None
-        }
-        return sorted(paths)
-
-    def visible_paths(self) -> list[str]:
-        output = self._run_bytes(
-            ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]
-        )
         return sorted(
-            path.decode("utf-8", errors="surrogateescape")
-            for path in output.split(b"\x00")
-            if path
+            {
+                path
+                for record in records
+                for path in (record.path, record.original_path)
+                if path is not None
+            }
         )
 
     def fingerprint(
@@ -237,8 +313,8 @@ class GitRepository:
             else b"".join(record.raw for record in records)
         )
         components = [
-            self.current_branch().encode("utf-8", errors="surrogateescape"),
-            branch.encode("utf-8", errors="surrogateescape"),
+            self.current_branch().encode("utf-8"),
+            branch.encode("utf-8"),
             self.resolve_ref(local_ref).encode("ascii"),
             self.resolve_ref(remote_ref).encode("ascii"),
             status_bytes,
@@ -250,12 +326,47 @@ class GitRepository:
         return digest.hexdigest()
 
     @property
-    def git_dir(self) -> Path:
-        value = Path(self._run_text(["rev-parse", "--git-dir"]))
-        return value if value.is_absolute() else (self.root / value).resolve()
+    def common_git_dir(self) -> Path:
+        if self._common_git_dir is None:
+            value = Path(
+                self._run_text(
+                    ["rev-parse", "--git-common-dir"],
+                    category="repository_metadata",
+                )
+            )
+            self._common_git_dir = (
+                value if value.is_absolute() else (self.root / value).resolve()
+            )
+        return self._common_git_dir
 
-    def remote_url(self, remote: str) -> str:
-        return self._run_text(["remote", "get-url", remote])
+    @property
+    def lock_path(self) -> Path:
+        return self.common_git_dir / LOCK_FILENAME
+
+    @contextmanager
+    def mutex(self) -> Iterator[None]:
+        try:
+            descriptor = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        except OSError:
+            raise GitCommandError(
+                RepositoryDiagnostic(
+                    command_category="repository_mutex",
+                    code="os_error",
+                    reason="git_command_unavailable",
+                )
+            ) from None
+        with os.fdopen(descriptor, "a+b") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            except OSError:
+                raise GitCommandError(
+                    RepositoryDiagnostic(
+                        command_category="repository_mutex",
+                        code="os_error",
+                        reason="git_command_unavailable",
+                    )
+                ) from None
+            yield
 
 
 class RepositoryUpgradeService:
@@ -282,10 +393,10 @@ class RepositoryUpgradeService:
 
     def check(self) -> RepositorySnapshot:
         checked_at = datetime.now(timezone.utc)
-        self._save_snapshot(
-            RepositorySnapshot(status=UpgradeStatus.CHECKING, checked_at=checked_at)
-        )
         try:
+            self._save_snapshot(
+                RepositorySnapshot(status=UpgradeStatus.CHECKING, checked_at=checked_at)
+            )
             self.repository.fetch(self.remote)
             local_commit = self.repository.resolve_ref(self.local_ref)
             remote_commit = self.repository.resolve_ref(self.remote_ref)
@@ -322,26 +433,41 @@ class RepositoryUpgradeService:
                 dirty_paths=dirty_paths,
                 fingerprint=fingerprint,
             )
-        except (GitCommandError, OSError, ValueError) as exc:
+        except GitCommandError as exc:
             snapshot = RepositorySnapshot(
                 status=UpgradeStatus.CHECK_FAILED,
                 checked_at=checked_at,
-                error=self._redacted_error(exc),
+                error=exc.diagnostic,
             )
-        self._save_snapshot(snapshot)
+        try:
+            self._save_snapshot(snapshot)
+        except GitCommandError as exc:
+            return RepositorySnapshot(
+                status=UpgradeStatus.CHECK_FAILED,
+                checked_at=checked_at,
+                error=exc.diagnostic,
+            )
         return snapshot
 
-    def load_state(self) -> RepositoryUpgradeState:
+    def _load_state_unlocked(self) -> RepositoryUpgradeState:
         raw = self.store.get_service_state(REPOSITORY_UPGRADE_STATE_KEY)
         if raw is None:
             return RepositoryUpgradeState()
         return RepositoryUpgradeState.model_validate_json(raw)
 
-    def save_state(self, state: RepositoryUpgradeState) -> None:
+    def _save_state_unlocked(self, state: RepositoryUpgradeState) -> None:
         self.store.set_service_state(
             REPOSITORY_UPGRADE_STATE_KEY,
             state.model_dump_json(),
         )
+
+    def load_state(self) -> RepositoryUpgradeState:
+        with self.repository.mutex():
+            return self._load_state_unlocked()
+
+    def save_state(self, state: RepositoryUpgradeState) -> None:
+        with self.repository.mutex():
+            self._save_state_unlocked(state)
 
     def reserve_operation(
         self,
@@ -352,73 +478,40 @@ class RepositoryUpgradeService:
             raise ValueError("operation_id must not be empty")
         if not fingerprint:
             raise ValueError("fingerprint must not be empty")
-        lock_path = self.repository.git_dir / LOCK_FILENAME
-        operation = RepositoryUpgradeOperation(
-            operation_id=operation_id,
-            fingerprint=fingerprint,
-            reserved_at=datetime.now(timezone.utc),
-        )
-        payload = operation.model_dump_json().encode("utf-8")
-        try:
-            descriptor = os.open(
-                lock_path,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o600,
-            )
-        except FileExistsError:
-            existing = self._read_lock(lock_path)
-            if existing.operation_id != operation_id:
-                raise RepositoryUpgradeConflict(
-                    f"repository upgrade operation {existing.operation_id!r} is already reserved"
+        with self.repository.mutex():
+            state = self._load_state_unlocked()
+            existing = state.operation
+            if existing is not None:
+                if existing.operation_id != operation_id:
+                    raise RepositoryUpgradeConflict(
+                        f"repository upgrade operation {existing.operation_id!r} "
+                        "is already reserved"
+                    )
+                if existing.fingerprint != fingerprint:
+                    raise RepositoryUpgradeConflict(
+                        f"repository upgrade operation {operation_id!r} has a "
+                        "different fingerprint"
+                    )
+                return OperationReservation(
+                    acquired=True,
+                    idempotent=True,
+                    operation=existing,
                 )
-            self._persist_operation(existing)
+            operation = RepositoryUpgradeOperation(
+                operation_id=operation_id,
+                fingerprint=fingerprint,
+                reserved_at=datetime.now(timezone.utc),
+            )
+            self._save_state_unlocked(
+                state.model_copy(update={"operation": operation})
+            )
             return OperationReservation(
                 acquired=True,
-                idempotent=True,
-                operation=existing,
+                idempotent=False,
+                operation=operation,
             )
-        try:
-            with os.fdopen(descriptor, "wb") as lock_file:
-                lock_file.write(payload)
-                lock_file.flush()
-                os.fsync(lock_file.fileno())
-            self._persist_operation(operation)
-        except Exception:
-            lock_path.unlink(missing_ok=True)
-            raise
-        return OperationReservation(
-            acquired=True,
-            idempotent=False,
-            operation=operation,
-        )
-
-    def _read_lock(self, lock_path: Path) -> RepositoryUpgradeOperation:
-        try:
-            return RepositoryUpgradeOperation.model_validate_json(
-                lock_path.read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError) as exc:
-            raise RepositoryUpgradeConflict(
-                f"repository upgrade lock at {lock_path} is unreadable or malformed"
-            ) from exc
-
-    def _persist_operation(self, operation: RepositoryUpgradeOperation) -> None:
-        state = self.load_state()
-        self.save_state(state.model_copy(update={"operation": operation}))
 
     def _save_snapshot(self, snapshot: RepositorySnapshot) -> None:
-        state = self.load_state()
-        self.save_state(state.model_copy(update={"snapshot": snapshot}))
-
-    def _redacted_error(self, exc: BaseException) -> str:
-        message = str(exc)
-        sensitive_values = [str(self.repository.root), str(Path.home())]
-        try:
-            sensitive_values.append(self.repository.remote_url(self.remote))
-        except GitCommandError:
-            pass
-        for value in sorted(set(sensitive_values), key=len, reverse=True):
-            if value:
-                message = message.replace(value, "<redacted>")
-        message = re.sub(r"(?i)(https?://)[^/@\s]+@", r"\1<redacted>@", message)
-        return message[:MAX_ERROR_LENGTH]
+        with self.repository.mutex():
+            state = self._load_state_unlocked()
+            self._save_state_unlocked(state.model_copy(update={"snapshot": snapshot}))
