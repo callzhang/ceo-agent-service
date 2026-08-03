@@ -215,6 +215,21 @@ def test_context_forbids_diagnosis_only_completion_for_execution_requests():
     assert "needs_human or failed" in rendered
 
 
+def test_context_requires_three_independent_cases_for_shared_infrastructure_change():
+    rendered = _context(trigger_text="一个用户反馈线上地址打不开，请修复").render()
+
+    assert "Do not change shared deployment entry points" in rendered
+    assert "at least three independently confirmed affected cases" in rendered
+    assert "Repeated probes from one machine or network are one case" in rendered
+    assert "leave shared configuration unchanged and return needs_human" in rendered
+
+
+def test_context_allows_exactly_authorized_shared_infrastructure_change():
+    rendered = _context(trigger_text="请把生产域名切换到已确认的新域名").render()
+
+    assert "explicit current authorization for that exact change" in rendered
+
+
 def test_context_forbids_agent_auth_commands():
     rendered = _context().render()
 

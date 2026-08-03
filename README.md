@@ -59,6 +59,8 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 `blocked` 只表示当前缺少权限、依赖、材料或安全条件。记录必须写明当前原因和恢复条件，始终保留在待处理 backlog；条件变化后通过原 trigger 的幂等 rerun 再次处理，不使用错误前缀把 blocked 永久排除。
 
+单个访问失败反馈只允许 Direct Agent 诊断和报告，不授权修改共享部署入口、域名、DNS、路由或基础设施配置。此类变更必须在上下文中已有至少 3 个相互独立的受影响案例，或 Derek 对该项具体变更给出当次明确授权；同一机器或网络上的重复探测只算一个案例。条件不足时保持配置不变并返回 `needs_human`。
+
 一次 reply task generation 对应一次 Direct Agent run，同一 `conversation_id` 的 run 复用 `conversations.codex_session_id`。Reply consumer 本身按队列逐条处理消息，不再额外维护对话锁。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID 和本次 transcript 行范围，不复制工具事件或生成服务自定义回执。任务终态直接采用严格 `AgentResult`；精确重复发送仍由 trigger 和 `sent_replies` 幂等记录阻止，人工修订后的新内容不被旧结果拦截。
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
