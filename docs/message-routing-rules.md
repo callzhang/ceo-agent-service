@@ -267,6 +267,7 @@ aflow\.dingtalk\.com|dinghash(?:=|%3D)approval|swfrom(?:=|%3D)oa
 - 不在 agent 前跳过。
 - OA 审阅使用统一 Codex 结构化 runner；OA handler 注入 `dingtalk-oa-approval` skill 并处理审批详情、任务归属和执行结果。
 - OA 审阅最终记录的动作只能是 `通过`、`拒绝`、`退回`。其中 `通过` 和 `拒绝` 执行审批动作；`退回` 不静默映射成 `拒绝`，而是把 `oa_remark` 作为审批单评论提交，提醒申请人补充材料或修改后再处理。
+- Agent 确认 OA 动作成功后，必须从审批详情识别实际发起人，并向该申请人发送一条结果消息；不得把仅转发催办的人当作申请人。消息发送失败或无法识别发起人时，最终审计会明确记录该异常，不能伪造已送达。
 - 服务在既有 `reply_attempts` 审计记录中保存审批 URL、审批动作、审批留言、执行结果、Codex session 和工具事件。
 - 不新增 OA 页面；从既有 attempt detail 查看处理过程。
 - DWS 详情不完整时，OA handler 可使用已授权的钉钉 OA API 补读详情，但不得记录 token、AppKey、AppSecret、cookie、OAuth code 或签名 URL。

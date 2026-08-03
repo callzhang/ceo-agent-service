@@ -10,6 +10,7 @@ from app.agent_runner import (
     AGENT_RESULT_SCHEMA_PATH,
     AgentRunUnavailableError,
     DirectAgentRunner,
+    direct_agent_developer_instructions,
 )
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
@@ -165,6 +166,13 @@ def test_direct_runner_uses_native_codex_config_without_mcp_whitelist(
     assert result.result.outcome is AgentOutcome.COMPLETED
     assert result.events == ()
     assert result.receipts == ()
+
+
+def test_direct_agent_requires_oa_applicant_notification_after_confirmed_action():
+    instructions = direct_agent_developer_instructions()
+
+    assert "notify that applicant through DingTalk before returning AgentResult" in instructions
+    assert "real originator identifier" in instructions
 
 
 def test_direct_runner_reuses_one_codex_session_for_the_conversation(
