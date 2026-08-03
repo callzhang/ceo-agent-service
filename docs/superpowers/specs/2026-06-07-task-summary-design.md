@@ -460,6 +460,16 @@ Sending policy:
 - Group sends require a known group conversation. If no group conversation is
   known but the owner is resolved, send directly to the owner.
 
+Message format:
+
+- Follow-up text is rendered as Markdown before the shared reply postfix and
+  feedback links are appended.
+- Start with the concrete confirmation question.
+- Then show a compact `事项` section with project, TODO, priority, and deadline
+  when available.
+- Put background in a separate `背景` section and keep it short; the sent
+  reminder should be a scannable prompt, not a long project memo.
+
 Conversation selection:
 
 - Track multiple source conversations per project.

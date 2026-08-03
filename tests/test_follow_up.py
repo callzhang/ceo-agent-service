@@ -104,6 +104,10 @@ def test_due_follow_up_sends_group_message(tmp_path):
     assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-owner-1"]
     assert dws.sent[0]["at_open_dingtalk_names"] == ["Alex"]
     assert not dws.sent[0]["text"].startswith("<@")
+    assert dws.sent[0]["text"].startswith("**请确认：**")
+    assert "**事项**" in dws.sent[0]["text"]
+    assert "- 项目：客户交付" in dws.sent[0]["text"]
+    assert "- 事项：给客户交付 ETA" in dws.sent[0]["text"]
     assert "结果、阻塞和 ETA" in dws.sent[0]["text"]
     sent_draft = store.list_follow_up_drafts(statuses=("sent",))[0]
     assert sent_draft.id == draft_id
@@ -248,7 +252,9 @@ def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
 
     assert sent == 1
     sent_text = dws.sent[0]["text"]
-    assert "基于项目「客户交付」的未完成事项：" in sent_text
+    assert sent_text.startswith("**请确认：**")
+    assert "**事项**" in sent_text
+    assert "- 项目：客户交付" in sent_text
     assert "请同步这个事项的最新进展。" in sent_text
     assert "（by明哥分身）" in sent_text
     assert "/api/dingtalk-feedback-spike?feedback_token=" in sent_text
@@ -256,6 +262,65 @@ def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
         store.list_follow_up_drafts(statuses=("sent",))[0].send_result_json
     )
     assert send_result["feedback_token"].startswith("spike_")
+
+
+def test_due_follow_up_uses_compact_markdown_sections_for_long_context(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="重点客户交付项目",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认验收材料和客户侧 blocker",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P0",
+        deadline_at="2026-06-09 18:00:00",
+    )
+    long_description = (
+        "客户侧验收材料已经反复沟通过，当前需要负责人明确最终验收口径、"
+        "客户还缺哪些材料、是否存在资源阻塞、预计什么时候能闭环。"
+        * 8
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        title="客户验收闭环确认",
+        description=long_description,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请同步当前结果、阻塞、下一步和预计完成时间。",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 1
+    sent_text = dws.sent[0]["text"]
+    assert sent_text.startswith("**请确认：** 请同步当前结果、阻塞、下一步和预计完成时间。")
+    assert "**事项**" in sent_text
+    assert "- 事项：客户验收闭环确认" in sent_text
+    assert "- 项目：重点客户交付项目" in sent_text
+    assert "- TODO：确认验收材料和客户侧 blocker" in sent_text
+    assert "- 优先级：P0" in sent_text
+    assert "- DDL：2026-06-09 18:00:00" in sent_text
+    assert "**背景**" in sent_text
+    assert long_description not in sent_text
+    assert sent_text.count("...") == 1
 
 
 def test_direct_follow_up_prefers_open_dingtalk_id_for_send_target(tmp_path):

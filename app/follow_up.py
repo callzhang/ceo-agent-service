@@ -20,6 +20,9 @@ MAX_FOLLOW_UPS_PER_GROUP_PER_DAY = 8
 LOCAL_WORK_TZ = ZoneInfo("Asia/Shanghai")
 LOCAL_WORK_START_HOUR = 9
 LOCAL_WORK_END_HOUR = 18
+FOLLOW_UP_FIELD_LIMIT = 96
+FOLLOW_UP_DESCRIPTION_LIMIT = 240
+FOLLOW_UP_QUESTION_LIMIT = 140
 
 
 def _parse_follow_up_datetime(value: str) -> datetime | None:
@@ -144,15 +147,57 @@ def _is_sensitive_follow_up(project, draft) -> bool:
     return project is not None and str(project.category) == "HR"
 
 
-def _source_context_prefix(project, todo) -> str:
-    parts: list[str] = []
-    if project is not None and project.title.strip():
-        parts.append(f"项目「{project.title.strip()}」")
-    if todo is not None and todo.title.strip():
-        parts.append(f"TODO「{todo.title.strip()}」")
-    if not parts:
-        return ""
-    return f"基于{' / '.join(parts)}的未完成事项：\n"
+def _compact_follow_up_text(value: str, *, limit: int) -> str:
+    text = " ".join(str(value or "").strip().split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 4)].rstrip()}..."
+
+
+def _follow_up_context_lines(project, todo, draft) -> list[str]:
+    lines: list[str] = []
+    project_title = project.title.strip() if project is not None else ""
+    todo_title = todo.title.strip() if todo is not None else ""
+    draft_title = str(getattr(draft, "title", "") or "").strip()
+    title = draft_title or todo_title
+    if title:
+        lines.append(
+            f"- 事项：{_compact_follow_up_text(title, limit=FOLLOW_UP_FIELD_LIMIT)}"
+        )
+    if project_title:
+        lines.append(
+            f"- 项目：{_compact_follow_up_text(project_title, limit=FOLLOW_UP_FIELD_LIMIT)}"
+        )
+    if todo_title and todo_title != title:
+        lines.append(
+            f"- TODO：{_compact_follow_up_text(todo_title, limit=FOLLOW_UP_FIELD_LIMIT)}"
+        )
+    priority = str(getattr(draft, "priority", "") or "").strip()
+    if not priority and todo is not None:
+        priority = str(todo.priority).strip()
+    if priority:
+        lines.append(f"- 优先级：{priority}")
+    deadline = ""
+    if todo is not None:
+        deadline = todo.deadline_at.strip()
+    if deadline:
+        lines.append(f"- DDL：{deadline}")
+    return lines
+
+
+def _follow_up_background_text(project, todo, draft) -> str:
+    candidates = [
+        str(getattr(draft, "description", "") or "").strip(),
+        todo.description.strip() if todo is not None else "",
+        project.background.strip() if project is not None else "",
+    ]
+    for candidate in candidates:
+        if candidate:
+            return _compact_follow_up_text(
+                candidate,
+                limit=FOLLOW_UP_DESCRIPTION_LIMIT,
+            )
+    return ""
 
 
 def _is_open_conversation_id(value: str) -> bool:
@@ -212,24 +257,20 @@ def _resolve_group_conversation_id(store: AutoReplyStore, dws, project, draft) -
 def _follow_up_message_text(store: AutoReplyStore, draft) -> str:
     project = store.get_work_project(draft.project_id)
     todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
-    text = draft.question_text.strip()
-    title = str(getattr(draft, "title", "") or "").strip()
-    description = str(getattr(draft, "description", "") or "").strip()
-    if title or description:
-        parts = []
-        prefix = _source_context_prefix(project, todo).strip()
-        if prefix:
-            parts.append(prefix)
-        if title:
-            parts.append(f"事项：{title}")
-        if description:
-            parts.append(f"背景：{description}")
-        if text:
-            parts.append(f"请确认：{text}")
-        return "\n\n".join(parts).strip()
-    if text.startswith("基于"):
-        return text
-    return f"{_source_context_prefix(project, todo)}{text}".strip()
+    question = _compact_follow_up_text(
+        draft.question_text.strip(),
+        limit=FOLLOW_UP_QUESTION_LIMIT,
+    )
+    parts: list[str] = []
+    if question:
+        parts.append(f"**请确认：** {question}")
+    context_lines = _follow_up_context_lines(project, todo, draft)
+    if context_lines:
+        parts.append("**事项**\n" + "\n".join(context_lines))
+    background = _follow_up_background_text(project, todo, draft)
+    if background:
+        parts.append(f"**背景**\n{background}")
+    return "\n\n".join(parts).strip()
 
 
 def _completion_supported_by_current_evidence(
