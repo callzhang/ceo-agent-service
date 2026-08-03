@@ -27,6 +27,7 @@ def source(*, participant_count: int = 3) -> MeetingSource:
             "started_at": "2026-07-14T10:00:00+08:00",
             "ended_at": "2026-07-14T11:00:00+08:00",
             "participants": participants,
+            "creator": participants[1] if participant_count > 2 else None,
             "current_user_id": "derek",
             "summary": "Alex 主张全量，Mina 主张灰度。",
             "transcript": [
@@ -166,10 +167,12 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "明确承接该业务、决策或后续行动" in prompt
     assert "涉及个人隐私、个人薪酬或绩效" in prompt
     assert "对特定个人的严厉负面反馈" in prompt
-    assert "只能私信本次会议中的相关参会人" in prompt
-    assert "找不到群不能作为改发私信的理由" in prompt
+    assert "找不到可发送群时，默认私信会议创建人 Alex" in prompt
+    assert "只保留该收件人完成对齐所需的内容" in prompt
+    assert "DWS 读取失败" in prompt
+    assert "不能降级私信" in prompt
     assert "target=null" in prompt
-    assert "交给发送层重试" in prompt
+    assert "让队列重试原群发现" in prompt
     assert "不能改成 no_action" in prompt
     assert "真实 @" in prompt
 
@@ -303,7 +306,7 @@ def test_agent_rejects_wrong_name_for_unresolved_counterpart():
         agent.decide(source_with_unresolved_one_to_one_counterpart())
 
 
-def test_agent_accepts_direct_participant_for_sensitive_multi_party_meeting():
+def test_agent_accepts_creator_direct_when_multi_party_group_is_unavailable():
     target = {
         "kind": "direct",
         "conversation_id": "",
@@ -320,6 +323,22 @@ def test_agent_accepts_direct_participant_for_sensitive_multi_party_meeting():
     assert decision.target.direct_user_id == "alex"
 
 
+def test_agent_rejects_non_creator_direct_target_for_multi_party_meeting():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "mina",
+        "title": "Mina",
+        "candidates": [],
+    }
+    agent = MeetingAlignmentAgent(FakeMeetingCodex(send_payload_with_target(target)))
+    with pytest.raises(
+        MeetingAlignmentTargetError,
+        match="multi-party direct target must identify the meeting creator",
+    ):
+        agent.decide(source())
+
+
 def test_agent_rejects_nonparticipant_direct_target_for_multi_party_meeting():
     target = {
         "kind": "direct",
@@ -331,7 +350,7 @@ def test_agent_rejects_nonparticipant_direct_target_for_multi_party_meeting():
     agent = MeetingAlignmentAgent(FakeMeetingCodex(send_payload_with_target(target)))
     with pytest.raises(
         MeetingAlignmentTargetError,
-        match="direct target must identify another meeting participant",
+        match="multi-party direct target must identify the meeting creator",
     ):
         agent.decide(source())
 

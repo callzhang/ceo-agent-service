@@ -27,6 +27,7 @@ class MeetingSource(StrictModel):
     started_at: str
     ended_at: str
     participants: list[MeetingParticipant]
+    creator: MeetingParticipant | None = None
     current_user_id: str
     summary: str
     transcript: list[TranscriptLine]

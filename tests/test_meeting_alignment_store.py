@@ -256,12 +256,13 @@ def test_activation_baseline_silences_unsent_historical_jobs(tmp_path):
     assert store.get_meeting_alignment_job(current_id).status == "pending"
 
 
-def test_replay_reopens_only_unsent_no_action_job(tmp_path):
+@pytest.mark.parametrize("replay_status", ["no_action", "failed"])
+def test_replay_reopens_only_unsent_terminal_job(tmp_path, replay_status):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     replay_id = seed_job(store, meeting_id="replay-me")
     store.update_meeting_alignment_job(
         replay_id,
-        status="no_action",
+        status=replay_status,
         decision_json='{"action":"no_action"}',
     )
     sent_id = seed_job(store, meeting_id="already-sent")

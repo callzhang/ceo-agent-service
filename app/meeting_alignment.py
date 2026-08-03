@@ -287,7 +287,7 @@ def queue_recent_meeting_alignment_replay(
                 result["outcome"] = "already_sent"
                 results.append(result)
                 continue
-            if existing.status != "no_action":
+            if existing.status not in {"no_action", "failed"}:
                 result["outcome"] = existing.status
                 results.append(result)
                 continue
@@ -344,7 +344,7 @@ def queue_recent_meeting_alignment_replay(
             ensure_ascii=False,
             sort_keys=True,
         )
-        if existing is not None and existing.status == "no_action":
+        if existing is not None and existing.status in {"no_action", "failed"}:
             reopened = store.reopen_meeting_alignment_job_for_replay(
                 existing.id,
                 title=metadata.title,

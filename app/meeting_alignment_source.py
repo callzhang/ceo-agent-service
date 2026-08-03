@@ -28,6 +28,7 @@ class CalendarMeetingEvidence(BaseModel):
     started_at: str
     ended_at: str
     participants: list[MeetingParticipant]
+    creator: MeetingParticipant | None = None
 
 
 class MinutesDiscoveryMetadata(BaseModel):
@@ -136,6 +137,7 @@ def read_meeting_source(
         current_user_id=current_user_id,
         summary=summary,
         meeting_id=meeting_id,
+        creator=calendar_evidence.creator,
     )
 
 
@@ -146,6 +148,7 @@ def normalize_meeting_source(
     current_user_id: str,
     summary: dict[str, Any] | str | None = None,
     meeting_id: str = "",
+    creator: MeetingParticipant | None = None,
 ) -> MeetingSource:
     data = _payload_data(info)
     _validate_metadata_aliases(data)
@@ -226,6 +229,7 @@ def normalize_meeting_source(
         started_at=started_at,
         ended_at=ended_at,
         participants=participants,
+        creator=creator,
         current_user_id=normalized_current_user_id,
         summary=_summary_text(summary),
         transcript=transcript,
@@ -294,6 +298,11 @@ def build_calendar_meeting_evidence(
                 open_dingtalk_id=detail.open_dingtalk_id.strip(),
             )
         )
+    creator_matches = [
+        participant
+        for participant in participants
+        if _normalized_title(participant.name) == _normalized_title(event.organizer)
+    ]
     return CalendarMeetingEvidence(
         source="calendar",
         event_id=event.event_id,
@@ -301,6 +310,7 @@ def build_calendar_meeting_evidence(
         started_at=_normalized_time(event.start_time),
         ended_at=_normalized_time(event.end_time),
         participants=participants,
+        creator=creator_matches[0] if len(creator_matches) == 1 else None,
     )
 
 
@@ -415,6 +425,16 @@ def _verify_calendar_evidence(
         raise MeetingSourceIncomplete("calendar evidence is stale or mismatched")
     if sum(p.user_id == current_user_id for p in evidence.participants) != 1:
         raise MeetingSourceIncomplete("calendar evidence lacks stable current user")
+    if evidence.creator is not None:
+        creator_matches = [
+            participant
+            for participant in evidence.participants
+            if participant == evidence.creator
+        ]
+        if len(creator_matches) != 1:
+            raise MeetingSourceIncomplete(
+                "calendar creator evidence is stale or ambiguous"
+            )
 
 
 def transcript_speaker_names(

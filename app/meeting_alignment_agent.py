@@ -216,14 +216,34 @@ def build_meeting_alignment_prompt(
 - 1:1 会议必须返回 direct target；不能返回 target=null。
 - 禁止搜索或选择群；conversation_id 和 candidates 必须为空。"""
     else:
-        target_contract = """这是多人会议：
+        creator = source.creator
+        if creator is None or creator.user_id == source.current_user_id:
+            creator_contract = (
+                "当前会议创建人缺失、不唯一或是 Derek，不能选择私信；"
+                "没有可发送群时返回 target=null，等待来源证据恢复。"
+            )
+            creator_name = "（当前不可用）"
+        elif creator.user_id:
+            creator_contract = (
+                f"会议创建人为 {creator.name}：direct_user_id={creator.user_id}、"
+                f"title={creator.name}。"
+            )
+            creator_name = creator.name
+        else:
+            creator_contract = (
+                f"会议创建人为 {creator.name}：direct_user_id 为空、"
+                f"title={creator.name}，发送层将通过 DWS 唯一解析身份。"
+            )
+            creator_name = creator.name
+        target_contract = f"""这是多人会议：
 - 默认发到明确承接业务、决策或后续行动的团队群。必须使用 DWS 做群发现，优先找会议内明确提及或分享的讨论群，再搜会议标题和核心议题消息。
 - 无论议题已经对齐还是仍有未决问题，都可以发到明确承接该业务、决策或后续行动的团队群；不能因为群可访问、议题相似、参会人部分重合或近期共同活跃就发送，必须有明确的业务承接证据。
 - 每个 candidate 都必须写清群来源和业务承接关系。只在符合当前投递范围的候选中按证据强弱排序，并选择第 1 个。
-- 如果待发送内容涉及个人隐私、个人薪酬或绩效，或者包含对特定个人的严厉负面反馈，公开到群里会造成不必要暴露，可以改为 direct；只能私信本次会议中的相关参会人，并在 audit_summary 说明为何不适合群聊。
-- 私信是内容边界决定的投递方式，不是群发现失败后的 fallback；找不到群不能作为改发私信的理由。
-- 如果没有符合当前投递范围的可发送群，但会议确实命中 send 触发条件，必须保留 action=send、trigger_reasons、topics/derek_viewpoint、key_questions、mention_names 和 final_message，并返回 target=null，交给发送层重试。
-- target=null 是暂时无法投递的运行状态：不能改成 no_action，也不能由服务自动选择私信对象。"""
+- 如果待发送内容涉及个人隐私、个人薪酬或绩效，或者包含对特定个人的严厉负面反馈，公开到群里会造成不必要暴露，改为私信会议创建人，并只保留该收件人完成对齐所需的内容。
+- 只有 DWS 群发现完整成功、确认没有可发送群时，才默认私信会议创建人。{creator_contract}
+- DWS 读取失败、网络失败或群元数据不完整时，不能降级私信；停止本轮并返回依赖错误，让队列重试原群发现。
+- 找不到可发送群时，默认私信会议创建人 {creator_name}；不能改成 no_action。
+- target=null 只用于创建人证据缺失、不唯一或无法验证的可恢复状态，不能由服务猜测收件人。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
 
@@ -411,7 +431,7 @@ def _validate_source_aware_target(
 
     if participant_count > 2:
         if target is not None and target.kind == "direct":
-            _validate_direct_target_participant(source, target)
+            _validate_multi_party_direct_target_creator(source, target)
         return
 
     raise MeetingAlignmentTargetError(
@@ -423,30 +443,28 @@ def _canonical_person_name(value: str) -> str:
     return " ".join(value.split()).casefold()
 
 
-def _validate_direct_target_participant(
+def _validate_multi_party_direct_target_creator(
     source: MeetingSource,
     target: DeliveryTarget,
 ) -> None:
-    participants = [
-        participant
-        for participant in source.participants
-        if participant.user_id != source.current_user_id
-    ]
-    if target.direct_user_id:
-        matches = [
-            participant
-            for participant in participants
-            if participant.user_id == target.direct_user_id
-        ]
-    else:
-        matches = [
-            participant
-            for participant in participants
-            if not participant.user_id
-            and _canonical_person_name(participant.name)
-            == _canonical_person_name(target.title)
-        ]
-    if len(matches) != 1:
+    creator = source.creator
+    if creator is None or creator.user_id == source.current_user_id:
         raise MeetingAlignmentTargetError(
-            "direct target must identify another meeting participant"
+            "multi-party direct target requires a uniquely identified meeting creator"
+        )
+    if target.direct_user_id:
+        matches_creator = creator.user_id == target.direct_user_id
+    else:
+        matches_creator = (
+            not creator.user_id
+            and _canonical_person_name(creator.name)
+            == _canonical_person_name(target.title)
+        )
+    if not matches_creator:
+        raise MeetingAlignmentTargetError(
+            "multi-party direct target must identify the meeting creator"
+        )
+    if _canonical_person_name(creator.name) != _canonical_person_name(target.title):
+        raise MeetingAlignmentTargetError(
+            "multi-party direct target title must name the meeting creator"
         )

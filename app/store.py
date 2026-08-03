@@ -5681,7 +5681,7 @@ class AutoReplyStore:
                     send_result_json='{}',
                     updated_at=current_timestamp
                 where id=?
-                  and status='no_action'
+                  and status in ('no_action', 'failed')
                   and send_result_json='{}'
                 returning *
                 """,

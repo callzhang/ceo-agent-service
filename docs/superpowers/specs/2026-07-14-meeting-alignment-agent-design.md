@@ -261,10 +261,12 @@ comparing the group-member set with the meeting participant set.
 
 When the follow-up contains personal information, compensation or performance
 details, or severe negative feedback about one person that should not be
-published to a group, the agent may select a direct target who is another
-meeting participant. This is a content-based delivery choice, not a fallback:
-if no group satisfying the business-ownership rule can be found for ordinary
-business content, the job retries without an external send.
+published to a group, the agent uses direct delivery. Direct delivery also
+applies when a complete group search finds no sendable owning group. In both
+cases the default recipient is the uniquely identified calendar creator and the
+message is limited to what that recipient needs. DWS read or network failure,
+incomplete group metadata, or missing or ambiguous creator evidence keeps the
+job retryable and cannot trigger direct delivery.
 
 ## Mention Resolution
 

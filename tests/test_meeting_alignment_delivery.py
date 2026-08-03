@@ -35,6 +35,7 @@ def meeting_source(*, one_to_one: bool = False, unresolved_other: bool = False):
             "started_at": "2026-07-14T09:00:00+08:00",
             "ended_at": "2026-07-14T10:00:00+08:00",
             "participants": participants,
+            "creator": participants[1] if not one_to_one else None,
             "current_user_id": "u-derek",
             "summary": "",
             "transcript": [],
@@ -197,7 +198,7 @@ def test_group_delivery_uses_first_candidate_and_real_mentions():
     assert result.message_text == dws.sent[0]["text"]
 
 
-def test_multi_person_no_group_never_falls_back_to_direct():
+def test_multi_person_no_group_without_agent_selected_creator_retries():
     dws = FakeDws()
 
     with pytest.raises(MeetingDeliveryRetry, match="sendable group"):
@@ -206,7 +207,7 @@ def test_multi_person_no_group_never_falls_back_to_direct():
     assert dws.sent == []
 
 
-def test_sensitive_multi_person_followup_can_be_sent_to_participant_directly():
+def test_multi_person_followup_can_be_sent_to_creator_directly():
     dws = FakeDws()
 
     result = deliver_meeting_alignment(
@@ -219,13 +220,52 @@ def test_sensitive_multi_person_followup_can_be_sent_to_participant_directly():
     assert dws.sent[0]["user_id"] == "u-a"
 
 
+def test_multi_person_creator_name_is_uniquely_resolved_before_direct_send():
+    dws = FakeDws()
+    payload = meeting_source().model_dump(mode="json")
+    payload["creator"].update(user_id="", open_dingtalk_id="")
+    dws.profiles["A"] = [DwsUserProfile(user_id="u-a", name="A")]
+    decision = send_decision(target="direct", mention_names=[])
+    decision.target.direct_user_id = ""
+
+    result = deliver_meeting_alignment(
+        decision,
+        MeetingSource.model_validate(payload),
+        dws,
+    )
+
+    assert result.status == "sent"
+    assert dws.sent[0]["user_id"] == "u-a"
+
+
+def test_multi_person_creator_identity_ambiguity_retries_without_send():
+    dws = FakeDws()
+    payload = meeting_source().model_dump(mode="json")
+    payload["creator"].update(user_id="", open_dingtalk_id="")
+    dws.profiles["A"] = [
+        DwsUserProfile(user_id="u-a-1", name="A"),
+        DwsUserProfile(user_id="u-a-2", name="A"),
+    ]
+    decision = send_decision(target="direct", mention_names=[])
+    decision.target.direct_user_id = ""
+
+    with pytest.raises(MeetingDeliveryRetry, match="identity is unresolved"):
+        deliver_meeting_alignment(
+            decision,
+            MeetingSource.model_validate(payload),
+            dws,
+        )
+
+    assert dws.sent == []
+
+
 def test_multi_person_direct_target_must_be_another_participant():
     payload = send_decision(target="direct").model_dump()
     payload["target"].update(direct_user_id="u-outsider", title="Outsider")
 
     with pytest.raises(
         MeetingDeliveryError,
-        match="direct target must identify another meeting participant",
+        match="direct target must identify the eligible meeting recipient",
     ):
         deliver_meeting_alignment(
             MeetingAlignmentDecision.model_validate(payload),

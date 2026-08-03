@@ -124,6 +124,11 @@ def calendar_evidence(**overrides) -> CalendarMeetingEvidence:
             },
             {"name": "A", "user_id": "u-a", "open_dingtalk_id": "open-a"},
         ],
+        "creator": {
+            "name": "A",
+            "user_id": "u-a",
+            "open_dingtalk_id": "open-a",
+        },
     }
     payload.update(overrides)
     return CalendarMeetingEvidence.model_validate(payload)
@@ -136,6 +141,7 @@ def calendar_event(**overrides) -> DwsCalendarEvent:
         "start_time": "2026-07-14T19:48:00+08:00",
         "end_time": "2026-07-14T21:28:00+08:00",
         "status": "confirmed",
+        "organizer": "A",
         "attendee_details": [
             DwsCalendarAttendee(
                 display_name="Derek",
@@ -230,6 +236,11 @@ def test_read_meeting_source_combines_metadata_summary_transcript_and_current_us
             },
             {"name": "A", "user_id": "u-a", "open_dingtalk_id": "open-a"},
         ],
+        "creator": {
+            "name": "A",
+            "user_id": "u-a",
+            "open_dingtalk_id": "open-a",
+        },
         "current_user_id": "u-derek",
         "summary": "存在上线范围分歧。",
         "transcript": [
@@ -363,6 +374,29 @@ def test_build_calendar_evidence_accepts_real_delayed_meeting_shape():
     )
 
     assert evidence.event_id == "event-1"
+    assert evidence.creator is not None
+    assert evidence.creator.name == "A"
+
+
+def test_build_calendar_evidence_leaves_ambiguous_creator_unresolved():
+    event = calendar_event(
+        organizer="A",
+        attendee_details=[
+            DwsCalendarAttendee(
+                display_name="Derek",
+                is_self=True,
+                user_id="u-derek",
+            ),
+            DwsCalendarAttendee(display_name="A", user_id="u-a-1"),
+            DwsCalendarAttendee(display_name="A", user_id="u-a-2"),
+        ],
+    )
+
+    evidence = build_calendar_meeting_evidence(
+        live_minutes_info(), [event], "u-derek"
+    )
+
+    assert evidence.creator is None
 
 
 def test_build_calendar_evidence_rejects_non_overlapping_event_within_four_hours():

@@ -65,6 +65,7 @@ def matching_calendar_event(
         start_time="2026-07-14T09:00:00+08:00",
         end_time="2026-07-14T10:00:00+08:00",
         status="confirmed",
+        organizer="A",
         attendee_details=attendees,
     )
 
@@ -525,7 +526,7 @@ def test_producer_keeps_recording_exactly_five_minutes(tmp_path):
     assert dws.calendar_calls == [""]
 
 
-def test_replay_queues_recent_unsent_meeting_and_reports_short_recording(tmp_path):
+def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     short = ended_meeting(
         meeting_id="minutes-short",
@@ -562,7 +563,12 @@ def test_replay_queues_recent_unsent_meeting_and_reports_short_recording(tmp_pat
         eligible_at=NOW.isoformat(),
         status="pending",
     )
-    store.update_meeting_alignment_job(old_id, status="no_action")
+    store.update_meeting_alignment_job(
+        old_id,
+        status="failed",
+        error='{"kind":"meeting_target"}',
+        decision_json='{"action":"send"}',
+    )
 
     results = queue_recent_meeting_alignment_replay(
         store,
@@ -585,6 +591,11 @@ def test_replay_queues_recent_unsent_meeting_and_reports_short_recording(tmp_pat
     ]
     replayed = store.get_meeting_alignment_job(old_id)
     assert replayed.status == "pending"
+    assert replayed.error == ""
+    assert replayed.decision_json == "{}"
+    assert json.loads(replayed.source_json)["calendar_evidence"]["creator"][
+        "name"
+    ] == "A"
     assert results[1]["job_id"] == old_id
 
 
@@ -1046,6 +1057,32 @@ def test_ready_delivery_source_failure_uses_counted_retry(tmp_path):
     assert json.loads(job.error)["kind"] == "meeting_source"
     assert dws.send_calls == []
     assert runner.calls == 0
+
+
+def test_source_read_failure_never_degrades_to_creator_direct(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    def fail_info(meeting_id: str):
+        raise DwsError("calendar or minutes source temporarily unavailable")
+
+    dws.get_minutes_info = fail_info
+    direct = consumer_send_decision().model_copy(deep=True)
+    direct.target.kind = "direct"
+    direct.target.conversation_id = ""
+    direct.target.direct_user_id = "u-a"
+    direct.target.title = "A"
+    direct.target.candidates = []
+    runner = FakeMeetingRunner(direct)
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert json.loads(job.error)["kind"] == "meeting_source"
+    assert runner.calls == 0
+    assert dws.send_calls == []
 
 
 def test_consumer_quarantines_ambiguous_send_without_verifiable_id(tmp_path):

@@ -254,11 +254,19 @@ def _direct_target_participant(
     source: MeetingSource,
     target: DeliveryTarget,
 ) -> MeetingParticipant:
-    participants = [
-        participant
-        for participant in source.participants
-        if participant.user_id != source.current_user_id
-    ]
+    if len(source.participants) > 2:
+        participants = (
+            [source.creator]
+            if source.creator is not None
+            and source.creator.user_id != source.current_user_id
+            else []
+        )
+    else:
+        participants = [
+            participant
+            for participant in source.participants
+            if participant.user_id != source.current_user_id
+        ]
     if target.direct_user_id:
         matches = [
             participant
@@ -274,7 +282,7 @@ def _direct_target_participant(
         ]
     if len(matches) != 1:
         raise MeetingDeliveryError(
-            "direct target must identify another meeting participant"
+            "direct target must identify the eligible meeting recipient"
         )
     counterpart = matches[0]
     if _canonical(target.title) != _canonical(counterpart.name):
