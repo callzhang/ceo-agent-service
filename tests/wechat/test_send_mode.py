@@ -171,6 +171,51 @@ def test_auto_mode_keeps_delivery_pending_when_latest_message_has_no_text(tmp_pa
     assert store.get_wechat_delivery_by_id(delivery.id).status == "ready_to_send"
 
 
+def test_auto_mode_skips_invisible_records_when_refreshing_binding_text(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    _seed(store)
+    account = WechatAccount(
+        account_id="acct-1", display_name="Derek", self_user_id="self",
+        account_dir="/account", db_dir="/db", app_version="4.0",
+    )
+
+    class Reader:
+        @staticmethod
+        def read_messages(*_args, **kwargs):
+            assert kwargs["limit"] > 1
+            common = {
+                "account_id": "acct-1", "conversation_id": "u9",
+                "sender_id": "u9", "sender_display_name": "Alex",
+                "conversation_type": "direct", "direction": "inbound",
+                "source_version": "4.0",
+            }
+            return [
+                WechatMessage(
+                    **common, message_id="internal-1",
+                    sent_at="2026-07-18T10:01:01", kind="unknown", text="",
+                ),
+                WechatMessage(
+                    **common, message_id="m2",
+                    sent_at="2026-07-18T10:01:00", kind="text",
+                    text="newest visible message",
+                ),
+            ]
+
+    class Runner:
+        calls = []
+
+        @classmethod
+        def send(cls, label, reply_text, *, search_query=None, expected_recent_text=None):
+            cls.calls.append(expected_recent_text)
+            return AccessibilityResult(True, True)
+
+    assert service.process_ready_wechat_deliveries(
+        store, WechatSender(store, Runner()), mode="auto", sender_enabled=True,
+        reader=Reader(), account=account,
+    ) == 1
+    assert Runner.calls == ["newest visible message"]
+
+
 def test_sender_round_reconciles_unknown_before_retrying(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery = _seed(store)
