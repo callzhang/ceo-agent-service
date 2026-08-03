@@ -156,12 +156,16 @@ def _refresh_direct_binding_evidence(delivery, reader, account):
         account,
         conversation_id=delivery.conversation_id,
         conversation_type=delivery.target_type,
-        limit=1,
+        limit=10,
         order="newest",
     )
     if not messages:
         return None
-    current_text = (messages[0].text or "").strip()
+    current_text = next(
+        ((message.text or "").strip() for message in messages
+         if (message.text or "").strip()),
+        "",
+    )
     if not current_text:
         return None
     evidence = dict(delivery.evidence)
