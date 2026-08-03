@@ -89,6 +89,34 @@ def test_default_newest_order_is_preserved_for_diagnostics(tmp_path):
     assert [row["message_id"] for row in rows] == ["2"]
 
 
+def test_repeated_reads_reuse_the_same_plaintext_connection(tmp_path, monkeypatch):
+    conversation_id = "friend-1"
+    source = tmp_path / "db_storage/message/message_0.db"
+    _create_message_db(source, conversation_id, [(1, 1, 1, "hello")])
+    backend = WcdbReaderBackend(tmp_path / "mirror", cipher=CopyCipher())
+    real_connect = sqlite3.connect
+    opened = []
+    statements = []
+
+    def tracking_connect(*args, **kwargs):
+        opened.append(args[0])
+        connection = real_connect(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr("app.wechat.backend.sqlite3.connect", tracking_connect)
+
+    for _ in range(2):
+        rows = backend.read_messages(
+            tmp_path / "db_storage", b"key", conversation_id=conversation_id,
+            conversation_type="direct", since="", limit=1,
+        )
+        assert [row["message_id"] for row in rows] == ["1"]
+
+    assert len(opened) == 1
+    assert sum("FROM Name2Id" in sql for sql in statements) == 1
+
+
 def test_until_bound_is_applied_before_newest_limit(tmp_path):
     conversation_id = "friend-1"
     boundary = datetime.fromisoformat("2026-07-20T10:00:00+08:00")

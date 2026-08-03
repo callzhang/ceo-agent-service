@@ -74,6 +74,18 @@ Do not treat every IPC timeout as revoked App Data permission. Confirm helper
 health, the structured IPC error code, and a bounded real read before changing
 TCC settings.
 
+### Reader query latency
+
+The Reader keeps read-only SQLite connections, contact display-name maps, and
+per-shard sender-ID maps open while their corresponding encrypted source file
+version is unchanged. Every request still checks source mtimes; before refreshing
+a changed mirror it closes the old connection and discards the related maps.
+This preserves current-message correctness without repeatedly parsing all 14
+historical shard schemas. On the production-sized local mirror, the measured
+in-process `probe + read_messages(limit=10)` hot path is 65–71ms after one-time
+warm-up. First open and any source-change decryption remain slower by design and
+must not be reported as hot-query latency.
+
 ## Dedicated Sender permission boundary
 
 Accessibility is granted to `~/Applications/CEO WeChat Sender.app` (bundle ID
