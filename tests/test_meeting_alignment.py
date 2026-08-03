@@ -10,6 +10,7 @@ from app.dws_client import (
     DwsError,
     DwsUserProfile,
 )
+from app.dingtalk_models import DingTalkConversation
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment import (
     consume_meeting_alignment_jobs,
@@ -169,6 +170,9 @@ class ConsumerDws(FakeDws):
         return {"open-derek", "open-a", "open-b"}
 
     def search_user_profiles(self, query: str) -> list:
+        return []
+
+    def search_conversations(self, query: str) -> list[DingTalkConversation]:
         return []
 
     def read_recent_messages(self, conversation, limit=50) -> list:
@@ -1046,6 +1050,214 @@ def test_ready_delivery_source_failure_uses_counted_retry(tmp_path):
     assert json.loads(job.error)["kind"] == "meeting_source"
     assert dws.send_calls == []
     assert runner.calls == 0
+
+
+def test_multi_party_missing_group_reanalyzes_after_discovery_backoff(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(
+        consumer_send_decision().model_copy(update={"target": None})
+    )
+
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        runner,
+        now=NOW,
+        limit=1,
+        retry_delay=timedelta(minutes=1),
+        max_attempts=1,
+    )
+
+    waiting = store.get_meeting_alignment_job(job_id)
+    assert waiting.status == "retry"
+    assert waiting.available_at == "2026-07-14T16:10:00+08:00"
+    assert waiting.attempts == 0
+    assert json.loads(waiting.error)["kind"] == "meeting_target_discovery"
+    assert dws.send_calls == []
+    assert runner.calls == 1
+
+    runner.decision = consumer_send_decision()
+    assert consume_meeting_alignment_jobs(
+        store,
+        dws,
+        runner,
+        now=NOW + timedelta(minutes=1),
+        limit=1,
+        retry_delay=timedelta(minutes=1),
+        max_attempts=1,
+    ) == 0
+
+    assert consume_meeting_alignment_jobs(
+        store,
+        dws,
+        runner,
+        now=NOW + timedelta(hours=6),
+        limit=1,
+        retry_delay=timedelta(minutes=1),
+        max_attempts=1,
+    ) == 1
+
+    recovered = store.get_meeting_alignment_job(job_id)
+    assert recovered.status == "sent"
+    assert runner.calls == 2
+    assert len(dws.send_calls) == 1
+
+
+def test_target_discovery_does_not_consume_later_agent_retry_budget(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    missing_target_runner = FakeMeetingRunner(
+        consumer_send_decision().model_copy(update={"target": None})
+    )
+
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        missing_target_runner,
+        now=NOW,
+        limit=1,
+        retry_delay=timedelta(minutes=1),
+        max_attempts=2,
+    )
+
+    class TemporarilyFailingRunner(FakeMeetingRunner):
+        def decide(self, *, prompt: str) -> MeetingAlignmentDecision:
+            self.calls += 1
+            self.prompts.append(prompt)
+            raise RuntimeError("agent temporarily unavailable")
+
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        TemporarilyFailingRunner(consumer_send_decision()),
+        now=NOW + timedelta(hours=6),
+        limit=1,
+        retry_delay=timedelta(minutes=1),
+        max_attempts=2,
+    )
+
+    retried = store.get_meeting_alignment_job(job_id)
+    assert retried.status == "retry"
+    assert retried.attempts == 1
+    assert json.loads(retried.error)["kind"] == "meeting_agent"
+    assert dws.send_calls == []
+
+
+def test_group_audience_mismatch_keeps_bounded_delivery_retry(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.list_group_member_open_dingtalk_ids = lambda conversation_id: {
+        "open-derek",
+        "open-a",
+        "open-b",
+        "open-frontline",
+    }
+    job_id = seed_consumer_job(store, dws)
+
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        FakeMeetingRunner(consumer_send_decision()),
+        now=NOW,
+        limit=1,
+        max_attempts=1,
+    )
+
+    failed = store.get_meeting_alignment_job(job_id)
+    assert failed.status == "failed"
+    assert json.loads(failed.error)["kind"] == "meeting_send"
+    assert dws.send_calls == []
+
+
+def test_missing_selected_group_reanalyzes_after_discovery_backoff(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.get_conversation_info = lambda conversation_id: (_ for _ in ()).throw(
+        DwsError("selected conversation is unavailable")
+    )
+    job_id = seed_consumer_job(store, dws)
+
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        FakeMeetingRunner(consumer_send_decision()),
+        now=NOW,
+        limit=1,
+        retry_delay=timedelta(minutes=1),
+        max_attempts=1,
+    )
+
+    waiting = store.get_meeting_alignment_job(job_id)
+    assert waiting.status == "retry"
+    assert waiting.attempts == 0
+    assert waiting.available_at == "2026-07-14T16:10:00+08:00"
+    assert json.loads(waiting.error)["kind"] == "meeting_target_discovery"
+    assert dws.send_calls == []
+
+
+def test_transient_group_lookup_stays_external_delivery_retry(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.get_conversation_info = lambda conversation_id: (_ for _ in ()).throw(
+        DwsError(
+            "conversation lookup timed out",
+            retryable_external_dependency=True,
+        )
+    )
+    job_id = seed_consumer_job(store, dws)
+
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        FakeMeetingRunner(consumer_send_decision()),
+        now=NOW,
+        limit=1,
+        retry_delay=timedelta(minutes=1),
+        max_attempts=1,
+    )
+
+    retried = store.get_meeting_alignment_job(job_id)
+    assert retried.status == "retry"
+    assert retried.attempts == 1
+    assert retried.available_at == "2026-07-14T10:11:00+08:00"
+    assert json.loads(retried.error)["kind"] == "meeting_send"
+    assert dws.send_calls == []
+
+
+def test_group_lookup_error_stays_bounded_when_target_is_still_visible(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.get_conversation_info = lambda conversation_id: (_ for _ in ()).throw(
+        DwsError("conversation-info response is malformed")
+    )
+    dws.search_conversations = lambda query: [
+        DingTalkConversation(
+            open_conversation_id="cid-first",
+            title="项目群",
+            single_chat=False,
+            unread_point=0,
+        )
+    ]
+    job_id = seed_consumer_job(store, dws)
+
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        FakeMeetingRunner(consumer_send_decision()),
+        now=NOW,
+        limit=1,
+        retry_delay=timedelta(minutes=1),
+        max_attempts=1,
+    )
+
+    failed = store.get_meeting_alignment_job(job_id)
+    assert failed.status == "failed"
+    assert failed.attempts == 1
+    assert json.loads(failed.error)["kind"] == "meeting_send"
+    assert dws.send_calls == []
 
 
 def test_consumer_quarantines_ambiguous_send_without_verifiable_id(tmp_path):

@@ -6,7 +6,9 @@ from pydantic import BaseModel, ConfigDict
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsError, DwsUserProfile
+from app.external_retry import is_external_dependency_error
 from app.meeting_alignment_models import (
+    DeliveryTarget,
     MeetingAlignmentDecision,
     MeetingParticipant,
     MeetingSource,
@@ -33,10 +35,15 @@ class MeetingDeliveryResult(BaseModel):
 
 class MeetingDeliveryRetry(RuntimeError):
     def __init__(
-        self, message: str, *, result: MeetingDeliveryResult | None = None
+        self,
+        message: str,
+        *,
+        result: MeetingDeliveryResult | None = None,
+        requires_target_rediscovery: bool = False,
     ) -> None:
         super().__init__(message)
         self.result = result
+        self.requires_target_rediscovery = requires_target_rediscovery
 
 
 class MeetingDeliveryAmbiguous(RuntimeError):
@@ -72,6 +79,8 @@ def meeting_followup_message(
 
 class MeetingDeliveryDws(Protocol):
     def get_conversation_info(self, conversation_id: str) -> dict[str, Any]: ...
+
+    def search_conversations(self, query: str) -> list[DingTalkConversation]: ...
 
     def list_group_member_open_dingtalk_ids(
         self, conversation_id: str
@@ -109,7 +118,10 @@ def deliver_meeting_alignment(
     direct_open_dingtalk_id = ""
     if participant_count > 2:
         if target is None:
-            raise MeetingDeliveryRetry("multi-party meeting has no sendable group")
+            raise MeetingDeliveryRetry(
+                "multi-party meeting has no sendable group",
+                requires_target_rediscovery=True,
+            )
         if target.kind == "direct":
             raise MeetingDeliveryError("multi-party meeting cannot use direct delivery")
         if (
@@ -119,9 +131,32 @@ def deliver_meeting_alignment(
             raise MeetingDeliveryError(
                 "group delivery must use the first ranked target candidate"
             )
-        info = dws.get_conversation_info(target.conversation_id)
+        try:
+            info = dws.get_conversation_info(target.conversation_id)
+        except DwsError as exc:
+            if (
+                exc.needs_authorization
+                or exc.needs_login
+                or is_external_dependency_error(exc)
+            ):
+                raise
+            try:
+                target_visible = _target_is_currently_visible(dws, target)
+            except DwsError as visibility_exc:
+                if is_external_dependency_error(visibility_exc):
+                    raise visibility_exc from exc
+                raise exc
+            if not target_visible:
+                raise MeetingDeliveryRetry(
+                    "selected target is no longer readable",
+                    requires_target_rediscovery=True,
+                ) from exc
+            raise
         if not _sendable_group_info(info, target.conversation_id):
-            raise MeetingDeliveryRetry("selected target is not a sendable group")
+            raise MeetingDeliveryRetry(
+                "selected target is not a sendable group",
+                requires_target_rediscovery=True,
+            )
         if _requires_participant_only_audience(decision):
             _validate_group_audience(source, target.conversation_id, info, dws)
         conversation = DingTalkConversation(
@@ -254,6 +289,19 @@ def _sendable_group_info(info: dict[str, Any], conversation_id: str) -> bool:
         and isinstance(member_count, int)
         and not isinstance(member_count, bool)
         and member_count > 0
+    )
+
+
+def _target_is_currently_visible(
+    dws: MeetingDeliveryDws,
+    target: DeliveryTarget,
+) -> bool:
+    query = str(target.title or "").strip()
+    if not query:
+        return True
+    return any(
+        conversation.open_conversation_id == target.conversation_id
+        for conversation in dws.search_conversations(query)
     )
 
 

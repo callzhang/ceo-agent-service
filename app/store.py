@@ -5512,6 +5512,28 @@ class AutoReplyStore:
             error=error,
         )
 
+    def schedule_meeting_alignment_target_discovery_retry(
+        self,
+        job_id: int,
+        error: str,
+        *,
+        available_at: str,
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update meeting_alignment_jobs
+                set status='retry',
+                    attempts=max(attempts - 1, 0),
+                    locked_at=null,
+                    available_at=?,
+                    error=?,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (available_at, error, job_id),
+            )
+
     def claim_ready_to_send_meeting_alignment_jobs(
         self,
         limit: int,

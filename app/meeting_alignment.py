@@ -49,6 +49,7 @@ MINIMUM_MEETING_DURATION = timedelta(minutes=5)
 TERMINAL_STATUSES = frozenset({"no_action", "sent", "failed"})
 DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
 DEFAULT_MEETING_MAX_ATTEMPTS = 3
+DEFAULT_MEETING_TARGET_DISCOVERY_RETRY_DELAY = timedelta(hours=6)
 MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY = (
     "meeting_alignment_discovery_activated_at"
 )
@@ -853,16 +854,26 @@ def _deliver_meeting_job(
         values: dict[str, object] = {}
         if exc.result is not None:
             values["send_result_json"] = exc.result.model_dump_json()
-        _retry_or_fail(
-            store,
-            job,
-            kind="meeting_send",
-            exc=exc,
-            now=now,
-            retry_delay=retry_delay,
-            max_attempts=max_attempts,
-            extra_values=values,
-        )
+        if exc.requires_target_rediscovery:
+            _schedule_meeting_target_discovery_retry(
+                store,
+                job,
+                exc=exc,
+                now=now,
+                retry_delay=retry_delay,
+                extra_values=values,
+            )
+        else:
+            _retry_or_fail(
+                store,
+                job,
+                kind="meeting_send",
+                exc=exc,
+                now=now,
+                retry_delay=retry_delay,
+                max_attempts=max_attempts,
+                extra_values=values,
+            )
         return
     except MeetingDeliveryError as exc:
         _fail_job(store, job.id, "meeting_target", exc)
@@ -876,6 +887,7 @@ def _deliver_meeting_job(
             now=now,
             retry_delay=retry_delay,
             max_attempts=max_attempts,
+            external_dependency=is_external_dependency_error(exc),
         )
         return
     except Exception as exc:
@@ -1064,6 +1076,27 @@ def _retry_or_fail(
         available_at=(now + retry_delay).isoformat(),
         error=error,
         **(extra_values or {}),
+    )
+
+
+def _schedule_meeting_target_discovery_retry(
+    store: AutoReplyStore,
+    job: Any,
+    *,
+    exc: Exception,
+    now: datetime,
+    retry_delay: timedelta,
+    extra_values: dict[str, object] | None = None,
+) -> None:
+    values = extra_values or {}
+    if values:
+        store.update_meeting_alignment_job(job.id, **values)
+    store.schedule_meeting_alignment_target_discovery_retry(
+        job.id,
+        _error_json("meeting_target_discovery", str(exc)),
+        available_at=(
+            now + max(retry_delay, DEFAULT_MEETING_TARGET_DISCOVERY_RETRY_DELAY)
+        ).isoformat(),
     )
 
 

@@ -140,6 +140,7 @@ Direct Agent 按 OA skill 工作：
 ## 其他链路
 
 - 会议对齐使用 `meeting_alignment_jobs` 和 `meeting_alignment_runs` 独立排队。
+- 多人会议需要群投递但暂时没有可验证或可读取的群时，任务保留为 `retry`，至少六小时后重新发现和分析；不得降级为私聊；该等待归还本次分析 claim，不消耗此前常规失败预算。
 - 工作事项由 scanners、task agent、project/TODO store 和 follow-up 流程处理。
 - 微信 reader/producer/consumer/sender 使用独立组件，但复用 generation、审计和投递幂等原则。
 - Memory Connector、DWS、Lark 和其他 MCP/CLI 调用必须出现在 agent event 审计中。

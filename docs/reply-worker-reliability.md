@@ -27,6 +27,16 @@ and meeting queues preserve that type and schedule a later retry without
 exhausting the business task's attempt limit. This applies to Codex runners and
 to DWS operations that the client has classified as retryable.
 
+For a multi-party meeting that requires a group but has no currently verifiable
+or readable group, the meeting queue records `meeting_target_discovery` and
+returns the job to analysis after at least six hours. It does not invent a
+direct-message target, and it does not treat the normal delivery-attempt limit
+as a terminal outcome.
+The target-discovery transition refunds its current analysis claim while keeping
+any earlier normal retry budget intact.
+The later analysis can select a newly available, policy-compliant group; only
+then may the delivery step send the single persisted follow-up.
+
 Authorization failures remain in the authorization recovery path. Local input,
 target-binding, privacy, schema, and business validation failures remain
 terminal or explicitly blocked. An external write with an unknown result is
