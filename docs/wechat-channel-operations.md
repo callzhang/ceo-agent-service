@@ -19,7 +19,7 @@ Accessibility send (verified live to 文件传输助手, including background qu
 | `cipher.py` / `schema.py` / `backend.py` | SQLCipher-4 decrypt (passphrase→PBKDF2), zstd, `Msg_<md5>`/`Name2Id`/`contact.db` parsing, decrypted mirror |
 | `reader.py` | Capability-gated normalized reads |
 | `producer.py` | Eligible-message → channel-isolated reply task (exact group @-gate) |
-| `prompt.py` / `consumer.py` | WeChat-specific prompt + Codex decision → fail-closed delivery |
+| `prompt.py` / `consumer.py` | WeChat-specific prompt + Codex decision → fail-closed delivery; the schema-validated reply transport marker maps to WeChat delivery, while every other system action is rejected |
 | `accessibility.py` | Exact-once delivery state machine + real AX runner |
 | `sender_ipc.py` / `sender_helper.py` | Owner-only IPC client/server and dedicated signed Sender app entrypoint |
 | `memory_import.py` / `memory_writer.py` | Bounded extraction + deterministic cleanup; claimed, approved-only Memory writer (`memory.py` keeps public imports) |
