@@ -115,7 +115,7 @@ def test_notification_prefers_terminal_notifier(monkeypatch):
     ]
     assert commands[0][0][-2:] == [
         "-execute",
-        "/usr/bin/curl -fsS 'http://127.0.0.1:8765/open-dingtalk?cid=75217569357' >/dev/null 2>&1",
+        "/usr/bin/curl -fsS -X POST 'http://127.0.0.1:8765/open-dingtalk?cid=75217569357' >/dev/null 2>&1",
     ]
 
 
