@@ -109,11 +109,11 @@ def run_consume_once(store, runner, reader, account) -> int:
     return WechatReplyConsumer(store, runner, reader, account).run_once()
 
 
-def recover_before_sender(store, reader) -> list:
+def recover_before_sender(store, reader, account=None) -> list:
     """Reconcile orphaned deliveries before any sender starts."""
     from app.wechat.accessibility import reconcile_incomplete_deliveries
 
-    return reconcile_incomplete_deliveries(store, reader)
+    return reconcile_incomplete_deliveries(store, reader, account=account)
 
 
 # ---- confirm-mode delivery gating (CEO_WECHAT_SEND_MODE) ----
@@ -141,6 +141,34 @@ def _sender_is_ready(sender) -> bool:
         return False
 
 
+def _refresh_direct_binding_evidence(delivery, reader, account):
+    """Return a transient delivery carrying the current sidebar text evidence.
+
+    Direct-chat replies may wait for minutes before sending. The original trigger
+    is therefore not necessarily the text WeChat currently renders in its session
+    row. Read the exact conversation again immediately before any UI action and
+    bind navigation to its newest message. No suitable current text means the
+    delivery must remain pending rather than falling back to a display name.
+    """
+    if delivery.target_type != "direct" or reader is None or account is None:
+        return delivery
+    messages = reader.read_messages(
+        account,
+        conversation_id=delivery.conversation_id,
+        conversation_type=delivery.target_type,
+        limit=1,
+        order="newest",
+    )
+    if not messages:
+        return None
+    current_text = (messages[0].text or "").strip()
+    if not current_text:
+        return None
+    evidence = dict(delivery.evidence)
+    evidence["trigger_text"] = current_text
+    return delivery.model_copy(update={"evidence": evidence})
+
+
 def process_ready_wechat_deliveries(
     store,
     sender,
@@ -148,17 +176,26 @@ def process_ready_wechat_deliveries(
     mode: str,
     sender_enabled: bool,
     reader=None,
+    account=None,
 ) -> int:
     """Auto mode + sender enabled: send every ready_to_send delivery. Confirm mode
     (or sender disabled): send nothing — hold them for explicit approval. Returns
     the number sent."""
-    recover_before_sender(store, reader)
+    recover_before_sender(store, reader, account=account)
     if not sender_enabled or mode != "auto":
         return 0
     if not _sender_is_ready(sender):
         return 0
     sent = 0
     for delivery in pending_wechat_deliveries(store):
+        try:
+            delivery = _refresh_direct_binding_evidence(delivery, reader, account)
+        except Exception:
+            # This happens before a delivery is claimed or WeChat is touched. Keep
+            # it ready so the next low-frequency sender pass can retry safely.
+            continue
+        if delivery is None:
+            continue
         scope = _scope_for_delivery(store, delivery)
         if scope is None:
             continue

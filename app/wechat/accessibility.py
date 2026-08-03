@@ -215,6 +215,11 @@ class WechatSender:
             )
             return SendOutcome("failed", "target_binding_unverified")
 
+        # The service may attach fresher, transient direct-chat binding evidence
+        # immediately before this call. Claiming reloads the durable row, whose
+        # audit evidence intentionally remains the original trigger, so retain the
+        # refreshed value separately for this one navigation attempt.
+        expected_recent_text = delivery.evidence.get("trigger_text") or None
         claimed = self.store.claim_wechat_delivery(
             delivery.id,
             expected_execution_generation=delivery.execution_generation,
@@ -227,7 +232,7 @@ class WechatSender:
                 scope.display_name,
                 delivery.reply_text,
                 search_query=scope.binding_evidence.get("navigation_query") or None,
-                expected_recent_text=delivery.evidence.get("trigger_text") or None,
+                expected_recent_text=expected_recent_text,
             )
         except Exception:
             error = "sender_execution_interrupted"
@@ -248,7 +253,7 @@ class WechatSender:
         return SendOutcome(status, error)
 
 
-def reconcile_incomplete_deliveries(store, reader) -> list:
+def reconcile_incomplete_deliveries(store, reader, *, account=None) -> list:
     """Reconcile uncertain sends from read-only message history."""
     updated = []
     uncertain = (
@@ -266,7 +271,7 @@ def reconcile_incomplete_deliveries(store, reader) -> list:
             updated.append(refreshed if refreshed is not None else delivery)
             continue
         try:
-            confirmed = _outbound_exists(reader, delivery)
+            confirmed = _outbound_exists(reader, delivery, account=account)
         except Exception:
             store.set_wechat_delivery_status(
                 delivery.id,
@@ -290,8 +295,8 @@ def reconcile_incomplete_deliveries(store, reader) -> list:
     return updated
 
 
-def _outbound_exists(reader, delivery) -> bool:
-    account = reader.account
+def _outbound_exists(reader, delivery, *, account=None) -> bool:
+    account = account or reader.account
     messages = reader.read_messages(
         account, conversation_id=delivery.conversation_id,
         conversation_type=delivery.target_type, limit=20,

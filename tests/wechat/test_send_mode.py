@@ -1,7 +1,7 @@
 from app.store import AutoReplyStore
 from app.wechat import service
-from app.wechat.accessibility import SendOutcome
-from app.wechat.models import WechatReplyScope
+from app.wechat.accessibility import AccessibilityResult, SendOutcome, WechatSender
+from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
 
 
 def _seed(store, *, binding="verified", task_id=1):
@@ -65,6 +65,110 @@ def test_auto_mode_sends(tmp_path):
     sender = FakeSender()
     assert service.process_ready_wechat_deliveries(store, sender, mode="auto", sender_enabled=True) == 1
     assert sender.sent == [1]
+
+
+def test_auto_mode_refreshes_direct_binding_text_before_send(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    _seed(store)
+    calls = []
+    account = WechatAccount(
+        account_id="acct-1",
+        display_name="Derek",
+        self_user_id="self",
+        account_dir="/account",
+        db_dir="/db",
+        app_version="4.0",
+    )
+
+    class Reader:
+        def read_messages(self, requested_account, **kwargs):
+            assert requested_account == account
+            assert kwargs["conversation_id"] == "u9"
+            assert kwargs["conversation_type"] == "direct"
+            assert kwargs["order"] == "newest"
+            return [WechatMessage(
+                account_id="acct-1",
+                conversation_id="u9",
+                message_id="m2",
+                sender_id="u9",
+                sender_display_name="Alex",
+                conversation_type="direct",
+                direction="inbound",
+                sent_at="2026-07-18T10:01:00",
+                kind="text",
+                text="new message during reply delay",
+                source_version="4.0",
+            )]
+
+    class Runner:
+        @staticmethod
+        def send(label, reply_text, *, search_query=None, expected_recent_text=None):
+            calls.append((label, reply_text, search_query, expected_recent_text))
+            return AccessibilityResult(True, True)
+
+    sender = WechatSender(store, Runner())
+
+    assert service.process_ready_wechat_deliveries(
+        store,
+        sender,
+        mode="auto",
+        sender_enabled=True,
+        reader=Reader(),
+        account=account,
+    ) == 1
+    assert calls == [("Alex", "收到", None, "new message during reply delay")]
+
+
+def test_auto_mode_keeps_delivery_pending_when_binding_refresh_fails(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery = _seed(store)
+    account = WechatAccount(
+        account_id="acct-1", display_name="Derek", self_user_id="self",
+        account_dir="/account", db_dir="/db", app_version="4.0",
+    )
+
+    class Reader:
+        @staticmethod
+        def read_messages(*_args, **_kwargs):
+            raise RuntimeError("reader temporarily unavailable")
+
+    sender = FakeSender()
+
+    assert service.process_ready_wechat_deliveries(
+        store, sender, mode="auto", sender_enabled=True,
+        reader=Reader(), account=account,
+    ) == 0
+    assert sender.sent == []
+    assert store.get_wechat_delivery_by_id(delivery.id).status == "ready_to_send"
+
+
+def test_auto_mode_keeps_delivery_pending_when_latest_message_has_no_text(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery = _seed(store)
+    account = WechatAccount(
+        account_id="acct-1", display_name="Derek", self_user_id="self",
+        account_dir="/account", db_dir="/db", app_version="4.0",
+    )
+
+    class Reader:
+        @staticmethod
+        def read_messages(*_args, **_kwargs):
+            return [WechatMessage(
+                account_id="acct-1", conversation_id="u9", message_id="image-1",
+                sender_id="u9", sender_display_name="Alex",
+                conversation_type="direct", direction="inbound",
+                sent_at="2026-07-18T10:01:00", kind="image", text="",
+                source_version="4.0",
+            )]
+
+    sender = FakeSender()
+
+    assert service.process_ready_wechat_deliveries(
+        store, sender, mode="auto", sender_enabled=True,
+        reader=Reader(), account=account,
+    ) == 0
+    assert sender.sent == []
+    assert store.get_wechat_delivery_by_id(delivery.id).status == "ready_to_send"
 
 
 def test_sender_round_reconciles_unknown_before_retrying(tmp_path):

@@ -242,6 +242,15 @@ pending.
   `ready_to_send`, `failed`, or `send_unknown` deliveries as `superseded`; their
   attempts become `skipped`. Sent, sending, and explicitly rejected deliveries
   remain unchanged.
+- **Direct-chat navigation evidence is refreshed at send time.** The normal
+  low-load delay means the sidebar preview may have advanced past the message
+  that originally triggered a reply. Immediately before claiming a delivery,
+  the sender reads the newest message from that exact `conversation_id` and uses
+  its current text for the unique-sidebar-row check; the original trigger stays
+  unchanged in the audit record. If the Reader is unavailable or the newest
+  message has no usable text, the delivery remains `ready_to_send` for a later
+  polling pass and WeChat is not touched. The composer title must still match, so
+  this does not fall back to display-name-only navigation.
 - **Wrong-target detection is layered, not instant.** Immediate check = the AX
   binding (`chat_input_field.AXTitle == target`, twice); duplicates it cannot tell
   apart, so those rely on `binding_status=="verified"` (fail-closed). A **DB check
