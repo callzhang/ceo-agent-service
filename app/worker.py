@@ -4630,11 +4630,18 @@ class DingTalkAutoReplyWorker:
             else f"CEO task {send_status}: {task.conversation_title}"
         )
         url = self._notification_url(conversation, attempt_id=attempt_id)
-        send_browser_notification(
+        delivered = send_browser_notification(
             title=title,
             message=message[:120],
             url=url,
         )
+        if send_status == "needs_human" and not delivered:
+            send_macos_notification(
+                title=title,
+                message=(
+                    f"{message[:96]} 请打开审计页选择 A/B/C 方案。"
+                ),
+            )
 
     def _notification_url(
         self,
