@@ -128,6 +128,22 @@ have a completed effectful tool event or an execution receipt. `no_reply` cannot
 be combined with another formal chat reply, handoff, blocked, or stop-with-error
 outcome because those results conflict at the conversation level.
 
+## Human decisions
+
+`needs_human` is a completed Direct Agent result that waits for a real operator
+choice. It is not a `blocked` execution failure. The Direct Agent may use it
+only when evidence leaves materially different actions or requires personal
+judgment; established facts, targets, and explicit manual rerun choices must be
+executed without asking the same question again.
+
+The worker sends a local decision notification. Its audit-attempt page presents
+three choices: continue using the available facts, ask one specific clarifying
+question, or supply a custom instruction. Selecting a choice creates a durable
+manual rerun and marks the source attempt `decision_selected`. The worker then
+executes, verifies, and publishes through its normal delivery path. Because the
+choice is stored before processing, launchd restart recovery resumes the pending
+rerun without requiring the operator to select again.
+
 ## Memory MCP inheritance
 
 The Direct Agent inherits the installed Codex `memory_connector` MCP

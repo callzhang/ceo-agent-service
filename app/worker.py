@@ -2512,7 +2512,9 @@ class DingTalkAutoReplyWorker:
             send_status = "skipped"
             task_status = "done"
         elif result.outcome is AgentOutcome.NEEDS_HUMAN:
-            send_status = "blocked"
+            # A completed agent run can explicitly wait for the principal without
+            # being an execution failure or an unknown external side effect.
+            send_status = "needs_human"
             task_status = "done"
             send_error = send_error or "needs_human"
         else:
@@ -2539,7 +2541,7 @@ class DingTalkAutoReplyWorker:
             task_status=task_status,
             available_at=available_at,
         )
-        if send_status in {"blocked", "failed"}:
+        if send_status in {"needs_human", "blocked", "failed"}:
             self._notify_problem_attempt(
                 task,
                 attempt_id=attempt_id,
@@ -2624,7 +2626,7 @@ class DingTalkAutoReplyWorker:
         )
         if send_error:
             self.store.update_reply_attempt(attempt_id, send_error=send_error)
-        if send_status in {"blocked", "failed"}:
+        if send_status in {"needs_human", "blocked", "failed"}:
             self._notify_problem_attempt(
                 task,
                 attempt_id=attempt_id,
@@ -4622,7 +4624,11 @@ class DingTalkAutoReplyWorker:
             single_chat=task.single_chat,
             unread_point=1,
         )
-        title = f"CEO task {send_status}: {task.conversation_title}"
+        title = (
+            f"CEO task needs a decision: {task.conversation_title}"
+            if send_status == "needs_human"
+            else f"CEO task {send_status}: {task.conversation_title}"
+        )
         url = self._notification_url(conversation, attempt_id=attempt_id)
         send_browser_notification(
             title=title,

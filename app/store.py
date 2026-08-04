@@ -7868,6 +7868,27 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def resolve_needs_human_attempt(
+        self,
+        attempt_id: int,
+        *,
+        reviewer_feedback: str,
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_attempts
+                set send_status='decision_selected',
+                    send_error='',
+                    reviewer_feedback=?,
+                    reviewed_at=current_timestamp,
+                    updated_at=current_timestamp
+                where id=? and send_status='needs_human'
+                """,
+                (reviewer_feedback, attempt_id),
+            )
+            return cursor.rowcount == 1
+
     def record_reviewed_reply_rerun(
         self,
         *,
@@ -7882,6 +7903,7 @@ class AutoReplyStore:
         suggested_reply_text: str,
         reviewer_feedback: str = "",
         channel: str = "dingtalk",
+        oa_url: str = "",
     ) -> tuple[int, ReplyTask]:
         """Atomically persist one reviewed instruction and queue its generation."""
         feedback = reviewer_feedback.strip()
@@ -7985,7 +8007,7 @@ class AutoReplyStore:
                     trigger_sender=trigger_sender,
                     trigger_text=trigger_text,
                     trigger_message_json=trigger_message_json,
-                    oa_url="",
+                    oa_url=oa_url,
                     attempt_id=attempt_id,
                     revision_key=revision_key,
                     channel=channel,
@@ -8150,7 +8172,7 @@ class AutoReplyStore:
                             limit 1
                         ), send_status)
                         when action in ('memory_write', 'oa_approval')
-                             and send_status in ('failed', 'blocked', 'pending', 'dry_run')
+                             and send_status in ('failed', 'blocked', 'pending', 'dry_run', 'needs_human')
                              and exists (
                                 select 1
                                 from reply_attempts as newer_side_effects
@@ -8164,7 +8186,7 @@ class AutoReplyStore:
                                   )
                              )
                         then 'skipped'
-                        when send_status in ('failed', 'blocked', 'pending', 'dry_run')
+                        when send_status in ('failed', 'blocked', 'pending', 'dry_run', 'needs_human')
                              and action not in ('memory_write', 'oa_approval')
                              and exists (
                                 select 1
@@ -8178,7 +8200,7 @@ class AutoReplyStore:
                                   )
                              )
                         then 'skipped'
-                        when send_status in ('failed', 'blocked', 'pending', 'dry_run')
+                        when send_status in ('failed', 'blocked', 'pending', 'dry_run', 'needs_human')
                              and action not in ('memory_write', 'oa_approval')
                              and exists (
                                 select 1
