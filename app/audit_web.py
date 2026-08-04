@@ -2845,6 +2845,19 @@ def _format_local_time(value: str, *, local_tz: tzinfo | None = None) -> str:
     return parsed.astimezone(local_timezone).strftime(DISPLAY_TIME_FORMAT)
 
 
+def _follow_up_schedule_label(value: str) -> str:
+    parsed = _parse_utc_timestamp(value)
+    if parsed is None:
+        return ""
+    local = parsed.astimezone(datetime.now().astimezone().tzinfo)
+    hour = local.hour % 12 or 12
+    meridiem = "AM" if local.hour < 12 else "PM"
+    return (
+        f"Scheduled on {local.strftime('%b')} {local.day}, "
+        f"{hour}:{local.minute:02d} {meridiem}"
+    )
+
+
 def _parse_utc_timestamp(value: str) -> datetime | None:
     raw = value.strip()
     if not raw:
@@ -3996,6 +4009,7 @@ def _task_history_id_label(item) -> str:
 def _task_history_card(item) -> str:
     status = item.status.strip().lower() or "done"
     detail_url = _task_history_detail_url(item)
+    output_text = _task_history_output_text(item, status)
     return (
         '<article class="attempt-item history-kind-task" role="link" tabindex="0" '
         f'data-history-detail-href="{escape(detail_url, quote=True)}">'
@@ -4016,9 +4030,15 @@ def _task_history_card(item) -> str:
         '</div></div></div>'
         '<div class="attempt-lines">'
         f'{_attempt_text_line(item.input_label, item.input_text, 260)}'
-        f'{_attempt_text_line(item.output_label, item.output_text, 320)}'
+        f'{_attempt_text_line(item.output_label, output_text, 320)}'
         '</div></article>'
     )
+
+
+def _task_history_output_text(item, status: str) -> str:
+    if item.action.strip().lower().startswith("follow_up_") and status == "pending":
+        return _follow_up_schedule_label(item.output_text) or "Scheduled"
+    return item.output_text
 
 
 def render_tasks_page(
@@ -5158,7 +5178,7 @@ def _task_follow_up_child_panel(
 
 
 def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) -> str:
-    scheduled = _format_local_time(draft.scheduled_at) or draft.scheduled_at or "-"
+    scheduled = _follow_up_schedule_label(draft.scheduled_at)
     target = _task_follow_up_target(draft, conversation_titles)
     title = draft.title.strip() or draft.owner_name or draft.owner_user_id or "Follow-up"
     description = draft.description.strip()
@@ -5182,6 +5202,11 @@ def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) ->
         if description
         else ""
     )
+    scheduled_html = (
+        f"<span class=\"todo-followup-time\">{escape(scheduled)}</span>"
+        if scheduled
+        else ""
+    )
     return (
         f"<li class=\"todo-followup-item\" id=\"follow-up-{draft.id}\">"
         "<div class=\"todo-followup-bubble\">"
@@ -5189,7 +5214,7 @@ def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) ->
         f"<span class=\"todo-followup-recipient\">{escape(title)}</span>"
         f"<span class=\"todo-followup-status\">{escape(draft.status)}</span>"
         f"<span class=\"todo-followup-status\">{escape(draft.priority or '-')}</span>"
-        f"<span class=\"todo-followup-time\">{escape(scheduled)}</span>"
+        f"{scheduled_html}"
         "</div>"
         f"{description_html}"
         f"<div class=\"todo-followup-message\">{escape(draft.question_text)}</div>"

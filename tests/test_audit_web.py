@@ -557,6 +557,7 @@ def test_render_attempt_list_shows_draft_follow_up_as_pending(tmp_path: Path):
     )
     assert '<span class="history-type-badge history-type-task">Task</span>' in html
     assert ">Pending</span>" in html
+    assert ">Scheduled on Jul 23, 9:00 AM</span>" in html
     assert ">Processing</span>" not in html
 
 
