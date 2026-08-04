@@ -4010,6 +4010,7 @@ def _task_history_card(item) -> str:
     status = item.status.strip().lower() or "done"
     detail_url = _task_history_detail_url(item)
     output_text = _task_history_output_text(item, status)
+    status_label = _task_history_status_label(item, status)
     return (
         '<article class="attempt-item history-kind-task" role="link" tabindex="0" '
         f'data-history-detail-href="{escape(detail_url, quote=True)}">'
@@ -4019,7 +4020,7 @@ def _task_history_card(item) -> str:
         f'{escape(_task_history_id_label(item))}</a>'
         f'{_history_type_badge("task", "Task")}'
         f'<span class="pill status-action {_action_state_class(status)}">'
-        f'{escape(_display_action_state(status))}</span>'
+        f'{escape(status_label)}</span>'
         '<div class="attempt-main">'
         f'{escape(_task_history_title(item))} · {escape(item.source_title)}</div>'
         f'<div class="attempt-meta">{escape(item.target_title or item.source_actor)}</div>'
@@ -4039,6 +4040,12 @@ def _task_history_output_text(item, status: str) -> str:
     if item.action.strip().lower().startswith("follow_up_") and status == "pending":
         return _follow_up_schedule_label(item.output_text) or "Scheduled"
     return item.output_text
+
+
+def _task_history_status_label(item, status: str) -> str:
+    if item.action.strip().lower().startswith("follow_up_") and status == "pending":
+        return _follow_up_schedule_label(item.output_text) or "Scheduled"
+    return _display_action_state(status)
 
 
 def render_tasks_page(

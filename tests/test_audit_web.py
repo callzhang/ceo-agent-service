@@ -530,7 +530,7 @@ def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
     assert f'id="follow-up-{follow_up_id}"' in detail
 
 
-def test_render_attempt_list_shows_draft_follow_up_as_pending(tmp_path: Path):
+def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = store.create_work_project(
         title="宝马项目周末攻坚与客户Demo推进",
@@ -556,7 +556,11 @@ def test_render_attempt_list_shows_draft_follow_up_as_pending(tmp_path: Path):
         in html
     )
     assert '<span class="history-type-badge history-type-task">Task</span>' in html
-    assert ">Pending</span>" in html
+    assert (
+        '<span class="pill status-action action-state-pending">'
+        "Scheduled on Jul 23, 9:00 AM</span>"
+    ) in html
+    assert ">Pending</span>" not in html
     assert ">Scheduled on Jul 23, 9:00 AM</span>" in html
     assert ">Processing</span>" not in html
 
