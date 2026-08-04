@@ -292,7 +292,10 @@ def memory_connector_config_issue() -> str:
     configured_token = config_env.get(MEMORY_CONNECTOR_API_KEY_ENV)
     if configured_token and _jwt_token_is_expired(configured_token):
         return "memory connector token is expired"
-    return "memory connector transferable auth is missing"
+    # Codex plugins own OAuth credentials outside config.toml. A configured
+    # server without a copyable bearer token therefore uses the inherited
+    # native plugin login instead of being treated as unavailable.
+    return ""
 
 
 def memory_connector_config_options() -> list[str]:

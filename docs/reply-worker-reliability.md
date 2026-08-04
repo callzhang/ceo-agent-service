@@ -152,6 +152,12 @@ refresh a separate Memory OAuth client. Deferred `tool_search` discovery is a
 read-only event; a claimed successful `memory_write` still requires its own
 completed tool event and receipt.
 
+Native Codex plugin OAuth credentials are stored outside `config.toml`. A
+configured Memory MCP URL without a plaintext header or bearer environment
+variable is therefore valid and must not be reported as missing transferable
+authentication. The child `codex exec` process inherits the plugin login and
+performs the authenticated MCP call itself.
+
 If Memory is unavailable before a write starts, the run may fail or request
 human action according to the returned error. If a write starts but its result
 cannot be confirmed, the run becomes `unknown` and recovery is read-only. The

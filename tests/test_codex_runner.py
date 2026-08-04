@@ -529,7 +529,7 @@ def test_codex_runner_env_loads_memory_connector_from_codex_config(
     )
 
 
-def test_codex_command_rejects_oauth_memory_connector_without_transferable_auth(
+def test_codex_command_inherits_oauth_memory_connector_without_copying_auth(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -556,11 +556,9 @@ def test_codex_command_rejects_oauth_memory_connector_without_transferable_auth(
     developer_arg = _developer_instructions_arg(command)
 
     assert not any("mcp_servers.memory_connector" in item for item in command)
-    assert memory_connector_config_issue() == (
-        "memory connector transferable auth is missing"
-    )
-    assert "memory_connector MCP is unavailable" in developer_arg
-    assert "Do not call memory_connector MCP tools" in developer_arg
+    assert memory_connector_config_issue() == ""
+    assert "memory_connector MCP is available" in developer_arg
+    assert "Do not call memory_connector MCP tools" not in developer_arg
 
 
 def test_codex_command_does_not_auto_fallback_to_configured_profile(
