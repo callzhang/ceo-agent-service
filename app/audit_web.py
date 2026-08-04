@@ -465,13 +465,15 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .status-sent{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .status-resolved{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .status-pending,.status-processing,.status-commented{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
+.status-needs-human{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
+.status-decision-selected{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .status-skipped{background:var(--surface);color:var(--stone)}
 .status-failed,.status-blocked,.status-active{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .status-action{background:var(--surface);color:var(--steel);border-color:var(--hairline)}
 .action-state-sent,.action-state-accepted,.action-state-approved,.action-state-resolved{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .action-state-skipped{background:var(--surface);color:var(--stone);border-color:var(--hairline)}
 .action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
-.action-state-tentative,.action-state-returned{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
+.action-state-needs-human,.action-state-tentative,.action-state-returned{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
 .action-state-failed,.action-state-blocked,.action-state-declined,.action-state-rejected{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .action-state-superseded{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.28)}
 .log-feed{display:grid;gap:8px}
@@ -504,6 +506,10 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .card{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:24px;margin:16px 0}
 .card h2{margin:0 0 14px;color:var(--ink);font-size:18px;font-weight:600;line-height:1.4;letter-spacing:0}
 .card p{margin:8px 0}
+.needs-human-card{border-color:rgba(195,125,13,.34);background:#fffaf0}
+.needs-human-card form{margin:10px 0}
+.needs-human-card button{width:100%;justify-content:flex-start;text-align:left}
+.needs-human-custom{display:grid;gap:8px}
 .review-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(340px,.75fr);gap:16px;align-items:start;margin:16px 0}
 .review-grid .card{margin:0}
 .review-side{display:grid;gap:16px}
@@ -576,7 +582,15 @@ _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
-HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "blocked", "failed", "done")
+HISTORY_TYPE_FILTERS = (
+    "sent",
+    "reacted",
+    "skipped",
+    "needs_human",
+    "blocked",
+    "failed",
+    "done",
+)
 HISTORY_SEARCH_OBJECT_TYPES = ("replay", "wechat", "approval", "task", "meeting")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
@@ -6520,6 +6534,59 @@ def handle_rerun_attempt_post(
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
 
 
+def handle_needs_human_decision_post(
+    store: AutoReplyStore,
+    attempt_id: int,
+    body: bytes,
+) -> tuple[int, dict[str, str], str]:
+    source = store.get_reply_attempt(attempt_id)
+    if source is None:
+        return 404, {}, render_page("Attempt not found", "Attempt not found")
+    if source.send_status != "needs_human":
+        return (
+            409,
+            {},
+            render_page("Decision unavailable", "<p>该 attempt 不再等待人工选择。</p>"),
+        )
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    choice = parsed.get("choice", [""])[0].strip().lower()
+    custom_instruction = parsed.get("instruction", [""])[0].strip()
+    choice_instructions = {
+        "a": "按当前事实选择最有依据的处理方式，完成、验证并发布对外回复或动作。",
+        "b": "不要猜测尚未确定的事实；向原消息发起人发送一个具体、最小化的澄清问题并验证发送。",
+    }
+    if choice == "c":
+        if not custom_instruction:
+            return (
+                400,
+                {},
+                render_page("Decision required", "<p>请填写自定义回复或执行指令。</p>"),
+            )
+        instruction = custom_instruction
+    else:
+        instruction = choice_instructions.get(choice, "")
+    if not instruction:
+        return 400, {}, render_page("Decision unavailable", "<p>无效的选择。</p>")
+    reviewer_feedback = (
+        f"Human decision for source attempt #{source.id}: {instruction}\n\n"
+        f"Original ambiguity summary:\n{source.audit_summary or source.codex_reason}"
+    )
+    try:
+        result = handle_reviewed_message_reply(
+            store,
+            attempt_id=source.id,
+            reply_text="",
+            reviewer_feedback=reviewer_feedback,
+        )
+    except ValueError as exc:
+        return 409, {}, render_page("Decision unavailable", f"<p>{escape(str(exc))}</p>")
+    store.resolve_needs_human_attempt(
+        source.id,
+        reviewer_feedback=reviewer_feedback,
+    )
+    return 303, {"Location": f"/attempts/{result['attempt_id']}"}, ""
+
+
 def handle_agent_run_resolution_post(
     store: AutoReplyStore,
     payload: Mapping[str, object],
@@ -6619,6 +6686,8 @@ def handle_reviewed_message_reply(
         trigger_message_json=trigger_message_json,
         suggested_reply_text=reply_text,
         reviewer_feedback=reviewer_feedback,
+        oa_url=source.oa_url,
+        channel=source.channel or "dingtalk",
     )
     attempt = store.get_reply_attempt(reviewed_attempt_id)
     if attempt is None:
@@ -7181,6 +7250,15 @@ def create_audit_app(
         )
         return _fastapi_post_response(status, headers, html)
 
+    @app.post("/attempts/{attempt_id}/human-decision")
+    async def human_decision(attempt_id: int, request: Request):
+        status, headers, html = handle_needs_human_decision_post(
+            AutoReplyStore(db_path),
+            attempt_id,
+            await request.body(),
+        )
+        return _fastapi_post_response(status, headers, html)
+
     @app.post("/agent-runs/{run_id}/resolution")
     async def resolve_agent_run(run_id: int, request: Request):
         _require_trusted_json_mutation(request)
@@ -7320,6 +7398,7 @@ def _attempt_detail_body(
         reply_title="生成回复",
         reply_text=_attempt_detail_reply_text(attempt),
         side_html=(
+            f"{_needs_human_decision_card(attempt)}"
             f"{_feedback_form(attempt)}"
             f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         ),
@@ -7646,6 +7725,29 @@ def _rerun_card(attempt: ReplyAttempt) -> str:
         "onsubmit=\"return confirm('确认重跑这条 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
         "<button type=\"submit\">重跑</button>"
         "</form></section>"
+    )
+
+
+def _needs_human_decision_card(attempt: ReplyAttempt) -> str:
+    if attempt.send_status != "needs_human" or attempt.channel != "dingtalk":
+        return ""
+    action = f"/attempts/{attempt.id}/human-decision"
+    return (
+        '<section class="card needs-human-card"><h2>需要你选择</h2>'
+        '<p class="muted">当前证据不足以可靠地替你选定行动。选择后会创建可恢复任务，'
+        '由 Agent 执行、验证并自动发布。</p>'
+        f'<form method="post" action="{action}">'
+        '<input type="hidden" name="choice" value="a">'
+        '<button type="submit">A. 按当前事实继续处理并发布</button></form>'
+        f'<form method="post" action="{action}">'
+        '<input type="hidden" name="choice" value="b">'
+        '<button type="submit">B. 先追问一个具体澄清问题并发布</button></form>'
+        f'<form method="post" action="{action}" class="needs-human-custom">'
+        '<input type="hidden" name="choice" value="c">'
+        '<label> C. 自定义回复或执行指令</label>'
+        '<textarea name="instruction" required placeholder="例如：先回复对方，说明按方案二推进"></textarea>'
+        '<button type="submit">按自定义指令执行并发布</button></form>'
+        '</section>'
     )
 
 

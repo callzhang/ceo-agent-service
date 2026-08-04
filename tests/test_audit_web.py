@@ -17,6 +17,7 @@ from app.audit_web import (
     handle_system_config_post,
     handle_user_prompt_post,
     handle_feedback_post,
+    handle_needs_human_decision_post,
     handle_rerun_attempt_post,
     handle_agent_run_resolution_post,
     handle_user_feedback_resolve_post,
@@ -5274,6 +5275,91 @@ def test_handle_reviewed_message_reply_uses_immutable_attempt_binding(tmp_path: 
     assert task is not None
     assert task.manual_rerun_attempt_id == result["attempt_id"]
     assert task.status == "pending"
+
+
+def test_needs_human_decision_renders_choices_and_queues_resumable_rerun(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-04 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="这个应该怎么处理？",
+        trigger_message_json=DingTalkMessage(
+            open_conversation_id="cid-1",
+            open_message_id="msg-1",
+            conversation_title="技术部",
+            single_chat=False,
+            sender_name="Mina",
+            create_time="2026-08-04 09:00:00",
+            content="这个应该怎么处理？",
+        ).model_dump_json(),
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="这个应该怎么处理？",
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="目标和范围存在实际歧义。",
+        audit_summary="目标和范围存在实际歧义。",
+        send_status="needs_human",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    store.update_reply_attempt(attempt_id, send_error="needs_human")
+
+    status, html = render_attempt_detail(store, attempt_id)
+    assert status == 200
+    assert "需要你选择" in html
+    assert "A. 按当前事实继续处理并发布" in html
+    assert "B. 先追问一个具体澄清问题并发布" in html
+    assert "C. 自定义回复或执行指令" in html
+
+    status, headers, body = handle_needs_human_decision_post(
+        store,
+        attempt_id,
+        b"choice=b",
+    )
+
+    source = store.get_reply_attempt(attempt_id)
+    restarted_store = AutoReplyStore(store.path)
+    task = restarted_store.get_reply_task_for_message("cid-1", "msg-1")
+    selected_attempt = store.get_reply_attempt(int(headers["Location"].rsplit("/", 1)[-1]))
+    assert status == 303
+    assert body == ""
+    assert source is not None
+    assert source.send_status == "decision_selected"
+    assert "Human decision for source attempt" in source.reviewer_feedback
+    assert task is not None
+    assert task.status == "pending"
+    assert task.oa_url == "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    assert selected_attempt is not None
+    assert selected_attempt.reviewer_feedback == source.reviewer_feedback
+    assert "向原消息发起人发送一个具体" in selected_attempt.reviewer_feedback
+
+    wechat_attempt_id = store.record_reply_attempt(
+        conversation_id="wechat-cid-1",
+        conversation_title="WeChat test",
+        trigger_message_id="wechat-msg-1",
+        trigger_sender="Mina",
+        trigger_text="这个应该怎么处理？",
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="目标和范围存在实际歧义。",
+        audit_summary="目标和范围存在实际歧义。",
+        send_status="needs_human",
+        channel="wechat",
+    )
+    status, html = render_attempt_detail(store, wechat_attempt_id)
+    assert status == 200
+    assert "需要你选择" not in html
 
 
 def test_reviewed_reply_api_rejects_mutable_text_lookup_payload(tmp_path: Path):

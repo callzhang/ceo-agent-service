@@ -1098,7 +1098,7 @@ def test_worker_persists_and_schedules_typed_reconciliation_dependency_error(
                 )
             ),
             "done",
-            "blocked",
+            "needs_human",
         ),
         (
             ScriptedRun(
@@ -1142,7 +1142,7 @@ def test_agent_result_maps_to_task_and_attempt(
     assert attempt is not None
     assert attempt.action == "agent_run"
     assert attempt.send_status == attempt_status
-    if attempt_status == "blocked":
+    if attempt_status == "needs_human":
         assert "permission_missing" in attempt.send_error
 
 
@@ -1274,7 +1274,7 @@ def test_completed_result_does_not_require_custom_effect_evidence(tmp_path: Path
     assert attempt.send_status == "completed"
 
 
-def test_diagnosis_only_for_requested_execution_is_blocked_by_agent_result(
+def test_diagnosis_only_for_requested_execution_waits_for_human_by_agent_result(
     tmp_path: Path,
 ):
     trigger = _message("请执行修复并验证")
@@ -1299,7 +1299,7 @@ def test_diagnosis_only_for_requested_execution_is_blocked_by_agent_result(
     assert worker.store.get_reply_task(task_id).status == "done"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "execution_not_performed"
 
 
@@ -1772,7 +1772,7 @@ def test_confirmed_fact_protocol_agent_asks_only_when_fact_is_absent(tmp_path: P
     assert executor.fact_was_present is False
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "confirmed_fact_missing"
 
 
@@ -1874,7 +1874,7 @@ def test_calendar_context_passes_raw_event_id_and_exact_live_read_command(
                     {"task_id": "task-b", "status": "running", "current_user": True},
                 ]
             },
-            "blocked",
+            "needs_human",
             False,
         ),
         (

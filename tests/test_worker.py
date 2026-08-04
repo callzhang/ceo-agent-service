@@ -1514,7 +1514,7 @@ def test_consumer_codex_command_injects_work_profile_content(
     assert profile_content not in context.render()
     assert final_sent(dws) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_status == "blocked"
+    assert attempt is not None and attempt.send_status == "needs_human"
 
 
 def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
@@ -1579,7 +1579,7 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
     )
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "candidate_material_missing"
 
 
@@ -3222,7 +3222,7 @@ def test_worker_falls_back_when_explicit_document_create_has_no_url(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "document_creation_no_url"
     assert dws.created_markdown_docs == []
 
@@ -3292,7 +3292,7 @@ def test_worker_keeps_explicit_document_reply_failed_when_permission_fails(
     assert final_sent(dws) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "doc_permission_failed"
     assert dws.doc_editor_permissions == []
 
@@ -5435,7 +5435,7 @@ def test_single_chat_rendered_schedule_asks_for_readable_calendar_detail(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
 
 
 def test_non_text_calendar_without_detail_asks_for_readable_calendar_detail(
@@ -5460,7 +5460,7 @@ def test_non_text_calendar_without_detail_asks_for_readable_calendar_detail(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
 
 
 def test_calendar_link_message_is_handled_as_calendar_invite(tmp_path: Path, monkeypatch):
@@ -5732,7 +5732,7 @@ def test_send_reply_calendar_response_failure_does_not_send_reply(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "calendar_needs_human"
     runner = worker.direct_agent_runner
     assert isinstance(runner, FakeAgentResultRunner)
@@ -6240,7 +6240,7 @@ def test_calendar_response_verifies_result_before_sending_reply(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "calendar_needs_human"
     assert worker.store.has_seen("msg-1") is False
 
@@ -6444,7 +6444,7 @@ def test_bare_calendar_card_ignores_sender_pending_invite_changed_too_early(
     assert dws.calendar_responses == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
 
 
 def test_bare_calendar_card_does_not_guess_multiple_pending_invites(
@@ -6494,7 +6494,7 @@ def test_bare_calendar_card_does_not_guess_multiple_pending_invites(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
 
 
 def test_bare_calendar_card_uses_near_upcoming_invite_without_change_time(
@@ -6607,7 +6607,7 @@ def test_bare_calendar_card_uses_pending_invite_created_near_message(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.codex_reason == "test_bare_calendar_card_uses_pending_invite_created_near_message"
 
 
@@ -6671,7 +6671,7 @@ def test_calendar_retry_ignores_old_system_notification_skip(
     assert latest.id != old_attempt_id
     assert latest.action == "agent_run"
     assert latest.codex_reason == "test_calendar_retry_ignores_old_system_notification_skip"
-    assert latest.send_status == "blocked"
+    assert latest.send_status == "needs_human"
     assert worker.store.count_reply_attempts() == 2
 
 
@@ -6723,7 +6723,7 @@ def test_calendar_invite_without_description_asks_for_attendance_reason(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
     assert attempt.codex_reason == "test_calendar_invite_without_description_asks_for_attendance_reason"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
 
 
 def test_calendar_invite_ignores_declined_overlapping_event(
@@ -7209,7 +7209,7 @@ def test_calendar_document_reference_is_exposed_to_agent_for_reading(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.codex_reason == "test_calendar_document_reference_is_exposed_to_agent_for_reading"
 
 
@@ -7676,7 +7676,7 @@ def test_structured_approval_card_is_processed_by_direct_agent(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert dws.oa_approval_actions == []
 
 
@@ -7991,7 +7991,7 @@ def test_ding_approval_reminder_is_processed_by_direct_agent(
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
 
 
 def test_oa_approval_missing_applicant_records_failed_delivery(
@@ -8029,7 +8029,7 @@ def test_oa_approval_missing_applicant_records_failed_delivery(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "missing_oa_applicant_user_id"
 
 
@@ -8072,7 +8072,7 @@ def test_oa_reject_action_still_requires_task_id(tmp_path: Path, monkeypatch):
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "missing_oa_approval_target"
     assert "proc-1" in worker.direct_agent_runner.calls[0][2].materials[0].reference
 
@@ -8118,7 +8118,7 @@ def test_oa_reject_action_requires_parseable_current_user_ownership(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "oa_ownership_unverified"
     assert dws.oa_approval_actions == []
 
@@ -8409,7 +8409,7 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="done") == 1
     assert worker.store.count_reply_attempts() == 1
@@ -9370,7 +9370,7 @@ def test_image_download_failure_is_passed_to_codex_prompt(
     attempts = worker.store.list_reply_attempts()
     assert len(attempts) == 1
     assert attempts[0].action == "agent_run"
-    assert attempts[0].send_status == "blocked"
+    assert attempts[0].send_status == "needs_human"
     assert worker.store.list_errors() == []
 
 
@@ -11585,7 +11585,7 @@ def test_okr_review_dingteam_auth_error_blocks_after_agent_queue_action(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "okr_authorization_required"
     assert worker.store.count_reply_tasks(status="failed") == 0
     assert worker.store.count_reply_tasks(status="done") == 1
@@ -12000,7 +12000,7 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
     assert attempt is not None
     assert attempt.action == "agent_run"
     assert attempt.final_reply_text == ""
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "needs_human"
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is None
@@ -13280,7 +13280,7 @@ def test_internal_personnel_question_missing_subject_blocks_without_sending(
     assert final_sent(dws) == []
     attempts = worker.store.list_reply_attempts(limit=10)
     assert attempts[0].action == "agent_run"
-    assert attempts[0].send_status == "blocked"
+    assert attempts[0].send_status == "needs_human"
     assert attempts[0].send_error == "needs_human"
     assert attempts[0].codex_reason == "missing personnel subject"
     assert attempts[0].final_reply_text == ""
@@ -13791,11 +13791,11 @@ def test_handoff_ding_failure_does_not_block_ack(
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "needs_human"
 
 
-def test_blocked_agent_attempt_publishes_browser_notification(
+def test_needs_human_agent_attempt_publishes_browser_notification(
     tmp_path: Path, monkeypatch
 ):
     browser_notifications: list[dict[str, str | None]] = []
@@ -13824,10 +13824,10 @@ def test_blocked_agent_attempt_publishes_browser_notification(
 
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert browser_notifications == [
         {
-            "title": "CEO task blocked: Friday",
+            "title": "CEO task needs a decision: Friday",
             "message": "需要本人确认。",
             "url": worker._notification_url(conversation(), attempt_id=attempt.id),
         }
@@ -13911,7 +13911,7 @@ def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
 
 
 def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
@@ -13954,7 +13954,7 @@ def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "needs_human"
 
 
