@@ -4880,6 +4880,38 @@ class AutoReplyStore:
             for row in rows
         ]
 
+    def ready_wechat_delivery_ids_for_messages(
+        self,
+        message_keys: list[tuple[str, str]],
+    ) -> dict[tuple[str, str], int]:
+        if not message_keys:
+            return {}
+        placeholders = ",".join(["(?, ?)"] * len(message_keys))
+        args = [value for key in message_keys for value in key]
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select
+                    reply_tasks.conversation_id,
+                    reply_tasks.trigger_message_id,
+                    wechat_deliveries.id as delivery_id
+                from wechat_deliveries
+                join reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
+                where wechat_deliveries.status='ready_to_send'
+                  and wechat_deliveries.execution_generation=
+                      reply_tasks.execution_generation
+                  and reply_tasks.channel='wechat'
+                  and (reply_tasks.conversation_id, reply_tasks.trigger_message_id)
+                      in ({placeholders})
+                """,
+                args,
+            ).fetchall()
+        return {
+            (str(row["conversation_id"]), str(row["trigger_message_id"])):
+            int(row["delivery_id"])
+            for row in rows
+        }
+
     def requeue_unperformed_wechat_deliveries(self, *, max_retries: int = 1) -> int:
         """Return pre-action failures to the send queue for a bounded retry."""
         if max_retries < 1:

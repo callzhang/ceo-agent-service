@@ -3917,21 +3917,24 @@ def _wechat_ready_delivery_by_attempt(
     attempts: list[ReplyAttempt],
 ) -> dict[int, int]:
     """Return ready delivery ids keyed by their exact WeChat reply attempt."""
-    result: dict[int, int] = {}
-    for attempt in attempts:
-        if (attempt.channel or "").strip().lower() != "wechat":
-            continue
-        task = store.get_reply_task_for_message(
-            attempt.conversation_id,
-            attempt.trigger_message_id,
-            channel="wechat",
-        )
-        if task is None:
-            continue
-        delivery = store.get_wechat_delivery_for_task(task.id)
-        if delivery is not None and delivery.status == "ready_to_send":
-            result[attempt.id] = delivery.id
-    return result
+    wechat_attempts = [
+        attempt
+        for attempt in attempts
+        if (attempt.channel or "").strip().lower() == "wechat"
+    ]
+    delivery_ids = store.ready_wechat_delivery_ids_for_messages(
+        [
+            (attempt.conversation_id, attempt.trigger_message_id)
+            for attempt in wechat_attempts
+        ]
+    )
+    return {
+        attempt.id: delivery_id
+        for attempt in wechat_attempts
+        if (delivery_id := delivery_ids.get(
+            (attempt.conversation_id, attempt.trigger_message_id)
+        )) is not None
+    }
 
 
 def _wechat_send_actions(delivery_id: int | None) -> str:

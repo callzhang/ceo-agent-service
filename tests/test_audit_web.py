@@ -483,6 +483,21 @@ def test_history_wechat_send_button_matches_exact_trigger(tmp_path: Path):
     assert html.count(f"/wechat/deliveries/{delivery_id}/reject?next=/") == 1
 
 
+def test_history_wechat_actions_use_batched_delivery_lookup(tmp_path: Path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_wechat_pending(store)
+
+    def unexpected_per_row_lookup(*_args, **_kwargs):
+        raise AssertionError("history rendering must not query each WeChat attempt")
+
+    monkeypatch.setattr(store, "get_reply_task_for_message", unexpected_per_row_lookup)
+    monkeypatch.setattr(store, "get_wechat_delivery_for_task", unexpected_per_row_lookup)
+
+    html = render_attempt_list(store, search_object_types=("wechat",))
+
+    assert f"/wechat/deliveries/{delivery_id}/approve?next=/" in html
+
+
 def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = store.create_work_project(
