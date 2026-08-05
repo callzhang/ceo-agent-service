@@ -4009,6 +4009,20 @@ def test_get_latest_reply_attempt_for_trigger(tmp_path: Path):
     assert store.get_latest_reply_attempt_for_trigger("cid-1", "missing") is None
 
 
+def test_history_query_skips_search_text_materialization_without_search():
+    query, args = AutoReplyStore._history_items_query(
+        send_statuses=None,
+        query_text="",
+        kinds=None,
+        reply_channels=None,
+        object_types=("reply", "meeting", "task"),
+        created_since="",
+    )
+
+    assert query.count("iif(?1,") == 4
+    assert args == [False, "reply", "meeting", "task"]
+
+
 def test_history_treats_superseded_blocked_reply_as_skipped(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     blocked_id = store.record_reply_attempt(
