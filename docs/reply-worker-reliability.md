@@ -34,6 +34,12 @@ never replayed merely because its transport failed; the service must reconcile
 the existing operation first so retries cannot duplicate a message, approval,
 or other visible side effect.
 
+An idempotent DWS message send that exits without a structured error result is
+also treated as a transient dependency failure. It is retried at the call
+boundary, then deferred with the same UUID for later recovery. A structured
+business rejection remains terminal; the service does not turn known validation
+or permission failures into an endless retry.
+
 Before starting an agent, the channel gate checks structured CLI auth status and
 one authenticated live probe. Only an explicit `needs_login` state may ask the
 login coordinator to launch the corresponding CLI login once. An unavailable

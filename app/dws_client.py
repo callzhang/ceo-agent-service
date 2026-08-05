@@ -3308,9 +3308,9 @@ class DwsClient:
                     or self._error_code(result.stdout)
                     or self._process_error_code(result.returncode)
                 )
-            retryable_error = automatic_retry_allowed and self._is_retryable_error(
-                command,
-                code,
+            retryable_error = automatic_retry_allowed and (
+                self._is_retryable_error(command, code)
+                or code is None
             )
             if retryable_error and remaining_retries > 0:
                 if code in self.DISCOVERY_CACHE_REFRESH_CODES:

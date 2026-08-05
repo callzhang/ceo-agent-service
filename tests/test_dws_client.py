@@ -622,6 +622,31 @@ def test_run_json_keeps_non_network_code_one_as_terminal(monkeypatch):
     assert error_info.value.code == "1"
 
 
+def test_run_json_retries_unclassified_idempotent_message_send_failure(monkeypatch):
+    calls = 0
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="dws process exited before returning a result",
+        )
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError) as error_info:
+        DwsClient(transient_retry_attempts=1).run_json(
+            ["dws", "chat", "message", "send", "--uuid", "stable-id"]
+        )
+
+    assert calls == 2
+    assert error_info.value.code is None
+    assert error_info.value.retryable_external_dependency is True
+
+
 def test_run_json_does_not_pass_app_oauth_env_to_dws_cli(monkeypatch):
     monkeypatch.setenv("DWS_CLIENT_ID", "app-client-id")
     monkeypatch.setenv("DWS_CLIENT_SECRET", "app-client-secret")
