@@ -115,6 +115,12 @@ with the delivery error. `no_reply` and `handoff_to_human` decisions do not
 create a delivery and must be recorded as `skipped`, so the audit backlog does
 not retain stale WeChat `pending` attempts.
 
+An Accessibility result that confirms no UI action occurred is different from an
+ambiguous send. On the next sender pass, only `action_not_performed` returns to
+`ready_to_send` and is retried from the same delivery record. `send_unknown`,
+sent, manually rejected, and target-binding failures remain outside this retry
+path, so an uncertain or disallowed send is never repeated automatically.
+
 ## Diagnostic CLI
 
 ```bash
