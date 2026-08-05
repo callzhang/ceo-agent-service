@@ -133,6 +133,10 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
   该命令使用 `dingtang-okr-review` skill 的专用 headless browser profile 和 token cache；登录态过期时先运行
   `/Users/derek/Documents/Projects/ceo-agent-service/.venv/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py login`
   并扫码。脚本不读取普通 Chrome cookie、localStorage 或 session 文件。
+- 如果主 Chrome 已经打开并登录 `dingokr.dingteam.com`，可以使用本仓库 wrapper：
+  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/Documents/Projects/ceo-agent-service/.venv/bin/python /Users/derek/Documents/Projects/ceo-agent-service/scripts/dingteam_okr_profile_source.py --user-id {user_id} --period-label {period_label}`。
+  wrapper 会先把主 Chrome 的 叮当 OKR tab 导航到目标用户 profile，再调用 direct API source，避免页面停在 `#/okr/cycle`
+  或 `#/report` 时抓不到 OKR auth headers。
 - 只有确认企业 OKR 数据暴露在 Agoal objective API 中时，才设置 `CEO_OKR_SOURCE_KIND=agoal`。
 - Agoal 模式从 `~/.dingtalk-skills/config` 或 `.env` 读取应用凭证；如果规则列表为空或不唯一，
   设置 `CEO_OKR_OBJECTIVE_RULE_ID`，否则服务会直接报错。
