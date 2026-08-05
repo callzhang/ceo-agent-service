@@ -366,6 +366,22 @@ def test_auto_mode_retries_delivery_when_no_wechat_action_was_performed(tmp_path
     assert store.get_reply_attempt(attempt_id).send_status == "sent"
 
 
+def test_unperformed_wechat_delivery_is_requeued_only_once(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3"); d, attempt_id = _seed_with_attempt(store)
+    store.mark_wechat_delivery_sending(d.id)
+    store.set_wechat_delivery_status(d.id, "failed", error="action_not_performed")
+
+    assert store.requeue_unperformed_wechat_deliveries() == 1
+    assert store.get_reply_attempt(attempt_id).retry_count == 1
+
+    store.mark_wechat_delivery_sending(d.id)
+    store.set_wechat_delivery_status(d.id, "failed", error="action_not_performed")
+
+    assert store.requeue_unperformed_wechat_deliveries() == 0
+    assert store.get_wechat_delivery_for_task(1).status == "failed"
+    assert store.get_reply_attempt(attempt_id).retry_count == 1
+
+
 def test_recall_uses_runner_capability_with_text(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3"); d = _seed(store)
     store.mark_wechat_delivery_sending(d.id)

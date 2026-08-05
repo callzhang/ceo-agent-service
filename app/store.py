@@ -4880,24 +4880,75 @@ class AutoReplyStore:
             for row in rows
         ]
 
-    def requeue_unperformed_wechat_deliveries(self) -> int:
-        """Return deliveries to the send queue only when no UI action occurred."""
+    def requeue_unperformed_wechat_deliveries(self, *, max_retries: int = 1) -> int:
+        """Return pre-action failures to the send queue for a bounded retry."""
+        if max_retries < 1:
+            return 0
         with self._connect() as db:
-            cursor = db.execute(
+            db.execute("begin immediate")
+            rows = db.execute(
                 """
-                update wechat_deliveries
-                set status='ready_to_send', error='', updated_at=current_timestamp
-                where status='failed'
-                  and error='action_not_performed'
-                  and exists (
+                select deliveries.id as delivery_id, (
+                    select attempts.id
+                    from reply_attempts as attempts
+                    where attempts.channel='wechat'
+                      and attempts.conversation_id=tasks.conversation_id
+                      and attempts.trigger_message_id=tasks.trigger_message_id
+                    order by attempts.id desc
+                    limit 1
+                ) as attempt_id
+                from wechat_deliveries as deliveries
+                join reply_tasks as tasks on tasks.id=deliveries.reply_task_id
+                where deliveries.status='failed'
+                  and deliveries.error='action_not_performed'
+                  and deliveries.execution_generation=tasks.execution_generation
+                  and coalesce((
+                      select attempts.retry_count
+                      from reply_attempts as attempts
+                      where attempts.channel='wechat'
+                        and attempts.conversation_id=tasks.conversation_id
+                        and attempts.trigger_message_id=tasks.trigger_message_id
+                      order by attempts.id desc
+                      limit 1
+                  ), ?) < ?
+                """,
+                (max_retries, max_retries),
+            ).fetchall()
+            eligible = [row for row in rows if row["attempt_id"] is not None]
+            requeued = 0
+            for row in eligible:
+                delivery_id = int(row["delivery_id"])
+                cursor = db.execute(
+                    """
+                    update wechat_deliveries
+                    set status='ready_to_send', error='', updated_at=current_timestamp
+                    where id=?
+                      and status='failed'
+                      and error='action_not_performed'
+                      and exists (
                       select 1 from reply_tasks
                       where reply_tasks.id=wechat_deliveries.reply_task_id
                         and reply_tasks.execution_generation=
                             wechat_deliveries.execution_generation
-                  )
-                """
-            )
-            return cursor.rowcount
+                      )
+                    """,
+                    (delivery_id,),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                self._sync_wechat_delivery_reply_attempt(
+                    db,
+                    delivery_id=delivery_id,
+                    delivery_status="ready_to_send",
+                    error="",
+                )
+                db.execute(
+                    "update reply_attempts set retry_count=retry_count + 1 "
+                    "where id=?",
+                    (row["attempt_id"],),
+                )
+                requeued += 1
+            return requeued
 
     def claim_wechat_delivery(
         self,
