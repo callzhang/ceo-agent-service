@@ -3642,6 +3642,33 @@ def render_attempt_list(
     include_pending_tasks: bool = True,
     include_feedback_count: bool = True,
 ) -> str:
+    with store.read_snapshot():
+        return _render_attempt_list(
+            store,
+            limit=limit,
+            page=page,
+            type_filter=type_filter,
+            query=query,
+            query_embedding=query_embedding,
+            search_object_types=search_object_types,
+            include_chart=include_chart,
+            include_pending_tasks=include_pending_tasks,
+            include_feedback_count=include_feedback_count,
+        )
+
+
+def _render_attempt_list(
+    store: AutoReplyStore,
+    limit: int | None = DEFAULT_ATTEMPT_LIST_LIMIT,
+    page: int = 1,
+    type_filter: str | Iterable[str] = (),
+    query: str = "",
+    query_embedding: list[float] | None = None,
+    search_object_types: str | Iterable[str] = HISTORY_SEARCH_OBJECT_TYPES,
+    include_chart: bool = True,
+    include_pending_tasks: bool = True,
+    include_feedback_count: bool = True,
+) -> str:
     query = query.strip()
     type_filters = _history_type_filters(type_filter)
     object_types = _history_search_object_types(search_object_types)

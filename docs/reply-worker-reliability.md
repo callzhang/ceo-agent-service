@@ -257,6 +257,11 @@ terminal state, and the safe Direct Agent summary. Planner labels, action
 indexes, dependency graphs, confidence scores, and target-normalization details
 are not user-facing runtime concepts.
 
+The History homepage reads its count, rows, delivery state, feedback state, and
+chart from one SQLite read-only snapshot. This keeps a single render internally
+consistent and avoids accumulating lock waits while worker threads persist new
+events.
+
 ## Processing acknowledgement
 
 The worker no longer sends `收到，我正在处理（by 分身）` before a final reply. Final
