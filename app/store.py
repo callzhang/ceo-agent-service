@@ -8321,13 +8321,13 @@ class AutoReplyStore:
                     0 as follow_up_id,
                     channel,
                     created_at,
-                    conversation_id || ' ' || conversation_title || ' ' ||
+                    iif(?1, conversation_id || ' ' || conversation_title || ' ' ||
                     trigger_message_id || ' ' || trigger_sender || ' ' ||
                     trigger_text || ' ' || action || ' ' || sensitivity_kind || ' ' ||
                     codex_reason || ' ' || draft_reply_text || ' ' || final_reply_text || ' ' ||
                     permission_action || ' ' || permission_reason || ' ' || send_status || ' ' ||
                     send_error || ' ' || reviewer_feedback || ' ' || corrected_reply_text
-                    as search_text
+                    , '') as search_text
                 from reply_attempts
                 union all
                 select
@@ -8365,13 +8365,13 @@ class AutoReplyStore:
                     0 as follow_up_id,
                     'dingtalk' as channel,
                     runs.created_at,
-                    jobs.meeting_id || ' ' || jobs.title || ' ' || jobs.source_json || ' ' ||
+                    iif(?1, jobs.meeting_id || ' ' || jobs.title || ' ' || jobs.source_json || ' ' ||
                     jobs.participants_json || ' ' || jobs.error || ' ' || jobs.decision_json || ' ' ||
                     jobs.target_kind || ' ' || jobs.target_id || ' ' || jobs.target_title || ' ' ||
                     jobs.mentions_json || ' ' || jobs.final_message || ' ' || jobs.send_result_json || ' ' ||
                     runs.decision_json || ' ' || runs.audit_summary || ' ' || runs.error || ' ' ||
                     runs.codex_session_id || ' ' || runs.status
-                    as search_text
+                    , '') as search_text
                 from meeting_alignment_runs as runs
                 join meeting_alignment_jobs as jobs on jobs.id=runs.job_id
                 union all
@@ -8394,13 +8394,13 @@ class AutoReplyStore:
                     0 as follow_up_id,
                     'dingtalk' as channel,
                     updates.created_at,
-                    projects.title || ' ' || projects.category || ' ' ||
+                    iif(?1, projects.title || ' ' || projects.category || ' ' ||
                     projects.owner_name || ' ' || projects.goal || ' ' ||
                     projects.background || ' ' || projects.current_state || ' ' ||
                     projects.next_step || ' ' || updates.source_type || ' ' ||
                     updates.source_ref || ' ' || updates.summary || ' ' ||
                     updates.changes_json || ' ' || updates.merge_reason
-                    as search_text
+                    , '') as search_text
                 from work_updates as updates
                 join work_projects as projects on projects.id=updates.project_id
                 union all
@@ -8436,7 +8436,7 @@ class AutoReplyStore:
                     drafts.id as follow_up_id,
                     'dingtalk' as channel,
                     coalesce(nullif(drafts.sent_at, ''), nullif(drafts.updated_at, ''), drafts.created_at) as created_at,
-                    projects.title || ' ' || projects.category || ' ' ||
+                    iif(?1, projects.title || ' ' || projects.category || ' ' ||
                     projects.owner_name || ' ' || projects.goal || ' ' ||
                     projects.background || ' ' || projects.current_state || ' ' ||
                     projects.next_step || ' ' || coalesce(todos.title, '') || ' ' ||
@@ -8446,7 +8446,7 @@ class AutoReplyStore:
                     drafts.send_result_json || ' ' || drafts.evidence_check_json || ' ' ||
                     drafts.reaction_status || ' ' || drafts.reaction_summary || ' ' ||
                     drafts.suppressed_reason
-                    as search_text
+                    , '') as search_text
                 from follow_up_drafts as drafts
                 join work_projects as projects on projects.id=drafts.project_id
                 left join work_todos as todos on todos.id=drafts.todo_id
@@ -8454,7 +8454,7 @@ class AutoReplyStore:
             select * from history_items
         """
         filters: list[str] = []
-        args: list[object] = []
+        args: list[object] = [bool(query_text.strip())]
         if send_statuses:
             placeholders = ",".join("?" for _ in send_statuses)
             filters.append(f"status in ({placeholders})")
