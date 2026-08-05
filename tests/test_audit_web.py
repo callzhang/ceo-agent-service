@@ -3584,6 +3584,25 @@ def test_empty_attempt_list_shows_db_path(tmp_path: Path):
     assert str(db_path) in html
 
 
+def test_render_attempt_list_reuses_one_read_connection(tmp_path: Path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    original_connect = sqlite3.connect
+    connection_calls = 0
+
+    def tracked_connect(*args, **kwargs):
+        nonlocal connection_calls
+        connection_calls += 1
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+
+    html = render_attempt_list(store, include_chart=True)
+
+    assert "#1" in html
+    assert connection_calls == 1
+
+
 def test_render_attempt_list_shows_pending_reply_tasks(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

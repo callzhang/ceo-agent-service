@@ -2,6 +2,7 @@ import json
 import hashlib
 import sqlite3
 import threading
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -608,6 +609,9 @@ class AutoReplyStore:
         self.path = path
         self.busy_timeout_seconds = busy_timeout_seconds
         self.busy_timeout_milliseconds = busy_timeout_seconds * 1000
+        self._read_snapshot_connection: ContextVar[sqlite3.Connection | None] = (
+            ContextVar(f"audit_read_snapshot_{id(self)}", default=None)
+        )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_initialized()
 
@@ -623,6 +627,18 @@ class AutoReplyStore:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
+        snapshot = self._read_snapshot_connection.get()
+        if snapshot is not None:
+            yield snapshot
+            return
+        connection = self._open_connection()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
+    def _open_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
             self.path,
             timeout=self.busy_timeout_seconds,
@@ -631,10 +647,25 @@ class AutoReplyStore:
         connection.execute("pragma synchronous = normal")
         connection.execute("pragma foreign_keys = on")
         connection.row_factory = sqlite3.Row
+        return connection
+
+    @contextmanager
+    def read_snapshot(self) -> Iterator[None]:
+        """Reuse one read-only SQLite snapshot for a related audit render."""
+        if self._read_snapshot_connection.get() is not None:
+            yield
+            return
+        connection = self._open_connection()
         try:
-            with connection:
-                yield connection
+            connection.execute("pragma query_only = on")
+            connection.execute("begin")
+            token = self._read_snapshot_connection.set(connection)
+            try:
+                yield
+            finally:
+                self._read_snapshot_connection.reset(token)
         finally:
+            connection.rollback()
             connection.close()
 
     def _initialize(self) -> None:
