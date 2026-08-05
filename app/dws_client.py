@@ -294,9 +294,14 @@ class DwsClient:
         ("contact", "user", "get"),
         ("contact", "user", "search"),
     }
-    GENERIC_BUSINESS_RETRYABLE_ERROR_CODES = {"ERROR", "RATE_LIMIT_ERROR"}
+    GENERIC_BUSINESS_RETRYABLE_ERROR_CODES = {
+        "ERROR",
+        "PREPARE_CALL_TOOL_ERROR",
+        "RATE_LIMIT_ERROR",
+    }
     GENERIC_BUSINESS_RETRYABLE_READ_COMMANDS = (
         TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS
+        | PAT_AUTH_RETRYABLE_READ_COMMANDS
     )
     TEXT_RETRYABLE_READ_COMMANDS = {
         ("doc", "download"),
@@ -440,7 +445,7 @@ class DwsClient:
             "chat",
             "message",
             "search",
-            "--keyword",
+            "--query",
             keyword,
             "--start",
             start,

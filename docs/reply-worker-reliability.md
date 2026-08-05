@@ -60,6 +60,12 @@ commands retry this code at the call boundary because they are reads and have no
 external side effect. Approval actions and other writes do not use this retry
 path, so an ambiguous write result cannot be duplicated.
 
+DWS may return `PREPARE_CALL_TOOL_ERROR` while preparing an otherwise valid
+authenticated read. Known message, calendar, contact, and AI-minutes read
+commands retry this code at the call boundary. Sends, approvals, and other
+mutations remain excluded because repeating an unknown write result could create
+a duplicate visible action.
+
 DWS message reads also treat server error codes ending in `_INVOKE_FAILED` as
 transient dependency failures. This covers infrastructure-side validation or
 gateway invocation changes without coupling recovery to one exact DWS error

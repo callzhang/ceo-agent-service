@@ -5136,6 +5136,89 @@ def test_run_json_retries_chat_message_list_system_error(monkeypatch):
     assert sleeps == [1.0]
 
 
+def test_build_search_messages_command_uses_current_query_flag():
+    command = DwsClient().build_search_messages_command(
+        keyword="@Friday",
+        start="2026-08-05T00:00:00+08:00",
+        end="2026-08-06T00:00:00+08:00",
+        limit=100,
+        cursor="0",
+    )
+
+    assert command == [
+        "dws",
+        "chat",
+        "message",
+        "search",
+        "--query",
+        "@Friday",
+        "--start",
+        "2026-08-05T00:00:00+08:00",
+        "--end",
+        "2026-08-06T00:00:00+08:00",
+        "--limit",
+        "100",
+        "--cursor",
+        "0",
+        "--format",
+        "json",
+    ]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["dws", "chat", "message", "search", "--query", "@Friday"],
+        ["dws", "chat", "message", "list", "--group", "cid-1"],
+        ["dws", "minutes", "get", "info", "--id", "minutes-1"],
+    ],
+)
+def test_run_json_retries_prepare_call_tool_error_for_read_commands(
+    monkeypatch, command
+):
+    calls = []
+    sleeps = []
+    payload = (
+        '{"error":{"code":1,"server_error_code":"PREPARE_CALL_TOOL_ERROR",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
+def test_run_json_does_not_retry_prepare_call_tool_error_for_mutating_command(
+    monkeypatch,
+):
+    calls = []
+    command = ["dws", "chat", "message", "send", "--group", "cid-1"]
+    payload = (
+        '{"error":{"code":1,"server_error_code":"PREPARE_CALL_TOOL_ERROR",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        return SimpleNamespace(returncode=1, stdout="", stderr=payload)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError, match="PREPARE_CALL_TOOL_ERROR"):
+        DwsClient(transient_retry_attempts=2).run_json(command)
+    assert calls == [command]
+
+
 def test_run_json_retries_chat_message_list_invoke_failure(monkeypatch):
     calls = []
     sleeps = []
@@ -5220,7 +5303,7 @@ def test_run_json_does_not_retry_invoke_failure_for_mutating_command(monkeypatch
             "chat",
             "message",
             "search",
-            "--keyword",
+            "--query",
             "@所有人",
             "--start",
             "2026-07-16T02:23:33.308564+08:00",
