@@ -144,6 +144,16 @@ executes, verifies, and publishes through its normal delivery path. Because the
 choice is stored before processing, launchd restart recovery resumes the pending
 rerun without requiring the operator to select again.
 
+## Scheduled follow-up delivery
+
+Due follow-ups are checked every 60 seconds and delivered in independent batches
+of up to 50. This delivery budget is deliberately separate from `CEO_MAX_BATCHES`,
+which only limits new agent-task discovery. A small discovery batch must never
+cause scheduled follow-ups to wait behind an older backlog. Delivery remains
+ordered, durable, and idempotent: working-hour, completion, daily-cap,
+sensitive-routing, and existing-send checks still run before each send, and a
+restart resumes from the persisted draft state.
+
 ## Memory MCP inheritance
 
 The Direct Agent inherits the installed Codex `memory_connector` MCP

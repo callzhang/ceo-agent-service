@@ -243,7 +243,7 @@ def task_daily_interval_seconds() -> int:
 
 
 def task_follow_up_interval_seconds() -> int:
-    return env_int("CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS", 3_600)
+    return env_int("CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS", 60)
 
 
 def embedding_base_url() -> str:

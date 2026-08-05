@@ -182,7 +182,7 @@ class WorkerSettings(BaseModel):
     task_codex_idle_timeout_seconds: PositiveInt = 900
     task_work_item_interval_seconds: PositiveInt = 60
     task_daily_interval_seconds: PositiveInt = 86_400
-    task_follow_up_interval_seconds: PositiveInt = 3_600
+    task_follow_up_interval_seconds: PositiveInt = 60
     oa_pending_scan_enabled: bool = True
     oa_pending_scan_interval_seconds: PositiveInt = 3_600
     oa_pending_scan_lookback_days: PositiveInt = 365
@@ -2268,7 +2268,8 @@ def run_task_maintenance_loop(
                 lambda: process_follow_ups_command(
                     settings,
                     refresh_evidence=False,
-                    limit=50 if settings.max_batches is None else settings.max_batches,
+                    # max_batches bounds agent task discovery, not durable scheduled delivery.
+                    limit=50,
                 ),
             )
             next_follow_up_run = now + follow_up_interval_seconds

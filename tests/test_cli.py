@@ -2840,7 +2840,7 @@ def test_settings_defaults_point_to_memory_home():
     assert settings.task_codex_idle_timeout_seconds == 900
     assert settings.task_work_item_interval_seconds == 60
     assert settings.task_daily_interval_seconds == 86_400
-    assert settings.task_follow_up_interval_seconds == 3_600
+    assert settings.task_follow_up_interval_seconds == 60
     assert settings.max_batches is None
 
 
@@ -4713,7 +4713,7 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("completion-check", tmp_path / "worker.sqlite3", 1),
-        ("follow", tmp_path / "worker.sqlite3", False, 4),
+        ("follow", tmp_path / "worker.sqlite3", False, 50),
         ("sleep", 31),
     ]
 
@@ -4860,14 +4860,14 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("completion-check", tmp_path / "worker.sqlite3", 1),
-        ("follow", tmp_path / "worker.sqlite3", False, 4),
+        ("follow", tmp_path / "worker.sqlite3", False, 50),
         ("sleep", 31),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("sleep", 31),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
-        ("follow", tmp_path / "worker.sqlite3", False, 4),
+        ("follow", tmp_path / "worker.sqlite3", False, 50),
         ("sleep", 31),
     ]
 
