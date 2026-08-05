@@ -188,6 +188,7 @@ class TodoChange(BaseModel):
     deadline_at: str = ""
     next_follow_up_at: str = ""
     follow_up_question: str = ""
+    owner_evidence: dict[str, Any] = Field(default_factory=dict)
     completion_evidence: dict[str, Any] | None = None
     blocker: str = ""
 

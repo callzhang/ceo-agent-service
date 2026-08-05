@@ -307,6 +307,7 @@
         "deadline_at",
         "next_follow_up_at",
         "follow_up_question",
+        "owner_evidence",
         "completion_evidence",
         "blocker"
       ],
@@ -349,6 +350,22 @@
         },
         "follow_up_question": {
           "type": "string"
+        },
+        "owner_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "reason", "description"],
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            }
+          }
         },
         "completion_evidence": {
           "type": ["object", "null"],
@@ -503,7 +520,7 @@
         "risk_check": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["sensitive", "owner_in_group", "reason"],
+          "required": ["sensitive", "owner_in_group", "reason", "owner_evidence"],
           "properties": {
             "sensitive": {
               "type": "boolean"
@@ -513,6 +530,22 @@
             },
             "reason": {
               "type": "string"
+            },
+            "owner_evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["source", "reason", "description"],
+              "properties": {
+                "source": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              }
             }
           }
         },

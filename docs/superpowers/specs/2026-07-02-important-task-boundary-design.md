@@ -71,6 +71,23 @@ The task agent should apply this priority order:
    merge into the right project, update facts and state, create or update TODOs
    only when there is an actionable owner, deadline, and follow-up reason.
 
+Additional evidence gates:
+
+- Follow-ups must not guess the owner. A `follow_up_draft` is valid only when
+  `risk_check.owner_evidence` names the source, reason, and readable evidence
+  description for why the selected user is the responsible owner.
+- TODO owner assignment should include `owner_evidence` when an owner is set, so
+  the audit trail can explain the assignment even before an external follow-up
+  is sent.
+- A TODO can be automatically closed only with completion evidence containing
+  source, reason, description, and completed time. A progress-like reply without
+  completion evidence should keep the TODO open and should not suppress future
+  checks.
+- New tasks must be tied to company goals, OKRs/KRs, key projects, or material
+  management risk. Unrelated personal collaboration, routine process movement,
+  and one-off tool or account items should be discarded even if they look like
+  TODOs in the conversation.
+
 ## Examples
 
 Discard:
@@ -170,6 +187,9 @@ Add or update tests for:
 - Routine HR process content is discarded and creates no TODO.
 - Mina-style noisy TODO feedback cancels the matched TODO and suppresses pending
   follow-ups.
+- Follow-up creation is rejected when owner evidence is missing.
+- Automatic TODO close is rejected when completion evidence lacks source,
+  reason, description, or completed time.
 - A routine process item with a real system fault still updates or creates an
   important TODO.
 - A critical hiring decision remains tracked.

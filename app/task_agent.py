@@ -245,7 +245,8 @@ def build_task_agent_prompt(
 - 你只更新工作项目和 TODO，不回复当前消息。
 - Work Item 是一个输入片段，不是已经抽取好的事实；必须判断其是否足够支撑稳定项目、TODO 或完成证据。
 - Task 只记录需要持续管理的公司重要事项；只跟踪重要事项，不跟踪普通流程步骤。
-- 重要事项是指失败会实质影响公司目标、关键项目、收入、客户承诺、组织决策、关键招聘、合规、财务风险或 Derek 级决策的事项。
+- 重要事项是指失败会实质影响公司目标、OKR/KR、关键项目、收入、客户承诺、组织决策、关键招聘、合规、财务风险或 Derek 级决策的事项。
+- 和公司目标、OKR/KR、关键项目或管理风险无关的事项不要进入 task；即使对话里出现“待办、跟进、确认”，如果只是个人协作、流程流转或一次性工具账号事项，action 应为 discard。
 - 流程性内容默认忽略：招聘、offer、面试、审批、报销、日程、行政等已知流程里的常规步骤，如果只是流程本来必须做的动作，不要创建 project、TODO、follow_up_draft 或 DingTalk Todo。
 - 流程性内容只有在暴露真实风险、系统故障、跨 owner 阻塞、明确 deadline 风险、关键岗位决策或 Derek 需要拍板时，才把其中的风险或决策抽成 task；不要跟踪流程步骤本身。
 - 如果 Work Item 是对误建 TODO 或过细 follow-up 的反馈，例如“没必要创建待办”“不要催这种流程动作”“这类事情不办流程也走不下去”，不要简单 discard；应在能匹配已有 TODO/follow_up 时使用 todo_changes.cancel 和 follow_up_changes.suppress 清理噪声，并在 update_summary 写明原因。
@@ -272,8 +273,12 @@ def build_task_agent_prompt(
 - 样例：如果小青显示“最终决策=淘汰/已淘汰”，输出 todo_changes.close 和 follow_up_changes.suppress；如果小青显示“最终决策=waiting/pending”，可以保留跟进，但 question_text 要写成“当前小青最终决策仍为 waiting，请确认是否要更新最终决策”，而不是让 HR 代替你查小青。
 - 行政、工商、法务、财务、人事合规类事项必须区分汇报人、推动人和实际执行 owner；只有材料明确写出“某人负责/待办/owner/由某人完成”且不是低可信说话人标签推导时，才能给该人生成 follow_up_draft。否则只更新项目背景或生成需要确认真实 owner 的 TODO，不要直接私聊。
 - 只有消息、会议纪要或文档明确证明 TODO 完成时，才能自动清理 TODO，并写入 completion_evidence。
-- Work Item 来源为 follow_up_completion_check 时，只是在提醒你检查已有 follow-up 是否完成；只有 sources、DWS 检索、会议纪要或 memory_recall 明确证明 owner 已完成时，才能 close TODO。completion_evidence 必须写 reason、source、completed_at；证据不足时不要 close，也不要新建 TODO。
-- 生成 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
+- Work Item 来源为 follow_up_completion_check 时，只是在提醒你检查已有 follow-up 是否完成；只有 sources、DWS 检索、会议纪要或 memory_recall 明确证明 owner 已完成时，才能 close TODO。completion_evidence 必须写 source、reason、description、completed_at；证据不足时不要 close，也不要新建 TODO。
+- 生成 TODO 或 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
+- owner_user_id 不能靠猜。只有消息、会议纪要、文档、候选上下文或 DWS/通讯录结果明确支持“这个人负责/承诺完成/被指定为 owner”时，才能给 TODO 或 follow_up_draft 填 owner_user_id。参与人、发言人、转述人、群成员或 AI 听记 speaker 标签本身都不是 owner 证据。
+- todo_changes 如果填写 owner_user_id，必须同时填写 owner_evidence={{source, reason, description}}，说明 owner 判定来自哪条事实；证据不足时不要填 owner_user_id。
+- 输出 schema 要求每个 todo_changes 都带 owner_evidence；如果本次 action 不分配或修改 owner，owner_evidence 写 source="existing_todo"、reason="owner 未变更"、description="本次只处理状态/完成证据，不重新判定 owner"。
+- follow_up_draft.risk_check 必须包含 owner_evidence={{source, reason, description}}，说明为什么可以追问这个 owner；缺少 owner_evidence 时不要生成 follow_up_draft。
 - 每个 follow_up_draft 必须绑定一个 TODO：跟进已有 TODO 时填写 todo_id；跟进本次新建 TODO 时，todo_changes.create 和 follow_up_drafts 使用相同的 todo_ref，系统会把 todo_ref 转成真实 todo_id。不能生成没有 TODO 绑定的 follow_up_draft。
 - follow_up_draft.status 固定填 draft；不要用 approved 表达“需审批”。项目跟进发送必须依赖 risk_check 审计：sensitive=true 表示不能在群里公开追问，发送端会优先转私聊或延后。
 - follow_up_draft.target_kind 只表示实际发送位置：能回到来源群聊就用 group，并且 target_conversation_id 必须填写 DWS 可直接发送的 openConversationId（通常以 cid 开头）；不要填 AI 搜问或业务搜索结果里的普通群号/数字群号。不能确定 openConversationId 但已确定 owner_user_id 时用 direct。不要把“没有群上下文”写成 owner_in_group=false 来阻断发送。
@@ -289,6 +294,7 @@ def build_task_agent_prompt(
 - 只输出 TaskAgentDecision JSON。
 - action 只能是 discard、create_project 或 update_project。
 - failure_risk 和 failure_risk_score 必须始终填写；低风险一次性事项通常 action=discard。
+- 非 discard 决策必须能解释和公司目标、OKR/KR、关键项目或管理风险的关系；否则 discard。
 - update_project 必须引用候选或已确认项目 id。
 - todo_changes 的 close/cancel/update 必须引用 todo_id。
 - follow_up_drafts 的 owner_user_id 不能为空，且必须有 todo_id 或 todo_ref；title、description、owners、scheduled_at、priority、tags、participants 字段必须完整。
@@ -653,12 +659,11 @@ def _validate_task_agent_decision(
             raise ValueError(f"{todo_change.action} requires todo_id")
         if todo_change.action == "close":
             evidence = todo_change.completion_evidence
-            if not isinstance(evidence, dict):
-                raise ValueError("close requires completion_evidence")
-            if not str(evidence.get("reason") or "").strip():
-                raise ValueError("completion_evidence.reason is required")
-            if not str(evidence.get("source") or "").strip():
-                raise ValueError("completion_evidence.source is required")
+            _require_evidence_fields(
+                evidence,
+                label="completion_evidence",
+                fields=("source", "reason", "description", "completed_at"),
+            )
     for draft in decision.follow_up_drafts:
         if not draft.title.strip():
             raise ValueError("follow_up_draft.title is required")
@@ -675,6 +680,11 @@ def _validate_task_agent_decision(
             raise ValueError("follow_up_draft.owners with user_id is required")
         if draft.owner_user_id.strip() not in owner_ids:
             raise ValueError("follow_up_draft.owner_user_id must be in owners")
+        _require_evidence_fields(
+            draft.risk_check.get("owner_evidence"),
+            label="follow_up_draft.risk_check.owner_evidence",
+            fields=("source", "reason", "description"),
+        )
         if draft.todo_id is None and not draft.todo_ref.strip():
             raise ValueError("follow_up_draft requires todo_id or todo_ref")
         if not draft.scheduled_at.strip():
@@ -724,6 +734,19 @@ def _validate_task_agent_decision(
         raise ValueError("non-discard task decision requires project.memory_context")
     if decision.action == "update_project" and decision.project.id is None:
         raise ValueError("update_project requires project.id")
+
+
+def _require_evidence_fields(
+    evidence: object,
+    *,
+    label: str,
+    fields: tuple[str, ...],
+) -> None:
+    if not isinstance(evidence, dict):
+        raise ValueError(f"{label} is required")
+    for field in fields:
+        if not str(evidence.get(field) or "").strip():
+            raise ValueError(f"{label}.{field} is required")
 
 
 def _validate_memory_recall_tool_event(
@@ -915,6 +938,8 @@ def _todo_change_audit_payload(change: TodoChange) -> dict[str, object]:
         payload["todo_id"] = change.todo_id
     if change.todo_ref:
         payload["todo_ref"] = change.todo_ref
+    if change.owner_evidence:
+        payload["owner_evidence"] = _jsonable(change.owner_evidence)
     if change.action == "create":
         payload.update(_todo_values(change))
         return payload

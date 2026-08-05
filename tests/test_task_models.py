@@ -157,6 +157,11 @@ def test_task_agent_decision_accepts_project_todo_and_follow_up():
                         "owner_in_group": True,
                         "sensitive": False,
                         "reason": "普通项目跟进",
+                        "owner_evidence": {
+                            "source": "reply_attempt:1",
+                            "reason": "来源消息明确说明 owner 是 Alex。",
+                            "description": "售前群消息写明 Alex 负责补齐售前材料来源链接。",
+                        },
                     },
                 }
             ],

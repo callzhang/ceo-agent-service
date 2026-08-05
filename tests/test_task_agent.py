@@ -188,6 +188,11 @@ def _follow_up_draft_payload(**overrides):
             "owner_in_group": True,
             "sensitive": False,
             "reason": "普通项目进展确认",
+            "owner_evidence": {
+                "source": "reply_attempt:1",
+                "reason": "来源消息明确说明 owner 是 Alex。",
+                "description": "售前群消息写明售前知识库需要补齐来源链接，owner 是 Alex。",
+            },
         },
         "status": "draft",
     }
@@ -1691,6 +1696,12 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
         owner_user_id="owner-1",
         status="open",
     )
+    todo_with_incomplete_evidence_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认客户验收完成时间",
+        owner_user_id="owner-1",
+        status="open",
+    )
     todo_without_dws_id = store.create_work_todo(
         project_id=project_id,
         title="归档客户验收材料",
@@ -1715,6 +1726,14 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
     for todo_id, evidence in (
         (todo_without_evidence_id, None),
         (todo_with_empty_evidence_id, {}),
+        (
+            todo_with_incomplete_evidence_id,
+            {
+                "source": "reply_attempt:2",
+                "reason": "客户已确认",
+                "description": "客户已确认",
+            },
+        ),
     ):
         payload = {
             "action": "update_project",
@@ -1874,6 +1893,11 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
         "owner_in_group": True,
         "sensitive": False,
         "reason": "普通项目进展确认",
+        "owner_evidence": {
+            "source": "reply_attempt:1",
+            "reason": "来源消息明确说明 owner 是 Alex。",
+            "description": "售前群消息写明售前知识库需要补齐来源链接，owner 是 Alex。",
+        },
     }
 
 
@@ -2026,6 +2050,11 @@ def test_low_confidence_minutes_speaker_labels_suppress_direct_follow_up(tmp_pat
                         "owner_in_group": False,
                         "sensitive": False,
                         "reason": "直接确认真实 owner",
+                        "owner_evidence": {
+                            "source": "dws_contact:owner-1",
+                            "reason": "通讯录唯一匹配刘瑞安，但低可信听记仍不能直接私聊。",
+                            "description": "只确认到刘瑞安的 userId，未证明该事项可以从听记直接私聊追问。",
+                        },
                     },
                 )
             ],
@@ -2046,6 +2075,61 @@ def test_low_confidence_minutes_speaker_labels_suppress_direct_follow_up(tmp_pat
 
     assert project_id is not None
     assert len(store.list_work_todos(project_id=project_id)) == 1
+    assert store.list_follow_up_drafts(statuses=("draft",)) == []
+
+
+def test_follow_up_draft_requires_owner_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "todo_ref": "confirm-project-boundary",
+                    "title": "确认项目边界",
+                    "owner_user_id": "owner-1",
+                    "owner_name": "Alex",
+                    "status": "open",
+                    "priority": "P1",
+                    "follow_up_question": "项目目标和 owner 是否确认？",
+                }
+            ],
+            "follow_up_drafts": [
+                _follow_up_draft_payload(
+                    todo_ref="confirm-project-boundary",
+                    risk_check={
+                        "owner_in_group": True,
+                        "sensitive": False,
+                        "reason": "只有风险判断，没有 owner 事实证据。",
+                    },
+                )
+            ],
+            "follow_up_changes": [],
+            "update_summary": "尝试生成缺少 owner 证据的跟进。",
+            "merge_reason": "",
+            "memory_recall_used": True,
+            "confidence": 0.7,
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="follow_up_draft.risk_check.owner_evidence",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=0,
+            work_item=_work_item(),
+            decision=decision,
+        )
+
     assert store.list_follow_up_drafts(statuses=("draft",)) == []
 
 
@@ -2533,6 +2617,8 @@ def test_task_agent_prompt_defines_important_vs_routine_process_boundary():
 
     assert "只跟踪重要事项" in prompt
     assert "流程性内容默认忽略" in prompt
+    assert "和公司目标、OKR/KR、关键项目或管理风险无关的事项不要进入 task" in prompt
+    assert "非 discard 决策必须能解释和公司目标、OKR/KR、关键项目或管理风险的关系" in prompt
     assert "不要创建 project、TODO、follow_up_draft 或 DingTalk Todo" in prompt
     assert "如果 Work Item 是对误建 TODO 或过细 follow-up 的反馈" in prompt
     assert "cancel" in prompt
@@ -2991,6 +3077,19 @@ def test_task_agent_schema_requires_follow_up_owner_user_id_to_be_non_empty():
 
     assert owner_user_id_schema["type"] == "string"
     assert owner_user_id_schema["minLength"] == 1
+    risk_check_schema = schema["$defs"]["follow_up_draft"]["properties"][
+        "risk_check"
+    ]
+    assert "owner_evidence" in risk_check_schema["required"]
+    owner_evidence_schema = risk_check_schema["properties"]["owner_evidence"]
+    assert owner_evidence_schema["required"] == ["source", "reason", "description"]
+    todo_schema = schema["$defs"]["todo_change"]
+    assert "owner_evidence" in todo_schema["required"]
+    assert todo_schema["properties"]["owner_evidence"]["required"] == [
+        "source",
+        "reason",
+        "description",
+    ]
 
 
 def test_task_agent_schema_requires_project_memory_context():
