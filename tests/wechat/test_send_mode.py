@@ -344,6 +344,28 @@ def test_unknown_delivery_status_fails_history_attempt(tmp_path):
     assert attempt.send_error == "no_visible_confirmation"
 
 
+def test_auto_mode_retries_delivery_when_no_wechat_action_was_performed(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3"); d, attempt_id = _seed_with_attempt(store)
+    store.mark_wechat_delivery_sending(d.id)
+    store.set_wechat_delivery_status(d.id, "failed", error="action_not_performed")
+
+    class RetryingSender(FakeSender):
+        def send(self, delivery, scope):
+            self.sent.append(delivery.id)
+            store.mark_wechat_delivery_sending(delivery.id)
+            store.set_wechat_delivery_status(delivery.id, "sent")
+            return SendOutcome("sent")
+
+    sender = RetryingSender()
+
+    assert service.process_ready_wechat_deliveries(
+        store, sender, mode="auto", sender_enabled=True
+    ) == 1
+    assert sender.sent == [d.id]
+    assert store.get_wechat_delivery_for_task(1).status == "sent"
+    assert store.get_reply_attempt(attempt_id).send_status == "sent"
+
+
 def test_recall_uses_runner_capability_with_text(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3"); d = _seed(store)
     store.mark_wechat_delivery_sending(d.id)

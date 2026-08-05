@@ -4880,6 +4880,25 @@ class AutoReplyStore:
             for row in rows
         ]
 
+    def requeue_unperformed_wechat_deliveries(self) -> int:
+        """Return deliveries to the send queue only when no UI action occurred."""
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update wechat_deliveries
+                set status='ready_to_send', error='', updated_at=current_timestamp
+                where status='failed'
+                  and error='action_not_performed'
+                  and exists (
+                      select 1 from reply_tasks
+                      where reply_tasks.id=wechat_deliveries.reply_task_id
+                        and reply_tasks.execution_generation=
+                            wechat_deliveries.execution_generation
+                  )
+                """
+            )
+            return cursor.rowcount
+
     def claim_wechat_delivery(
         self,
         delivery_id: int,

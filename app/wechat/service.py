@@ -110,9 +110,10 @@ def run_consume_once(store, runner, reader, account) -> int:
 
 
 def recover_before_sender(store, reader, account=None) -> list:
-    """Reconcile orphaned deliveries before any sender starts."""
+    """Recover safe pre-action failures and reconcile uncertain sends."""
     from app.wechat.accessibility import reconcile_incomplete_deliveries
 
+    store.requeue_unperformed_wechat_deliveries()
     return reconcile_incomplete_deliveries(store, reader, account=account)
 
 
