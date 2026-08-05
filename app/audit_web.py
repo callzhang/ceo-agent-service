@@ -2058,11 +2058,12 @@ def _worker_components_table(components: object) -> str:
         for component in components
         if isinstance(component, dict)
     )
+    empty_row = '<tr><td colspan="3" class="muted">No workers configured.</td></tr>'
     return (
         "<table class=\"column-sized-table worker-table\"><thead><tr>"
         "<th>Worker</th><th>Role</th><th>Cadence</th>"
         "</tr></thead><tbody>"
-        f"{rows or '<tr><td colspan=\"3\" class=\"muted\">No workers configured.</td></tr>'}"
+        f"{rows or empty_row}"
         "</tbody></table>"
     )
 
@@ -2082,12 +2083,13 @@ def _worker_queues_table(queues: object) -> str:
         for queue in queues
         if isinstance(queue, dict)
     )
+    empty_row = '<tr><td colspan="8" class="muted">No queues found.</td></tr>'
     return (
         "<table class=\"column-sized-table worker-table\"><thead><tr>"
         "<th>Queue</th><th>Status counts</th><th>Pending</th><th>Processing</th>"
         "<th>Retryable</th><th>Failed</th><th>Updated</th><th>Latest error</th>"
         "</tr></thead><tbody>"
-        f"{rows or '<tr><td colspan=\"8\" class=\"muted\">No queues found.</td></tr>'}"
+        f"{rows or empty_row}"
         "</tbody></table>"
     )
 
@@ -2105,11 +2107,15 @@ def _worker_attention_table(rows_obj: object) -> str:
         for row in rows_obj
         if isinstance(row, dict)
     )
+    empty_row = (
+        '<tr><td colspan="6" class="muted">'
+        "No pending, processing, or failed queue items.</td></tr>"
+    )
     return (
         "<table class=\"column-sized-table worker-table\"><thead><tr>"
         "<th>Item</th><th>Status</th><th>Context</th><th>Summary</th><th>Updated</th><th>Error</th>"
         "</tr></thead><tbody>"
-        f"{rows or '<tr><td colspan=\"6\" class=\"muted\">No pending, processing, or failed queue items.</td></tr>'}"
+        f"{rows or empty_row}"
         "</tbody></table>"
     )
 
