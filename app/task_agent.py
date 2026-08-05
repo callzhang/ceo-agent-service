@@ -254,6 +254,8 @@ def build_task_agent_prompt(
 - 一次性工具、账号、权限、订阅或行政操作默认不创建 task，也不生成 follow-up，除非它明确影响已有项目、关键交付、成本风险或管理决策。
 - 每次必须评估 failure_risk 和 failure_risk_score：failure_risk 说明如果不跟进会发生什么；failure_risk_score 是 0 到 1 的失败风险，0 表示几乎无业务影响，1 表示会直接影响关键交付、收入、合规或管理决策。
 - BM25 候选项目只是初始线索，不是权威匹配结果。
+- 判断事项是否关联公司目标、OKR/KR 或关键项目时，如果工作区存在 `OKR档案/latest_company_okr_index.md`，先读取它作为公司目标参照；这份索引只用于判断 task-worthy 和项目归属，不是 TODO 完成证据。
+- 如果 OKR 索引不存在或无法读取，继续使用 Work Item、候选项目、DWS 和 memory_recall 判断，不要因此停止。
 - 如果候选项目为空或你判断不匹配，可以使用 dws 或 memory_connector 恢复更多上下文；这是提示，不是硬性要求。
 - 近期 follow-up 候选只是上下文线索。你必须自己判断当前 Work Item 是否真的回应了某条 follow-up；不能因为候选存在就关闭 TODO 或 suppress follow-up。
 - 如果 Work Item 明确说明追错 owner、重复追问或不应继续跟进，可以通过 follow_up_changes 更新已有 follow_up_draft；不要生成新的 follow_up_draft 来继续追同一个错误 owner。

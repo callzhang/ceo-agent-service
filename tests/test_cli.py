@@ -208,6 +208,22 @@ def test_parser_supports_forced_weekly_okr_report():
     assert args.period_label == "2026 Q3"
 
 
+def test_parser_supports_refresh_okr_archive():
+    args = build_parser().parse_args(
+        [
+            "refresh-okr-archive",
+            "--period-label",
+            "2026 Q3",
+            "--group-name",
+            "CEO-2 管理群",
+        ]
+    )
+
+    assert args.command == "refresh-okr-archive"
+    assert args.period_label == "2026 Q3"
+    assert args.group_name == "CEO-2 管理群"
+
+
 def test_parser_supports_channel_doctor():
     args = build_parser().parse_args(["channel-doctor"])
 

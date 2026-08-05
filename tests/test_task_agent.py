@@ -2618,6 +2618,8 @@ def test_task_agent_prompt_defines_important_vs_routine_process_boundary():
     assert "只跟踪重要事项" in prompt
     assert "流程性内容默认忽略" in prompt
     assert "和公司目标、OKR/KR、关键项目或管理风险无关的事项不要进入 task" in prompt
+    assert "OKR档案/latest_company_okr_index.md" in prompt
+    assert "只用于判断 task-worthy 和项目归属，不是 TODO 完成证据" in prompt
     assert "非 discard 决策必须能解释和公司目标、OKR/KR、关键项目或管理风险的关系" in prompt
     assert "不要创建 project、TODO、follow_up_draft 或 DingTalk Todo" in prompt
     assert "如果 Work Item 是对误建 TODO 或过细 follow-up 的反馈" in prompt

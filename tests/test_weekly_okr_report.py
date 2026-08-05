@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -6,6 +7,9 @@ import pytest
 from app.weekly_okr_report import (
     CeoAttentionItem,
     CodexWeeklyOkrAgent,
+    DEFAULT_ARCHIVE_DIR_NAME,
+    LATEST_ARCHIVE_INDEX_NAME,
+    LATEST_ARCHIVE_RAW_NAME,
     DimensionScoreReview,
     DwsWeeklyOkrGateway,
     GroupRoster,
@@ -16,6 +20,7 @@ from app.weekly_okr_report import (
     WeeklyOkrAnalysis,
     _manager_scorecards,
     _extract_report_payload,
+    refresh_company_okr_archive,
     run_weekly_okr_report,
     weekly_okr_report_window_open,
 )
@@ -376,6 +381,44 @@ def test_force_run_publishes_verified_document_then_group_summary(tmp_path):
         if "评分附录" in name
     } == {"doc-main"}
     assert store.state["weekly_okr_report:last_success_date"] == "2026-07-30"
+
+
+def test_refresh_company_okr_archive_writes_raw_and_latest_index(tmp_path):
+    gateway = FakeGateway(managers())
+    source = FakeSource()
+
+    result = refresh_company_okr_archive(
+        gateway=gateway,
+        source=source,
+        workspace=tmp_path,
+        now=datetime(2026, 8, 5, 12, tzinfo=SHANGHAI),
+        period_label="2026 Q3",
+    )
+
+    assert result.status == "archived"
+    assert result.manager_count == 2
+    assert result.kr_count == 2
+    assert source.calls == [("u1", "2026 Q3"), ("u2", "2026 Q3")]
+    raw_path = tmp_path / DEFAULT_ARCHIVE_DIR_NAME / "2026q3" / "company_okr_2026q3_raw.json"
+    index_path = tmp_path / DEFAULT_ARCHIVE_DIR_NAME / "2026q3" / "company_okr_2026q3_index.md"
+    latest_raw = tmp_path / DEFAULT_ARCHIVE_DIR_NAME / LATEST_ARCHIVE_RAW_NAME
+    latest_index = tmp_path / DEFAULT_ARCHIVE_DIR_NAME / LATEST_ARCHIVE_INDEX_NAME
+    assert result.raw_path == str(raw_path)
+    assert result.index_path == str(index_path)
+    payload = json.loads(raw_path.read_text(encoding="utf-8"))
+    assert payload["periodLabel"] == "2026 Q3"
+    assert payload["managers"][0]["manager"]["name"] == "甲"
+    assert latest_raw.read_text(encoding="utf-8") == raw_path.read_text(
+        encoding="utf-8"
+    )
+    index = index_path.read_text(encoding="utf-8")
+    assert "# 公司 OKR 索引（2026 Q3）" in index
+    assert "- KR 数：2" in index
+    assert "## 甲｜总监" in index
+    assert "- O：O1" in index
+    assert "  - KR：KR1（进度 50%，权重 100）" in index
+    assert "不是 TODO 完成证据" in index
+    assert latest_index.read_text(encoding="utf-8") == index
 
 
 def test_scheduled_run_waits_until_sunday_hour_and_deduplicates(tmp_path):

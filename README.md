@@ -129,10 +129,10 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 - `CEO_OKR_SOURCE_KIND=dingteam_web` 时，必须设置 `CEO_OKR_LIVE_SOURCE_COMMAND`。该命令接收
   `{user_id}` 和 `{period_label}` 占位符，并返回 worker 可用的实时 OKR JSON。
   本机 Dingteam Web source 命令示例：
-  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/Documents/Projects/ceo-agent-service/scripts/dingteam_okr_live_source.py --user-id {user_id} --period-label {period_label}`。
-  该命令要求 Chrome 已登录 `dingokr.dingteam.com`，Chrome 会正常保存登录 cookie；脚本只通过页面内
-  API 拉取数据，不导出或复制浏览器 cookie、localStorage 或 session 文件。若 DingTeam 返回未登录，
-  脚本会把 DingTeam tab 切到前台并发本机通知，提醒 Derek 在 Chrome 中完成登录。
+  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/Documents/Projects/ceo-agent-service/.venv/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}`。
+  该命令使用 `dingtang-okr-review` skill 的专用 headless browser profile 和 token cache；登录态过期时先运行
+  `/Users/derek/Documents/Projects/ceo-agent-service/.venv/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py login`
+  并扫码。脚本不读取普通 Chrome cookie、localStorage 或 session 文件。
 - 只有确认企业 OKR 数据暴露在 Agoal objective API 中时，才设置 `CEO_OKR_SOURCE_KIND=agoal`。
 - Agoal 模式从 `~/.dingtalk-skills/config` 或 `.env` 读取应用凭证；如果规则列表为空或不唯一，
   设置 `CEO_OKR_OBJECTIVE_RULE_ID`，否则服务会直接报错。
@@ -362,6 +362,10 @@ recruiting, sales, finance, admin, HR, other
 
 - 每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费一次 reply worker 写入的 Work Item，默认 60 秒。
 - 每 `CEO_TASK_DAILY_INTERVAL_SECONDS` 秒扫描 AI 听记、本地新增文件、拉取钉钉 Todo 完成状态并处理到期 follow-up，默认 86400 秒。
+- `refresh-okr-archive --period-label '2026 Q3'` 会只读拉取 CEO-2 管理群成员的实时叮当 OKR，
+  写入 `CEO_WORKSPACE/OKR档案/<period>/company_okr_<period>_raw.json` 和
+  `CEO_WORKSPACE/OKR档案/latest_company_okr_index.md`。task agent 会把 latest index 作为公司目标参照，
+  用于判断事项是否和 OKR/KR、关键项目或管理风险有关；该索引不是 TODO 完成证据。
 - 钉钉 OA 待审批扫描默认开启，由 `CEO_OA_PENDING_SCAN_ENABLED` 控制；扫描间隔由
   `CEO_OA_PENDING_SCAN_INTERVAL_SECONDS` 控制，默认 3600 秒；每次扫描查询最近
   `CEO_OA_PENDING_SCAN_LOOKBACK_DAYS` 天的待审批，默认 365 天。扫描只会在审批详情中

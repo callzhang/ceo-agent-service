@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import shlex
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -23,6 +24,9 @@ from app.process_runner import run_process_with_idle_timeout
 DEFAULT_GROUP_NAME = "CEO-2 管理群"
 DEFAULT_WIKI_NAME = "🎯  目标与执行"
 DEFAULT_FOLDER_NAME = "管理者 OKR 进度周报"
+DEFAULT_ARCHIVE_DIR_NAME = "OKR档案"
+LATEST_ARCHIVE_INDEX_NAME = "latest_company_okr_index.md"
+LATEST_ARCHIVE_RAW_NAME = "latest_company_okr_raw.json"
 DEFAULT_SCHEDULE_HOUR = 18
 DEFAULT_RETRY_SECONDS = 1800
 WEEKLY_OKR_REPORT_SCHEMA_PATH = (
@@ -120,6 +124,17 @@ class WeeklyOkrReportResult:
     document_url: str = ""
     local_report_path: str = ""
     send_state: str = ""
+
+
+@dataclass(frozen=True)
+class CompanyOkrArchiveResult:
+    status: str
+    generated_at: str
+    period_label: str
+    manager_count: int
+    kr_count: int
+    raw_path: str
+    index_path: str
 
 
 @dataclass(frozen=True)
@@ -1079,6 +1094,41 @@ def weekly_okr_report_command(
     return result
 
 
+def refresh_company_okr_archive_command(
+    settings,
+    *,
+    period_label: str = "",
+    group_name: str = DEFAULT_GROUP_NAME,
+    now: datetime | None = None,
+) -> CompanyOkrArchiveResult:
+    current = now or datetime.now().astimezone()
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+        transient_retry_attempts=settings.dws_transient_retry_attempts,
+        transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+    )
+    command_template = shlex.split(os.getenv("CEO_OKR_LIVE_SOURCE_COMMAND", ""))
+    if not command_template:
+        raise RuntimeError("CEO_OKR_LIVE_SOURCE_COMMAND is required")
+    source = DwsLiveOkrSource(
+        dws=dws,
+        command_template=command_template,
+        timeout_seconds=300,
+    )
+    result = refresh_company_okr_archive(
+        gateway=DwsWeeklyOkrGateway(dws),
+        source=source,
+        workspace=settings.workspace,
+        now=current,
+        group_name=group_name,
+        period_label=period_label,
+    )
+    print(json.dumps(result.__dict__, ensure_ascii=False), flush=True)
+    return result
+
+
 def render_weekly_okr_report(
     *,
     title: str,
@@ -1583,6 +1633,159 @@ def _live_kr_rows(
             result[kr_id] = row
         return result
     raise ValueError(f"missing live OKR payload for {manager_name}")
+
+
+def refresh_company_okr_archive(
+    *,
+    gateway: WeeklyOkrGateway,
+    source,
+    workspace: Path,
+    now: datetime,
+    group_name: str = DEFAULT_GROUP_NAME,
+    period_label: str = "",
+) -> CompanyOkrArchiveResult:
+    local_now = now.astimezone()
+    roster = gateway.resolve_group_roster(group_name)
+    if not roster.managers:
+        raise RuntimeError("CEO-2 manager roster is empty")
+
+    resolved_period = period_label.strip() or current_quarter_period(
+        local_now.date().isoformat()
+    ).period_label
+    period_slug = _period_slug(resolved_period)
+    archive_dir = workspace / DEFAULT_ARCHIVE_DIR_NAME / period_slug
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    raw_path = archive_dir / f"company_okr_{period_slug}_raw.json"
+    index_path = archive_dir / f"company_okr_{period_slug}_index.md"
+    latest_index_path = workspace / DEFAULT_ARCHIVE_DIR_NAME / LATEST_ARCHIVE_INDEX_NAME
+    latest_raw_path = workspace / DEFAULT_ARCHIVE_DIR_NAME / LATEST_ARCHIVE_RAW_NAME
+
+    manager_payloads: list[dict[str, Any]] = []
+    for manager in roster.managers:
+        payload = source.fetch_user_okr(
+            user_id=manager.user_id,
+            period_label=resolved_period,
+        )
+        _validate_live_okr_payload(payload, manager=manager)
+        manager_payloads.append(
+            {
+                "manager": {
+                    "name": manager.name,
+                    "title": manager.title,
+                    "userId": manager.user_id,
+                    "openDingtalkId": manager.open_dingtalk_id,
+                },
+                "liveOkr": payload,
+            }
+        )
+
+    archive_payload = {
+        "generatedAt": local_now.isoformat(),
+        "periodLabel": resolved_period,
+        "group": roster.name,
+        "groupConversationId": roster.conversation_id,
+        "managers": manager_payloads,
+    }
+    raw_text = json.dumps(archive_payload, ensure_ascii=False, indent=2)
+    raw_path.write_text(raw_text, encoding="utf-8")
+    latest_raw_path.write_text(raw_text, encoding="utf-8")
+
+    index_text = render_company_okr_archive_index(archive_payload)
+    index_path.write_text(index_text, encoding="utf-8")
+    latest_index_path.write_text(index_text, encoding="utf-8")
+    return CompanyOkrArchiveResult(
+        status="archived",
+        generated_at=local_now.isoformat(),
+        period_label=resolved_period,
+        manager_count=len(roster.managers),
+        kr_count=_archive_kr_count(manager_payloads),
+        raw_path=str(raw_path),
+        index_path=str(index_path),
+    )
+
+
+def render_company_okr_archive_index(payload: dict[str, Any]) -> str:
+    managers = payload.get("managers")
+    if not isinstance(managers, list):
+        raise ValueError("company OKR archive has no managers")
+    lines = [
+        f"# 公司 OKR 索引（{payload.get('periodLabel', '')}）",
+        "",
+        f"- 生成时间：{payload.get('generatedAt', '')}",
+        f"- 来源群：{payload.get('group', '')}",
+        f"- 管理者数：{len(managers)}",
+        f"- KR 数：{_archive_kr_count(managers)}",
+        "",
+        "用途：供 task agent 判断事项是否关联公司目标、OKR/KR、关键项目或管理风险；这不是 TODO 完成证据。",
+        "",
+    ]
+    for item in managers:
+        manager = item.get("manager", {}) if isinstance(item, dict) else {}
+        live_okr = item.get("liveOkr", {}) if isinstance(item, dict) else {}
+        rows = live_okr.get("processed", {}).get("okrRows", [])
+        lines.extend(
+            [
+                f"## {manager.get('name', '')}｜{manager.get('title', '')}",
+                "",
+            ]
+        )
+        current_objective = ""
+        manager_kr_count = 0
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            objective = str(row.get("objectiveTitle") or row.get("objective") or "").strip()
+            if objective and objective != current_objective:
+                current_objective = objective
+                lines.append(f"- O：{objective}")
+            if str(row.get("level") or "").upper() != "KR":
+                continue
+            kr_title = str(row.get("krTitle") or row.get("kr") or "").strip()
+            if not kr_title:
+                continue
+            manager_kr_count += 1
+            progress = row.get("krProgress")
+            weight = row.get("krWeight")
+            suffix_parts = []
+            if progress not in (None, ""):
+                suffix_parts.append(f"进度 {progress}%")
+            if weight not in (None, ""):
+                suffix_parts.append(f"权重 {weight}")
+            suffix = f"（{'，'.join(suffix_parts)}）" if suffix_parts else ""
+            lines.append(f"  - KR：{kr_title}{suffix}")
+        if manager_kr_count == 0:
+            lines.append("- 暂无可用 KR")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _archive_kr_count(manager_payloads: list[dict[str, Any]]) -> int:
+    count = 0
+    for item in manager_payloads:
+        rows = item.get("liveOkr", {}).get("processed", {}).get("okrRows", [])
+        if not isinstance(rows, list):
+            continue
+        count += sum(
+            1
+            for row in rows
+            if isinstance(row, dict) and str(row.get("level") or "").upper() == "KR"
+        )
+    return count
+
+
+def _period_slug(period_label: str) -> str:
+    normalized = period_label.strip().lower().replace(" ", "")
+    normalized = normalized.replace("年", "").replace("季度", "")
+    normalized = normalized.replace("第", "").replace("q", "q")
+    replacements = {
+        "一": "1",
+        "二": "2",
+        "三": "3",
+        "四": "4",
+    }
+    for source, target in replacements.items():
+        normalized = normalized.replace(source, target)
+    return re.sub(r"[^0-9a-z]+", "", normalized) or "current"
 
 
 def _weighted_average(items: list[tuple[float, float]]) -> float | None:

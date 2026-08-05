@@ -105,6 +105,7 @@ from app.worker import (
 )
 from app.weekly_okr_report import (
     DEFAULT_SCHEDULE_HOUR,
+    refresh_company_okr_archive_command,
     weekly_okr_report_command,
     weekly_okr_report_window_open,
 )
@@ -260,6 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
         "backfill-routine-process-todos",
         "process-okr-reviews",
         "weekly-okr-report",
+        "refresh-okr-archive",
         "scan-task-sources",
         "scan-oa-approvals",
         "process-follow-ups",
@@ -605,6 +607,17 @@ def build_parser() -> argparse.ArgumentParser:
                 "--period-label",
                 default="",
                 help="override the current-quarter OKR period label",
+            )
+        if command == "refresh-okr-archive":
+            subparser.add_argument(
+                "--period-label",
+                default="",
+                help="override the current-quarter OKR period label",
+            )
+            subparser.add_argument(
+                "--group-name",
+                default="CEO-2 管理群",
+                help="DingTalk group whose members define the company OKR archive roster",
             )
         if command == "resolve-agent-run":
             subparser.add_argument("--run-id", type=int, required=True)
@@ -2836,6 +2849,12 @@ def main() -> None:
             settings,
             force=args.force,
             period_label=args.period_label,
+        )
+    elif args.command == "refresh-okr-archive":
+        refresh_company_okr_archive_command(
+            settings,
+            period_label=args.period_label,
+            group_name=args.group_name,
         )
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
