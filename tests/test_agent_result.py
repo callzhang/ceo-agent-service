@@ -76,6 +76,21 @@ def test_parse_agent_result_accepts_message_fields(payload, expected):
     assert parse_agent_result(json.dumps(payload)).summary == expected
 
 
+def test_parse_agent_result_normalizes_null_error_from_schema_less_resume():
+    payload = {
+        "outcome": "completed",
+        "summary": "resume completed",
+        "error": None,
+    }
+
+    result = parse_agent_result(json.dumps({"message": json.dumps(payload)}))
+
+    assert result.summary == "resume completed"
+    assert result.error.code == ""
+    assert result.error.retryable is False
+    assert result.error.authorization_required is False
+
+
 def test_agent_result_forbids_extra_fields():
     with pytest.raises(ValidationError):
         AgentResult.model_validate_json(

@@ -147,6 +147,19 @@ def test_codex_command_read_only_resume_preserves_native_user_config(tmp_path: P
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
 
 
+def test_codex_command_resume_omits_explicit_output_schema(tmp_path: Path):
+    schema = tmp_path / "agent-result.schema.json"
+
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="hello",
+        session_id="session-1",
+        output_schema_path=schema,
+    )
+
+    assert command[:3] == ["codex", "exec", "resume"]
+    assert "--output-schema" not in command
+
+
 def test_codex_command_can_preserve_native_model_config(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("CEO_CODEX_MODEL", "codex-MiniMax-M2.7")
     monkeypatch.setenv("CEO_CODEX_MODEL_PROVIDER", "minimax")

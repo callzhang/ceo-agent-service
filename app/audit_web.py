@@ -2058,11 +2058,12 @@ def _worker_components_table(components: object) -> str:
         for component in components
         if isinstance(component, dict)
     )
+    empty_row = '<tr><td colspan="3" class="muted">No workers configured.</td></tr>'
     return (
         "<table class=\"column-sized-table worker-table\"><thead><tr>"
         "<th>Worker</th><th>Role</th><th>Cadence</th>"
         "</tr></thead><tbody>"
-        f"{rows or '<tr><td colspan=\"3\" class=\"muted\">No workers configured.</td></tr>'}"
+        f"{rows or empty_row}"
         "</tbody></table>"
     )
 
@@ -2082,12 +2083,13 @@ def _worker_queues_table(queues: object) -> str:
         for queue in queues
         if isinstance(queue, dict)
     )
+    empty_row = '<tr><td colspan="8" class="muted">No queues found.</td></tr>'
     return (
         "<table class=\"column-sized-table worker-table\"><thead><tr>"
         "<th>Queue</th><th>Status counts</th><th>Pending</th><th>Processing</th>"
         "<th>Retryable</th><th>Failed</th><th>Updated</th><th>Latest error</th>"
         "</tr></thead><tbody>"
-        f"{rows or '<tr><td colspan=\"8\" class=\"muted\">No queues found.</td></tr>'}"
+        f"{rows or empty_row}"
         "</tbody></table>"
     )
 
@@ -2105,11 +2107,15 @@ def _worker_attention_table(rows_obj: object) -> str:
         for row in rows_obj
         if isinstance(row, dict)
     )
+    empty_row = (
+        '<tr><td colspan="6" class="muted">'
+        "No pending, processing, or failed queue items.</td></tr>"
+    )
     return (
         "<table class=\"column-sized-table worker-table\"><thead><tr>"
         "<th>Item</th><th>Status</th><th>Context</th><th>Summary</th><th>Updated</th><th>Error</th>"
         "</tr></thead><tbody>"
-        f"{rows or '<tr><td colspan=\"6\" class=\"muted\">No pending, processing, or failed queue items.</td></tr>'}"
+        f"{rows or empty_row}"
         "</tbody></table>"
     )
 
@@ -4819,6 +4825,56 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         _unlinked_follow_up_drafts(todos, drafts),
         conversation_titles,
     )
+    todo_panel_html = todo_panel if todos else '<p class="muted">No TODOs recorded.</p>'
+    facts_html = (
+        _simple_table(
+            ("Description", "Source", "Created", "Updated"),
+            facts,
+            column_widths={"Source": "118px", "Created": "132px", "Updated": "132px"},
+        )
+        if facts
+        else '<p class="muted">No facts recorded.</p>'
+    )
+    updates_html = (
+        _simple_table(
+            ("Time", "Source", "Summary", "Changes", "Reason", "Confidence"),
+            update_rows,
+            column_widths={
+                "Time": "148px",
+                "Source": "118px",
+                "Summary": "240px",
+                "Changes": "220px",
+                "Reason": "180px",
+                "Confidence": "96px",
+            },
+        )
+        if update_rows
+        else '<p class="muted">No updates recorded.</p>'
+    )
+    unlinked_followups_html = (
+        "<section class=\"card\"><h2>Unlinked follow-ups</h2>"
+        + _simple_table(
+            ("Time", "Owner", "TODO", "Target", "Status", "Question", "Risk", "Result"),
+            draft_rows,
+            column_widths={
+                "Time": "148px",
+                "Owner": "110px",
+                "TODO": "88px",
+                "Target": "112px",
+                "Status": "104px",
+                "Question": "240px",
+                "Risk": "170px",
+                "Result": "180px",
+            },
+            html_columns={"TODO"},
+        )
+        + "</section>"
+        if draft_rows
+        else ""
+    )
+    memory_context_html = _collapsible_json_card(
+        "Memory context", project.memory_context_json
+    )
 
     body = (
         "<section class=\"card\"><div class=\"card-head\">"
@@ -4844,22 +4900,16 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         f"{_task_project_detail_table(detail_rows)}"
         "</section>"
         "<section class=\"card\"><h2>TODOs</h2>"
-        f"{todo_panel if todos else '<p class=\"muted\">No TODOs recorded.</p>'}"
+        f"{todo_panel_html}"
         "</section>"
         "<section class=\"card\"><h2>Facts</h2>"
-        f"{_simple_table(('Description', 'Source', 'Created', 'Updated'), facts, column_widths={'Source': '118px', 'Created': '132px', 'Updated': '132px'}) if facts else '<p class=\"muted\">No facts recorded.</p>'}"
+        f"{facts_html}"
         "</section>"
         "<section class=\"card\"><h2>Updates</h2>"
-        f"{_simple_table(('Time', 'Source', 'Summary', 'Changes', 'Reason', 'Confidence'), update_rows, column_widths={'Time': '148px', 'Source': '118px', 'Summary': '240px', 'Changes': '220px', 'Reason': '180px', 'Confidence': '96px'}) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
+        f"{updates_html}"
         "</section>"
-        + (
-            "<section class=\"card\"><h2>Unlinked follow-ups</h2>"
-            f"{_simple_table(('Time', 'Owner', 'TODO', 'Target', 'Status', 'Question', 'Risk', 'Result'), draft_rows, column_widths={'Time': '148px', 'Owner': '110px', 'TODO': '88px', 'Target': '112px', 'Status': '104px', 'Question': '240px', 'Risk': '170px', 'Result': '180px'}, html_columns={'TODO'})}"
-            "</section>"
-            if draft_rows
-            else ""
-        )
-        + f"{_collapsible_json_card('Memory context', project.memory_context_json)}"
+        + unlinked_followups_html
+        + memory_context_html
     )
     return (
         200,

@@ -504,11 +504,8 @@ class CodexRunner:
                     if effective_approval_bypass
                     else []
                 ),
-                *(
-                    ["--output-schema", str(output_schema_path)]
-                    if output_schema_path is not None
-                    else []
-                ),
+                # Native `codex exec resume` does not accept --output-schema.
+                # The prompt/developer instructions still require structured JSON.
                 *image_options,
                 session_id,
                 "-",

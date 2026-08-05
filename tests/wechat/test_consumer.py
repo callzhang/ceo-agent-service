@@ -80,6 +80,7 @@ def test_dingtalk_system_actions_rejected(fake_codex, consumer, store):
     assert store.get_wechat_delivery_for_task(1) is None
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
+    assert attempt.channel == "wechat"
     assert attempt.send_status == "failed"
     assert attempt.send_error == "dingtalk_only_system_actions_rejected"
 

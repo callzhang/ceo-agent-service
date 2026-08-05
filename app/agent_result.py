@@ -97,6 +97,7 @@ def parse_agent_result(raw: str) -> AgentResult:
             continue
         try:
             normalized = _normalize_result_text(candidate)
+            normalized = _normalize_agent_result_payload(normalized)
             return AgentResult.model_validate_json(normalized)
         except (ResultParseError, ValidationError) as exc:
             raise ResultParseError(
@@ -144,6 +145,18 @@ def _agent_message_candidate(payload: dict) -> str | None:
 
 def _normalize_result_text(text: str) -> str:
     return _first_balanced_json_object(_strip_json_fence(text.strip()))
+
+
+def _normalize_agent_result_payload(text: str) -> str:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ResultParseError("agent message does not contain valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ResultParseError("agent message JSON is not an object")
+    if payload.get("error") is None:
+        payload["error"] = {}
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _strip_json_fence(text: str) -> str:

@@ -5550,6 +5550,32 @@ def test_wechat_service_components_present_when_reader_ready(monkeypatch, tmp_pa
     assert [name for name, _ in comps] == ["wechat-producer", "wechat-consumer"]
 
 
+def test_wechat_sender_component_requires_explicit_sender_flag(monkeypatch, tmp_path):
+    import types
+    from app import cli
+    from app.store import AutoReplyStore
+
+    db = tmp_path / "w.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a1", account_dir="/a1", db_dir="/a1/db_storage",
+        app_version="4.1.10", self_user_id="self-1", capability_status="ready",
+    )
+    monkeypatch.setenv("CEO_WECHAT_READER_ENABLED", "1")
+    monkeypatch.delenv("CEO_WECHAT_SENDER_ENABLED", raising=False)
+
+    comps = cli._wechat_service_components(types.SimpleNamespace(db_path=db))
+    assert [name for name, _ in comps] == ["wechat-producer", "wechat-consumer"]
+
+    monkeypatch.setenv("CEO_WECHAT_SENDER_ENABLED", "1")
+    comps = cli._wechat_service_components(types.SimpleNamespace(db_path=db))
+    assert [name for name, _ in comps] == [
+        "wechat-producer",
+        "wechat-consumer",
+        "wechat-sender",
+    ]
+
+
 def test_wechat_service_components_absent_when_ready_account_has_no_self_id(
     monkeypatch, tmp_path,
 ):
@@ -5599,6 +5625,57 @@ def test_wechat_loop_stops_after_app_data_permission_denial(
         "app.wechat.service.run_produce_once",
         lambda *a, **k: (_ for _ in ()).throw(
             PermissionError(1, "Operation not permitted", "/private/wechat.db")
+        ),
+    )
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        raise StopLoop
+
+    monkeypatch.setattr(time, "sleep", sleep)
+
+    with pytest.raises(StopLoop):
+        cli._run_wechat_loop(settings, "producer")
+
+    errors = store.list_errors(limit=10)
+    assert [error.kind for error in errors] == ["wechat_data_permission_required"]
+
+
+def test_wechat_loop_stops_after_reader_ipc_permission_denial(
+    monkeypatch,
+    tmp_path,
+):
+    import time
+
+    from app.wechat.reader_ipc import ReaderIpcError
+
+    class StopLoop(Exception):
+        pass
+
+    db = tmp_path / "w.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a1",
+        account_dir="/a1",
+        db_dir="/a1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+    )
+    settings = SimpleNamespace(
+        db_path=db,
+        workspace=tmp_path,
+        codex_timeout_seconds=30,
+        codex_idle_timeout_seconds=30,
+    )
+    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
+    monkeypatch.setattr(
+        "app.wechat.service.run_produce_once",
+        lambda *a, **k: (_ for _ in ()).throw(
+            ReaderIpcError(
+                "Grant App Data permission to CEO WeChat Reader, then retry Connect."
+            )
         ),
     )
     sleeps = []

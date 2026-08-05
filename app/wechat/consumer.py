@@ -83,7 +83,10 @@ class WechatReplyConsumer:
         prompt = build_wechat_turn_prompt(trigger, context)
         decision = self.runner.decide(prompt, None)
 
-        if decision.action in (CodexAction.SEND_REPLY, CodexAction.ASK_CLARIFYING_QUESTION):
+        if decision.action in (
+            CodexAction.SEND_REPLY,
+            CodexAction.ASK_CLARIFYING_QUESTION,
+        ):
             unsupported_actions = [
                 action
                 for action in decision.system_actions

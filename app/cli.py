@@ -2368,12 +2368,31 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     account=account,
                 )
         except Exception as exc:  # keep the loop alive; surface via error log
-            if isinstance(exc, OSError) and exc.errno in {errno.EACCES, errno.EPERM}:
+            reader_permission_error = (
+                isinstance(exc, ReaderIpcError)
+                and "App Data permission" in str(exc)
+            )
+            if (
+                isinstance(exc, OSError)
+                and exc.errno in {errno.EACCES, errno.EPERM}
+            ) or reader_permission_error:
+                detail = (
+                    "WeChat data access was denied; "
+                    "reader paused until service restart."
+                )
+                if (
+                    isinstance(exc, ReaderIpcError)
+                    and exc.code == "permission_required"
+                ):
+                    detail = (
+                        "CEO WeChat Reader App Data permission is required; "
+                        f"{role} paused until service restart."
+                    )
                 store.record_error(
                     "wechat",
                     "",
                     "wechat_data_permission_required",
-                    "WeChat data access was denied; reader paused until service restart.",
+                    detail,
                 )
                 _pause_wechat_loop_until_service_restart(time.sleep)
             elif isinstance(exc, ReaderIpcError):
