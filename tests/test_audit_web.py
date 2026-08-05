@@ -2943,7 +2943,7 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_TASK_DAILY_INTERVAL_SECONDS" in html
     assert "task-maintenance 扫 task sources 的间隔秒数" in html
     assert "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS" in html
-    assert "task-maintenance 处理 due follow-ups 的间隔秒数" in html
+    assert "follow-up-delivery 处理 due follow-ups 的间隔秒数" in html
     assert "CEO_POLL_INTERVAL_SECONDS" in html
     assert "CEO_BATCH_SECONDS" in html
     assert "FAST_PATH_UNREAD_BACKOFF" in html

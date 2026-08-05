@@ -146,13 +146,13 @@ rerun without requiring the operator to select again.
 
 ## Scheduled follow-up delivery
 
-Due follow-ups are checked every 60 seconds and delivered in independent batches
-of up to 50. This delivery budget is deliberately separate from `CEO_MAX_BATCHES`,
-which only limits new agent-task discovery. A small discovery batch must never
-cause scheduled follow-ups to wait behind an older backlog. Delivery remains
-ordered, durable, and idempotent: working-hour, completion, daily-cap,
-sensitive-routing, and existing-send checks still run before each send, and a
-restart resumes from the persisted draft state.
+Due follow-ups run in their own maintenance loop every 60 seconds and deliver
+independent batches of up to 50. This loop is separate from daily task-source
+scans, so a slow scan cannot delay an already due message. Its delivery budget
+is deliberately separate from `CEO_MAX_BATCHES`, which only limits new
+agent-task discovery. Delivery remains ordered, durable, and idempotent:
+working-hour, completion, daily-cap, sensitive-routing, and existing-send checks
+still run before each send, and a restart resumes from the persisted draft state.
 
 ## Memory MCP inheritance
 

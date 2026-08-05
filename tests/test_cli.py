@@ -23,6 +23,7 @@ from app.cli import (
     resolve_agent_run_command,
     reset_codex_sessions_command,
     run_consumer_loop,
+    run_follow_up_delivery_loop,
     run_task_maintenance_loop,
     record_feedback_command,
     refresh_org_cache_command,
@@ -4597,7 +4598,6 @@ def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_pat
             settings,
             work_item_interval_seconds=60,
             daily_interval_seconds=3600,
-            follow_up_interval_seconds=900,
             sleep=sleep,
             network_ready=lambda: False,
         )
@@ -4700,7 +4700,6 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
             settings,
             work_item_interval_seconds=31,
             daily_interval_seconds=3600,
-            follow_up_interval_seconds=900,
             sleep=sleep,
             monotonic=lambda: next(times),
             network_ready=lambda: True,
@@ -4713,7 +4712,6 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("completion-check", tmp_path / "worker.sqlite3", 1),
-        ("follow", tmp_path / "worker.sqlite3", False, 50),
         ("sleep", 31),
     ]
 
@@ -4767,7 +4765,6 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
             settings,
             work_item_interval_seconds=31,
             daily_interval_seconds=3600,
-            follow_up_interval_seconds=900,
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             monotonic=lambda: 10.0,
             network_ready=lambda: True,
@@ -4780,11 +4777,10 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",
         "completion-check",
-        "follow",
     ]
 
 
-def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
+def test_task_maintenance_loop_does_not_block_follow_up_delivery(
     monkeypatch, tmp_path
 ):
     calls = []
@@ -4847,7 +4843,6 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
             settings,
             work_item_interval_seconds=31,
             daily_interval_seconds=3600,
-            follow_up_interval_seconds=900,
             sleep=sleep,
             monotonic=lambda: next(times),
             network_ready=lambda: True,
@@ -4860,15 +4855,49 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("completion-check", tmp_path / "worker.sqlite3", 1),
-        ("follow", tmp_path / "worker.sqlite3", False, 50),
         ("sleep", 31),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("sleep", 31),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
-        ("follow", tmp_path / "worker.sqlite3", False, 50),
         ("sleep", 31),
+    ]
+
+
+def test_follow_up_delivery_loop_runs_independently_of_task_maintenance(
+    monkeypatch, tmp_path
+):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=1)
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda received, refresh_evidence=True, limit=50: calls.append(
+            (received.db_path, refresh_evidence, limit)
+        )
+        or 0,
+    )
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_follow_up_delivery_loop(
+            settings,
+            interval_seconds=60,
+            sleep=sleep,
+            network_ready=lambda: True,
+        )
+
+    assert calls == [
+        (tmp_path / "worker.sqlite3", False, 50),
+        ("sleep", 60),
     ]
 
 
@@ -4918,7 +4947,6 @@ def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path
             settings,
             work_item_interval_seconds=31,
             daily_interval_seconds=3600,
-            follow_up_interval_seconds=900,
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             monotonic=lambda: 10.0,
             network_ready=lambda: True,
@@ -4931,7 +4959,6 @@ def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path
         "work",
         "okr",
         "completion-check",
-        "follow",
     ]
 
 
@@ -5092,7 +5119,6 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         settings,
         work_item_interval_seconds,
         daily_interval_seconds,
-        follow_up_interval_seconds,
         network_ready=None,
     ):
         calls.append(
@@ -5100,11 +5126,24 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
                 "task-maintenance",
                 work_item_interval_seconds,
                 daily_interval_seconds,
-                follow_up_interval_seconds,
                 network_ready is gate.ready,
             )
         )
         stop("task-maintenance")
+
+    def follow_up_delivery_loop(
+        settings,
+        interval_seconds,
+        network_ready=None,
+    ):
+        calls.append(
+            (
+                "follow-up-delivery",
+                interval_seconds,
+                network_ready is gate.ready,
+            )
+        )
+        stop("follow-up-delivery")
 
     def oa_pending_scan_loop(
         settings,
@@ -5123,6 +5162,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         stop("oa-pending-scan")
 
     monkeypatch.setattr(cli, "run_task_maintenance_loop", task_maintenance_loop)
+    monkeypatch.setattr(cli, "run_follow_up_delivery_loop", follow_up_delivery_loop)
     monkeypatch.setattr(cli, "run_oa_pending_scan_loop", oa_pending_scan_loop)
     monkeypatch.setattr(
         cli,
@@ -5164,7 +5204,9 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("start", "ceo-agent-service-meeting-consumer", True),
         ("meeting-consumer", 10, 4, True),
         ("start", "ceo-agent-service-task-maintenance", True),
-        ("task-maintenance", 31, 3600, 900, True),
+        ("task-maintenance", 31, 3600, True),
+        ("start", "ceo-agent-service-follow-up-delivery", True),
+        ("follow-up-delivery", 900, True),
         ("start", "ceo-agent-service-oa-pending-scan", True),
         ("oa-pending-scan", 3600, 4, True),
         ("wait",),
@@ -5177,9 +5219,10 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("meeting-producer", "stop meeting-producer"),
         ("meeting-consumer", "stop meeting-consumer"),
         ("task-maintenance", "stop task-maintenance"),
+        ("follow-up-delivery", "stop follow-up-delivery"),
         ("oa-pending-scan", "stop oa-pending-scan"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1, 1, 1, 1]
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):

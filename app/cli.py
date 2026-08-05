@@ -2212,7 +2212,6 @@ def run_task_maintenance_loop(
     *,
     work_item_interval_seconds: int,
     daily_interval_seconds: int,
-    follow_up_interval_seconds: int,
     sleep: Callable[[int], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
     wall_clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
@@ -2228,7 +2227,6 @@ def run_task_maintenance_loop(
 
     now = monotonic()
     next_daily_run = now
-    next_follow_up_run = now
     while True:
         if not network_ready():
             sleep(work_item_interval_seconds)
@@ -2262,18 +2260,29 @@ def run_task_maintenance_loop(
                 lambda: check_follow_up_completions_command(settings, limit=1),
             )
             next_daily_run = now + daily_interval_seconds
-        if now >= next_follow_up_run:
-            run_step(
-                "process_follow_ups",
-                lambda: process_follow_ups_command(
+        sleep(work_item_interval_seconds)
+
+
+def run_follow_up_delivery_loop(
+    settings: WorkerSettings,
+    interval_seconds: int,
+    *,
+    sleep: Callable[[int], None] = time.sleep,
+    network_ready: Callable[[], bool] = _macos_wifi_connected,
+) -> None:
+    store = AutoReplyStore(settings.db_path)
+    while True:
+        if network_ready():
+            try:
+                # max_batches bounds agent task discovery, not durable scheduled delivery.
+                process_follow_ups_command(
                     settings,
                     refresh_evidence=False,
-                    # max_batches bounds agent task discovery, not durable scheduled delivery.
                     limit=50,
-                ),
-            )
-            next_follow_up_run = now + follow_up_interval_seconds
-        sleep(work_item_interval_seconds)
+                )
+            except Exception as exc:
+                store.record_error("", "", "follow_up_delivery", str(exc))
+        sleep(interval_seconds)
 
 
 def run_oa_pending_scan_loop(
@@ -2468,7 +2477,14 @@ def run_service(
                 settings,
                 work_item_interval_seconds=settings.task_work_item_interval_seconds,
                 daily_interval_seconds=settings.task_daily_interval_seconds,
-                follow_up_interval_seconds=settings.task_follow_up_interval_seconds,
+                network_ready=dependency_gate.ready,
+            ),
+        ),
+        (
+            "follow-up-delivery",
+            lambda: run_follow_up_delivery_loop(
+                settings,
+                settings.task_follow_up_interval_seconds,
                 network_ready=dependency_gate.ready,
             ),
         ),

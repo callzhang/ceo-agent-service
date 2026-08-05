@@ -1805,7 +1805,8 @@ def _service_component_snapshots() -> list[dict[str, str]]:
         {"name": "consumer", "role": "reply task execution", "cadence": f"{consumer_poll_interval_seconds()}s"},
         {"name": "meeting-producer", "role": "AI minutes scan", "cadence": f"{meeting_producer_interval_seconds()}s"},
         {"name": "meeting-consumer", "role": "meeting alignment", "cadence": f"{meeting_consumer_poll_interval_seconds()}s"},
-        {"name": "task-maintenance", "role": "task agent scans/follow-ups", "cadence": f"{task_work_item_interval_seconds()}s"},
+        {"name": "task-maintenance", "role": "task agent scans/OKR review", "cadence": f"{task_work_item_interval_seconds()}s"},
+        {"name": "follow-up-delivery", "role": "scheduled follow-up delivery", "cadence": f"{task_follow_up_interval_seconds()}s"},
     ]
 
 
@@ -2448,7 +2449,7 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
         (
             "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS",
             str(task_follow_up_interval_seconds()),
-            "task-maintenance 处理 due follow-ups 的间隔秒数。",
+            "follow-up-delivery 处理 due follow-ups 的间隔秒数。",
         ),
         (
             "CEO_POLL_INTERVAL_SECONDS",
