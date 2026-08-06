@@ -4023,6 +4023,40 @@ def test_history_query_skips_search_text_materialization_without_search():
     assert args == [False, "reply", "meeting", "task"]
 
 
+def test_history_query_has_indexes_for_correlated_reply_lookups(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with sqlite3.connect(store.path) as db:
+        index_names = {
+            row[0]
+            for row in db.execute(
+                "select name from sqlite_master where type='index'"
+            ).fetchall()
+        }
+        query, args = store._history_items_query(
+            send_statuses=None,
+            query_text="",
+            kinds=None,
+            reply_channels=None,
+            object_types=("replay", "wechat", "approval", "task", "meeting"),
+            created_since="",
+        )
+        plan = [
+            str(row[3])
+            for row in db.execute(
+                f"explain query plan {query} order by created_at desc, source_id desc, kind desc limit 1",
+                args,
+            ).fetchall()
+        ]
+
+    assert {
+        "idx_reply_attempts_oa_history",
+        "idx_reply_attempts_trigger_history",
+        "idx_sent_replies_history",
+    } <= index_names
+    assert not any("scan process_attempts" in detail.lower() for detail in plan)
+    assert not any("scan sent" in detail.lower() for detail in plan)
+
+
 def test_history_treats_superseded_blocked_reply_as_skipped(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     blocked_id = store.record_reply_attempt(
