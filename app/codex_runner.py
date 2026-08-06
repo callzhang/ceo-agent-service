@@ -485,8 +485,6 @@ class CodexRunner:
                 developer_instructions or codex_developer_instructions(),
             ),
             "-c",
-            'model_reasoning_summary="concise"',
-            "-c",
             "include_permissions_instructions=false",
             "-c",
             "include_apps_instructions=false",

@@ -384,6 +384,11 @@ transient Codex startup, model refresh, or provider errors cannot produce a
 false alarm before a later attempt succeeds. The default maximum is three
 claimed attempts.
 
+The Direct Agent does not force Codex's optional reasoning-summary setting.
+The summary capability is presentation metadata rather than a task requirement;
+leaving it to the installed CLI avoids a model-cache schema update preventing a
+durable task from starting.
+
 Delivery failures for an otherwise sendable reply are treated as task processing
 failures after the reply attempt has recorded the failed send. This keeps the
 original message retryable instead of completing the task with a failed attempt.
