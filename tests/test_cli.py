@@ -89,6 +89,15 @@ def test_parser_supports_worker_commands():
     assert args.db == "/tmp/worker.sqlite3"
 
 
+def test_quality_check_help_names_the_default_live_channel_gates():
+    help_text = build_parser()._subparsers._group_actions[0].choices[
+        "quality-check"
+    ].format_help()
+
+    assert "DingTalk and Lark" in help_text
+    assert "DingTalk and WeChat" not in help_text
+
+
 def test_parser_requires_structured_agent_run_resolution():
     args = build_parser().parse_args(
         [
