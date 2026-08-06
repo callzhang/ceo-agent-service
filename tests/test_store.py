@@ -4054,6 +4054,42 @@ def test_history_treats_superseded_blocked_reply_as_skipped(tmp_path: Path):
     assert [item.source_id for item in skipped_items] == [blocked_id]
 
 
+def test_history_groups_approval_retries_under_latest_meaningful_review(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    reviewed_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-1:first",
+        trigger_sender="Derek OA",
+        trigger_text="付款申请",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="review",
+        send_status="needs_human",
+    )
+    failed_retry_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-1:own-remark",
+        trigger_sender="Derek OA",
+        trigger_text="付款申请",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="review",
+        send_status="failed",
+    )
+
+    items = store.list_history_items(object_types=("approval",))
+
+    assert failed_retry_id != reviewed_id
+    assert [item.source_id for item in items] == [reviewed_id]
+    assert items[0].status == "needs_human"
+
+
 def test_history_keeps_blocked_side_effects_visible_after_terminal_reply(
     tmp_path: Path,
 ):
@@ -4431,6 +4467,43 @@ def test_list_oa_attempt_history_returns_newest_first(tmp_path: Path):
 
     assert [attempt.id for attempt in history] == [second_id, first_id]
     assert store.list_oa_attempt_history("") == []
+
+
+def test_backfill_oa_audit_metadata_recovers_completed_agent_scan_attempt(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    trigger_message_id = "oa-pending:proc-1:revision-1"
+    assert store.enqueue_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id=trigger_message_id,
+        trigger_create_time="2026-08-06T05:41:00+00:00",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id=trigger_message_id,
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="已审阅并评论要求补充材料。",
+        send_status="needs_human",
+    )
+
+    assert store.backfill_oa_audit_metadata() == 1
+
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == "task-1"
+    assert attempt.oa_url.endswith("procInstId=proc-1&taskId=task-1")
+    assert attempt.oa_action == "review"
 
 
 def test_setup_wizard_step_state_round_trips(tmp_path):

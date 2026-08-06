@@ -93,6 +93,21 @@ class AgentTaskContext:
             "Recent conversation context\n" + _json(messages),
             "Raw material references and exact read commands\n" + _json(materials),
         ]
+        if self.prior_receipts:
+            sections.append(
+                "Safe prior execution receipts\n"
+                + _json(
+                    [
+                        {
+                            "receipt_id": receipt.receipt_id,
+                            "operation": receipt.operation,
+                            "summary": receipt.summary,
+                            "completed": receipt.completed,
+                        }
+                        for receipt in self.prior_receipts
+                    ]
+                )
+            )
         if self.manual_rerun is not None:
             sections.append(
                 "Manual rerun instruction\n"
@@ -124,6 +139,7 @@ _AGENT_RULES = """Direct Agent responsibilities
 - For an explicit repair, send, edit, approval, comment, or other write request, execute the requested action. A diagnosis-only response is not completion; return needs_human or failed when the action cannot be completed.
 - Do not change shared deployment entry points, domains, DNS, routing, or infrastructure configuration in response to one reported failure. Diagnose and report first. Such a change requires either explicit current authorization for that exact change or at least three independently confirmed affected cases in the supplied context. Repeated probes from one machine or network are one case, not independent cases. Without that evidence, leave shared configuration unchanged and return needs_human.
 - Before repeating an external action, query live state to avoid an exact duplicate. A corrected action with changed content is a new requested action, not an exact duplicate.
+- Treat Safe prior execution receipts for the same OA process as idempotency evidence: do not repeat the same confirmed action; first read live OA state, then act only when new evidence requires a different action.
 - Never run authentication login, reset, or logout commands, including dws auth login, dws auth reset, dws auth logout, lark auth login, lark auth reset, or lark auth logout. Authentication readiness is owned by the service gate.
 - Never expose credentials, tokens, cookies, authorization codes, signed URLs, or local credential paths in externally visible output or persisted summaries.
 - Return one final JSON object matching the supplied AgentResult schema. Do not return a plan or an action schema."""

@@ -10,3 +10,13 @@ If the service stops mid-run, the existing stale-lock expiry permits the
 persisted task to resume. Nonzero Codex exits retain a redacted stderr summary
 in the Agent run's structured error; prompts, command arguments, and
 credentials are not stored in that diagnostic field.
+
+Direct Agent results are validated locally after Codex exits. The Direct Agent
+command does not use Codex `--output-schema`: that upstream mode can reject a
+request before the Agent can execute the task. OA receipts must place the
+verified read-back payload in `oa_action_receipt.result` so the completed
+action can be persisted and reconciled.
+
+The service also does not force a Codex reasoning-summary setting. Model
+providers negotiate supported response fields themselves; forcing a setting
+that a provider does not support prevents an Agent process from starting.

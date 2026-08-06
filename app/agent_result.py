@@ -43,6 +43,18 @@ class AgentError(BaseModel):
     )
 
 
+class OaActionReceipt(BaseModel):
+    """A verified OA action that must remain attached to its approval history."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    process_instance_id: str = Field(min_length=1)
+    task_id: str = ""
+    action: str = Field(min_length=1)
+    remark: str = ""
+    result: dict[str, object] = Field(default_factory=dict)
+
+
 class AgentResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -53,6 +65,7 @@ class AgentResult(BaseModel):
     outcome: AgentOutcome
     summary: str = Field(min_length=1)
     error: AgentError = Field(default_factory=AgentError)
+    oa_action_receipt: OaActionReceipt | None = None
 
 
 class EffectKind(StrEnum):

@@ -179,6 +179,7 @@ def test_direct_agent_requires_oa_applicant_notification_after_confirmed_action(
     assert "outcome, summary, and error" in instructions
     assert "completed, no_action, needs_human, or failed" in instructions
     assert "error is always an object" in instructions
+    assert "oa_action_receipt.result" in instructions
     assert "notify that applicant through DingTalk before returning AgentResult" in instructions
     assert "real originator identifier" in instructions
     assert "does not approve, reject, or return the approval" in instructions
@@ -284,6 +285,32 @@ def test_direct_runner_persists_sanitized_process_failure_detail(
     )
     assert run is not None
     assert json.loads(run.structured_error_json)["detail"] == "process failed"
+
+
+def test_direct_runner_does_not_reinject_unrelated_user_mcp_servers(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.unrelated_plugin]\n"
+        'url = "https://example.invalid/mcp"\n'
+        "enabled = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    task = _task(store)
+    executor = RecordingExecutor(_jsonl())
+
+    DirectAgentRunner(store=store, workspace=tmp_path, executor=executor).run(
+        task,
+        _context(task.id),
+    )
+
+    command = executor.commands[0]
+    assert "mcp_servers.unrelated_plugin.enabled=false" not in command
 
 
 def test_direct_runner_persists_new_session_for_later_conversation_messages(

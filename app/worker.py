@@ -1546,6 +1546,12 @@ class DingTalkAutoReplyWorker:
                     )
                     continue
                 try:
+                    if error in RECOVERABLE_AGENT_RUNTIME_ERRORS:
+                        self.store.clear_codex_session(task.conversation_id)
+                        self.store.clear_agent_run_session(
+                            task.id,
+                            task.execution_generation,
+                        )
                     task_status = self._record_agent_runtime_failure_attempt(
                         task,
                         error,
@@ -2247,7 +2253,7 @@ class DingTalkAutoReplyWorker:
             trigger_mentioned_user_ids=tuple(trigger.mentioned_user_ids),
             messages=tuple(messages),
             materials=materials,
-            prior_receipts=(),
+            prior_receipts=self._agent_prior_receipts(task),
             manual_rerun=manual_rerun,
             trigger_raw_payload=dict(trigger.raw_payload),
         )
@@ -2479,6 +2485,29 @@ class DingTalkAutoReplyWorker:
         return process_instance_id, task_id
 
     def _agent_prior_receipts(self, task: ReplyTask) -> tuple[PriorReceipt, ...]:
+        process_instance_id = self._oa_process_instance_id_from_url(task.oa_url)
+        if process_instance_id:
+            receipts = []
+            for attempt in self.store.list_oa_attempt_history(
+                process_instance_id,
+                limit=10,
+            ):
+                if not attempt.oa_action.strip():
+                    continue
+                if attempt.send_status not in {"commented", "completed"}:
+                    continue
+                summary = (attempt.oa_remark or attempt.audit_summary).strip()
+                if not summary:
+                    continue
+                receipts.append(
+                    PriorReceipt(
+                        receipt_id=f"reply-attempt-{attempt.id}",
+                        operation=attempt.oa_action,
+                        summary=summary,
+                        completed=True,
+                    )
+                )
+            return tuple(receipts)
         attempt = self.store.get_latest_reply_attempt_for_trigger(
             task.conversation_id,
             task.trigger_message_id,
@@ -2577,6 +2606,7 @@ class DingTalkAutoReplyWorker:
         run = self.store.get_agent_run(run_result.run_id)
         if run is None:
             raise RuntimeError("agent run was not persisted")
+        oa_metadata = self._agent_oa_audit_metadata(task, run_result.result)
         return self.store.finalize_agent_reply_task(
             task_id=task.id,
             expected_execution_generation=task.execution_generation,
@@ -2602,7 +2632,29 @@ class DingTalkAutoReplyWorker:
             send_status=send_status,
             send_error=send_error,
             channel=task.channel,
+            **oa_metadata,
         )
+
+    @staticmethod
+    def _agent_oa_audit_metadata(
+        task: ReplyTask,
+        result: AgentResult,
+    ) -> dict[str, str]:
+        receipt = result.oa_action_receipt
+        if receipt is None:
+            return {}
+        return {
+            "oa_process_instance_id": receipt.process_instance_id,
+            "oa_task_id": receipt.task_id,
+            "oa_url": task.oa_url,
+            "oa_action": receipt.action,
+            "oa_remark": receipt.remark,
+            "oa_action_result_json": json.dumps(
+                receipt.result,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        }
 
     def _record_agent_attempt(
         self,
