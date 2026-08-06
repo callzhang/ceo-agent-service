@@ -178,6 +178,7 @@ def test_direct_agent_requires_oa_applicant_notification_after_confirmed_action(
 
     assert "outcome, summary, and error" in instructions
     assert "completed, no_action, needs_human, or failed" in instructions
+    assert "error is always an object" in instructions
     assert "notify that applicant through DingTalk before returning AgentResult" in instructions
     assert "real originator identifier" in instructions
     assert "does not approve, reject, or return the approval" in instructions
