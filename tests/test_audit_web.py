@@ -1826,18 +1826,22 @@ def test_history_route_returns_busy_page_when_database_is_locked(
     monkeypatch,
     tmp_path: Path,
 ):
+    calls = 0
+
     def locked_attempt_list(*args, **kwargs):
+        nonlocal calls
         del args, kwargs
+        calls += 1
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(audit_web_module, "render_attempt_list", locked_attempt_list)
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
-
-    response = client.get("/")
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        response = client.get("/")
 
     assert response.status_code == 200
     assert "History is temporarily busy" in response.text
     assert "refresh" in response.text
+    assert calls == 1
 
 
 def test_history_route_renders_chart_on_default_page(tmp_path: Path):

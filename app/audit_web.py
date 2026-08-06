@@ -6957,6 +6957,7 @@ def create_audit_app(
         except sqlite3.OperationalError as exc:
             if not _is_sqlite_busy_error(exc):
                 raise
+            default_attempt_list_cache.get_or_render(_render_history_busy_page)
         yield
 
     app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)

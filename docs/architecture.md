@@ -25,7 +25,7 @@ CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 D
 - 审计页面：默认 `http://127.0.0.1:8765`
 - 运行库：默认 `~/Library/Application Support/ceo-agent-service/auto-reply.sqlite3`
 
-`com.ceo-agent-service.main` 启动 `app.service_supervisor`。supervisor 运行两个独立子进程：`service` 负责数据库备份、消息 producer/consumer、会议处理、任务维护和可选微信组件，`audit-web` 负责审计页面。两个子进程共享同一 SQLite 事实源，但不争用同一 Python 解释器。任一子进程退出时，supervisor 会终止并回收另一方后以失败退出，交由同一个 launchd job 重启；收到停止信号时它也会回收两个子进程，因此不会留下孤儿进程。默认 History 在 Web 进程启动时预热，刷新期间继续返回最近一次完整页面。主服务启动时只恢复当前队列和可安全恢复的运行状态；结果未知的写操作不会作为普通失败自动重试。
+`com.ceo-agent-service.main` 启动 `app.service_supervisor`。supervisor 运行两个独立子进程：`service` 负责数据库备份、消息 producer/consumer、会议处理、任务维护和可选微信组件，`audit-web` 负责审计页面。两个子进程共享同一 SQLite 事实源，但不争用同一 Python 解释器。任一子进程退出时，supervisor 会终止并回收另一方后以失败退出，交由同一个 launchd job 重启；收到停止信号时它也会回收两个子进程，因此不会留下孤儿进程。默认 History 在 Web 进程启动时预热，刷新期间继续返回最近一次完整页面；若初始预热遇到 SQLite 写锁，先缓存并返回轻量忙碌页，再自动刷新。主服务启动时只恢复当前队列和可安全恢复的运行状态；结果未知的写操作不会作为普通失败自动重试。
 
 ## 权威处理流
 
