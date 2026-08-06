@@ -264,6 +264,8 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
             "actions": [
                 {
                     "description": "Comment on the approval",
+                    "capability": "agent_cli.dws",
+                    "operation": "oa approval comment",
                     "target": {"process_instance_id": "pid-1"},
                     "payload": {"remark": "请补充材料。"},
                     "expected_verification": "Read the OA records",
@@ -292,7 +294,8 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert '"operation_id": "op-2"' in rendered
     assert "请补充材料。" in rendered
     assert "dws oa approval detail --instance-id pid-1 --format json" in rendered
-    assert "resolve live IDs and tool choice" in rendered
-    assert "without changing business meaning" in rendered
+    assert "Execute the named operation" in rendered
+    assert "payload unchanged" in rendered
+    assert "return revision_required" in rendered
     assert "Effective Audit Rules" in rendered
     _assert_no_service_oa_resolution_fields(rendered)

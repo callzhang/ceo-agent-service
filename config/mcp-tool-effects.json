@@ -2,17 +2,17 @@
   "version": 1,
   "tools": [
     {
-      "server": "reconciliation_cli",
+      "server": "agent_cli",
       "tool": "execute_reviewed_read",
       "effect": "read_only"
     },
     {
-      "server": "reconciliation_cli",
+      "server": "agent_cli",
       "tool": "read_skill",
       "effect": "read_only"
     },
     {
-      "server": "reconciliation_cli",
+      "server": "agent_cli",
       "tool": "execute_reviewed_write",
       "effect": "effectful"
     },

@@ -42,6 +42,20 @@ def contains_credential(text: str) -> bool:
     return any(pattern.search(text) for pattern in _CREDENTIAL_PATTERNS)
 
 
+def is_sensitive_field_name(value: str) -> bool:
+    normalized = "".join(character for character in value.casefold() if character.isalnum())
+    return (
+        normalized.endswith("token")
+        or normalized.endswith("password")
+        or normalized.endswith("secret")
+        or normalized.endswith("cookie")
+        or normalized.endswith("authorization")
+        or normalized.endswith("apikey")
+        or normalized.endswith("signedurl")
+        or normalized.endswith("signature")
+    )
+
+
 def contains_local_runtime_leak(text: str) -> bool:
     if any(prefix in text for prefix in forbidden_path_prefixes()):
         return True

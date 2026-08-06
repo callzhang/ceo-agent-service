@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 
 from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX
 
@@ -20,6 +21,13 @@ _TOOL_ITEM_TYPES = frozenset({
     "web_search",
     "web_search_call",
 })
+
+
+@dataclass(frozen=True)
+class ControlledCliConfig:
+    command: str
+    args: tuple[str, ...]
+    cwd: str
 
 
 def _jsonl_payloads(raw: str) -> Iterator[dict]:
@@ -123,11 +131,81 @@ def make_read_only_without_tools(command: list[str]) -> None:
     _insert_command_options(
         command,
         [
+            "-c", "features.plugins=false",
+            "-c", "features.apps=false",
             "--sandbox", "read-only",
             "-c", 'approval_policy="never"',
             "-c", "tools.enabled_tools=[]",
             "-c", 'web_search="disabled"',
         ],
+    )
+
+
+def make_role_agent_command(
+    command: list[str],
+    *,
+    reviewed_mcp_tools: dict[str, tuple[str, ...]],
+    controlled_cli: ControlledCliConfig,
+    allow_write: bool,
+) -> None:
+    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
+        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
+    _remove_config_options(
+        command,
+        prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
+    )
+    for name in configured_transport_server_names(command):
+        tools = reviewed_mcp_tools.get(name, ())
+        if tools:
+            encoded = json.dumps(list(tools), separators=(",", ":"))
+            _insert_command_options(
+                command, ["-c", f"mcp_servers.{name}.enabled_tools={encoded}"]
+            )
+        else:
+            _insert_command_options(command, ["-c", f"mcp_servers.{name}.enabled=false"])
+    agent_cli_tools = ["execute_reviewed_read", "read_skill"]
+    if allow_write:
+        agent_cli_tools.insert(1, "execute_reviewed_write")
+    _insert_command_options(
+        command,
+        [
+            "-c", "features.plugins=false",
+            "-c", "features.apps=false",
+            "--sandbox", "read-only",
+            "-c", 'approval_policy="never"',
+            "-c", f"mcp_servers.agent_cli.command={json.dumps(controlled_cli.command)}",
+            "-c", "mcp_servers.agent_cli.args=" + json.dumps(list(controlled_cli.args)),
+            "-c", f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli.cwd)}",
+            "-c", "mcp_servers.agent_cli.enabled_tools=" + json.dumps(agent_cli_tools),
+        ],
+    )
+
+
+def make_consumer_agent_command(
+    command: list[str],
+    *,
+    reviewed_mcp_tools: dict[str, tuple[str, ...]],
+    controlled_cli: ControlledCliConfig,
+) -> None:
+    make_role_agent_command(
+        command,
+        reviewed_mcp_tools=reviewed_mcp_tools,
+        controlled_cli=controlled_cli,
+        allow_write=False,
+    )
+
+
+def make_audit_agent_command(
+    command: list[str],
+    *,
+    reviewed_mcp_tools: dict[str, tuple[str, ...]],
+    controlled_cli: ControlledCliConfig,
+) -> None:
+    make_role_agent_command(
+        command,
+        reviewed_mcp_tools=reviewed_mcp_tools,
+        controlled_cli=controlled_cli,
+        allow_write=True,
     )
 
 
@@ -174,14 +252,14 @@ def make_read_only_with_reviewed_tools(
             "-c",
             'web_search="disabled"',
             "-c",
-            f"mcp_servers.reconciliation_cli.command={json.dumps(controlled_cli_command)}",
+            f"mcp_servers.agent_cli.command={json.dumps(controlled_cli_command)}",
             "-c",
-            "mcp_servers.reconciliation_cli.args="
+            "mcp_servers.agent_cli.args="
             + json.dumps(list(controlled_cli_args), ensure_ascii=True),
             "-c",
-            f"mcp_servers.reconciliation_cli.cwd={json.dumps(controlled_cli_cwd)}",
+            f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli_cwd)}",
             "-c",
-            'mcp_servers.reconciliation_cli.enabled_tools=["execute_reviewed_read","read_skill"]',
+            'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read","read_skill"]',
         ],
     )
 
@@ -230,14 +308,14 @@ def make_direct_agent_sandbox(
             "-c",
             'web_search="disabled"',
             "-c",
-            f"mcp_servers.reconciliation_cli.command={json.dumps(controlled_cli_command)}",
+            f"mcp_servers.agent_cli.command={json.dumps(controlled_cli_command)}",
             "-c",
-            "mcp_servers.reconciliation_cli.args="
+            "mcp_servers.agent_cli.args="
             + json.dumps(list(controlled_cli_args), ensure_ascii=True),
             "-c",
-            f"mcp_servers.reconciliation_cli.cwd={json.dumps(controlled_cli_cwd)}",
+            f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli_cwd)}",
             "-c",
-            "mcp_servers.reconciliation_cli.enabled_tools="
+            "mcp_servers.agent_cli.enabled_tools="
             '["execute_reviewed_read","execute_reviewed_write","read_skill"]',
         ],
     )

@@ -167,7 +167,7 @@ _CONSUMER_AGENT_RULES = """Consumer Agent A responsibilities
 - Return needs_human only when the available evidence leaves a real choice between materially different actions, or requires a personal judgment that cannot be inferred. Do not use it for an action, target, or fact that is already established by the supplied context or a successful live read.
 - A Manual rerun instruction is an explicit human choice. Carry it out and verify it. Return needs_human again only if new live evidence creates a different concrete ambiguity; do not ask again about the original choice.
 - Apply the explicit OA SOP to the live task. For internal_personnel matters, identify who the matter concerns and verify counterpart consistency; an HR conversation may skip counterpart identity matching.
-- For an explicit repair, send, edit, approval, comment, or other write request, propose the exact action for Audit Agent B. B must execute the requested action after acceptance. A diagnosis-only response is not completion; when no executable proposal can be formed, return needs_human or failed rather than claiming execution.
+- For an explicit repair, send, edit, approval, comment, or other write request, propose the exact action for Audit Agent B. Each action names the installed capability and operation separately, and payload is the complete tool argument object B must submit unchanged. B must execute the requested action after acceptance. A diagnosis-only response is not completion; when no executable proposal can be formed, return needs_human or failed rather than claiming execution.
 - Do not change shared deployment entry points, domains, DNS, routing, or infrastructure configuration in response to one reported failure. Diagnose and report first. Such a change requires either explicit current authorization for that exact change or at least three independently confirmed affected cases in the supplied context. Repeated probes from one machine or network are one case, not independent cases. Without that evidence, leave shared configuration unchanged and return needs_human.
 - Before proposing a repeated external action, query live state to avoid an exact duplicate. A corrected action with changed content is a new requested action, not an exact duplicate.
 - Treat Safe prior execution receipts for the same OA process as idempotency evidence: do not repeat the same confirmed action; first read live OA state, then act only when new evidence requires a different action.
@@ -179,7 +179,7 @@ _CONSUMER_AGENT_RULES = """Consumer Agent A responsibilities
 _AUDIT_AGENT_RULES = """Audit Agent B responsibilities
 
 - Independently review Consumer Agent A's complete candidate and execute only an accepted candidate.
-- Preserve the candidate unchanged. You may resolve live IDs and tool choice without changing business meaning.
+- Preserve the candidate unchanged. Execute the named operation with the candidate payload unchanged. If live reading shows that an ID, tool, or argument must change, return revision_required so A produces a replacement proposal.
 - Read live external state before execution, suppress only an exact already-executed revision, execute through the applicable installed capability, and verify the result from the external system.
 - If business meaning must change, return concrete revision_required feedback. Do not rewrite the candidate yourself.
 - Use raw process/task IDs, material references, and exact read commands. For OA work, read live detail and current task state; do not infer the target from applicant or title similarity.

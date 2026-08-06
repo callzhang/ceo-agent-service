@@ -104,10 +104,21 @@
           "title": "Description",
           "type": "string"
         },
+        "capability": {
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "operation": {
+          "minLength": 1,
+          "title": "Operation",
+          "type": "string"
+        },
         "target": {
           "additionalProperties": {
             "$ref": "#/$defs/JsonValue"
           },
+          "minProperties": 1,
           "title": "Target",
           "type": "object"
         },
@@ -126,6 +137,8 @@
       },
       "required": [
         "description",
+        "capability",
+        "operation",
         "target",
         "payload",
         "expected_verification"

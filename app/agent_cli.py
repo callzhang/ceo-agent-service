@@ -19,6 +19,7 @@ from app.bounded_process import (
     run_bounded_process,
 )
 from app.channel_gate import classify_cli_read_failure
+from app.leak_check import is_sensitive_field_name
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
@@ -116,12 +117,18 @@ def _execute_reviewed(
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None,
 ) -> dict[str, object]:
     if not argv:
-        raise AgentReadOnlyViolationError("reconciliation_command_invalid")
+        raise AgentReadOnlyViolationError("agent_cli_command_invalid")
+    if any(
+        argument.startswith("--")
+        and is_sensitive_field_name(argument[2:].partition("=")[0])
+        for argument in argv
+    ):
+        raise AgentReadOnlyViolationError("agent_cli_sensitive_argument")
     reviewed = classifier or NativeCliMetadataClassifier()
     item = {"type": "command_execution", "argv": list(argv)}
     descriptor = describe_native_command(item)
     if descriptor is None:
-        raise AgentReadOnlyViolationError("reconciliation_command_invalid")
+        raise AgentReadOnlyViolationError("agent_cli_command_invalid")
     try:
         reviewed.prewarm()
         command = reviewed.classify(item)
@@ -132,14 +139,14 @@ def _execute_reviewed(
             retryable=exc.retryable,
         )
     if command is None:
-        raise AgentReadOnlyViolationError("reconciliation_command_unreviewed")
+        raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
     if command.effect is not expected_effect:
         raise AgentReadOnlyViolationError("reviewed_cli_effect_mismatch")
     executable = shutil.which(command.cli)
     if executable is None:
         return _process_failure_receipt(
             command,
-            code="reconciliation_cli_start_unavailable",
+            code="agent_cli_start_unavailable",
             retryable=True,
         )
     reviewed_argv = [executable, *argv[1:]]
@@ -170,7 +177,7 @@ def _execute_reviewed(
             "stdout": "",
             "error": {
                 "channel": command.cli,
-                "code": "reconciliation_cli_output_limit_exceeded",
+                "code": "agent_cli_output_limit_exceeded",
                 "retryable": False,
                 "gate_state": "blocked",
             },
@@ -178,7 +185,7 @@ def _execute_reviewed(
     except subprocess.TimeoutExpired:
         return _process_failure_receipt(
             command,
-            code="reconciliation_cli_timeout",
+            code="agent_cli_timeout",
             retryable=True,
         )
     except OSError as exc:
@@ -186,9 +193,9 @@ def _execute_reviewed(
         return _process_failure_receipt(
             command,
             code=(
-                "reconciliation_cli_start_unavailable"
+                "agent_cli_start_unavailable"
                 if retryable
-                else "reconciliation_cli_start_invalid"
+                else "agent_cli_start_invalid"
             ),
             retryable=retryable,
         )
@@ -212,7 +219,7 @@ def _execute_reviewed(
 
 
 server = FastMCP(
-    "reconciliation_cli",
+    "agent_cli",
     instructions=(
         "Read installed Agent skills and run DWS or Lark commands only after "
         "reviewing installed effect metadata."

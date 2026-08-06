@@ -412,7 +412,7 @@ def _reviewed_cli_event(
     item: dict[str, object] = {
         "id": call_id,
         "type": "mcp_tool_call",
-        "server": "reconciliation_cli",
+        "server": "agent_cli",
         "tool": "execute_reviewed_write" if effectful else "execute_reviewed_read",
         "arguments": {"argv": shlex.split(command)},
         "status": "in_progress",

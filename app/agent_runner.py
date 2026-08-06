@@ -28,7 +28,7 @@ from app.codex_history import count_codex_session_lines, find_codex_session_path
 from app.channel_gate import ChannelGateState
 from app.dws_client import DwsClient
 from app.history import safe_observability_error
-from app.leak_check import contains_credential
+from app.leak_check import contains_credential, is_sensitive_field_name
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliCommand,
@@ -679,7 +679,7 @@ class DirectAgentRunner:
             command,
             reviewed_mcp_tools=self.mcp_effect_registry.reviewed_read_tools(),
             controlled_cli_command=sys.executable,
-            controlled_cli_args=("-m", "app.reconciliation_cli"),
+            controlled_cli_args=("-m", "app.agent_cli"),
             controlled_cli_cwd=str(SERVICE_ROOT),
         )
         self.native_cli_classifier.prewarm()
@@ -766,7 +766,7 @@ class DirectAgentRunner:
             raise AgentReadOnlyViolationError("reconciliation_shell_forbidden")
         if item_type == "mcp_tool_call":
             if (
-                item.get("server") == "reconciliation_cli"
+                item.get("server") == "agent_cli"
                 and item.get("tool") == "execute_reviewed_read"
             ):
                 arguments = item.get("arguments")
@@ -1017,7 +1017,7 @@ def _reconciliation_prompt(
     return (
         "Read-only unknown side-effect reconciliation. Never replay the original "
         "operation. Run exact DWS/Lark read commands only through the "
-        "reconciliation_cli execute_reviewed_read tool; direct shell execution is "
+        "agent_cli execute_reviewed_read tool; direct shell execution is "
         "disabled. Query live state with reviewed read-only tools. Return completed "
         "only when the effect is present, no_action only when its absence is confirmed, "
         "and set proof.observed_state to effect_present or effect_absent. The service "
@@ -1095,13 +1095,13 @@ def _is_matching_reconciliation_read_event(
     server = item.get("server")
     tool = item.get("tool")
     controlled_cli = (
-        server == "reconciliation_cli"
+        server == "agent_cli"
         and tool == "execute_reviewed_read"
         and metadata.get("native_cli") in {"dws", "lark-cli"}
     )
     reviewed_mcp = (
         isinstance(server, str)
-        and server != "reconciliation_cli"
+        and server != "agent_cli"
         and isinstance(tool, str)
         and metadata.get("mcp_server") == server
         and metadata.get("operation") == tool
@@ -1322,7 +1322,7 @@ def _mcp_tool_call(
     if not isinstance(item, dict):
         return None
     call = registry.classify(item)
-    if call is None or call.server != "reconciliation_cli":
+    if call is None or call.server != "agent_cli":
         return call
     if call.tool not in {"execute_reviewed_read", "execute_reviewed_write"}:
         return call
@@ -1741,16 +1741,7 @@ def _is_sensitive_key(normalized_key: str) -> bool:
         return True
     if normalized_key.startswith("x") and normalized_key[1:] in _SENSITIVE_KEY_NAMES:
         return True
-    return (
-        normalized_key.endswith("token")
-        or normalized_key.endswith("password")
-        or normalized_key.endswith("secret")
-        or normalized_key.endswith("cookie")
-        or normalized_key.endswith("authorization")
-        or normalized_key.endswith("apikey")
-        or normalized_key.endswith("signedurl")
-        or normalized_key.endswith("signature")
-    )
+    return is_sensitive_field_name(normalized_key)
 
 
 def _sanitize_json_text(value: str) -> str | None:

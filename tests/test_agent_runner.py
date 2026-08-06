@@ -6,12 +6,13 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import AgentTaskContext
-from app.agent_result import AgentOutcome
+from app.agent_result import AgentOutcome, EffectKind
 from app.agent_runner import (
     AGENT_RESULT_SCHEMA_PATH,
     AgentConversationLockedError,
     AgentRunUnavailableError,
     DirectAgentRunner,
+    McpToolEffectRegistry,
     direct_agent_developer_instructions,
 )
 from app.process_runner import ProcessRunResult
@@ -20,6 +21,37 @@ from app.service_codex_config import (
     ServiceMcpConfigIssue,
 )
 from app.store import AgentRole, AutoReplyStore
+
+
+def test_mcp_effect_registry_qualifies_operation_with_server():
+    registry = McpToolEffectRegistry(
+        {
+            ("server_a", "write"): EffectKind.EFFECTFUL,
+            ("server_b", "write"): EffectKind.EFFECTFUL,
+        }
+    )
+
+    first = registry.classify(
+        {
+            "type": "mcp_tool_call",
+            "server": "server_a",
+            "tool": "write",
+            "arguments": {"value": "same"},
+        }
+    )
+    second = registry.classify(
+        {
+            "type": "mcp_tool_call",
+            "server": "server_b",
+            "tool": "write",
+            "arguments": {"value": "same"},
+        }
+    )
+
+    assert first is not None and second is not None
+    assert first.server == "server_a"
+    assert second.server == "server_b"
+    assert first.operation == second.operation == "write"
 
 
 def _task(store: AutoReplyStore):

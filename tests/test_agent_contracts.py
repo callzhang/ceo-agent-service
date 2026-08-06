@@ -11,6 +11,7 @@ from app.agent_contracts import (
     AuditOutcome,
     ConsumerAgentResult,
     ConsumerOutcome,
+    ProposedAction,
 )
 from app.agent_result import parse_typed_agent_result
 
@@ -32,6 +33,8 @@ def _proposal() -> dict[str, object]:
         "actions": [
             {
                 "description": "Send one private message",
+                "capability": "agent_cli.dws",
+                "operation": "chat message send",
                 "target": {"conversation_reference": "cid-1"},
                 "payload": {"text": "The published result is effective today."},
                 "expected_verification": "Read the sent message by operation id",
@@ -79,6 +82,38 @@ def test_consumer_proposal_keeps_facts_and_judgment_separate():
     assert result.proposal is not None
     assert result.proposal.sourced_facts[0].references == ("message:trigger",)
     assert result.proposal.authored_judgment == "Use a factual private notice."
+
+
+def test_proposed_action_rejects_empty_target():
+    with pytest.raises(ValidationError):
+        ProposedAction.model_validate(
+            {
+                "description": "Send",
+                "capability": "agent_cli.dws",
+                "operation": "chat message send",
+                "target": {},
+                "payload": {"text": "done"},
+                "expected_verification": "Message exists",
+            }
+        )
+
+
+def test_proposed_action_requires_operation_identity():
+    action = _proposal()["actions"][0]
+    assert isinstance(action, dict)
+    action.pop("operation")
+
+    with pytest.raises(ValidationError):
+        ProposedAction.model_validate(action)
+
+
+def test_proposed_action_requires_capability_identity():
+    action = _proposal()["actions"][0]
+    assert isinstance(action, dict)
+    action.pop("capability")
+
+    with pytest.raises(ValidationError):
+        ProposedAction.model_validate(action)
 
 
 @pytest.mark.parametrize(

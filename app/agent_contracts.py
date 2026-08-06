@@ -80,9 +80,12 @@ class ProposedAction(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     description: str = Field(min_length=1)
-    target: dict[str, JsonValue]
+    capability: str = Field(min_length=1)
+    operation: str = Field(min_length=1)
+    target: dict[str, JsonValue] = Field(min_length=1)
     payload: dict[str, JsonValue]
     expected_verification: str = Field(min_length=1)
+
 
 
 class ProposalFact(BaseModel):
