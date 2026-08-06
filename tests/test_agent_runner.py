@@ -164,7 +164,8 @@ def test_direct_runner_uses_native_codex_config_without_mcp_whitelist(
     assert "features.apps=false" not in command_text
     assert "reconciliation_cli" not in command_text
     assert "--dangerously-bypass-approvals-and-sandbox" in command
-    assert str(AGENT_RESULT_SCHEMA_PATH) in command
+    assert "--output-schema" not in command
+    assert str(AGENT_RESULT_SCHEMA_PATH) not in command
     assert result.result.outcome is AgentOutcome.COMPLETED
     assert result.events == ()
     assert result.receipts == ()
@@ -173,6 +174,10 @@ def test_direct_runner_uses_native_codex_config_without_mcp_whitelist(
 def test_direct_agent_requires_oa_applicant_notification_after_confirmed_action():
     instructions = direct_agent_developer_instructions()
 
+    assert "outcome, summary, and error" in instructions
+    assert "completed, no_action, needs_human, or failed" in instructions
+    assert "error is always an object" in instructions
+    assert "oa_action_receipt.result" in instructions
     assert "notify that applicant through DingTalk before returning AgentResult" in instructions
     assert "real originator identifier" in instructions
     assert "does not approve, reject, or return the approval" in instructions
