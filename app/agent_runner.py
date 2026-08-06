@@ -40,7 +40,6 @@ from app.native_cli_metadata import (
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRun, AgentRunLeaseLostError, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import (
-    make_direct_agent_sandbox,
     make_read_only_with_reviewed_tools,
 )
 
@@ -66,11 +65,11 @@ DIRECT_AGENT_DEVELOPER_INSTRUCTIONS = """You are the Direct Agent for one queued
 - The Agent owns evidence reads, business judgment, direct execution and verification.
 - Use raw identifiers, references, exact read commands, and live tool results. Do not rely on service-side target assumptions.
 - Complete authorized work directly with available CLI and MCP tools. Do not produce plans, action arrays, or requests for service execution.
-- Return only one JSON object matching the AgentResult schema supplied to Codex.
+- Return only one JSON result with outcome, summary, and error. The outcome is completed, no_action, needs_human, or failed; summary is a nonempty factual description; error is always an object with code, retryable, and authorization_required, using an empty code and false flags when there is no error.
 - Never run authentication login, reset, or logout commands. Authentication readiness belongs to the service gate.
 - Never expose credentials, tokens, cookies, authorization codes, signed URLs, or local credential paths.
 - Use the configured MCP tools and installed DWS/Lark CLIs directly. Read an applicable installed SKILL.md before using a business capability.
-- When an OA action is performed, include oa_action_receipt with the exact process_instance_id, task_id, action, remark, and read-back result. Use null when no OA action was performed; older resumed sessions that omit this optional receipt remain valid.
+- When an OA action is performed, include oa_action_receipt with the exact process_instance_id, task_id, action, remark, and put the live read-back result in oa_action_receipt.result. Use null when no OA action was performed.
 - After any confirmed OA action (approve, reject, return, or comment), identify the OA originator from the approval detail and notify that applicant through DingTalk before returning AgentResult. State the actual action and, when relevant, the next node or material needed. Use the real originator identifier; do not notify someone merely because they forwarded the request. Verify the send was accepted. If the originator cannot be resolved or notification fails, report that concrete exception in the final summary; do not invent delivery.
 - After an OA review that does not approve, reject, or return the approval, notify that same applicant through DingTalk before returning AgentResult. Say that the approval remains pending, give the concrete missing material or other factual reason, and state the next action needed. Verify the send was accepted; do not silently rely on an OA comment or a group reminder as notice to the applicant.
 - Use the original conversation context and live tool results to decide and execute the task. Report the actual outcome without inventing success."""
@@ -466,10 +465,11 @@ class DirectAgentRunner:
             prompt=prompt,
             session_id=session_id,
             output_schema_path=AGENT_RESULT_SCHEMA_PATH,
+            use_output_schema=False,
             approval_policy=approval_policy,
             developer_instructions=developer_instructions,
             use_approval_bypass=not read_only,
-            preserve_native_model_config=True,
+            ignore_user_config=True,
         )
         saw_json = False
         stream_line_count = 0
@@ -645,6 +645,7 @@ class DirectAgentRunner:
             prompt=prompt,
             session_id=None,
             output_schema_path=AGENT_RECONCILIATION_SCHEMA_PATH,
+            use_output_schema=False,
             approval_policy="never",
             developer_instructions=(
                 direct_agent_developer_instructions()
@@ -652,7 +653,7 @@ class DirectAgentRunner:
                 + READ_ONLY_DEVELOPER_INSTRUCTION
             ),
             use_approval_bypass=False,
-            preserve_native_model_config=True,
+            ignore_user_config=True,
         )
         make_read_only_with_reviewed_tools(
             command,

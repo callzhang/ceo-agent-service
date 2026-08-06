@@ -140,7 +140,7 @@ def store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "reply.sqlite3")
 
 
-def test_direct_runner_uses_native_codex_config_without_mcp_whitelist(
+def test_direct_runner_uses_service_mcp_configuration_only(
     tmp_path: Path,
     store: AutoReplyStore,
 ):
@@ -157,14 +157,17 @@ def test_direct_runner_uses_native_codex_config_without_mcp_whitelist(
     command_text = " ".join(command)
     assert command[:2] == ["codex", "exec"]
     assert "resume" not in command
-    assert "--ignore-user-config" not in command
+    assert "--ignore-user-config" in command
     assert "enabled_tools=" not in command_text
-    assert ".enabled=false" not in command_text
+    assert "mcp_servers.brightdata.enabled=false" not in command
+    assert "mcp_servers.crm_connector.enabled=false" not in command
+    assert "mcp_servers.fundflow.enabled=false" not in command
     assert "features.plugins=false" not in command_text
     assert "features.apps=false" not in command_text
     assert "reconciliation_cli" not in command_text
     assert "--dangerously-bypass-approvals-and-sandbox" in command
-    assert str(AGENT_RESULT_SCHEMA_PATH) in command
+    assert "--output-schema" not in command
+    assert str(AGENT_RESULT_SCHEMA_PATH) not in command
     assert result.result.outcome is AgentOutcome.COMPLETED
     assert result.events == ()
     assert result.receipts == ()
@@ -173,6 +176,10 @@ def test_direct_runner_uses_native_codex_config_without_mcp_whitelist(
 def test_direct_agent_requires_oa_applicant_notification_after_confirmed_action():
     instructions = direct_agent_developer_instructions()
 
+    assert "outcome, summary, and error" in instructions
+    assert "completed, no_action, needs_human, or failed" in instructions
+    assert "error is always an object" in instructions
+    assert "oa_action_receipt.result" in instructions
     assert "notify that applicant through DingTalk before returning AgentResult" in instructions
     assert "real originator identifier" in instructions
     assert "does not approve, reject, or return the approval" in instructions
@@ -278,6 +285,32 @@ def test_direct_runner_persists_sanitized_process_failure_detail(
     )
     assert run is not None
     assert json.loads(run.structured_error_json)["detail"] == "process failed"
+
+
+def test_direct_runner_does_not_reinject_unrelated_user_mcp_servers(
+    tmp_path: Path,
+    store: AutoReplyStore,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.unrelated_plugin]\n"
+        'url = "https://example.invalid/mcp"\n'
+        "enabled = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    task = _task(store)
+    executor = RecordingExecutor(_jsonl())
+
+    DirectAgentRunner(store=store, workspace=tmp_path, executor=executor).run(
+        task,
+        _context(task.id),
+    )
+
+    command = executor.commands[0]
+    assert "mcp_servers.unrelated_plugin.enabled=false" not in command
 
 
 def test_direct_runner_persists_new_session_for_later_conversation_messages(
