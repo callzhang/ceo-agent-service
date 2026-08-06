@@ -551,6 +551,31 @@ def test_codex_command_can_skip_output_schema_for_service_result_validation(
     assert "--output-schema" not in command
 
 
+def test_codex_command_loads_one_service_mcp_snapshot(tmp_path: Path, monkeypatch):
+    import app.codex_runner as codex_runner_module
+
+    original = codex_runner_module.load_service_mcp_servers
+    calls = 0
+
+    def counted_load(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        codex_runner_module,
+        "load_service_mcp_servers",
+        counted_load,
+    )
+
+    CodexRunner(workspace=tmp_path, codex_bin="codex").build_command(
+        prompt="hello",
+        session_id=None,
+    )
+
+    assert calls == 1
+
+
 def test_codex_runner_env_does_not_load_personal_memory_connector_env_file(
     tmp_path: Path, monkeypatch
 ):

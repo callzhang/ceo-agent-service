@@ -15,6 +15,10 @@ from app.agent_runner import (
     direct_agent_developer_instructions,
 )
 from app.process_runner import ProcessRunResult
+from app.service_codex_config import (
+    ServiceMcpConfigError,
+    ServiceMcpConfigIssue,
+)
 from app.store import AutoReplyStore
 
 
@@ -495,3 +499,44 @@ def test_runtime_failures_are_persisted_as_regular_failures(
     assert run.status == "failed"
     assert run.side_effect_state == "none"
     assert error_code in run.structured_error_json
+
+
+def test_service_mcp_config_failure_does_not_leave_claimed_run_running(
+    tmp_path: Path,
+    store: AutoReplyStore,
+):
+    task = _task(store)
+    runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(_jsonl()),
+    )
+
+    def fail_build_command(**kwargs):
+        del kwargs
+        raise ServiceMcpConfigError(
+            path=tmp_path / "service-mcp.json",
+            issues=(
+                ServiceMcpConfigIssue(
+                    server_name="xiaoqing_interview",
+                    field="command",
+                    reason="service transport command is not configured",
+                ),
+            ),
+        )
+
+    runner.codex.build_command = fail_build_command
+
+    with pytest.raises(RuntimeError, match="service_mcp_config_invalid"):
+        runner.run(task, _context(task.id))
+
+    run = store.get_agent_run_for_task_generation(
+        task.id,
+        task.execution_generation,
+    )
+    assert run.status == "failed"
+    assert run.side_effect_state == "none"
+    assert json.loads(run.structured_error_json) == {
+        "code": "service_mcp_config_invalid",
+        "retryable": True,
+    }

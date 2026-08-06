@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 
@@ -36,6 +37,11 @@ def clear_fake_store() -> None:
 def _write_manifest(path: Path, servers: dict[str, object]) -> Path:
     path.write_text(json.dumps({"servers": servers}), encoding="utf-8")
     return path
+
+
+def _expired_jwt() -> str:
+    payload = base64.urlsafe_b64encode(b'{"exp":1}').decode().rstrip("=")
+    return f"header.{payload}.signature"
 
 
 def test_mcp_doctor_reports_service_manifest_transports_ready(
@@ -135,7 +141,8 @@ def test_mcp_doctor_reports_missing_xiaoqing_command_without_secret_values(
     )
     by_name = {status.name: status for status in statuses}
 
-    assert by_name["memory_connector"].ready is True
+    assert by_name["memory_connector"].ready is False
+    assert by_name["memory_connector"].state == "missing_config"
     assert by_name["xiaoqing_interview"] == McpStatus(
         name="xiaoqing_interview",
         state="missing_config",
@@ -144,6 +151,86 @@ def test_mcp_doctor_reports_missing_xiaoqing_command_without_secret_values(
         recover_command="fix xiaoqing_interview in the service MCP manifest",
     )
     assert secret not in repr(statuses)
+
+
+def test_mcp_doctor_reports_expired_manifest_bearer_token(tmp_path: Path) -> None:
+    config = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "memory_connector": {
+                "url": "https://memory.example/mcp/",
+                "bearer_token_env_var": "CONNECTOR_API_KEY",
+            }
+        },
+    )
+
+    statuses = check_mcp_statuses(
+        service_config_path=config,
+        env={"CONNECTOR_API_KEY": _expired_jwt()},
+    )
+
+    assert statuses == [
+        McpStatus(
+            name="memory_connector",
+            state="token_expired",
+            ready=False,
+            reason="configured bearer token is expired",
+            authorization_required=True,
+            recover_command="configure CONNECTOR_API_KEY",
+        )
+    ]
+
+
+def test_mcp_doctor_live_probe_uses_bearer_and_rejects_unauthorized(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "memory_connector": {
+                "url": "https://memory.example/mcp/",
+                "bearer_token_env_var": "CONNECTOR_API_KEY",
+            }
+        },
+    )
+    observed: dict[str, object] = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            request = httpx.Request("GET", "https://memory.example/mcp/")
+            response = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError("secret response", request=request, response=response)
+
+    class Client:
+        def __init__(self, **kwargs):
+            observed["client_kwargs"] = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, **kwargs):
+            observed["url"] = url
+            observed["headers"] = kwargs.get("headers")
+            return Response()
+
+    import httpx
+
+    monkeypatch.setattr("app.mcp_doctor.httpx.Client", Client)
+
+    statuses = check_mcp_statuses(
+        service_config_path=config,
+        env={"CONNECTOR_API_KEY": "must-not-appear"},
+        verify_live=True,
+    )
+
+    assert observed["headers"] == {"Authorization": "Bearer must-not-appear"}
+    assert statuses[0].state == "needs_login"
+    assert statuses[0].reason == "HTTP authorization failed"
+    assert "must-not-appear" not in repr(statuses)
 
 
 def test_mcp_doctor_notification_is_sent_once(tmp_path: Path) -> None:

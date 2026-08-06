@@ -1,13 +1,13 @@
-import base64
 import json
 import os
-import time
 from pathlib import Path
 
 from app.dws_client import dws_noninteractive_environment
 from app.prompt import ceo_agent_thread_prompt
 from app.service_codex_config import (
     ServiceMcpConfigError,
+    ServiceMcpServer,
+    jwt_token_is_expired,
     load_service_mcp_servers,
     service_mcp_config_options,
 )
@@ -78,8 +78,10 @@ DEFAULT_CODEX_MODEL = "gpt-5.5"
 DEFAULT_CODEX_MODEL_REASONING_EFFORT = "medium"
 
 
-def _memory_connector_runtime_instructions() -> str:
-    issue = memory_connector_config_issue()
+def _memory_connector_runtime_instructions(
+    servers: tuple[ServiceMcpServer, ...] | None = None,
+) -> str:
+    issue = memory_connector_config_issue(servers)
     if not issue:
         return (
             "Memory connector runtime\n\n"
@@ -95,13 +97,15 @@ def _memory_connector_runtime_instructions() -> str:
     )
 
 
-def codex_developer_instructions() -> str:
+def codex_developer_instructions(
+    servers: tuple[ServiceMcpServer, ...] | None = None,
+) -> str:
     return (
         f"{CODEX_DEVELOPER_INSTRUCTIONS_PREFIX}\n\n"
         f"{DWS_MATERIAL_READING_INSTRUCTIONS}\n\n"
         f"{XIAOQING_INTERVIEW_READING_INSTRUCTIONS}\n\n"
         f"{ceo_agent_thread_prompt()}\n\n"
-        f"{_memory_connector_runtime_instructions()}"
+        f"{_memory_connector_runtime_instructions(servers)}"
     )
 
 
@@ -154,11 +158,14 @@ def codex_model_config_options() -> list[str]:
     return options
 
 
-def memory_connector_config_issue() -> str:
-    try:
-        servers = load_service_mcp_servers()
-    except ServiceMcpConfigError as exc:
-        return f"service MCP configuration is invalid: {exc.reason}"
+def memory_connector_config_issue(
+    servers: tuple[ServiceMcpServer, ...] | None = None,
+) -> str:
+    if servers is None:
+        try:
+            servers = load_service_mcp_servers()
+        except ServiceMcpConfigError as exc:
+            return f"service MCP configuration is invalid: {exc.reason}"
     memory_connector = next(
         (server for server in servers if server.name == "memory_connector"),
         None,
@@ -166,25 +173,9 @@ def memory_connector_config_issue() -> str:
     if memory_connector is None:
         return "memory_connector is not present in the service MCP manifest"
     token_env = memory_connector.bearer_token_env_var
-    if token_env and _jwt_token_is_expired(os.environ.get(token_env, "")):
+    if token_env and jwt_token_is_expired(os.environ.get(token_env, "")):
         return "memory connector token is expired"
     return ""
-
-
-def _jwt_token_is_expired(token: str, *, now: float | None = None) -> bool:
-    parts = token.split(".")
-    if len(parts) < 2:
-        return False
-    payload_segment = parts[1]
-    try:
-        padded = payload_segment + "=" * ((4 - len(payload_segment) % 4) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-    except (ValueError, json.JSONDecodeError):
-        return False
-    exp = payload.get("exp")
-    if not isinstance(exp, int | float):
-        return False
-    return exp <= (time.time() if now is None else now)
 
 
 class CodexRunner:
@@ -231,6 +222,15 @@ class CodexRunner:
         effective_approval_bypass = (
             use_approval_bypass and approval_policy != "never"
         )
+        service_mcp_servers = load_service_mcp_servers()
+        service_mcp_options = service_mcp_config_options(
+            servers=service_mcp_servers
+        )
+        effective_developer_instructions = (
+            developer_instructions
+            if developer_instructions is not None
+            else codex_developer_instructions(service_mcp_servers)
+        )
         image_options: list[str] = []
         for image_path in image_paths or []:
             image_options.extend(["--image", str(image_path)])
@@ -251,7 +251,7 @@ class CodexRunner:
             "--ignore-rules",
             "--disable",
             "hooks",
-            *service_mcp_config_options(),
+            *service_mcp_options,
             "-c",
             _config_string("approval_policy", approval_policy),
             *(
@@ -262,7 +262,7 @@ class CodexRunner:
             "-c",
             _config_string(
                 "developer_instructions",
-                developer_instructions or codex_developer_instructions(),
+                effective_developer_instructions,
             ),
             "-c",
             "include_permissions_instructions=false",

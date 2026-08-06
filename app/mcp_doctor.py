@@ -13,6 +13,7 @@ from app.service_codex_config import (
     ServiceMcpConfigError,
     ServiceMcpConfigIssue,
     ServiceMcpServer,
+    jwt_token_is_expired,
     load_service_mcp_servers,
 )
 from app.store import AutoReplyStore
@@ -92,12 +93,25 @@ def check_mcp_statuses(
     try:
         servers = load_service_mcp_servers(service_config_path, env=env)
     except ServiceMcpConfigError as exc:
-        servers = exc.valid_servers
+        servers = ()
         issues = exc.issues
+        blocked_servers = [
+            McpStatus(
+                name=server.name,
+                state="missing_config",
+                ready=False,
+                reason="service MCP manifest contains invalid entries",
+                recover_command="fix the service MCP manifest",
+            )
+            for server in exc.valid_servers
+        ]
+    else:
+        blocked_servers = []
 
-    statuses = [
+    statuses = blocked_servers + [
         _service_server_status(
             server,
+            env=env,
             verify_live=verify_live,
             memory_reachability_checker=memory_reachability_checker,
         )
@@ -166,21 +180,38 @@ def mcp_doctor_report(
 def _service_server_status(
     server: ServiceMcpServer,
     *,
+    env: Mapping[str, str],
     verify_live: bool,
     memory_reachability_checker: Callable[[str], None] | None,
 ) -> McpStatus:
+    bearer_token = (
+        env.get(server.bearer_token_env_var, "")
+        if server.bearer_token_env_var
+        else ""
+    )
+    if bearer_token and jwt_token_is_expired(bearer_token):
+        return McpStatus(
+            name=server.name,
+            state="token_expired",
+            ready=False,
+            reason="configured bearer token is expired",
+            authorization_required=True,
+            recover_command=f"configure {server.bearer_token_env_var}",
+        )
     if verify_live and server.name == "memory_connector" and server.url is not None:
         try:
             if memory_reachability_checker is not None:
                 memory_reachability_checker(server.url)
             else:
-                _check_http_reachable(server.url)
+                _check_http_reachable(server.url, bearer_token=bearer_token)
         except Exception as exc:
+            state, reason = _live_probe_failure(exc)
             return McpStatus(
                 name=server.name,
-                state=_network_or_tool_state(str(exc)),
+                state=state,
                 ready=False,
-                reason=str(exc),
+                reason=reason,
+                authorization_required=state in AUTHORIZATION_STATES,
                 recover_command="ceo-agent doctor-mcp --verify-live",
             )
 
@@ -228,9 +259,28 @@ def _network_or_tool_state(message: str) -> str:
     return "tool_not_found"
 
 
-def _check_http_reachable(url: str) -> None:
+def _live_probe_failure(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code in {401, 403}:
+            return "needs_login", "HTTP authorization failed"
+        if status_code >= 500:
+            return "network_blocked", "HTTP service is unavailable"
+        return "tool_not_found", "HTTP probe was rejected"
+    state = _network_or_tool_state(type(exc).__name__ + " " + str(exc))
+    reasons = {
+        "network_blocked": "service endpoint is unreachable",
+        "needs_login": "service authorization is required",
+        "tool_not_found": "service probe failed",
+    }
+    return state, reasons[state]
+
+
+def _check_http_reachable(url: str, *, bearer_token: str = "") -> None:
+    headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else None
     with httpx.Client(timeout=10.0, trust_env=False) as client:
-        client.get(url)
+        response = client.get(url, headers=headers)
+        response.raise_for_status()
 
 
 def _error_detail(status: McpStatus) -> str:
@@ -242,5 +292,5 @@ def _notification_message(status: McpStatus) -> str:
     command = f" Run: {status.recover_command}." if status.recover_command else ""
     return (
         f"{status.name} is {status.state}: {status.reason}. "
-        f"Related tasks are blocked until this is fixed.{command}"
+        f"The service gate reports this dependency unavailable.{command}"
     )[:240]

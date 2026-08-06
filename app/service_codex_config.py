@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import string
+import time
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -156,9 +158,15 @@ def service_mcp_config_options(
     path: Path | str | None = None,
     *,
     env: Mapping[str, str] = os.environ,
+    servers: Iterable[ServiceMcpServer] | None = None,
 ) -> list[str]:
     options: list[str] = []
-    for server in load_service_mcp_servers(path, env=env):
+    configured_servers = (
+        tuple(servers)
+        if servers is not None
+        else load_service_mcp_servers(path, env=env)
+    )
+    for server in configured_servers:
         prefix = f"mcp_servers.{server.name}"
         if server.url is not None:
             _append_option(options, f"{prefix}.url", server.url)
@@ -181,6 +189,22 @@ def service_mcp_config_options(
                 dict(server.env_http_headers),
             )
     return options
+
+
+def jwt_token_is_expired(token: str, *, now: float | None = None) -> bool:
+    parts = token.split(".")
+    if len(parts) < 2:
+        return False
+    payload_segment = parts[1]
+    try:
+        padded = payload_segment + "=" * ((4 - len(payload_segment) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, json.JSONDecodeError):
+        return False
+    exp = payload.get("exp")
+    if not isinstance(exp, int | float):
+        return False
+    return exp <= (time.time() if now is None else now)
 
 
 def service_mcp_url_is_safe(url: str) -> bool:

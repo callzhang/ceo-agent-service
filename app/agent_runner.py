@@ -38,6 +38,7 @@ from app.native_cli_metadata import (
     structured_target_identifiers,
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
+from app.service_codex_config import ServiceMcpConfigError
 from app.store import AgentRun, AgentRunLeaseLostError, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import (
     make_read_only_with_reviewed_tools,
@@ -460,16 +461,24 @@ class DirectAgentRunner:
                 "command. Query live state only.\n\n" + prompt
             )
             developer_instructions += "\n\n" + READ_ONLY_DEVELOPER_INSTRUCTION
-        command = self.codex.build_command(
-            prompt=prompt,
-            session_id=session_id,
-            output_schema_path=AGENT_RESULT_SCHEMA_PATH,
-            use_output_schema=False,
-            approval_policy=approval_policy,
-            developer_instructions=developer_instructions,
-            use_approval_bypass=not read_only,
-            ignore_user_config=True,
-        )
+        try:
+            command = self.codex.build_command(
+                prompt=prompt,
+                session_id=session_id,
+                output_schema_path=AGENT_RESULT_SCHEMA_PATH,
+                use_output_schema=False,
+                approval_policy=approval_policy,
+                developer_instructions=developer_instructions,
+                use_approval_bypass=not read_only,
+                ignore_user_config=True,
+            )
+        except ServiceMcpConfigError as exc:
+            self._record_failure(
+                run.id,
+                "service_mcp_config_invalid",
+                now=now,
+            )
+            raise RuntimeError("service_mcp_config_invalid") from exc
         saw_json = False
         stream_line_count = 0
 

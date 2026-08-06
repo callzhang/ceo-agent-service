@@ -15,6 +15,8 @@ from app.mcp_doctor import check_mcp_statuses
 from app.prompt import DEFAULT_WORK_PROFILE_TEXT
 from app.service_codex_config import (
     DEFAULT_SERVICE_MCP_CONFIG_PATH,
+    ServiceMcpConfigError,
+    load_service_mcp_servers,
     service_mcp_url_is_safe,
 )
 from app.setup_wizard_models import (
@@ -1148,10 +1150,23 @@ def _setup_service_config(
         SEED_USER_PROMPT_TEMPLATE.read_text(encoding="utf-8"),
     )
     _seed_missing_file(work_profile, DEFAULT_WORK_PROFILE_TEXT)
-    _seed_missing_file(
-        service_mcp_config,
-        DEFAULT_SERVICE_MCP_CONFIG_PATH.read_text(encoding="utf-8"),
-    )
+    setup_env = os.environ.copy()
+    setup_env.update(values)
+    setup_env.update(env)
+    _seed_or_refresh_service_mcp_manifest(service_mcp_config, env=setup_env)
+    try:
+        load_service_mcp_servers(service_mcp_config, env=setup_env)
+    except ServiceMcpConfigError as exc:
+        return SetupWizardEvent(
+            step_id="service_config",
+            action_id="setup_service_config",
+            status="failed",
+            summary=exc.reason,
+            evidence={
+                "env_path": _redact_evidence_path(env_path),
+                "service_mcp_config": _redact_evidence_path(service_mcp_config),
+            },
+        )
 
     return SetupWizardEvent(
         step_id="service_config",
@@ -1176,6 +1191,63 @@ def _seed_missing_file(path: Path, content: str) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _seed_or_refresh_service_mcp_manifest(
+    path: Path,
+    *,
+    env: dict[str, str],
+) -> None:
+    seed = json.loads(DEFAULT_SERVICE_MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+    seed_servers = seed["servers"]
+    if path.exists():
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+        current_servers = current.get("servers") if isinstance(current, dict) else None
+        if not isinstance(current_servers, dict) or any(
+            name not in seed_servers or entry != seed_servers[name]
+            for name, entry in current_servers.items()
+        ):
+            return
+
+    selected_servers = {
+        name: entry
+        for name, entry in seed_servers.items()
+        if _service_mcp_entry_is_configured(entry, env=env)
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {"servers": selected_servers},
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _service_mcp_entry_is_configured(
+    entry: object,
+    *,
+    env: dict[str, str],
+) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    references: list[str] = []
+    for field in ("url_env", "command_env", "args_env", "bearer_token_env_var"):
+        value = entry.get(field)
+        if isinstance(value, str):
+            references.append(value)
+    env_headers = entry.get("env_http_headers")
+    if isinstance(env_headers, dict):
+        references.extend(
+            value for value in env_headers.values() if isinstance(value, str)
+        )
+    return all(bool(env.get(reference, "").strip()) for reference in references)
 
 
 def _check_mcp(*, repo_root: Path) -> SetupStepStatus:
@@ -1211,65 +1283,105 @@ def _setup_mcp(
     repo_root: Path,
     env: dict[str, str],
 ) -> SetupWizardEvent:
+    def first_nonblank(*values: str | None) -> str:
+        for value in values:
+            normalized = (value or "").strip()
+            if normalized:
+                return normalized
+        return ""
+
     env_path = repo_root / ".env"
     persisted_values = _raw_env_values(env_path)
-    service_config_value = (
-        env.get("CEO_SERVICE_MCP_CONFIG_PATH")
-        or os.getenv("CEO_SERVICE_MCP_CONFIG_PATH", "")
-        or persisted_values.get("CEO_SERVICE_MCP_CONFIG_PATH", "")
-        or "data/config/service-mcp.json"
+    service_config_value = first_nonblank(
+        env.get("CEO_SERVICE_MCP_CONFIG_PATH"),
+        persisted_values.get("CEO_SERVICE_MCP_CONFIG_PATH"),
+        os.getenv("CEO_SERVICE_MCP_CONFIG_PATH"),
+        "data/config/service-mcp.json",
     )
     service_config_path = _resolve_repo_path(repo_root, service_config_value)
-    _seed_missing_file(
-        service_config_path,
-        DEFAULT_SERVICE_MCP_CONFIG_PATH.read_text(encoding="utf-8"),
-    )
-
-    memory_url = (
-        env.get("MEMORY_CONNECTOR_URL") or os.getenv("MEMORY_CONNECTOR_URL", "")
+    submitted_memory_url = (env.get("MEMORY_CONNECTOR_URL") or "").strip()
+    persisted_memory_url = (
+        persisted_values.get("MEMORY_CONNECTOR_URL") or ""
     ).strip()
-    memory_url_source = "environment" if memory_url else ""
-    if not memory_url:
-        memory_url = persisted_values.get("MEMORY_CONNECTOR_URL", "").strip()
-        memory_url_source = "service_env_file" if memory_url else ""
-    if not memory_url:
-        persisted_values["CEO_SERVICE_MCP_CONFIG_PATH"] = service_config_value
-        _write_env_values(env_path, persisted_values)
-        return SetupWizardEvent(
-            step_id="mcp",
-            action_id="setup_mcp",
-            status="failed",
-            summary="MEMORY_CONNECTOR_URL is missing.",
-            evidence={
-                "service_mcp_config": _redact_evidence_path(service_config_path),
-            },
-        )
+    process_memory_url = (os.getenv("MEMORY_CONNECTOR_URL") or "").strip()
+    memory_url = first_nonblank(
+        submitted_memory_url,
+        persisted_memory_url,
+        process_memory_url,
+    )
+    memory_url_source = "environment" if submitted_memory_url else ""
+    if not memory_url_source and persisted_memory_url:
+        memory_url_source = "service_env_file"
+    if not memory_url_source and process_memory_url:
+        memory_url_source = "process_environment"
     if not service_mcp_url_is_safe(memory_url):
+        if not memory_url:
+            memory_url = ""
+        else:
+            persisted_values["CEO_SERVICE_MCP_CONFIG_PATH"] = service_config_value
+            _write_env_values(env_path, persisted_values)
+            return SetupWizardEvent(
+                step_id="mcp",
+                action_id="setup_mcp",
+                status="failed",
+                summary=(
+                    "MEMORY_CONNECTOR_URL must be an http(s) URL without credentials, "
+                    "query, or fragment."
+                ),
+                evidence={
+                    "service_mcp_config": _redact_evidence_path(service_config_path),
+                },
+            )
+
+    persisted_values["CEO_SERVICE_MCP_CONFIG_PATH"] = service_config_value
+    service_env_keys = (
+        "MEMORY_CONNECTOR_URL",
+        "CONNECTOR_API_KEY",
+        "MEMORY_CONNECTOR_AUTH_TYPE",
+        "MEMORY_CONNECTOR_CONTENT_TYPE",
+        "CEO_XIAOQING_MCP_COMMAND",
+        "CEO_XIAOQING_MCP_ARGS_JSON",
+    )
+    resolved_service_values: dict[str, str] = {}
+    for key in service_env_keys:
+        value = first_nonblank(
+            env.get(key),
+            persisted_values.get(key),
+            os.getenv(key),
+        )
+        if value:
+            persisted_values[key] = value
+            resolved_service_values[key] = value
+    _write_env_values(env_path, persisted_values)
+    setup_env = os.environ.copy()
+    setup_env.update(persisted_values)
+    setup_env.update(
+        {key: value for key, value in env.items() if key not in service_env_keys}
+    )
+    setup_env.update(resolved_service_values)
+    _seed_or_refresh_service_mcp_manifest(service_config_path, env=setup_env)
+    try:
+        servers = load_service_mcp_servers(service_config_path, env=setup_env)
+    except ServiceMcpConfigError as exc:
         persisted_values["CEO_SERVICE_MCP_CONFIG_PATH"] = service_config_value
-        _write_env_values(env_path, persisted_values)
         return SetupWizardEvent(
             step_id="mcp",
             action_id="setup_mcp",
             status="failed",
-            summary=(
-                "MEMORY_CONNECTOR_URL must be an http(s) URL without credentials, "
-                "query, or fragment."
-            ),
+            summary=exc.reason,
             evidence={
                 "service_mcp_config": _redact_evidence_path(service_config_path),
             },
         )
-    persisted_values["CEO_SERVICE_MCP_CONFIG_PATH"] = service_config_value
-    persisted_values["MEMORY_CONNECTOR_URL"] = memory_url
-    _write_env_values(env_path, persisted_values)
     return SetupWizardEvent(
         step_id="mcp",
         action_id="setup_mcp",
         status="done",
-        summary="Service MCP manifest and Memory Connector URL were configured.",
+        summary="Service MCP manifest was configured and validated.",
         evidence={
             "service_mcp_config": _redact_evidence_path(service_config_path),
             "memory_url_source": memory_url_source,
+            "configured_servers": len(servers),
         },
     )
 

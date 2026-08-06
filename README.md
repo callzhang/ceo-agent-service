@@ -408,9 +408,10 @@ CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-mes
 
 初始化向导会把仓库内的 `config/service-mcp.json` 复制到可编辑的
 `data/config/service-mcp.json`，并在 `.env` 写入
-`CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json`。不使用的可选 server
-应从本地清单中删除；清单中仍存在但缺少环境变量的 server 会阻断 Codex 启动，
-不会生成不完整 transport。
+`CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json`。首次配置始终保留 Exa，
+仅在所需环境变量完整时加入 Memory/Xiaoqing；不使用的可选 server 从本地清单中
+省略。清单中仍存在但缺少环境变量的 server 会阻断 Codex 启动，不会生成不完整
+transport。
 
 CEO reply agent 始终使用 `--ignore-user-config` 并显式禁用 hooks。需要保留给
 agent 的外部能力分两类：
@@ -418,13 +419,18 @@ agent 的外部能力分两类：
 - CLI 能力：`dws` 和 Feishu/Lark CLI 由服务环境直接提供。DWS 负责钉钉消息、文档、审批、日历、通讯录和 AI 听记；Feishu/Lark CLI 负责飞书读取和显式开启后的回复发送。两者都不通过 MCP 透传。
 - MCP 能力：所有 transport 仅来自 `CEO_SERVICE_MCP_CONFIG_PATH` 指向的服务清单。URL、command 和 args 可由环境变量解析；bearer token 与动态 HTTP header 只在清单中保存环境变量名，不保存值。
 
-Direct Agent 只会禁用生成命令中已经存在的服务 transport，不会扫描或注入个人
-MCP 名称。Agent 可直接读取适用的 `SKILL.md`，并调用服务提供的 DWS/Lark CLI
-或 MCP。认证登录仍由服务 gate 和 Tutorial 管理，Agent 不执行 login/reset/logout。
+Direct Agent 不会扫描、禁用或注入个人 MCP 名称。Agent 可直接读取适用的
+`SKILL.md`，并调用服务提供的 DWS/Lark CLI 或 MCP。认证登录仍由服务 gate 和
+Tutorial 管理，Agent 不执行 login/reset/logout。
 
 Codex CLI 的原生 session JSONL 是运行审计。服务只保存 session ID 和每个 run 的 transcript 起止行，避免复制工具参数、结果和另一套回执状态机。
 
-服务启动会先运行 MCP doctor，检查 `memory_connector`、`exa`、`xiaoqing_interview`，状态只使用 `ready`、`needs_login`、`missing_config`、`token_expired`、`network_blocked`、`tool_not_found` 等明确值。`needs_login` 和 `token_expired` 只记录/提醒一次，然后暂停相关任务，不让 agent 自己触发登录循环。手动检查：
+MCP doctor 检查 `memory_connector`、`exa`、`xiaoqing_interview`，状态只使用
+`ready`、`needs_login`、`missing_config`、`token_expired`、`network_blocked`、
+`tool_not_found` 等明确值。当前阶段 doctor 负责报告 gate 状态，严格 runtime loader
+负责阻止无效配置启动；任务级暂停由 Consumer/Audit 编排切换后统一处理。
+`needs_login` 和 `token_expired` 只记录/提醒一次，不让 agent 自己触发登录循环。
+手动检查：
 
 ```bash
 .venv/bin/ceo-agent doctor-mcp --verify-live
