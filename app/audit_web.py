@@ -6661,7 +6661,7 @@ def handle_agent_run_resolution_post(
     missing = [name for name in required if payload.get(name) in {None, ""}]
     if missing:
         raise ValueError(f"missing manual reconciliation fields: {', '.join(missing)}")
-    resolved = store.resolve_unknown_agent_run_manually(
+    resolved = store.resolve_agent_run_manually(
         int(payload["run_id"]),
         expected_execution_generation=str(payload["execution_generation"]),
         resolution=str(payload["resolution"]),

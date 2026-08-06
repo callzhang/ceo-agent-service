@@ -3610,7 +3610,7 @@ class AutoReplyStore:
                 send_error=code,
             )
 
-    def resolve_unknown_agent_run_manually(
+    def resolve_agent_run_manually(
         self,
         run_id: int,
         *,
@@ -3644,11 +3644,20 @@ class AutoReplyStore:
                 """,
                 (run_id,),
             ).fetchone()
+            is_suspended_unknown = (
+                row is not None
+                and row["status"] == "unknown"
+                and bool(row["reconciliation_suspended"])
+                and row["task_status"] == "processing"
+            )
+            is_failed_with_confirmed_effect = (
+                row is not None
+                and row["status"] == "failed"
+                and row["task_status"] == "failed"
+                and resolution == "confirmed_occurred"
+            )
             if (
-                row is None
-                or row["status"] != "unknown"
-                or not row["reconciliation_suspended"]
-                or row["task_status"] != "processing"
+                not (is_suspended_unknown or is_failed_with_confirmed_effect)
                 or row["execution_generation"] != expected_execution_generation
                 or row["task_generation"] != expected_execution_generation
             ):
@@ -3656,6 +3665,9 @@ class AutoReplyStore:
                     f"manual reconciliation target is stale: {run_id}"
                 )
             task_id = int(row["reply_task_id"])
+            expected_run_status = str(row["status"])
+            expected_task_status = str(row["task_status"])
+            expected_suspended = int(bool(row["reconciliation_suspended"]))
             code = f"manual_reconciliation_{resolution}"
             audit_summary = f"{actor}: {reason}"
             next_generation = expected_execution_generation
@@ -3703,7 +3715,7 @@ class AutoReplyStore:
                     side_effect_state=?, reconciliation_suspended=0,
                     reconciliation_next_attempt_at='', lease_owner='',
                     lease_expires_at='', completed_at=?, updated_at=?
-                where id=? and status='unknown' and reconciliation_suspended=1
+                where id=? and status=? and reconciliation_suspended=?
                   and execution_generation=?
                 """,
                 (
@@ -3714,6 +3726,8 @@ class AutoReplyStore:
                     now_text,
                     now_text,
                     run_id,
+                    expected_run_status,
+                    expected_suspended,
                     expected_execution_generation,
                 ),
             )
@@ -3722,7 +3736,7 @@ class AutoReplyStore:
                 update reply_tasks
                 set status=?, execution_generation=?, force_new_decision=?,
                     locked_at=null, available_at='', error=?, updated_at=?
-                where id=? and status='processing' and execution_generation=?
+                where id=? and status=? and execution_generation=?
                 """,
                 (
                     task_status,
@@ -3731,6 +3745,7 @@ class AutoReplyStore:
                     "" if task_status == "done" else code,
                     now_text,
                     task_id,
+                    expected_task_status,
                     expected_execution_generation,
                 ),
             )

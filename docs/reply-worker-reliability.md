@@ -34,6 +34,12 @@ never replayed merely because its transport failed; the service must reconcile
 the existing operation first so retries cannot duplicate a message, approval,
 or other visible side effect.
 
+If a local result-envelope validation fails after an externally visible action,
+the failed run is not replayed. After read-back confirms the action, the
+audited manual-reconciliation command may transition that exact generation to
+`completed` and create a reconciliation attempt. It accepts this path only for
+`confirmed_occurred`; failed runs without verified evidence remain failed.
+
 An idempotent DWS message send that exits without a structured error result is
 also treated as a transient dependency failure. It is retried at the call
 boundary, then deferred with the same UUID for later recovery. A structured

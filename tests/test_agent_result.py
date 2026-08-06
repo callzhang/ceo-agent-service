@@ -67,6 +67,26 @@ def test_parse_agent_result_from_last_agent_message():
     assert result.summary == "latest result"
 
 
+def test_parse_agent_result_from_codex_response_item_output_text():
+    raw = json.dumps(
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": _result_json(summary="current result")}
+                ],
+            },
+        }
+    )
+
+    result = parse_agent_result(raw)
+
+    assert result.outcome is AgentOutcome.COMPLETED
+    assert result.summary == "current result"
+
+
 def test_parse_agent_result_preserves_confirmed_oa_action_receipt():
     payload = json.loads(_result_json(summary="OA comment was read back"))
     payload["oa_action_receipt"] = {
