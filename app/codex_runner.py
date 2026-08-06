@@ -438,6 +438,7 @@ class CodexRunner:
         session_id: str | None,
         image_paths: list[Path] | None = None,
         output_schema_path: Path | None = None,
+        use_output_schema: bool = True,
         ignore_user_config: bool = False,
         approval_policy: str = "untrusted",
         developer_instructions: str | None = None,
@@ -452,11 +453,12 @@ class CodexRunner:
         image_options: list[str] = []
         for image_path in image_paths or []:
             image_options.extend(["--image", str(image_path)])
-        schema_options = (
-            ["--output-schema", str(output_schema_path)]
-            if output_schema_path is not None
-            else ["--output-schema", str(CODEX_DECISION_SCHEMA_PATH)]
-        )
+        if not use_output_schema:
+            schema_options: list[str] = []
+        elif output_schema_path is not None:
+            schema_options = ["--output-schema", str(output_schema_path)]
+        else:
+            schema_options = ["--output-schema", str(CODEX_DECISION_SCHEMA_PATH)]
         common_options = [
             "--json",
             *(
@@ -504,7 +506,7 @@ class CodexRunner:
                 ),
                 *(
                     ["--output-schema", str(output_schema_path)]
-                    if output_schema_path is not None
+                    if use_output_schema and output_schema_path is not None
                     else []
                 ),
                 *image_options,
