@@ -11,7 +11,11 @@ import pytest
 from app.agent_context import AgentTaskContext
 from app.agent_envelope import AgentEnvelope
 from app.agent_result import AgentError, AgentOutcome, AgentResult, SideEffectState
-from app.agent_runner import DirectAgentRunResult, LEASE_SECONDS
+from app.agent_runner import (
+    AgentConversationLockedError,
+    DirectAgentRunResult,
+    LEASE_SECONDS,
+)
 import app.worker as worker_module
 from app.codex_decision import (
     CodexDecisionRunner,
@@ -9912,6 +9916,32 @@ def test_codex_process_failure_recovers_after_normal_attempt_limit_without_alert
     assert worker.store.count_reply_tasks(status="done") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
     assert notifications == []
+
+
+def test_session_lock_wait_defers_task_without_consuming_attempt(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+
+    class SessionLockedRunner:
+        def run(self, task, _context, **_kwargs):
+            raise AgentConversationLockedError(task.conversation_id)
+
+    worker.direct_agent_runner = SessionLockedRunner()
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    assert pending.attempts == 0
+    assert pending.error == "codex_session_locked"
+    assert pending.available_at
+    assert worker.store.count_reply_tasks(status="failed") == 0
 
 
 def test_codex_process_failure_becomes_terminal_after_one_extra_recovery_claim(
