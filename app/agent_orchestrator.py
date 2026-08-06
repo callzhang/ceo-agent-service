@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -64,6 +65,7 @@ class _NextConsumer:
     proposal_revision: int
     parent_run_id: int | None
     feedback: AuditFeedback | None
+    authorization_error_code: str = ""
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,7 @@ class _NextAudit:
     turn_attempt: int
     parent_run_id: int
     proposal: ConsumerProposal | None
+    authorization_error_code: str = ""
 
 
 @dataclass(frozen=True)
@@ -98,6 +101,8 @@ class AgentOrchestrator:
         self,
         task: ReplyTask,
         context: AgentTaskContext,
+        *,
+        refresh_context: Callable[[], AgentTaskContext],
     ) -> OrchestrationResult:
         if context.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
@@ -111,12 +116,23 @@ class AgentOrchestrator:
             try:
                 if isinstance(state, _NextConsumer):
                     attempt_key = (AgentRole.CONSUMER, state.proposal_revision)
-                    if role_attempts.get(attempt_key, 0) >= MAX_ROLE_ATTEMPTS_PER_PROCESS:
+                    max_attempts = (
+                        1
+                        if state.authorization_error_code
+                        else MAX_ROLE_ATTEMPTS_PER_PROCESS
+                    )
+                    if role_attempts.get(attempt_key, 0) >= max_attempts:
                         return self._deferred_result(
                             _Deferred(
                                 run=None,
-                                code="consumer_retry_deferred",
+                                code=(
+                                    state.authorization_error_code
+                                    or "consumer_retry_deferred"
+                                ),
                                 feedback_cycles=self._feedback_cycles(task),
+                                authorization_required=bool(
+                                    state.authorization_error_code
+                                ),
                             )
                         )
                     role_attempts[attempt_key] = role_attempts.get(attempt_key, 0) + 1
@@ -129,20 +145,45 @@ class AgentOrchestrator:
                     )
                 else:
                     attempt_key = (AgentRole.AUDIT, state.proposal_revision)
-                    if role_attempts.get(attempt_key, 0) >= MAX_ROLE_ATTEMPTS_PER_PROCESS:
+                    max_attempts = (
+                        1
+                        if state.authorization_error_code
+                        else MAX_ROLE_ATTEMPTS_PER_PROCESS
+                    )
+                    if role_attempts.get(attempt_key, 0) >= max_attempts:
                         return self._deferred_result(
                             _Deferred(
                                 run=None,
-                                code="audit_retry_deferred",
+                                code=(
+                                    state.authorization_error_code
+                                    or "audit_retry_deferred"
+                                ),
                                 feedback_cycles=self._feedback_cycles(task),
+                                authorization_required=bool(
+                                    state.authorization_error_code
+                                ),
                             )
                         )
                     role_attempts[attempt_key] = role_attempts.get(attempt_key, 0) + 1
                     assert state.proposal is not None
+                    try:
+                        audit_task_context = refresh_context()
+                        if audit_task_context.task_id != task.id:
+                            raise ValueError(
+                                "refreshed agent context does not match reply task"
+                            )
+                    except Exception:
+                        return self._deferred_result(
+                            _Deferred(
+                                run=None,
+                                code="agent_context_refresh_failed",
+                                feedback_cycles=self._feedback_cycles(task),
+                            )
+                        )
                     self.audit.run(
                         task,
                         AuditTurnContext(
-                            task=context,
+                            task=audit_task_context,
                             proposal_revision=state.proposal_revision,
                             operation_id=_operation_id(task, state.proposal_revision),
                             proposal=state.proposal,
@@ -214,7 +255,7 @@ class AgentOrchestrator:
                     previous_audit.id,
                     previous_result.feedback,
                 )
-            consumer_state = self._consumer_state(consumer, revision)
+            consumer_state = self._consumer_state(task, consumer, revision)
             if not isinstance(consumer_state, ConsumerAgentResult):
                 return consumer_state
             if consumer_state.outcome is ConsumerOutcome.NO_ACTION:
@@ -234,7 +275,7 @@ class AgentOrchestrator:
             if not audits:
                 return _NextAudit(revision, 0, consumer.id, consumer_state.proposal)
             latest = audits[-1]
-            audit_state = self._audit_state(latest, revision)
+            audit_state = self._audit_state(task, latest, revision)
             if isinstance(audit_state, _NextAudit):
                 return _NextAudit(
                     revision,
@@ -262,8 +303,9 @@ class AgentOrchestrator:
             revision += 1
         return _Deferred(None, "agent_turn_state_incomplete", revision)
 
-    @staticmethod
     def _consumer_state(
+        self,
+        task: ReplyTask,
         run: AgentRun,
         feedback_cycles: int,
     ) -> ConsumerAgentResult | _NextConsumer | _Deferred | OrchestrationResult:
@@ -271,6 +313,16 @@ class AgentOrchestrator:
             return _consumer_result(run)
         error = _run_error(run)
         if run.status == "failed" and error.authorization_required:
+            if task.error == error.code:
+                feedback = self._retry_feedback(run)
+                if run.proposal_revision > 0 and feedback is None:
+                    return _Deferred(run, "agent_feedback_missing", feedback_cycles)
+                return _NextConsumer(
+                    run.proposal_revision,
+                    run.parent_agent_run_id,
+                    feedback,
+                    error.code or "authorization_required",
+                )
             return _Deferred(
                 run,
                 error.code or "authorization_required",
@@ -278,13 +330,25 @@ class AgentOrchestrator:
                 authorization_required=True,
             )
         if run.status == "failed" and error.retryable:
+            feedback = self._retry_feedback(run)
+            if run.proposal_revision > 0 and feedback is None:
+                return _Deferred(run, "agent_feedback_missing", feedback_cycles)
             return _NextConsumer(
                 run.proposal_revision,
                 run.parent_agent_run_id,
-                None,
+                feedback,
             )
         if run.status == "running":
-            return _Deferred(run, "agent_run_active", feedback_cycles)
+            if self.store.agent_run_lease_is_active(run.id):
+                return _Deferred(run, "agent_run_active", feedback_cycles)
+            feedback = self._retry_feedback(run)
+            if run.proposal_revision > 0 and feedback is None:
+                return _Deferred(run, "agent_feedback_missing", feedback_cycles)
+            return _NextConsumer(
+                run.proposal_revision,
+                run.parent_agent_run_id,
+                feedback,
+            )
         result = ConsumerAgentResult(
             outcome=ConsumerOutcome.FAILED,
             summary=error.code or "Consumer Agent failed.",
@@ -293,8 +357,9 @@ class AgentOrchestrator:
         )
         return _consumer_terminal("failed", run, result, feedback_cycles)
 
-    @staticmethod
     def _audit_state(
+        self,
+        task: ReplyTask,
         run: AgentRun,
         feedback_cycles: int,
     ) -> AuditAgentResult | _NextAudit | _Deferred | OrchestrationResult:
@@ -306,6 +371,14 @@ class AgentOrchestrator:
             return _audit_terminal("blocked", run, result, feedback_cycles)
         error = _run_error(run)
         if run.status == "failed" and error.authorization_required:
+            if task.error == error.code:
+                return _NextAudit(
+                    run.proposal_revision,
+                    run.turn_attempt,
+                    run.parent_agent_run_id or 0,
+                    None,
+                    error.code or "authorization_required",
+                )
             return _Deferred(
                 run,
                 error.code or "authorization_required",
@@ -320,9 +393,42 @@ class AgentOrchestrator:
                 None,
             )
         if run.status == "running":
-            return _Deferred(run, "agent_run_active", feedback_cycles)
+            if self.store.agent_run_lease_is_active(run.id):
+                return _Deferred(run, "agent_run_active", feedback_cycles)
+            if run.side_effect_state != SideEffectState.NONE.value:
+                run = self.store.mark_expired_agent_run_unknown(
+                    run.id,
+                    {
+                        "code": "expired_audit_effect_requires_reconciliation",
+                        "retryable": False,
+                    },
+                    expected_execution_generation=task.execution_generation,
+                )
+                result = _failed_audit_result(
+                    run,
+                    AuditOutcome.UNKNOWN,
+                    AgentError(code="expired_audit_effect_requires_reconciliation"),
+                )
+                return _audit_terminal("blocked", run, result, feedback_cycles)
+            return _NextAudit(
+                run.proposal_revision,
+                run.turn_attempt,
+                run.parent_agent_run_id or 0,
+                None,
+            )
         result = _failed_audit_result(run, AuditOutcome.FAILED, error)
         return _audit_terminal("failed", run, result, feedback_cycles)
+
+    def _retry_feedback(self, run: AgentRun) -> AuditFeedback | None:
+        if run.proposal_revision == 0 or run.parent_agent_run_id is None:
+            return None
+        parent = self.store.get_agent_run(run.parent_agent_run_id)
+        if parent is None or parent.role is not AgentRole.AUDIT or parent.status != "completed":
+            return None
+        result = _audit_result(parent)
+        if result.outcome is not AuditOutcome.REVISION_REQUIRED:
+            return None
+        return result.feedback
 
     @staticmethod
     def _revision_feedback_run(

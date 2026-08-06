@@ -38,7 +38,7 @@ class NoActionOrchestrator:
         self.store = store
         self.calls: list[tuple[object, AgentTaskContext]] = []
 
-    def process(self, task, context) -> OrchestrationResult:
+    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         self.calls.append((task, context))
         claim = self.store.claim_agent_run(
             task.id,
@@ -211,6 +211,27 @@ class ContextOnlyDws:
         raise AttributeError(name)
 
 
+class FailingRefreshDws(ContextOnlyDws):
+    def read_recent_messages(self, conversation) -> list[DingTalkMessage]:
+        if self.recent_reads >= 1:
+            raise RuntimeError("context refresh unavailable")
+        return super().read_recent_messages(conversation)
+
+
+class NativeCodexFacade:
+    def __init__(self, workspace: Path) -> None:
+        self.runner = type(
+            "NativeRunnerConfig",
+            (),
+            {"workspace": workspace, "codex_bin": "codex"},
+        )()
+
+
+class UnexpectedRoleRunner:
+    def run(self, *_args, **_kwargs):
+        raise AssertionError("persisted terminal role turn must not be rerun")
+
+
 def _persisted_effect_evidence(call_id: str, status: str) -> dict[str, object]:
     item: dict[str, object] = {
         "id": call_id,
@@ -299,7 +320,7 @@ class ScriptedDirectAgentRunner:
         self.read_only_values: list[bool] = []
         self.owner = "scripted-agent"
 
-    def process(self, task, context) -> OrchestrationResult:
+    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         persisted = self.store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
@@ -735,6 +756,7 @@ def _audit_protocol_result(
     live_reference: dict[str, object] | None = None,
     code: str = "",
     retryable: bool = False,
+    authorization_required: bool = False,
 ) -> AuditAgentResult:
     executed = outcome == "executed"
     return AuditAgentResult.model_validate(
@@ -756,7 +778,7 @@ def _audit_protocol_result(
             "error": {
                 "code": code,
                 "retryable": retryable,
-                "authorization_required": False,
+                "authorization_required": authorization_required,
             },
         }
     )
@@ -1114,6 +1136,172 @@ class FailedWriteProtocolExecutor(ProtocolCodexExecutor):
         ]
 
 
+class ContextRefreshingProtocolExecutor(ProtocolCodexExecutor):
+    def __init__(self, dws: ContextOnlyDws, new_message: DingTalkMessage) -> None:
+        super().__init__()
+        self.dws = dws
+        self.new_message = new_message
+        self.audit_prompt = ""
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        if "Candidate revision\n" not in prompt:
+            self.dws.messages.append(self.new_message)
+            return [
+                _agent_result_event(
+                    _consumer_protocol_result(
+                        "proposal",
+                        "Prepared candidate before the conversation update.",
+                        proposal={
+                            "objective": "Send the requested update.",
+                            "actions": [
+                                {
+                                    "description": "Send the update.",
+                                    "capability": "agent_cli.dws",
+                                    "operation": "chat message send",
+                                    "target": {"group": "cid-1"},
+                                    "payload": {
+                                        "argv": [
+                                            "dws",
+                                            "chat",
+                                            "message",
+                                            "send",
+                                            "--group",
+                                            "cid-1",
+                                            "--text",
+                                            "old target",
+                                            "--yes",
+                                        ]
+                                    },
+                                    "expected_verification": "Read the live message.",
+                                }
+                            ],
+                            "sourced_facts": [],
+                            "authored_judgment": "",
+                        },
+                    )
+                )
+            ]
+        self.audit_prompt = prompt
+        candidate = _prompt_json_section(prompt, "Candidate revision\n")
+        return [
+            _agent_result_event(
+                _audit_protocol_result(
+                    "needs_human",
+                    int(candidate["proposal_revision"]),
+                    "The refreshed context requires human review.",
+                    operation_id=str(candidate["operation_id"]),
+                    code="newer_context_requires_review",
+                )
+            )
+        ]
+
+
+class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.audit_attempts = 0
+
+    def __call__(self, _command, *, prompt: str, **kwargs) -> ProcessRunResult:
+        self.prompts.append(prompt)
+        audit_turn = "Candidate revision\n" in prompt
+        if audit_turn:
+            self.audit_attempts += 1
+            thread_id = "authorization-audit-session"
+        else:
+            thread_id = "authorization-consumer-session"
+        records = [
+            {"type": "thread.started", "thread_id": thread_id},
+            *self.records(prompt),
+        ]
+        output = "\n".join(json.dumps(record) for record in records)
+        callback = kwargs["on_stdout_line"]
+        for line in output.splitlines():
+            callback(line)
+        return ProcessRunResult(returncode=0, stdout=output, stderr="")
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        if "Candidate revision\n" not in prompt:
+            return [
+                _agent_result_event(
+                    _consumer_protocol_result(
+                        "proposal",
+                        "Prepared the requested message.",
+                        proposal={
+                            "objective": "Send the requested message.",
+                            "actions": [
+                                {
+                                    "description": "Send the message.",
+                                    "capability": "agent_cli.dws",
+                                    "operation": "chat message send",
+                                    "target": {"group": "cid-1"},
+                                    "payload": {
+                                        "argv": [
+                                            "dws",
+                                            "chat",
+                                            "message",
+                                            "send",
+                                            "--group",
+                                            "cid-1",
+                                            "--text",
+                                            "approved",
+                                            "--yes",
+                                        ]
+                                    },
+                                    "expected_verification": "Read the live message.",
+                                }
+                            ],
+                            "sourced_facts": [],
+                            "authored_judgment": "",
+                        },
+                    )
+                )
+            ]
+        candidate = _prompt_json_section(prompt, "Candidate revision\n")
+        if self.audit_attempts == 1:
+            return [
+                _agent_result_event(
+                    _audit_protocol_result(
+                        "failed",
+                        int(candidate["proposal_revision"]),
+                        "Authorization must be restored.",
+                        operation_id=str(candidate["operation_id"]),
+                        code="authorization_wait",
+                        retryable=True,
+                        authorization_required=True,
+                    )
+                )
+            ]
+        write_command = shlex.join(candidate["proposal"]["actions"][0]["payload"]["argv"])
+        verify_command = "dws chat message list --group cid-1 --time 2026-08-07"
+        return [
+            _reviewed_cli_event(
+                "item.started", "authorization-write", write_command, effectful=True
+            ),
+            _reviewed_cli_event(
+                "item.completed",
+                "authorization-write",
+                write_command,
+                effectful=True,
+                output='{"ok":true}',
+            ),
+            _reviewed_cli_event("item.started", "authorization-verify", verify_command),
+            _reviewed_cli_event(
+                "item.completed",
+                "authorization-verify",
+                verify_command,
+                output='{"messages":["approved"]}',
+            ),
+            _agent_result_event(
+                _audit_protocol_result(
+                    "executed",
+                    int(candidate["proposal_revision"]),
+                    "Execution succeeded after authorization recovery.",
+                    operation_id=str(candidate["operation_id"]),
+                )
+            ),
+        ]
+
+
 def _message(
     text: str = "@CEO Agent 请处理",
     *,
@@ -1207,6 +1395,74 @@ def test_queued_task_uses_orchestrator_without_direct_runner_fallback(tmp_path: 
     assert attempt is not None and attempt.send_status == "skipped"
 
 
+def test_worker_passes_dry_run_to_real_audit_runner(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([]),
+        codex=NativeCodexFacade(tmp_path),
+        dry_run=True,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    orchestrator = worker._agent_orchestrator()
+
+    assert isinstance(orchestrator.audit, AuditAgentRunner)
+    assert orchestrator.audit.dry_run is True
+
+
+def test_stale_worker_recovers_completed_consumer_turn_without_legacy_parsing(
+    tmp_path: Path,
+):
+    trigger = _message("No action remains.")
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    task = store.claim_reply_task(task_id)
+    assert task is not None
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="completed-consumer",
+    )
+    store.complete_agent_run(
+        claim.run.id,
+        _consumer_protocol_result("no_action", "Nothing remains.").model_dump(
+            mode="json"
+        ),
+        owner="completed-consumer",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            (task.id,),
+        )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        agent_orchestrator=AgentOrchestrator(
+            store=store,
+            consumer=UnexpectedRoleRunner(),
+            audit=UnexpectedRoleRunner(),
+        ),
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    recovered = store.get_reply_task(task.id)
+    assert recovered is not None and recovered.status == "done"
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "skipped"
+
+
 def _worker(
     tmp_path: Path,
     messages: list[DingTalkMessage],
@@ -1271,6 +1527,200 @@ def _worker_with_protocol_executor(
         max_task_attempts=max_task_attempts,
     )
     return worker, dws
+
+
+def test_worker_refreshes_conversation_after_consumer_before_audit(tmp_path: Path):
+    trigger = _message("Send the current target.")
+    new_message = _message(
+        "The target changed after the request.",
+        message_id="msg-new",
+    )
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    dws = ContextOnlyDws([trigger])
+    executor = ContextRefreshingProtocolExecutor(dws, new_message)
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ConsumerAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+            owner="context-refresh-consumer",
+            codex_session_exists=lambda _session_id: True,
+        ),
+        audit=AuditAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+            owner="context-refresh-audit",
+        ),
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=dws,
+        codex=object(),
+        agent_orchestrator=orchestrator,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+    _enqueue(store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert "The target changed after the request." in executor.audit_prompt
+    assert dws.recent_reads == 2
+    assert dws.unread_reads == 2
+
+
+def test_oa_pending_scan_refreshes_conversation_before_audit(tmp_path: Path):
+    trigger = _message(
+        "Review the queued approval.",
+        raw_payload={"source": "oa_pending_scan"},
+    )
+    new_message = _message(
+        "The approval context changed after the request.",
+        message_id="msg-new",
+    )
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    dws = ContextOnlyDws([trigger])
+    executor = ContextRefreshingProtocolExecutor(dws, new_message)
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=dws,
+        codex=object(),
+        agent_orchestrator=AgentOrchestrator(
+            store=store,
+            consumer=ConsumerAgentRunner(
+                store=store,
+                workspace=tmp_path,
+                executor=executor,
+                owner="oa-refresh-consumer",
+                codex_session_exists=lambda _session_id: True,
+            ),
+            audit=AuditAgentRunner(
+                store=store,
+                workspace=tmp_path,
+                executor=executor,
+                owner="oa-refresh-audit",
+            ),
+        ),
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+    _enqueue(store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert "The approval context changed after the request." in executor.audit_prompt
+    assert dws.recent_reads == 1
+    assert dws.unread_reads == 1
+
+
+def test_worker_defers_without_audit_when_context_refresh_fails(tmp_path: Path):
+    trigger = _message("Send the current target.")
+    new_message = _message("unused", message_id="msg-new")
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    dws = FailingRefreshDws([trigger])
+    executor = ContextRefreshingProtocolExecutor(dws, new_message)
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=dws,
+        codex=object(),
+        agent_orchestrator=AgentOrchestrator(
+            store=store,
+            consumer=ConsumerAgentRunner(
+                store=store,
+                workspace=tmp_path,
+                executor=executor,
+                owner="failing-refresh-consumer",
+                codex_session_exists=lambda _session_id: True,
+            ),
+            audit=AuditAgentRunner(
+                store=store,
+                workspace=tmp_path,
+                executor=executor,
+                owner="failing-refresh-audit",
+            ),
+        ),
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+    task_id = _enqueue(store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    task = store.get_reply_task(task_id)
+    assert task is not None and task.status == "pending"
+    assert task.error == "agent_context_refresh_failed"
+    assert executor.audit_prompt == ""
+
+
+def test_worker_retries_authorization_failed_turn_after_gate_recovery(tmp_path: Path):
+    trigger = _message("Send the approved message.")
+    executor = AuthorizationRecoveryProtocolExecutor()
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    task_id = _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    waiting = worker.store.get_reply_task(task_id)
+    assert waiting is not None
+    assert waiting.status == "pending"
+    assert waiting.error == "authorization_wait"
+    assert executor.audit_attempts == 1
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set available_at='' where id=?",
+            (task_id,),
+        )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    completed = worker.store.get_reply_task(task_id)
+    assert completed is not None and completed.status == "done"
+    assert executor.audit_attempts == 2
+    runs = worker.store.list_agent_runs_for_task_generation(task_id, "g1")
+    audit_runs = [run for run in runs if run.role is AgentRole.AUDIT]
+    assert len(audit_runs) == 1
+    assert audit_runs[0].status == "completed"
+
+
+def test_oa_material_does_not_recover_target_from_historical_context(tmp_path: Path):
+    historical = _message(
+        "https://aflow.dingtalk.com/detail?procInstId=old-proc&taskId=old-task",
+        message_id="msg-old",
+    )
+    trigger = _message("Please review the current request.")
+    worker, runner, _dws = _worker(
+        tmp_path,
+        [historical, trigger],
+        [ScriptedRun(_result(AgentOutcome.NO_ACTION, summary="No action."))],
+    )
+    _enqueue(worker.store, trigger)
+
+    worker.consume_once(max_tasks=1)
+
+    assert all(material.kind != "dingtalk_oa" for material in runner.calls[0][2].materials)
+
+
+def test_oa_trigger_without_exact_process_id_preserves_reference_without_fallback(
+    tmp_path: Path,
+):
+    oa_url = "https://aflow.dingtalk.com/dingtalk/pc/query/pchomepage.htm?swfrom=oa"
+    trigger = _message(f"Please review {oa_url}")
+    worker, runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [ScriptedRun(_result(AgentOutcome.NEEDS_HUMAN, summary="Target is ambiguous."))],
+    )
+    _enqueue(worker.store, trigger, oa_url=oa_url)
+
+    worker.consume_once(max_tasks=1)
+
+    material = next(
+        item for item in runner.calls[0][2].materials if item.kind == "dingtalk_oa"
+    )
+    assert oa_url in material.reference
+    assert material.read_commands == ()
 
 
 def test_queued_task_runs_agent_once_and_records_completed_attempt(tmp_path: Path):
@@ -2143,7 +2593,7 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
     assert worker.store.get_reply_task(task_id).status == "done"
 
 
-def test_stale_recovery_allows_one_extra_runtime_retry_then_notifies_failure(
+def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -2229,10 +2679,11 @@ def test_stale_recovery_allows_one_extra_runtime_retry_then_notifies_failure(
     worker._recover_stale_agent_reply_tasks()
 
     failed_task = worker.store.get_reply_task(task_id)
-    assert failed_task is not None and failed_task.status == "failed"
+    assert failed_task is not None and failed_task.status == "pending"
+    assert failed_task.error == "stale_agent_turn_recovery"
     assert failed_task.attempts == 2
     assert [notification["title"] for notification in notifications] == [
-        "CEO task failed: 测试群"
+        "CEO task retrying stale tasks"
     ]
 
 

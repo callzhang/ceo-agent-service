@@ -2,11 +2,12 @@ import json
 import threading
 import time
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from app.agent_context import AgentTaskContext
+from app.agent_context import AgentContextMessage, AgentTaskContext
 from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
@@ -183,12 +184,13 @@ class ScriptedAudit:
             owner=self.owner,
         )
         assert claim.claimed
-        session_id = f"audit-session-{len(self.calls)}"
-        self.store.set_agent_run_session(
-            claim.run.id,
-            session_id,
-            owner=self.owner,
-        )
+        session_id = claim.run.codex_session_id or f"audit-session-{len(self.calls)}"
+        if not claim.run.codex_session_id:
+            self.store.set_agent_run_session(
+                claim.run.id,
+                session_id,
+                owner=self.owner,
+            )
         result = self.results.popleft()
         if result.outcome is AuditOutcome.EXECUTED:
             result = result.model_copy(
@@ -218,6 +220,7 @@ class ScriptedAudit:
                 "operation_id": context.operation_id,
                 "session_id": session_id,
                 "proposal": context.proposal,
+                "context": context,
             }
         )
         return AgentTurnRunResult(claim.run.id, result, 0, 1)
@@ -261,14 +264,21 @@ def _context(task) -> AgentTaskContext:
     )
 
 
+def _process(orchestrator, task, context=None, *, refresh_context=None):
+    initial = context or _context(task)
+    return orchestrator.process(
+        task,
+        initial,
+        refresh_context=refresh_context or (lambda: initial),
+    )
+
+
 def test_no_action_finishes_without_launching_audit(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("no_action", "Nothing to do."))
     audit = ScriptedAudit(store)
 
-    result = AgentOrchestrator(store=store, consumer=consumer, audit=audit).process(
-        task, _context(task)
-    )
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
     assert result.status == "skipped"
     assert result.final_role is AgentRole.CONSUMER
@@ -280,9 +290,7 @@ def test_proposal_is_executed_only_by_fresh_audit_session(store):
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
     audit = ScriptedAudit(store, _audit_result("executed", 0))
 
-    result = AgentOrchestrator(store=store, consumer=consumer, audit=audit).process(
-        task, _context(task)
-    )
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
     assert result.status == "completed"
     assert result.final_role is AgentRole.AUDIT
@@ -307,9 +315,7 @@ def test_two_feedback_cycles_resume_same_consumer_and_create_fresh_auditors(stor
         _audit_result("executed", 2),
     )
 
-    result = AgentOrchestrator(store=store, consumer=consumer, audit=audit).process(
-        task, _context(task)
-    )
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
     assert result.status == "completed"
     assert result.feedback_cycles == 2
@@ -332,9 +338,7 @@ def test_infrastructure_retry_does_not_consume_feedback_cycle(store):
         _audit_result("executed", 0),
     )
 
-    result = AgentOrchestrator(store=store, consumer=consumer, audit=audit).process(
-        task, _context(task)
-    )
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
     assert result.status == "completed"
     assert result.feedback_cycles == 0
@@ -353,9 +357,7 @@ def test_newer_context_stale_candidate_is_revised_without_write(store):
     )
     audit = ScriptedAudit(store, _audit_result("revision_required", 0))
 
-    result = AgentOrchestrator(store=store, consumer=consumer, audit=audit).process(
-        task, _context(task)
-    )
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
     assert result.status == "skipped"
     assert result.final_role is AgentRole.CONSUMER
@@ -379,9 +381,7 @@ def test_third_revision_request_becomes_needs_human(store):
         _audit_result("revision_required", 2),
     )
 
-    result = AgentOrchestrator(store=store, consumer=consumer, audit=audit).process(
-        task, _context(task)
-    )
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
     assert result.status == "needs_human"
     assert result.feedback_cycles == 2
@@ -402,13 +402,281 @@ def test_authorization_wait_defers_without_consuming_feedback_cycle(store):
         ),
     )
 
-    result = AgentOrchestrator(store=store, consumer=consumer, audit=audit).process(
-        task, _context(task)
-    )
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
     assert result.status == "deferred"
     assert result.feedback_cycles == 0
     assert len(audit.calls) == 1
+
+
+def test_expired_consumer_turn_without_session_is_reclaimed_in_place(store):
+    task = _task(store)
+    stale = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="stale-consumer",
+        lease_seconds=1,
+        now="2020-01-01 00:00:00",
+    ).run
+    consumer = ScriptedConsumer(store, _consumer_result("no_action", "Recovered."))
+
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=ScriptedAudit(store)),
+        task,
+    )
+
+    assert result.status == "skipped"
+    assert result.final_run_id == stale.id
+    assert len(
+        store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    ) == 1
+
+
+def test_expired_audit_turn_without_session_is_reclaimed_in_place(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    consumer.run(
+        task,
+        _context(task),
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+    parent = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert parent is not None
+    stale = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
+        owner="stale-audit",
+        lease_seconds=1,
+        now="2020-01-01 00:00:00",
+    ).run
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=audit),
+        task,
+    )
+
+    assert result.status == "completed"
+    assert result.final_run_id == stale.id
+    assert audit.calls[0]["turn_attempt"] == 0
+
+
+@pytest.mark.parametrize("side_effect_state", ["unknown", "confirmed"])
+def test_expired_audit_turn_with_possible_effect_is_persisted_unknown_without_replay(
+    store,
+    side_effect_state,
+):
+    pending = _task(store)
+    task = store.claim_reply_task(pending.id)
+    assert task is not None
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    consumer.run(
+        task,
+        _context(task),
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+    parent = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert parent is not None
+    stale = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
+        owner="stale-audit",
+        lease_seconds=1,
+        now="2020-01-01 00:00:00",
+    ).run
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set side_effect_state=? where id=?",
+            (side_effect_state, stale.id),
+        )
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=audit),
+        task,
+    )
+
+    assert result.status == "blocked"
+    assert audit.calls == []
+    persisted = store.get_agent_run(stale.id)
+    assert persisted is not None
+    assert persisted.status == "unknown"
+    assert persisted.side_effect_state == "unknown"
+
+
+def test_authorization_recovery_retries_same_persisted_turn_on_next_process(store):
+    pending_task = _task(store)
+    task = store.claim_reply_task(pending_task.id)
+    assert task is not None
+    audit = ScriptedAudit(
+        store,
+        _audit_result(
+            "failed",
+            0,
+            code="authorization_wait",
+            retryable=True,
+            authorization_required=True,
+        ),
+        _audit_result("executed", 0),
+    )
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ScriptedConsumer(store, _consumer_result("proposal", "candidate-0")),
+        audit=audit,
+    )
+
+    first = _process(orchestrator, task)
+    assert first.status == "deferred"
+    store.defer_reply_task(
+        task.id,
+        first.error.code,
+        expected_execution_generation=task.execution_generation,
+    )
+    recovered_task = store.claim_reply_task(task.id)
+    assert recovered_task is not None
+
+    second = _process(orchestrator, recovered_task)
+
+    assert second.status == "completed"
+    assert [call["turn_attempt"] for call in audit.calls] == [0, 0]
+    audit_runs = [
+        run
+        for run in store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation
+        )
+        if run.role is AgentRole.AUDIT
+    ]
+    assert len(audit_runs) == 1
+
+
+class RevisionRetryConsumer(ScriptedConsumer):
+    def __init__(self, store: AutoReplyStore) -> None:
+        super().__init__(store)
+        self.revision_one_attempts = 0
+
+    def run(self, task, context, **kwargs):
+        revision = kwargs["proposal_revision"]
+        if revision == 0:
+            self.results.append(_consumer_result("proposal", "candidate-0"))
+            return super().run(task, context, **kwargs)
+        self.revision_one_attempts += 1
+        if self.revision_one_attempts == 1:
+            claim = self.store.claim_agent_run(
+                task.id,
+                task.execution_generation,
+                role=AgentRole.CONSUMER,
+                proposal_revision=revision,
+                turn_attempt=0,
+                parent_agent_run_id=kwargs["parent_agent_run_id"],
+                operation_id="",
+                owner=self.owner,
+            )
+            assert claim.claimed
+            self.calls.append({"feedback": kwargs["feedback"], "revision": revision})
+            self.store.fail_agent_run(
+                claim.run.id,
+                {"code": "temporary_consumer_failure", "retryable": True},
+                owner=self.owner,
+            )
+            raise RuntimeError("temporary_consumer_failure")
+        self.results.append(_consumer_result("no_action", "revision complete"))
+        return super().run(task, context, **kwargs)
+
+
+def test_consumer_retry_restores_identical_feedback_from_parent_audit(store):
+    task = _task(store)
+    consumer = RevisionRetryConsumer(store)
+    audit = ScriptedAudit(store, _audit_result("revision_required", 0))
+
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
+    )
+
+    assert result.status == "skipped"
+    revision_calls = [call for call in consumer.calls if call["revision"] == 1]
+    assert len(revision_calls) == 2
+    assert revision_calls[0]["feedback"] is not None
+    assert revision_calls[1]["feedback"] == revision_calls[0]["feedback"]
+
+
+def test_audit_receives_context_refreshed_after_consumer_output(store):
+    task = _task(store)
+    refreshed = replace(
+        _context(task),
+        messages=(
+            AgentContextMessage(
+                message_id="msg-new",
+                sender="Requester",
+                text="Use the updated target.",
+                create_time="2026-08-07 10:01:00",
+            ),
+        ),
+    )
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=ScriptedConsumer(store, _consumer_result("proposal", "candidate-0")),
+            audit=audit,
+        ),
+        task,
+        refresh_context=lambda: refreshed,
+    )
+
+    assert result.status == "completed"
+    assert audit.calls[0]["context"].task.messages[0].text == "Use the updated target."
+
+
+def test_context_refresh_failure_defers_before_audit(store):
+    task = _task(store)
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+
+    def fail_refresh():
+        raise RuntimeError("context source unavailable")
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=ScriptedConsumer(store, _consumer_result("proposal", "candidate-0")),
+            audit=audit,
+        ),
+        task,
+        refresh_context=fail_refresh,
+    )
+
+    assert result.status == "deferred"
+    assert result.error.code == "agent_context_refresh_failed"
+    assert audit.calls == []
 
 
 class SerialConsumer(ScriptedConsumer):
@@ -460,7 +728,7 @@ def test_concurrent_tasks_share_one_consumer_session_and_resume_serially(store):
     threads = [
         threading.Thread(
             target=lambda task=task: results.append(
-                (task, orchestrator.process(task, _context(task)))
+                (task, _process(orchestrator, task))
             )
         )
         for task in (first, second)
@@ -472,7 +740,7 @@ def test_concurrent_tasks_share_one_consumer_session_and_resume_serially(store):
 
     deferred = [task for task, result in results if result.status == "deferred"]
     assert len(deferred) == 1
-    retry = orchestrator.process(deferred[0], _context(deferred[0]))
+    retry = _process(orchestrator, deferred[0])
 
     assert retry.status == "skipped"
     assert consumer.max_active == 1

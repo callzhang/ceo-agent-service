@@ -471,6 +471,7 @@ class DingTalkAutoReplyWorker:
                 store=self.store,
                 workspace=Path(workspace),
                 codex_bin=codex_bin,
+                dry_run=self.dry_run,
             ),
         )
         return self.agent_orchestrator
@@ -530,6 +531,7 @@ class DingTalkAutoReplyWorker:
         message_id: str | None = None,
         notify_title: str | None = None,
         raise_authorization: bool = False,
+        raise_errors: bool = False,
         record_forbidden_error: bool = True,
         default: T,
     ) -> T:
@@ -545,7 +547,7 @@ class DingTalkAutoReplyWorker:
             pat_authorization_requested = False
             is_login_error = self._is_dws_login_error(exc)
             if is_login_error:
-                if self._ensure_dws_auth_login(exc):
+                if self._ensure_dws_auth_login(exc) and not raise_errors:
                     return default
             else:
                 required_scopes = self._dws_authorization_required_scopes(exc)
@@ -582,6 +584,8 @@ class DingTalkAutoReplyWorker:
                     title=notify_title,
                     message=str(exc)[:120],
                 )
+            if raise_errors:
+                raise
             return default
 
     @staticmethod
@@ -688,9 +692,12 @@ class DingTalkAutoReplyWorker:
         *,
         message_id: str | None = None,
         raise_authorization: bool = False,
+        raise_errors: bool = False,
         default: T,
     ) -> T:
         if self._is_dws_read_forbidden(conversation.open_conversation_id):
+            if raise_errors:
+                raise RuntimeError("conversation_context_refresh_forbidden")
             return default
         return self._call_dws(
             kind,
@@ -698,6 +705,7 @@ class DingTalkAutoReplyWorker:
             conversation_id=conversation.open_conversation_id,
             message_id=message_id,
             raise_authorization=raise_authorization,
+            raise_errors=raise_errors,
             record_forbidden_error=False,
             default=default,
         )
@@ -1627,14 +1635,11 @@ class DingTalkAutoReplyWorker:
             return
         recovered = 0
         for task in stale_tasks:
-            run = self.store.get_agent_run_for_turn(
+            runs = self.store.list_agent_runs_for_task_generation(
                 task.id,
                 task.execution_generation,
-                role=AgentRole.AUDIT,
-                proposal_revision=0,
-                turn_attempt=0,
             )
-            if run is None:
+            if not runs:
                 recovery_error = "stale_before_agent_start"
                 if (
                     task.channel == "wechat"
@@ -1648,98 +1653,9 @@ class DingTalkAutoReplyWorker:
                 )
                 recovered += 1
                 continue
-            if run.status == "unknown":
-                self.store.fail_reply_task(
-                    task.id,
-                    "agent_run_unknown",
-                    expected_execution_generation=task.execution_generation,
-                )
-                continue
-            if run.status == "completed" and run.final_result_json:
-                payload = json.loads(run.final_result_json)
-                if isinstance(payload, dict) and "proof" in payload:
-                    ReconciliationResult.model_validate_json(run.final_result_json)
-                    self.store.fail_reply_task(
-                        task.id,
-                        "inconsistent_terminal_reconciliation_state",
-                        expected_execution_generation=task.execution_generation,
-                    )
-                    continue
-                result = AgentResult.model_validate(payload)
-                self._apply_agent_result(
-                    task,
-                    DirectAgentRunResult(
-                        run_id=run.id,
-                        result=result,
-                        transcript_start_line=run.transcript_start_line,
-                        transcript_end_line=run.transcript_end_line,
-                        events=tuple(run.tool_events),
-                    ),
-                )
-                continue
-            if run.status == "failed":
-                try:
-                    structured_error = json.loads(run.structured_error_json or "{}")
-                except json.JSONDecodeError:
-                    structured_error = {}
-                retryable = (
-                    isinstance(structured_error, dict)
-                    and structured_error.get("retryable") is True
-                    and run.side_effect_state == "none"
-                )
-                error = str(structured_error.get("code") or "agent_run_failed")
-                task_status = self._record_agent_runtime_failure_attempt(
-                    task,
-                    error,
-                    retryable=retryable,
-                    retry_beyond_limit=(
-                        error in RECOVERABLE_AGENT_RUNTIME_ERRORS
-                        and task.attempts == self.max_task_attempts
-                    ),
-                )
-                if task_status == "pending":
-                    recovered += 1
-                    continue
-                self.store.record_error(
-                    task.conversation_id,
-                    task.trigger_message_id,
-                    "reply_task",
-                    error,
-                )
-                self._notify(
-                    title=f"CEO task failed: {task.conversation_title}",
-                    message=error[:120],
-                    conversation=DingTalkConversation(
-                        open_conversation_id=task.conversation_id,
-                        title=task.conversation_title,
-                        single_chat=task.single_chat,
-                        unread_point=1,
-                    ),
-                )
-                continue
-            if run.status != "running":
-                self.store.fail_reply_task(
-                    task.id,
-                    f"invalid_agent_run_state:{run.status}",
-                    expected_execution_generation=task.execution_generation,
-                )
-                continue
-            if not run.codex_session_id:
-                self.store.fail_expired_agent_run(
-                    run.id,
-                    {"code": "stale_agent_run_missing_session"},
-                    expected_execution_generation=task.execution_generation,
-                    now=self._sqlite_timestamp(self._now()),
-                )
-                self._record_agent_runtime_failure_attempt(
-                    task,
-                    "stale_agent_run_missing_session",
-                    retryable=False,
-                )
-                continue
             self.store.requeue_reply_task(
                 task.id,
-                "stale_agent_run_resume",
+                "stale_agent_turn_recovery",
                 expected_execution_generation=task.execution_generation,
             )
             recovered += 1
@@ -1748,8 +1664,9 @@ class DingTalkAutoReplyWorker:
                 task.trigger_message_id,
                 "reply_task_stale",
                 (
-                    "requeued stale task for same-generation session resume: "
-                    f"task={task.id} generation={task.execution_generation}"
+                    "requeued stale task for persisted turn recovery: "
+                    f"task={task.id} generation={task.execution_generation} "
+                    f"turns={len(runs)}"
                 ),
             )
         if recovered:
@@ -2156,11 +2073,40 @@ class DingTalkAutoReplyWorker:
             trigger=trigger,
             context_messages=context_messages,
         )
-        result = self._agent_orchestrator().process(task, context)
+        result = self._agent_orchestrator().process(
+            task,
+            context,
+            refresh_context=lambda: self._refresh_agent_task_context(
+                conversation=conversation,
+                task=task,
+                trigger=trigger,
+            ),
+        )
         try:
             return self._apply_orchestration_result(task, result)
         except AgentRunLeaseLostError:
             return False
+
+    def _refresh_agent_task_context(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        task: ReplyTask,
+        trigger: DingTalkMessage,
+    ) -> AgentTaskContext:
+        _context_messages, prompt_context_messages = (
+            self._queued_task_prompt_context_messages(
+                conversation,
+                trigger,
+                strict=True,
+            )
+        )
+        return self._build_agent_task_context(
+            conversation=conversation,
+            task=task,
+            trigger=trigger,
+            context_messages=prompt_context_messages,
+        )
 
     def _apply_orchestration_result(
         self,
@@ -2474,8 +2420,7 @@ class DingTalkAutoReplyWorker:
                 ),
             )
 
-        oa_sources = [trigger, *context_messages]
-        for message in oa_sources:
+        for message in (trigger,):
             oa_url = (
                 task.oa_url.strip()
                 if message.open_message_id == trigger.open_message_id
@@ -2511,11 +2456,21 @@ class DingTalkAutoReplyWorker:
                     (detail_command,),
                 )
             elif oa_url or self._is_oa_approval_message(message):
+                reference = json.dumps(
+                    {
+                        "process_instance_id": process_instance_id,
+                        "task_id": task_id,
+                        "url": oa_url,
+                        "original_reference": message.content,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
                 add(
                     "dingtalk_oa",
-                    oa_url or message.open_message_id,
+                    reference,
                     message.open_message_id,
-                    ("dws oa +list-pending --format json",),
+                    (),
                 )
         return tuple(references)
 
@@ -2815,8 +2770,10 @@ class DingTalkAutoReplyWorker:
         self,
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
+        *,
+        strict: bool = False,
     ) -> tuple[list[DingTalkMessage], list[DingTalkMessage]]:
-        if self._is_oa_pending_scan_trigger(trigger):
+        if self._is_oa_pending_scan_trigger(trigger) and not strict:
             return [trigger], [trigger]
         context_messages: list[DingTalkMessage] = []
         unread_messages: list[DingTalkMessage] = []
@@ -2826,6 +2783,7 @@ class DingTalkAutoReplyWorker:
             lambda: self.dws.read_recent_messages(conversation),
             message_id=trigger.open_message_id,
             raise_authorization=True,
+            raise_errors=strict,
             default=[],
         )
         unread_messages = self._read_conversation_messages(
@@ -2834,6 +2792,7 @@ class DingTalkAutoReplyWorker:
             lambda: self.dws.read_unread_messages(conversation),
             message_id=trigger.open_message_id,
             raise_authorization=True,
+            raise_errors=strict,
             default=[],
         )
         return context_messages, self._prompt_context_messages(

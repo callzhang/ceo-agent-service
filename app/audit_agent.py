@@ -31,6 +31,7 @@ class AuditAgentRunner:
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
+        dry_run: bool = False,
     ) -> None:
         self.store = store
         self.workspace = workspace
@@ -38,6 +39,7 @@ class AuditAgentRunner:
         self.executor = executor
         self.owner = owner or f"audit-agent-{uuid4().hex}"
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
+        self.dry_run = dry_run
 
     def run(
         self,
@@ -75,21 +77,35 @@ class AuditAgentRunner:
         return process.execute(
             run=claim.run,
             prompt=context.render(),
-            session_id=None,
+            session_id=claim.run.codex_session_id or None,
             schema_path=SCHEMA_PATH,
             expected_schema=AuditAgentResult.model_json_schema(),
             developer_instructions=_developer_instructions(
                 "Audit Agent B independently reviews and executes accepted candidates.\n\n"
+                + (
+                    "Dry-run is active. Use read-only tools to complete the independent "
+                    "review. Return revision_required normally when the candidate must "
+                    "change. When the candidate is executable but execution is suppressed "
+                    "only by dry-run, return needs_human with error code "
+                    "dry_run_execution_suppressed and side_effect_state none.\n\n"
+                    if self.dry_run
+                    else ""
+                )
                 + rendered_rules
             ),
             configure_command=lambda command: make_audit_agent_command(
                 command,
-                reviewed_mcp_tools=self.effects.reviewed_tools(),
+                reviewed_mcp_tools=(
+                    self.effects.reviewed_read_tools()
+                    if self.dry_run
+                    else self.effects.reviewed_tools()
+                ),
                 controlled_cli=ControlledCliConfig(
                     command=sys.executable,
                     args=("-m", "app.agent_cli"),
                     cwd=str(SERVICE_ROOT),
                 ),
+                allow_write=not self.dry_run,
             ),
             parse_result=lambda raw: parse_typed_agent_result(raw, AuditAgentResult),
             persist_conversation_session=False,

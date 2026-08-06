@@ -167,6 +167,28 @@ def _audit_jsonl(
     return "\n".join(records)
 
 
+def _dry_run_suppressed_jsonl(*, proposal_revision: int = 0) -> str:
+    result = {
+        "outcome": "needs_human",
+        "summary": "The candidate is executable but dry-run suppresses execution.",
+        "proposal_revision": proposal_revision,
+        "side_effect_state": "none",
+        "feedback": None,
+        "external_result": None,
+        "error": {
+            "code": "dry_run_execution_suppressed",
+            "retryable": False,
+            "authorization_required": False,
+        },
+    }
+    return json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": json.dumps(result)},
+        }
+    )
+
+
 @pytest.fixture
 def setup(tmp_path):
     store = AutoReplyStore(tmp_path / "agent.sqlite3")
@@ -232,6 +254,34 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert run.tool_events[1]["item"]["metadata"]["target_identifiers"] == {
         "group": "cid-agent"
     }
+
+
+def test_dry_run_audit_command_exposes_only_reviewed_read_tools(setup):
+    store, task, audit_context, parent = setup
+    executor = CapturingExecutor(_dry_run_suppressed_jsonl())
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        dry_run=True,
+    ).run(
+        task,
+        audit_context,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+    )
+
+    command = executor.commands[0]
+    assert result.result.outcome.value == "needs_human"
+    assert result.result.error.code == "dry_run_execution_suppressed"
+    assert result.result.side_effect_state.value == "none"
+    assert (
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill"]'
+        in command
+    )
+    assert "execute_reviewed_write" not in command
+    assert any("dry_run_execution_suppressed" in item for item in command)
 
 
 def test_audit_reads_current_audit_rules_for_each_turn(

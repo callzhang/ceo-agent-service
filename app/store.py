@@ -2571,6 +2571,21 @@ class AutoReplyStore:
             ).fetchall()
             return [self._agent_run_from_row(row, db=db) for row in rows]
 
+    def agent_run_lease_is_active(
+        self,
+        run_id: int,
+        *,
+        now: str | datetime | None = None,
+    ) -> bool:
+        _, now_text = _utc_store_time(now)
+        with self._connect() as db:
+            row = db.execute(
+                "select 1 from agent_runs "
+                "where id=? and status='running' and lease_expires_at>?",
+                (run_id, now_text),
+            ).fetchone()
+            return row is not None
+
     def foreign_key_violations(self) -> list[tuple[object, ...]]:
         with self._connect() as db:
             return [tuple(row) for row in db.execute("pragma foreign_key_check")]
@@ -2962,8 +2977,7 @@ class AutoReplyStore:
             if (
                 not claimed
                 and row["status"] == "running"
-                and bool(row["codex_session_id"])
-                and row["side_effect_state"] != "unknown"
+                and row["side_effect_state"] == "none"
                 and row["lease_expires_at"] <= now_text
             ):
                 reclaimed = db.execute(
@@ -2971,8 +2985,7 @@ class AutoReplyStore:
                     update agent_runs
                     set lease_owner=?, lease_expires_at=?, updated_at=?
                     where id=? and status='running'
-                      and codex_session_id<>''
-                      and side_effect_state<>'unknown'
+                      and side_effect_state='none'
                       and lease_expires_at<=?
                     """,
                     (owner, lease_expires_at, now_text, row["id"], now_text),
@@ -3523,7 +3536,7 @@ class AutoReplyStore:
                 where id=? and status='running'
                   and role='audit'
                   and execution_generation=?
-                  and side_effect_state='unknown'
+                  and side_effect_state<>'none'
                   and lease_expires_at<=?
                   and exists (
                       select 1 from reply_tasks

@@ -206,12 +206,13 @@ def make_audit_agent_command(
     *,
     reviewed_mcp_tools: dict[str, tuple[str, ...]],
     controlled_cli: ControlledCliConfig,
+    allow_write: bool = True,
 ) -> None:
     make_role_agent_command(
         command,
         reviewed_mcp_tools=reviewed_mcp_tools,
         controlled_cli=controlled_cli,
-        allow_write=True,
+        allow_write=allow_write,
     )
 
 

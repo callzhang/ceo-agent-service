@@ -56,6 +56,9 @@ approve execution under the configured rules.
 - One A Codex session is reused for each business conversation.
 - B is an auditor and executor, not a second business author.
 - B has broad read/write permissions from the start of its invocation.
+- In service dry-run mode B remains an auditor but receives only reviewed
+  read-only tools. An otherwise executable candidate returns `needs_human`
+  with `dry_run_execution_suppressed`; revision feedback remains available.
 - Every proposal revision is reviewed by a newly created B Codex session.
 - B sends rejected-review feedback to A as a new Agent message and obtains a
   revised result from the same A session.
@@ -330,8 +333,19 @@ not prevent corrections.
 
 ### B Failure Before Any External Write
 
-- Retry the same proposal with a new B session.
+- An expired persisted turn whose side-effect state is `none` may be reclaimed
+  and retried as that same turn, starting a fresh B session when no session was
+  recorded.
 - Do not consume a content-feedback cycle.
+
+An active lease always defers. An expired turn with a confirmed or unknown
+possible side effect is marked `unknown` and is not replayed. Reconciliation of
+that state is a separate recovery phase.
+
+The first `authorization_required` result defers without consuming a feedback
+cycle. After the service authentication gate succeeds and reclaims the task,
+the same persisted turn may be retried once in that processing pass; the
+worker must not loop on login within one pass.
 
 ### B Failure During Or After A Possible External Write
 
@@ -349,10 +363,12 @@ candidate operation identifier prevents an exact replay where supported.
 
 ### New Business Context
 
-If a newer conversation message changes the instruction, target, finality, or
-relevance of a pending candidate, B returns revision feedback. A receives the
-new context and produces a complete replacement candidate. The stale candidate
-is never executed.
+Immediately before every B invocation, the worker rereads the current
+conversation and rebuilds the task context. If this refresh fails, execution is
+deferred and B does not receive the older snapshot. If a newer conversation
+message changes the instruction, target, finality, or relevance of a pending
+candidate, B returns revision feedback. A receives the new context and produces
+a complete replacement candidate. The stale candidate is never executed.
 
 ## Storage
 
@@ -406,6 +422,9 @@ Simplification design:
 The following simplification decisions remain:
 
 - the service does not read or select business material for Agents;
+- for OA work, the service passes only process/task identifiers and links from
+  the trigger/task itself; it neither recovers targets from historical context
+  nor lists pending approvals to choose a target when no exact ID is present;
 - Agents use installed Skills, native CLIs, and reviewed MCP tools directly;
 - the service does not infer business targets or repair content;
 - authentication readiness remains a service-owned gate;

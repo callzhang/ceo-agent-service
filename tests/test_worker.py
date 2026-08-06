@@ -234,7 +234,7 @@ class FakeAgentOrchestrator:
     def __init__(self, worker: "DingTalkAutoReplyWorker") -> None:
         self.worker = worker
 
-    def process(self, task, context) -> OrchestrationResult:
+    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         runner = self.worker.direct_agent_runner
         assert runner is not None
         run_result = runner.run(task, context)
@@ -296,7 +296,7 @@ class ScriptedAgentOrchestrator:
         self.results = list(results)
         self.calls = []
 
-    def process(self, task, context) -> OrchestrationResult:
+    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         self.calls.append((task, context))
         return self.results.pop(0)
 
@@ -7841,7 +7841,8 @@ def test_structured_approval_card_is_processed_by_direct_agent(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert "dws oa +list-pending --format json" in agent_prompt(worker)
+    assert "dws oa +list-pending --format json" not in agent_prompt(worker)
+    assert '"read_commands": []' in agent_prompt(worker)
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
@@ -8192,7 +8193,8 @@ def test_ding_approval_reminder_is_processed_by_direct_agent(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert "dws oa +list-pending --format json" in agent_prompt(worker)
+    assert "dws oa +list-pending --format json" not in agent_prompt(worker)
+    assert '"read_commands": []' in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
@@ -8424,7 +8426,8 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
     script_no_action(worker)
     worker.run_once()
     assert len(agent_runner(worker).calls) == 1
-    assert "dws oa +list-pending --format json" in agent_prompt(worker)
+    assert "dws oa +list-pending --format json" not in agent_prompt(worker)
+    assert '"read_commands": []' in agent_prompt(worker)
     assert "试用期工作内容和转正要求" not in agent_prompt(worker)
 
 
@@ -8644,7 +8647,8 @@ def test_bare_dingtalk_approval_wrapper_reaches_direct_agent(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert "dws oa +list-pending --format json" in agent_prompt(worker)
+    assert "dws oa +list-pending --format json" not in agent_prompt(worker)
+    assert '"read_commands": []' in agent_prompt(worker)
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
@@ -13026,7 +13030,7 @@ def test_single_chat_oa_card_followup_triggers_followup_only(
     assert merged.open_message_id == "msg-followup"
 
 
-def test_fast_path_followup_uses_recent_oa_card_url_when_unread_omits_card(
+def test_fast_path_followup_does_not_inherit_oa_target_from_recent_context(
     tmp_path: Path, monkeypatch
 ):
     oa_card = message(
@@ -13072,12 +13076,9 @@ def test_fast_path_followup_uses_recent_oa_card_url_when_unread_omits_card(
     assert worker.consume_once() == 1
     runner = worker.direct_agent_runner
     assert isinstance(runner, FakeAgentResultRunner)
-    material = next(
-        item for item in runner.calls[0][2].materials if item.kind == "dingtalk_oa"
+    assert all(
+        item.kind != "dingtalk_oa" for item in runner.calls[0][2].materials
     )
-    assert '"process_instance_id": "proc-1"' in material.reference
-    assert '"task_id": "task-1"' in material.reference
-    assert material.source_message_id == "msg-oa-card"
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
