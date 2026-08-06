@@ -88,6 +88,7 @@ from app.permission import PermissionGate
 from app.prompt import MaterialReferenceContext
 from app.store import (
     AgentRole,
+    AgentRun,
     AgentRunLeaseLostError,
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
@@ -1583,15 +1584,24 @@ class DingTalkAutoReplyWorker:
                     )
                     continue
                 try:
+                    failed_run = self._latest_failed_agent_run(task)
                     if error in RECOVERABLE_AGENT_RUNTIME_ERRORS:
-                        self.store.clear_codex_session(task.conversation_id)
-                        self.store.clear_agent_run_session(
-                            task.id,
-                            task.execution_generation,
-                            role=AgentRole.AUDIT,
-                            proposal_revision=0,
-                            turn_attempt=0,
-                        )
+                        if failed_run is not None:
+                            conversation_session = self.store.get_codex_session_id(
+                                task.conversation_id
+                            )
+                            if (
+                                failed_run.role is AgentRole.CONSUMER
+                                or conversation_session == failed_run.codex_session_id
+                            ):
+                                self.store.clear_codex_session(task.conversation_id)
+                            self.store.clear_agent_run_session(
+                                task.id,
+                                task.execution_generation,
+                                role=failed_run.role,
+                                proposal_revision=failed_run.proposal_revision,
+                                turn_attempt=failed_run.turn_attempt,
+                            )
                     task_status = self._record_agent_runtime_failure_attempt(
                         task,
                         error,
@@ -1927,11 +1937,7 @@ class DingTalkAutoReplyWorker:
         retryable: bool,
         retry_beyond_limit: bool = False,
     ) -> str:
-        runs = self.store.list_agent_runs_for_task_generation(
-            task.id,
-            task.execution_generation,
-        )
-        run = next((item for item in reversed(runs) if item.status == "failed"), None)
+        run = self._latest_failed_agent_run(task)
         task_status = (
             "pending"
             if retryable
@@ -1998,6 +2004,16 @@ class DingTalkAutoReplyWorker:
             message=error,
         )
         return task_status
+
+    def _latest_failed_agent_run(self, task: ReplyTask) -> AgentRun | None:
+        runs = self.store.list_agent_runs_for_task_generation(
+            task.id,
+            task.execution_generation,
+        )
+        return next(
+            (item for item in reversed(runs) if item.status == "failed"),
+            None,
+        )
 
     def _pending_reply_task_candidates(
         self, *, page_size: int, now: str, max_id: int | None

@@ -1070,6 +1070,33 @@ def test_agent_run_is_unique_per_task_generation(tmp_path: Path):
     assert second.run.lease_owner == "worker-1"
 
 
+def test_stale_processing_task_with_current_unknown_effect_is_not_recoverable(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store,
+        task_id,
+        "initial",
+        owner="failed-worker",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": False},
+        owner="failed-worker",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') "
+            "where id=?",
+            (task_id,),
+        )
+
+    assert store.list_stale_processing_reply_tasks(30 * 60) == []
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+
+
 def test_agent_run_concurrent_claims_choose_exactly_one_owner(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     first_store = AutoReplyStore(db_path)

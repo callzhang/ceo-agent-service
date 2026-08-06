@@ -4457,8 +4457,13 @@ class AutoReplyStore:
                       from agent_runs as runs
                       where runs.reply_task_id=tasks.id
                         and runs.execution_generation=tasks.execution_generation
-                        and runs.status='running'
-                        and runs.lease_expires_at>current_timestamp
+                        and (
+                            runs.side_effect_state='unknown'
+                            or (
+                                runs.status='running'
+                                and runs.lease_expires_at>current_timestamp
+                            )
+                        )
                   )
                 order by tasks.locked_at, tasks.id
                 """,

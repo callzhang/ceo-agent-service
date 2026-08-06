@@ -127,6 +127,105 @@ class BlockedUnknownOrchestrator:
         )
 
 
+class PoisonedSessionFailureOrchestrator:
+    def __init__(self, store: AutoReplyStore, role: AgentRole) -> None:
+        self.store = store
+        self.role = role
+        self.run_id = 0
+        self.observed_resume_sessions: list[str] = []
+
+    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
+        del context, refresh_context
+        if self.run_id == 0:
+            parent_id = None
+            proposal_revision = 0
+            turn_attempt = 0
+            operation_id = ""
+            conversation_session = "poisoned-consumer-session"
+            if self.role is AgentRole.AUDIT:
+                consumer_zero = self.store.claim_agent_run(
+                    task.id,
+                    task.execution_generation,
+                    role=AgentRole.CONSUMER,
+                    proposal_revision=0,
+                    turn_attempt=0,
+                    parent_agent_run_id=None,
+                    operation_id="",
+                    owner="poison-consumer-zero",
+                ).run
+                audit_zero = self.store.claim_agent_run(
+                    task.id,
+                    task.execution_generation,
+                    role=AgentRole.AUDIT,
+                    proposal_revision=0,
+                    turn_attempt=0,
+                    parent_agent_run_id=consumer_zero.id,
+                    operation_id=(
+                        f"agent-task:{task.id}:{task.execution_generation}:proposal:0"
+                    ),
+                    owner="poison-audit-zero",
+                ).run
+                consumer_one = self.store.claim_agent_run(
+                    task.id,
+                    task.execution_generation,
+                    role=AgentRole.CONSUMER,
+                    proposal_revision=1,
+                    turn_attempt=0,
+                    parent_agent_run_id=audit_zero.id,
+                    operation_id="",
+                    owner="poison-consumer-one",
+                ).run
+                parent_id = consumer_one.id
+                proposal_revision = 1
+                turn_attempt = 2
+                operation_id = (
+                    f"agent-task:{task.id}:{task.execution_generation}:proposal:1"
+                )
+                conversation_session = "healthy-consumer-session"
+            self.store.upsert_conversation(
+                task.conversation_id,
+                task.conversation_title,
+                task.single_chat,
+                conversation_session,
+            )
+            claim = self.store.claim_agent_run(
+                task.id,
+                task.execution_generation,
+                role=self.role,
+                proposal_revision=proposal_revision,
+                turn_attempt=turn_attempt,
+                parent_agent_run_id=parent_id,
+                operation_id=operation_id,
+                owner="poisoned-role",
+            )
+            assert claim.claimed
+            self.store.set_agent_run_session(
+                claim.run.id,
+                "poisoned-role-session",
+                owner="poisoned-role",
+            )
+            failed = self.store.fail_agent_run(
+                claim.run.id,
+                {"code": "codex_process_failed", "retryable": True},
+                owner="poisoned-role",
+            )
+            self.run_id = failed.id
+            raise RuntimeError("codex_process_failed")
+
+        run = self.store.get_agent_run(self.run_id)
+        assert run is not None
+        self.observed_resume_sessions.append(run.codex_session_id)
+        error = AgentError(code="stop_after_recovery", retryable=False)
+        return OrchestrationResult(
+            status="failed",
+            final_run_id=run.id,
+            final_role=self.role,
+            summary=error.code,
+            error=error,
+            feedback_cycles=run.proposal_revision,
+        )
+
+
 def _get_direct_run(store, task_id: int, execution_generation: str):
     audit = store.get_agent_run_for_turn(
         task_id,
@@ -1916,6 +2015,44 @@ def test_blocked_orchestration_keeps_unknown_run_reconciliation_reachable(
     assert store.get_reply_task(task_id).status == "done"
 
 
+def test_stale_recovery_leaves_unknown_effect_processing_without_duplicate_attempt(
+    tmp_path: Path,
+):
+    trigger = _message("Review and execute the current request.")
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        agent_orchestrator=BlockedUnknownOrchestrator(store),
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+    assert worker.consume_once(max_tasks=1) == 0
+    before_attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert before_attempt is not None and before_attempt.send_status == "blocked"
+    unknown = store.list_unknown_agent_runs(now=NOW)
+    assert len(unknown) == 1
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
+            (task_id,),
+        )
+
+    worker._recover_stale_agent_reply_tasks()
+
+    task = store.get_reply_task(task_id)
+    assert task is not None and task.status == "processing"
+    assert [run.id for run in store.list_unknown_agent_runs(now=NOW)] == [unknown[0].id]
+    attempts = [
+        attempt
+        for attempt in store.list_reply_attempts(limit=10)
+        if attempt.trigger_message_id == trigger.open_message_id
+    ]
+    assert [attempt.id for attempt in attempts] == [before_attempt.id]
+
+
 @pytest.mark.parametrize(
     ("role", "proposal_revision", "turn_attempt"),
     (
@@ -2023,6 +2160,41 @@ def test_runtime_failure_attempt_uses_latest_current_generation_role_turn(
     assert attempt.codex_transcript_start_line == 4
     assert attempt.codex_transcript_end_line == 7
     assert json.loads(attempt.audit_tool_events_json) == [event]
+
+
+@pytest.mark.parametrize("role", (AgentRole.CONSUMER, AgentRole.AUDIT))
+def test_runtime_failure_cleanup_clears_actual_failed_role_session_before_retry(
+    tmp_path: Path,
+    role: AgentRole,
+):
+    trigger = _message("Review the current request.")
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    orchestrator = PoisonedSessionFailureOrchestrator(store, role)
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        agent_orchestrator=orchestrator,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+    task_id = _enqueue(store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    task = store.get_reply_task(task_id)
+    assert task is not None and task.status == "pending"
+    failed_run = store.get_agent_run(orchestrator.run_id)
+    assert failed_run is not None and failed_run.codex_session_id == ""
+    expected_conversation_session = (
+        None if role is AgentRole.CONSUMER else "healthy-consumer-session"
+    )
+    assert store.get_codex_session_id(task.conversation_id) == expected_conversation_session
+    with store._connect() as db:
+        db.execute("update reply_tasks set available_at='' where id=?", (task_id,))
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert orchestrator.observed_resume_sessions == [""]
 
 
 def test_unknown_oa_run_reconciliation_receives_raw_instance_id_and_read_command(
@@ -2944,7 +3116,7 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     ]
 
 
-def test_stale_processing_ignores_copied_tool_events_and_resumes_same_run(
+def test_stale_processing_unknown_effect_does_not_resume_same_run(
     tmp_path: Path,
 ):
     trigger = _message("请发送一次通知")
@@ -2971,6 +3143,12 @@ def test_stale_processing_ignores_copied_tool_events_and_resumes_same_run(
         owner="dead-worker",
         now="2026-07-28 07:00:01",
     )
+    worker.store.mark_expired_agent_run_unknown(
+        claim.run.id,
+        {"code": "expired_effect_requires_reconciliation", "retryable": False},
+        expected_execution_generation=task.execution_generation,
+        now="2026-07-28 07:02:00",
+    )
     with worker.store._connect() as db:
         db.execute(
             "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
@@ -2979,12 +3157,13 @@ def test_stale_processing_ignores_copied_tool_events_and_resumes_same_run(
 
     assert worker.consume_once(max_tasks=1) == 0
 
-    assert len(runner.calls) == 1
+    assert runner.calls == []
     run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None
-    assert run.status == "running"
+    assert run.status == "unknown"
     assert run.side_effect_state == "unknown"
-    assert worker.store.get_reply_task(task_id).status == "pending"
+    assert worker.store.get_reply_task(task_id).status == "processing"
+    assert [item.id for item in worker.store.list_unknown_agent_runs()] == [run.id]
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is None or attempt.send_status != "blocked"
 
