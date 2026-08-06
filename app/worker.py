@@ -1927,13 +1927,11 @@ class DingTalkAutoReplyWorker:
         retryable: bool,
         retry_beyond_limit: bool = False,
     ) -> str:
-        run = self.store.get_agent_run_for_turn(
+        runs = self.store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
-            role=AgentRole.AUDIT,
-            proposal_revision=0,
-            turn_attempt=0,
         )
+        run = next((item for item in reversed(runs) if item.status == "failed"), None)
         task_status = (
             "pending"
             if retryable
@@ -2140,7 +2138,7 @@ class DingTalkAutoReplyWorker:
             send_error = send_error or "needs_human"
         elif result.status == "blocked":
             send_status = "blocked"
-            task_status = "done"
+            task_status = "unchanged"
             send_error = send_error or "agent_side_effect_unknown"
         else:
             send_status = "failed"

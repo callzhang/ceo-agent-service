@@ -122,6 +122,12 @@ class AgentOrchestrator:
                         else MAX_ROLE_ATTEMPTS_PER_PROCESS
                     )
                     if role_attempts.get(attempt_key, 0) >= max_attempts:
+                        if not state.authorization_error_code:
+                            return self._retry_exhausted_result(
+                                task,
+                                role=AgentRole.CONSUMER,
+                                proposal_revision=state.proposal_revision,
+                            )
                         return self._deferred_result(
                             _Deferred(
                                 run=None,
@@ -151,6 +157,12 @@ class AgentOrchestrator:
                         else MAX_ROLE_ATTEMPTS_PER_PROCESS
                     )
                     if role_attempts.get(attempt_key, 0) >= max_attempts:
+                        if not state.authorization_error_code:
+                            return self._retry_exhausted_result(
+                                task,
+                                role=AgentRole.AUDIT,
+                                proposal_revision=state.proposal_revision,
+                            )
                         return self._deferred_result(
                             _Deferred(
                                 run=None,
@@ -459,6 +471,37 @@ class AgentOrchestrator:
                 )
             ),
             default=0,
+        )
+
+    def _retry_exhausted_result(
+        self,
+        task: ReplyTask,
+        *,
+        role: AgentRole,
+        proposal_revision: int,
+    ) -> OrchestrationResult:
+        runs = self.store.list_agent_runs_for_task_generation(
+            task.id,
+            task.execution_generation,
+        )
+        latest = next(
+            (
+                run
+                for run in reversed(runs)
+                if run.role is role and run.proposal_revision == proposal_revision
+            ),
+            None,
+        )
+        if latest is None:
+            raise RuntimeError("agent retry exhausted without a persisted role turn")
+        code = f"{role.value}_retry_exhausted"
+        return OrchestrationResult(
+            status="failed",
+            final_run_id=latest.id,
+            final_role=role,
+            summary=code,
+            error=AgentError(code=code, retryable=True),
+            feedback_cycles=self._feedback_cycles(task),
         )
 
     @staticmethod

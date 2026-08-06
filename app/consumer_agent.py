@@ -61,6 +61,7 @@ class ConsumerAgentRunner:
                 return self._run_locked(
                     task,
                     context,
+                    lock_owner=lock_owner,
                     proposal_revision=proposal_revision,
                     parent_agent_run_id=parent_agent_run_id,
                     rendered_rules=rendered_rules,
@@ -76,6 +77,7 @@ class ConsumerAgentRunner:
         task: ReplyTask,
         context: AgentTaskContext,
         *,
+        lock_owner: str,
         proposal_revision: int,
         parent_agent_run_id: int | None,
         rendered_rules: str,
@@ -107,6 +109,14 @@ class ConsumerAgentRunner:
             codex_bin=self.codex_bin,
             mcp_effect_registry=self.effects,
         )
+
+        def renew_session_lock() -> None:
+            if not self.store.renew_codex_session_lock(
+                task.conversation_id,
+                lock_owner,
+            ):
+                raise RuntimeError("codex_session_lock_lost")
+
         return process.execute(
             run=claim.run,
             prompt=context.render(
@@ -133,6 +143,7 @@ class ConsumerAgentRunner:
                 ConsumerAgentResult,
             ),
             persist_conversation_session=True,
+            on_progress=renew_session_lock,
         )
 
 

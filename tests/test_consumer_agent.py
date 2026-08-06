@@ -203,28 +203,67 @@ def test_consumer_validates_audit_rules_before_claiming_run(
     ) is None
 
 
-def test_consumer_renews_lease_for_every_jsonl_record(
+def test_consumer_renews_run_and_session_leases_for_every_jsonl_record(
     store,
     task,
     context,
     monkeypatch,
 ):
-    calls = 0
-    original = store.renew_agent_run_lease
+    run_calls = 0
+    session_calls = 0
+    original_run = store.renew_agent_run_lease
+    original_session = store.renew_codex_session_lock
 
-    def renew(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return original(*args, **kwargs)
+    def renew_run(*args, **kwargs):
+        nonlocal run_calls
+        run_calls += 1
+        return original_run(*args, **kwargs)
 
-    monkeypatch.setattr(store, "renew_agent_run_lease", renew)
+    def renew_session(*args, **kwargs):
+        nonlocal session_calls
+        session_calls += 1
+        assert args == (
+            task.conversation_id,
+            f"consumer-agent:{task.id}:{task.execution_generation}",
+        )
+        renewed = original_session(*args, **kwargs)
+        assert store.acquire_codex_session_lock(
+            task.conversation_id,
+            "concurrent-consumer",
+        ) is False
+        return renewed
+
+    monkeypatch.setattr(store, "renew_agent_run_lease", renew_run)
+    monkeypatch.setattr(store, "renew_codex_session_lock", renew_session)
     ConsumerAgentRunner(
         store=store,
         workspace=Path("/workspace"),
         executor=CapturingExecutor(_result_jsonl()),
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert calls == 2
+    assert run_calls == 2
+    assert session_calls == 2
+
+
+def test_consumer_releases_session_lock_after_progress_callback_failure(
+    store,
+    task,
+    context,
+    monkeypatch,
+):
+    def fail_renewal(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(store, "renew_codex_session_lock", fail_renewal)
+
+    with pytest.raises(RuntimeError, match="codex_session_lock_lost"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(_result_jsonl()),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert store.acquire_codex_session_lock(task.conversation_id, "next-consumer")
 
 
 def test_consumer_reports_session_lock_release_failure(

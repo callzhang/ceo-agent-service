@@ -71,6 +71,7 @@ class AgentTurnProcess(Generic[ResultT]):
         parse_result: Callable[[str], ResultT],
         persist_conversation_session: bool,
         expected_effect_actions: tuple[dict[str, object], ...] = (),
+        on_progress: Callable[[], None] | None = None,
     ) -> AgentTurnRunResult[ResultT]:
         line_count = 0
         saw_json = False
@@ -92,6 +93,8 @@ class AgentTurnProcess(Generic[ResultT]):
             self.store.renew_agent_run_lease(
                 run.id, owner=self.owner, lease_seconds=LEASE_SECONDS
             )
+            if on_progress is not None:
+                on_progress()
             new_session = _session_id(payload)
             if new_session:
                 self.store.set_agent_run_session(

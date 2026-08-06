@@ -309,6 +309,30 @@ def test_codex_session_lock_release_requires_owner(tmp_path):
     assert store.release_codex_session_lock("cid-1", "okr:1") is True
 
 
+def test_codex_session_lock_renewal_requires_current_owner(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    assert store.acquire_codex_session_lock("cid-1", "consumer:1") is True
+    with store._connect() as db:
+        db.execute(
+            "update codex_session_locks "
+            "set locked_at=datetime('now', '-19 minutes') "
+            "where conversation_id='cid-1'"
+        )
+
+    assert store.renew_codex_session_lock("cid-1", "other") is False
+    assert store.renew_codex_session_lock("cid-1", "consumer:1") is True
+    assert store.acquire_codex_session_lock("cid-1", "other") is False
+
+    with store._connect() as db:
+        db.execute(
+            "update codex_session_locks "
+            "set locked_at=datetime('now', '-21 minutes') "
+            "where conversation_id='cid-1'"
+        )
+    assert store.renew_codex_session_lock("cid-1", "consumer:1") is False
+
+
 def test_codex_session_lock_context_manager_releases_without_swallowing(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
@@ -1123,7 +1147,7 @@ def test_agent_run_fresh_lease_cannot_be_stolen_but_expired_lease_recovers(
     assert expired.run.lease_owner == "worker-2"
 
 
-def test_expired_sessionless_agent_run_cannot_be_reclaimed(tmp_path: Path):
+def test_expired_sessionless_no_effect_agent_run_can_be_reclaimed(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     first = _claim_audit_run(store,
@@ -1141,11 +1165,11 @@ def test_expired_sessionless_agent_run_cannot_be_reclaimed(tmp_path: Path):
         now="2026-07-29 00:30:01",
     )
 
-    assert expired.claimed is False
+    assert expired.claimed is True
     assert expired.run.id == first.run.id
     assert expired.run.codex_session_id == ""
-    assert expired.run.lease_owner == "worker-1"
-    assert expired.run.lease_expires_at == first.run.lease_expires_at
+    assert expired.run.lease_owner == "worker-2"
+    assert expired.run.lease_expires_at > first.run.lease_expires_at
 
 
 def test_agent_run_claim_rejects_generation_not_owned_by_task(tmp_path: Path):

@@ -256,6 +256,30 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     }
 
 
+def test_audit_does_not_renew_conversation_session_lock(setup, monkeypatch):
+    store, task, audit_context, parent = setup
+    renewals = 0
+
+    def renew(*_args, **_kwargs):
+        nonlocal renewals
+        renewals += 1
+        return True
+
+    monkeypatch.setattr(store, "renew_codex_session_lock", renew)
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(_audit_jsonl("operation-1", session="session-b")),
+    ).run(
+        task,
+        audit_context,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+    )
+
+    assert renewals == 0
+
+
 def test_dry_run_audit_command_exposes_only_reviewed_read_tools(setup):
     store, task, audit_context, parent = setup
     executor = CapturingExecutor(_dry_run_suppressed_jsonl())

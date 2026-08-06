@@ -148,13 +148,21 @@ class ScriptedConsumer:
             owner=self.owner,
         )
         result = self.results.popleft()
-        self.store.complete_agent_run(
-            claim.run.id,
-            result.model_dump(mode="json"),
-            owner=self.owner,
-        )
+        if result.outcome is ConsumerOutcome.FAILED:
+            self.store.fail_agent_run(
+                claim.run.id,
+                result.error.model_dump(mode="json"),
+                owner=self.owner,
+            )
+        else:
+            self.store.complete_agent_run(
+                claim.run.id,
+                result.model_dump(mode="json"),
+                owner=self.owner,
+            )
         self.calls.append(
             {
+                "run_id": claim.run.id,
                 "revision": proposal_revision,
                 "parent": parent_agent_run_id,
                 "feedback": feedback,
@@ -215,6 +223,7 @@ class ScriptedAudit:
             )
         self.calls.append(
             {
+                "run_id": claim.run.id,
                 "revision": context.proposal_revision,
                 "turn_attempt": turn_attempt,
                 "operation_id": context.operation_id,
@@ -623,6 +632,63 @@ def test_authorization_recovery_defers_again_after_one_failed_retry(store):
     assert second.error.authorization_required is True
     assert second.feedback_cycles == 0
     assert len(audit.calls) == 2
+
+
+def test_retryable_audit_exhaustion_returns_failed_latest_run(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    audit = ScriptedAudit(
+        store,
+        _audit_result("failed", 0, code="audit_unavailable", retryable=True),
+        _audit_result("failed", 0, code="audit_unavailable", retryable=True),
+    )
+
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=audit),
+        task,
+    )
+
+    assert result.status == "failed"
+    assert result.final_role is AgentRole.AUDIT
+    assert result.final_run_id == audit.calls[-1]["run_id"]
+    assert result.error.code == "audit_retry_exhausted"
+    assert result.error.retryable is True
+    assert result.feedback_cycles == 0
+    assert len(audit.calls) == 2
+
+
+def test_retryable_consumer_exhaustion_returns_failed_latest_run(store):
+    failure = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "failed",
+            "summary": "Consumer dependency unavailable.",
+            "proposal": None,
+            "error": {
+                "code": "consumer_unavailable",
+                "retryable": True,
+                "authorization_required": False,
+            },
+        }
+    )
+    task = _task(store)
+    consumer = ScriptedConsumer(store, failure, failure)
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=consumer,
+            audit=ScriptedAudit(store),
+        ),
+        task,
+    )
+
+    assert result.status == "failed"
+    assert result.final_role is AgentRole.CONSUMER
+    assert result.final_run_id == consumer.calls[-1]["run_id"]
+    assert result.error.code == "consumer_retry_exhausted"
+    assert result.error.retryable is True
+    assert result.feedback_cycles == 0
+    assert len(consumer.calls) == 2
 
 
 class RevisionRetryConsumer(ScriptedConsumer):

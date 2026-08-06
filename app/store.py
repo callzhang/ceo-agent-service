@@ -6678,6 +6678,32 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def renew_codex_session_lock(
+        self,
+        conversation_id: str,
+        owner: str,
+        *,
+        now: str | datetime | None = None,
+    ) -> bool:
+        if not conversation_id.strip():
+            raise ValueError("missing conversation_id")
+        if not owner.strip():
+            raise ValueError("missing lock owner")
+        now_value, now_text = _utc_store_time(now)
+        stale_before = (
+            now_value - timedelta(seconds=CODEX_SESSION_LOCK_STALE_SECONDS)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update codex_session_locks
+                set locked_at=?
+                where conversation_id=? and owner=? and locked_at>?
+                """,
+                (now_text, conversation_id, owner, stale_before),
+            )
+            return cursor.rowcount == 1
+
     def codex_session_lock(self, conversation_id: str, owner: str) -> CodexSessionLock:
         return CodexSessionLock(self, conversation_id, owner)
 
