@@ -1108,6 +1108,53 @@ def test_retryable_dws_failure_defers_follow_up_with_stable_idempotency_uuid(tmp
     assert dws.sent[0]["idempotency_uuid"]
 
 
+def test_unknown_dws_send_outcome_defers_follow_up_with_stable_idempotency_uuid(
+    tmp_path,
+):
+    from app.dws_client import DwsError
+
+    class UnknownOutcomeDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            self.sent.append(kwargs)
+            raise DwsError("dws command failed with exit code 1", code="1")
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="owner-1",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请同步进展",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = UnknownOutcomeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert store.list_follow_up_drafts(statuses=("failed",)) == []
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "draft"
+    assert draft.scheduled_at == "2026-06-08 02:15:00"
+    result = json.loads(draft.send_result_json)
+    assert result["reason"] == "dws_send_outcome_unknown"
+    assert dws.sent[0]["idempotency_uuid"]
+
+
 def test_process_due_follow_ups_can_target_one_draft_for_recovery(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
