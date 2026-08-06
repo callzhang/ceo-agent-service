@@ -139,6 +139,22 @@ def _parse_jsonl_payloads(raw: str) -> list[dict]:
 
 
 def _agent_message_candidate(payload: dict) -> str | None:
+    response_item = payload.get("payload")
+    if (
+        payload.get("type") == "response_item"
+        and isinstance(response_item, dict)
+        and response_item.get("type") == "message"
+        and response_item.get("role") == "assistant"
+    ):
+        content = response_item.get("content")
+        if isinstance(content, list):
+            for block in reversed(content):
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "output_text"
+                    and isinstance(block.get("text"), str)
+                ):
+                    return block["text"]
     item = payload.get("item")
     if isinstance(item, dict) and item.get("type") == "agent_message":
         for key in ("text", "message"):

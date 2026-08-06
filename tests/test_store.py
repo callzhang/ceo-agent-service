@@ -2101,7 +2101,7 @@ def test_suspended_unknown_run_requires_structured_manual_resolution(
         now="2026-07-29 09:00:03",
     )
 
-    resolved = store.resolve_unknown_agent_run_manually(
+    resolved = store.resolve_agent_run_manually(
         run.id,
         expected_execution_generation=original_generation,
         resolution=resolution,
@@ -2191,7 +2191,7 @@ def test_manual_resolution_rolls_back_run_task_and_attempt_on_insert_failure(
     )
 
     with pytest.raises(sqlite3.IntegrityError, match="forced attempt failure"):
-        store.resolve_unknown_agent_run_manually(
+        store.resolve_agent_run_manually(
             run.id,
             expected_execution_generation="initial",
             resolution="confirmed_occurred",
