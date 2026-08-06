@@ -267,6 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
         "process-follow-ups",
         "check-follow-up-completions",
         "daily-task-maintenance",
+        "quality-check",
         "channel-doctor",
         "doctor-mcp",
         "setup-memory-connector",
@@ -478,6 +479,21 @@ def build_parser() -> argparse.ArgumentParser:
                 "--notify",
                 action="store_true",
                 help="record non-ready auth states and notify once",
+            )
+        if command == "quality-check":
+            subparser.add_argument(
+                "--state-file",
+                default=os.getenv(
+                    "CEO_HOURLY_QUALITY_GATE_PATH",
+                    str(_default_data_dir() / "hourly-quality-gate.json"),
+                ),
+                help="path for the fail-closed queue coverage result",
+            )
+            subparser.add_argument(
+                "--verify-channels",
+                action=argparse.BooleanOptionalAction,
+                default=_env_bool("CEO_QUALITY_CHECK_VERIFY_CHANNELS", True),
+                help="run live DingTalk and WeChat channel health checks",
             )
         if command == "feedback":
             subparser.add_argument("--attempt-id", type=int, required=True)
@@ -1500,6 +1516,32 @@ def channel_doctor_command() -> dict[str, object]:
     report: dict[str, object] = {"channels": statuses}
     print(json.dumps(report, ensure_ascii=False), flush=True)
     return report
+
+
+def quality_check_command(
+    settings: WorkerSettings,
+    *,
+    state_file: str | Path,
+    verify_channels: bool = False,
+) -> int:
+    from app.quality_gate import (
+        add_channel_health,
+        scan_hourly_quality,
+        write_hourly_quality_state,
+    )
+
+    report = scan_hourly_quality(settings.db_path)
+    if verify_channels:
+        from app.channel_gate import default_channel_gates
+
+        channel_states = {
+            name: gate.check().state.value
+            for name, gate in default_channel_gates().items()
+        }
+        report = add_channel_health(report, channel_states)
+    write_hourly_quality_state(report, state_file)
+    print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True), flush=True)
+    return 0 if report.ok else 2
 
 
 def _record_service_failure(
@@ -2868,6 +2910,14 @@ def main() -> None:
     elif args.command == "daily-task-maintenance":
         ensure_live_send_allowed(settings)
         daily_task_maintenance_command(settings)
+    elif args.command == "quality-check":
+        raise SystemExit(
+            quality_check_command(
+                settings,
+                state_file=args.state_file,
+                verify_channels=args.verify_channels,
+            )
+        )
     elif args.command == "doctor-mcp":
         doctor_mcp_command(
             settings,
