@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterator
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, TypeAdapter
@@ -623,6 +624,7 @@ class AutoReplyStore:
             if path_key in _INITIALIZED_STORE_PATHS:
                 return
             self._initialize()
+            self.backfill_oa_audit_metadata()
             _INITIALIZED_STORE_PATHS.add(path_key)
 
     @contextmanager
@@ -7572,6 +7574,12 @@ class AutoReplyStore:
         send_status: str,
         send_error: str,
         channel: str,
+        oa_process_instance_id: str = "",
+        oa_task_id: str = "",
+        oa_url: str = "",
+        oa_action: str = "",
+        oa_remark: str = "",
+        oa_action_result_json: str = "",
     ) -> int:
         """Persist one Direct Agent result and its task transition atomically."""
         if task_status not in {"done", "failed", "pending", "unchanged"}:
@@ -7605,9 +7613,11 @@ class AutoReplyStore:
                     trigger_sender, trigger_text, action, sensitivity_kind,
                     codex_reason, codex_session_id,
                     codex_transcript_start_line, codex_transcript_end_line,
-                    audit_tool_events_json, audit_summary, send_status,
-                    send_error, channel
-                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    audit_tool_events_json, audit_summary,
+                    oa_process_instance_id, oa_task_id, oa_url, oa_action,
+                    oa_remark, oa_action_result_json, send_status, send_error,
+                    channel
+                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -7621,6 +7631,12 @@ class AutoReplyStore:
                     codex_transcript_end_line,
                     audit_tool_events_json,
                     audit_summary,
+                    oa_process_instance_id,
+                    oa_task_id,
+                    oa_url,
+                    oa_action,
+                    oa_remark,
+                    oa_action_result_json,
                     send_status,
                     send_error,
                     channel,
@@ -8585,6 +8601,58 @@ class AutoReplyStore:
                 (process_id, max(1, limit)),
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def backfill_oa_audit_metadata(self) -> int:
+        """Recover OA identity for historical Direct Agent attempts by exact task key."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select reply_attempts.id, reply_tasks.oa_url
+                from reply_attempts
+                join reply_tasks on reply_tasks.conversation_id=reply_attempts.conversation_id
+                    and reply_tasks.trigger_message_id=reply_attempts.trigger_message_id
+                where reply_attempts.action='agent_run'
+                    and reply_attempts.oa_process_instance_id=''
+                    and reply_tasks.oa_url<>''
+                """
+            ).fetchall()
+            repaired = 0
+            for row in rows:
+                process_instance_id, task_id = self._oa_identifiers_from_url(
+                    str(row["oa_url"] or "")
+                )
+                if not process_instance_id:
+                    continue
+                cursor = db.execute(
+                    """
+                    update reply_attempts
+                    set oa_process_instance_id=?, oa_task_id=?, oa_url=?,
+                        oa_action=case when oa_action='' then 'review' else oa_action end,
+                        updated_at=current_timestamp
+                    where id=? and oa_process_instance_id=''
+                    """,
+                    (
+                        process_instance_id,
+                        task_id,
+                        str(row["oa_url"] or ""),
+                        int(row["id"]),
+                    ),
+                )
+                repaired += cursor.rowcount
+            return repaired
+
+    @staticmethod
+    def _oa_identifiers_from_url(url: str) -> tuple[str, str]:
+        query = parse_qs(urlsplit(url).query)
+        values = {
+            "".join(key.replace("_", "").casefold().split()): value
+            for key, value in query.items()
+        }
+        process_values = values.get("procinstid") or values.get("processinstanceid")
+        task_values = values.get("taskid")
+        process_instance_id = str(process_values[0]).strip() if process_values else ""
+        task_id = str(task_values[0]).strip() if task_values else ""
+        return process_instance_id, task_id
 
     def list_reply_attempts_for_codex_session(
         self, codex_session_id: str, limit: int | None = None

@@ -33,6 +33,43 @@
       ],
       "title": "AgentOutcome",
       "type": "string"
+    },
+    "OaActionReceipt": {
+      "additionalProperties": false,
+      "description": "A verified OA action that must remain attached to its approval history.",
+      "properties": {
+        "process_instance_id": {
+          "minLength": 1,
+          "title": "Process Instance Id",
+          "type": "string"
+        },
+        "task_id": {
+          "default": "",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "action": {
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "remark": {
+          "default": "",
+          "title": "Remark",
+          "type": "string"
+        },
+        "result": {
+          "additionalProperties": true,
+          "title": "Result",
+          "type": "object"
+        }
+      },
+      "required": [
+        "process_instance_id",
+        "action"
+      ],
+      "title": "OaActionReceipt",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -47,12 +84,24 @@
     },
     "error": {
       "$ref": "#/$defs/AgentError"
+    },
+    "oa_action_receipt": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OaActionReceipt"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [
     "outcome",
     "summary",
-    "error"
+    "error",
+    "oa_action_receipt"
   ],
   "title": "AgentResult",
   "type": "object"

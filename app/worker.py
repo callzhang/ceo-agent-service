@@ -2565,6 +2565,7 @@ class DingTalkAutoReplyWorker:
         run = self.store.get_agent_run(run_result.run_id)
         if run is None:
             raise RuntimeError("agent run was not persisted")
+        oa_metadata = self._agent_oa_audit_metadata(task, run_result.result)
         return self.store.finalize_agent_reply_task(
             task_id=task.id,
             expected_execution_generation=task.execution_generation,
@@ -2590,7 +2591,29 @@ class DingTalkAutoReplyWorker:
             send_status=send_status,
             send_error=send_error,
             channel=task.channel,
+            **oa_metadata,
         )
+
+    @staticmethod
+    def _agent_oa_audit_metadata(
+        task: ReplyTask,
+        result: AgentResult,
+    ) -> dict[str, str]:
+        receipt = result.oa_action_receipt
+        if receipt is None:
+            return {}
+        return {
+            "oa_process_instance_id": receipt.process_instance_id,
+            "oa_task_id": receipt.task_id,
+            "oa_url": task.oa_url,
+            "oa_action": receipt.action,
+            "oa_remark": receipt.remark,
+            "oa_action_result_json": json.dumps(
+                receipt.result,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        }
 
     def _record_agent_attempt(
         self,

@@ -375,7 +375,9 @@ recruiting, sales, finance, admin, HR, other
   `CEO_OA_PENDING_SCAN_LOOKBACK_DAYS` 天的待审批，默认 365 天。扫描只会在审批详情中
   确认当前登录用户存在 RUNNING 审批节点时入队，避免猜测 task id；同一审批仅在首次到达
   当前用户、任务 ID 变化或产生新的审批操作/留言时再次入队。该扫描器独立运行，不会被
-  长时间的普通消息处理阻塞。
+  长时间的普通消息处理阻塞。每个 Direct Agent 的已核验审批动作都会随流程 ID、任务 ID 和
+  回读结果写入审批 History；服务启动时还会从精确匹配的已完成扫描任务回填旧记录，避免把
+  实际已审阅的审批误显示为普通回复或过期状态。
 
 钉钉 Todo 是 owner 执行层，不替代 `/tasks` 里的内部项目管理视图。只有明确 owner、due time、非敏感且未完成的高置信 TODO 会创建钉钉 Todo；Derek 默认不作为执行人加入。内部 `work_todos` 仍是主数据，钉钉 Todo 只同步创建、完成状态拉取和有强证据时的完成推送。发送 follow-up 前会先检查已关联的钉钉 Todo 状态：如果钉钉侧已经完成，系统会关闭内部 TODO 并跳过提醒，避免重复催办。
 

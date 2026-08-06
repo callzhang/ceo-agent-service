@@ -5653,8 +5653,6 @@ def _later_attempt_for_display(
         ):
             if (
                 candidate.id > attempt.id
-                and candidate.conversation_id == attempt.conversation_id
-                and candidate.trigger_message_id == attempt.trigger_message_id
                 and candidate.oa_action.strip()
             ):
                 return candidate

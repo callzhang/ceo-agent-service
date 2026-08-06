@@ -10,7 +10,13 @@ import pytest
 
 from app.agent_context import AgentTaskContext
 from app.agent_envelope import AgentEnvelope
-from app.agent_result import AgentError, AgentOutcome, AgentResult, SideEffectState
+from app.agent_result import (
+    AgentError,
+    AgentOutcome,
+    AgentResult,
+    OaActionReceipt,
+    SideEffectState,
+)
 from app.agent_runner import DirectAgentRunResult, LEASE_SECONDS
 import app.worker as worker_module
 from app.codex_decision import (
@@ -7678,6 +7684,42 @@ def test_structured_approval_card_is_processed_by_direct_agent(
     assert attempt.action == "agent_run"
     assert attempt.send_status == "needs_human"
     assert dws.oa_approval_actions == []
+
+
+def test_direct_agent_oa_receipt_is_persisted_with_approval_history(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[Ding]审批待办", single_chat=True)
+    trigger.raw_payload = {
+        "processInstanceId": "proc-1",
+        "taskId": "task-1",
+    }
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    result = AgentResult(
+        outcome=AgentOutcome.NEEDS_HUMAN,
+        summary="已评论要求补充复评标准。",
+        error=AgentError(code="OA_MATERIAL_INCOMPLETE"),
+        oa_action_receipt=OaActionReceipt(
+            process_instance_id="proc-1",
+            task_id="task-1",
+            action="comment",
+            remark="请补充延期时长、量化目标和复评标准。",
+            result={"success": True},
+        ),
+    )
+    script_agent_result(worker, result)
+
+    worker.run_once()
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == "task-1"
+    assert attempt.oa_action == "comment"
+    assert attempt.oa_remark == "请补充延期时长、量化目标和复评标准。"
+    assert json.loads(attempt.oa_action_result_json) == {"success": True}
 
 
 def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):

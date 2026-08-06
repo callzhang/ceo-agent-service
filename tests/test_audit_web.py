@@ -3838,6 +3838,43 @@ def test_attempt_detail_renders_oa_comment_status(tmp_path: Path):
     assert 'class="pill status-action action-state-returned">🧾 退回</span>' in html
 
 
+def test_oa_attempt_detail_links_to_later_verified_action_for_same_process(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    blocked_id = store.record_reply_attempt(
+        conversation_id="cid-original",
+        conversation_title="审批通知",
+        trigger_message_id="msg-original",
+        trigger_sender="工作通知",
+        trigger_text="审批提醒",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="comment",
+        send_status="blocked",
+    )
+    verified_id = store.record_reply_attempt(
+        conversation_id="cid-follow-up",
+        conversation_title="审批待办",
+        trigger_message_id="msg-follow-up",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="approve",
+        send_status="completed",
+    )
+
+    status, html = render_attempt_detail(store, blocked_id)
+
+    assert status == 200
+    assert f"已由 #{verified_id} 后续处理" in html
+
+
 def test_attempt_history_and_detail_render_calendar_response_metadata(
     tmp_path: Path,
 ):

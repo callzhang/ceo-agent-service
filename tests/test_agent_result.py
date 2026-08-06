@@ -62,6 +62,24 @@ def test_parse_agent_result_from_last_agent_message():
     assert result.summary == "latest result"
 
 
+def test_parse_agent_result_preserves_confirmed_oa_action_receipt():
+    payload = json.loads(_result_json(summary="OA comment was read back"))
+    payload["oa_action_receipt"] = {
+        "process_instance_id": "proc-1",
+        "task_id": "task-1",
+        "action": "comment",
+        "remark": "请补充复评标准。",
+        "result": {"success": True},
+    }
+
+    result = parse_agent_result(json.dumps({"message": json.dumps(payload)}))
+
+    assert result.oa_action_receipt is not None
+    assert result.oa_action_receipt.process_instance_id == "proc-1"
+    assert result.oa_action_receipt.action == "comment"
+    assert result.oa_action_receipt.result == {"success": True}
+
+
 @pytest.mark.parametrize(
     ("payload", "expected"),
     [
