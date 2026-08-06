@@ -9,6 +9,7 @@ from uuid import uuid4
 from app.agent_context import AuditTurnContext
 from app.agent_contracts import AuditAgentResult
 from app.agent_result import parse_typed_agent_result
+from app.audit_rules import render_audit_rules
 from app.agent_runner import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
 from app.consumer_agent import _developer_instructions
@@ -48,6 +49,7 @@ class AuditAgentRunner:
     ) -> AgentTurnRunResult[AuditAgentResult]:
         if context.task.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
+        rendered_rules = render_audit_rules(AgentRole.AUDIT)
         claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -76,7 +78,10 @@ class AuditAgentRunner:
             session_id=None,
             schema_path=SCHEMA_PATH,
             expected_schema=AuditAgentResult.model_json_schema(),
-            developer_instructions=_developer_instructions("Audit Agent B independently reviews and executes accepted candidates."),
+            developer_instructions=_developer_instructions(
+                "Audit Agent B independently reviews and executes accepted candidates.\n\n"
+                + rendered_rules
+            ),
             configure_command=lambda command: make_audit_agent_command(
                 command,
                 reviewed_mcp_tools=self.effects.reviewed_tools(),

@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ from app.agent_context import AgentTaskContext
 from app.consumer_agent import ConsumerAgentRunner
 from app.native_cli_metadata import AgentReadOnlyViolationError
 from app.process_runner import ProcessRunResult
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 
 
 class CapturingExecutor:
@@ -122,6 +123,84 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         "Output JSON Schema (validated locally):" in option
         for option in command
     )
+
+
+def test_consumer_reads_current_audit_rules_for_each_turn(
+    store,
+    task,
+    context,
+    tmp_path,
+    monkeypatch,
+):
+    rules_path = tmp_path / "audit_rules.md"
+    rules_path.write_text("First rule version.", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(rules_path))
+    first_executor = CapturingExecutor(_result_jsonl(session="session-a"))
+
+    runner = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=first_executor,
+    )
+    runner.run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    rules_path.write_text("Second rule version.", encoding="utf-8")
+    store.enqueue_reply_task(
+        conversation_id="cid-agent-2",
+        conversation_title="Group 2",
+        single_chat=False,
+        trigger_message_id="msg-2",
+        trigger_create_time="2026-08-06 10:01:00",
+        trigger_sender="Derek",
+        trigger_text="Check this too",
+        execution_generation="gen-2",
+    )
+    second_task = store.claim_reply_tasks(limit=1)[0]
+    second_context = replace(
+        context,
+        task_id=second_task.id,
+        conversation_id=second_task.conversation_id,
+        conversation_title=second_task.conversation_title,
+        trigger_message_id=second_task.trigger_message_id,
+        trigger_text=second_task.trigger_text,
+    )
+    runner.run(
+        second_task,
+        second_context,
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+
+    assert any("First rule version." in item for item in first_executor.commands[0])
+    assert any("do not execute" in item for item in first_executor.commands[0])
+    assert any("Second rule version." in item for item in first_executor.commands[1])
+
+
+def test_consumer_validates_audit_rules_before_claiming_run(
+    store,
+    task,
+    context,
+    monkeypatch,
+):
+    def fail_rules(_role):
+        raise OSError("rules unavailable")
+
+    monkeypatch.setattr("app.consumer_agent.render_audit_rules", fail_rules)
+
+    with pytest.raises(OSError, match="rules unavailable"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(_result_jsonl()),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    ) is None
 
 
 def test_consumer_renews_lease_for_every_jsonl_record(

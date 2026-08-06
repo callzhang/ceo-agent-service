@@ -647,11 +647,15 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     assert (tmp_path / "data" / "corpus").is_dir()
     assert (tmp_path / "data" / "prompts" / "developer_prompt.md").exists()
     assert (tmp_path / "data" / "prompts" / "user_prompt.md").exists()
+    assert (tmp_path / "data" / "prompts" / "audit_rules.md").exists()
     assert (tmp_path / "data" / "work-profile" / "work_profile.md").exists()
     assert "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH=data/prompts/developer_prompt.md" in (
         tmp_path / ".env"
     ).read_text(encoding="utf-8")
     assert "CEO_USER_PROMPT_TEMPLATE_PATH=data/prompts/user_prompt.md" in (
+        tmp_path / ".env"
+    ).read_text(encoding="utf-8")
+    assert "CEO_AUDIT_RULES_TEMPLATE_PATH=data/prompts/audit_rules.md" in (
         tmp_path / ".env"
     ).read_text(encoding="utf-8")
     assert "CEO_WORK_PROFILE_PATH=data/work-profile/work_profile.md" in (

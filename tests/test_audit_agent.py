@@ -16,9 +16,10 @@ class CapturingExecutor:
     def __init__(self, stdout: str) -> None:
         self.stdout = stdout
         self.commands: list[list[str]] = []
+        self.prompts: list[str] = []
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
-        del kwargs
+        self.prompts.append(kwargs["prompt"])
         self.commands.append(command)
         for line in self.stdout.splitlines():
             on_stdout_line(line)
@@ -231,6 +232,63 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert run.tool_events[1]["item"]["metadata"]["target_identifiers"] == {
         "group": "cid-agent"
     }
+
+
+def test_audit_reads_current_audit_rules_for_each_turn(
+    setup,
+    tmp_path,
+    monkeypatch,
+):
+    store, task, audit_context, parent = setup
+    rules_path = tmp_path / "audit_rules.md"
+    rules_path.write_text("Current audit rule.", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(rules_path))
+    executor = CapturingExecutor(
+        _audit_jsonl("operation-1", session="session-b")
+    )
+
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert "Current audit rule." not in executor.prompts[0]
+    assert "Check authority." not in executor.prompts[0]
+    assert "Effective Audit Rules" not in executor.prompts[0]
+    assert any("Current audit rule." in item for item in executor.commands[0])
+    assert any(
+        "do not rewrite the candidate" in item for item in executor.commands[0]
+    )
+
+
+def test_audit_validates_rules_before_claiming_run(
+    setup,
+    monkeypatch,
+):
+    store, task, audit_context, parent = setup
+
+    def fail_rules(_role):
+        raise OSError("rules unavailable")
+
+    monkeypatch.setattr("app.audit_agent.render_audit_rules", fail_rules)
+
+    with pytest.raises(OSError, match="rules unavailable"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(
+                _audit_jsonl("operation-1", session="session-b")
+            ),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    ) is None
 
 
 def test_audit_rejects_executed_result_without_completed_write(setup):

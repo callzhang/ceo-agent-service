@@ -28,6 +28,12 @@ from app.codex_history import (
     extract_codex_audit_events_from_session,
     render_local_codex_session,
 )
+from app.audit_rules import (
+    audit_rules_template_path,
+    read_audit_rules_template,
+    render_audit_rules,
+    write_audit_rules_template,
+)
 from app.codex_decision import audit_summary_explains_no_documents
 from app.config import (
     agent_names,
@@ -100,6 +106,7 @@ from app.feedback_events import (
 )
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
+    AgentRole,
     AgentRunLeaseLostError,
     AutoReplyStore,
     FeedbackEvent,
@@ -2127,11 +2134,19 @@ def render_config_page(
     active_tab: str = "info",
     saved: bool = False,
     db_path: Path | None = None,
+    audit_rules_error: str = "",
+    audit_rules_draft: str | None = None,
 ) -> str:
     if active_tab == "developer":
         content = _render_developer_prompt_editor_content(saved=saved)
     elif active_tab == "user":
         content = _render_user_prompt_editor_content(saved=saved)
+    elif active_tab == "audit-rules":
+        content = _render_audit_rules_editor_content(
+            saved=saved,
+            validation_error=audit_rules_error,
+            submitted_draft=audit_rules_draft,
+        )
     elif active_tab == "system":
         content = _render_system_config(db_path=db_path)
     elif active_tab == "channels":
@@ -2143,7 +2158,11 @@ def render_config_page(
     else:
         active_tab = "info"
         content = _render_config_info()
-    prompt_card = "" if active_tab == "wechat" else _prompt_config_card(active_tab)
+    prompt_card = (
+        ""
+        if active_tab in {"wechat", "audit-rules"}
+        else _prompt_config_card(active_tab)
+    )
     body = f"{prompt_card}{_config_tabs(active_tab)}{content}"
     pending_count = (
         AutoReplyStore(db_path).count_pending_user_feedback_items()
@@ -6179,6 +6198,9 @@ def _config_tabs(active_tab: str) -> str:
     )
     user_class = "prompt-tab active" if active_tab == "user" else "prompt-tab"
     wechat_class = "prompt-tab active" if active_tab == "wechat" else "prompt-tab"
+    audit_rules_class = (
+        "prompt-tab active" if active_tab == "audit-rules" else "prompt-tab"
+    )
     return (
         "<nav class=\"prompt-tabs\" aria-label=\"Config sections\">"
         f"<a class=\"{info_class}\" href=\"/config?tab=info\">Info</a>"
@@ -6190,6 +6212,8 @@ def _config_tabs(active_tab: str) -> str:
         "Developer Prompt</a>"
         f"<a class=\"{user_class}\" href=\"/config?tab=user\">"
         "User Prompt</a>"
+        f"<a class=\"{audit_rules_class}\" href=\"/config?tab=audit-rules\">"
+        "Audit Rules</a>"
         "</nav>"
     )
 
@@ -6289,6 +6313,68 @@ def _render_user_prompt_editor_content(*, saved: bool = False) -> str:
     )
 
 
+def _render_audit_rules_editor_content(
+    *,
+    saved: bool = False,
+    validation_error: str = "",
+    submitted_draft: str | None = None,
+) -> str:
+    template_path = audit_rules_template_path()
+    error_html = ""
+    try:
+        persisted_template = read_audit_rules_template()
+        consumer_preview = render_audit_rules(AgentRole.CONSUMER)
+        audit_preview = render_audit_rules(AgentRole.AUDIT)
+    except (OSError, DeveloperPromptTemplateError) as exc:
+        persisted_template = ""
+        consumer_preview = ""
+        audit_preview = ""
+        error_html = (
+            "<p class=\"attempt-warning\">"
+            f"Template render error: {escape(str(exc))}"
+            "</p>"
+        )
+    saved_at = (
+        datetime.fromtimestamp(template_path.stat().st_mtime, timezone.utc).isoformat()
+        if template_path.exists()
+        else ""
+    )
+    saved_html = "<p class=\"muted\">Saved.</p>" if saved else ""
+    template = (
+        persisted_template if submitted_draft is None else submitted_draft
+    )
+    if validation_error:
+        error_html = (
+            "<p class=\"attempt-warning\">"
+            f"Template validation error: {escape(validation_error)}"
+            "</p>"
+        )
+    return (
+        "<section class=\"card\">"
+        "<div class=\"grid\">"
+        "<div class=\"muted\">template path</div>"
+        f"<div>{escape(str(template_path))}</div>"
+        "<div class=\"muted\">Last saved</div>"
+        f"<div>{escape(_format_local_time(saved_at) or '-')}</div>"
+        "</div>"
+        f"{saved_html}{error_html}"
+        "<form method=\"post\" action=\"/config?tab=audit-rules\">"
+        "<label for=\"template\">Configurable rules</label>"
+        f"<textarea id=\"template\" name=\"template\" style=\"min-height:420px\">{escape(template)}</textarea>"
+        "<p><button type=\"submit\">Save rules</button></p>"
+        "</form>"
+        "</section>"
+        "<section class=\"card\">"
+        "<h2>Consumer preview</h2>"
+        f"<pre>{escape(consumer_preview)}</pre>"
+        "</section>"
+        "<section class=\"card\">"
+        "<h2>Audit preview</h2>"
+        f"<pre>{escape(audit_preview)}</pre>"
+        "</section>"
+    )
+
+
 def _user_prompt_dynamic_function_table() -> str:
     blocks = [
         UserPromptBlock(
@@ -6376,6 +6462,20 @@ def handle_developer_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]
     template = parsed.get("template", [""])[0]
     write_developer_prompt_template(template.strip())
     return 303, {"Location": "/config?tab=developer&saved=1"}, ""
+
+
+def handle_audit_rules_post(body: bytes) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    template = parsed.get("template", [""])[0]
+    try:
+        write_audit_rules_template(template)
+    except DeveloperPromptTemplateError as exc:
+        return 400, {}, render_config_page(
+            active_tab="audit-rules",
+            audit_rules_error=str(exc),
+            audit_rules_draft=template,
+        )
+    return 303, {"Location": "/config?tab=audit-rules&saved=1"}, ""
 
 
 def handle_prompt_variables_post(body: bytes) -> tuple[int, dict[str, str], str]:
@@ -7278,6 +7378,8 @@ def create_audit_app(
     async def config_save(request: Request):
         if request.query_params.get("tab") == "user":
             status, headers, html = handle_user_prompt_post(await request.body())
+        elif request.query_params.get("tab") == "audit-rules":
+            status, headers, html = handle_audit_rules_post(await request.body())
         else:
             status, headers, html = handle_developer_prompt_post(await request.body())
         return _fastapi_post_response(status, headers, html)

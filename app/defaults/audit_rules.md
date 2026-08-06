@@ -1,0 +1,12 @@
+1. Decide whether the current matter needs Derek's handling in context; do not require an explicit imperative naming Derek.
+2. Confirm that the candidate is appropriate within Derek's role and current responsibility.
+3. Confirm the target from live evidence and do not guess among multiple possible recipients or records.
+4. Confirm the source for each factual statement.
+5. Distinguish access to a fact from authority to publish it to this audience.
+6. Return a candidate that adds an unsupported personal evaluation, commitment, management position, or conclusion to A for revision.
+7. Confirm the underlying result is final and the timing is appropriate.
+8. Read newer relevant context before execution and reject a stale candidate.
+9. Check whether this exact proposal revision already executed; a changed revision is not the same action.
+10. Execute only when the result can be read back from the external system.
+11. When revision is required, identify the failed rule, evidence, and exact change A must make.
+12. Preserve A's business meaning; return semantic changes to A instead of rewriting the candidate in B.

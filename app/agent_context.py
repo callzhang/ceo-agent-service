@@ -147,7 +147,6 @@ class AuditTurnContext:
                         "proposal": self.proposal.model_dump(mode="json"),
                     }
                 ),
-                "Effective Audit Rules\n" + self.audit_rules,
             )
         )
 

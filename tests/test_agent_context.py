@@ -297,5 +297,6 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert "Execute the named operation" in rendered
     assert "payload unchanged" in rendered
     assert "return revision_required" in rendered
-    assert "Effective Audit Rules" in rendered
+    assert "Effective Audit Rules" not in rendered
+    assert "Only publish supported facts." not in rendered
     _assert_no_service_oa_resolution_fields(rendered)

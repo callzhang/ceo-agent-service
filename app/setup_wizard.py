@@ -11,6 +11,7 @@ from app.developer_prompt import (
     SEED_DEVELOPER_PROMPT_TEMPLATE,
     SEED_USER_PROMPT_TEMPLATE,
 )
+from app.audit_rules import SEED_AUDIT_RULES_TEMPLATE
 from app.mcp_doctor import check_mcp_statuses
 from app.prompt import DEFAULT_WORK_PROFILE_TEXT
 from app.service_codex_config import (
@@ -1111,6 +1112,7 @@ def _setup_service_config(
         "CEO_WORK_PROFILE_PATH": "data/work-profile/work_profile.md",
         "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH": "data/prompts/developer_prompt.md",
         "CEO_USER_PROMPT_TEMPLATE_PATH": "data/prompts/user_prompt.md",
+        "CEO_AUDIT_RULES_TEMPLATE_PATH": "data/prompts/audit_rules.md",
         "CEO_SERVICE_MCP_CONFIG_PATH": "data/config/service-mcp.json",
         "CEO_NOT_SEND_MESSAGE": "1",
     }
@@ -1134,6 +1136,10 @@ def _setup_service_config(
         repo_root,
         values["CEO_USER_PROMPT_TEMPLATE_PATH"],
     )
+    audit_rules = _resolve_repo_path(
+        repo_root,
+        values["CEO_AUDIT_RULES_TEMPLATE_PATH"],
+    )
     service_mcp_config = _resolve_repo_path(
         repo_root,
         values["CEO_SERVICE_MCP_CONFIG_PATH"],
@@ -1148,6 +1154,10 @@ def _setup_service_config(
     _seed_missing_file(
         user_prompt,
         SEED_USER_PROMPT_TEMPLATE.read_text(encoding="utf-8"),
+    )
+    _seed_missing_file(
+        audit_rules,
+        SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8"),
     )
     _seed_missing_file(work_profile, DEFAULT_WORK_PROFILE_TEXT)
     setup_env = os.environ.copy()
@@ -1181,6 +1191,7 @@ def _setup_service_config(
             "work_profile": _redact_evidence_path(work_profile),
             "developer_prompt": _redact_evidence_path(developer_prompt),
             "user_prompt": _redact_evidence_path(user_prompt),
+            "audit_rules": _redact_evidence_path(audit_rules),
             "service_mcp_config": _redact_evidence_path(service_mcp_config),
         },
     )

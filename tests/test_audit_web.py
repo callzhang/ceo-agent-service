@@ -12,6 +12,7 @@ import app.audit_web as audit_web_module
 from app.audit_web import (
     create_audit_app,
     create_default_audit_app,
+    handle_audit_rules_post,
     handle_developer_prompt_post,
     handle_prompt_variables_post,
     handle_system_config_post,
@@ -42,6 +43,7 @@ from app.audit_web import (
     render_user_feedback_list,
     run_audit_web,
 )
+from app.audit_rules import read_audit_rules_template
 from app.developer_prompt import read_developer_prompt_template
 from app.config import load_env_file
 from app.dingtalk_models import DingTalkMessage
@@ -3529,6 +3531,68 @@ def test_render_prompt_editor_shows_user_prompt_tab(tmp_path: Path, monkeypatch)
     assert "&quot;quoted&quot;: {" in html
     assert "USER 当前待处理消息:" in html
     assert "Saved." in html
+
+
+def test_render_config_page_shows_editable_audit_rules_and_fixed_previews(
+    tmp_path: Path,
+    monkeypatch,
+):
+    template_path = tmp_path / "audit_rules.md"
+    template_path.write_text("Check publication authority.", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(template_path))
+
+    html = render_config_page(active_tab="audit-rules", saved=True)
+
+    assert 'href="/config?tab=audit-rules"' in html
+    assert 'class="prompt-tab active"' in html
+    assert 'action="/config?tab=audit-rules"' in html
+    assert "Check publication authority." in html
+    assert "Consumer preview" in html
+    assert "Audit preview" in html
+    assert "Last saved" in html
+    assert "do not execute" in html
+    assert "do not rewrite" in html
+    textarea = html.split('<textarea id="template"', 1)[1].split("</textarea>", 1)[0]
+    assert "Check publication authority." in textarea
+    assert "do not execute" not in textarea
+    assert "do not rewrite" not in textarea
+    assert "Saved." in html
+
+
+def test_config_audit_rules_tab_saves_empty_custom_body(
+    tmp_path: Path,
+    monkeypatch,
+):
+    path = tmp_path / "audit_rules.md"
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(path))
+
+    status, headers, html = handle_audit_rules_post(b"template=")
+
+    assert status == 303
+    assert headers["Location"] == "/config?tab=audit-rules&saved=1"
+    assert html == ""
+    assert read_audit_rules_template() == ""
+
+
+def test_config_audit_rules_post_rejects_invalid_template_without_overwrite(
+    tmp_path: Path,
+    monkeypatch,
+):
+    path = tmp_path / "audit_rules.md"
+    path.write_text("Keep this rule.", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(path))
+
+    status, headers, html = handle_audit_rules_post(
+        b"template=%3Cvar%3A+missing_rule%3E"
+    )
+
+    assert status == 400
+    assert headers == {}
+    assert "Template validation error" in html
+    assert "plain text" in html
+    assert "&lt;var: missing_rule&gt;" in html
+    assert "Keep this rule." in html
+    assert path.read_text(encoding="utf-8") == "Keep this rule."
 
 
 def test_handle_developer_prompt_post_saves_template(tmp_path: Path, monkeypatch):

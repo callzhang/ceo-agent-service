@@ -8,6 +8,7 @@ from uuid import uuid4
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import ConsumerAgentResult
 from app.agent_result import parse_typed_agent_result
+from app.audit_rules import render_audit_rules
 from app.agent_runner import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
 from app.codex_history import find_codex_session_path
@@ -52,6 +53,7 @@ class ConsumerAgentRunner:
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
         if context.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
+        rendered_rules = render_audit_rules(AgentRole.CONSUMER)
         lock_owner = f"consumer-agent:{task.id}:{task.execution_generation}"
         try:
             with self.store.codex_session_lock(task.conversation_id, lock_owner):
@@ -60,6 +62,7 @@ class ConsumerAgentRunner:
                     context,
                     proposal_revision=proposal_revision,
                     parent_agent_run_id=parent_agent_run_id,
+                    rendered_rules=rendered_rules,
                 )
         except RuntimeError as exc:
             if str(exc).startswith("codex session locked:"):
@@ -73,6 +76,7 @@ class ConsumerAgentRunner:
         *,
         proposal_revision: int,
         parent_agent_run_id: int | None,
+        rendered_rules: str,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
         session_id = self.store.get_codex_session_id(task.conversation_id) or None
         if session_id and not self.codex_session_exists(session_id):
@@ -107,7 +111,7 @@ class ConsumerAgentRunner:
             schema_path=SCHEMA_PATH,
             expected_schema=ConsumerAgentResult.model_json_schema(),
             developer_instructions=_developer_instructions(
-                "Consumer Agent A is read-only."
+                "Consumer Agent A is read-only.\n\n" + rendered_rules
             ),
             configure_command=lambda command: make_consumer_agent_command(
                 command,
