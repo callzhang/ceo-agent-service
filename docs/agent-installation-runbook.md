@@ -182,21 +182,17 @@ scripts/bootstrap-local-components.sh --format json
 
 ### Memory Connector
 
-If the deployment uses Friday Memory or another Memory Connector MCP endpoint:
-
-```sh
-.venv/bin/ceo-agent setup-memory-connector \
-  --memory-url '<memory-mcp-url>'
-```
-
-Codex config uses the installed MCP Authorization header as the authenticated
-OAuth identity. Do not provide or invent a separate `user_id`.
+If the deployment uses Friday Memory or another Memory Connector MCP endpoint,
+keep its URL and credential references in `.env` and the service-owned manifest.
+The setup wizard seeds the editable manifest at `data/config/service-mcp.json`;
+service runtime does not read personal Codex configuration.
 
 In the Tutorial page, the Memory Connector "Fix automatically" action first
-uses `MEMORY_CONNECTOR_URL` when provided, then falls back to the existing
-`[mcp_servers.memory_connector].url` in the installed Codex config. If Codex
-already has `memory_connector` installed, the agent should not ask the user to
-re-enter the URL.
+uses `MEMORY_CONNECTOR_URL` when provided. As a one-time migration convenience,
+it may import only the existing `[mcp_servers.memory_connector].url` transport
+shape from the installed Codex config. It then persists that non-secret URL and
+the local `CEO_SERVICE_MCP_CONFIG_PATH`; runtime never re-reads the personal
+Codex config. Authorization headers and token values are never imported.
 
 ### Nvwa Persona Skill
 

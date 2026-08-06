@@ -89,49 +89,22 @@ def has_any_tool_event(raw: str) -> bool:
     return False
 
 
-def configured_transport_server_names(
-    command: list[str], *, include_all_configured: bool = False
-) -> tuple[str, ...]:
-    """Find MCP transports relevant to the requested isolation boundary."""
-    from app.codex_runner import _codex_config, _passthrough_mcp_server_names
-
+def configured_transport_server_names(command: list[str]) -> tuple[str, ...]:
+    """Find service-owned MCP transports present in the generated command."""
     names: set[str] = set()
-    explicitly_configured_names: set[str] = set()
-    passthrough_names = frozenset(_passthrough_mcp_server_names())
-    servers = _codex_config().get("mcp_servers") or {}
-    if isinstance(servers, dict):
-        for name, server in servers.items():
-            if not isinstance(name, str) or not isinstance(server, dict):
-                continue
-            if any(
-                isinstance(server.get(key), str) and server[key].strip()
-                for key in ("url", "command")
-            ):
-                explicitly_configured_names.add(name)
-                if include_all_configured or name in passthrough_names:
-                    names.add(name)
     for index, value in enumerate(command[:-1]):
-        if value != "-c" or index + 1 >= len(command):
+        if value != "-c":
             continue
         match = _TRANSPORT_OPTION.match(command[index + 1])
         if match:
-            name = match.group(1)
-            if (
-                include_all_configured
-                or name != "exa"
-                or name in explicitly_configured_names
-            ):
-                names.add(name)
+            names.add(match.group(1))
     return tuple(sorted(names))
 
 
 def disable_configured_mcp_servers(
     command: list[str], *, except_names: frozenset[str] = frozenset(),
-    include_all_configured: bool = False,
 ) -> None:
-    for name in configured_transport_server_names(
-        command, include_all_configured=include_all_configured
-    ):
+    for name in configured_transport_server_names(command):
         if name not in except_names:
             _insert_command_options(
                 command, ["-c", f"mcp_servers.{name}.enabled=false"]
@@ -146,7 +119,7 @@ def make_read_only_without_tools(command: list[str]) -> None:
         command,
         prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
     )
-    disable_configured_mcp_servers(command, include_all_configured=True)
+    disable_configured_mcp_servers(command)
     _insert_command_options(
         command,
         [
@@ -173,10 +146,7 @@ def make_read_only_with_reviewed_tools(
         command,
         prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
     )
-    configured = configured_transport_server_names(
-        command,
-        include_all_configured=True,
-    )
+    configured = configured_transport_server_names(command)
     for name in configured:
         tools = reviewed_mcp_tools.get(name, ())
         if not tools:
@@ -232,10 +202,7 @@ def make_direct_agent_sandbox(
         command,
         prefixes=("approval_policy=", "tools.enabled_tools=", "web_search="),
     )
-    configured = configured_transport_server_names(
-        command,
-        include_all_configured=True,
-    )
+    configured = configured_transport_server_names(command)
     for name in configured:
         tools = reviewed_mcp_tools.get(name, ())
         if not tools:

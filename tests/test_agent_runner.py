@@ -140,10 +140,27 @@ def store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "reply.sqlite3")
 
 
-def test_direct_runner_disables_unreviewed_native_mcp_servers(
+def test_direct_runner_never_disables_or_imports_personal_mcp_servers(
     tmp_path: Path,
     store: AutoReplyStore,
+    monkeypatch,
 ):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[mcp_servers.brightdata]",
+                'url = "https://personal.example/brightdata"',
+                "[mcp_servers.crm_connector]",
+                'url = "https://personal.example/crm"',
+                "[mcp_servers.fundflow]",
+                'url = "https://personal.example/fundflow"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
     task = _task(store)
     executor = RecordingExecutor(_jsonl())
 
@@ -159,9 +176,10 @@ def test_direct_runner_disables_unreviewed_native_mcp_servers(
     assert "resume" not in command
     assert "--ignore-user-config" in command
     assert "enabled_tools=" not in command_text
-    assert "mcp_servers.brightdata.enabled=false" in command
-    assert "mcp_servers.crm_connector.enabled=false" in command
-    assert "mcp_servers.fundflow.enabled=false" in command
+    assert not any("mcp_servers.brightdata" in item for item in command)
+    assert not any("mcp_servers.crm_connector" in item for item in command)
+    assert not any("mcp_servers.fundflow" in item for item in command)
+    assert not any("personal.example" in item for item in command)
     assert "features.plugins=false" not in command_text
     assert "features.apps=false" not in command_text
     assert "reconciliation_cli" not in command_text

@@ -470,13 +470,11 @@ class DirectAgentRunner:
             use_approval_bypass=not read_only,
             ignore_user_config=True,
         )
-        # The desktop Codex config may contain personal MCP integrations that
-        # this task cannot use. One unavailable integration must not prevent a
-        # queued task from reaching its reviewed tools.
+        # A service transport is usable only when its tools are in the reviewed
+        # effect registry for this task.
         disable_configured_mcp_servers(
             command,
             except_names=frozenset(self.mcp_effect_registry.reviewed_tools()),
-            include_all_configured=True,
         )
         saw_json = False
         stream_line_count = 0

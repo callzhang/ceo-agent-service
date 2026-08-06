@@ -340,6 +340,20 @@ def test_parser_supports_setup_memory_connector():
     assert args.claude_config == "/tmp/claude.json"
 
 
+def test_parser_supports_service_mcp_doctor_config():
+    args = build_parser().parse_args(
+        [
+            "doctor-mcp",
+            "--service-mcp-config",
+            "/tmp/service-mcp.json",
+        ]
+    )
+
+    assert args.command == "doctor-mcp"
+    assert args.service_mcp_config == "/tmp/service-mcp.json"
+    assert not hasattr(args, "codex_config")
+
+
 def test_setup_memory_connector_command_updates_codex_and_reports_claude(
     tmp_path,
     capsys,

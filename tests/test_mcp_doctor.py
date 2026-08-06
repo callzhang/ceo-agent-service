@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -32,24 +33,32 @@ def clear_fake_store() -> None:
     FakeStore.rows = []
 
 
-def test_mcp_doctor_reports_native_memory_and_passthrough_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config = tmp_path / "config.toml"
-    config.write_text(
-        """
-[mcp_servers.memory_connector]
-url = "https://memory.example/mcp/"
+def _write_manifest(path: Path, servers: dict[str, object]) -> Path:
+    path.write_text(json.dumps({"servers": servers}), encoding="utf-8")
+    return path
 
-[mcp_servers.xiaoqing_interview]
-url = "https://xiaoqing.example/mcp"
-""",
-        encoding="utf-8",
+
+def test_mcp_doctor_reports_service_manifest_transports_ready(
+    tmp_path: Path,
+) -> None:
+    config = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "memory_connector": {"url": "https://memory.example/mcp/"},
+            "exa": {"url": "https://mcp.exa.ai/mcp"},
+            "xiaoqing_interview": {
+                "command_env": "CEO_XIAOQING_MCP_COMMAND",
+                "args_env": "CEO_XIAOQING_MCP_ARGS_JSON",
+            },
+        },
     )
-    monkeypatch.delenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", raising=False)
 
     statuses = check_mcp_statuses(
-        codex_config_path=config,
+        service_config_path=config,
+        env={
+            "CEO_XIAOQING_MCP_COMMAND": "/opt/service/xiaoqing-mcp",
+            "CEO_XIAOQING_MCP_ARGS_JSON": "[]",
+        },
     )
     by_name = {status.name: status for status in statuses}
 
@@ -60,34 +69,64 @@ url = "https://xiaoqing.example/mcp"
     assert by_name["xiaoqing_interview"].ready is True
 
 
-def test_mcp_doctor_reports_missing_memory_config(tmp_path: Path) -> None:
+def test_mcp_doctor_reports_missing_service_manifest(tmp_path: Path) -> None:
     statuses = check_mcp_statuses(
-        codex_config_path=tmp_path / "missing.toml",
+        service_config_path=tmp_path / "missing.json",
+        env={},
     )
 
     assert statuses[0] == McpStatus(
-        name="memory_connector",
+        name="service_mcp_config",
         state="missing_config",
         ready=False,
-        reason="[mcp_servers.memory_connector] is missing from Codex config",
-        recover_command="ceo-agent setup-memory-connector --memory-url <memory-mcp-url>",
+        reason=(
+            "service MCP manifest is missing; set CEO_SERVICE_MCP_CONFIG_PATH "
+            "to an existing JSON file"
+        ),
+        recover_command="configure CEO_SERVICE_MCP_CONFIG_PATH",
     )
 
 
-def test_mcp_doctor_marks_disabled_passthrough_as_tool_not_found(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_mcp_doctor_reports_missing_xiaoqing_command_without_secret_values(
+    tmp_path: Path,
 ) -> None:
-    config = tmp_path / "config.toml"
-    config.write_text("", encoding="utf-8")
-    monkeypatch.setenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", "exa")
+    config = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "memory_connector": {
+                "url_env": "MEMORY_CONNECTOR_URL",
+                "bearer_token_env_var": "CONNECTOR_API_KEY",
+            },
+            "xiaoqing_interview": {
+                "command_env": "CEO_XIAOQING_MCP_COMMAND",
+                "args_env": "CEO_XIAOQING_MCP_ARGS_JSON",
+            },
+        },
+    )
+    secret = "must-not-appear"
 
     statuses = check_mcp_statuses(
-        codex_config_path=config,
+        service_config_path=config,
+        env={
+            "MEMORY_CONNECTOR_URL": "https://memory.example/mcp/",
+            "CONNECTOR_API_KEY": secret,
+            "CEO_XIAOQING_MCP_ARGS_JSON": "[]",
+        },
     )
     by_name = {status.name: status for status in statuses}
 
-    assert by_name["exa"].ready is True
-    assert by_name["xiaoqing_interview"].state == "tool_not_found"
+    assert by_name["memory_connector"].ready is True
+    assert by_name["xiaoqing_interview"] == McpStatus(
+        name="xiaoqing_interview",
+        state="missing_config",
+        ready=False,
+        reason=(
+            "xiaoqing_interview requires environment variable "
+            "CEO_XIAOQING_MCP_COMMAND; set it or delete the server from the manifest"
+        ),
+        recover_command="fix xiaoqing_interview in the service MCP manifest",
+    )
+    assert secret not in repr(statuses)
 
 
 def test_mcp_doctor_notification_is_sent_once(tmp_path: Path) -> None:
@@ -118,7 +157,8 @@ def test_mcp_doctor_notification_is_sent_once(tmp_path: Path) -> None:
 def test_mcp_doctor_report_is_read_only_without_notify(tmp_path: Path) -> None:
     report = mcp_doctor_report(
         db_path=tmp_path / "auto-reply.sqlite3",
-        codex_config_path=tmp_path / "missing.toml",
+        service_config_path=tmp_path / "missing.json",
+        env={},
         notify=False,
     )
 

@@ -166,19 +166,19 @@ agent-task discovery. Delivery remains ordered, durable, and idempotent:
 working-hour, completion, daily-cap, sensitive-routing, and existing-send checks
 still run before each send, and a restart resumes from the persisted draft state.
 
-## Memory MCP inheritance
+## Service-owned Memory MCP
 
-The Direct Agent inherits the installed Codex `memory_connector` MCP
-configuration and plugin login state. The reply worker does not create or
-refresh a separate Memory OAuth client. Deferred `tool_search` discovery is a
+The Direct Agent receives `memory_connector` only from the service manifest
+selected by `CEO_SERVICE_MCP_CONFIG_PATH`. Every service Codex process uses
+`--ignore-user-config`, so personal Codex transports and plugin configuration
+cannot alter the runtime capability set. Deferred `tool_search` discovery is a
 read-only event; a claimed successful `memory_write` still requires its own
 completed tool event and receipt.
 
-Native Codex plugin OAuth credentials are stored outside `config.toml`. A
-configured Memory MCP URL without a plaintext header or bearer environment
-variable is therefore valid and must not be reported as missing transferable
-authentication. The child `codex exec` process inherits the plugin login and
-performs the authenticated MCP call itself.
+The manifest stores only the bearer-token environment variable name and dynamic
+header environment variable names. Their values must be present in the service
+environment. Missing referenced values are configuration failures; the service
+does not fall back to personal Codex OAuth or `config.toml`.
 
 If Memory is unavailable before a write starts, the run may fail or request
 human action according to the returned error. If a write starts but its result

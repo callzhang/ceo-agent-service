@@ -3,19 +3,21 @@ import os
 import re
 import shutil
 import subprocess
-from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
-from io import StringIO
 from pathlib import Path
 
 from app.channel_gate import ChannelGateState, default_channel_gates
-from app.cli import setup_memory_connector_command
 from app.developer_prompt import (
     SEED_DEVELOPER_PROMPT_TEMPLATE,
     SEED_USER_PROMPT_TEMPLATE,
 )
 from app.memory_setup import codex_memory_connector_url
+from app.mcp_doctor import check_mcp_statuses
 from app.prompt import DEFAULT_WORK_PROFILE_TEXT
+from app.service_codex_config import (
+    DEFAULT_SERVICE_MCP_CONFIG_PATH,
+    service_mcp_url_is_safe,
+)
 from app.setup_wizard_models import (
     SetupAction,
     SetupStatus,
@@ -379,6 +381,14 @@ def _configured_work_profile_path(repo_root: Path) -> Path:
     )
 
 
+def _configured_service_mcp_path(repo_root: Path) -> Path:
+    values = _env_values(repo_root / ".env")
+    return _resolve_repo_path(
+        repo_root,
+        values.get("CEO_SERVICE_MCP_CONFIG_PATH", "data/config/service-mcp.json"),
+    )
+
+
 def _contains_sensitive_profile_evidence(text: str) -> bool:
     return any(
         pattern.search(text)
@@ -406,9 +416,11 @@ def check_service_config(*, repo_root: Path) -> SetupStepStatus:
     workspace_value = values.get("CEO_WORKSPACE", "")
     db_value = values.get("CEO_WORKER_DB", "")
     corpus_value = values.get("CEO_CORPUS_DIR", "")
+    service_mcp_value = values.get("CEO_SERVICE_MCP_CONFIG_PATH", "")
     workspace = _resolve_repo_path(repo_root, workspace_value)
     db_path = _resolve_repo_path(repo_root, db_value)
     corpus_dir = _resolve_repo_path(repo_root, corpus_value)
+    service_mcp_config = _resolve_repo_path(repo_root, service_mcp_value)
     dry_run_enabled = (
         values.get("CEO_NOT_SEND_MESSAGE") == "1"
         or values.get("CEO_DRY_RUN") == "1"
@@ -419,6 +431,11 @@ def check_service_config(*, repo_root: Path) -> SetupStepStatus:
             ("CEO_WORKSPACE", workspace_value, workspace),
             ("CEO_WORKER_DB parent", db_value, db_path.parent),
             ("CEO_CORPUS_DIR", corpus_value, corpus_dir),
+            (
+                "CEO_SERVICE_MCP_CONFIG_PATH",
+                service_mcp_value,
+                service_mcp_config,
+            ),
         )
         if not value or not path.exists()
     ]
@@ -547,6 +564,8 @@ def check_setup_step(
             binary="lark-cli",
             channel="lark",
         )
+    if step_id == "mcp":
+        return _check_mcp(repo_root=repo_root)
     if step_id == "service_config":
         return check_service_config(repo_root=repo_root)
     if step_id == "data_corpus":
@@ -1091,6 +1110,7 @@ def _setup_service_config(
         "CEO_WORK_PROFILE_PATH": "data/work-profile/work_profile.md",
         "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH": "data/prompts/developer_prompt.md",
         "CEO_USER_PROMPT_TEMPLATE_PATH": "data/prompts/user_prompt.md",
+        "CEO_SERVICE_MCP_CONFIG_PATH": "data/config/service-mcp.json",
         "CEO_NOT_SEND_MESSAGE": "1",
     }
     for key, default in defaults.items():
@@ -1113,6 +1133,10 @@ def _setup_service_config(
         repo_root,
         values["CEO_USER_PROMPT_TEMPLATE_PATH"],
     )
+    service_mcp_config = _resolve_repo_path(
+        repo_root,
+        values["CEO_SERVICE_MCP_CONFIG_PATH"],
+    )
     workspace.mkdir(parents=True, exist_ok=True)
     db_parent.mkdir(parents=True, exist_ok=True)
     corpus_dir.mkdir(parents=True, exist_ok=True)
@@ -1125,6 +1149,10 @@ def _setup_service_config(
         SEED_USER_PROMPT_TEMPLATE.read_text(encoding="utf-8"),
     )
     _seed_missing_file(work_profile, DEFAULT_WORK_PROFILE_TEXT)
+    _seed_missing_file(
+        service_mcp_config,
+        DEFAULT_SERVICE_MCP_CONFIG_PATH.read_text(encoding="utf-8"),
+    )
 
     return SetupWizardEvent(
         step_id="service_config",
@@ -1139,6 +1167,7 @@ def _setup_service_config(
             "work_profile": _redact_evidence_path(work_profile),
             "developer_prompt": _redact_evidence_path(developer_prompt),
             "user_prompt": _redact_evidence_path(user_prompt),
+            "service_mcp_config": _redact_evidence_path(service_mcp_config),
         },
     )
 
@@ -1150,10 +1179,53 @@ def _seed_missing_file(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _check_mcp(*, repo_root: Path) -> SetupStepStatus:
+    values = _env_values(repo_root / ".env")
+    merged_env = os.environ.copy()
+    merged_env.update(values)
+    statuses = check_mcp_statuses(
+        service_config_path=_configured_service_mcp_path(repo_root),
+        env=merged_env,
+    )
+    first_failure = next((status for status in statuses if not status.ready), None)
+    if first_failure is not None:
+        return _status(
+            "mcp",
+            title="Memory Connector MCP",
+            status="needs_action",
+            summary=first_failure.reason,
+            evidence={
+                "server": first_failure.name,
+                "state": first_failure.state,
+            },
+        )
+    return _status(
+        "mcp",
+        title="Memory Connector MCP",
+        status="done",
+        summary="Service MCP manifest is ready.",
+        evidence={"configured_servers": len(statuses)},
+    )
+
+
 def _setup_mcp(
     repo_root: Path,
     env: dict[str, str],
 ) -> SetupWizardEvent:
+    env_path = repo_root / ".env"
+    persisted_values = _raw_env_values(env_path)
+    service_config_value = (
+        env.get("CEO_SERVICE_MCP_CONFIG_PATH")
+        or os.getenv("CEO_SERVICE_MCP_CONFIG_PATH", "")
+        or persisted_values.get("CEO_SERVICE_MCP_CONFIG_PATH", "")
+        or "data/config/service-mcp.json"
+    )
+    service_config_path = _resolve_repo_path(repo_root, service_config_value)
+    _seed_missing_file(
+        service_config_path,
+        DEFAULT_SERVICE_MCP_CONFIG_PATH.read_text(encoding="utf-8"),
+    )
+
     codex_config = env.get("CODEX_CONFIG_PATH") or os.getenv("CODEX_CONFIG_PATH", "")
     if not codex_config:
         codex_home = env.get("CODEX_HOME") or os.getenv("CODEX_HOME", "~/.codex")
@@ -1164,65 +1236,58 @@ def _setup_mcp(
     ).strip()
     memory_url_source = "environment" if memory_url else ""
     if not memory_url:
+        memory_url = persisted_values.get("MEMORY_CONNECTOR_URL", "").strip()
+        memory_url_source = "service_env_file" if memory_url else ""
+    if not memory_url:
         memory_url = codex_memory_connector_url(codex_config_path)
         memory_url_source = "installed_codex_config" if memory_url else ""
     if not memory_url:
+        persisted_values["CEO_SERVICE_MCP_CONFIG_PATH"] = service_config_value
+        _write_env_values(env_path, persisted_values)
         return SetupWizardEvent(
             step_id="mcp",
             action_id="setup_mcp",
             status="failed",
             summary="MEMORY_CONNECTOR_URL is missing.",
+            evidence={
+                "service_mcp_config": _redact_evidence_path(service_config_path),
+            },
         )
-    claude_config = env.get("CLAUDE_CONFIG_PATH") or os.getenv(
-        "CLAUDE_CONFIG_PATH",
-        str(
-            Path.home()
-            / "Library"
-            / "Application Support"
-            / "Claude"
-            / "claude_desktop_config.json"
-        ),
-    )
-
-    stdout = StringIO()
-    stderr = StringIO()
-    try:
-        with redirect_stdout(stdout), redirect_stderr(stderr):
-            result = setup_memory_connector_command(
-                memory_url=memory_url,
-                codex_config=str(codex_config_path),
-                claude_config=claude_config,
-            )
-    except BaseException as exc:
+    if not service_mcp_url_is_safe(memory_url):
+        persisted_values["CEO_SERVICE_MCP_CONFIG_PATH"] = service_config_value
+        _write_env_values(env_path, persisted_values)
         return SetupWizardEvent(
             step_id="mcp",
             action_id="setup_mcp",
             status="failed",
-            summary=redact_setup_output(str(exc)),
-            stdout_excerpt=redact_setup_output(stdout.getvalue()),
-            stderr_excerpt=redact_setup_output(stderr.getvalue()),
+            summary=(
+                "MEMORY_CONNECTOR_URL must be an http(s) URL without credentials, "
+                "query, or fragment."
+            ),
+            evidence={
+                "service_mcp_config": _redact_evidence_path(service_config_path),
+            },
         )
-
-    stdout_excerpt = "\n".join(
-        part
-        for part in (
-            stdout.getvalue().strip(),
-            json.dumps(result, ensure_ascii=False, sort_keys=True),
-        )
-        if part
-    )
+    persisted_values["CEO_SERVICE_MCP_CONFIG_PATH"] = service_config_value
+    persisted_values["MEMORY_CONNECTOR_URL"] = memory_url
+    _write_env_values(env_path, persisted_values)
     return SetupWizardEvent(
         step_id="mcp",
         action_id="setup_mcp",
         status="done",
-        summary="Memory Connector MCP config checked.",
+        summary="Service MCP manifest and Memory Connector URL were configured.",
         evidence={
-            "codex_config": redact_setup_output(result["codex_config"]),
-            "claude_status": result["claude_status"],
+            "service_mcp_config": _redact_evidence_path(service_config_path),
             "memory_url_source": memory_url_source,
         },
-        stdout_excerpt=redact_setup_output(stdout_excerpt),
-        stderr_excerpt=redact_setup_output(stderr.getvalue()),
+    )
+
+
+def _write_env_values(path: Path, values: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(f"{key}={values[key]}\n" for key in sorted(values)),
+        encoding="utf-8",
     )
 
 

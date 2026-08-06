@@ -206,6 +206,7 @@ cp .env.example .env
 | `CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS` | 会后对齐队列消费周期，默认 10 秒 |
 | `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex 模型配置；默认 `gpt-5.5` + `medium`，避免服务继承用户全局 `~/.codex/config.toml` 的模型 |
+| `CEO_SERVICE_MCP_CONFIG_PATH` | 服务专用 MCP JSON 清单；setup 默认创建 `data/config/service-mcp.json`，运行时不读取用户的 `~/.codex/config.toml` |
 | `CEO_FEISHU_CLI_BINARY` | 飞书 CLI 二进制名，默认 `lark` |
 | `CEO_FEISHU_LIVE_SEND_ENABLED` | 飞书 CLI 真实发送开关，默认 `0`；未显式设为 `1` 时 `send_reply` 只返回 blocked，不会发送 |
 | `data/mcp-doctor-state.json` | MCP doctor 的一次性提醒状态文件；用于避免 `needs_login` / `token_expired` 状态重复弹授权提醒 |
@@ -405,23 +406,21 @@ CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-mes
 
 `scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。AI 听记通过当前 `dws` 登录态增量读取。
 
-如果 Codex 或 Claude Desktop 没有配置 Memory Connector，可以先检查/写入本机配置：
+初始化向导会把仓库内的 `config/service-mcp.json` 复制到可编辑的
+`data/config/service-mcp.json`，并在 `.env` 写入
+`CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json`。不使用的可选 server
+应从本地清单中删除；清单中仍存在但缺少环境变量的 server 会阻断 Codex 启动，
+不会生成不完整 transport。
 
-```bash
-.venv/bin/ceo-agent setup-memory-connector \
-  --memory-url 'https://memory.example.com/mcp/'
-```
-
-Codex 配置会写入 `[mcp_servers.memory_connector]`，并使用现有 OAuth Authorization 作为身份。Claude Desktop 的 remote MCP 需要在 Settings > Connectors 手动添加；命令只报告状态，不直接改写 remote connector。
-
-CEO reply agent 默认复用本机 Codex MCP/OAuth 配置，但仍显式禁用 hooks，避免个人自动化脚本影响服务行为。需要保留给 agent 的外部能力分两类：
+CEO reply agent 始终使用 `--ignore-user-config` 并显式禁用 hooks。需要保留给
+agent 的外部能力分两类：
 
 - CLI 能力：`dws` 和 Feishu/Lark CLI 由服务环境直接提供。DWS 负责钉钉消息、文档、审批、日历、通讯录和 AI 听记；Feishu/Lark CLI 负责飞书读取和显式开启后的回复发送。两者都不通过 MCP 透传。
-- MCP 能力：`memory_connector` 由子 Codex 继承本机 Codex MCP/OAuth 配置执行，服务不维护独立 Memory client 或单独 OAuth 登录态；`xiaoqing_interview` 和 `exa` 从 `~/.codex/config.toml` 的同名 `[mcp_servers.*]` 读取安全连接字段后透传。若安装者没有配置 `[mcp_servers.exa]`，服务使用默认 Exa remote MCP URL；若没有配置 `[mcp_servers.xiaoqing_interview]`，涉及小青面试资料的任务会被视为阻断性依赖缺失。
+- MCP 能力：所有 transport 仅来自 `CEO_SERVICE_MCP_CONFIG_PATH` 指向的服务清单。URL、command 和 args 可由环境变量解析；bearer token 与动态 HTTP header 只在清单中保存环境变量名，不保存值。
 
-为了避免把个人密钥写进进程命令行，MCP 透传只复制 URL、OAuth resource、command、args、startup timeout 和 bearer token 环境变量名，不复制 `[mcp_servers.*.env]` 里的密钥值。需要 API key 的 stdio MCP 应把密钥放在 launchd 或 shell 环境中。
-
-Direct Agent 原样使用本机 Codex 配置中的 MCP、plugin、App、shell 和已安装 skill；服务不再生成 MCP `enabled_tools` 白名单，也不关闭用户配置。Agent 可直接读取适用的 `SKILL.md`，并直接调用 DWS/Lark CLI 或 MCP。认证登录仍由服务 gate 和 Tutorial 管理，Agent 不执行 login/reset/logout。
+Direct Agent 只会禁用生成命令中已经存在的服务 transport，不会扫描或注入个人
+MCP 名称。Agent 可直接读取适用的 `SKILL.md`，并调用服务提供的 DWS/Lark CLI
+或 MCP。认证登录仍由服务 gate 和 Tutorial 管理，Agent 不执行 login/reset/logout。
 
 Codex CLI 的原生 session JSONL 是运行审计。服务只保存 session ID 和每个 run 的 transcript 起止行，避免复制工具参数、结果和另一套回执状态机。
 
@@ -431,11 +430,9 @@ Codex CLI 的原生 session JSONL 是运行审计。服务只保存 session ID �
 .venv/bin/ceo-agent doctor-mcp --verify-live
 ```
 
-Memory 写入由受限 Codex 子 agent 继承当前 Codex 的 `memory_connector` MCP 配置和插件登录态；服务本身不创建或刷新另一套 Memory OAuth 身份。若 `memory_connector` 需要重新授权，使用 Codex 原生命令：
-
-```bash
-codex mcp login memory_connector
-```
+Memory 写入由受限 Codex 子 agent 使用服务清单中的 `memory_connector` transport。
+URL、bearer token 和 header 环境变量必须由 `.env`/launchd 环境提供；doctor 不会
+从个人 Codex OAuth 或个人配置中补全它们。
 
 Follow-up 发送仍遵守 live-send 安全边界：默认 dry-run 时只生成/记录草稿；真实发送需要 `CEO_NOT_SEND_MESSAGE=0` 且显式设置 `CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1`。
 

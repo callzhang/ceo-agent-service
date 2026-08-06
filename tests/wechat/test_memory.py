@@ -777,8 +777,7 @@ def test_recall_matcher_rejects_unbounded_candidate_count(tmp_path):
         ).match([candidate(f"fact {index}", category="fact") for index in range(101)])
 
 
-def test_unconfigured_default_exa_is_not_disabled_for_recall_or_write(tmp_path, monkeypatch):
-    monkeypatch.setattr("app.codex_runner._codex_config", lambda: {})
+def test_service_exa_is_disabled_for_memory_only_recall_and_write(tmp_path, monkeypatch):
     recall_final = {"matches": [{"statement": "fact", "relation": "none",
                                   "memory_id": "", "evidence": "",
                                   "merged_statement": ""}]}
@@ -811,23 +810,24 @@ def test_unconfigured_default_exa_is_not_disabled_for_recall_or_write(tmp_path, 
 
     CodexMemoryWriteBackend(tmp_path, executor=write_execute).write(
         "final", source_time_start="2026-07-17", source_time_end="")
-    assert all("mcp_servers.exa.enabled=false" not in command for command in commands)
+    assert all("mcp_servers.exa.enabled=false" in command for command in commands)
 
 
 def test_extraction_filters_sensitive_input_and_runs_read_only_without_tools(
     tmp_path, monkeypatch,
 ):
-    from app.codex_runner import MEMORY_CONNECTOR_URL_ENV
-
-    monkeypatch.setattr("app.codex_runner._codex_config", lambda: {
-        "mcp_servers": {
-            "xiaoqing_interview": {"url": "https://example.invalid/mcp"},
-            "github": {"command": "github-mcp-server"},
-        }
-    })
-    monkeypatch.setattr("app.codex_runner._memory_connector_env", lambda: {
-        MEMORY_CONNECTOR_URL_ENV: "https://memory.invalid/mcp",
-    })
+    service_manifest = tmp_path / "service-mcp.json"
+    service_manifest.write_text(
+        json.dumps({
+            "servers": {
+                "xiaoqing_interview": {"url": "https://example.invalid/mcp"},
+                "exa": {"url": "https://mcp.exa.ai/mcp"},
+                "github": {"command": "github-mcp-server"},
+            }
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(service_manifest))
     captured = {}
 
     def execute(command, prompt):

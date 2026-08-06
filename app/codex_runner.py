@@ -1,13 +1,16 @@
 import base64
 import json
 import os
-import shlex
 import time
-import tomllib
 from pathlib import Path
 
 from app.dws_client import dws_noninteractive_environment
 from app.prompt import ceo_agent_thread_prompt
+from app.service_codex_config import (
+    ServiceMcpConfigError,
+    load_service_mcp_servers,
+    service_mcp_config_options,
+)
 
 
 CODEX_DECISION_SCHEMA_PATH = (
@@ -62,27 +65,6 @@ Xiaoqing interview material reading
 # does not support `-s`, so use the explicit bypass flag for both new and resumed
 # decision threads.
 CODEX_BYPASS_APPROVALS_AND_SANDBOX = "--dangerously-bypass-approvals-and-sandbox"
-MEMORY_CONNECTOR_ENV_FILE = "memory_connector.env"
-MEMORY_CONNECTOR_URL_ENV = "MEMORY_CONNECTOR_URL"
-MEMORY_CONNECTOR_API_KEY_ENV = "CONNECTOR_API_KEY"
-MEMORY_CONNECTOR_AUTH_TYPE_ENV = "MEMORY_CONNECTOR_AUTH_TYPE"
-MEMORY_CONNECTOR_CONTENT_TYPE_ENV = "MEMORY_CONNECTOR_CONTENT_TYPE"
-MEMORY_CONNECTOR_ENV_KEYS = {
-    MEMORY_CONNECTOR_API_KEY_ENV,
-    MEMORY_CONNECTOR_AUTH_TYPE_ENV,
-    MEMORY_CONNECTOR_CONTENT_TYPE_ENV,
-    MEMORY_CONNECTOR_URL_ENV,
-}
-CODEX_PASSTHROUGH_MCP_SERVERS_ENV = "CEO_CODEX_PASSTHROUGH_MCP_SERVERS"
-DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS = ("xiaoqing_interview", "exa")
-DEFAULT_EXA_MCP_URL = "https://mcp.exa.ai/mcp"
-PASSTHROUGH_MCP_SCALAR_KEYS = (
-    "url",
-    "oauth_resource",
-    "command",
-    "startup_timeout_sec",
-    "bearer_token_env_var",
-)
 DWS_CLI_AUTH_ENV_KEYS = {
     "DWS_CLIENT_ID",
     "DWS_CLIENT_SECRET",
@@ -145,82 +127,12 @@ def _codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
 
 
-def _codex_config() -> dict:
-    path = _codex_home() / "config.toml"
-    if not path.exists():
-        return {}
-    try:
-        payload = tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
 def selected_codex_model_provider() -> str:
     provider = os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
-    if provider:
-        return provider
-    configured = _codex_config().get("model_provider")
-    if isinstance(configured, str) and configured.strip():
-        return configured.strip()
-    return "openai"
+    return provider or "openai"
 
 
-def _parse_export_env_file(path: Path) -> dict[str, str]:
-    if not path.exists():
-        return {}
-
-    values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        tokens = shlex.split(line, comments=True, posix=True)
-        if not tokens:
-            continue
-        if tokens[0] == "export":
-            tokens = tokens[1:]
-        for token in tokens:
-            if "=" not in token:
-                continue
-            key, value = token.split("=", 1)
-            values[key] = value
-    return values
-
-
-def _memory_connector_env() -> dict[str, str]:
-    file_env = _parse_export_env_file(_codex_home() / MEMORY_CONNECTOR_ENV_FILE)
-    whitelisted_file_env = {
-        key: value for key, value in file_env.items() if key in MEMORY_CONNECTOR_ENV_KEYS
-    }
-    config_env = _memory_connector_env_from_config(_codex_home() / "config.toml")
-    env = {**config_env, **whitelisted_file_env, **os.environ}
-    env.pop("MEMORY_CONNECTOR_USER_ID", None)
-    token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
-    if token and _jwt_token_is_expired(token):
-        env.pop(MEMORY_CONNECTOR_API_KEY_ENV, None)
-    return env
-
-
-def _model_provider_config_options(config: dict, provider_name: str) -> list[str]:
-    providers = config.get("model_providers") or {}
-    if not isinstance(providers, dict):
-        return []
-    provider = providers.get(provider_name) or {}
-    if not isinstance(provider, dict):
-        return []
-    options: list[str] = []
-    for key, value in provider.items():
-        if not isinstance(key, str) or not key:
-            continue
-        if isinstance(value, str | int | float | bool):
-            options.extend(
-                [
-                    "-c",
-                    _config_string(f"model_providers.{provider_name}.{key}", value),
-                ]
-            )
-    return options
-
-
-def codex_model_config_options(*, ignore_user_config: bool = False) -> list[str]:
+def codex_model_config_options() -> list[str]:
     model = os.environ.get(CODEX_MODEL_ENV, DEFAULT_CODEX_MODEL).strip()
     provider = os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
     reasoning_effort = os.environ.get(
@@ -232,8 +144,6 @@ def codex_model_config_options(*, ignore_user_config: bool = False) -> list[str]
         options.extend(["-m", model])
         if provider:
             options.extend(["-c", _config_string("model_provider", provider)])
-            if ignore_user_config:
-                options.extend(_model_provider_config_options(_codex_config(), provider))
     if reasoning_effort:
         options.extend(
             [
@@ -244,152 +154,21 @@ def codex_model_config_options(*, ignore_user_config: bool = False) -> list[str]
     return options
 
 
-def _memory_connector_env_from_config(config_path: Path) -> dict[str, str]:
-    if not config_path.exists():
-        return {}
-    try:
-        payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError:
-        return {}
-    memory_config = (payload.get("mcp_servers") or {}).get("memory_connector") or {}
-    if not isinstance(memory_config, dict):
-        return {}
-    env: dict[str, str] = {}
-    url = memory_config.get("url")
-    if isinstance(url, str) and url.strip():
-        env[MEMORY_CONNECTOR_URL_ENV] = url.strip()
-    headers = memory_config.get("http_headers")
-    authorization = headers.get("Authorization") if isinstance(headers, dict) else None
-    if isinstance(authorization, str) and authorization.strip():
-        token = authorization.strip()
-        if token.lower().startswith("bearer "):
-            token = token[7:].strip()
-        if token:
-            env[MEMORY_CONNECTOR_API_KEY_ENV] = token
-    auth_type = (
-        headers.get("X-Friday-Memory-Auth-Type")
-        if isinstance(headers, dict)
-        else None
-    )
-    if isinstance(auth_type, str) and auth_type.strip():
-        env[MEMORY_CONNECTOR_AUTH_TYPE_ENV] = auth_type.strip()
-    content_type = headers.get("Content-Type") if isinstance(headers, dict) else None
-    if isinstance(content_type, str) and content_type.strip():
-        env[MEMORY_CONNECTOR_CONTENT_TYPE_ENV] = content_type.strip()
-    return env
-
-
 def memory_connector_config_issue() -> str:
-    env = _memory_connector_env()
-    url = env.get(MEMORY_CONNECTOR_URL_ENV)
-    token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
-    if not url:
-        return "memory connector URL is missing"
-    if token:
-        return ""
-
-    config_env = _memory_connector_env_from_config(_codex_home() / "config.toml")
-    configured_token = config_env.get(MEMORY_CONNECTOR_API_KEY_ENV)
-    if configured_token and _jwt_token_is_expired(configured_token):
-        return "memory connector token is expired"
-    # Codex plugins own OAuth credentials outside config.toml. A configured
-    # server without a copyable bearer token therefore uses the inherited
-    # native plugin login instead of being treated as unavailable.
-    return ""
-
-
-def memory_connector_config_options() -> list[str]:
-    env = _memory_connector_env()
-    url = env.get(MEMORY_CONNECTOR_URL_ENV)
-    token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
-    if not url:
-        return []
-    if not token:
-        return []
-    env_http_headers: dict[str, str] = {}
-    if env.get(MEMORY_CONNECTOR_AUTH_TYPE_ENV):
-        env_http_headers["X-Friday-Memory-Auth-Type"] = MEMORY_CONNECTOR_AUTH_TYPE_ENV
-    if env.get(MEMORY_CONNECTOR_CONTENT_TYPE_ENV):
-        env_http_headers["Content-Type"] = MEMORY_CONNECTOR_CONTENT_TYPE_ENV
-    options = [
-        "-c",
-        _config_string("mcp_servers.memory_connector.url", url),
-    ]
-    if token:
-        options.extend(
-            [
-                "-c",
-                _config_string(
-                    "mcp_servers.memory_connector.bearer_token_env_var",
-                    MEMORY_CONNECTOR_API_KEY_ENV,
-                ),
-            ]
-        )
-    if env_http_headers:
-        options.extend(
-            [
-                "-c",
-                _config_string(
-                    "mcp_servers.memory_connector.env_http_headers",
-                    env_http_headers,
-                ),
-            ]
-        )
-    return options
-
-
-def passthrough_mcp_server_config_options() -> list[str]:
-    config = _codex_config()
-    servers = config.get("mcp_servers") or {}
-    if not isinstance(servers, dict):
-        return []
-
-    options: list[str] = []
-    for name in _passthrough_mcp_server_names():
-        server = servers.get(name)
-        if name == "exa" and not isinstance(server, dict):
-            server = {"url": DEFAULT_EXA_MCP_URL}
-        if not isinstance(server, dict):
-            continue
-        for key in PASSTHROUGH_MCP_SCALAR_KEYS:
-            value = server.get(key)
-            if isinstance(value, str) and value.strip():
-                options.extend(
-                    [
-                        "-c",
-                        _config_string(f"mcp_servers.{name}.{key}", value.strip()),
-                    ]
-                )
-            elif isinstance(value, int | float | bool):
-                options.extend(
-                    [
-                        "-c",
-                        _config_string(f"mcp_servers.{name}.{key}", value),
-                    ]
-                )
-        args = server.get("args")
-        if isinstance(args, list) and all(
-            isinstance(item, str | int | float | bool) for item in args
-        ):
-            options.extend(
-                [
-                    "-c",
-                    _config_string(f"mcp_servers.{name}.args", args),
-                ]
-            )
-    return options
-
-
-def _passthrough_mcp_server_names() -> tuple[str, ...]:
-    raw = os.environ.get(CODEX_PASSTHROUGH_MCP_SERVERS_ENV, "").strip()
-    if not raw:
-        return DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS
-    names = tuple(
-        name.strip()
-        for name in raw.replace(";", ",").split(",")
-        if name.strip()
+    try:
+        servers = load_service_mcp_servers()
+    except ServiceMcpConfigError as exc:
+        return f"service MCP configuration is invalid: {exc.reason}"
+    memory_connector = next(
+        (server for server in servers if server.name == "memory_connector"),
+        None,
     )
-    return names or DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS
+    if memory_connector is None:
+        return "memory_connector is not present in the service MCP manifest"
+    token_env = memory_connector.bearer_token_env_var
+    if token_env and _jwt_token_is_expired(os.environ.get(token_env, "")):
+        return "memory connector token is expired"
+    return ""
 
 
 def _jwt_token_is_expired(token: str, *, now: float | None = None) -> bool:
@@ -418,7 +197,7 @@ class CodexRunner:
         *,
         preserve_local_cli_auth: bool = False,
     ) -> dict[str, str]:
-        base_env = {**os.environ, **_memory_connector_env()}
+        base_env = os.environ.copy()
         env = (
             base_env
             if preserve_local_cli_auth
@@ -438,12 +217,14 @@ class CodexRunner:
         session_id: str | None,
         image_paths: list[Path] | None = None,
         output_schema_path: Path | None = None,
-        ignore_user_config: bool = False,
+        ignore_user_config: bool = True,
         approval_policy: str = "untrusted",
         developer_instructions: str | None = None,
         use_approval_bypass: bool = True,
         preserve_native_model_config: bool = False,
     ) -> list[str]:
+        if not ignore_user_config:
+            raise ValueError("service Codex runs require user config isolation")
         if approval_policy not in {"untrusted", "never"}:
             raise ValueError("unsupported approval policy")
         effective_approval_bypass = (
@@ -462,16 +243,13 @@ class CodexRunner:
             *(
                 []
                 if preserve_native_model_config
-                else codex_model_config_options(
-                    ignore_user_config=ignore_user_config
-                )
+                else codex_model_config_options()
             ),
-            *(["--ignore-user-config"] if ignore_user_config else []),
+            "--ignore-user-config",
             "--ignore-rules",
             "--disable",
             "hooks",
-            *memory_connector_config_options(),
-            *passthrough_mcp_server_config_options(),
+            *service_mcp_config_options(),
             "-c",
             _config_string("approval_policy", approval_policy),
             *(

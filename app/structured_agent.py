@@ -19,11 +19,10 @@ from app.codex_runner import (
     _codex_home,
     _config_string,
     codex_model_config_options,
-    memory_connector_config_options,
-    passthrough_mcp_server_config_options,
 )
 from app.external_retry import ExternalDependencyError, run_external
 from app.process_runner import run_process_with_idle_timeout
+from app.service_codex_config import service_mcp_config_options
 
 
 class SkillLoadError(RuntimeError):
@@ -271,12 +270,12 @@ class StructuredCodexRunner:
         )
         common = [
             "--json",
-            *codex_model_config_options(ignore_user_config=False),
+            *codex_model_config_options(),
+            "--ignore-user-config",
             "--ignore-rules",
             "--disable",
             "hooks",
-            *memory_connector_config_options(),
-            *passthrough_mcp_server_config_options(),
+            *service_mcp_config_options(),
             *safety_options,
             "-c",
             _config_string("developer_instructions", self.spec.developer_instructions()),
