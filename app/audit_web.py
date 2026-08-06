@@ -2,6 +2,8 @@ import json
 import asyncio
 import ipaddress
 import sqlite3
+import threading
+import time
 from collections.abc import Callable, Iterable, Mapping
 from collections import deque
 from datetime import datetime, timedelta, timezone, tzinfo
@@ -599,6 +601,7 @@ TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/cs
 TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"
 DEFAULT_ERROR_LIST_LIMIT = 20
 HISTORY_CHART_HOURS = 24
+DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
 HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
     "💬 Skipped": "#a8a8aa",
@@ -622,6 +625,32 @@ HISTORY_CHART_COLORS = {
     "🧾 Returned": "#c37d0d",
     "🧾 Rejected": "#d45656",
 }
+
+
+class _RecentHtmlCache:
+    """Reuse a just-rendered default audit page while concurrent requests arrive."""
+
+    def __init__(
+        self,
+        ttl_seconds: float,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        self._html = ""
+        self._rendered_at = 0.0
+        self._lock = threading.Lock()
+
+    def get_or_render(self, renderer: Callable[[], str]) -> str:
+        with self._lock:
+            now = self._clock()
+            if self._html and now - self._rendered_at < self._ttl_seconds:
+                return self._html
+            html = renderer()
+            self._html = html
+            self._rendered_at = self._clock()
+            return html
 
 
 class _TutorialStep(TypedDict):
@@ -6913,10 +6942,15 @@ def create_audit_app(
         writer_factory=_wechat_memory_writer,
     )
 
+    default_attempt_list_cache = _RecentHtmlCache(
+        DEFAULT_HISTORY_CACHE_TTL_SECONDS
+    )
+
     @app.get("/", response_class=HTMLResponse)
     def attempt_list(request: Request) -> str:
         query = str(request.query_params.get("q", ""))
-        try:
+
+        def render() -> str:
             return render_attempt_list(
                 _audit_store(db_path),
                 limit=_attempt_list_limit(
@@ -6935,6 +6969,11 @@ def create_audit_app(
                 include_pending_tasks=bool(query or request.query_params),
                 include_feedback_count=False,
             )
+
+        try:
+            if not request.query_params:
+                return default_attempt_list_cache.get_or_render(render)
+            return render()
         except sqlite3.OperationalError as exc:
             if _is_sqlite_busy_error(exc):
                 return _render_history_busy_page()
