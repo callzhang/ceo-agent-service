@@ -1534,6 +1534,8 @@ class DingTalkAutoReplyWorker:
                     )
                     continue
                 try:
+                    if error in RECOVERABLE_AGENT_RUNTIME_ERRORS:
+                        self.store.clear_codex_session(task.conversation_id)
                     task_status = self._record_agent_runtime_failure_attempt(
                         task,
                         error,

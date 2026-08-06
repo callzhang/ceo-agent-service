@@ -9956,6 +9956,41 @@ def test_codex_process_failure_recovers_after_normal_attempt_limit_without_alert
     assert notifications == []
 
 
+def test_codex_process_failure_rotates_stuck_conversation_session_before_retry(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+    worker.store.upsert_conversation("cid-1", "Friday", False, "stuck-session")
+
+    class ProcessFailureRunner(FakeAgentResultRunner):
+        def run(self, task, context, **kwargs):
+            claim = self.store.claim_agent_run(
+                task.id,
+                task.execution_generation,
+                owner=self.owner,
+            )
+            assert claim.claimed
+            self.store.fail_agent_run(
+                claim.run.id,
+                {"code": "codex_process_failed", "retryable": True},
+                owner=self.owner,
+            )
+            raise RuntimeError("codex_process_failed")
+
+    worker.direct_agent_runner = ProcessFailureRunner(worker.store, [])
+
+    worker.run_once()
+
+    assert worker.store.get_codex_session_id("cid-1") is None
+
+
 def test_codex_process_failure_becomes_terminal_after_one_extra_recovery_claim(
     tmp_path: Path, monkeypatch
 ):
