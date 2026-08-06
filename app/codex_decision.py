@@ -670,7 +670,12 @@ class CodexDecisionRunner:
         self.last_transcript_start_line = self._session_line_count(session_id)
         self.last_transcript_end_line = self.last_transcript_start_line
         first_raw = self.executor(
-            self.runner.build_command(prompt, session_id, image_paths=image_paths),
+            self.runner.build_command(
+                prompt,
+                session_id,
+                image_paths=image_paths,
+                ignore_user_config=True,
+            ),
             prompt,
         )
         raw_outputs.append(first_raw)
@@ -710,6 +715,7 @@ class CodexDecisionRunner:
                     repair_prompt,
                     retry_session_id,
                     image_paths=image_paths,
+                    ignore_user_config=True,
                 ),
                 repair_prompt,
             )
