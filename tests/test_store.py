@@ -5281,3 +5281,32 @@ def test_recover_orphaned_processing_reply_tasks_is_generation_aware(
     assert store.get_reply_task(task_ids[0]).attempts == 0
     assert store.get_reply_task(task_ids[1]).status == "processing"
     assert store.get_reply_task(task_ids[2]).status == "processing"
+
+
+def test_recover_interrupted_wechat_read_only_decision_has_precise_reason(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="wechat-conversation",
+        conversation_title="Wechat contact",
+        single_chat=True,
+        trigger_message_id="wechat-message",
+        trigger_create_time="2026-08-07 01:00:00",
+        trigger_sender="contact",
+        trigger_text="Can you reply?",
+    )
+    [task] = store.claim_reply_tasks(1, channel="wechat")
+
+    store.mark_wechat_read_only_decision_started(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+    recovered = store.recover_orphaned_processing_reply_tasks(limit=10)
+
+    assert [item.id for item in recovered] == [task.id]
+    recovered_task = store.get_reply_task(task.id)
+    assert recovered_task is not None
+    assert recovered_task.status == "pending"
+    assert recovered_task.error == "interrupted_read_only_decision"

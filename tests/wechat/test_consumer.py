@@ -124,6 +124,27 @@ def test_stop_with_error_records_failed_attempt(fake_codex, consumer, store):
     assert attempt.send_error == "missing_wechat_context"
 
 
+def test_consumer_marks_read_only_decision_phase_before_calling_codex(
+    consumer, store
+):
+    observed_phases: list[str] = []
+
+    class PhaseInspectingRunner:
+        def decide(self, *_args, **_kwargs):
+            task = store.get_reply_task(1)
+            assert task is not None
+            observed_phases.append(task.error)
+            return CodexDecision(
+                action=CodexAction.NO_REPLY,
+                audit_summary="无需回复。",
+            )
+
+    consumer.runner = PhaseInspectingRunner()
+
+    assert consumer.run_once(limit=1) == 1
+    assert observed_phases == ["wechat_read_only_decision_running"]
+
+
 def test_corrected_generation_replaces_unsent_wechat_delivery(
     fake_codex, consumer, store
 ):
