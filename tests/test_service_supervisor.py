@@ -28,6 +28,10 @@ class FakeChild:
         return self.returncode
 
 
+def test_shutdown_grace_finishes_before_launchd_forces_exit():
+    assert service_supervisor.SHUTDOWN_GRACE_SECONDS < 5.0
+
+
 def test_build_child_command_uses_same_runtime_and_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(service_supervisor.sys, "executable", "/tmp/ceo-python")
     args = Namespace(

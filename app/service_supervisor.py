@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 POLL_INTERVAL_SECONDS = 0.2
-SHUTDOWN_GRACE_SECONDS = 5.0
+SHUTDOWN_GRACE_SECONDS = 1.0
 
 
 def build_child_command(command: str, args: argparse.Namespace) -> list[str]:

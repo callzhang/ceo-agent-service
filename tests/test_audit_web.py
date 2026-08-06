@@ -2,6 +2,8 @@ import json
 import os
 import sqlite3
 import subprocess
+import threading
+import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -1827,15 +1829,18 @@ def test_history_route_returns_busy_page_when_database_is_locked(
     tmp_path: Path,
 ):
     calls = 0
+    rendered = threading.Event()
 
     def locked_attempt_list(*args, **kwargs):
         nonlocal calls
         del args, kwargs
         calls += 1
+        rendered.set()
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(audit_web_module, "render_attempt_list", locked_attempt_list)
     with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        assert rendered.wait(timeout=1)
         response = client.get("/")
 
     assert response.status_code == 200
@@ -1878,17 +1883,42 @@ def test_history_route_reuses_recent_default_render(monkeypatch, tmp_path: Path)
 
 def test_audit_app_prewarms_default_history(monkeypatch, tmp_path: Path):
     calls = 0
+    rendered = threading.Event()
 
     def render_once(*args, **kwargs):
         nonlocal calls
         del args, kwargs
         calls += 1
+        rendered.set()
         return f"render-{calls}"
 
     monkeypatch.setattr(audit_web_module, "render_attempt_list", render_once)
 
     with TestClient(create_audit_app(tmp_path / "worker.sqlite3")):
+        assert rendered.wait(timeout=1)
         assert calls == 1
+
+
+def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp_path: Path):
+    release_render = threading.Event()
+    render_started = threading.Event()
+
+    def render_slowly(*args, **kwargs):
+        del args, kwargs
+        render_started.set()
+        release_render.wait(timeout=0.4)
+        return "ready"
+
+    monkeypatch.setattr(audit_web_module, "render_attempt_list", render_slowly)
+    started_at = time.monotonic()
+    try:
+        with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+            assert time.monotonic() - started_at < 0.2
+            assert render_started.wait(timeout=1)
+            response = client.get("/")
+            assert "History is temporarily busy" in response.text
+    finally:
+        release_render.set()
 
 
 def test_recent_html_cache_refreshes_after_ttl():

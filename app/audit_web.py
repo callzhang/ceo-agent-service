@@ -692,6 +692,18 @@ class _RecentHtmlCache:
             self._rendered_at = self._clock()
             self._refreshing = False
 
+    def refresh_in_background(self, renderer: Callable[[], str]) -> None:
+        with self._lock:
+            if self._refreshing:
+                return
+            self._refreshing = True
+            refresh_thread = self._thread_factory(
+                target=self._refresh,
+                args=(renderer,),
+                daemon=True,
+            )
+        refresh_thread.start()
+
 
 class _TutorialStep(TypedDict):
     phase: str
@@ -6952,12 +6964,8 @@ def create_audit_app(
 
     @asynccontextmanager
     async def audit_lifespan(_app: FastAPI):
-        try:
-            default_attempt_list_cache.get_or_render(render_default_attempt_list)
-        except sqlite3.OperationalError as exc:
-            if not _is_sqlite_busy_error(exc):
-                raise
-            default_attempt_list_cache.get_or_render(_render_history_busy_page)
+        default_attempt_list_cache.get_or_render(_render_history_busy_page)
+        default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
         yield
 
     app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
