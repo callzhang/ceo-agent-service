@@ -308,13 +308,17 @@ def test_send_feedback_spike_links_uses_current_user_message_path():
     assert result["response"] == {"result": {"processQueryKey": "key-1"}}
     assert client.sent[0]["conversation_id"] == "cid-1"
     assert client.sent[0]["user_id"] is None
-    assert client.sent[0]["title"] == "收到"
+    assert client.sent[0]["title"] == "收到（by明哥分身）"
+    assert client.sent[0]["text"].startswith("收到（by明哥分身）")
+    assert client.sent[0]["text"].count("（by明哥分身）") == 1
     assert "rating=up" in client.sent[0]["text"]
     assert "rating=down" in client.sent[0]["text"]
     assert "attempt_id=42" in client.sent[0]["text"]
     assert result["command"][3] == "send"
     assert "--group" in result["command"]
-    assert result["command"][result["command"].index("--title") + 1] == "收到"
+    assert result["command"][result["command"].index("--title") + 1] == "收到（by明哥分身）"
+    assert result["callback_url_up"] in client.sent[0]["text"]
+    assert result["callback_url_down"] in client.sent[0]["text"]
     assert "send-by-bot" not in result["command"]
 
 
