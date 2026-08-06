@@ -425,6 +425,22 @@ def test_codex_command_can_use_explicit_output_schema(tmp_path: Path):
     assert command[schema_index] == str(schema)
 
 
+def test_codex_command_can_skip_output_schema_for_service_result_validation(
+    tmp_path: Path,
+):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+    schema = tmp_path / "strict.schema.json"
+
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        output_schema_path=schema,
+        use_output_schema=False,
+    )
+
+    assert "--output-schema" not in command
+
+
 def test_codex_runner_env_loads_memory_connector_env_file(
     tmp_path: Path, monkeypatch
 ):

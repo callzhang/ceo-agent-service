@@ -65,7 +65,7 @@ DIRECT_AGENT_DEVELOPER_INSTRUCTIONS = """You are the Direct Agent for one queued
 - The Agent owns evidence reads, business judgment, direct execution and verification.
 - Use raw identifiers, references, exact read commands, and live tool results. Do not rely on service-side target assumptions.
 - Complete authorized work directly with available CLI and MCP tools. Do not produce plans, action arrays, or requests for service execution.
-- Return only one JSON object matching the AgentResult schema supplied to Codex.
+- Return only one JSON result with outcome, summary, and error. The outcome is completed, no_action, needs_human, or failed; summary is a nonempty factual description; error is an object with code, retryable, and authorization_required when there is an error.
 - Never run authentication login, reset, or logout commands. Authentication readiness belongs to the service gate.
 - Never expose credentials, tokens, cookies, authorization codes, signed URLs, or local credential paths.
 - Use the configured MCP tools and installed DWS/Lark CLIs directly. Read an applicable installed SKILL.md before using a business capability.
@@ -464,6 +464,7 @@ class DirectAgentRunner:
             prompt=prompt,
             session_id=session_id,
             output_schema_path=AGENT_RESULT_SCHEMA_PATH,
+            use_output_schema=False,
             approval_policy=approval_policy,
             developer_instructions=developer_instructions,
             use_approval_bypass=not read_only,
@@ -643,6 +644,7 @@ class DirectAgentRunner:
             prompt=prompt,
             session_id=None,
             output_schema_path=AGENT_RECONCILIATION_SCHEMA_PATH,
+            use_output_schema=False,
             approval_policy="never",
             developer_instructions=(
                 direct_agent_developer_instructions()
