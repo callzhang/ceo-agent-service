@@ -140,7 +140,7 @@ def store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "reply.sqlite3")
 
 
-def test_direct_runner_uses_native_codex_config_without_mcp_whitelist(
+def test_direct_runner_disables_unreviewed_native_mcp_servers(
     tmp_path: Path,
     store: AutoReplyStore,
 ):
@@ -159,7 +159,9 @@ def test_direct_runner_uses_native_codex_config_without_mcp_whitelist(
     assert "resume" not in command
     assert "--ignore-user-config" not in command
     assert "enabled_tools=" not in command_text
-    assert ".enabled=false" not in command_text
+    assert "mcp_servers.brightdata.enabled=false" in command
+    assert "mcp_servers.crm_connector.enabled=false" in command
+    assert "mcp_servers.fundflow.enabled=false" in command
     assert "features.plugins=false" not in command_text
     assert "features.apps=false" not in command_text
     assert "reconciliation_cli" not in command_text

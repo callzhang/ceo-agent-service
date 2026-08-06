@@ -40,7 +40,7 @@ from app.native_cli_metadata import (
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRun, AgentRunLeaseLostError, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import (
-    make_direct_agent_sandbox,
+    disable_configured_mcp_servers,
     make_read_only_with_reviewed_tools,
 )
 
@@ -469,6 +469,14 @@ class DirectAgentRunner:
             developer_instructions=developer_instructions,
             use_approval_bypass=not read_only,
             preserve_native_model_config=True,
+        )
+        # The desktop Codex config may contain personal MCP integrations that
+        # this task cannot use. One unavailable integration must not prevent a
+        # queued task from reaching its reviewed tools.
+        disable_configured_mcp_servers(
+            command,
+            except_names=frozenset(self.mcp_effect_registry.reviewed_tools()),
+            include_all_configured=True,
         )
         saw_json = False
         stream_line_count = 0
