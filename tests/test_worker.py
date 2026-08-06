@@ -4969,6 +4969,53 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
     assert run.codex_session_id == "session-stale-1"
 
 
+def test_stale_wechat_read_only_decision_requeues_with_precise_reason(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="wechat-cid",
+        conversation_title="Wechat contact",
+        single_chat=True,
+        trigger_message_id="wechat-msg",
+        trigger_create_time="2026-08-07 01:00:00",
+        trigger_sender="contact",
+        trigger_text="Can you reply?",
+    )
+    [task] = store.claim_reply_tasks(limit=1, channel="wechat")
+    store.mark_wechat_read_only_decision_started(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            (task.id,),
+        )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([], {}),
+        codex=FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, audit_summary="unused")),
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
+        direct_agent_runner=FakeAgentResultRunner(store),
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker._recover_stale_agent_reply_tasks()
+
+    recovered = store.get_reply_task(task.id)
+    assert recovered is not None
+    assert recovered.status == "pending"
+    assert recovered.error == "interrupted_read_only_decision"
+    assert notifications[0]["title"] == "CEO task retrying stale tasks"
+
+
 def test_consume_once_does_not_requeue_stale_task_with_live_agent_lease(
     tmp_path: Path, monkeypatch
 ):

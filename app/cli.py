@@ -2399,7 +2399,9 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
     reader = _wx.build_reader()
     runner = None
     if role == "consumer":
-        runner = CodexDecisionRunner(
+        from app.wechat.decision_runner import WechatDecisionRunner
+
+        runner = WechatDecisionRunner(
             workspace=settings.workspace,
             timeout_seconds=settings.codex_timeout_seconds,
             idle_timeout_seconds=settings.codex_idle_timeout_seconds,

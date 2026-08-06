@@ -21,6 +21,12 @@ _TOOL_ITEM_TYPES = frozenset({
     "web_search",
     "web_search_call",
 })
+WECHAT_MEMORY_READ_TOOLS = (
+    "memory_get",
+    "memory_recall",
+    "timeline_get",
+    "user_get",
+)
 
 
 @dataclass(frozen=True)
@@ -206,6 +212,40 @@ def make_audit_agent_command(
         reviewed_mcp_tools=reviewed_mcp_tools,
         controlled_cli=controlled_cli,
         allow_write=True,
+    )
+
+
+def make_read_only_with_memory_tools(command: list[str]) -> None:
+    """Allow only durable-memory reads while a WeChat reply is being decided."""
+    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
+        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
+    _remove_config_options(
+        command,
+        prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
+    )
+    disable_configured_mcp_servers(
+        command,
+        except_names=frozenset({"memory_connector"}),
+    )
+    enabled_tools = json.dumps(
+        list(WECHAT_MEMORY_READ_TOOLS), ensure_ascii=True, separators=(",", ":")
+    )
+    _insert_command_options(
+        command,
+        [
+            "-c",
+            "features.plugins=false",
+            "-c",
+            "features.apps=false",
+            "--sandbox",
+            "read-only",
+            "-c",
+            'approval_policy="never"',
+            "-c",
+            'web_search="disabled"',
+            "-c",
+            f"mcp_servers.memory_connector.enabled_tools={enabled_tools}",
+        ],
     )
 
 

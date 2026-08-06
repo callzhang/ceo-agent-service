@@ -4480,12 +4480,18 @@ class AutoReplyStore:
             ).fetchall()
             recovered: list[ReplyTask] = []
             for row in rows:
+                recovery_error = "orphaned_before_agent_start"
+                if (
+                    row["channel"] == "wechat"
+                    and row["error"] == "wechat_read_only_decision_running"
+                ):
+                    recovery_error = "interrupted_read_only_decision"
                 cursor = db.execute(
                     """
                     update reply_tasks
                     set status='pending', attempts=max(attempts - 1, 0),
                         locked_at=null, available_at='',
-                        error='orphaned_before_agent_start',
+                        error=?,
                         updated_at=current_timestamp
                     where id=? and status='processing' and execution_generation=?
                       and not exists (
@@ -4495,7 +4501,7 @@ class AutoReplyStore:
                             and execution_generation=reply_tasks.execution_generation
                       )
                     """,
-                    (row["id"], row["execution_generation"]),
+                    (recovery_error, row["id"], row["execution_generation"]),
                 )
                 if cursor.rowcount != 1:
                     continue
@@ -4505,6 +4511,28 @@ class AutoReplyStore:
                 ).fetchone()
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
+
+    def mark_wechat_read_only_decision_started(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+    ) -> None:
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set error='wechat_read_only_decision_running',
+                    updated_at=current_timestamp
+                where id=? and channel='wechat' and status='processing'
+                  and execution_generation=?
+                """,
+                (task_id, expected_execution_generation),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
     def complete_reply_task(
         self,
