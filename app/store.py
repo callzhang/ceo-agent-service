@@ -1576,6 +1576,31 @@ class AutoReplyStore:
             )
             db.execute(
                 """
+                create index if not exists idx_reply_attempts_oa_history
+                    on reply_attempts(
+                        oa_process_instance_id, created_at desc, id desc
+                    )
+                    where oa_process_instance_id <> ''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_reply_attempts_trigger_history
+                    on reply_attempts(
+                        conversation_id, trigger_message_id, action, id desc
+                    )
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_sent_replies_history
+                    on sent_replies(
+                        conversation_id, trigger_message_id, sent_at
+                    )
+                """
+            )
+            db.execute(
+                """
                 create index if not exists idx_meeting_alignment_runs_created
                     on meeting_alignment_runs(created_at, id)
                 """
@@ -8412,6 +8437,7 @@ class AutoReplyStore:
                         select process_attempts.id
                         from reply_attempts as process_attempts
                         where process_attempts.oa_process_instance_id = reply_attempts.oa_process_instance_id
+                          and process_attempts.oa_process_instance_id <> ''
                         order by
                             case
                                 when process_attempts.send_status in (
