@@ -157,7 +157,7 @@ def test_direct_runner_disables_unreviewed_native_mcp_servers(
     command_text = " ".join(command)
     assert command[:2] == ["codex", "exec"]
     assert "resume" not in command
-    assert "--ignore-user-config" not in command
+    assert "--ignore-user-config" in command
     assert "enabled_tools=" not in command_text
     assert "mcp_servers.brightdata.enabled=false" in command
     assert "mcp_servers.crm_connector.enabled=false" in command

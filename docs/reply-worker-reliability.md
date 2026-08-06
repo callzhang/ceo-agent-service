@@ -389,6 +389,10 @@ The summary capability is presentation metadata rather than a task requirement;
 leaving it to the installed CLI avoids a model-cache schema update preventing a
 durable task from starting.
 
+Direct Agent and reconciliation invocations ignore personal Codex user config.
+They receive the service-selected model and reviewed MCP configuration explicitly,
+so interactive plugins or UI-only settings cannot prevent durable queue recovery.
+
 Delivery failures for an otherwise sendable reply are treated as task processing
 failures after the reply attempt has recorded the failed send. This keeps the
 original message retryable instead of completing the task with a failed attempt.

@@ -468,7 +468,7 @@ class DirectAgentRunner:
             approval_policy=approval_policy,
             developer_instructions=developer_instructions,
             use_approval_bypass=not read_only,
-            preserve_native_model_config=True,
+            ignore_user_config=True,
         )
         # The desktop Codex config may contain personal MCP integrations that
         # this task cannot use. One unavailable integration must not prevent a
@@ -659,7 +659,7 @@ class DirectAgentRunner:
                 + READ_ONLY_DEVELOPER_INSTRUCTION
             ),
             use_approval_bypass=False,
-            preserve_native_model_config=True,
+            ignore_user_config=True,
         )
         make_read_only_with_reviewed_tools(
             command,
