@@ -1850,6 +1850,47 @@ def test_history_route_renders_chart_on_default_page(tmp_path: Path):
     assert "最近 24 小时事件" in response.text
 
 
+def test_history_route_reuses_recent_default_render(monkeypatch, tmp_path: Path):
+    calls = 0
+
+    def render_once(*args, **kwargs):
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        return f"render-{calls}"
+
+    monkeypatch.setattr(audit_web_module, "render_attempt_list", render_once)
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    first = client.get("/")
+    second = client.get("/")
+    filtered = client.get("/?object_type=meeting")
+
+    assert first.text == "render-1"
+    assert second.text == "render-1"
+    assert filtered.text == "render-2"
+    assert calls == 2
+
+
+def test_recent_html_cache_refreshes_after_ttl():
+    timestamps = iter((0.0, 0.0, 1.0, 3.0, 3.0))
+    cache = audit_web_module._RecentHtmlCache(
+        2.0,
+        clock=lambda: next(timestamps),
+    )
+    calls = 0
+
+    def render_once():
+        nonlocal calls
+        calls += 1
+        return f"render-{calls}"
+
+    assert cache.get_or_render(render_once) == "render-1"
+    assert cache.get_or_render(render_once) == "render-1"
+    assert cache.get_or_render(render_once) == "render-2"
+    assert calls == 2
+
+
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     client = loopback_test_client(create_audit_app(db_path))
