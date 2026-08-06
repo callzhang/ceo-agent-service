@@ -154,6 +154,14 @@ class AgentRunUnavailableError(RuntimeError):
     pass
 
 
+class AgentConversationLockedError(RuntimeError):
+    """Another Direct Agent invocation owns this conversation's Codex session."""
+
+    def __init__(self, conversation_id: str) -> None:
+        self.conversation_id = conversation_id
+        super().__init__("codex_session_locked")
+
+
 class AgentStreamError(RuntimeError):
     pass
 
@@ -389,6 +397,39 @@ class DirectAgentRunner:
     ) -> DirectAgentRunResult:
         if context.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
+        lock_owner = f"direct-agent:{task.id}:{task.execution_generation}"
+        if not self.store.acquire_codex_session_lock(
+            task.conversation_id,
+            lock_owner,
+        ):
+            raise AgentConversationLockedError(task.conversation_id)
+        run_failed = False
+        try:
+            return self._run_with_session_lock(
+                task,
+                context,
+                read_only=read_only,
+                now=now,
+            )
+        except BaseException:
+            run_failed = True
+            raise
+        finally:
+            released = self.store.release_codex_session_lock(
+                task.conversation_id,
+                lock_owner,
+            )
+            if not released and not run_failed:
+                raise RuntimeError("codex session lock release failed")
+
+    def _run_with_session_lock(
+        self,
+        task: ReplyTask,
+        context: AgentTaskContext,
+        *,
+        read_only: bool = False,
+        now: str | None = None,
+    ) -> DirectAgentRunResult:
         claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -496,6 +537,7 @@ class DirectAgentRunner:
             self._record_failure(
                 run.id,
                 "codex_process_failed",
+                detail=safe_observability_error(str(exc)),
                 now=now,
             )
             if self.store.get_agent_run(run.id).status == "unknown":
@@ -515,6 +557,7 @@ class DirectAgentRunner:
             self._record_failure(
                 run.id,
                 "codex_process_failed",
+                detail=_process_failure_detail(process.stderr),
                 now=now,
             )
             if self.store.get_agent_run(run.id).status == "unknown":
@@ -769,6 +812,7 @@ class DirectAgentRunner:
         run_id: int,
         code: str,
         *,
+        detail: str = "",
         now: str | None,
     ) -> None:
         persisted = self.store.get_agent_run(run_id)
@@ -776,9 +820,12 @@ class DirectAgentRunner:
             raise RuntimeError("agent run was not persisted")
         if persisted.status != "running":
             return
+        error: dict[str, object] = {"code": code, "retryable": True}
+        if detail:
+            error["detail"] = safe_observability_error(detail)
         self.store.fail_agent_run(
             run_id,
-            {"code": code, "retryable": True},
+            error,
             owner=self.owner,
             transcript_end_line=persisted.transcript_end_line,
             side_effect_state=SideEffectState.NONE.value,
@@ -1743,6 +1790,14 @@ def _is_signed_url(value: str) -> bool:
         _is_sensitive_key(_normalized_key(name))
         for name, _value in parse_qsl(parsed.query, keep_blank_values=True)
     )
+
+
+def _process_failure_detail(stderr: str) -> str:
+    for line in stderr.splitlines():
+        candidate = line.strip()
+        if candidate and " WARN " not in f" {candidate} ":
+            return safe_observability_error(candidate, limit=500)
+    return "codex process exited without an error message"
 
 
 def _effect_event(payload: dict[str, object]) -> ToolEffectEvent | None:

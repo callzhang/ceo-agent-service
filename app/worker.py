@@ -25,6 +25,7 @@ from app.agent_result import (
 )
 from app.agent_runner import (
     LEASE_SECONDS,
+    AgentConversationLockedError,
     AgentReadOnlyViolationError,
     AgentRunNoEffectEvidenceError,
     AgentRunUnavailableError,
@@ -1482,6 +1483,17 @@ class DingTalkAutoReplyWorker:
             )
             try:
                 completed = self._process_queued_task(conversation, task)
+            except AgentConversationLockedError:
+                try:
+                    self.store.defer_reply_task(
+                        task.id,
+                        "codex_session_locked",
+                        expected_execution_generation=task.execution_generation,
+                        available_at=self._reply_task_retry_available_at(1),
+                    )
+                except AgentRunLeaseLostError:
+                    continue
+                continue
             except AgentRunLeaseLostError:
                 continue
             except Exception as exc:

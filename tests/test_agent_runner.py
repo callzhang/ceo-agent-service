@@ -9,6 +9,7 @@ from app.agent_context import AgentTaskContext
 from app.agent_result import AgentOutcome
 from app.agent_runner import (
     AGENT_RESULT_SCHEMA_PATH,
+    AgentConversationLockedError,
     AgentRunUnavailableError,
     DirectAgentRunner,
     direct_agent_developer_instructions,
@@ -180,19 +181,10 @@ def test_direct_agent_requires_oa_applicant_notification_after_confirmed_action(
 def test_direct_runner_reuses_one_codex_session_for_the_conversation(
     tmp_path: Path,
     store: AutoReplyStore,
-    monkeypatch: pytest.MonkeyPatch,
 ):
     store.upsert_conversation("cid", "产品群", False, "conversation-session")
     task = _task(store)
     executor = RecordingExecutor(_jsonl(session_id="conversation-session"))
-    monkeypatch.setattr(
-        store,
-        "codex_session_lock",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("Direct Agent must not manage a conversation lock")
-        ),
-    )
-
     DirectAgentRunner(
         store=store,
         workspace=tmp_path,
@@ -207,6 +199,85 @@ def test_direct_runner_reuses_one_codex_session_for_the_conversation(
         task.execution_generation,
     )
     assert run.codex_session_id == "conversation-session"
+
+
+def test_direct_runner_serializes_same_conversation_before_claiming_second_run(
+    tmp_path: Path,
+    store: AutoReplyStore,
+):
+    first = _task(store)
+    store.enqueue_reply_task(
+        channel="dingtalk",
+        conversation_id="cid",
+        conversation_title="产品群",
+        single_chat=False,
+        trigger_message_id="mid-2",
+        trigger_create_time="2026-07-28 12:01:00",
+        trigger_sender="ET",
+        trigger_text="继续处理",
+        execution_generation="generation-2",
+    )
+    second = store.get_reply_task_for_message("cid", "mid-2")
+    assert second is not None
+    second_context = replace(
+        _context(second.id),
+        trigger_message_id="mid-2",
+        trigger_text="继续处理",
+        trigger_create_time="2026-07-28 12:01:00",
+    )
+
+    second_runner = DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=RecordingExecutor(_jsonl(session_id="second-session")),
+    )
+
+    class ReentrantExecutor(RecordingExecutor):
+        def __call__(self, command, *, prompt, on_stdout_line, **kwargs):
+            with pytest.raises(AgentConversationLockedError):
+                second_runner.run(second, second_context)
+            return super().__call__(
+                command,
+                prompt=prompt,
+                on_stdout_line=on_stdout_line,
+                **kwargs,
+            )
+
+    DirectAgentRunner(
+        store=store,
+        workspace=tmp_path,
+        executor=ReentrantExecutor(_jsonl(session_id="first-session")),
+    ).run(first, _context(first.id))
+
+    assert (
+        store.get_agent_run_for_task_generation(
+            second.id,
+            second.execution_generation,
+        )
+        is None
+    )
+    assert store.acquire_codex_session_lock("cid", "post-run") is True
+
+
+def test_direct_runner_persists_sanitized_process_failure_detail(
+    tmp_path: Path,
+    store: AutoReplyStore,
+):
+    task = _task(store)
+    executor = RecordingExecutor(_jsonl(), returncode=1)
+
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        DirectAgentRunner(store=store, workspace=tmp_path, executor=executor).run(
+            task,
+            _context(task.id),
+        )
+
+    run = store.get_agent_run_for_task_generation(
+        task.id,
+        task.execution_generation,
+    )
+    assert run is not None
+    assert json.loads(run.structured_error_json)["detail"] == "process failed"
 
 
 def test_direct_runner_persists_new_session_for_later_conversation_messages(
