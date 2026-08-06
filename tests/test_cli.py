@@ -40,7 +40,7 @@ from app.cli import (
 from app.corpus import CorpusRecord, append_records
 from app.dws_client import DwsError
 from app.external_retry import ExternalDependencyError
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 from app.task_models import TaskAgentDecision, WorkItem
 
 
@@ -115,7 +115,16 @@ def test_resolve_agent_run_command_records_manual_resolution(tmp_path, capsys):
     store = AutoReplyStore(settings.db_path)
     enqueue_trigger_task(store)
     task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(task.id, task.execution_generation, owner="worker").run
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=f"direct-agent:{task.id}:{task.execution_generation}",
+        owner="worker",
+    ).run
     store.mark_agent_run_unknown(
         run.id,
         {"code": "unknown"},

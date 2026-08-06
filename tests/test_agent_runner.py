@@ -19,7 +19,7 @@ from app.service_codex_config import (
     ServiceMcpConfigError,
     ServiceMcpConfigIssue,
 )
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 
 
 def _task(store: AutoReplyStore):
@@ -35,6 +35,20 @@ def _task(store: AutoReplyStore):
         execution_generation="generation-1",
     )
     return store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+
+
+def _get_direct_run(
+    store: AutoReplyStore,
+    task_id: int,
+    execution_generation: str,
+):
+    return store.get_agent_run_for_turn(
+        task_id,
+        execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
 
 
 def _context(task_id: int) -> AgentTaskContext:
@@ -226,7 +240,7 @@ def test_direct_runner_reuses_one_codex_session_for_the_conversation(
 
     assert executor.commands[0][1:3] == ["exec", "resume"]
     assert executor.commands[0][-2:] == ["conversation-session", "-"]
-    run = store.get_agent_run_for_task_generation(
+    run = _get_direct_run(store,
         task.id,
         task.execution_generation,
     )
@@ -282,7 +296,7 @@ def test_direct_runner_serializes_same_conversation_before_claiming_second_run(
     ).run(first, _context(first.id))
 
     assert (
-        store.get_agent_run_for_task_generation(
+        _get_direct_run(store,
             second.id,
             second.execution_generation,
         )
@@ -304,7 +318,7 @@ def test_direct_runner_persists_sanitized_process_failure_detail(
             _context(task.id),
         )
 
-    run = store.get_agent_run_for_task_generation(
+    run = _get_direct_run(store,
         task.id,
         task.execution_generation,
     )
@@ -441,7 +455,7 @@ def test_direct_runner_renews_lease_when_stream_reports_progress(
     def executor(command, *, prompt, on_stdout_line, **_kwargs):
         for line in output.splitlines():
             on_stdout_line(line)
-        run = store.get_agent_run_for_task_generation(
+        run = _get_direct_run(store,
             task.id,
             task.execution_generation,
         )
@@ -519,7 +533,7 @@ def test_runtime_failures_are_persisted_as_regular_failures(
             executor=executor,
         ).run(task, _context(task.id))
 
-    run = store.get_agent_run_for_task_generation(
+    run = _get_direct_run(store,
         task.id,
         task.execution_generation,
     )
@@ -557,7 +571,7 @@ def test_service_mcp_config_failure_does_not_leave_claimed_run_running(
     with pytest.raises(RuntimeError, match="service_mcp_config_invalid"):
         runner.run(task, _context(task.id))
 
-    run = store.get_agent_run_for_task_generation(
+    run = _get_direct_run(store,
         task.id,
         task.execution_generation,
     )

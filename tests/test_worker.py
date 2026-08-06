@@ -50,7 +50,7 @@ from app.dws_client import (
     DwsOaApprovalCandidate,
     DwsUserProfile,
 )
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 from app.worker import (
     DWS_AUTH_LOGIN_STATE_KEY,
     HANDOFF_NOTIFICATION_PREFIX,
@@ -60,6 +60,37 @@ from app.worker import (
 
 
 CONTEXT_HEADER = "上下文消息（自上次回复后的新信息，最多 20 条）:"
+
+
+def _get_direct_run(store, task_id: int, execution_generation: str):
+    return store.get_agent_run_for_turn(
+        task_id,
+        execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+
+
+def _claim_direct_run(
+    store,
+    task_id: int,
+    execution_generation: str,
+    *,
+    owner: str,
+    **kwargs,
+):
+    return store.claim_agent_run(
+        task_id,
+        execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=f"direct-agent:{task_id}:{execution_generation}",
+        owner=owner,
+        **kwargs,
+    )
 
 
 class FakeAuthLoginProcess:
@@ -108,7 +139,7 @@ class FakeAgentResultRunner:
         self.owner = "worker-result-agent"
 
     def run(self, task, context, **_kwargs) -> DirectAgentRunResult:
-        claim = self.store.claim_agent_run(
+        claim = _claim_direct_run(self.store,
             task.id,
             task.execution_generation,
             owner=self.owner,
@@ -4801,7 +4832,7 @@ def test_active_run_defer_cannot_overwrite_rotated_generation(
     worker.produce_once()
     pending = worker.store.get_reply_task(1)
     assert pending is not None
-    worker.store.claim_agent_run(
+    _claim_direct_run(worker.store,
         pending.id,
         pending.execution_generation,
         owner="active-worker",
@@ -4888,7 +4919,7 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
     )
     claimed = store.claim_reply_tasks(limit=1)
     assert claimed[0].status == "processing"
-    agent_claim = store.claim_agent_run(
+    agent_claim = _claim_direct_run(store,
         claimed[0].id,
         claimed[0].execution_generation,
         owner="crashed-worker",
@@ -4930,7 +4961,7 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
     assert f"task={claimed[0].id}" in stale_error.detail
     assert f"generation={claimed[0].execution_generation}" in stale_error.detail
     assert notifications[0]["title"] == "CEO task retrying stale tasks"
-    run = store.get_agent_run_for_task_generation(
+    run = _get_direct_run(store,
         claimed[0].id,
         claimed[0].execution_generation,
     )
@@ -4952,7 +4983,7 @@ def test_consume_once_does_not_requeue_stale_task_with_live_agent_lease(
         trigger_text="@Alex Chen 这个怎么处理？",
     )
     claimed = store.claim_reply_tasks(limit=1)
-    agent_claim = store.claim_agent_run(
+    agent_claim = _claim_direct_run(store,
         claimed[0].id,
         claimed[0].execution_generation,
         owner="active-worker",
@@ -5358,7 +5389,7 @@ def test_consume_once_external_dependency_does_not_exhaust_business_attempts(
     assert task.attempts == 1
     assert task.error == "codex_dependency_unavailable"
     assert worker.store.get_codex_session_id("cid-1") == "full-codex-session"
-    run = worker.store.get_agent_run_for_task_generation(
+    run = _get_direct_run(worker.store,
         task.id,
         task.execution_generation,
     )
@@ -9664,7 +9695,7 @@ def test_codex_invalid_refresh_token_retries_without_duplicate_notification(
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
     assert worker.store.count_reply_attempts() == 0
-    assert worker.store.get_agent_run_for_task_generation(1, "initial") is None
+    assert _get_direct_run(worker.store, 1, "initial") is None
     assert codex.calls == []
     assert gate.calls == 2
 
@@ -9904,7 +9935,7 @@ def test_codex_process_failure_recovers_after_normal_attempt_limit_without_alert
     class ProcessFailureThenSuccessRunner(FakeAgentResultRunner):
         def run(self, task, context, **kwargs):
             if not self.calls:
-                claim = self.store.claim_agent_run(
+                claim = _claim_direct_run(self.store,
                     task.id,
                     task.execution_generation,
                     owner=self.owner,
@@ -10001,7 +10032,7 @@ def test_codex_process_failure_rotates_stuck_conversation_session_before_retry(
 
     class ProcessFailureRunner(FakeAgentResultRunner):
         def run(self, task, context, **kwargs):
-            claim = self.store.claim_agent_run(
+            claim = _claim_direct_run(self.store,
                 task.id,
                 task.execution_generation,
                 owner=self.owner,
@@ -10024,7 +10055,7 @@ def test_codex_process_failure_rotates_stuck_conversation_session_before_retry(
     worker.run_once()
 
     assert worker.store.get_codex_session_id("cid-1") is None
-    failed_run = worker.store.get_agent_run_for_task_generation(1, "initial")
+    failed_run = _get_direct_run(worker.store, 1, "initial")
     assert failed_run is not None
     assert failed_run.codex_session_id == ""
 
@@ -10046,7 +10077,7 @@ def test_codex_process_failure_becomes_terminal_after_one_extra_recovery_claim(
 
     class PersistentProcessFailureRunner(FakeAgentResultRunner):
         def run(self, task, context, **kwargs):
-            claim = self.store.claim_agent_run(
+            claim = _claim_direct_run(self.store,
                 task.id,
                 task.execution_generation,
                 owner=self.owner,
@@ -10453,7 +10484,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
         now="2026-05-13 17:00:00",
     )
     assert claimed_task is not None
-    claim = worker.store.claim_agent_run(
+    claim = _claim_direct_run(worker.store,
         task.id,
         task.execution_generation,
         owner="dead-worker",
@@ -10486,7 +10517,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
 
     assert agent_runner(worker).calls[0][3] == "session-1"
     assert codex.calls == []
-    run = worker.store.get_agent_run_for_task_generation(
+    run = _get_direct_run(worker.store,
         task.id,
         task.execution_generation,
     )
@@ -10553,7 +10584,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
         now="2026-05-13 17:00:00",
     )
     assert claimed_task is not None
-    claim = worker.store.claim_agent_run(
+    claim = _claim_direct_run(worker.store,
         task.id,
         task.execution_generation,
         owner="dead-worker",
@@ -10584,7 +10615,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
     assert worker.consume_once(max_tasks=1) == 0
 
     assert runner.calls[0][3] == "session-1"
-    run = worker.store.get_agent_run_for_task_generation(
+    run = _get_direct_run(worker.store,
         task.id,
         task.execution_generation,
     )
@@ -10622,7 +10653,7 @@ def test_sent_reply_records_recall_key_from_send_result(tmp_path: Path, monkeypa
     assert attempt is not None
     assert attempt.action == "agent_run"
     assert attempt.send_status == "completed"
-    run = worker.store.get_agent_run_for_task_generation(1, "initial")
+    run = _get_direct_run(worker.store, 1, "initial")
     assert run is not None
     receipts = worker.store.list_agent_execution_receipts(run.id)
     assert [receipt.operation_id for receipt in receipts] == ["reply-with-receipt"]
@@ -11040,7 +11071,7 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
 
     assert codex.calls == []
-    run = worker.store.get_agent_run_for_task_generation(1, worker.store.get_reply_task(1).execution_generation)
+    run = _get_direct_run(worker.store, 1, worker.store.get_reply_task(1).execution_generation)
     assert run is not None
     assert run.codex_session_id != "old-session"
     assert "Direct Agent responsibilities" in agent_prompt(worker)
@@ -14262,7 +14293,7 @@ def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monke
     assert persisted is not None and persisted.status == "unknown"
     task = worker.store.get_reply_task(run.reply_task_id)
     assert task is not None and task.status == "failed"
-    assert worker.store.get_agent_run_for_task_generation(
+    assert _get_direct_run(worker.store,
         run.reply_task_id,
         run.execution_generation,
     ).id == run.id

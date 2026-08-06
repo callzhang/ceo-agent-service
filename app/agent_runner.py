@@ -39,7 +39,13 @@ from app.native_cli_metadata import (
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.service_codex_config import ServiceMcpConfigError
-from app.store import AgentRun, AgentRunLeaseLostError, AutoReplyStore, ReplyTask
+from app.store import (
+    AgentRole,
+    AgentRun,
+    AgentRunLeaseLostError,
+    AutoReplyStore,
+    ReplyTask,
+)
 from app.wechat.codex_safety import (
     make_read_only_with_reviewed_tools,
 )
@@ -433,6 +439,11 @@ class DirectAgentRunner:
         claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=None,
+            operation_id=f"direct-agent:{task.id}:{task.execution_generation}",
             owner=self.owner,
             lease_seconds=LEASE_SECONDS,
             now=now,

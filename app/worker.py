@@ -84,6 +84,7 @@ from app.org_cache import (
 from app.permission import PermissionGate
 from app.prompt import MaterialReferenceContext
 from app.store import (
+    AgentRole,
     AgentRunLeaseLostError,
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
@@ -1551,6 +1552,9 @@ class DingTalkAutoReplyWorker:
                         self.store.clear_agent_run_session(
                             task.id,
                             task.execution_generation,
+                            role=AgentRole.AUDIT,
+                            proposal_revision=0,
+                            turn_attempt=0,
                         )
                     task_status = self._record_agent_runtime_failure_attempt(
                         task,
@@ -1595,9 +1599,12 @@ class DingTalkAutoReplyWorker:
             return
         recovered = 0
         for task in stale_tasks:
-            run = self.store.get_agent_run_for_task_generation(
+            run = self.store.get_agent_run_for_turn(
                 task.id,
                 task.execution_generation,
+                role=AgentRole.AUDIT,
+                proposal_revision=0,
+                turn_attempt=0,
             )
             if run is None:
                 self.store.requeue_reply_task(
@@ -1969,9 +1976,12 @@ class DingTalkAutoReplyWorker:
         retryable: bool,
         retry_beyond_limit: bool = False,
     ) -> str:
-        run = self.store.get_agent_run_for_task_generation(
+        run = self.store.get_agent_run_for_turn(
             task.id,
             task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=0,
+            turn_attempt=0,
         )
         task_status = (
             "pending"
@@ -2106,9 +2116,12 @@ class DingTalkAutoReplyWorker:
         trigger: DingTalkMessage,
         context_messages: list[DingTalkMessage],
     ) -> bool:
-        existing_run = self.store.get_agent_run_for_task_generation(
+        existing_run = self.store.get_agent_run_for_turn(
             task.id,
             task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=0,
+            turn_attempt=0,
         )
         if existing_run is not None:
             if existing_run.status == "completed":

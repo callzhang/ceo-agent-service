@@ -46,8 +46,21 @@ from app.developer_prompt import read_developer_prompt_template
 from app.config import load_env_file
 from app.dingtalk_models import DingTalkMessage
 from app.setup_wizard_models import SetupWizardEvent
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 from app.wechat.models import WechatMessage
+
+
+def _claim_direct_run(store, task, *, owner="worker"):
+    return store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=f"direct-agent:{task.id}:{task.execution_generation}",
+        owner=owner,
+    )
 
 
 def task_script_json(html: str, element_id: str):
@@ -4904,7 +4917,7 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
         trigger_text="请处理",
     )
     task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(task.id, task.execution_generation, owner="worker").run
+    run = _claim_direct_run(store, task).run
     store.mark_agent_run_unknown(run.id, {"code": "unknown"}, owner="worker")
     store.claim_unknown_agent_run(run.id, owner="reconciler")
     store.defer_unknown_agent_run_reconciliation(
@@ -5089,7 +5102,7 @@ def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
         trigger_text="请处理",
     )
     task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(task.id, task.execution_generation, owner="worker").run
+    run = _claim_direct_run(store, task).run
     store.mark_agent_run_unknown(run.id, {"code": "unknown"}, owner="worker")
     store.claim_unknown_agent_run(run.id, owner="reconciler")
     store.defer_unknown_agent_run_reconciliation(

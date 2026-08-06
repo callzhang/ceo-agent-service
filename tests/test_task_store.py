@@ -2,12 +2,30 @@ import json
 import sqlite3
 from pathlib import Path
 
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 from app.task_models import WorkItem
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "task.sqlite3")
+
+
+def _claim_audit_run(
+    store: AutoReplyStore,
+    reply_task_id: int,
+    execution_generation: str,
+    **kwargs,
+):
+    return store.claim_agent_run(
+        reply_task_id,
+        execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=f"direct-agent:{reply_task_id}:{execution_generation}",
+        **kwargs,
+    )
 
 
 def test_existing_database_adds_agent_runs_without_rewriting_reply_tasks(
@@ -56,7 +74,7 @@ def test_existing_database_adds_agent_runs_without_rewriting_reply_tasks(
 
     store = AutoReplyStore(db_path)
     original = store.get_reply_task(1)
-    claim = store.claim_agent_run(1, "initial", owner="worker-1")
+    claim = _claim_audit_run(store, 1, "initial", owner="worker-1")
 
     assert original is not None
     assert original.trigger_text == "existing task"

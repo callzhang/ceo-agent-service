@@ -20,12 +20,43 @@ from app.agent_runner import (
 )
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.dingtalk_models import DingTalkMessage
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 from app.process_runner import ProcessRunResult
 from app.worker import DingTalkAutoReplyWorker
 
 
 NOW = datetime(2026, 7, 29, 9, 0, tzinfo=timezone.utc)
+
+
+def _get_direct_run(store, task_id: int, execution_generation: str):
+    return store.get_agent_run_for_turn(
+        task_id,
+        execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+
+
+def _claim_direct_run(
+    store,
+    task_id: int,
+    execution_generation: str,
+    *,
+    owner: str,
+    **kwargs,
+):
+    return store.claim_agent_run(
+        task_id,
+        execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=f"direct-agent:{task_id}:{execution_generation}",
+        owner=owner,
+        **kwargs,
+    )
 
 
 class ReadyGate:
@@ -190,7 +221,7 @@ class ScriptedDirectAgentRunner:
 
     def run(self, task, context, **kwargs) -> DirectAgentRunResult:
         self.read_only_values.append(bool(kwargs.get("read_only")))
-        claim = self.store.claim_agent_run(
+        claim = _claim_direct_run(self.store,
             task.id,
             task.execution_generation,
             owner=self.owner,
@@ -332,7 +363,7 @@ def _seed_unknown_run(store: AutoReplyStore, task_id: int):
         task = claimed_tasks[0]
     else:
         assert task.status == "processing"
-    claim = store.claim_agent_run(
+    claim = _claim_direct_run(store,
         task.id,
         task.execution_generation,
         owner="seed-owner",
@@ -1188,7 +1219,7 @@ def test_retryable_failure_reuses_generation_and_session_then_succeeds(
         "g1",
     ]
     assert runner.resume_session_ids == ["session-retry"]
-    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None and run.status == "completed"
     assert worker.store.get_reply_task(task_id).status == "done"
 
@@ -1247,7 +1278,7 @@ def test_retryable_failure_is_requeued_without_custom_receipt_logic(
     task = worker.store.get_reply_task(task_id)
     assert task is not None and task.status == "pending"
     assert len(runner.calls) == 1
-    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None and run.side_effect_state == "none"
     assert worker.store.list_agent_execution_receipts(run.id) == []
 
@@ -1323,7 +1354,7 @@ def test_no_action_result_does_not_consult_custom_receipts(tmp_path: Path):
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "skipped"
-    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None
     assert worker.store.list_agent_execution_receipts(run.id) == []
 
@@ -1353,7 +1384,7 @@ def test_failed_result_is_a_regular_failure_without_unknown_effect_state(
 
     assert len(runner.calls) == 1
     assert worker.store.get_reply_task(task_id).status == "failed"
-    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None and run.status == "failed"
     assert run.side_effect_state == "none"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
@@ -1410,11 +1441,11 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
     ]
     assert runner.calls[0][2].trigger_text == "请给目标 A 发送第一版"
     assert runner.calls[1][2].trigger_text == "请改为给目标 B 发送修订版"
-    first_run = worker.store.get_agent_run_for_task_generation(
+    first_run = _get_direct_run(worker.store,
         first_id,
         first_generation,
     )
-    second_run = worker.store.get_agent_run_for_task_generation(
+    second_run = _get_direct_run(worker.store,
         first_id,
         rerun.execution_generation,
     )
@@ -1497,7 +1528,7 @@ def test_completed_generation_is_not_executed_again(tmp_path: Path):
     assert worker.consume_once(max_tasks=1) == 1
 
     assert len(runner.calls) == 1
-    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None and run.status == "completed"
 
 
@@ -1511,7 +1542,7 @@ def test_stale_processing_resumes_same_generation_and_session(tmp_path: Path):
     task_id = _enqueue(worker.store, trigger)
     task = worker.store.claim_reply_task(task_id, now="2026-07-28 07:00:00")
     assert task is not None
-    claim = worker.store.claim_agent_run(
+    claim = _claim_direct_run(worker.store,
         task.id,
         task.execution_generation,
         owner="dead-worker",
@@ -1549,7 +1580,7 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
     task_id = _enqueue(worker.store, trigger)
     task = worker.store.claim_reply_task(task_id, now="2026-07-28 07:00:00")
     assert task is not None
-    claim = worker.store.claim_agent_run(
+    claim = _claim_direct_run(worker.store,
         task.id,
         task.execution_generation,
         owner="dead-worker",
@@ -1613,7 +1644,7 @@ def test_stale_recovery_allows_one_extra_runtime_retry_then_notifies_failure(
         now="2026-07-28 07:00:00",
     )
     assert first_task is not None and first_task.attempts == 1
-    first_claim = worker.store.claim_agent_run(
+    first_claim = _claim_direct_run(worker.store,
         first_task.id,
         first_task.execution_generation,
         owner="dead-worker-1",
@@ -1652,7 +1683,7 @@ def test_stale_recovery_allows_one_extra_runtime_retry_then_notifies_failure(
         now="2026-07-28 07:01:00",
     )
     assert second_task is not None and second_task.attempts == 2
-    second_claim = worker.store.claim_agent_run(
+    second_claim = _claim_direct_run(worker.store,
         second_task.id,
         second_task.execution_generation,
         owner="dead-worker-2",
@@ -1690,7 +1721,7 @@ def test_stale_processing_ignores_copied_tool_events_and_resumes_same_run(
     task_id = _enqueue(worker.store, trigger)
     task = worker.store.claim_reply_task(task_id, now="2026-07-28 07:00:00")
     assert task is not None
-    claim = worker.store.claim_agent_run(
+    claim = _claim_direct_run(worker.store,
         task.id,
         task.execution_generation,
         owner="dead-worker",
@@ -1718,7 +1749,7 @@ def test_stale_processing_ignores_copied_tool_events_and_resumes_same_run(
     assert worker.consume_once(max_tasks=1) == 0
 
     assert runner.calls == []
-    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None
     assert run.status == "running"
     assert run.side_effect_state == "unknown"
@@ -1935,7 +1966,7 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
     task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
     assert task is not None
     task_id = task.id
-    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None
     assert bool(native_executor.write_calls) is effectful
     assert worker.store.list_agent_execution_receipts(run.id) == []
@@ -1967,7 +1998,7 @@ def test_service_accepts_agent_result_without_reimplementing_agent_judgment(
 
     task = worker.store.get_reply_task(task_id)
     assert task is not None and task.status == "done"
-    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None
     assert run.status == "completed"
     assert run.side_effect_state == "none"
@@ -1996,7 +2027,7 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
 
     task = worker.store.get_reply_task(task_id)
     assert task is not None and task.status == "pending"
-    run = worker.store.get_agent_run_for_task_generation(task_id, "g1")
+    run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None
     assert run.status == "failed"
     assert run.side_effect_state == "none"

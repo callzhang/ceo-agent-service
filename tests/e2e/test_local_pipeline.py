@@ -4,7 +4,7 @@ from pathlib import Path
 from app.agent_runner import DirectAgentRunner
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.dingtalk_models import DingTalkMessage
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 from app.dws_client import DwsCalendarAttendee, DwsCalendarEvent
 from app.audit_web import render_attempt_list
 from app.meeting_alignment import (
@@ -14,6 +14,16 @@ from app.meeting_alignment import (
 from app.meeting_alignment_models import MeetingAlignmentDecision
 from app.process_runner import ProcessRunResult
 from app.worker import DingTalkAutoReplyWorker
+
+
+def _get_direct_run(store, task_id: int, execution_generation: str):
+    return store.get_agent_run_for_turn(
+        task_id,
+        execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
 
 
 class FakeMeetingDws:
@@ -286,7 +296,7 @@ def test_direct_agent_local_pipeline_send_uses_codex_session_audit(tmp_path):
     assert worker.consume_once(max_tasks=1) == 1
 
     task = store.get_reply_task_for_message("cid-1", "msg-1")
-    run = store.get_agent_run_for_task_generation(task.id, "g1")
+    run = _get_direct_run(store, task.id, "g1")
     assert task.status == "done"
     assert store.list_agent_execution_receipts(run.id) == []
     assert run.codex_session_id
@@ -303,7 +313,7 @@ def test_direct_agent_local_pipeline_handoff_uses_codex_session_audit(
     assert worker.consume_once(max_tasks=1) == 1
 
     task = store.get_reply_task_for_message("cid-1", "msg-1")
-    run = store.get_agent_run_for_task_generation(task.id, "g1")
+    run = _get_direct_run(store, task.id, "g1")
     assert task.status == "done"
     assert store.list_agent_execution_receipts(run.id) == []
     assert run.codex_session_id
