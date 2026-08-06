@@ -5017,11 +5017,10 @@ class AutoReplyStore:
                       limit 1
                   ), ?) < ?
                 """,
-                (max_retries, max_retries),
+                (0, max_retries),
             ).fetchall()
-            eligible = [row for row in rows if row["attempt_id"] is not None]
             requeued = 0
-            for row in eligible:
+            for row in rows:
                 delivery_id = int(row["delivery_id"])
                 cursor = db.execute(
                     """
@@ -5047,11 +5046,47 @@ class AutoReplyStore:
                     delivery_status="ready_to_send",
                     error="",
                 )
-                db.execute(
-                    "update reply_attempts set retry_count=retry_count + 1 "
-                    "where id=?",
-                    (row["attempt_id"],),
-                )
+                if row["attempt_id"] is None:
+                    task = db.execute(
+                        """
+                        select conversation_id, conversation_title,
+                               trigger_message_id, trigger_sender, trigger_text
+                        from reply_tasks
+                        where id=(
+                            select reply_task_id from wechat_deliveries where id=?
+                        )
+                        """,
+                        (delivery_id,),
+                    ).fetchone()
+                    if task is None:
+                        raise RuntimeError("wechat delivery retry task is missing")
+                    db.execute(
+                        """
+                        insert into reply_attempts (
+                            conversation_id, conversation_title,
+                            trigger_message_id, trigger_sender, trigger_text,
+                            action, sensitivity_kind, codex_reason, audit_summary,
+                            send_status, send_error, retry_count, channel
+                        ) values (?, ?, ?, ?, ?, 'send_reply', 'normal',
+                                  'legacy_wechat_delivery_recovery',
+                                  'created during bounded legacy delivery recovery',
+                                  'pending', 'wechat_delivery_ready_to_send', 1,
+                                  'wechat')
+                        """,
+                        (
+                            task["conversation_id"],
+                            task["conversation_title"],
+                            task["trigger_message_id"],
+                            task["trigger_sender"],
+                            task["trigger_text"],
+                        ),
+                    )
+                else:
+                    db.execute(
+                        "update reply_attempts set retry_count=retry_count + 1 "
+                        "where id=?",
+                        (row["attempt_id"],),
+                    )
                 requeued += 1
             return requeued
 
