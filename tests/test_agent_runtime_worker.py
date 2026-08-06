@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import AgentTaskContext
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
+from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
 from app.agent_result import AgentError, AgentOutcome, AgentResult, SideEffectState
 from app.agent_runner import (
     AgentReconciliationRunResult,
@@ -18,8 +20,11 @@ from app.agent_runner import (
     ReconciliationProof,
     ReconciliationResult,
 )
+from app.audit_agent import AuditAgentRunner
 from app.channel_gate import ChannelGateResult, ChannelGateState
+from app.consumer_agent import ConsumerAgentRunner
 from app.dingtalk_models import DingTalkMessage
+from app.native_cli_metadata import describe_native_command
 from app.store import AgentRole, AutoReplyStore
 from app.process_runner import ProcessRunResult
 from app.worker import DingTalkAutoReplyWorker
@@ -28,11 +33,65 @@ from app.worker import DingTalkAutoReplyWorker
 NOW = datetime(2026, 7, 29, 9, 0, tzinfo=timezone.utc)
 
 
+class NoActionOrchestrator:
+    def __init__(self, store: AutoReplyStore) -> None:
+        self.store = store
+        self.calls: list[tuple[object, AgentTaskContext]] = []
+
+    def process(self, task, context) -> OrchestrationResult:
+        self.calls.append((task, context))
+        claim = self.store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner="worker-orchestrator-test",
+        )
+        result = ConsumerAgentResult.model_validate(
+            {
+                "outcome": "no_action",
+                "summary": "No external action is required.",
+                "proposal": None,
+                "error": {
+                    "code": "",
+                    "retryable": False,
+                    "authorization_required": False,
+                },
+            }
+        )
+        self.store.complete_agent_run(
+            claim.run.id,
+            result.model_dump(mode="json"),
+            owner="worker-orchestrator-test",
+        )
+        return OrchestrationResult(
+            status="skipped",
+            final_run_id=claim.run.id,
+            final_role=AgentRole.CONSUMER,
+            summary=result.summary,
+            error=result.error,
+            feedback_cycles=0,
+            consumer_result=result,
+        )
+
+
 def _get_direct_run(store, task_id: int, execution_generation: str):
-    return store.get_agent_run_for_turn(
+    audit = store.get_agent_run_for_turn(
         task_id,
         execution_generation,
         role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    if audit is not None:
+        return audit
+    return store.get_agent_run_for_turn(
+        task_id,
+        execution_generation,
+        role=AgentRole.CONSUMER,
         proposal_revision=0,
         turn_attempt=0,
     )
@@ -54,6 +113,27 @@ def _claim_direct_run(
         turn_attempt=0,
         parent_agent_run_id=None,
         operation_id=f"direct-agent:{task_id}:{execution_generation}",
+        owner=owner,
+        **kwargs,
+    )
+
+
+def _claim_consumer_run(
+    store,
+    task_id: int,
+    execution_generation: str,
+    *,
+    owner: str,
+    **kwargs,
+):
+    return store.claim_agent_run(
+        task_id,
+        execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
         owner=owner,
         **kwargs,
     )
@@ -218,6 +298,230 @@ class ScriptedDirectAgentRunner:
         self.resume_session_ids: list[str] = []
         self.read_only_values: list[bool] = []
         self.owner = "scripted-agent"
+
+    def process(self, task, context) -> OrchestrationResult:
+        persisted = self.store.list_agent_runs_for_task_generation(
+            task.id,
+            task.execution_generation,
+        )
+        if not self.scripts and persisted:
+            final_run = persisted[-1]
+            if final_run.status == "completed" and final_run.role is AgentRole.AUDIT:
+                audit_result = AuditAgentResult.model_validate_json(
+                    final_run.final_result_json
+                )
+                return OrchestrationResult(
+                    status="completed",
+                    final_run_id=final_run.id,
+                    final_role=AgentRole.AUDIT,
+                    summary=audit_result.summary,
+                    error=audit_result.error,
+                    feedback_cycles=final_run.proposal_revision,
+                    audit_result=audit_result,
+                )
+            if final_run.status == "completed" and final_run.role is AgentRole.CONSUMER:
+                consumer_result = ConsumerAgentResult.model_validate_json(
+                    final_run.final_result_json
+                )
+                return OrchestrationResult(
+                    status=(
+                        "skipped"
+                        if consumer_result.outcome.value == "no_action"
+                        else "needs_human"
+                    ),
+                    final_run_id=final_run.id,
+                    final_role=AgentRole.CONSUMER,
+                    summary=consumer_result.summary,
+                    error=consumer_result.error,
+                    feedback_cycles=final_run.proposal_revision,
+                    consumer_result=consumer_result,
+                )
+        self.calls.append((task.id, task.execution_generation, context))
+        self.read_only_values.append(True)
+        script = self.scripts.pop(0)
+        session_id = self.store.get_codex_session_id(task.conversation_id)
+        if session_id:
+            self.resume_session_ids.append(session_id)
+        else:
+            session_id = script.session_id
+            self.store.upsert_conversation(
+                task.conversation_id,
+                task.conversation_title,
+                task.single_chat,
+                session_id,
+            )
+        consumer_claim = self.store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner=self.owner,
+            lease_seconds=1800,
+            now=NOW,
+        )
+        assert consumer_claim.claimed
+        self.store.set_agent_run_session(
+            consumer_claim.run.id,
+            session_id,
+            owner=self.owner,
+            now=NOW,
+        )
+        direct_result = script.result
+        consumer_outcome = {
+            AgentOutcome.NO_ACTION: "no_action",
+            AgentOutcome.NEEDS_HUMAN: "needs_human",
+            AgentOutcome.FAILED: "failed",
+        }.get(direct_result.outcome, "proposal")
+        proposal = None
+        if consumer_outcome == "proposal":
+            proposal = {
+                "objective": direct_result.summary,
+                "actions": [
+                    {
+                        "description": direct_result.summary,
+                        "capability": "agent_cli.dws",
+                        "operation": "scripted test action",
+                        "target": {"task_id": str(task.id)},
+                        "payload": {"task_id": task.id},
+                        "expected_verification": "Scripted test verification.",
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "",
+            }
+        consumer_result = ConsumerAgentResult.model_validate(
+            {
+                "outcome": consumer_outcome,
+                "summary": direct_result.summary,
+                "proposal": proposal,
+                "error": {
+                    "code": direct_result.error.code,
+                    "retryable": direct_result.error.retryable,
+                    "authorization_required": direct_result.error.authorization_required,
+                },
+            }
+        )
+        if consumer_outcome == "failed":
+            consumer_run = self.store.fail_agent_run(
+                consumer_claim.run.id,
+                consumer_result.error.model_dump(mode="json"),
+                owner=self.owner,
+                now=NOW,
+            )
+            return OrchestrationResult(
+                status="failed",
+                final_run_id=consumer_run.id,
+                final_role=AgentRole.CONSUMER,
+                summary=consumer_result.summary,
+                error=consumer_result.error,
+                feedback_cycles=0,
+                consumer_result=consumer_result,
+            )
+        consumer_run = self.store.complete_agent_run(
+            consumer_claim.run.id,
+            consumer_result.model_dump(mode="json"),
+            owner=self.owner,
+            now=NOW,
+        )
+        if consumer_outcome != "proposal":
+            return OrchestrationResult(
+                status=("skipped" if consumer_outcome == "no_action" else "needs_human"),
+                final_run_id=consumer_run.id,
+                final_role=AgentRole.CONSUMER,
+                summary=consumer_result.summary,
+                error=consumer_result.error,
+                feedback_cycles=0,
+                consumer_result=consumer_result,
+            )
+
+        operation_id = f"agent-task:{task.id}:{task.execution_generation}:proposal:0"
+        audit_claim = self.store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=consumer_run.id,
+            operation_id=operation_id,
+            owner=self.owner,
+            lease_seconds=1800,
+            now=NOW,
+        )
+        assert audit_claim.claimed
+        self.store.set_agent_run_session(
+            audit_claim.run.id,
+            f"{script.session_id}-audit",
+            owner=self.owner,
+            now=NOW,
+        )
+        for event in script.events:
+            self.store.append_agent_run_event(
+                audit_claim.run.id,
+                event,
+                owner=self.owner,
+                now=NOW,
+            )
+        for receipt in script.receipts:
+            self.store.record_agent_execution_receipt(
+                audit_claim.run.id,
+                receipt_id=f"native:{receipt.operation_id}:{receipt.command_digest}",
+                operation_id=receipt.operation_id,
+                cli=receipt.cli,
+                command_path=receipt.command_path,
+                command_digest=receipt.command_digest,
+                exit_code=0,
+                owner=self.owner,
+                now=NOW,
+            )
+        live_reference = {"id": "scripted-result"}
+        if direct_result.oa_action_receipt is not None:
+            receipt = direct_result.oa_action_receipt
+            live_reference = {
+                "process_instance_id": receipt.process_instance_id,
+                "task_id": receipt.task_id,
+                "action": receipt.action,
+                "remark": receipt.remark,
+                **receipt.result,
+            }
+        audit_result = AuditAgentResult.model_validate(
+            {
+                "outcome": "executed",
+                "summary": direct_result.summary,
+                "proposal_revision": 0,
+                "side_effect_state": "confirmed",
+                "feedback": None,
+                "external_result": {
+                    "operation_id": operation_id,
+                    "verification_summary": direct_result.summary,
+                    "live_result_reference": live_reference,
+                },
+                "error": {
+                    "code": direct_result.error.code,
+                    "retryable": direct_result.error.retryable,
+                    "authorization_required": direct_result.error.authorization_required,
+                },
+            }
+        )
+        audit_run = self.store.complete_agent_run(
+            audit_claim.run.id,
+            audit_result.model_dump(mode="json"),
+            owner=self.owner,
+            side_effect_state="confirmed",
+            transcript_end_line=len(script.events),
+            now=NOW,
+        )
+        return OrchestrationResult(
+            status="completed",
+            final_run_id=audit_run.id,
+            final_role=AgentRole.AUDIT,
+            summary=audit_result.summary,
+            error=audit_result.error,
+            feedback_cycles=0,
+            audit_result=audit_result,
+        )
 
     def run(self, task, context, **kwargs) -> DirectAgentRunResult:
         self.read_only_values.append(bool(kwargs.get("read_only")))
@@ -390,7 +694,7 @@ def _prompt_json_section(prompt: str, heading: str):
     return value
 
 
-def _agent_result_event(result: AgentResult) -> dict[str, object]:
+def _agent_result_event(result) -> dict[str, object]:
     return {
         "type": "item.completed",
         "item": {
@@ -398,6 +702,64 @@ def _agent_result_event(result: AgentResult) -> dict[str, object]:
             "text": result.model_dump_json(),
         },
     }
+
+
+def _consumer_protocol_result(
+    outcome: str,
+    summary: str,
+    *,
+    proposal: dict[str, object] | None = None,
+    code: str = "",
+    retryable: bool = False,
+) -> ConsumerAgentResult:
+    return ConsumerAgentResult.model_validate(
+        {
+            "outcome": outcome,
+            "summary": summary,
+            "proposal": proposal,
+            "error": {
+                "code": code,
+                "retryable": retryable,
+                "authorization_required": False,
+            },
+        }
+    )
+
+
+def _audit_protocol_result(
+    outcome: str,
+    revision: int,
+    summary: str,
+    *,
+    operation_id: str,
+    live_reference: dict[str, object] | None = None,
+    code: str = "",
+    retryable: bool = False,
+) -> AuditAgentResult:
+    executed = outcome == "executed"
+    return AuditAgentResult.model_validate(
+        {
+            "outcome": outcome,
+            "summary": summary,
+            "proposal_revision": revision,
+            "side_effect_state": "confirmed" if executed else "none",
+            "feedback": None,
+            "external_result": (
+                {
+                    "operation_id": operation_id,
+                    "verification_summary": summary,
+                    "live_result_reference": live_reference or {},
+                }
+                if executed
+                else None
+            ),
+            "error": {
+                "code": code,
+                "retryable": retryable,
+                "authorization_required": False,
+            },
+        }
+    )
 
 
 def _reviewed_cli_event(
@@ -418,12 +780,26 @@ def _reviewed_cli_event(
         "status": "in_progress",
     }
     if event_type == "item.completed":
+        descriptor = describe_native_command(
+            {"type": "command_execution", "argv": shlex.split(command)}
+        )
+        assert descriptor is not None
+        receipt = {
+            "cli": descriptor.cli,
+            "operation": descriptor.command_path,
+            "operation_digest": descriptor.command_digest,
+            "target_identifiers": descriptor.target_identifiers,
+            "result_digest": "protocol-result-digest",
+            "stdout": output,
+        }
         item.update(
             {
                 "status": "completed" if succeeded else "failed",
                 "result": {
-                    "content": [{"type": "text", "text": output}],
-                    "structuredContent": {"stdout": output},
+                    "content": [
+                        {"type": "text", "text": json.dumps(receipt)}
+                    ],
+                    "structuredContent": receipt,
                     "isError": not succeeded,
                 },
             }
@@ -434,11 +810,16 @@ def _reviewed_cli_event(
 class ProtocolCodexExecutor:
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self.session_count = 0
 
     def __call__(self, _command, *, prompt: str, **kwargs) -> ProcessRunResult:
         self.prompts.append(prompt)
+        self.session_count += 1
         records = [
-            {"type": "thread.started", "thread_id": "protocol-session"},
+            {
+                "type": "thread.started",
+                "thread_id": f"protocol-session-{self.session_count}",
+            },
             *self.records(prompt),
         ]
         output = "\n".join(json.dumps(record) for record in records)
@@ -465,14 +846,14 @@ class ConfirmedFactProtocolExecutor(ProtocolCodexExecutor):
             if isinstance(message, dict)
         )
         result = (
-            _result(
-                AgentOutcome.NO_ACTION,
-                summary=f"Reused confirmed context value {self.fact_value}.",
+            _consumer_protocol_result(
+                "no_action",
+                f"Reused confirmed context value {self.fact_value}.",
             )
             if self.fact_was_present
-            else _result(
-                AgentOutcome.NEEDS_HUMAN,
-                summary="A required confirmed context value is missing.",
+            else _consumer_protocol_result(
+                "needs_human",
+                "A required confirmed context value is missing.",
                 code="confirmed_fact_missing",
             )
         )
@@ -504,6 +885,7 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
         self.read_commands: list[str] = []
 
     def records(self, prompt: str) -> list[dict[str, object]]:
+        audit_turn = "Candidate revision\n" in prompt
         materials = _prompt_json_section(
             prompt,
             "Raw material references and exact read commands\n",
@@ -535,49 +917,110 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
         tasks = live_results[-1].get("tasks") if live_results else []
         live_tasks = tasks if isinstance(tasks, list) else []
         if len(live_tasks) != 1:
-            result = _result(
-                AgentOutcome.NEEDS_HUMAN,
-                summary="Live OA detail has more than one candidate task.",
+            result = _consumer_protocol_result(
+                "needs_human",
+                "Live OA detail has more than one candidate task.",
                 code="oa_target_ambiguous",
             )
         else:
             live_task = live_tasks[0] if isinstance(live_tasks[0], dict) else {}
             status = str(live_task.get("status") or "").lower()
             if status == "completed":
-                result = _result(
-                    AgentOutcome.NO_ACTION,
-                    summary="Live OA task is already completed.",
+                result = _consumer_protocol_result(
+                    "no_action",
+                    "Live OA task is already completed.",
                 )
             else:
                 task_id = str(live_task.get("task_id") or "")
                 process_id = str(reference.get("process_instance_id") or "")
-                write_command = (
-                    "dws oa approval approve --instance-id "
-                    f"{process_id} --task-id {task_id} "
-                    "--remark 'Reviewed by protocol agent' --format json --yes"
-                )
-                output = self.native_executor(write_command)
-                records.extend(
-                    (
-                        _reviewed_cli_event(
-                            "item.started",
-                            "oa-write",
-                            write_command,
-                            effectful=True,
-                        ),
-                        _reviewed_cli_event(
-                            "item.completed",
-                            "oa-write",
-                            write_command,
-                            output=output,
-                            effectful=True,
-                        ),
+                argv = [
+                    "dws",
+                    "oa",
+                    "approval",
+                    "approve",
+                    "--instance-id",
+                    process_id,
+                    "--task-id",
+                    task_id,
+                    "--remark",
+                    "Reviewed by protocol agent",
+                    "--format",
+                    "json",
+                    "--yes",
+                ]
+                if not audit_turn:
+                    result = _consumer_protocol_result(
+                        "proposal",
+                        "Prepared the live OA action for independent audit.",
+                        proposal={
+                            "objective": "Review the live OA task.",
+                            "actions": [
+                                {
+                                    "description": "Approve the live OA task.",
+                                    "capability": "agent_cli.dws",
+                                    "operation": "oa approval approve",
+                                    "target": {
+                                        "process_instance_id": process_id,
+                                        "task_id": task_id,
+                                    },
+                                    "payload": {"argv": argv},
+                                    "expected_verification": "Read live OA detail again.",
+                                }
+                            ],
+                            "sourced_facts": [],
+                            "authored_judgment": "Use only the live task identity.",
+                        },
                     )
-                )
-                result = _result(
-                    summary="Live OA task was reviewed and completed.",
-                    side_effect_state=SideEffectState.CONFIRMED,
-                )
+                else:
+                    candidate = _prompt_json_section(prompt, "Candidate revision\n")
+                    candidate_action = candidate["proposal"]["actions"][0]
+                    candidate_argv = candidate_action["payload"]["argv"]
+                    write_command = shlex.join(candidate_argv)
+                    output = self.native_executor(write_command)
+                    records.extend(
+                        (
+                            _reviewed_cli_event(
+                                "item.started",
+                                "oa-write",
+                                write_command,
+                                effectful=True,
+                            ),
+                            _reviewed_cli_event(
+                                "item.completed",
+                                "oa-write",
+                                write_command,
+                                output=output,
+                                effectful=True,
+                            ),
+                        )
+                    )
+                    verify_command = oa_material["read_commands"][0]
+                    verify_output = self.native_executor(verify_command)
+                    records.extend(
+                        (
+                            _reviewed_cli_event(
+                                "item.started", "oa-verify", verify_command
+                            ),
+                            _reviewed_cli_event(
+                                "item.completed",
+                                "oa-verify",
+                                verify_command,
+                                output=verify_output,
+                            ),
+                        )
+                    )
+                    result = _audit_protocol_result(
+                        "executed",
+                        int(candidate["proposal_revision"]),
+                        "Live OA task was reviewed and verified.",
+                        operation_id=str(candidate["operation_id"]),
+                        live_reference={
+                            "process_instance_id": process_id,
+                            "task_id": task_id,
+                            "action": "approve",
+                            "result": json.loads(output),
+                        },
+                    )
         records.append(_agent_result_event(result))
         return records
 
@@ -608,17 +1051,43 @@ class DiagnosisOnlyProtocolExecutor(ProtocolCodexExecutor):
                 output=output,
             ),
             _agent_result_event(
-                _result(
-                    summary="Diagnosed the requested repair but did not execute it.",
-                    side_effect_state=SideEffectState.CONFIRMED,
+                _consumer_protocol_result(
+                    "needs_human",
+                    "Diagnosed the requested repair but no executable action is available.",
+                    code="executable_proposal_missing",
                 )
             ),
         ]
 
 
 class FailedWriteProtocolExecutor(ProtocolCodexExecutor):
-    def records(self, _prompt: str) -> list[dict[str, object]]:
+    def records(self, prompt: str) -> list[dict[str, object]]:
         command = "dws chat message send --group cid-1 --text 'hello' --yes"
+        if "Candidate revision\n" not in prompt:
+            return [
+                _agent_result_event(
+                    _consumer_protocol_result(
+                        "proposal",
+                        "Prepared a message send for independent audit.",
+                        proposal={
+                            "objective": "Send the requested message.",
+                            "actions": [
+                                {
+                                    "description": "Send the message.",
+                                    "capability": "agent_cli.dws",
+                                    "operation": "chat message send",
+                                    "target": {"group": "cid-1"},
+                                    "payload": {"argv": shlex.split(command)},
+                                    "expected_verification": "Read the live message.",
+                                }
+                            ],
+                            "sourced_facts": [],
+                            "authored_judgment": "",
+                        },
+                    )
+                )
+            ]
+        candidate = _prompt_json_section(prompt, "Candidate revision\n")
         failed = _reviewed_cli_event(
             "item.completed",
             "send-failed",
@@ -633,9 +1102,11 @@ class FailedWriteProtocolExecutor(ProtocolCodexExecutor):
             ),
             failed,
             _agent_result_event(
-                _result(
-                    AgentOutcome.FAILED,
-                    summary="The native write returned a nonzero exit code.",
+                _audit_protocol_result(
+                    "failed",
+                    int(candidate["proposal_revision"]),
+                    "The native write returned a nonzero exit code.",
+                    operation_id=str(candidate["operation_id"]),
                     retryable=True,
                     code="native_write_failed",
                 )
@@ -712,6 +1183,30 @@ def _enqueue(
     return task.id
 
 
+def test_queued_task_uses_orchestrator_without_direct_runner_fallback(tmp_path: Path):
+    trigger = _message("No external action is needed.")
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    orchestrator = NoActionOrchestrator(store)
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        agent_orchestrator=orchestrator,
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+    task_id = _enqueue(store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert len(orchestrator.calls) == 1
+    assert store.get_reply_task(task_id).status == "done"
+    run = store.list_agent_runs_for_task_generation(task_id, "g1")[-1]
+    assert run.role is AgentRole.CONSUMER
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "skipped"
+
+
 def _worker(
     tmp_path: Path,
     messages: list[DingTalkMessage],
@@ -727,6 +1222,7 @@ def _worker(
         dws=dws,
         codex=object(),
         direct_agent_runner=runner,
+        agent_orchestrator=runner,
         channel_gates={
             "dingtalk": ReadyGate("dingtalk"),
             "lark": ReadyGate("lark"),
@@ -746,16 +1242,27 @@ def _worker_with_protocol_executor(
 ) -> tuple[DingTalkAutoReplyWorker, ContextOnlyDws]:
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
     dws = ContextOnlyDws(messages)
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ConsumerAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+            owner="protocol-consumer",
+            codex_session_exists=lambda _session_id: True,
+        ),
+        audit=AuditAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+            owner="protocol-audit",
+        ),
+    )
     worker = DingTalkAutoReplyWorker(
         store=store,
         dws=dws,
         codex=object(),
-        direct_agent_runner=DirectAgentRunner(
-            store=store,
-            workspace=tmp_path,
-            executor=executor,
-            owner="protocol-agent",
-        ),
+        agent_orchestrator=orchestrator,
         channel_gates={
             "dingtalk": ReadyGate("dingtalk"),
             "lark": ReadyGate("lark"),
@@ -1219,7 +1726,13 @@ def test_retryable_failure_reuses_generation_and_session_then_succeeds(
         "g1",
     ]
     assert runner.resume_session_ids == ["session-retry"]
-    run = _get_direct_run(worker.store, task_id, "g1")
+    run = worker.store.get_agent_run_for_turn(
+        task_id,
+        "g1",
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
     assert run is not None and run.status == "completed"
     assert worker.store.get_reply_task(task_id).status == "done"
 
@@ -1450,8 +1963,14 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
         rerun.execution_generation,
     )
     assert first_run is not None and second_run is not None
-    assert worker.store.list_agent_execution_receipts(first_run.id) == []
-    assert worker.store.list_agent_execution_receipts(second_run.id) == []
+    assert [
+        receipt.operation_id
+        for receipt in worker.store.list_agent_execution_receipts(first_run.id)
+    ] == ["send-a"]
+    assert [
+        receipt.operation_id
+        for receipt in worker.store.list_agent_execution_receipts(second_run.id)
+    ] == ["send-b"]
 
 
 def test_manual_review_reaches_agent_without_unrelated_attempt_fields(tmp_path: Path):
@@ -1542,7 +2061,7 @@ def test_stale_processing_resumes_same_generation_and_session(tmp_path: Path):
     task_id = _enqueue(worker.store, trigger)
     task = worker.store.claim_reply_task(task_id, now="2026-07-28 07:00:00")
     assert task is not None
-    claim = _claim_direct_run(worker.store,
+    claim = _claim_consumer_run(worker.store,
         task.id,
         task.execution_generation,
         owner="dead-worker",
@@ -1554,6 +2073,12 @@ def test_stale_processing_resumes_same_generation_and_session(tmp_path: Path):
         "session-stale",
         owner="dead-worker",
         now="2026-07-28 07:00:00",
+    )
+    worker.store.upsert_conversation(
+        task.conversation_id,
+        task.conversation_title,
+        task.single_chat,
+        "session-stale",
     )
     with worker.store._connect() as db:
         db.execute(
@@ -1580,7 +2105,7 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
     task_id = _enqueue(worker.store, trigger)
     task = worker.store.claim_reply_task(task_id, now="2026-07-28 07:00:00")
     assert task is not None
-    claim = _claim_direct_run(worker.store,
+    claim = _claim_consumer_run(worker.store,
         task.id,
         task.execution_generation,
         owner="dead-worker",
@@ -1592,6 +2117,12 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
         "session-retry-after-restart",
         owner="dead-worker",
         now="2026-07-28 07:00:00",
+    )
+    worker.store.upsert_conversation(
+        task.conversation_id,
+        task.conversation_title,
+        task.single_chat,
+        "session-retry-after-restart",
     )
     worker.store.fail_agent_run(
         claim.run.id,
@@ -1605,14 +2136,6 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
             (task.id,),
         )
 
-    assert worker.consume_once(max_tasks=1) == 0
-    recovered_task = worker.store.get_reply_task(task_id)
-    assert recovered_task is not None and recovered_task.status == "pending"
-    with worker.store._connect() as db:
-        db.execute(
-            "update reply_tasks set available_at='' where id=?",
-            (task.id,),
-        )
     assert worker.consume_once(max_tasks=1) == 1
 
     assert runner.resume_session_ids == ["session-retry-after-restart"]
@@ -1748,7 +2271,7 @@ def test_stale_processing_ignores_copied_tool_events_and_resumes_same_run(
 
     assert worker.consume_once(max_tasks=1) == 0
 
-    assert runner.calls == []
+    assert len(runner.calls) == 1
     run = _get_direct_run(worker.store, task_id, "g1")
     assert run is not None
     assert run.status == "running"
@@ -1977,7 +2500,7 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
         assert "task-live" in native_executor.write_calls[0]
 
 
-def test_service_accepts_agent_result_without_reimplementing_agent_judgment(
+def test_service_waits_when_agent_cannot_form_requested_execution_proposal(
     tmp_path: Path,
 ):
     trigger = _message(
@@ -2004,8 +2527,8 @@ def test_service_accepts_agent_result_without_reimplementing_agent_judgment(
     assert run.side_effect_state == "none"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "completed"
-    assert attempt.send_error == ""
+    assert attempt.send_status == "needs_human"
+    assert attempt.send_error == "executable_proposal_missing"
     assert len(native_executor.calls) == 1
     assert native_executor.write_calls == []
     assert dws.forbidden_material_reads == []
@@ -2033,9 +2556,14 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
     assert run.side_effect_state == "none"
     assert worker.store.list_agent_execution_receipts(run.id) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None
-    assert attempt.send_status == "failed"
-    assert attempt.send_error == "native_write_failed"
+    assert attempt is None
+    audit_runs = [
+        item
+        for item in worker.store.list_agent_runs_for_task_generation(task_id, "g1")
+        if item.role is AgentRole.AUDIT
+    ]
+    assert [item.turn_attempt for item in audit_runs] == [0, 1]
+    assert len({item.operation_id for item in audit_runs}) == 1
 
 
 @pytest.mark.parametrize(

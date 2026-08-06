@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass, field
 
-from app.agent_contracts import ConsumerProposal
+from app.agent_contracts import AuditFeedback, ConsumerProposal
 
 
 @dataclass(frozen=True)
@@ -55,8 +55,24 @@ class AgentTaskContext:
     trigger_mentioned_user_ids: tuple[str, ...] = ()
     trigger_raw_payload: dict[str, object] = field(default_factory=dict)
 
-    def render(self) -> str:
-        return "\n\n".join((_CONSUMER_AGENT_RULES, self.render_business_context()))
+    def render(
+        self,
+        *,
+        proposal_revision: int = 0,
+        feedback: AuditFeedback | None = None,
+    ) -> str:
+        sections = [_CONSUMER_AGENT_RULES, self.render_business_context()]
+        if feedback is not None:
+            sections.append(
+                "Audit feedback requiring a complete replacement proposal\n"
+                + _json(
+                    {
+                        "proposal_revision": proposal_revision,
+                        "feedback": feedback.model_dump(mode="json"),
+                    }
+                )
+            )
+        return "\n\n".join(sections)
 
     def render_business_context(self) -> str:
         trigger = {

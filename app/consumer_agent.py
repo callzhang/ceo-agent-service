@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import AgentTaskContext
-from app.agent_contracts import ConsumerAgentResult
+from app.agent_contracts import AuditFeedback, ConsumerAgentResult
 from app.agent_result import parse_typed_agent_result
 from app.audit_rules import render_audit_rules
 from app.agent_runner import LEASE_SECONDS, McpToolEffectRegistry
@@ -50,6 +50,7 @@ class ConsumerAgentRunner:
         *,
         proposal_revision: int,
         parent_agent_run_id: int | None,
+        feedback: AuditFeedback | None = None,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
         if context.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
@@ -63,6 +64,7 @@ class ConsumerAgentRunner:
                     proposal_revision=proposal_revision,
                     parent_agent_run_id=parent_agent_run_id,
                     rendered_rules=rendered_rules,
+                    feedback=feedback,
                 )
         except RuntimeError as exc:
             if str(exc).startswith("codex session locked:"):
@@ -77,6 +79,7 @@ class ConsumerAgentRunner:
         proposal_revision: int,
         parent_agent_run_id: int | None,
         rendered_rules: str,
+        feedback: AuditFeedback | None,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
         session_id = self.store.get_codex_session_id(task.conversation_id) or None
         if session_id and not self.codex_session_exists(session_id):
@@ -106,7 +109,10 @@ class ConsumerAgentRunner:
         )
         return process.execute(
             run=claim.run,
-            prompt=context.render(),
+            prompt=context.render(
+                proposal_revision=proposal_revision,
+                feedback=feedback,
+            ),
             session_id=session_id,
             schema_path=SCHEMA_PATH,
             expected_schema=ConsumerAgentResult.model_json_schema(),

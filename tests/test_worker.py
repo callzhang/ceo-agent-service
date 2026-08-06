@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agent_context import AgentTaskContext
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
+from app.agent_orchestrator import OrchestrationResult
 from app.agent_envelope import AgentEnvelope
 from app.agent_result import (
     AgentError,
@@ -224,6 +226,79 @@ class FailingDirectAgentRunner:
     def run(self, _task, _context, **_kwargs):
         self.calls += 1
         raise RuntimeError(self.error)
+
+
+class FakeAgentOrchestrator:
+    """Adapt existing explicit runner fixtures to the new worker seam."""
+
+    def __init__(self, worker: "DingTalkAutoReplyWorker") -> None:
+        self.worker = worker
+
+    def process(self, task, context) -> OrchestrationResult:
+        runner = self.worker.direct_agent_runner
+        assert runner is not None
+        run_result = runner.run(task, context)
+        result = run_result.result
+        if result.error.side_effect_state is SideEffectState.UNKNOWN:
+            status = "failed"
+        elif result.outcome is AgentOutcome.COMPLETED:
+            status = "completed"
+        elif result.outcome is AgentOutcome.NO_ACTION:
+            status = "skipped"
+        elif result.outcome is AgentOutcome.NEEDS_HUMAN:
+            status = "needs_human"
+        else:
+            status = "failed"
+
+        audit_result = None
+        if result.oa_action_receipt is not None:
+            receipt = result.oa_action_receipt
+            run = self.worker.store.get_agent_run(run_result.run_id)
+            assert run is not None
+            audit_result = AuditAgentResult.model_validate(
+                {
+                    "outcome": "executed",
+                    "summary": result.summary,
+                    "proposal_revision": 0,
+                    "side_effect_state": "confirmed",
+                    "feedback": None,
+                    "external_result": {
+                        "operation_id": run.operation_id,
+                        "verification_summary": result.summary,
+                        "live_result_reference": {
+                            "process_instance_id": receipt.process_instance_id,
+                            "task_id": receipt.task_id,
+                            "action": receipt.action,
+                            "remark": receipt.remark,
+                            "result": receipt.result,
+                        },
+                    },
+                    "error": {
+                        "code": "",
+                        "retryable": False,
+                        "authorization_required": False,
+                    },
+                }
+            )
+        return OrchestrationResult(
+            status=status,
+            final_run_id=run_result.run_id,
+            final_role=AgentRole.AUDIT,
+            summary=result.summary,
+            error=result.error,
+            feedback_cycles=0,
+            audit_result=audit_result,
+        )
+
+
+class ScriptedAgentOrchestrator:
+    def __init__(self, *results: OrchestrationResult) -> None:
+        self.results = list(results)
+        self.calls = []
+
+    def process(self, task, context) -> OrchestrationResult:
+        self.calls.append((task, context))
+        return self.results.pop(0)
 
 
 def explicit_agent_result(
@@ -1398,7 +1473,7 @@ def make_worker(
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("principal-user-1")
     direct_agent_runner = direct_agent_runner or FakeAgentResultRunner(store)
-    return DingTalkAutoReplyWorker(
+    worker = DingTalkAutoReplyWorker(
         store=store,
         dws=dws,
         codex=codex,
@@ -1410,6 +1485,8 @@ def make_worker(
         channel_gates=channel_gates or fixed_channel_gates(),
         direct_agent_runner=direct_agent_runner,
     )
+    worker.agent_orchestrator = FakeAgentOrchestrator(worker)
+    return worker
 
 
 def test_worker_defaults_to_real_channel_gates(tmp_path, monkeypatch):
@@ -4370,6 +4447,7 @@ def test_lark_blocked_task_does_not_block_later_dingtalk_task(tmp_path, monkeypa
         channel_gates={"dingtalk": dingtalk_gate, "lark": lark_gate},
         direct_agent_runner=FakeAgentResultRunner(store),
     )
+    worker.agent_orchestrator = FakeAgentOrchestrator(worker)
     lark_triggers = [
         message(
             f"https://example.feishu.cn/docx/{index} 这份文档怎么处理？",
@@ -4832,11 +4910,15 @@ def test_active_run_defer_cannot_overwrite_rotated_generation(
     worker.produce_once()
     pending = worker.store.get_reply_task(1)
     assert pending is not None
-    _claim_direct_run(worker.store,
-        pending.id,
-        pending.execution_generation,
-        owner="active-worker",
-        now="2026-05-29 08:00:00",
+    worker.agent_orchestrator = ScriptedAgentOrchestrator(
+        OrchestrationResult(
+            status="deferred",
+            final_run_id=0,
+            final_role=AgentRole.CONSUMER,
+            summary="agent_run_active",
+            error=AgentError(code="agent_run_active", retryable=True),
+            feedback_cycles=0,
+        )
     )
     original_defer = worker.store.defer_reply_task
 
@@ -10499,7 +10581,7 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     prompt = agent_prompt(worker)
     assert agent_runner(worker).calls[0][3] == ""
     assert codex.calls == []
-    assert "Direct Agent responsibilities" in prompt
+    assert "Consumer Agent A responsibilities" in prompt
     assert "CEO Agent Prompt" not in prompt
     assert "你是 Alex 的钉钉自动回复分身" not in prompt
     assert "回答任何问题前，先检索本地 workspace" not in prompt
@@ -10839,7 +10921,7 @@ def test_sent_reply_prevents_retry_when_latest_attempt_failed(
     assert latest is not None
     assert latest.action == "agent_run"
     assert latest.send_status == "skipped"
-    assert "Before repeating an external action, query live state" in agent_prompt(worker)
+    assert "Before proposing a repeated external action" in agent_prompt(worker)
 
 
 def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
@@ -11121,7 +11203,7 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
     run = _get_direct_run(worker.store, 1, worker.store.get_reply_task(1).execution_generation)
     assert run is not None
     assert run.codex_session_id != "old-session"
-    assert "Direct Agent responsibilities" in agent_prompt(worker)
+    assert "Consumer Agent A responsibilities" in agent_prompt(worker)
     assert "你是 Alex 的钉钉自动回复分身" not in agent_prompt(worker)
 
 
@@ -11329,7 +11411,7 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
     assert "先看岗位匹配" not in prompt
     assert "cid-style-1" not in prompt
     assert '"conversation_title": "Friday"' in prompt
-    assert "Direct Agent responsibilities" in prompt
+    assert "Consumer Agent A responsibilities" in prompt
 
 
 def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeypatch):

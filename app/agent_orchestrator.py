@@ -1,0 +1,454 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Protocol
+
+from app.agent_context import AgentTaskContext, AuditTurnContext
+from app.agent_contracts import (
+    AuditAgentResult,
+    AuditFeedback,
+    AuditOutcome,
+    ConsumerAgentResult,
+    ConsumerOutcome,
+    ConsumerProposal,
+)
+from app.agent_result import AgentError, SideEffectState
+from app.agent_turn_runner import AgentTurnRunResult
+from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
+
+
+MAX_CONTENT_FEEDBACK_CYCLES = 2
+MAX_TURNS_PER_PROCESS = 32
+MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
+
+
+class ConsumerRunner(Protocol):
+    def run(
+        self,
+        task: ReplyTask,
+        context: AgentTaskContext,
+        *,
+        proposal_revision: int,
+        parent_agent_run_id: int | None,
+        feedback: AuditFeedback | None = None,
+    ) -> AgentTurnRunResult[ConsumerAgentResult]: ...
+
+
+class AuditRunner(Protocol):
+    def run(
+        self,
+        task: ReplyTask,
+        context: AuditTurnContext,
+        *,
+        turn_attempt: int,
+        parent_agent_run_id: int,
+    ) -> AgentTurnRunResult[AuditAgentResult]: ...
+
+
+@dataclass(frozen=True)
+class OrchestrationResult:
+    status: str
+    final_run_id: int
+    final_role: AgentRole
+    summary: str
+    error: AgentError
+    feedback_cycles: int
+    feedback: AuditFeedback | None = None
+    consumer_result: ConsumerAgentResult | None = None
+    audit_result: AuditAgentResult | None = None
+
+
+@dataclass(frozen=True)
+class _NextConsumer:
+    proposal_revision: int
+    parent_run_id: int | None
+    feedback: AuditFeedback | None
+
+
+@dataclass(frozen=True)
+class _NextAudit:
+    proposal_revision: int
+    turn_attempt: int
+    parent_run_id: int
+    proposal: ConsumerProposal | None
+
+
+@dataclass(frozen=True)
+class _Deferred:
+    run: AgentRun | None
+    code: str
+    feedback_cycles: int
+    authorization_required: bool = False
+
+
+class AgentOrchestrator:
+    def __init__(
+        self,
+        *,
+        store: AutoReplyStore,
+        consumer: ConsumerRunner,
+        audit: AuditRunner,
+    ) -> None:
+        self.store = store
+        self.consumer = consumer
+        self.audit = audit
+
+    def process(
+        self,
+        task: ReplyTask,
+        context: AgentTaskContext,
+    ) -> OrchestrationResult:
+        if context.task_id != task.id:
+            raise ValueError("agent context task does not match reply task")
+        role_attempts: dict[tuple[AgentRole, int], int] = {}
+        for _ in range(MAX_TURNS_PER_PROCESS):
+            state = self._derive_state(task)
+            if isinstance(state, OrchestrationResult):
+                return state
+            if isinstance(state, _Deferred):
+                return self._deferred_result(state)
+            try:
+                if isinstance(state, _NextConsumer):
+                    attempt_key = (AgentRole.CONSUMER, state.proposal_revision)
+                    if role_attempts.get(attempt_key, 0) >= MAX_ROLE_ATTEMPTS_PER_PROCESS:
+                        return self._deferred_result(
+                            _Deferred(
+                                run=None,
+                                code="consumer_retry_deferred",
+                                feedback_cycles=self._feedback_cycles(task),
+                            )
+                        )
+                    role_attempts[attempt_key] = role_attempts.get(attempt_key, 0) + 1
+                    self.consumer.run(
+                        task,
+                        context,
+                        proposal_revision=state.proposal_revision,
+                        parent_agent_run_id=state.parent_run_id,
+                        feedback=state.feedback,
+                    )
+                else:
+                    attempt_key = (AgentRole.AUDIT, state.proposal_revision)
+                    if role_attempts.get(attempt_key, 0) >= MAX_ROLE_ATTEMPTS_PER_PROCESS:
+                        return self._deferred_result(
+                            _Deferred(
+                                run=None,
+                                code="audit_retry_deferred",
+                                feedback_cycles=self._feedback_cycles(task),
+                            )
+                        )
+                    role_attempts[attempt_key] = role_attempts.get(attempt_key, 0) + 1
+                    assert state.proposal is not None
+                    self.audit.run(
+                        task,
+                        AuditTurnContext(
+                            task=context,
+                            proposal_revision=state.proposal_revision,
+                            operation_id=_operation_id(task, state.proposal_revision),
+                            proposal=state.proposal,
+                            audit_rules="",
+                        ),
+                        turn_attempt=state.turn_attempt,
+                        parent_agent_run_id=state.parent_run_id,
+                    )
+            except RuntimeError as exc:
+                if str(exc) in {
+                    "agent_run_unavailable",
+                    "codex_session_locked",
+                }:
+                    return self._deferred_result(
+                        _Deferred(
+                            run=None,
+                            code=str(exc),
+                            feedback_cycles=self._feedback_cycles(task),
+                        )
+                    )
+                next_state = self._derive_state(task)
+                if isinstance(next_state, (_NextConsumer, _NextAudit)):
+                    continue
+                if isinstance(next_state, _Deferred):
+                    return self._deferred_result(next_state)
+                return next_state
+        return self._deferred_result(
+            _Deferred(
+                run=None,
+                code="agent_turn_limit_reached",
+                feedback_cycles=self._feedback_cycles(task),
+            )
+        )
+
+    def _derive_state(
+        self,
+        task: ReplyTask,
+    ) -> OrchestrationResult | _NextConsumer | _NextAudit | _Deferred:
+        runs = self.store.list_agent_runs_for_task_generation(
+            task.id,
+            task.execution_generation,
+        )
+        by_revision: dict[int, list[AgentRun]] = {}
+        for run in runs:
+            by_revision.setdefault(run.proposal_revision, []).append(run)
+
+        revision = 0
+        while revision <= MAX_CONTENT_FEEDBACK_CYCLES:
+            revision_runs = by_revision.get(revision, [])
+            consumer = next(
+                (run for run in revision_runs if run.role is AgentRole.CONSUMER),
+                None,
+            )
+            if consumer is None:
+                if revision == 0:
+                    return _NextConsumer(0, None, None)
+                previous_audit = self._revision_feedback_run(by_revision, revision - 1)
+                if previous_audit is None:
+                    return _Deferred(None, "agent_turn_state_incomplete", revision - 1)
+                previous_result = _audit_result(previous_audit)
+                if previous_result.feedback is None:
+                    return _Deferred(
+                        previous_audit,
+                        "agent_feedback_missing",
+                        revision - 1,
+                    )
+                return _NextConsumer(
+                    revision,
+                    previous_audit.id,
+                    previous_result.feedback,
+                )
+            consumer_state = self._consumer_state(consumer, revision)
+            if not isinstance(consumer_state, ConsumerAgentResult):
+                return consumer_state
+            if consumer_state.outcome is ConsumerOutcome.NO_ACTION:
+                return _consumer_terminal("skipped", consumer, consumer_state, revision)
+            if consumer_state.outcome is ConsumerOutcome.NEEDS_HUMAN:
+                return _consumer_terminal(
+                    "needs_human", consumer, consumer_state, revision
+                )
+            if consumer_state.outcome is ConsumerOutcome.FAILED:
+                return _consumer_terminal("failed", consumer, consumer_state, revision)
+            assert consumer_state.proposal is not None
+
+            audits = sorted(
+                (run for run in revision_runs if run.role is AgentRole.AUDIT),
+                key=lambda run: (run.turn_attempt, run.id),
+            )
+            if not audits:
+                return _NextAudit(revision, 0, consumer.id, consumer_state.proposal)
+            latest = audits[-1]
+            audit_state = self._audit_state(latest, revision)
+            if isinstance(audit_state, _NextAudit):
+                return _NextAudit(
+                    revision,
+                    audit_state.turn_attempt,
+                    consumer.id,
+                    consumer_state.proposal,
+                )
+            if not isinstance(audit_state, AuditAgentResult):
+                return audit_state
+            if audit_state.outcome is AuditOutcome.EXECUTED:
+                return _audit_terminal("completed", latest, audit_state, revision)
+            if audit_state.outcome is AuditOutcome.NEEDS_HUMAN:
+                return _audit_terminal("needs_human", latest, audit_state, revision)
+            if audit_state.outcome is AuditOutcome.UNKNOWN:
+                return _audit_terminal("blocked", latest, audit_state, revision)
+            if audit_state.outcome is AuditOutcome.FAILED:
+                return _audit_terminal("failed", latest, audit_state, revision)
+            if revision == MAX_CONTENT_FEEDBACK_CYCLES:
+                return _audit_terminal(
+                    "needs_human",
+                    latest,
+                    audit_state,
+                    MAX_CONTENT_FEEDBACK_CYCLES,
+                )
+            revision += 1
+        return _Deferred(None, "agent_turn_state_incomplete", revision)
+
+    @staticmethod
+    def _consumer_state(
+        run: AgentRun,
+        feedback_cycles: int,
+    ) -> ConsumerAgentResult | _NextConsumer | _Deferred | OrchestrationResult:
+        if run.status == "completed":
+            return _consumer_result(run)
+        error = _run_error(run)
+        if run.status == "failed" and error.authorization_required:
+            return _Deferred(
+                run,
+                error.code or "authorization_required",
+                feedback_cycles,
+                authorization_required=True,
+            )
+        if run.status == "failed" and error.retryable:
+            return _NextConsumer(
+                run.proposal_revision,
+                run.parent_agent_run_id,
+                None,
+            )
+        if run.status == "running":
+            return _Deferred(run, "agent_run_active", feedback_cycles)
+        result = ConsumerAgentResult(
+            outcome=ConsumerOutcome.FAILED,
+            summary=error.code or "Consumer Agent failed.",
+            proposal=None,
+            error=error,
+        )
+        return _consumer_terminal("failed", run, result, feedback_cycles)
+
+    @staticmethod
+    def _audit_state(
+        run: AgentRun,
+        feedback_cycles: int,
+    ) -> AuditAgentResult | _NextAudit | _Deferred | OrchestrationResult:
+        if run.status == "completed":
+            return _audit_result(run)
+        if run.status == "unknown":
+            error = _run_error(run)
+            result = _failed_audit_result(run, AuditOutcome.UNKNOWN, error)
+            return _audit_terminal("blocked", run, result, feedback_cycles)
+        error = _run_error(run)
+        if run.status == "failed" and error.authorization_required:
+            return _Deferred(
+                run,
+                error.code or "authorization_required",
+                feedback_cycles,
+                authorization_required=True,
+            )
+        if run.status == "failed" and error.retryable and run.side_effect_state == "none":
+            return _NextAudit(
+                run.proposal_revision,
+                run.turn_attempt + 1,
+                run.parent_agent_run_id or 0,
+                None,
+            )
+        if run.status == "running":
+            return _Deferred(run, "agent_run_active", feedback_cycles)
+        result = _failed_audit_result(run, AuditOutcome.FAILED, error)
+        return _audit_terminal("failed", run, result, feedback_cycles)
+
+    @staticmethod
+    def _revision_feedback_run(
+        by_revision: dict[int, list[AgentRun]],
+        revision: int,
+    ) -> AgentRun | None:
+        audits = sorted(
+            (
+                run
+                for run in by_revision.get(revision, [])
+                if run.role is AgentRole.AUDIT and run.status == "completed"
+            ),
+            key=lambda run: (run.turn_attempt, run.id),
+        )
+        if not audits:
+            return None
+        latest = audits[-1]
+        result = _audit_result(latest)
+        return latest if result.outcome is AuditOutcome.REVISION_REQUIRED else None
+
+    def _feedback_cycles(self, task: ReplyTask) -> int:
+        return max(
+            (
+                run.proposal_revision
+                for run in self.store.list_agent_runs_for_task_generation(
+                    task.id, task.execution_generation
+                )
+            ),
+            default=0,
+        )
+
+    @staticmethod
+    def _deferred_result(state: _Deferred) -> OrchestrationResult:
+        run = state.run
+        return OrchestrationResult(
+            status="deferred",
+            final_run_id=run.id if run is not None else 0,
+            final_role=run.role if run is not None else AgentRole.CONSUMER,
+            summary=state.code,
+            error=AgentError(
+                code=state.code,
+                retryable=True,
+                authorization_required=state.authorization_required,
+            ),
+            feedback_cycles=state.feedback_cycles,
+        )
+
+
+def _operation_id(task: ReplyTask, revision: int) -> str:
+    return f"agent-task:{task.id}:{task.execution_generation}:proposal:{revision}"
+
+
+def _run_error(run: AgentRun) -> AgentError:
+    try:
+        payload = json.loads(run.structured_error_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return AgentError.model_validate(
+        {
+            "code": str(payload.get("code") or "agent_run_failed"),
+            "retryable": payload.get("retryable") is True,
+            "authorization_required": payload.get("authorization_required") is True,
+        }
+    )
+
+
+def _consumer_result(run: AgentRun) -> ConsumerAgentResult:
+    return ConsumerAgentResult.model_validate_json(run.final_result_json)
+
+
+def _audit_result(run: AgentRun) -> AuditAgentResult:
+    return AuditAgentResult.model_validate_json(run.final_result_json)
+
+
+def _consumer_terminal(
+    status: str,
+    run: AgentRun,
+    result: ConsumerAgentResult,
+    feedback_cycles: int,
+) -> OrchestrationResult:
+    return OrchestrationResult(
+        status=status,
+        final_run_id=run.id,
+        final_role=AgentRole.CONSUMER,
+        summary=result.summary,
+        error=result.error,
+        feedback_cycles=feedback_cycles,
+        consumer_result=result,
+    )
+
+
+def _audit_terminal(
+    status: str,
+    run: AgentRun,
+    result: AuditAgentResult,
+    feedback_cycles: int,
+) -> OrchestrationResult:
+    return OrchestrationResult(
+        status=status,
+        final_run_id=run.id,
+        final_role=AgentRole.AUDIT,
+        summary=result.summary,
+        error=result.error,
+        feedback_cycles=feedback_cycles,
+        feedback=result.feedback,
+        audit_result=result,
+    )
+
+
+def _failed_audit_result(
+    run: AgentRun,
+    outcome: AuditOutcome,
+    error: AgentError,
+) -> AuditAgentResult:
+    return AuditAgentResult(
+        outcome=outcome,
+        summary=error.code or "Audit Agent failed.",
+        proposal_revision=run.proposal_revision,
+        side_effect_state=(
+            SideEffectState.UNKNOWN
+            if outcome is AuditOutcome.UNKNOWN
+            else SideEffectState.NONE
+        ),
+        feedback=None,
+        external_result=None,
+        error=error,
+    )

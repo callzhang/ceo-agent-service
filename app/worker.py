@@ -17,6 +17,7 @@ from app.agent_context import (
     MaterialReference,
     PriorReceipt,
 )
+from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
 from app.agent_result import (
     AgentError,
     AgentOutcome,
@@ -36,6 +37,7 @@ from app.agent_runner import (
     structured_execution_evidence,
     unknown_effect_reference,
 )
+from app.audit_agent import AuditAgentRunner
 from app.channel_gate import (
     ChannelGate,
     ChannelGateResult,
@@ -44,6 +46,7 @@ from app.channel_gate import (
     default_channel_gates,
     start_lark_auth_login,
 )
+from app.consumer_agent import ConsumerAgentRunner
 from app.config import (
     agent_mention_aliases,
     assistant_signature,
@@ -421,6 +424,7 @@ class DingTalkAutoReplyWorker:
         channel_gates: dict[str, ChannelGate] | None = None,
         login_coordinator: LoginCoordinator | None = None,
         direct_agent_runner: DirectAgentRunner | None = None,
+        agent_orchestrator: AgentOrchestrator | None = None,
     ):
         self.store = store
         self.dws = dws
@@ -446,6 +450,30 @@ class DingTalkAutoReplyWorker:
         )
         self._pass_channel_results: dict[str, ChannelGateResult] = {}
         self.direct_agent_runner = direct_agent_runner
+        self.agent_orchestrator = agent_orchestrator
+
+    def _agent_orchestrator(self) -> AgentOrchestrator:
+        if self.agent_orchestrator is not None:
+            return self.agent_orchestrator
+        runner = getattr(self.codex, "runner", None)
+        workspace = getattr(runner, "workspace", None)
+        if workspace is None:
+            raise RuntimeError("native Codex runner workspace is unavailable")
+        codex_bin = str(getattr(runner, "codex_bin", "codex"))
+        self.agent_orchestrator = AgentOrchestrator(
+            store=self.store,
+            consumer=ConsumerAgentRunner(
+                store=self.store,
+                workspace=Path(workspace),
+                codex_bin=codex_bin,
+            ),
+            audit=AuditAgentRunner(
+                store=self.store,
+                workspace=Path(workspace),
+                codex_bin=codex_bin,
+            ),
+        )
+        return self.agent_orchestrator
 
     def _direct_agent_runner(self) -> DirectAgentRunner:
         if self.direct_agent_runner is not None:
@@ -2122,95 +2150,129 @@ class DingTalkAutoReplyWorker:
         trigger: DingTalkMessage,
         context_messages: list[DingTalkMessage],
     ) -> bool:
-        existing_run = self.store.get_agent_run_for_turn(
-            task.id,
-            task.execution_generation,
-            role=AgentRole.AUDIT,
-            proposal_revision=0,
-            turn_attempt=0,
-        )
-        if existing_run is not None:
-            if existing_run.status == "completed":
-                result = AgentResult.model_validate_json(existing_run.final_result_json)
-                try:
-                    return self._apply_agent_result(
-                        task,
-                        DirectAgentRunResult(
-                            run_id=existing_run.id,
-                            result=result,
-                            transcript_start_line=existing_run.transcript_start_line,
-                            transcript_end_line=existing_run.transcript_end_line,
-                            events=tuple(existing_run.tool_events),
-                        ),
-                    )
-                except AgentRunLeaseLostError:
-                    return False
-            if existing_run.status == "unknown":
-                self._record_agent_runtime_failure_attempt(
-                    task,
-                    "agent_run_unknown",
-                    retryable=False,
-                )
-                return False
-            if existing_run.status == "failed":
-                try:
-                    structured_error = json.loads(
-                        existing_run.structured_error_json or "{}"
-                    )
-                except json.JSONDecodeError:
-                    structured_error = {}
-                retryable = (
-                    isinstance(structured_error, dict)
-                    and structured_error.get("retryable") is True
-                    and existing_run.side_effect_state == "none"
-                )
-                error_code = str(
-                    structured_error.get("code") or "agent_run_failed"
-                )
-                retry_beyond_limit = (
-                    error_code in RECOVERABLE_AGENT_RUNTIME_ERRORS
-                    and task.attempts <= self.max_task_attempts + 1
-                )
-                if not retryable or (
-                    task.attempts > self.max_task_attempts
-                    and not retry_beyond_limit
-                ):
-                    self._record_agent_runtime_failure_attempt(
-                        task,
-                        error_code,
-                        retryable=False,
-                    )
-                    return False
-            if (
-                existing_run.status == "running"
-                and existing_run.lease_expires_at
-                > self._sqlite_timestamp(self._now())
-            ):
-                self.store.defer_reply_task(
-                    task.id,
-                    "agent_run_active",
-                    expected_execution_generation=task.execution_generation,
-                    available_at=existing_run.lease_expires_at,
-                )
-                return False
         context = self._build_agent_task_context(
             conversation=conversation,
             task=task,
             trigger=trigger,
             context_messages=context_messages,
         )
+        result = self._agent_orchestrator().process(task, context)
         try:
-            run_result = self._direct_agent_runner().run(
-                task,
-                context,
-                read_only=self.dry_run,
-            )
-        except Exception:
-            raise
-        try:
-            return self._apply_agent_result(task, run_result)
+            return self._apply_orchestration_result(task, result)
         except AgentRunLeaseLostError:
             return False
+
+    def _apply_orchestration_result(
+        self,
+        task: ReplyTask,
+        result: OrchestrationResult,
+    ) -> bool:
+        if result.status == "deferred":
+            available_at = (
+                self._reply_task_authorization_available_at()
+                if result.error.authorization_required
+                else self._reply_task_retry_available_at(max(task.attempts, 1))
+            )
+            self.store.defer_reply_task(
+                task.id,
+                result.error.code or "agent_orchestration_deferred",
+                expected_execution_generation=task.execution_generation,
+                available_at=available_at,
+            )
+            return False
+
+        send_error = result.error.code
+        if result.status == "completed":
+            send_status = "completed"
+            task_status = "done"
+        elif result.status == "skipped":
+            send_status = "skipped"
+            task_status = "done"
+        elif result.status == "needs_human":
+            send_status = "needs_human"
+            task_status = "done"
+            send_error = send_error or "needs_human"
+        elif result.status == "blocked":
+            send_status = "blocked"
+            task_status = "done"
+            send_error = send_error or "agent_side_effect_unknown"
+        else:
+            send_status = "failed"
+            task_status = "pending" if result.error.retryable else "failed"
+            send_error = send_error or "agent_failed"
+
+        available_at = ""
+        if task_status == "pending" and task.attempts < self.max_task_attempts:
+            available_at = self._reply_task_retry_available_at(task.attempts)
+        elif task_status == "pending":
+            task_status = "failed"
+
+        run = self.store.get_agent_run(result.final_run_id)
+        if run is None:
+            raise RuntimeError("orchestration final run was not persisted")
+        attempt_id = self.store.finalize_agent_reply_task(
+            task_id=task.id,
+            expected_execution_generation=task.execution_generation,
+            run_id=run.id,
+            task_status=task_status,
+            task_error=send_error,
+            available_at=available_at,
+            conversation_id=task.conversation_id,
+            conversation_title=task.conversation_title,
+            trigger_message_id=task.trigger_message_id,
+            trigger_sender=task.trigger_sender,
+            trigger_text=task.trigger_text,
+            codex_reason=result.summary,
+            codex_session_id=run.codex_session_id,
+            codex_transcript_start_line=run.transcript_start_line,
+            codex_transcript_end_line=run.transcript_end_line,
+            audit_tool_events_json=json.dumps(
+                run.tool_events,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            audit_summary=result.summary,
+            send_status=send_status,
+            send_error=send_error,
+            channel=task.channel,
+            **self._orchestration_oa_metadata(task, result),
+        )
+        if send_status in {"needs_human", "blocked", "failed"}:
+            self._notify_problem_attempt(
+                task,
+                attempt_id=attempt_id,
+                send_status=send_status,
+                message=result.summary or send_error,
+            )
+        return task_status == "done"
+
+    @staticmethod
+    def _orchestration_oa_metadata(
+        task: ReplyTask,
+        result: OrchestrationResult,
+    ) -> dict[str, str]:
+        audit_result = result.audit_result
+        if audit_result is None or audit_result.external_result is None:
+            return {}
+        reference = audit_result.external_result.live_result_reference
+        process_instance_id = str(reference.get("process_instance_id") or "").strip()
+        if not process_instance_id:
+            return {}
+        action_result = reference.get("result")
+        if not isinstance(action_result, dict):
+            action_result = reference
+        return {
+            "oa_process_instance_id": process_instance_id,
+            "oa_task_id": str(reference.get("task_id") or "").strip(),
+            "oa_url": task.oa_url,
+            "oa_action": str(reference.get("action") or "").strip(),
+            "oa_remark": str(reference.get("remark") or "").strip(),
+            "oa_action_result_json": json.dumps(
+                action_result,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        }
 
     def _build_agent_task_context(
         self,
