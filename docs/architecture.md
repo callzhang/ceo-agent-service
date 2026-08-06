@@ -18,14 +18,14 @@ CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 D
 
 生产环境通常由 macOS launchd 启动：
 
-- 主服务：`com.ceo-agent-service.main`
-- 审计页面：`com.ceo-agent-service.audit-web`
+- 主服务：`com.ceo-agent-service.main`（唯一 launchd job）
+- 审计页面：由主服务的 supervisor 托管
 - 命令入口：`ceo-agent`，由 `app.cli:main` 提供
-- 默认服务命令：`python -m app.cli service`
+- 默认 launchd 命令：`python -m app.service_supervisor`；worker 子进程命令：`python -m app.cli service`
 - 审计页面：默认 `http://127.0.0.1:8765`
 - 运行库：默认 `~/Library/Application Support/ceo-agent-service/auto-reply.sqlite3`
 
-`service` 模式的主进程运行数据库备份、消息 producer/consumer、会议处理、任务维护和可选微信组件。审计 Web 由独立的 `com.ceo-agent-service.audit-web` launchd job 运行；两个 job 共享同一 SQLite 事实源，但页面不再与持续 worker 争用同一 Python 解释器，也不会留下由主进程重启产生的孤儿子进程。默认 History 在 Web 进程启动时预热，刷新期间继续返回最近一次完整页面。各自的 job 退出都会由 launchd 重启。主服务启动时只恢复当前队列和可安全恢复的运行状态；结果未知的写操作不会作为普通失败自动重试。
+`com.ceo-agent-service.main` 启动 `app.service_supervisor`。supervisor 运行两个独立子进程：`service` 负责数据库备份、消息 producer/consumer、会议处理、任务维护和可选微信组件，`audit-web` 负责审计页面。两个子进程共享同一 SQLite 事实源，但不争用同一 Python 解释器。任一子进程退出时，supervisor 会终止并回收另一方后以失败退出，交由同一个 launchd job 重启；收到停止信号时它也会回收两个子进程，因此不会留下孤儿进程。默认 History 在 Web 进程启动时预热，刷新期间继续返回最近一次完整页面。主服务启动时只恢复当前队列和可安全恢复的运行状态；结果未知的写操作不会作为普通失败自动重试。
 
 ## 权威处理流
 

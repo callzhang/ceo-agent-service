@@ -460,10 +460,9 @@ scripts/install-auto-reply-agents.sh
 
 安装前请先检查 `launchd/*.plist` 中的本地路径、用户名、workspace、数据库路径和 persona 配置。开源部署时通常需要替换这些值。
 
-运行模型由两个独立 launchd job 组成：worker 服务和审计 Web 服务。它们共享 SQLite，但不共享 Python 进程；worker 重启或高负载不会阻塞页面。不会创建 meeting crontab：
+运行模型只有一个 launchd job。它的 supervisor 运行 worker 和审计 Web 两个独立子进程；它们共享 SQLite，但不共享 Python 解释器。任一子进程退出时，supervisor 会回收另一方并让 launchd 重启整个可恢复服务，因此 worker 重启或高负载不会阻塞页面。不会创建 meeting crontab 或第二个 plist：
 
-- `com.ceo-agent-service.main`：队列与 worker 主服务。
-- `com.ceo-agent-service.audit-web`：本地审计页面服务。
+- `com.ceo-agent-service.main`：唯一 launchd job，托管队列 worker 与本地审计页面。
 - producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。
 - consumer loop：按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。
 - meeting producer loop：读取 AI 听记与日历参会证据，只为 Derek 参会且明确结束至少 `CEO_MEETING_SETTLE_SECONDS` 的会议建队列；没有匹配日程的临时通话，仅在完整转写恰好证明 Derek 和另一位唯一员工时按 1:1 放行；没有触发条件的会议保持安静。

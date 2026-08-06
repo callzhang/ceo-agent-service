@@ -40,7 +40,7 @@ def test_local_service_script_runs_single_main_service():
     assert "--consumer-poll-interval-seconds" not in content
 
 
-def test_main_launch_agent_runs_single_keepalive_service():
+def test_main_launch_agent_runs_single_keepalive_supervisor():
     plist_path = REPO_ROOT / "launchd" / "com.ceo-agent-service.main.plist"
 
     with plist_path.open("rb") as file:
@@ -54,7 +54,8 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert plist["StandardErrorPath"].endswith("ceo-agent-service-main.err.log")
     command = plist["ProgramArguments"]
     assert command[:2] == ["/bin/zsh", "-lc"]
-    assert " service " in command[2]
+    assert "app.service_supervisor" in command[2]
+    assert "app.cli service" not in command[2]
     assert "--producer-interval-seconds" not in command[2]
     assert "--consumer-poll-interval-seconds" not in command[2]
     assert "CEO_PRODUCER_INTERVAL_SECONDS" not in command[2]
@@ -99,31 +100,16 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert "run-audit-web.sh" not in command[2]
 
 
-def test_audit_web_launch_agent_runs_independently_from_workers():
-    plist_path = REPO_ROOT / "launchd" / "com.ceo-agent-service.audit-web.plist"
-
-    with plist_path.open("rb") as file:
-        plist = plistlib.load(file)
-
-    assert plist["Label"] == "com.ceo-agent-service.audit-web"
-    assert plist["RunAtLoad"] is True
-    assert plist["KeepAlive"] is True
-    assert plist["StandardOutPath"].endswith("ceo-agent-service-audit-web.out.log")
-    command = plist["ProgramArguments"]
-    assert command[:2] == ["/bin/zsh", "-lc"]
-    assert " audit-web " in command[2]
-    assert " service " not in command[2]
-    assert 'CEO_AUDIT_WEB_PORT:-8765' in command[2]
-    assert 'CEO_WORKER_DB' in command[2]
-
-
 def test_hourly_dry_run_install_script_installs_and_kickstarts_launch_agent():
     script = REPO_ROOT / "scripts" / "install-auto-reply-agents.sh"
 
     content = script.read_text(encoding="utf-8")
 
     assert "com.ceo-agent-service.main.plist" in content
-    assert "com.ceo-agent-service.audit-web.plist" in content
+    assert (
+        'plist_names=(\n  "com.ceo-agent-service.main.plist"\n)' in content
+    )
+    assert '  "com.ceo-agent-service.audit-web.plist"' in content
     assert "com.ceo-agent-service.reply-producer" in content
     assert "com.ceo-agent-service.reply-consumer" in content
     assert "com.ceo-agent-service.audit-web" in content
