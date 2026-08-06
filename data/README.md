@@ -15,7 +15,27 @@ runtime contents from this directory.
   `work-profile/work_profile.md` through `work_profile_instruction()`.
 - `prompts/`: local editable Developer/User prompt templates. Missing files are
   seeded from `app/defaults/`.
-- `hourly-quality-gate.json`: local quality-gate state for scheduled checks.
+- `hourly-quality-gate.json`: local machine-readable result of the latest
+  fail-closed queue coverage check. It is generated state, not a manually
+  maintained health flag.
+
+Run the fail-closed queue coverage check with:
+
+`python -m app.cli quality-check --db "$CEO_WORKER_DB"`
+
+It records every required source it inspected. A missing source, new error in
+the four-hour repair window, unrecovered failure, stale processing item,
+overdue scheduled follow-up, unknown side effect, or unresolved feedback makes
+the command exit non-zero. Future scheduled follow-ups and fresh active
+processing are reported as attention, not failures. By default it also runs
+the live DingTalk and Lark channel gates; use `--no-verify-channels` only for
+offline diagnostics.
+
+The JSON has `checked_at`, `mode`, `ok`, `checked_sources`,
+`missing_sources`, `violations`, and `attention`. Consumers must use this
+generated result rather than treating a missing or old file as healthy. See
+[`docs/quality-inspection.md`](../docs/quality-inspection.md) for the source
+matrix, trigger-level deduplication rule, thresholds, and planned coverage.
 
 ## Cleanup policy
 

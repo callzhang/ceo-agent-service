@@ -1147,6 +1147,7 @@ def test_subprocess_executor_passes_timeout(tmp_path: Path, monkeypatch):
     assert calls[0][1]["total_timeout_seconds"] == 7
     assert calls[0][1]["idle_timeout_seconds"] == 3
     assert calls[0][1]["prompt"] == "decide"
+    assert "--ignore-user-config" in calls[0][0]
 
 
 def test_subprocess_timeout_returns_stop_with_error(tmp_path: Path, monkeypatch):

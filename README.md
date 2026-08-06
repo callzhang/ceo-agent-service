@@ -26,7 +26,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时生成跟进。多人会议默认发到 Agent 核验过、明确承接该业务或后续行动的团队群；涉及个人隐私、薪酬绩效或不适合公开的个人负面反馈时，可以私信相关参会人。
 - **审计 Web UI**：本地 FastAPI 页面查看历史、attempt 详情、Codex session、错误、Prompt 模板和路由配置。
-- **自动修复 heartbeat**：定期检查 failed/processing/dry_run backlog，包括 `reply_tasks`、work summary 和结果未知的 agent run；未知写操作只做只读核对，不自动重放。
+- **自动修复 heartbeat**：消费 fail-closed 质量巡检结果，覆盖必需队列、最新 trigger、陈旧处理、外部投递、反馈和近期错误；将须恢复的问题与仍在进行的工作分开呈现。未知写操作只做只读核对，不自动重放。
 - **管理者 OKR 周报**：每周日读取 CEO-2 管理群成员的实时叮当 OKR 和可访问证据，按 `dingtang-okr-review` 生成可审计评分、知识库报告和群内重点摘要。
 
 ## 按角色使用
@@ -51,7 +51,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 5. **Channel Gate 层**：用 CLI status 和 authenticated probe 确认通道可用；只有明确 `needs_login` 才协调一次登录流程。
 6. **Direct Agent 层**：同一对话复用一个原生 Codex session；每条新消息通过 `codex exec resume` 追加到该 session，并形成独立 run。
 7. **会话与投递层**：保存 Codex session 指针和 transcript 范围，并用 generation-aware claim 与 `sent_replies` 防止重复或过时投递。
-8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd 和结果未知写操作的只读核对。
+8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd、fail-closed 质量巡检和结果未知写操作的只读核对。
 
 当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取仍以临时网络错误失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。
 
@@ -64,6 +64,8 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 一次 reply task generation 对应一次 Direct Agent run，同一 `conversation_id` 的 run 复用 `conversations.codex_session_id`。Reply consumer 本身按队列逐条处理消息，不再额外维护对话锁。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID 和本次 transcript 行范围，不复制工具事件或生成服务自定义回执。任务终态直接采用严格 `AgentResult`；服务在收到结果后本地校验 JSON，不使用 Codex CLI 的 `--output-schema` 传输参数，避免上游 schema 兼容性错误在 Agent 执行前中断任务。无错误时 Agent 仍返回空错误对象，避免结果解析把成功执行误标为失败。精确重复发送仍由 trigger 和 `sent_replies` 幂等记录阻止，人工修订后的新内容不被旧结果拦截。
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
+
+所有仍使用 `CodexDecisionRunner` 的通道（包括微信消费）也忽略过期的用户级 Codex 配置，并显式采用服务当前的模型供应商配置；这使其与 Direct Agent 使用同一认证和模型配置来源，避免旧刷新令牌阻塞新消息处理。
 
 Agent 必须如实返回动作结果；只完成诊断时返回 `needs_human` 或 `failed`。服务不再根据复制的工具事件二次判断 Agent 结论。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
 
@@ -576,11 +578,22 @@ cd /path/to/ceo-agent-service
 
 Live smoke tests 默认跳过，只有显式设置环境变量时才会访问真实钉钉或发送外部可见消息。
 
+本地检查全部持久化队列覆盖、当前 backlog 和默认 channel gate：
+
+```bash
+.venv/bin/python -m app.cli quality-check --db "$CEO_WORKER_DB"
+```
+
+命令成功不代表没有任何工作正在进行；`attention` 表示新鲜的排队或恢复，
+`violations` 才会使退出码非零。运行契约、数据源、阈值和当前覆盖边界见
+[docs/quality-inspection.md](docs/quality-inspection.md)。
+
 ## 文档
 
 - [docs/user-guide.md](docs/user-guide.md)：按安装者、管理者、同事、HR、OA 和运维角色组织的使用教程。
 - [docs/agent-installation-runbook.md](docs/agent-installation-runbook.md)：给 agent 执行的端到端安装流程。
 - [docs/product-logic.md](docs/product-logic.md)：产品逻辑、审计、安全默认值。
+- [docs/quality-inspection.md](docs/quality-inspection.md)：质量巡检、收敛规则、输出契约和演进计划。
 - [docs/message-routing-rules.md](docs/message-routing-rules.md)：消息类型、路由条件和已实现规则。
 - [docs/dws-capabilities.md](docs/dws-capabilities.md)：项目使用的 DWS 能力。
 - [docs/dws-command-inventory.md](docs/dws-command-inventory.md)：本机 `dws` CLI 能力清单和安全边界。
