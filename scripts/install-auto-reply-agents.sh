@@ -8,11 +8,11 @@ domain="gui/$(id -u)"
 legacy_label_prefix="com.$(id -un).ceo-agent-service"
 plist_names=(
   "com.ceo-agent-service.main.plist"
+  "com.ceo-agent-service.audit-web.plist"
 )
 obsolete_labels=(
   "com.ceo-agent-service.reply-producer"
   "com.ceo-agent-service.reply-consumer"
-  "com.ceo-agent-service.audit-web"
 )
 legacy_labels=(
   "${legacy_label_prefix}.reply-producer"
@@ -25,7 +25,6 @@ legacy_labels=(
 obsolete_plist_names=(
   "com.ceo-agent-service.reply-producer.plist"
   "com.ceo-agent-service.reply-consumer.plist"
-  "com.ceo-agent-service.audit-web.plist"
 )
 legacy_plist_names=(
   "${legacy_label_prefix}.reply-producer.plist"

@@ -1,7 +1,6 @@
 import argparse
 import errno
 import json
-import multiprocessing
 import os
 import shlex
 import subprocess
@@ -1886,50 +1885,6 @@ def run_audit_web_command(
     )
 
 
-def _exit_audit_web_when_parent_stops(parent: multiprocessing.Process) -> None:
-    while parent.is_alive():
-        time.sleep(0.5)
-    os._exit(0)
-
-
-def _run_audit_web_process_target(
-    settings: WorkerSettings,
-    host: str,
-    port: int,
-) -> None:
-    parent = multiprocessing.parent_process()
-    if parent is not None:
-        threading.Thread(
-            target=_exit_audit_web_when_parent_stops,
-            args=(parent,),
-            name="ceo-agent-service-audit-parent-watch",
-            daemon=True,
-        ).start()
-    run_audit_web_command(settings, host=host, port=port)
-
-
-def run_audit_web_process(
-    settings: WorkerSettings,
-    *,
-    host: str,
-    port: int,
-    process_factory: Callable[..., multiprocessing.Process] | None = None,
-) -> None:
-    """Run the interactive audit server outside the worker interpreter."""
-    if process_factory is None:
-        process_factory = multiprocessing.get_context("spawn").Process
-    process = process_factory(
-        target=_run_audit_web_process_target,
-        kwargs={"settings": settings, "host": host, "port": port},
-        name="ceo-agent-service-audit-web",
-        daemon=True,
-    )
-    process.start()
-    process.join()
-    if process.exitcode not in (None, 0):
-        raise RuntimeError(f"audit-web process exited with status {process.exitcode}")
-
-
 def export_feedback_command(
     settings: WorkerSettings, output: Path, limit: int | None = None
 ) -> int:
@@ -2527,10 +2482,6 @@ def run_service(
     )
     dependency_gate = NetworkDependencyGate()
     components = (
-        (
-            "audit-web",
-            lambda: run_audit_web_process(settings, host=host, port=port),
-        ),
         (
             "database-backup",
             lambda: run_database_backup_loop(settings.db_path),
