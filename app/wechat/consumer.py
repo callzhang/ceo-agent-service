@@ -81,6 +81,10 @@ class WechatReplyConsumer:
         except Exception:
             pass
         prompt = build_wechat_turn_prompt(trigger, context)
+        self.store.mark_wechat_read_only_decision_started(
+            task.id,
+            expected_execution_generation=task.execution_generation,
+        )
         decision = self.runner.decide(prompt, None)
 
         if decision.action in (CodexAction.SEND_REPLY, CodexAction.ASK_CLARIFYING_QUESTION):

@@ -647,12 +647,22 @@ class CodexDecisionRunner:
         timeout_seconds: int = 1200,
         idle_timeout_seconds: int = 900,
         codex_home: Path | None = None,
+        approval_policy: str = "untrusted",
+        use_approval_bypass: bool = True,
+        developer_instructions: str | None = None,
+        command_mutator: Callable[[list[str]], None] | None = None,
     ):
+        if approval_policy not in {"untrusted", "never"}:
+            raise ValueError("unsupported approval policy")
         self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
         self.executor = executor or self._subprocess_executor
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
         self.codex_home = codex_home
+        self.approval_policy = approval_policy
+        self.use_approval_bypass = use_approval_bypass
+        self.developer_instructions = developer_instructions
+        self.command_mutator = command_mutator
         self.last_session_id: str | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
         self.last_transcript_start_line: int = 0
@@ -670,12 +680,7 @@ class CodexDecisionRunner:
         self.last_transcript_start_line = self._session_line_count(session_id)
         self.last_transcript_end_line = self.last_transcript_start_line
         first_raw = self.executor(
-            self.runner.build_command(
-                prompt,
-                session_id,
-                image_paths=image_paths,
-                ignore_user_config=True,
-            ),
+            self._build_command(prompt, session_id, image_paths=image_paths),
             prompt,
         )
         raw_outputs.append(first_raw)
@@ -711,11 +716,10 @@ class CodexDecisionRunner:
                 f"{REPLY_AGENT_ENVELOPE_SCHEMA_HINT}"
             )
             second_raw = self.executor(
-                self.runner.build_command(
+                self._build_command(
                     repair_prompt,
                     retry_session_id,
                     image_paths=image_paths,
-                    ignore_user_config=True,
                 ),
                 repair_prompt,
             )
@@ -786,6 +790,26 @@ class CodexDecisionRunner:
         session_id = extract_codex_session_id(raw)
         if session_id:
             self.last_session_id = session_id
+
+    def _build_command(
+        self,
+        prompt: str,
+        session_id: str | None,
+        *,
+        image_paths: list[Path] | None = None,
+    ) -> list[str]:
+        command = self.runner.build_command(
+            prompt,
+            session_id,
+            image_paths=image_paths,
+            ignore_user_config=True,
+            approval_policy=self.approval_policy,
+            developer_instructions=self.developer_instructions,
+            use_approval_bypass=self.use_approval_bypass,
+        )
+        if self.command_mutator is not None:
+            self.command_mutator(command)
+        return command
 
     def _timeout_session_decision(self, decision: CodexDecision) -> CodexDecision | None:
         if (
