@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import string
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -188,6 +189,8 @@ def service_mcp_url_is_safe(url: str) -> bool:
         or not url
         or "\\" in url
         or _contains_control_character(url)
+        or not _is_utf8_safe(url)
+        or _has_malformed_percent_escape(url)
         or any(character.isspace() for character in url)
     ):
         return False
@@ -302,6 +305,22 @@ def _resolve_server(
     )
     http_headers = _string_mapping(name, entry, "http_headers")
     env_http_headers = _environment_mapping(name, entry, "env_http_headers")
+    static_header_names = {header.casefold() for header, _ in http_headers}
+    environment_header_names = {
+        header.casefold() for header, _ in env_http_headers
+    }
+    if static_header_names & environment_header_names:
+        raise _ServerConfigProblem(
+            f"{name} cannot declare the same HTTP header in both "
+            "http_headers and env_http_headers"
+        )
+    if bearer_token_env_var and "authorization" in (
+        static_header_names | environment_header_names
+    ):
+        raise _ServerConfigProblem(
+            f"{name} cannot combine bearer_token_env_var with an "
+            "Authorization header source"
+        )
 
     if url is not None:
         _validate_url(name, url)
@@ -365,7 +384,7 @@ def _required_string(name: str, entry: dict[str, object], field: str) -> str:
             f"{name}.{field} must be a non-empty string",
             field=field,
         )
-    if "\0" in value or "\n" in value or "\r" in value:
+    if _contains_control_character(value) or not _is_utf8_safe(value):
         raise _ServerConfigProblem(
             f"{name}.{field} contains invalid characters",
             field=field,
@@ -411,7 +430,7 @@ def _required_environment_value(
             f"{name} environment variable {env_name} contains leading or trailing whitespace",
             field=field,
         )
-    if "\0" in value or "\n" in value or "\r" in value:
+    if _contains_control_character(value) or not _is_utf8_safe(value):
         raise _ServerConfigProblem(
             f"{name} environment variable {env_name} contains invalid characters",
             field=field,
@@ -448,10 +467,11 @@ def _string_list(name: str, value: object, *, field: str) -> tuple[str, ...]:
         and item
         and item == item.strip()
         and not _contains_control_character(item)
+        and _is_utf8_safe(item)
         for item in value
     ):
         raise _ServerConfigProblem(
-            f"{name}.{field} must be a JSON array of non-empty strings "
+            f"{name}.{field} must be a JSON array of non-empty UTF-8-safe strings "
             "without control characters"
         )
     return tuple(value)
@@ -468,9 +488,17 @@ def _string_mapping(
     if not isinstance(value, dict) or not value:
         raise _ServerConfigProblem(f"{name}.{field} must be a non-empty object")
     pairs: list[tuple[str, str]] = []
+    normalized_headers: set[str] = set()
     for header, header_value in value.items():
         if not _valid_header_name(header):
             raise _ServerConfigProblem(f"{name}.{field} has an invalid header name")
+        normalized_header = header.casefold()
+        if normalized_header in normalized_headers:
+            raise _ServerConfigProblem(
+                f"{name}.{field} cannot declare duplicate HTTP header names "
+                "case-insensitively"
+            )
+        normalized_headers.add(normalized_header)
         if header.casefold() in _SENSITIVE_STATIC_HEADERS:
             raise _ServerConfigProblem(
                 f"{name}.{field} must reference secrets through bearer_token_env_var or env_http_headers"
@@ -480,9 +508,10 @@ def _string_mapping(
             or not header_value
             or header_value != header_value.strip()
             or _contains_control_character(header_value)
+            or not _is_utf8_safe(header_value)
         ):
             raise _ServerConfigProblem(
-                f"{name}.{field} header values must be non-empty strings "
+                f"{name}.{field} header values must be non-empty UTF-8-safe strings "
                 "without control characters"
             )
         pairs.append((header, header_value))
@@ -500,9 +529,17 @@ def _environment_mapping(
     if not isinstance(value, dict) or not value:
         raise _ServerConfigProblem(f"{name}.{field} must be a non-empty object")
     pairs: list[tuple[str, str]] = []
+    normalized_headers: set[str] = set()
     for header, env_name in value.items():
         if not _valid_header_name(header):
             raise _ServerConfigProblem(f"{name}.{field} has an invalid header name")
+        normalized_header = header.casefold()
+        if normalized_header in normalized_headers:
+            raise _ServerConfigProblem(
+                f"{name}.{field} cannot declare duplicate HTTP header names "
+                "case-insensitively"
+            )
+        normalized_headers.add(normalized_header)
         if not isinstance(env_name, str) or not _valid_environment_name(env_name):
             raise _ServerConfigProblem(
                 f"{name}.{field} values must name environment variables"
@@ -529,7 +566,30 @@ def _valid_server_name(value: object) -> bool:
 
 
 def _contains_control_character(value: str) -> bool:
-    return any(ord(character) < 32 or ord(character) == 127 for character in value)
+    return any(unicodedata.category(character) == "Cc" for character in value)
+
+
+def _is_utf8_safe(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _has_malformed_percent_escape(value: str) -> bool:
+    index = 0
+    while True:
+        index = value.find("%", index)
+        if index < 0:
+            return False
+        if (
+            index + 2 >= len(value)
+            or value[index + 1] not in string.hexdigits
+            or value[index + 2] not in string.hexdigits
+        ):
+            return True
+        index += 3
 
 
 def _valid_environment_name(value: str) -> bool:

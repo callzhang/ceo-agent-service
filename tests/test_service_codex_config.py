@@ -222,7 +222,7 @@ def test_malformed_args_environment_does_not_leak_its_value(tmp_path: Path) -> N
     assert secret not in str(exc_info.value)
 
 
-@pytest.mark.parametrize("control", ["\0", "\x1f", "\x7f"])
+@pytest.mark.parametrize("control", ["\0", "\x1f", "\x7f", "\x85"])
 def test_static_command_args_reject_embedded_control_characters(
     tmp_path: Path,
     control: str,
@@ -236,7 +236,8 @@ def test_static_command_args_reject_embedded_control_characters(
         service_mcp_config_options(path=manifest, env={})
 
     assert exc_info.value.reason == (
-        "stdio.args must be a JSON array of non-empty strings without control characters"
+        "stdio.args must be a JSON array of non-empty UTF-8-safe strings "
+        "without control characters"
     )
     assert control not in str(exc_info.value)
 
@@ -261,12 +262,13 @@ def test_environment_command_args_reject_embedded_control_characters(
         )
 
     assert exc_info.value.reason == (
-        "stdio.SERVICE_MCP_ARGS_JSON must be a JSON array of non-empty strings "
+        "stdio.SERVICE_MCP_ARGS_JSON must be a JSON array of non-empty "
+        "UTF-8-safe strings "
         "without control characters"
     )
 
 
-@pytest.mark.parametrize("control", ["\0", "\x1f", "\x7f"])
+@pytest.mark.parametrize("control", ["\0", "\x1f", "\x7f", "\x85"])
 def test_static_http_header_values_reject_embedded_control_characters(
     tmp_path: Path,
     control: str,
@@ -285,10 +287,199 @@ def test_static_http_header_values_reject_embedded_control_characters(
         service_mcp_config_options(path=manifest, env={})
 
     assert exc_info.value.reason == (
-        "remote.http_headers header values must be non-empty strings "
+        "remote.http_headers header values must be non-empty UTF-8-safe strings "
         "without control characters"
     )
     assert control not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("control", ["\t", "\x01", "\x7f", "\x85"])
+def test_environment_http_header_values_reject_all_control_characters(
+    tmp_path: Path,
+    control: str,
+) -> None:
+    manifest = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "remote": {
+                "url": "https://service.example/mcp/",
+                "env_http_headers": {"X-Service-Mode": "SERVICE_MODE"},
+            }
+        },
+    )
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        service_mcp_config_options(
+            path=manifest,
+            env={"SERVICE_MODE": f"before{control}after"},
+        )
+
+    assert exc_info.value.reason == (
+        "remote environment variable SERVICE_MODE contains invalid characters"
+    )
+    assert control not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("server", "expected_reason"),
+    [
+        (
+            {"url": "https://service.example/mcp/\ud800"},
+            "remote.url contains invalid characters",
+        ),
+        (
+            {"command": "/opt/service/\ud800"},
+            "remote.command contains invalid characters",
+        ),
+        (
+            {"command": "/opt/service/mcp", "args": ["before\ud800after"]},
+            "remote.args must be a JSON array of non-empty UTF-8-safe strings "
+            "without control characters",
+        ),
+        (
+            {
+                "url": "https://service.example/mcp/",
+                "http_headers": {"X-Service-Mode": "before\ud800after"},
+            },
+            "remote.http_headers header values must be non-empty UTF-8-safe strings "
+            "without control characters",
+        ),
+    ],
+    ids=["url", "command", "args", "static-header"],
+)
+def test_manifest_transport_values_reject_lone_unicode_surrogates(
+    tmp_path: Path,
+    server: dict[str, object],
+    expected_reason: str,
+) -> None:
+    manifest = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {"remote": server},
+    )
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        service_mcp_config_options(path=manifest, env={})
+
+    assert exc_info.value.reason == expected_reason
+    assert "\ud800" not in str(exc_info.value)
+
+
+def test_environment_http_header_value_rejects_lone_unicode_surrogate(
+    tmp_path: Path,
+) -> None:
+    manifest = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "remote": {
+                "url": "https://service.example/mcp/",
+                "env_http_headers": {"X-Service-Mode": "SERVICE_MODE"},
+            }
+        },
+    )
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        service_mcp_config_options(path=manifest, env={"SERVICE_MODE": "\ud800"})
+
+    assert exc_info.value.reason == (
+        "remote environment variable SERVICE_MODE contains invalid characters"
+    )
+    assert "\ud800" not in str(exc_info.value)
+
+
+def test_http_header_sources_cannot_overlap_case_insensitively(
+    tmp_path: Path,
+) -> None:
+    manifest = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "remote": {
+                "url": "https://service.example/mcp/",
+                "http_headers": {"X-Service-Mode": "static"},
+                "env_http_headers": {"x-service-mode": "SERVICE_MODE"},
+            }
+        },
+    )
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        service_mcp_config_options(
+            path=manifest,
+            env={"SERVICE_MODE": "environment"},
+        )
+
+    assert exc_info.value.reason == (
+        "remote cannot declare the same HTTP header in both "
+        "http_headers and env_http_headers"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "values", "env"),
+    [
+        (
+            "http_headers",
+            {"X-Service-Mode": "first", "x-service-mode": "second"},
+            {},
+        ),
+        (
+            "env_http_headers",
+            {"X-Service-Mode": "FIRST_MODE", "x-service-mode": "SECOND_MODE"},
+            {"FIRST_MODE": "first", "SECOND_MODE": "second"},
+        ),
+    ],
+)
+def test_each_http_header_source_rejects_case_insensitive_duplicates(
+    tmp_path: Path,
+    field: str,
+    values: dict[str, str],
+    env: dict[str, str],
+) -> None:
+    manifest = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "remote": {
+                "url": "https://service.example/mcp/",
+                field: values,
+            }
+        },
+    )
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        service_mcp_config_options(path=manifest, env=env)
+
+    assert exc_info.value.reason == (
+        f"remote.{field} cannot declare duplicate HTTP header names "
+        "case-insensitively"
+    )
+
+
+def test_bearer_token_cannot_overlap_authorization_header_source(
+    tmp_path: Path,
+) -> None:
+    manifest = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "remote": {
+                "url": "https://service.example/mcp/",
+                "bearer_token_env_var": "SERVICE_TOKEN",
+                "env_http_headers": {"aUtHoRiZaTiOn": "AUTHORIZATION_HEADER"},
+            }
+        },
+    )
+    secret = "must-not-appear"
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        service_mcp_config_options(
+            path=manifest,
+            env={
+                "SERVICE_TOKEN": secret,
+                "AUTHORIZATION_HEADER": f"Bearer {secret}",
+            },
+        )
+
+    assert exc_info.value.reason == (
+        "remote cannot combine bearer_token_env_var with an Authorization header source"
+    )
+    assert secret not in str(exc_info.value)
 
 
 def test_malformed_http_header_name_is_rejected(tmp_path: Path) -> None:
@@ -315,6 +506,9 @@ def test_malformed_http_header_name_is_rejected(tmp_path: Path) -> None:
         "https://:443/mcp",
         "https://exam ple.com/mcp",
         "https://[::1/mcp",
+        "https://service.example/mcp/%",
+        "https://service.example/mcp/%2",
+        "https://service.example/mcp/%GG",
     ],
 )
 def test_malformed_manifest_urls_raise_typed_error_without_echoing_value(
