@@ -395,6 +395,11 @@ The summary capability is presentation metadata rather than a task requirement;
 leaving it to the installed CLI avoids a model-cache schema update preventing a
 durable task from starting.
 
+The Agent result parser accepts Codex's current `response_item` output and
+canonicalizes only `error: null` to the explicit empty error object. All other
+result fields remain subject to the committed strict schema, so malformed or
+ambiguous decisions still fail instead of being guessed.
+
 Direct Agent and reconciliation invocations ignore personal Codex user config.
 They receive the service-selected model and reviewed MCP configuration explicitly,
 so interactive plugins or UI-only settings cannot prevent durable queue recovery.

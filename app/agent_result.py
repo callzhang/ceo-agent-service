@@ -127,8 +127,23 @@ def parse_typed_agent_result(
             continue
         try:
             normalized = _normalize_result_text(candidate)
-            return model_type.model_validate_json(normalized)
-        except (ResultParseError, ValidationError) as exc:
+            candidate_payload = json.loads(normalized)
+            if (
+                model_type is AgentResult
+                and isinstance(candidate_payload, dict)
+                and candidate_payload.get("outcome")
+                in {"completed", "no_action", "needs_human"}
+                and candidate_payload.get("error") is None
+            ):
+                candidate_payload["error"] = {
+                    "code": "",
+                    "retryable": False,
+                    "authorization_required": False,
+                }
+            return model_type.model_validate_json(
+                json.dumps(candidate_payload, ensure_ascii=False, separators=(",", ":"))
+            )
+        except (json.JSONDecodeError, ResultParseError, ValidationError) as exc:
             raise ResultParseError(
                 "latest agent result candidate is malformed or does not match the strict schema"
             ) from exc

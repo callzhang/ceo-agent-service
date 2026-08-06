@@ -387,6 +387,8 @@ recruiting, sales, finance, admin, HR, other
 
 钉钉 Todo 是 owner 执行层，不替代 `/tasks` 里的内部项目管理视图。只有明确 owner、due time、非敏感且未完成的高置信 TODO 会创建钉钉 Todo；Derek 默认不作为执行人加入。内部 `work_todos` 仍是主数据，钉钉 Todo 只同步创建、完成状态拉取和有强证据时的完成推送。发送 follow-up 前会先检查已关联的钉钉 Todo 状态：如果钉钉侧已经完成，系统会关闭内部 TODO 并跳过提醒，避免重复催办。
 
+Follow-up 发送使用稳定的幂等键。若钉钉返回登录、权限或已识别的目标错误，服务保留明确原因；若发送命令仅返回无业务码的未知结果，服务将草稿延迟重试并复用同一幂等键，而不是标记为不可恢复的失败。重复请求会由钉钉幂等回执收敛，避免重复催办。
+
 可见性：
 
 - `/tasks/{project_id}` 的每个 TODO 下会显示钉钉 Todo 的 task id、状态、最近 pull/push 时间和错误。
