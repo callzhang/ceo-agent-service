@@ -163,6 +163,19 @@ def test_codex_command_can_preserve_native_model_config(tmp_path: Path, monkeypa
     assert "model_provider" not in command_text
 
 
+def test_codex_command_does_not_require_reasoning_summary_support(tmp_path: Path):
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="hello",
+        session_id=None,
+        preserve_native_model_config=True,
+    )
+
+    assert not any(
+        item.startswith("model_reasoning_summary=")
+        for item in command
+    )
+
+
 def test_codex_command_exposes_default_passthrough_mcps_from_codex_config(
     tmp_path: Path, monkeypatch
 ):
@@ -813,8 +826,6 @@ def test_builds_new_thread_command(tmp_path: Path):
         "-c",
         'approvals_reviewer="auto_review"',
         "-c",
-        'model_reasoning_summary="concise"',
-        "-c",
         "include_permissions_instructions=false",
         "-c",
         "include_apps_instructions=false",
@@ -858,8 +869,6 @@ def test_builds_resume_command(tmp_path: Path):
         'approval_policy="untrusted"',
         "-c",
         'approvals_reviewer="auto_review"',
-        "-c",
-        'model_reasoning_summary="concise"',
         "-c",
         "include_permissions_instructions=false",
         "-c",
