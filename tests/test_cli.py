@@ -4068,6 +4068,26 @@ def test_run_audit_web_process_surfaces_child_failure(tmp_path):
         )
 
 
+def test_audit_web_child_exits_when_parent_stops(monkeypatch):
+    class StoppedParent:
+        def is_alive(self):
+            return False
+
+    class ParentStopped(Exception):
+        pass
+
+    monkeypatch.setattr(
+        cli.os,
+        "_exit",
+        lambda status: (_ for _ in ()).throw(ParentStopped(status)),
+    )
+
+    with pytest.raises(ParentStopped) as exc_info:
+        cli._exit_audit_web_when_parent_stops(StoppedParent())
+
+    assert exc_info.value.args == (0,)
+
+
 def test_export_feedback_command_writes_reviewed_attempts_jsonl(tmp_path, capsys):
     settings = WorkerSettings(
         workspace=tmp_path / "workspace",

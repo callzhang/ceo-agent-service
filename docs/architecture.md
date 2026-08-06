@@ -24,7 +24,7 @@ CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 D
 - 审计页面：默认 `http://127.0.0.1:8765`
 - 运行库：默认 `~/Library/Application Support/ceo-agent-service/auto-reply.sqlite3`
 
-`service` 模式保留一个 launchd job：主进程运行数据库备份、消息 producer/consumer、会议处理、任务维护和可选微信组件；它受监督地启动独立审计 Web 子进程。页面不再与持续 worker 争用同一 Python 解释器；默认 History 在 Web 进程启动时预热，刷新期间继续返回最近一次完整页面。任一进程退出都会使 launchd 重启整个可恢复服务。服务启动时只恢复当前队列和可安全恢复的运行状态；结果未知的写操作不会作为普通失败自动重试。
+`service` 模式保留一个 launchd job：主进程运行数据库备份、消息 producer/consumer、会议处理、任务维护和可选微信组件；它受监督地启动独立审计 Web 子进程，子进程会在主进程终止时自行退出。页面不再与持续 worker 争用同一 Python 解释器；默认 History 在 Web 进程启动时预热，刷新期间继续返回最近一次完整页面。任一进程退出都会使 launchd 重启整个可恢复服务。服务启动时只恢复当前队列和可安全恢复的运行状态；结果未知的写操作不会作为普通失败自动重试。
 
 ## 权威处理流
 

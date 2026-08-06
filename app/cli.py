@@ -1886,6 +1886,28 @@ def run_audit_web_command(
     )
 
 
+def _exit_audit_web_when_parent_stops(parent: multiprocessing.Process) -> None:
+    while parent.is_alive():
+        time.sleep(0.5)
+    os._exit(0)
+
+
+def _run_audit_web_process_target(
+    settings: WorkerSettings,
+    host: str,
+    port: int,
+) -> None:
+    parent = multiprocessing.parent_process()
+    if parent is not None:
+        threading.Thread(
+            target=_exit_audit_web_when_parent_stops,
+            args=(parent,),
+            name="ceo-agent-service-audit-parent-watch",
+            daemon=True,
+        ).start()
+    run_audit_web_command(settings, host=host, port=port)
+
+
 def run_audit_web_process(
     settings: WorkerSettings,
     *,
@@ -1897,7 +1919,7 @@ def run_audit_web_process(
     if process_factory is None:
         process_factory = multiprocessing.get_context("spawn").Process
     process = process_factory(
-        target=run_audit_web_command,
+        target=_run_audit_web_process_target,
         kwargs={"settings": settings, "host": host, "port": port},
         name="ceo-agent-service-audit-web",
         daemon=True,
