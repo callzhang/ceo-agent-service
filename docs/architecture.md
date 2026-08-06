@@ -67,6 +67,7 @@ Direct Agent 使用本机 Codex 原生配置暴露的 MCP、plugin、App、shell
 | `app.agent_runner.DirectAgentRunner` | 复用仍存在的对话 Codex session；若持久化指针对应的本地 session 已缺失，则清理旧指针并从新 session 继续，避免 `codex exec resume` 在任务启动前失败 |
 | `app.native_cli_metadata` | 为已审阅 CLI/MCP 能力提供结构化 effect metadata |
 | `app.store.AutoReplyStore` | 持久化任务、agent run、append-only events、attempt、delivery 和回执 |
+| `app.quality_gate` | 对所有必需持久化队列做 fail-closed 覆盖检查，区分须恢复的 violation 与正常进行中的 attention |
 | `app.audit_web` | 本地审计、人工核对和受保护的 mutation API |
 | `app.wechat.sender` | 通过 generation-aware 原子 claim 发送当前微信 delivery |
 
@@ -137,6 +138,22 @@ Direct Agent 按 OA skill 工作：
 
 外部可见动作必须留下本地事件或回执。Recoverable failed/blocked 不能伪装成完成；不可恢复原因必须明确落库，避免每轮重复处理。
 
+## 质量巡检与收敛
+
+`quality-check` 是独立于审计页面的 fail-closed 状态检查。它验证所有必需 SQLite
+事实源都可检查，并扫描失败、陈旧 processing、到期未领取、未解决的最新 trigger、
+未知副作用、逾期 follow-up、外部投递状态、未处理反馈和近期服务错误。它同时附加
+DingTalk/Lark channel gate；结果写入本地机器可读状态文件。
+
+巡检的输出分为 `violations` 与 `attention`：前者使命令非零退出，后者表示新鲜的
+排队或恢复进行中。回复 attempt 以 `channel + conversation_id + trigger_message_id`
+取最新行，避免已经由后续 `sent` 或 `skipped` 收敛的旧 `blocked` 持续报警。
+
+巡检只发现并保留证据，不直接重放外部写入。写入结果未知时由只读 reconciliation
+核对；确认未发生后，才允许创建新的 generation。完整的事实源矩阵、阈值、JSON
+契约、测试不变量和待实现的 72 小时/增量检查见
+[docs/quality-inspection.md](quality-inspection.md)。
+
 ## 其他链路
 
 - 会议对齐使用 `meeting_alignment_jobs` 和 `meeting_alignment_runs` 独立排队。
@@ -164,6 +181,7 @@ Direct Agent 按 OA skill 工作：
 | OA 为什么不能执行 | live DWS detail/任务归属事件、result、回执 |
 | 微信旧文案为何未发 | task generation、delivery generation、claim 状态 |
 | 工具或权限 | channel gate、`service_state`、`errors` |
+| 质量门为什么失败或漏检 | `hourly-quality-gate.json`、`quality-check` JSON、[质量巡检文档](quality-inspection.md) |
 
 常用只读命令：
 
@@ -172,6 +190,7 @@ ceo-agent produce-once
 ceo-agent consume-once
 ceo-agent run-once
 ceo-agent audit-web --host 127.0.0.1 --port 8765
+ceo-agent quality-check --db "$CEO_WORKER_DB"
 ```
 
 ## 相关文档
@@ -180,6 +199,7 @@ ceo-agent audit-web --host 127.0.0.1 --port 8765
 - `docs/product-logic.md`：产品规则和业务处理逻辑。
 - `docs/message-routing-rules.md`：消息路由规则。
 - `docs/reply-worker-reliability.md`：Direct Agent 回复链路可靠性。
+- `docs/quality-inspection.md`：质量巡检覆盖、阈值、收敛规则和演进边界。
 - `docs/dws-capabilities.md`：DWS 能力说明。
 - `docs/agent-installation-runbook.md`：安装和初始化。
 - `docs/superpowers/plans/`：历史计划，仅用于设计追溯。

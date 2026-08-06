@@ -493,7 +493,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "--verify-channels",
                 action=argparse.BooleanOptionalAction,
                 default=_env_bool("CEO_QUALITY_CHECK_VERIFY_CHANNELS", True),
-                help="run live DingTalk and WeChat channel health checks",
+                help="run live DingTalk and Lark channel health checks",
             )
         if command == "feedback":
             subparser.add_argument("--attempt-id", type=int, required=True)
