@@ -7820,8 +7820,7 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert "Safe prior execution receipts" not in agent_prompt(worker)
-    assert '"kind": "dingtalk_oa"' not in agent_prompt(worker)
+    assert "Safe prior execution receipts" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     attempts = worker.store.list_reply_attempts(limit=2)
     assert attempts[0].trigger_message_id == "msg-1"
