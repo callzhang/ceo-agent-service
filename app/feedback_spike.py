@@ -26,12 +26,16 @@ class FeedbackSpikeLinkMessage:
 class FeedbackReplyText:
     feedback_token: str
     text: str
+    callback_url_up: str = ""
+    callback_url_down: str = ""
 
 
 @dataclass(frozen=True)
 class PreparedOutgoingReplyText:
     feedback_token: str
     text: str
+    callback_url_up: str = ""
+    callback_url_down: str = ""
 
 
 @dataclass(frozen=True)
@@ -247,7 +251,12 @@ def append_feedback_links(
         feedback_token=feedback_token,
         link_prefix=link_prefix,
     )
-    return FeedbackReplyText(feedback_token=message.feedback_token, text=message.text)
+    return FeedbackReplyText(
+        feedback_token=message.feedback_token,
+        text=message.text,
+        callback_url_up=message.callback_url_up,
+        callback_url_down=message.callback_url_down,
+    )
 
 
 def prepare_outgoing_reply_text(
@@ -274,6 +283,8 @@ def prepare_outgoing_reply_text(
     return PreparedOutgoingReplyText(
         feedback_token=feedback_reply.feedback_token,
         text=feedback_reply.text,
+        callback_url_up=feedback_reply.callback_url_up,
+        callback_url_down=feedback_reply.callback_url_down,
     )
 
 
@@ -290,11 +301,11 @@ def send_feedback_spike_links(
     dws_client: DwsClient | None = None,
     preview: bool = False,
 ) -> dict[str, object]:
-    message = build_feedback_spike_link_message(
-        vercel_base_url=vercel_base_url,
+    message = prepare_outgoing_reply_text(
         reply_text=reply_text,
         original_text=original_text,
         attempt_id=attempt_id,
+        feedback_base_url=vercel_base_url,
     )
     client = dws_client or DwsClient(dws_bin=dws_bin)
     command = client.build_send_message_command(
@@ -302,7 +313,7 @@ def send_feedback_spike_links(
         message.text,
         user_id=user_id,
         open_dingtalk_id=open_dingtalk_id,
-        title=reply_text,
+        title=append_signature(reply_text),
     )
     result: dict[str, object] = {
         "feedback_token": message.feedback_token,
@@ -320,6 +331,6 @@ def send_feedback_spike_links(
         message.text,
         user_id=user_id,
         open_dingtalk_id=open_dingtalk_id,
-        title=reply_text,
+        title=append_signature(reply_text),
     )
     return result
