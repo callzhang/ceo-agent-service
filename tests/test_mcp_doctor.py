@@ -87,6 +87,26 @@ def test_mcp_doctor_reports_missing_service_manifest(tmp_path: Path) -> None:
     )
 
 
+def test_mcp_doctor_reports_invalid_utf8_manifest_as_malformed_config(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "service-mcp.json"
+    config.write_bytes(b'{"servers":"must-not-appear\xff"}')
+
+    statuses = check_mcp_statuses(service_config_path=config, env={})
+
+    assert statuses == [
+        McpStatus(
+            name="service_mcp_config",
+            state="missing_config",
+            ready=False,
+            reason="service MCP manifest is not valid UTF-8",
+            recover_command="configure CEO_SERVICE_MCP_CONFIG_PATH",
+        )
+    ]
+    assert "must-not-appear" not in repr(statuses)
+
+
 def test_mcp_doctor_reports_missing_xiaoqing_command_without_secret_values(
     tmp_path: Path,
 ) -> None:

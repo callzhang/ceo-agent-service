@@ -187,7 +187,8 @@ def service_mcp_url_is_safe(url: str) -> bool:
         not isinstance(url, str)
         or not url
         or "\\" in url
-        or any(character.isspace() or ord(character) < 32 for character in url)
+        or _contains_control_character(url)
+        or any(character.isspace() for character in url)
     ):
         return False
     try:
@@ -221,6 +222,11 @@ def _read_manifest(path: Path) -> dict[str, object]:
         )
     except OSError:
         raise _manifest_error(path, "service MCP manifest cannot be read") from None
+    except UnicodeDecodeError:
+        raise _manifest_error(
+            path,
+            "service MCP manifest is not valid UTF-8",
+        ) from None
     except json.JSONDecodeError:
         raise _manifest_error(path, "service MCP manifest is not valid JSON") from None
     except _DuplicateJsonKey:
@@ -438,11 +444,15 @@ def _resolve_args(
 
 def _string_list(name: str, value: object, *, field: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(
-        isinstance(item, str) and item and item == item.strip()
+        isinstance(item, str)
+        and item
+        and item == item.strip()
+        and not _contains_control_character(item)
         for item in value
     ):
         raise _ServerConfigProblem(
-            f"{name}.{field} must be a JSON array of non-empty strings"
+            f"{name}.{field} must be a JSON array of non-empty strings "
+            "without control characters"
         )
     return tuple(value)
 
@@ -469,11 +479,11 @@ def _string_mapping(
             not isinstance(header_value, str)
             or not header_value
             or header_value != header_value.strip()
-            or "\n" in header_value
-            or "\r" in header_value
+            or _contains_control_character(header_value)
         ):
             raise _ServerConfigProblem(
-                f"{name}.{field} header values must be non-empty strings"
+                f"{name}.{field} header values must be non-empty strings "
+                "without control characters"
             )
         pairs.append((header, header_value))
     return tuple(pairs)
@@ -516,6 +526,10 @@ def _valid_server_name(value: object) -> bool:
         and value.isascii()
         and all(character.isalnum() or character in "_-" for character in value)
     )
+
+
+def _contains_control_character(value: str) -> bool:
+    return any(ord(character) < 32 or ord(character) == 127 for character in value)
 
 
 def _valid_environment_name(value: str) -> bool:

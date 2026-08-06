@@ -222,6 +222,75 @@ def test_malformed_args_environment_does_not_leak_its_value(tmp_path: Path) -> N
     assert secret not in str(exc_info.value)
 
 
+@pytest.mark.parametrize("control", ["\0", "\x1f", "\x7f"])
+def test_static_command_args_reject_embedded_control_characters(
+    tmp_path: Path,
+    control: str,
+) -> None:
+    manifest = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {"stdio": {"command": "/opt/service/mcp", "args": [f"before{control}after"]}},
+    )
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        service_mcp_config_options(path=manifest, env={})
+
+    assert exc_info.value.reason == (
+        "stdio.args must be a JSON array of non-empty strings without control characters"
+    )
+    assert control not in str(exc_info.value)
+
+
+def test_environment_command_args_reject_embedded_control_characters(
+    tmp_path: Path,
+) -> None:
+    manifest = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "stdio": {
+                "command": "/opt/service/mcp",
+                "args_env": "SERVICE_MCP_ARGS_JSON",
+            }
+        },
+    )
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        service_mcp_config_options(
+            path=manifest,
+            env={"SERVICE_MCP_ARGS_JSON": '["before\\u0001after"]'},
+        )
+
+    assert exc_info.value.reason == (
+        "stdio.SERVICE_MCP_ARGS_JSON must be a JSON array of non-empty strings "
+        "without control characters"
+    )
+
+
+@pytest.mark.parametrize("control", ["\0", "\x1f", "\x7f"])
+def test_static_http_header_values_reject_embedded_control_characters(
+    tmp_path: Path,
+    control: str,
+) -> None:
+    manifest = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "remote": {
+                "url": "https://service.example/mcp/",
+                "http_headers": {"X-Service-Mode": f"before{control}after"},
+            }
+        },
+    )
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        service_mcp_config_options(path=manifest, env={})
+
+    assert exc_info.value.reason == (
+        "remote.http_headers header values must be non-empty strings "
+        "without control characters"
+    )
+    assert control not in str(exc_info.value)
+
+
 def test_malformed_http_header_name_is_rejected(tmp_path: Path) -> None:
     manifest = _write_manifest(
         tmp_path / "service-mcp.json",
@@ -265,3 +334,17 @@ def test_malformed_manifest_urls_raise_typed_error_without_echoing_value(
         "remote URL must be a valid http(s) URL without credentials, query, or fragment"
     )
     assert malformed_url not in str(exc_info.value)
+
+
+def test_invalid_utf8_manifest_raises_typed_error_without_echoing_bytes(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_bytes(b'{"servers":{"remote":{"url":"must-not-appear\xff"}}}')
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        load_service_mcp_servers(path=manifest, env={})
+
+    assert exc_info.value.server_name == "service_mcp_config"
+    assert exc_info.value.reason == "service MCP manifest is not valid UTF-8"
+    assert "must-not-appear" not in str(exc_info.value)
