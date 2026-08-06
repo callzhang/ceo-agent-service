@@ -167,6 +167,27 @@ def test_recovery_keeps_unknown_when_read_only_history_has_no_confirmation(
     assert recovered[0].error == "sender_execution_interrupted"
 
 
+def test_recovery_uses_explicit_account_with_ipc_style_reader(store):
+    delivery = _seed_delivery(store)
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "send_unknown",
+        error="sender_execution_interrupted",
+    )
+    account = object()
+
+    class Reader:
+        @staticmethod
+        def read_messages(requested_account, *_args, **_kwargs):
+            assert requested_account is account
+            return [SimpleNamespace(direction="outbound", text="收到")]
+
+    recovered = reconcile_incomplete_deliveries(store, Reader(), account=account)
+
+    assert recovered[0].status == "sent"
+
+
 def test_open_target_waits_for_async_composer_after_session_click():
     row = object()
     composer = object()

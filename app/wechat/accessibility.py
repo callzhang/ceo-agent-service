@@ -261,7 +261,8 @@ def reconcile_incomplete_deliveries(store, reader, *, account=None) -> list:
         + store.list_wechat_deliveries_by_status("send_unknown")
     )
     for delivery in uncertain:
-        if reader is None or getattr(reader, "account", None) is None:
+        resolved_account = account or getattr(reader, "account", None)
+        if reader is None or resolved_account is None:
             store.set_wechat_delivery_status(
                 delivery.id,
                 "send_unknown",
@@ -271,7 +272,7 @@ def reconcile_incomplete_deliveries(store, reader, *, account=None) -> list:
             updated.append(refreshed if refreshed is not None else delivery)
             continue
         try:
-            confirmed = _outbound_exists(reader, delivery, account=account)
+            confirmed = _outbound_exists(reader, delivery, account=resolved_account)
         except Exception:
             store.set_wechat_delivery_status(
                 delivery.id,
