@@ -613,6 +613,62 @@ def test_scan_pending_oa_approvals_requeues_when_a_new_remark_arrives(tmp_path):
     assert scan_pending_oa_approvals(store, dws, now=now) == 1
 
 
+def test_scan_pending_oa_approvals_does_not_requeue_for_own_remark(tmp_path):
+    class FakeDws:
+        latest_operation_time = 1
+        latest_operation_user_id = "requester"
+
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [DwsOaApprovalCandidate(process_instance_id="proc-1", title="付款申请")]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_approval_detail(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {
+                "result": {
+                    "operationRecords": [
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": 1,
+                            "userId": "requester",
+                        },
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": self.latest_operation_time,
+                            "userId": self.latest_operation_user_id,
+                        },
+                    ]
+                }
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    now = datetime.fromisoformat("2026-07-31T19:00:00+08:00")
+
+    assert scan_pending_oa_approvals(store, dws, now=now) == 1
+    dws.latest_operation_time = 2
+    dws.latest_operation_user_id = "principal-user-1"
+
+    assert scan_pending_oa_approvals(store, dws, now=now) == 0
+
+
 def test_scan_pending_oa_approvals_skips_when_current_task_id_is_missing(tmp_path):
     class FakeDws:
         def list_pending_oa_approvals(self, *, page, size, start, end):

@@ -61,7 +61,8 @@ def test_context_renders_reference_and_command_without_resolved_body():
     assert "dws doc info" in rendered
     assert "resolved_content" not in rendered
     assert "Trusted" not in rendered
-    assert "评论已提交" not in rendered
+    assert "Safe prior execution receipts" in rendered
+    assert "评论已提交" in rendered
 
 
 def test_context_contains_only_the_agreed_business_rules():

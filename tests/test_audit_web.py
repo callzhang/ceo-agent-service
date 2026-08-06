@@ -716,6 +716,19 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
         send_status="sent",
     )
     store.record_reply_attempt(
+        conversation_id="cid-agent-approval-history",
+        conversation_title="Agent Approval Search Group",
+        trigger_message_id="msg-agent-approval-history",
+        trigger_sender="Derek OA",
+        trigger_text="风险预算审批扫描已完成审阅",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-agent-history-filter",
+        oa_task_id="task-agent-history-filter",
+        oa_action="review",
+        send_status="needs_human",
+    )
+    store.record_reply_attempt(
         conversation_id="cid-approval-history",
         conversation_title="Approval Search Group",
         trigger_message_id="msg-approval-history",
@@ -762,6 +775,7 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
     assert 'name="object_type" value="meeting" checked' in default_html
     assert "History Search Group" in default_html
     assert "Approval Search Group" in default_html
+    assert "Agent Approval Search Group" in default_html
     assert "Task Search Group" in default_html
     assert "相似 Codex sessions" in default_html
 
@@ -783,6 +797,7 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
         query_embedding=[1.0, 0.0],
     )
     assert "Approval Search Group" in approval_only_html
+    assert "Agent Approval Search Group" in approval_only_html
     assert "History Search Group" not in approval_only_html
     assert "Task Search Group" not in approval_only_html
     assert "相似 Codex sessions" not in approval_only_html
@@ -3836,6 +3851,43 @@ def test_attempt_detail_renders_oa_comment_status(tmp_path: Path):
         in html
     )
     assert 'class="pill status-action action-state-returned">🧾 退回</span>' in html
+
+
+def test_oa_attempt_detail_links_to_later_verified_action_for_same_process(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    blocked_id = store.record_reply_attempt(
+        conversation_id="cid-original",
+        conversation_title="审批通知",
+        trigger_message_id="msg-original",
+        trigger_sender="工作通知",
+        trigger_text="审批提醒",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="comment",
+        send_status="blocked",
+    )
+    verified_id = store.record_reply_attempt(
+        conversation_id="cid-follow-up",
+        conversation_title="审批待办",
+        trigger_message_id="msg-follow-up",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="approve",
+        send_status="completed",
+    )
+
+    status, html = render_attempt_detail(store, blocked_id)
+
+    assert status == 200
+    assert f"已由 #{verified_id} 后续处理" in html
 
 
 def test_attempt_history_and_detail_render_calendar_response_metadata(

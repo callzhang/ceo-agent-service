@@ -1659,7 +1659,7 @@ def resolve_agent_run_command(
     reason: str,
     actor: str,
 ) -> dict[str, object]:
-    resolved = AutoReplyStore(settings.db_path).resolve_unknown_agent_run_manually(
+    resolved = AutoReplyStore(settings.db_path).resolve_agent_run_manually(
         run_id,
         expected_execution_generation=execution_generation,
         resolution=resolution,

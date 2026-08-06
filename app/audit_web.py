@@ -5653,8 +5653,6 @@ def _later_attempt_for_display(
         ):
             if (
                 candidate.id > attempt.id
-                and candidate.conversation_id == attempt.conversation_id
-                and candidate.trigger_message_id == attempt.trigger_message_id
                 and candidate.oa_action.strip()
             ):
                 return candidate
@@ -6663,7 +6661,7 @@ def handle_agent_run_resolution_post(
     missing = [name for name in required if payload.get(name) in {None, ""}]
     if missing:
         raise ValueError(f"missing manual reconciliation fields: {', '.join(missing)}")
-    resolved = store.resolve_unknown_agent_run_manually(
+    resolved = store.resolve_agent_run_manually(
         int(payload["run_id"]),
         expected_execution_generation=str(payload["execution_generation"]),
         resolution=str(payload["resolution"]),

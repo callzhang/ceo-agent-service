@@ -31,7 +31,12 @@ def _result_json(
 def test_agent_result_schema_requires_every_declared_property():
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
-    assert set(schema["required"]) == set(schema["properties"])
+    assert set(schema["required"]) == {
+        "outcome",
+        "summary",
+        "error",
+    }
+    assert "oa_action_receipt" in schema["properties"]
     error_schema = schema["$defs"]["AgentError"]
     assert set(error_schema["required"]) == set(error_schema["properties"])
     assert "side_effect_state" not in error_schema["properties"]
@@ -60,6 +65,44 @@ def test_parse_agent_result_from_last_agent_message():
 
     assert result.outcome is AgentOutcome.COMPLETED
     assert result.summary == "latest result"
+
+
+def test_parse_agent_result_from_codex_response_item_output_text():
+    raw = json.dumps(
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": _result_json(summary="current result")}
+                ],
+            },
+        }
+    )
+
+    result = parse_agent_result(raw)
+
+    assert result.outcome is AgentOutcome.COMPLETED
+    assert result.summary == "current result"
+
+
+def test_parse_agent_result_preserves_confirmed_oa_action_receipt():
+    payload = json.loads(_result_json(summary="OA comment was read back"))
+    payload["oa_action_receipt"] = {
+        "process_instance_id": "proc-1",
+        "task_id": "task-1",
+        "action": "comment",
+        "remark": "请补充复评标准。",
+        "result": {"success": True},
+    }
+
+    result = parse_agent_result(json.dumps({"message": json.dumps(payload)}))
+
+    assert result.oa_action_receipt is not None
+    assert result.oa_action_receipt.process_instance_id == "proc-1"
+    assert result.oa_action_receipt.action == "comment"
+    assert result.oa_action_receipt.result == {"success": True}
 
 
 @pytest.mark.parametrize(

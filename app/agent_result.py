@@ -43,6 +43,18 @@ class AgentError(BaseModel):
     )
 
 
+class OaActionReceipt(BaseModel):
+    """A verified OA action that must remain attached to its approval history."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    process_instance_id: str = Field(min_length=1)
+    task_id: str = ""
+    action: str = Field(min_length=1)
+    remark: str = ""
+    result: dict[str, object] = Field(default_factory=dict)
+
+
 class AgentResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -53,6 +65,7 @@ class AgentResult(BaseModel):
     outcome: AgentOutcome
     summary: str = Field(min_length=1)
     error: AgentError = Field(default_factory=AgentError)
+    oa_action_receipt: OaActionReceipt | None = None
 
 
 class EffectKind(StrEnum):
@@ -126,6 +139,22 @@ def _parse_jsonl_payloads(raw: str) -> list[dict]:
 
 
 def _agent_message_candidate(payload: dict) -> str | None:
+    response_item = payload.get("payload")
+    if (
+        payload.get("type") == "response_item"
+        and isinstance(response_item, dict)
+        and response_item.get("type") == "message"
+        and response_item.get("role") == "assistant"
+    ):
+        content = response_item.get("content")
+        if isinstance(content, list):
+            for block in reversed(content):
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "output_text"
+                    and isinstance(block.get("text"), str)
+                ):
+                    return block["text"]
     item = payload.get("item")
     if isinstance(item, dict) and item.get("type") == "agent_message":
         for key in ("text", "message"):

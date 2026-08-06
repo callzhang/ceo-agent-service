@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterator
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, TypeAdapter
@@ -623,6 +624,7 @@ class AutoReplyStore:
             if path_key in _INITIALIZED_STORE_PATHS:
                 return
             self._initialize()
+            self.backfill_oa_audit_metadata()
             _INITIALIZED_STORE_PATHS.add(path_key)
 
     @contextmanager
@@ -3608,7 +3610,7 @@ class AutoReplyStore:
                 send_error=code,
             )
 
-    def resolve_unknown_agent_run_manually(
+    def resolve_agent_run_manually(
         self,
         run_id: int,
         *,
@@ -3642,11 +3644,20 @@ class AutoReplyStore:
                 """,
                 (run_id,),
             ).fetchone()
+            is_suspended_unknown = (
+                row is not None
+                and row["status"] == "unknown"
+                and bool(row["reconciliation_suspended"])
+                and row["task_status"] == "processing"
+            )
+            is_failed_with_confirmed_effect = (
+                row is not None
+                and row["status"] == "failed"
+                and row["task_status"] == "failed"
+                and resolution == "confirmed_occurred"
+            )
             if (
-                row is None
-                or row["status"] != "unknown"
-                or not row["reconciliation_suspended"]
-                or row["task_status"] != "processing"
+                not (is_suspended_unknown or is_failed_with_confirmed_effect)
                 or row["execution_generation"] != expected_execution_generation
                 or row["task_generation"] != expected_execution_generation
             ):
@@ -3654,6 +3665,9 @@ class AutoReplyStore:
                     f"manual reconciliation target is stale: {run_id}"
                 )
             task_id = int(row["reply_task_id"])
+            expected_run_status = str(row["status"])
+            expected_task_status = str(row["task_status"])
+            expected_suspended = int(bool(row["reconciliation_suspended"]))
             code = f"manual_reconciliation_{resolution}"
             audit_summary = f"{actor}: {reason}"
             next_generation = expected_execution_generation
@@ -3701,7 +3715,7 @@ class AutoReplyStore:
                     side_effect_state=?, reconciliation_suspended=0,
                     reconciliation_next_attempt_at='', lease_owner='',
                     lease_expires_at='', completed_at=?, updated_at=?
-                where id=? and status='unknown' and reconciliation_suspended=1
+                where id=? and status=? and reconciliation_suspended=?
                   and execution_generation=?
                 """,
                 (
@@ -3712,6 +3726,8 @@ class AutoReplyStore:
                     now_text,
                     now_text,
                     run_id,
+                    expected_run_status,
+                    expected_suspended,
                     expected_execution_generation,
                 ),
             )
@@ -3720,7 +3736,7 @@ class AutoReplyStore:
                 update reply_tasks
                 set status=?, execution_generation=?, force_new_decision=?,
                     locked_at=null, available_at='', error=?, updated_at=?
-                where id=? and status='processing' and execution_generation=?
+                where id=? and status=? and execution_generation=?
                 """,
                 (
                     task_status,
@@ -3729,6 +3745,7 @@ class AutoReplyStore:
                     "" if task_status == "done" else code,
                     now_text,
                     task_id,
+                    expected_task_status,
                     expected_execution_generation,
                 ),
             )
@@ -6464,6 +6481,22 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def clear_agent_run_session(
+        self,
+        reply_task_id: int,
+        execution_generation: str,
+    ) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update agent_runs
+                set codex_session_id=''
+                where reply_task_id=? and execution_generation=?
+                """,
+                (reply_task_id, execution_generation),
+            )
+            return cursor.rowcount
+
     def list_codex_conversations(self) -> list[ConversationRecord]:
         with self._connect() as db:
             rows = db.execute(
@@ -7572,6 +7605,12 @@ class AutoReplyStore:
         send_status: str,
         send_error: str,
         channel: str,
+        oa_process_instance_id: str = "",
+        oa_task_id: str = "",
+        oa_url: str = "",
+        oa_action: str = "",
+        oa_remark: str = "",
+        oa_action_result_json: str = "",
     ) -> int:
         """Persist one Direct Agent result and its task transition atomically."""
         if task_status not in {"done", "failed", "pending", "unchanged"}:
@@ -7605,9 +7644,11 @@ class AutoReplyStore:
                     trigger_sender, trigger_text, action, sensitivity_kind,
                     codex_reason, codex_session_id,
                     codex_transcript_start_line, codex_transcript_end_line,
-                    audit_tool_events_json, audit_summary, send_status,
-                    send_error, channel
-                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    audit_tool_events_json, audit_summary,
+                    oa_process_instance_id, oa_task_id, oa_url, oa_action,
+                    oa_remark, oa_action_result_json, send_status, send_error,
+                    channel
+                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -7621,6 +7662,12 @@ class AutoReplyStore:
                     codex_transcript_end_line,
                     audit_tool_events_json,
                     audit_summary,
+                    oa_process_instance_id,
+                    oa_task_id,
+                    oa_url,
+                    oa_action,
+                    oa_remark,
+                    oa_action_result_json,
                     send_status,
                     send_error,
                     channel,
@@ -8270,7 +8317,7 @@ class AutoReplyStore:
                 select
                     'reply' as kind,
                     case
-                        when action='oa_approval' then 'approval'
+                        when action='oa_approval' or oa_process_instance_id<>'' then 'approval'
                         when channel='wechat' then 'wechat'
                         else 'replay'
                     end as object_type,
@@ -8360,6 +8407,22 @@ class AutoReplyStore:
                     send_error || ' ' || reviewer_feedback || ' ' || corrected_reply_text
                     , '') as search_text
                 from reply_attempts
+                where oa_process_instance_id = ''
+                   or id = (
+                        select process_attempts.id
+                        from reply_attempts as process_attempts
+                        where process_attempts.oa_process_instance_id = reply_attempts.oa_process_instance_id
+                        order by
+                            case
+                                when process_attempts.send_status in (
+                                    'completed', 'commented', 'needs_human'
+                                ) then 0
+                                else 1
+                            end,
+                            process_attempts.created_at desc,
+                            process_attempts.id desc
+                        limit 1
+                   )
                 union all
                 select
                     'meeting' as kind,
@@ -8585,6 +8648,58 @@ class AutoReplyStore:
                 (process_id, max(1, limit)),
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def backfill_oa_audit_metadata(self) -> int:
+        """Recover OA identity for historical Direct Agent attempts by exact task key."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select reply_attempts.id, reply_tasks.oa_url
+                from reply_attempts
+                join reply_tasks on reply_tasks.conversation_id=reply_attempts.conversation_id
+                    and reply_tasks.trigger_message_id=reply_attempts.trigger_message_id
+                where reply_attempts.action='agent_run'
+                    and reply_attempts.oa_process_instance_id=''
+                    and reply_tasks.oa_url<>''
+                """
+            ).fetchall()
+            repaired = 0
+            for row in rows:
+                process_instance_id, task_id = self._oa_identifiers_from_url(
+                    str(row["oa_url"] or "")
+                )
+                if not process_instance_id:
+                    continue
+                cursor = db.execute(
+                    """
+                    update reply_attempts
+                    set oa_process_instance_id=?, oa_task_id=?, oa_url=?,
+                        oa_action=case when oa_action='' then 'review' else oa_action end,
+                        updated_at=current_timestamp
+                    where id=? and oa_process_instance_id=''
+                    """,
+                    (
+                        process_instance_id,
+                        task_id,
+                        str(row["oa_url"] or ""),
+                        int(row["id"]),
+                    ),
+                )
+                repaired += cursor.rowcount
+            return repaired
+
+    @staticmethod
+    def _oa_identifiers_from_url(url: str) -> tuple[str, str]:
+        query = parse_qs(urlsplit(url).query)
+        values = {
+            "".join(key.replace("_", "").casefold().split()): value
+            for key, value in query.items()
+        }
+        process_values = values.get("procinstid") or values.get("processinstanceid")
+        task_values = values.get("taskid")
+        process_instance_id = str(process_values[0]).strip() if process_values else ""
+        task_id = str(task_values[0]).strip() if task_values else ""
+        return process_instance_id, task_id
 
     def list_reply_attempts_for_codex_session(
         self, codex_session_id: str, limit: int | None = None

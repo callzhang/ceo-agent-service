@@ -407,7 +407,11 @@ def scan_pending_oa_approvals(
                 records_payload = read_records(process_instance_id)
             except Exception:
                 pass
-        revision = _oa_approval_revision(task_id, records_payload)
+        revision = _oa_approval_revision(
+            task_id,
+            records_payload,
+            exclude_user_id=current_user_id,
+        )
         process_revisions[process_instance_id] = revision
         if previous_revisions.get(process_instance_id) == revision:
             continue
@@ -509,9 +513,22 @@ def _pending_oa_task_id_for_current_user(
     return ""
 
 
-def _oa_approval_revision(task_id: str, records_payload: Any) -> str:
+def _oa_approval_revision(
+    task_id: str,
+    records_payload: Any,
+    *,
+    exclude_user_id: str = "",
+) -> str:
+    records = _oa_operation_records(records_payload)
+    if exclude_user_id:
+        records = [
+            record
+            for record in records
+            if _oa_task_field(record, ("userId", "userid", "user_id"))
+            != exclude_user_id
+        ]
     latest_operation = max(
-        _oa_operation_records(records_payload),
+        records,
         key=lambda record: (
             _oa_task_field(record, ("operationTime", "date", "time")),
             _oa_task_field(record, ("operationType", "type")),

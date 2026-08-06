@@ -10,7 +10,13 @@ import pytest
 
 from app.agent_context import AgentTaskContext
 from app.agent_envelope import AgentEnvelope
-from app.agent_result import AgentError, AgentOutcome, AgentResult, SideEffectState
+from app.agent_result import (
+    AgentError,
+    AgentOutcome,
+    AgentResult,
+    OaActionReceipt,
+    SideEffectState,
+)
 from app.agent_runner import (
     AgentConversationLockedError,
     DirectAgentRunResult,
@@ -7684,6 +7690,42 @@ def test_structured_approval_card_is_processed_by_direct_agent(
     assert dws.oa_approval_actions == []
 
 
+def test_direct_agent_oa_receipt_is_persisted_with_approval_history(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[Ding]审批待办", single_chat=True)
+    trigger.raw_payload = {
+        "processInstanceId": "proc-1",
+        "taskId": "task-1",
+    }
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    result = AgentResult(
+        outcome=AgentOutcome.NEEDS_HUMAN,
+        summary="已评论要求补充复评标准。",
+        error=AgentError(code="OA_MATERIAL_INCOMPLETE"),
+        oa_action_receipt=OaActionReceipt(
+            process_instance_id="proc-1",
+            task_id="task-1",
+            action="comment",
+            remark="请补充延期时长、量化目标和复评标准。",
+            result={"success": True},
+        ),
+    )
+    script_agent_result(worker, result)
+
+    worker.run_once()
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == "task-1"
+    assert attempt.oa_action == "comment"
+    assert attempt.oa_remark == "请补充延期时长、量化目标和复评标准。"
+    assert json.loads(attempt.oa_action_result_json) == {"success": True}
+
+
 def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     trigger = message(
         "[Ding]张静提醒您审批他的录用申请 https://aflow.dingtalk.com/dingtalk/pc/query"
@@ -7720,7 +7762,8 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert "Safe prior execution receipts" not in agent_prompt(worker)
+    assert "Safe prior execution receipts" in agent_prompt(worker)
+    assert "退回" in agent_prompt(worker)
     assert "dws oa approval detail --instance-id proc-1" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
@@ -7777,8 +7820,7 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert "Safe prior execution receipts" not in agent_prompt(worker)
-    assert '"kind": "dingtalk_oa"' not in agent_prompt(worker)
+    assert "Safe prior execution receipts" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     attempts = worker.store.list_reply_attempts(limit=2)
     assert attempts[0].trigger_message_id == "msg-1"
@@ -9942,6 +9984,49 @@ def test_session_lock_wait_defers_task_without_consuming_attempt(
     assert pending.error == "codex_session_locked"
     assert pending.available_at
     assert worker.store.count_reply_tasks(status="failed") == 0
+
+
+def test_codex_process_failure_rotates_stuck_conversation_session_before_retry(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+    worker.store.upsert_conversation("cid-1", "Friday", False, "stuck-session")
+
+    class ProcessFailureRunner(FakeAgentResultRunner):
+        def run(self, task, context, **kwargs):
+            claim = self.store.claim_agent_run(
+                task.id,
+                task.execution_generation,
+                owner=self.owner,
+            )
+            assert claim.claimed
+            self.store.set_agent_run_session(
+                claim.run.id,
+                "stuck-session",
+                owner=self.owner,
+            )
+            self.store.fail_agent_run(
+                claim.run.id,
+                {"code": "codex_process_failed", "retryable": True},
+                owner=self.owner,
+            )
+            raise RuntimeError("codex_process_failed")
+
+    worker.direct_agent_runner = ProcessFailureRunner(worker.store, [])
+
+    worker.run_once()
+
+    assert worker.store.get_codex_session_id("cid-1") is None
+    failed_run = worker.store.get_agent_run_for_task_generation(1, "initial")
+    assert failed_run is not None
+    assert failed_run.codex_session_id == ""
 
 
 def test_codex_process_failure_becomes_terminal_after_one_extra_recovery_claim(
