@@ -31,7 +31,12 @@ def _result_json(
 def test_agent_result_schema_requires_every_declared_property():
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
-    assert set(schema["required"]) == set(schema["properties"])
+    assert set(schema["required"]) == {
+        "outcome",
+        "summary",
+        "error",
+    }
+    assert "oa_action_receipt" in schema["properties"]
     error_schema = schema["$defs"]["AgentError"]
     assert set(error_schema["required"]) == set(error_schema["properties"])
     assert "side_effect_state" not in error_schema["properties"]

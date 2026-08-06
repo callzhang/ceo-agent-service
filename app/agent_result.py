@@ -59,9 +59,7 @@ class AgentResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         strict=True,
-        json_schema_extra={
-            "required": ["outcome", "summary", "error", "oa_action_receipt"]
-        },
+        json_schema_extra={"required": ["outcome", "summary", "error"]},
     )
 
     outcome: AgentOutcome

@@ -100,8 +100,7 @@
   "required": [
     "outcome",
     "summary",
-    "error",
-    "oa_action_receipt"
+    "error"
   ],
   "title": "AgentResult",
   "type": "object"
