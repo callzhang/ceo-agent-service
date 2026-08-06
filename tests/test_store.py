@@ -2101,7 +2101,7 @@ def test_suspended_unknown_run_requires_structured_manual_resolution(
         now="2026-07-29 09:00:03",
     )
 
-    resolved = store.resolve_unknown_agent_run_manually(
+    resolved = store.resolve_agent_run_manually(
         run.id,
         expected_execution_generation=original_generation,
         resolution=resolution,
@@ -2155,6 +2155,95 @@ def test_suspended_unknown_run_remains_visible_until_manual_resolution(tmp_path:
         store.rotate_reply_task_execution_generation(task_id)
 
 
+def test_manual_reconciliation_closes_failed_run_after_external_effect_is_confirmed(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = store.claim_agent_run(task_id, task.execution_generation, owner="worker").run
+    store.fail_agent_run(
+        run.id,
+        {"code": "codex_result_invalid", "retryable": False},
+        owner="worker",
+    )
+    store.finalize_reply_task_without_run(
+        task_id=task_id,
+        expected_execution_generation=task.execution_generation,
+        task_status="failed",
+        task_error="codex_result_invalid",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="codex_result_invalid",
+        audit_summary="codex_result_invalid",
+        send_status="failed",
+        send_error="codex_result_invalid",
+        channel=task.channel,
+    )
+
+    resolved = store.resolve_agent_run_manually(
+        run.id,
+        expected_execution_generation=task.execution_generation,
+        resolution="confirmed_occurred",
+        reason="已从外部系统读回并确认动作完成",
+        actor="Derek",
+    )
+
+    persisted_run = store.get_agent_run(run.id)
+    persisted_task = store.get_reply_task(task_id)
+    attempt = store.get_reply_attempt(resolved.attempt_id)
+    assert persisted_run is not None and persisted_run.status == "completed"
+    assert persisted_run.side_effect_state == "confirmed"
+    assert persisted_task is not None and persisted_task.status == "done"
+    assert attempt is not None and attempt.send_status == "completed"
+
+
+def test_manual_reconciliation_cannot_mark_failed_run_without_effect_as_completed(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = store.claim_agent_run(task_id, task.execution_generation, owner="worker").run
+    store.fail_agent_run(
+        run.id,
+        {"code": "codex_result_invalid", "retryable": False},
+        owner="worker",
+    )
+    store.finalize_reply_task_without_run(
+        task_id=task_id,
+        expected_execution_generation=task.execution_generation,
+        task_status="failed",
+        task_error="codex_result_invalid",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="codex_result_invalid",
+        audit_summary="codex_result_invalid",
+        send_status="failed",
+        send_error="codex_result_invalid",
+        channel=task.channel,
+    )
+
+    with pytest.raises(AgentRunLeaseLostError, match="manual reconciliation target is stale"):
+        store.resolve_agent_run_manually(
+            run.id,
+            expected_execution_generation=task.execution_generation,
+            resolution="confirmed_not_occurred",
+            reason="没有可读回的外部动作",
+            actor="Derek",
+        )
+
+
 def test_manual_resolution_rolls_back_run_task_and_attempt_on_insert_failure(
     tmp_path: Path, monkeypatch
 ):
@@ -2191,7 +2280,7 @@ def test_manual_resolution_rolls_back_run_task_and_attempt_on_insert_failure(
     )
 
     with pytest.raises(sqlite3.IntegrityError, match="forced attempt failure"):
-        store.resolve_unknown_agent_run_manually(
+        store.resolve_agent_run_manually(
             run.id,
             expected_execution_generation="initial",
             resolution="confirmed_occurred",
