@@ -87,6 +87,36 @@ def test_parse_agent_result_from_codex_response_item_output_text():
     assert result.summary == "current result"
 
 
+def test_parse_agent_result_normalizes_null_error_from_current_codex_output():
+    payload = json.loads(_result_json(summary="completed without an error"))
+    payload["error"] = None
+
+    result = parse_agent_result(
+        json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": json.dumps(payload)}],
+                },
+            }
+        )
+    )
+
+    assert result.outcome is AgentOutcome.COMPLETED
+    assert result.error.code == ""
+    assert result.error.retryable is False
+
+
+def test_parse_agent_result_rejects_null_error_for_failed_outcome():
+    payload = json.loads(_result_json(outcome="failed"))
+    payload["error"] = None
+
+    with pytest.raises(ResultParseError):
+        parse_agent_result(json.dumps({"message": json.dumps(payload)}))
+
+
 def test_parse_agent_result_preserves_confirmed_oa_action_receipt():
     payload = json.loads(_result_json(summary="OA comment was read back"))
     payload["oa_action_receipt"] = {
