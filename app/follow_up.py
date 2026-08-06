@@ -377,6 +377,14 @@ def _defer_recoverable_follow_up(
     )
 
 
+def _dws_send_outcome_is_unknown(exc: BaseException) -> bool:
+    if not isinstance(exc, DwsError):
+        return False
+    if exc.needs_login or exc.needs_authorization:
+        return False
+    return exc.code in {None, "1"}
+
+
 def _defer_policy_follow_up(
     store: AutoReplyStore,
     draft,
@@ -772,6 +780,21 @@ def process_due_follow_ups(
                     draft,
                     now=now,
                     reason=reason,
+                    error=str(exc),
+                )
+                store.record_error(
+                    draft.target_conversation_id,
+                    None,
+                    "follow_up",
+                    str(exc),
+                )
+                continue
+            if _dws_send_outcome_is_unknown(exc):
+                _defer_recoverable_follow_up(
+                    store,
+                    draft,
+                    now=now,
+                    reason="dws_send_outcome_unknown",
                     error=str(exc),
                 )
                 store.record_error(
