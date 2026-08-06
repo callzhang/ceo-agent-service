@@ -8392,6 +8392,22 @@ class AutoReplyStore:
                     send_error || ' ' || reviewer_feedback || ' ' || corrected_reply_text
                     , '') as search_text
                 from reply_attempts
+                where oa_process_instance_id = ''
+                   or id = (
+                        select process_attempts.id
+                        from reply_attempts as process_attempts
+                        where process_attempts.oa_process_instance_id = reply_attempts.oa_process_instance_id
+                        order by
+                            case
+                                when process_attempts.send_status in (
+                                    'completed', 'commented', 'needs_human'
+                                ) then 0
+                                else 1
+                            end,
+                            process_attempts.created_at desc,
+                            process_attempts.id desc
+                        limit 1
+                   )
                 union all
                 select
                     'meeting' as kind,

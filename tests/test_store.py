@@ -4054,6 +4054,42 @@ def test_history_treats_superseded_blocked_reply_as_skipped(tmp_path: Path):
     assert [item.source_id for item in skipped_items] == [blocked_id]
 
 
+def test_history_groups_approval_retries_under_latest_meaningful_review(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    reviewed_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-1:first",
+        trigger_sender="Derek OA",
+        trigger_text="付款申请",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="review",
+        send_status="needs_human",
+    )
+    failed_retry_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-1:own-remark",
+        trigger_sender="Derek OA",
+        trigger_text="付款申请",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="review",
+        send_status="failed",
+    )
+
+    items = store.list_history_items(object_types=("approval",))
+
+    assert failed_retry_id != reviewed_id
+    assert [item.source_id for item in items] == [reviewed_id]
+    assert items[0].status == "needs_human"
+
+
 def test_history_keeps_blocked_side_effects_visible_after_terminal_reply(
     tmp_path: Path,
 ):
