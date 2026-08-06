@@ -460,7 +460,7 @@ scripts/install-auto-reply-agents.sh
 
 安装前请先检查 `launchd/*.plist` 中的本地路径、用户名、workspace、数据库路径和 persona 配置。开源部署时通常需要替换这些值。
 
-运行模型只有一个 launchd job、五个内部组件；不会创建 meeting crontab 或第二个 plist：
+运行模型只有一个 launchd job；主进程的 worker 组件与受监督的独立审计 Web 子进程共同运行，不会创建 meeting crontab 或第二个 plist：
 
 - `com.ceo-agent-service.main`：唯一的 launchd 主服务。
 - producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。

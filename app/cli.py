@@ -1,6 +1,7 @@
 import argparse
 import errno
 import json
+import multiprocessing
 import os
 import shlex
 import subprocess
@@ -1885,6 +1886,28 @@ def run_audit_web_command(
     )
 
 
+def run_audit_web_process(
+    settings: WorkerSettings,
+    *,
+    host: str,
+    port: int,
+    process_factory: Callable[..., multiprocessing.Process] | None = None,
+) -> None:
+    """Run the interactive audit server outside the worker interpreter."""
+    if process_factory is None:
+        process_factory = multiprocessing.get_context("spawn").Process
+    process = process_factory(
+        target=run_audit_web_command,
+        kwargs={"settings": settings, "host": host, "port": port},
+        name="ceo-agent-service-audit-web",
+        daemon=True,
+    )
+    process.start()
+    process.join()
+    if process.exitcode not in (None, 0):
+        raise RuntimeError(f"audit-web process exited with status {process.exitcode}")
+
+
 def export_feedback_command(
     settings: WorkerSettings, output: Path, limit: int | None = None
 ) -> int:
@@ -2484,7 +2507,7 @@ def run_service(
     components = (
         (
             "audit-web",
-            lambda: run_audit_web_command(settings, host=host, port=port, reload=False),
+            lambda: run_audit_web_process(settings, host=host, port=port),
         ),
         (
             "database-backup",

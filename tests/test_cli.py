@@ -36,6 +36,7 @@ from app.cli import (
     settings_from_args,
     test_ding_command as run_test_ding_command,
     run_audit_web_command,
+    run_audit_web_process,
 )
 from app.corpus import CorpusRecord, append_records
 from app.dws_client import DwsError
@@ -3995,6 +3996,78 @@ def test_run_audit_web_command_forwards_uvicorn_reload(monkeypatch, tmp_path):
     assert calls["args"][7][0].name == "app"
 
 
+def test_run_audit_web_process_runs_server_in_isolated_child(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeProcess:
+        exitcode = 0
+
+        def __init__(self, *, target, kwargs, name, daemon):
+            self.target = target
+            self.kwargs = kwargs
+            calls.append(("created", name, daemon))
+
+        def start(self):
+            calls.append(("start",))
+            self.target(**self.kwargs)
+
+        def join(self):
+            calls.append(("join",))
+
+    monkeypatch.setattr(
+        cli,
+        "run_audit_web_command",
+        lambda settings, host, port: calls.append(("server", settings.db_path, host, port)),
+    )
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+
+    run_audit_web_process(
+        settings,
+        host="127.0.0.1",
+        port=8765,
+        process_factory=FakeProcess,
+    )
+
+    assert calls == [
+        ("created", "ceo-agent-service-audit-web", True),
+        ("start",),
+        ("server", settings.db_path, "127.0.0.1", 8765),
+        ("join",),
+    ]
+
+
+def test_run_audit_web_process_surfaces_child_failure(tmp_path):
+    class FailedProcess:
+        exitcode = 1
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def join(self):
+            pass
+
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+
+    with pytest.raises(RuntimeError, match="audit-web process exited with status 1"):
+        run_audit_web_process(
+            settings,
+            host="127.0.0.1",
+            port=8765,
+            process_factory=FailedProcess,
+        )
+
+
 def test_export_feedback_command_writes_reviewed_attempts_jsonl(tmp_path, capsys):
     settings = WorkerSettings(
         workspace=tmp_path / "workspace",
@@ -5125,10 +5198,8 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         cli,
-        "run_audit_web_command",
-        lambda settings, host, port, reload=False: calls.append(
-            ("audit-web", host, port, reload)
-        )
+        "run_audit_web_process",
+        lambda settings, host, port: calls.append(("audit-web", host, port))
         or stop("audit-web"),
     )
     def task_maintenance_loop(
@@ -5208,7 +5279,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     assert calls == [
         ("meeting-recovery", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-audit-web", True),
-        ("audit-web", "127.0.0.1", 8765, False),
+        ("audit-web", "127.0.0.1", 8765),
         ("start", "ceo-agent-service-database-backup", True),
         ("database-backup", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-producer", True),
