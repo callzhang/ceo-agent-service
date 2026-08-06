@@ -39,6 +39,7 @@ AUTH_ERROR_CODES = frozenset(
         "REFRESH_TOKEN_EXPIRED",
     }
 )
+DWS_CHANNEL_GATE_TIMEOUT_SECONDS = 10
 
 
 class ChannelGateState(StrEnum):
@@ -278,7 +279,7 @@ class DwsChannelGate:
             "--format",
             "json",
             "--timeout",
-            "5",
+            str(DWS_CHANNEL_GATE_TIMEOUT_SECONDS),
         ]
         probe_command = [
             self.binary,
@@ -305,6 +306,7 @@ class DwsChannelGate:
             commands=commands,
             runner=self.runner,
             env=env,
+            timeout_seconds=DWS_CHANNEL_GATE_TIMEOUT_SECONDS,
         )
         if isinstance(status, ChannelGateResult):
             return status
@@ -354,6 +356,7 @@ class DwsChannelGate:
             commands=commands,
             runner=self.runner,
             env=env,
+            timeout_seconds=DWS_CHANNEL_GATE_TIMEOUT_SECONDS,
         )
         if isinstance(probe, ChannelGateResult):
             return probe
@@ -524,6 +527,7 @@ def _run_command(
     commands: list[list[str]],
     runner: CliRunner,
     env: dict[str, str],
+    timeout_seconds: int = 5,
 ) -> subprocess.CompletedProcess[str] | ChannelGateResult:
     commands.append(command)
     try:
@@ -531,7 +535,7 @@ def _run_command(
             command,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=timeout_seconds,
             check=False,
             env=env,
         )
