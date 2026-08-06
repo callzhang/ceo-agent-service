@@ -4,6 +4,7 @@ import ipaddress
 import sqlite3
 import threading
 import time
+from contextlib import asynccontextmanager
 from collections.abc import Callable, Iterable, Mapping
 from collections import deque
 from datetime import datetime, timedelta, timezone, tzinfo
@@ -628,29 +629,68 @@ HISTORY_CHART_COLORS = {
 
 
 class _RecentHtmlCache:
-    """Reuse a just-rendered default audit page while concurrent requests arrive."""
+    """Serve the last complete page while one background refresh runs."""
 
     def __init__(
         self,
         ttl_seconds: float,
         *,
         clock: Callable[[], float] = time.monotonic,
+        thread_factory: Callable[..., threading.Thread] = threading.Thread,
     ) -> None:
         self._ttl_seconds = ttl_seconds
         self._clock = clock
+        self._thread_factory = thread_factory
         self._html = ""
         self._rendered_at = 0.0
+        self._refreshing = False
         self._lock = threading.Lock()
 
     def get_or_render(self, renderer: Callable[[], str]) -> str:
+        refresh_thread: threading.Thread | None = None
         with self._lock:
             now = self._clock()
             if self._html and now - self._rendered_at < self._ttl_seconds:
                 return self._html
+            if self._html:
+                if not self._refreshing:
+                    self._refreshing = True
+                    refresh_thread = self._thread_factory(
+                        target=self._refresh,
+                        args=(renderer,),
+                        daemon=True,
+                    )
+                cached_html = self._html
+            else:
+                self._refreshing = True
+                cached_html = ""
+        if refresh_thread is not None:
+            refresh_thread.start()
+        if cached_html:
+            return cached_html
+        try:
             html = renderer()
+        except Exception:
+            with self._lock:
+                self._refreshing = False
+            raise
+        with self._lock:
             self._html = html
             self._rendered_at = self._clock()
+            self._refreshing = False
             return html
+
+    def _refresh(self, renderer: Callable[[], str]) -> None:
+        try:
+            html = renderer()
+        except Exception:
+            with self._lock:
+                self._refreshing = False
+            return
+        with self._lock:
+            self._html = html
+            self._rendered_at = self._clock()
+            self._refreshing = False
 
 
 class _TutorialStep(TypedDict):
@@ -6892,7 +6932,34 @@ def create_audit_app(
     ding_robot_code: str | None = None,
     ding_robot_name: str | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="CEO Agent Audit")
+    default_attempt_list_cache = _RecentHtmlCache(
+        DEFAULT_HISTORY_CACHE_TTL_SECONDS
+    )
+
+    def render_default_attempt_list() -> str:
+        return render_attempt_list(
+            _audit_store(db_path),
+            limit=DEFAULT_ATTEMPT_LIST_LIMIT,
+            page=1,
+            type_filter=(),
+            query="",
+            query_embedding=None,
+            search_object_types=HISTORY_SEARCH_OBJECT_TYPES,
+            include_chart=True,
+            include_pending_tasks=False,
+            include_feedback_count=False,
+        )
+
+    @asynccontextmanager
+    async def audit_lifespan(_app: FastAPI):
+        try:
+            default_attempt_list_cache.get_or_render(render_default_attempt_list)
+        except sqlite3.OperationalError as exc:
+            if not _is_sqlite_busy_error(exc):
+                raise
+        yield
+
+    app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
 
     @app.middleware("http")
     async def require_trusted_requests(request: Request, call_next):
@@ -6942,10 +7009,6 @@ def create_audit_app(
         writer_factory=_wechat_memory_writer,
     )
 
-    default_attempt_list_cache = _RecentHtmlCache(
-        DEFAULT_HISTORY_CACHE_TTL_SECONDS
-    )
-
     @app.get("/", response_class=HTMLResponse)
     def attempt_list(request: Request) -> str:
         query = str(request.query_params.get("q", ""))
@@ -6972,7 +7035,7 @@ def create_audit_app(
 
         try:
             if not request.query_params:
-                return default_attempt_list_cache.get_or_render(render)
+                return default_attempt_list_cache.get_or_render(render_default_attempt_list)
             return render()
         except sqlite3.OperationalError as exc:
             if _is_sqlite_busy_error(exc):
