@@ -392,6 +392,9 @@ durable task from starting.
 Direct Agent and reconciliation invocations ignore personal Codex user config.
 They receive the service-selected model and reviewed MCP configuration explicitly,
 so interactive plugins or UI-only settings cannot prevent durable queue recovery.
+They do not add disabled-server entries for personal MCPs: with user config
+ignored, those entries would create incomplete transports instead of isolating
+the service.
 
 Delivery failures for an otherwise sendable reply are treated as task processing
 failures after the reply attempt has recorded the failed send. This keeps the
