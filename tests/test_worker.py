@@ -9977,6 +9977,11 @@ def test_codex_process_failure_rotates_stuck_conversation_session_before_retry(
                 owner=self.owner,
             )
             assert claim.claimed
+            self.store.set_agent_run_session(
+                claim.run.id,
+                "stuck-session",
+                owner=self.owner,
+            )
             self.store.fail_agent_run(
                 claim.run.id,
                 {"code": "codex_process_failed", "retryable": True},
@@ -9989,6 +9994,9 @@ def test_codex_process_failure_rotates_stuck_conversation_session_before_retry(
     worker.run_once()
 
     assert worker.store.get_codex_session_id("cid-1") is None
+    failed_run = worker.store.get_agent_run_for_task_generation(1, "initial")
+    assert failed_run is not None
+    assert failed_run.codex_session_id == ""
 
 
 def test_codex_process_failure_becomes_terminal_after_one_extra_recovery_claim(

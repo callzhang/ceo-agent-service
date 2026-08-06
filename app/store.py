@@ -6466,6 +6466,22 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def clear_agent_run_session(
+        self,
+        reply_task_id: int,
+        execution_generation: str,
+    ) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update agent_runs
+                set codex_session_id=''
+                where reply_task_id=? and execution_generation=?
+                """,
+                (reply_task_id, execution_generation),
+            )
+            return cursor.rowcount
+
     def list_codex_conversations(self) -> list[ConversationRecord]:
         with self._connect() as db:
             rows = db.execute(
