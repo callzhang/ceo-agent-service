@@ -578,6 +578,53 @@ def test_authorization_recovery_retries_same_persisted_turn_on_next_process(stor
     assert len(audit_runs) == 1
 
 
+def test_authorization_recovery_defers_again_after_one_failed_retry(store):
+    pending_task = _task(store)
+    task = store.claim_reply_task(pending_task.id)
+    assert task is not None
+    authorization_failure = _audit_result(
+        "failed",
+        0,
+        code="authorization_wait",
+        retryable=True,
+        authorization_required=True,
+    )
+    audit = ScriptedAudit(
+        store,
+        authorization_failure,
+        authorization_failure,
+        authorization_failure,
+    )
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ScriptedConsumer(store, _consumer_result("proposal", "candidate-0")),
+        audit=audit,
+    )
+
+    first = _process(orchestrator, task)
+
+    assert first.status == "deferred"
+    assert first.error.code == "authorization_wait"
+    assert first.error.authorization_required is True
+    assert first.feedback_cycles == 0
+    assert len(audit.calls) == 1
+    store.defer_reply_task(
+        task.id,
+        first.error.code,
+        expected_execution_generation=task.execution_generation,
+    )
+    recovered_task = store.claim_reply_task(task.id)
+    assert recovered_task is not None
+
+    second = _process(orchestrator, recovered_task)
+
+    assert second.status == "deferred"
+    assert second.error.code == "authorization_wait"
+    assert second.error.authorization_required is True
+    assert second.feedback_cycles == 0
+    assert len(audit.calls) == 2
+
+
 class RevisionRetryConsumer(ScriptedConsumer):
     def __init__(self, store: AutoReplyStore) -> None:
         super().__init__(store)

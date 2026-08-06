@@ -282,6 +282,7 @@ class AgentOrchestrator:
                     audit_state.turn_attempt,
                     consumer.id,
                     consumer_state.proposal,
+                    audit_state.authorization_error_code,
                 )
             if not isinstance(audit_state, AuditAgentResult):
                 return audit_state
