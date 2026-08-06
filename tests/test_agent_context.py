@@ -1,10 +1,12 @@
 from app.agent_context import (
     AgentContextMessage,
     AgentTaskContext,
+    AuditTurnContext,
     ManualRerunInstruction,
     MaterialReference,
     PriorReceipt,
 )
+from app.agent_contracts import ConsumerProposal
 
 
 def _context(
@@ -237,3 +239,60 @@ def test_context_forbids_agent_auth_commands():
     assert "dws auth login" in rendered
     assert "lark auth login" in rendered
     assert "Never run authentication login, reset, or logout commands" in rendered
+
+
+def test_consumer_context_is_read_only_and_reuses_supplied_facts():
+    rendered = _context().render()
+
+    assert "Consumer Agent A" in rendered
+    assert "read-only" in rendered
+    assert "no external write" in rendered
+    assert "already available" in rendered
+    assert "Raw material references and exact read commands" in rendered
+
+
+def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
+    task = _oa_context(
+        reference="process_instance_id=pid-1; task_id=tid-1",
+        read_commands=(
+            "dws oa approval detail --instance-id pid-1 --format json",
+        ),
+    )
+    proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Review the live approval",
+            "actions": [
+                {
+                    "description": "Comment on the approval",
+                    "target": {"process_instance_id": "pid-1"},
+                    "payload": {"remark": "请补充材料。"},
+                    "expected_verification": "Read the OA records",
+                }
+            ],
+            "sourced_facts": [
+                {
+                    "assertion": "The trigger asks for review.",
+                    "references": ["message:mid"],
+                }
+            ],
+            "authored_judgment": "Request the missing material.",
+        }
+    )
+
+    rendered = AuditTurnContext(
+        task=task,
+        proposal_revision=2,
+        operation_id="op-2",
+        proposal=proposal,
+        audit_rules="Only publish supported facts.",
+    ).render()
+
+    assert "Audit Agent B" in rendered
+    assert '"proposal_revision": 2' in rendered
+    assert '"operation_id": "op-2"' in rendered
+    assert "请补充材料。" in rendered
+    assert "dws oa approval detail --instance-id pid-1 --format json" in rendered
+    assert "resolve live IDs and tool choice" in rendered
+    assert "without changing business meaning" in rendered
+    assert "Effective Audit Rules" in rendered
+    _assert_no_service_oa_resolution_fields(rendered)

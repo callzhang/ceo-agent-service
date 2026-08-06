@@ -1,6 +1,8 @@
 import json
 from enum import StrEnum
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from typing import TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 
@@ -41,6 +43,11 @@ class AgentError(BaseModel):
         default=SideEffectState.NONE,
         exclude=True,
     )
+
+    @field_validator("side_effect_state", mode="before")
+    @classmethod
+    def accept_json_side_effect_state(cls, value: object) -> object:
+        return SideEffectState(value) if isinstance(value, str) else value
 
 
 class OaActionReceipt(BaseModel):
@@ -102,7 +109,17 @@ class ResultParseError(ValueError):
     pass
 
 
+AgentResultType = TypeVar("AgentResultType", bound=BaseModel)
+
+
 def parse_agent_result(raw: str) -> AgentResult:
+    return parse_typed_agent_result(raw, AgentResult)
+
+
+def parse_typed_agent_result(
+    raw: str,
+    model_type: type[AgentResultType],
+) -> AgentResultType:
     payloads = _parse_jsonl_payloads(raw)
     for payload in reversed(payloads):
         candidate = _agent_message_candidate(payload)
@@ -110,7 +127,7 @@ def parse_agent_result(raw: str) -> AgentResult:
             continue
         try:
             normalized = _normalize_result_text(candidate)
-            return AgentResult.model_validate_json(normalized)
+            return model_type.model_validate_json(normalized)
         except (ResultParseError, ValidationError) as exc:
             raise ResultParseError(
                 "latest agent result candidate is malformed or does not match the strict schema"

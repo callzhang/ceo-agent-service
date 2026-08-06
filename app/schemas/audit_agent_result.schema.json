@@ -1,0 +1,227 @@
+{
+  "$defs": {
+    "AgentError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "authorization_required": {
+          "title": "Authorization Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "retryable",
+        "authorization_required"
+      ],
+      "title": "AgentError",
+      "type": "object"
+    },
+    "AuditExternalResult": {
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {
+          "minLength": 1,
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "verification_summary": {
+          "minLength": 1,
+          "title": "Verification Summary",
+          "type": "string"
+        },
+        "live_result_reference": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Live Result Reference",
+          "type": "object"
+        }
+      },
+      "required": [
+        "operation_id",
+        "verification_summary",
+        "live_result_reference"
+      ],
+      "title": "AuditExternalResult",
+      "type": "object"
+    },
+    "AuditFeedback": {
+      "additionalProperties": false,
+      "properties": {
+        "rule": {
+          "minLength": 1,
+          "title": "Rule",
+          "type": "string"
+        },
+        "observation": {
+          "minLength": 1,
+          "title": "Observation",
+          "type": "string"
+        },
+        "requested_revision": {
+          "minLength": 1,
+          "title": "Requested Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "observation",
+        "requested_revision"
+      ],
+      "title": "AuditFeedback",
+      "type": "object"
+    },
+    "AuditOutcome": {
+      "enum": [
+        "executed",
+        "revision_required",
+        "needs_human",
+        "failed",
+        "unknown"
+      ],
+      "title": "AuditOutcome",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "SideEffectState": {
+      "enum": [
+        "none",
+        "confirmed",
+        "unknown"
+      ],
+      "title": "SideEffectState",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "properties": {
+        "outcome": {
+          "const": "executed"
+        },
+        "side_effect_state": {
+          "const": "confirmed"
+        },
+        "feedback": {
+          "type": "null"
+        },
+        "external_result": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "const": "revision_required"
+        },
+        "side_effect_state": {
+          "const": "none"
+        },
+        "feedback": {
+          "type": "object"
+        },
+        "external_result": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "const": "unknown"
+        },
+        "side_effect_state": {
+          "const": "unknown"
+        },
+        "feedback": {
+          "type": "null"
+        },
+        "external_result": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "enum": [
+            "needs_human",
+            "failed"
+          ]
+        },
+        "side_effect_state": {
+          "const": "none"
+        },
+        "feedback": {
+          "type": "null"
+        },
+        "external_result": {
+          "type": "null"
+        }
+      }
+    }
+  ],
+  "properties": {
+    "outcome": {
+      "$ref": "#/$defs/AuditOutcome"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "proposal_revision": {
+      "minimum": 0,
+      "title": "Proposal Revision",
+      "type": "integer"
+    },
+    "side_effect_state": {
+      "$ref": "#/$defs/SideEffectState"
+    },
+    "feedback": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuditFeedback"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "external_result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuditExternalResult"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "$ref": "#/$defs/AgentError"
+    }
+  },
+  "required": [
+    "outcome",
+    "summary",
+    "proposal_revision",
+    "side_effect_state",
+    "feedback",
+    "external_result",
+    "error"
+  ],
+  "title": "AuditAgentResult",
+  "type": "object"
+}
