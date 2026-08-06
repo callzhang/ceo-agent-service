@@ -930,7 +930,7 @@ def test_run_setup_mcp_uses_os_service_path_and_redacts_output(
     assert str(tmp_path) not in json.dumps(event.evidence)
 
 
-def test_run_setup_mcp_uses_installed_codex_memory_connector_url(
+def test_run_setup_mcp_does_not_copy_personal_literal_transports(
     monkeypatch,
     tmp_path: Path,
 ):
@@ -938,25 +938,35 @@ def test_run_setup_mcp_uses_installed_codex_memory_connector_url(
     codex_home.mkdir()
     codex_config = codex_home / "config.toml"
     codex_config.write_text(
-        '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
+        "[mcp_servers.memory_connector]\n"
+        'url = "https://personal.example/mcp/literal-secret"\n'
+        'http_headers = { Authorization = "Bearer literal-secret" }\n'
+        "[mcp_servers.xiaoqing_interview]\n"
+        'command = "/personal/bin/xiaoqing"\n'
+        'args = ["--token", "literal-secret"]\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
 
-    event = run_setup_action("setup_mcp", repo_root=tmp_path, env={})
-
-    assert event.status == "done"
-    assert event.evidence["memory_url_source"] == "installed_codex_config"
-    assert codex_config.read_text(encoding="utf-8") == (
-        '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n'
+    event = run_setup_action(
+        "setup_mcp",
+        repo_root=tmp_path,
+        env={"CEO_SERVICE_MCP_CONFIG_PATH": "data/config/service-mcp.json"},
     )
-    assert "MEMORY_CONNECTOR_URL=https://memory.example/mcp/" in (
-        tmp_path / ".env"
-    ).read_text(encoding="utf-8")
+
+    assert event.status == "failed"
+    assert event.summary == "MEMORY_CONNECTOR_URL is missing."
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    manifest_text = (tmp_path / "data/config/service-mcp.json").read_text(
+        encoding="utf-8"
+    )
+    for literal in ("personal.example", "/personal/bin/xiaoqing", "literal-secret"):
+        assert literal not in env_text
+        assert literal not in manifest_text
 
 
-def test_run_setup_mcp_imports_personal_memory_url_only_once(
+def test_run_setup_mcp_uses_persisted_service_url_without_personal_config(
     monkeypatch,
     tmp_path: Path,
 ):
@@ -964,28 +974,28 @@ def test_run_setup_mcp_imports_personal_memory_url_only_once(
     codex_home.mkdir()
     codex_config = codex_home / "config.toml"
     codex_config.write_text(
-        '[mcp_servers.memory_connector]\nurl = "https://first.example/mcp/"\n',
+        '[mcp_servers.memory_connector]\nurl = "https://personal.example/mcp/"\n',
         encoding="utf-8",
     )
     service_config = tmp_path / "data" / "config" / "service-mcp.json"
+    (tmp_path / ".env").write_text(
+        "CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json\n"
+        "MEMORY_CONNECTOR_URL=https://service.example/mcp/\n",
+        encoding="utf-8",
+    )
     action_env = {
         "CODEX_HOME": str(codex_home),
         "CEO_SERVICE_MCP_CONFIG_PATH": str(service_config),
     }
     monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
 
-    first = run_setup_action("setup_mcp", repo_root=tmp_path, env=action_env)
-    codex_config.write_text(
-        '[mcp_servers.memory_connector]\nurl = "https://second.example/mcp/"\n',
-        encoding="utf-8",
-    )
-    second = run_setup_action("setup_mcp", repo_root=tmp_path, env=action_env)
+    event = run_setup_action("setup_mcp", repo_root=tmp_path, env=action_env)
 
-    assert first.evidence["memory_url_source"] == "installed_codex_config"
-    assert second.evidence["memory_url_source"] == "service_env_file"
+    assert event.status == "done"
+    assert event.evidence["memory_url_source"] == "service_env_file"
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
-    assert "MEMORY_CONNECTOR_URL=https://first.example/mcp/" in env_text
-    assert "second.example" not in env_text
+    assert "MEMORY_CONNECTOR_URL=https://service.example/mcp/" in env_text
+    assert "personal.example" not in env_text
 
 
 def test_run_setup_mcp_reports_missing_memory_url(monkeypatch, tmp_path: Path):
@@ -1010,7 +1020,7 @@ def test_run_setup_mcp_does_not_import_secret_bearing_personal_url(
     secret = "must-not-appear"
     (codex_home / "config.toml").write_text(
         "[mcp_servers.memory_connector]\n"
-        f'url = "https://memory.example/mcp/?api_key={secret}"\n',
+        f'url = "https://{secret}.memory.example/mcp/{secret}"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
@@ -1019,10 +1029,7 @@ def test_run_setup_mcp_does_not_import_secret_bearing_personal_url(
     event = run_setup_action("setup_mcp", repo_root=tmp_path, env={})
 
     assert event.status == "failed"
-    assert event.summary == (
-        "MEMORY_CONNECTOR_URL must be an http(s) URL without credentials, "
-        "query, or fragment."
-    )
+    assert event.summary == "MEMORY_CONNECTOR_URL is missing."
     assert secret not in event.summary
     assert secret not in (tmp_path / ".env").read_text(encoding="utf-8")
 
@@ -1056,10 +1063,7 @@ def test_setup_mcp_gate_reports_present_xiaoqing_without_command(
     status = check_setup_step("mcp", repo_root=tmp_path)
 
     assert status.status == "needs_action"
-    assert status.summary == (
-        "xiaoqing_interview requires environment variable "
-        "CEO_XIAOQING_MCP_COMMAND; set it or delete the server from the manifest"
-    )
+    assert status.summary == "service transport command is not configured"
 
 
 def test_run_setup_action_dispatches_wechat_connect(monkeypatch, tmp_path: Path):

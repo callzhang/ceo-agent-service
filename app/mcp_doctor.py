@@ -193,11 +193,14 @@ def _service_server_status(
 
 
 def _configuration_issue_status(issue: ServiceMcpConfigIssue) -> McpStatus:
+    reason = issue.reason
+    if issue.server_name == "xiaoqing_interview" and issue.field == "command":
+        reason = "service transport command is not configured"
     return McpStatus(
         name=issue.server_name,
         state="missing_config",
         ready=False,
-        reason=issue.reason,
+        reason=reason,
         recover_command=(
             "configure CEO_SERVICE_MCP_CONFIG_PATH"
             if issue.server_name == "service_mcp_config"

@@ -120,10 +120,7 @@ def test_mcp_doctor_reports_missing_xiaoqing_command_without_secret_values(
         name="xiaoqing_interview",
         state="missing_config",
         ready=False,
-        reason=(
-            "xiaoqing_interview requires environment variable "
-            "CEO_XIAOQING_MCP_COMMAND; set it or delete the server from the manifest"
-        ),
+        reason="service transport command is not configured",
         recover_command="fix xiaoqing_interview in the service MCP manifest",
     )
     assert secret not in repr(statuses)

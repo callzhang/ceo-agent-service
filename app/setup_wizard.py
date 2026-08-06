@@ -11,7 +11,6 @@ from app.developer_prompt import (
     SEED_DEVELOPER_PROMPT_TEMPLATE,
     SEED_USER_PROMPT_TEMPLATE,
 )
-from app.memory_setup import codex_memory_connector_url
 from app.mcp_doctor import check_mcp_statuses
 from app.prompt import DEFAULT_WORK_PROFILE_TEXT
 from app.service_codex_config import (
@@ -1226,11 +1225,6 @@ def _setup_mcp(
         DEFAULT_SERVICE_MCP_CONFIG_PATH.read_text(encoding="utf-8"),
     )
 
-    codex_config = env.get("CODEX_CONFIG_PATH") or os.getenv("CODEX_CONFIG_PATH", "")
-    if not codex_config:
-        codex_home = env.get("CODEX_HOME") or os.getenv("CODEX_HOME", "~/.codex")
-        codex_config = str(Path(codex_home).expanduser() / "config.toml")
-    codex_config_path = Path(codex_config).expanduser()
     memory_url = (
         env.get("MEMORY_CONNECTOR_URL") or os.getenv("MEMORY_CONNECTOR_URL", "")
     ).strip()
@@ -1238,9 +1232,6 @@ def _setup_mcp(
     if not memory_url:
         memory_url = persisted_values.get("MEMORY_CONNECTOR_URL", "").strip()
         memory_url_source = "service_env_file" if memory_url else ""
-    if not memory_url:
-        memory_url = codex_memory_connector_url(codex_config_path)
-        memory_url_source = "installed_codex_config" if memory_url else ""
     if not memory_url:
         persisted_values["CEO_SERVICE_MCP_CONFIG_PATH"] = service_config_value
         _write_env_values(env_path, persisted_values)

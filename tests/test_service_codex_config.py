@@ -237,3 +237,31 @@ def test_malformed_http_header_name_is_rejected(tmp_path: Path) -> None:
         load_service_mcp_servers(path=manifest, env={})
 
     assert exc_info.value.reason == "remote.http_headers has an invalid header name"
+
+
+@pytest.mark.parametrize(
+    "malformed_url",
+    [
+        "https://example.com:bad/mcp",
+        "https://:443/mcp",
+        "https://exam ple.com/mcp",
+        "https://[::1/mcp",
+    ],
+)
+def test_malformed_manifest_urls_raise_typed_error_without_echoing_value(
+    tmp_path: Path,
+    malformed_url: str,
+) -> None:
+    manifest = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {"remote": {"url": malformed_url}},
+    )
+
+    with pytest.raises(ServiceMcpConfigError) as exc_info:
+        load_service_mcp_servers(path=manifest, env={})
+
+    assert exc_info.value.server_name == "remote"
+    assert exc_info.value.reason == (
+        "remote URL must be a valid http(s) URL without credentials, query, or fragment"
+    )
+    assert malformed_url not in str(exc_info.value)

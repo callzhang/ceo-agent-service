@@ -59,6 +59,7 @@ class ServiceMcpServer:
 class ServiceMcpConfigIssue:
     server_name: str
     reason: str
+    field: str | None = None
 
 
 class ServiceMcpConfigError(ValueError):
@@ -78,7 +79,10 @@ class ServiceMcpConfigError(ValueError):
 
 
 class _ServerConfigProblem(ValueError):
-    pass
+    def __init__(self, reason: str, *, field: str | None = None) -> None:
+        self.reason = reason
+        self.field = field
+        super().__init__(reason)
 
 
 class _DuplicateJsonKey(ValueError):
@@ -131,7 +135,13 @@ def load_service_mcp_servers(
         try:
             servers.append(_resolve_server(name, entry, env=env))
         except _ServerConfigProblem as exc:
-            issues.append(ServiceMcpConfigIssue(server_name=name, reason=str(exc)))
+            issues.append(
+                ServiceMcpConfigIssue(
+                    server_name=name,
+                    reason=exc.reason,
+                    field=exc.field,
+                )
+            )
     if issues:
         raise ServiceMcpConfigError(
             path=config_path,
@@ -173,14 +183,28 @@ def service_mcp_config_options(
 
 
 def service_mcp_url_is_safe(url: str) -> bool:
-    parsed = urlsplit(url)
+    if (
+        not isinstance(url, str)
+        or not url
+        or "\\" in url
+        or any(character.isspace() or ord(character) < 32 for character in url)
+    ):
+        return False
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except (UnicodeError, ValueError):
+        return False
     return (
         parsed.scheme in {"http", "https"}
         and bool(parsed.netloc)
+        and bool(hostname)
         and parsed.username is None
         and parsed.password is None
-        and not parsed.query
-        and not parsed.fragment
+        and (port is None or port > 0)
+        and "?" not in url
+        and "#" not in url
     )
 
 
@@ -252,12 +276,17 @@ def _resolve_server(
         url = _required_string(name, entry, "url")
     elif url_source == "url_env":
         url_env = _environment_name(name, entry, "url_env")
-        url = _required_environment_value(name, url_env, env=env)
+        url = _required_environment_value(name, url_env, env=env, field="url")
     elif command_source == "command":
         command = _required_string(name, entry, "command")
     else:
         command_env = _environment_name(name, entry, "command_env")
-        command = _required_environment_value(name, command_env, env=env)
+        command = _required_environment_value(
+            name,
+            command_env,
+            env=env,
+            field="command",
+        )
 
     args, args_env = _resolve_args(name, entry, env=env)
     bearer_token_env_var = _optional_environment_name(
@@ -281,9 +310,19 @@ def _resolve_server(
             )
 
     if bearer_token_env_var is not None:
-        _required_environment_value(name, bearer_token_env_var, env=env)
+        _required_environment_value(
+            name,
+            bearer_token_env_var,
+            env=env,
+            field="bearer_token_env_var",
+        )
     for _, env_name in env_http_headers:
-        _required_environment_value(name, env_name, env=env)
+        _required_environment_value(
+            name,
+            env_name,
+            env=env,
+            field="env_http_headers",
+        )
 
     return ServiceMcpServer(
         name=name,
@@ -316,9 +355,15 @@ def _exclusive_source(
 def _required_string(name: str, entry: dict[str, object], field: str) -> str:
     value = entry.get(field)
     if not isinstance(value, str) or not value or value != value.strip():
-        raise _ServerConfigProblem(f"{name}.{field} must be a non-empty string")
+        raise _ServerConfigProblem(
+            f"{name}.{field} must be a non-empty string",
+            field=field,
+        )
     if "\0" in value or "\n" in value or "\r" in value:
-        raise _ServerConfigProblem(f"{name}.{field} contains invalid characters")
+        raise _ServerConfigProblem(
+            f"{name}.{field} contains invalid characters",
+            field=field,
+        )
     return value
 
 
@@ -346,20 +391,24 @@ def _required_environment_value(
     env_name: str,
     *,
     env: Mapping[str, str],
+    field: str | None = None,
 ) -> str:
     value = env.get(env_name)
     if not isinstance(value, str) or not value.strip():
         raise _ServerConfigProblem(
             f"{name} requires environment variable {env_name}; "
-            "set it or delete the server from the manifest"
+            "set it or delete the server from the manifest",
+            field=field,
         )
     if value != value.strip():
         raise _ServerConfigProblem(
-            f"{name} environment variable {env_name} contains leading or trailing whitespace"
+            f"{name} environment variable {env_name} contains leading or trailing whitespace",
+            field=field,
         )
     if "\0" in value or "\n" in value or "\r" in value:
         raise _ServerConfigProblem(
-            f"{name} environment variable {env_name} contains invalid characters"
+            f"{name} environment variable {env_name} contains invalid characters",
+            field=field,
         )
     return value
 
@@ -377,7 +426,7 @@ def _resolve_args(
         return _string_list(name, entry["args"], field="args"), None
 
     args_env = _environment_name(name, entry, "args_env")
-    raw = _required_environment_value(name, args_env, env=env)
+    raw = _required_environment_value(name, args_env, env=env, field="args")
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -455,7 +504,8 @@ def _environment_mapping(
 def _validate_url(name: str, url: str) -> None:
     if not service_mcp_url_is_safe(url):
         raise _ServerConfigProblem(
-            f"{name} URL must be an http(s) URL without credentials, query, or fragment"
+            f"{name} URL must be a valid http(s) URL without credentials, query, or fragment",
+            field="url",
         )
 
 
