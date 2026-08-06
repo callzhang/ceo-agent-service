@@ -5206,6 +5206,87 @@ class AutoReplyStore:
                 delivery_status=status,
                 error=error,
             )
+            if status == "sent":
+                self._supersede_failed_wechat_deliveries_with_newer_sent(
+                    db,
+                    sent_delivery_id=delivery_id,
+                )
+
+    @classmethod
+    def _supersede_failed_wechat_deliveries_with_newer_sent(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        sent_delivery_id: int,
+    ) -> int:
+        """Close old pre-action failures once a newer reply reached the chat.
+
+        A later successful direct-chat reply makes earlier failed drafts stale.
+        Replaying them would reverse the conversation and duplicate a response,
+        so preserve the audit trail as ``superseded`` instead of retrying.
+        """
+        sent = db.execute(
+            """
+            select account_id, target_type, target_id, conversation_id, reply_task_id
+            from wechat_deliveries
+            where id=? and status='sent'
+            """,
+            (sent_delivery_id,),
+        ).fetchone()
+        if sent is None:
+            return 0
+        rows = db.execute(
+            """
+            select id
+            from wechat_deliveries
+            where account_id=?
+              and target_type=?
+              and target_id=?
+              and conversation_id=?
+              and reply_task_id < ?
+              and status='failed'
+              and error='action_not_performed'
+            """,
+            (
+                sent["account_id"],
+                sent["target_type"],
+                sent["target_id"],
+                sent["conversation_id"],
+                sent["reply_task_id"],
+            ),
+        ).fetchall()
+        error = f"superseded_by_newer_wechat_delivery:{sent_delivery_id}"
+        for row in rows:
+            delivery_id = int(row["id"])
+            db.execute(
+                """
+                update wechat_deliveries
+                set status='superseded', error=?, updated_at=current_timestamp
+                where id=? and status='failed' and error='action_not_performed'
+                """,
+                (error, delivery_id),
+            )
+            cls._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=delivery_id,
+                delivery_status="superseded",
+                error=error,
+            )
+        return len(rows)
+
+    def supersede_failed_wechat_deliveries_with_newer_sent(self) -> int:
+        """Reconcile historical failures after an interrupted sender restart."""
+        with self._connect() as db:
+            sent_rows = db.execute(
+                "select id from wechat_deliveries where status='sent' order by id"
+            ).fetchall()
+            total = 0
+            for row in sent_rows:
+                total += self._supersede_failed_wechat_deliveries_with_newer_sent(
+                    db,
+                    sent_delivery_id=int(row["id"]),
+                )
+            return total
 
     @staticmethod
     def _wechat_delivery_source_statuses(status: str, error: str) -> tuple[str, ...]:

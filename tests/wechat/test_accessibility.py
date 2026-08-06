@@ -478,6 +478,64 @@ def test_wechat_pid_comes_from_main_bundle_application():
     assert seen == ["com.tencent.xinWeChat"]
 
 
+def test_preflight_requires_a_usable_accessibility_window(monkeypatch):
+    app = object()
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrusted=lambda: True,
+            AXUIElementCreateApplication=lambda _pid: app,
+            AXUIElementCopyAttributeValue=lambda _app, _attribute, _unused: (0, []),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "Quartz",
+        SimpleNamespace(
+            CGSessionCopyCurrentDictionary=lambda: {},
+            CGWindowListCopyWindowInfo=lambda _options, _window_id: [
+                {"kCGWindowOwnerPID": 500}
+            ],
+            kCGWindowListOptionAll=1,
+            kCGNullWindowID=0,
+        ),
+    )
+    runner = MacWechatAccessibility()
+    monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
+
+    assert runner.preflight() == "wechat_window_unavailable"
+
+
+def test_preflight_reports_ready_when_wechat_has_accessibility_window(monkeypatch):
+    app = object()
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrusted=lambda: True,
+            AXUIElementCreateApplication=lambda _pid: app,
+            AXUIElementCopyAttributeValue=lambda _app, _attribute, _unused: (0, [object()]),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "Quartz",
+        SimpleNamespace(
+            CGSessionCopyCurrentDictionary=lambda: {},
+            CGWindowListCopyWindowInfo=lambda _options, _window_id: [
+                {"kCGWindowOwnerPID": 500}
+            ],
+            kCGWindowListOptionAll=1,
+            kCGNullWindowID=0,
+        ),
+    )
+    runner = MacWechatAccessibility()
+    monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
+
+    assert runner.preflight() == "ready"
+
+
 def test_request_accessibility_asks_macos_to_show_prompt(monkeypatch):
     seen = []
     monkeypatch.setitem(

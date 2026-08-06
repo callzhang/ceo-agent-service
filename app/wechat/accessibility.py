@@ -398,7 +398,11 @@ class MacWechatAccessibility:
 
     def preflight(self) -> str:
         try:
-            from ApplicationServices import AXIsProcessTrusted
+            from ApplicationServices import (
+                AXIsProcessTrusted,
+                AXUIElementCopyAttributeValue,
+                AXUIElementCreateApplication,
+            )
             import Quartz
         except Exception:
             return "pyobjc_unavailable"
@@ -413,8 +417,14 @@ class MacWechatAccessibility:
             Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID
         ):
             if w.get("kCGWindowOwnerPID") == pid:
-                return "ready"
-        return "wechat_not_running"
+                app = AXUIElementCreateApplication(pid)
+                error, windows = AXUIElementCopyAttributeValue(app, "AXWindows", None)
+                if error == 0 and windows:
+                    return "ready"
+                # A composited window without an AX tree cannot receive a
+                # verified target selection. Fail before consuming a retry.
+                return "wechat_window_unavailable"
+        return "wechat_window_unavailable"
 
     def request_accessibility(self) -> str:
         try:

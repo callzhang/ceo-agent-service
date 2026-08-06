@@ -108,6 +108,11 @@ state, and navigates duplicate direct-chat names with the stable target ID befor
 requiring the composer title to match the expected display name. Group navigation
 uses the verified unique group name.
 
+Preflight is ready only when both a visible WeChat process window and a usable
+Accessibility `AXWindows` tree are present. A composited but inaccessible
+window is reported as `wechat_window_unavailable`; delivery is paused before a
+retry is spent, rather than repeatedly attempting an impossible UI action.
+
 Delivery status is mirrored back to the History `reply_attempts` row. A
 `ready_to_send` or `sending` delivery remains `pending`; `sent` becomes `sent`;
 user rejection becomes `skipped`; `failed` and `send_unknown` become `failed`
