@@ -2241,7 +2241,7 @@ class DingTalkAutoReplyWorker:
             trigger_mentioned_user_ids=tuple(trigger.mentioned_user_ids),
             messages=tuple(messages),
             materials=materials,
-            prior_receipts=(),
+            prior_receipts=self._agent_prior_receipts(task),
             manual_rerun=manual_rerun,
             trigger_raw_payload=dict(trigger.raw_payload),
         )
@@ -2473,6 +2473,29 @@ class DingTalkAutoReplyWorker:
         return process_instance_id, task_id
 
     def _agent_prior_receipts(self, task: ReplyTask) -> tuple[PriorReceipt, ...]:
+        process_instance_id = self._oa_process_instance_id_from_url(task.oa_url)
+        if process_instance_id:
+            receipts = []
+            for attempt in self.store.list_oa_attempt_history(
+                process_instance_id,
+                limit=10,
+            ):
+                if not attempt.oa_action.strip():
+                    continue
+                if attempt.send_status not in {"commented", "completed"}:
+                    continue
+                summary = (attempt.oa_remark or attempt.audit_summary).strip()
+                if not summary:
+                    continue
+                receipts.append(
+                    PriorReceipt(
+                        receipt_id=f"reply-attempt-{attempt.id}",
+                        operation=attempt.oa_action,
+                        summary=summary,
+                        completed=True,
+                    )
+                )
+            return tuple(receipts)
         attempt = self.store.get_latest_reply_attempt_for_trigger(
             task.conversation_id,
             task.trigger_message_id,

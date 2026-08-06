@@ -8302,7 +8302,7 @@ class AutoReplyStore:
                 select
                     'reply' as kind,
                     case
-                        when action='oa_approval' then 'approval'
+                        when action='oa_approval' or oa_process_instance_id<>'' then 'approval'
                         when channel='wechat' then 'wechat'
                         else 'replay'
                     end as object_type,

@@ -716,6 +716,19 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
         send_status="sent",
     )
     store.record_reply_attempt(
+        conversation_id="cid-agent-approval-history",
+        conversation_title="Agent Approval Search Group",
+        trigger_message_id="msg-agent-approval-history",
+        trigger_sender="Derek OA",
+        trigger_text="风险预算审批扫描已完成审阅",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-agent-history-filter",
+        oa_task_id="task-agent-history-filter",
+        oa_action="review",
+        send_status="needs_human",
+    )
+    store.record_reply_attempt(
         conversation_id="cid-approval-history",
         conversation_title="Approval Search Group",
         trigger_message_id="msg-approval-history",
@@ -762,6 +775,7 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
     assert 'name="object_type" value="meeting" checked' in default_html
     assert "History Search Group" in default_html
     assert "Approval Search Group" in default_html
+    assert "Agent Approval Search Group" in default_html
     assert "Task Search Group" in default_html
     assert "相似 Codex sessions" in default_html
 
@@ -783,6 +797,7 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
         query_embedding=[1.0, 0.0],
     )
     assert "Approval Search Group" in approval_only_html
+    assert "Agent Approval Search Group" in approval_only_html
     assert "History Search Group" not in approval_only_html
     assert "Task Search Group" not in approval_only_html
     assert "相似 Codex sessions" not in approval_only_html

@@ -7758,7 +7758,8 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert "Safe prior execution receipts" not in agent_prompt(worker)
+    assert "Safe prior execution receipts" in agent_prompt(worker)
+    assert "退回" in agent_prompt(worker)
     assert "dws oa approval detail --instance-id proc-1" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
