@@ -9363,7 +9363,7 @@ class AutoReplyStore:
                       or attempts.reviewed_at is null
                   )
                   and (
-                      attempts.send_status != 'failed'
+                      attempts.send_status = 'needs_human'
                       or not exists (
                           select 1
                           from reply_tasks as tasks
@@ -9371,7 +9371,7 @@ class AutoReplyStore:
                             and tasks.conversation_id=attempts.conversation_id
                             and tasks.trigger_message_id=attempts.trigger_message_id
                             and (
-                                tasks.status='processing'
+                                tasks.status in ('done', 'processing')
                                 or (
                                     tasks.status='pending'
                                     and tasks.error='codex_provider_unavailable'
@@ -9404,7 +9404,7 @@ class AutoReplyStore:
                       or attempts.reviewed_at is null
                   )
                   and (
-                      attempts.send_status != 'failed'
+                      attempts.send_status = 'needs_human'
                       or not exists (
                           select 1
                           from reply_tasks as tasks
@@ -9412,7 +9412,7 @@ class AutoReplyStore:
                             and tasks.conversation_id=attempts.conversation_id
                             and tasks.trigger_message_id=attempts.trigger_message_id
                             and (
-                                tasks.status='processing'
+                                tasks.status in ('done', 'processing')
                                 or (
                                     tasks.status='pending'
                                     and tasks.error='codex_provider_unavailable'

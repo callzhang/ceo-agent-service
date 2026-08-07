@@ -168,8 +168,8 @@ ID、租约、终态、外部结果状态和精确去重键，不复制完整 tr
 ## 通知与审计页面
 
 `failed`、`unknown` 和真正的 `needs_human` 会进入 History。审计页 `/notifications` 从 SQLite
-按同一原始触发的最新状态列出当前 `failed`、`blocked` 和未审阅 `needs_human`，因此旧失败在
-后续成功或审阅完成后不会继续占用收件箱。
+按同一原始触发的最新状态列出当前 `failed`、`blocked` 和未审阅 `needs_human`。关联任务已经
+完成时，旧失败和阻塞不会继续占用收件箱；未审阅的人工选择仍会保留。
 
 若关联任务当前正在执行，或已因外部 Codex 容量问题进入定时恢复，旧 `failed` attempt 也不进入
 收件箱；前者会在任务页显示处理中，后者显示等待服务商恢复。

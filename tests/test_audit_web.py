@@ -3833,10 +3833,36 @@ def test_browser_notifications_exclude_active_and_provider_recovery_tasks(
         send_status="failed",
     )
 
+    store.enqueue_reply_task(
+        conversation_id="cid-completed",
+        conversation_title="Completed task",
+        single_chat=False,
+        trigger_message_id="msg-completed",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Completed task.",
+    )
+    [completed_task] = store.claim_reply_tasks(limit=1)
+    store.complete_reply_task(
+        completed_task.id,
+        expected_execution_generation=completed_task.execution_generation,
+    )
+    completed_attempt = store.record_reply_attempt(
+        conversation_id=completed_task.conversation_id,
+        conversation_title=completed_task.conversation_title,
+        trigger_message_id=completed_task.trigger_message_id,
+        trigger_sender=completed_task.trigger_sender,
+        trigger_text=completed_task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="blocked",
+    )
+
     html = audit_web_module.render_browser_notifications_page(store)
 
     assert f"Attempt #{active_attempt}" not in html
     assert f"Attempt #{provider_attempt}" not in html
+    assert f"Attempt #{completed_attempt}" not in html
     assert store.count_current_unresolved_problem_attempts() == 0
 
 
