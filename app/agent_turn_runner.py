@@ -240,7 +240,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 approval_policy="untrusted" if allow_effectful_tools else "never",
                 developer_instructions=contract_instructions,
                 use_approval_bypass=allow_effectful_tools,
-                ignore_user_config=True,
             )
             configure_command(command)
             process = self.executor(

@@ -28,8 +28,7 @@ class CodexMemoryWriteBackend:
                           "source_time_start": source_time_start,
                           "source_time_end": source_time_end}, ensure_ascii=False)
         )
-        command = self.runner.build_command(prompt, None, output_schema_path=WRITE_SCHEMA_PATH,
-                                            ignore_user_config=True)
+        command = self.runner.build_command(prompt, None, output_schema_path=WRITE_SCHEMA_PATH)
         from app.wechat.codex_safety import disable_configured_mcp_servers
         disable_configured_mcp_servers(
             command, except_names=frozenset({"memory_connector"}))

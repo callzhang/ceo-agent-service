@@ -82,7 +82,6 @@ def test_recovery_mcp_env_override_is_a_toml_inline_table():
     ]
     make_audit_agent_command(
         command,
-        reviewed_mcp_tools={},
         controlled_cli=ControlledCliConfig(
             command="python",
             args=("-m", "app.agent_cli"),
@@ -451,8 +450,8 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert command[:2] == ["codex", "exec"]
     assert "resume" not in command
     assert "--output-schema" not in command
-    assert "features.plugins=false" in command
-    assert "features.apps=false" in command
+    assert "features.plugins=false" not in command
+    assert "features.apps=false" not in command
     assert 'approval_policy="untrusted"' in command
     assert 'approvals_reviewer="auto_review"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command

@@ -22,7 +22,6 @@ from app.codex_runner import (
 )
 from app.external_retry import ExternalDependencyError, run_external
 from app.process_runner import run_process_with_idle_timeout
-from app.service_codex_config import service_mcp_config_options
 
 
 class SkillLoadError(RuntimeError):
@@ -271,11 +270,6 @@ class StructuredCodexRunner:
         common = [
             "--json",
             *codex_model_config_options(),
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--disable",
-            "hooks",
-            *service_mcp_config_options(),
             *safety_options,
             "-c",
             _config_string("developer_instructions", self.spec.developer_instructions()),
@@ -284,9 +278,6 @@ class StructuredCodexRunner:
             "-c",
             "include_permissions_instructions=false",
             "-c",
-            "include_apps_instructions=false",
-            "-c",
-            "include_environment_context=false",
         ]
         schema_options = (
             ["--output-schema", str(self.spec.output_schema_path)]

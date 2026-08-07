@@ -198,14 +198,10 @@ scripts/bootstrap-local-components.sh --format json
 ### Memory Connector
 
 If the deployment uses Friday Memory or another Memory Connector MCP endpoint,
-keep its URL and credential references in `.env` and the service-owned manifest.
-The setup wizard seeds the editable manifest at `data/config/service-mcp.json`;
-service runtime does not read personal Codex configuration.
-
-In the Tutorial page, the Memory Connector "Fix automatically" action uses only
-`MEMORY_CONNECTOR_URL` from the service environment and persists the local
-`CEO_SERVICE_MCP_CONFIG_PATH`. It never imports personal Codex transport values,
-headers, commands, or tokens.
+configure and authenticate it once in the installing user's Codex profile. The
+service reuses that native MCP configuration and does not copy endpoint headers,
+commands, or tokens into `.env` or a service manifest. The Tutorial page should
+guide the user to the native Codex setup when a tool is unavailable.
 
 ### Nvwa Persona Skill
 

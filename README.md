@@ -65,7 +65,7 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
-所有服务启动的 Codex 通道（包括微信消费）均忽略用户级 Codex 配置，并显式采用服务当前的模型供应商和 MCP 配置来源，避免个人 OAuth、插件或旧刷新令牌阻塞新消息处理。
+所有服务启动的 Codex 通道（包括微信消费）均复用安装用户的 Codex 配置、MCP、插件和 skills。服务不会复制 OAuth 或 token；单个 MCP 的认证失败按实际依赖错误处理，不会触发 Agent 自行登录。
 
 Agent 必须如实返回动作结果；只有诊断、没有完成用户要求的动作时不能标为 `executed`。可向对话参与者补齐的事实必须变成一个具体澄清消息候选，不得要求 Derek 选择“继续还是追问”。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
 
@@ -207,8 +207,7 @@ cp .env.example .env
 | `CEO_MEETING_PRODUCER_INTERVAL_SECONDS` | 会议信息发现周期，默认 60 秒 |
 | `CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS` | 会后对齐队列消费周期，默认 10 秒 |
 | `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
-| `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex 模型配置；默认 `gpt-5.5` + `medium`，避免服务继承用户全局 `~/.codex/config.toml` 的模型 |
-| `CEO_SERVICE_MCP_CONFIG_PATH` | 服务专用 MCP JSON 清单；setup 默认创建 `data/config/service-mcp.json`，运行时不读取用户的 `~/.codex/config.toml` |
+| `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | 可选模型覆盖；默认 `gpt-5.5` + `medium`，未设置时继续使用用户的 Codex 认证与 MCP/skills |
 | `CEO_FEISHU_CLI_BINARY` | 飞书 CLI 二进制名，默认 `lark` |
 | `CEO_FEISHU_LIVE_SEND_ENABLED` | 飞书 CLI 真实发送开关，默认 `0`；未显式设为 `1` 时 `send_reply` 只返回 blocked，不会发送 |
 | `data/mcp-doctor-state.json` | MCP doctor 的一次性提醒状态文件；用于避免 `needs_login` / `token_expired` 状态重复弹授权提醒 |
@@ -417,22 +416,16 @@ CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-mes
 
 `scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。AI 听记通过当前 `dws` 登录态增量读取。
 
-初始化向导会把仓库内的 `config/service-mcp.json` 复制到可编辑的
-`data/config/service-mcp.json`，并在 `.env` 写入
-`CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json`。首次配置始终保留 Exa，
-仅在所需环境变量完整时加入 Memory/Xiaoqing；不使用的可选 server 从本地清单中
-省略。清单中仍存在但缺少环境变量的 server 会阻断 Codex 启动，不会生成不完整
-transport。
+CEO reply agent 使用原生 `codex exec`，保留用户的 `~/.codex` 配置、MCP、plugins、hooks 和
+skills。无需把 Exa、Memory 或 Xiaoqing 再配置到仓库或 `.env`，也绝不把它们的 OAuth/token
+复制进服务目录。
 
-CEO reply agent 始终使用 `--ignore-user-config` 并显式禁用 hooks。需要保留给
-agent 的外部能力分两类：
+- CLI 能力：`dws` 和 Feishu/Lark CLI 使用安装用户原有登录态；服务在执行前做 channel gate。
+- MCP/skills：直接来自用户的 Codex 安装。Consumer A 与 Audit B 都可以检索与读取；B 负责
+  独立审阅后的外部执行。
 
-- CLI 能力：`dws` 和 Feishu/Lark CLI 由服务环境直接提供。DWS 负责钉钉消息、文档、审批、日历、通讯录和 AI 听记；Feishu/Lark CLI 负责飞书读取和显式开启后的回复发送。两者都不通过 MCP 透传。
-- MCP 能力：所有 transport 仅来自 `CEO_SERVICE_MCP_CONFIG_PATH` 指向的服务清单。URL、command 和 args 可由环境变量解析；bearer token 与动态 HTTP header 只在清单中保存环境变量名，不保存值。
-
-Consumer A 与 Audit B 都不会扫描、禁用或注入个人 MCP 名称。两者只能使用服务提供的
-DWS/Lark CLI、显式 MCP 清单和适用的 `SKILL.md`；A 只拿读取工具，B 才能执行已接受候选
-中的写动作。认证登录仍由 service gate 和 Tutorial 管理，Agent 不执行 login/reset/logout。
+认证仍由 Codex/MCP 原生登录管理。Agent 不执行 login/reset/logout；工具未授权时保留可恢复错误，
+不会把问题转嫁为“对方没给材料”。
 
 Codex CLI 的原生 session JSONL 是运行审计。服务只保存 session ID 和每个 run 的 transcript 起止行，避免复制工具参数、结果和另一套回执状态机。
 

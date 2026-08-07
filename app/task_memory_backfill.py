@@ -64,7 +64,6 @@ class ProjectMemoryContextCodexRunner:
             session_id=None,
             image_paths=None,
             output_schema_path=PROJECT_MEMORY_CONTEXT_SCHEMA_PATH,
-            ignore_user_config=True,
         )
         if self.executor is not None:
             return self.executor(command, prompt)

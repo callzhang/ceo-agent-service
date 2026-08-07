@@ -50,13 +50,13 @@ def test_wechat_decision_runner_uses_read_only_memory_only_command(
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     assert "--sandbox read-only" in command_text
     assert 'approval_policy="never"' in command_text
-    assert "features.plugins=false" in command_text
-    assert "features.apps=false" in command_text
+    assert "features.plugins=false" not in command_text
+    assert "features.apps=false" not in command_text
     assert 'web_search="disabled"' in command_text
-    assert 'mcp_servers.memory_connector.enabled_tools=["memory_get","memory_recall","timeline_get","user_get"]' in command_text
+    assert "mcp_servers.memory_connector.enabled_tools=" not in command_text
 
 
-def test_read_only_command_does_not_add_an_unconfigured_memory_transport():
+def test_read_only_command_preserves_principal_mcp_configuration():
     command = [
         "codex",
         "exec",
@@ -67,5 +67,5 @@ def test_read_only_command_does_not_add_an_unconfigured_memory_transport():
     make_read_only_with_memory_tools(command)
 
     command_text = " ".join(command)
-    assert "mcp_servers.exa.enabled=false" in command_text
+    assert "mcp_servers.exa.enabled=false" not in command_text
     assert "mcp_servers.memory_connector" not in command_text
