@@ -1,5 +1,6 @@
 import json
 
+from app.wechat.codex_safety import make_read_only_with_memory_tools
 from app.wechat.decision_runner import WechatDecisionRunner
 
 
@@ -24,7 +25,21 @@ class CapturingExecutor:
         )
 
 
-def test_wechat_decision_runner_uses_read_only_memory_only_command(tmp_path):
+def test_wechat_decision_runner_uses_read_only_memory_only_command(
+    tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "memory_connector": {"url": "https://memory.example/mcp"}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
     executor = CapturingExecutor()
     runner = WechatDecisionRunner(workspace=tmp_path, executor=executor)
 
@@ -39,3 +54,18 @@ def test_wechat_decision_runner_uses_read_only_memory_only_command(tmp_path):
     assert "features.apps=false" in command_text
     assert 'web_search="disabled"' in command_text
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_get","memory_recall","timeline_get","user_get"]' in command_text
+
+
+def test_read_only_command_does_not_add_an_unconfigured_memory_transport():
+    command = [
+        "codex",
+        "exec",
+        "-c",
+        'mcp_servers.exa.url="https://mcp.exa.ai/mcp"',
+    ]
+
+    make_read_only_with_memory_tools(command)
+
+    command_text = " ".join(command)
+    assert "mcp_servers.exa.enabled=false" in command_text
+    assert "mcp_servers.memory_connector" not in command_text
