@@ -9,6 +9,7 @@ from app.agent_context import AgentTaskContext
 from app.agent_result import AgentOutcome, EffectKind
 from app.agent_runner import (
     AGENT_RESULT_SCHEMA_PATH,
+    DEFAULT_MCP_EFFECTS_PATH,
     AgentConversationLockedError,
     DirectAgentRunner,
     McpToolEffectRegistry,
@@ -73,6 +74,39 @@ def test_mcp_effect_registry_declares_structured_readback_relationship():
         read_tool="get",
         write_server="records",
         write_tool="delete",
+    )
+
+
+def test_default_mcp_effect_registry_has_only_verifiable_direct_readback():
+    registry = McpToolEffectRegistry.from_path(DEFAULT_MCP_EFFECTS_PATH)
+
+    assert registry.can_readback(
+        read_server="xiaoqing_interview",
+        read_tool="get_interview_context",
+        write_server="xiaoqing_interview",
+        write_tool="upload_interview_result",
+    )
+    assert registry.readback_targets_match(
+        read_server="xiaoqing_interview",
+        read_tool="get_interview_context",
+        write_server="xiaoqing_interview",
+        write_tool="upload_interview_result",
+        read_targets={"candidate_id": "candidate-1", "interview_id": "interview-1"},
+        write_targets={"candidate_id": "candidate-1", "interview_id": "interview-1"},
+    )
+    assert not registry.readback_targets_match(
+        read_server="xiaoqing_interview",
+        read_tool="get_interview_context",
+        write_server="xiaoqing_interview",
+        write_tool="upload_interview_result",
+        read_targets={"candidate_id": "candidate-1", "interview_id": "interview-2"},
+        write_targets={"candidate_id": "candidate-1", "interview_id": "interview-1"},
+    )
+    assert not registry.can_readback(
+        read_server="memory_connector",
+        read_tool="memory_get",
+        write_server="memory_connector",
+        write_tool="memory_write",
     )
 
 

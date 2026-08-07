@@ -374,9 +374,9 @@ class AgentRunLeaseLostError(RuntimeError):
 
 
 def _persisted_agent_effect_state(events: list[dict[str, object]]) -> str:
-    started: set[str] = set()
-    completed: set[str] = set()
-    failed: set[str] = set()
+    pending: dict[str, int] = {}
+    event_closures: set[str] = set()
+    confirmed = False
     for event in events:
         event_type = event.get("type")
         item = event.get("item")
@@ -391,15 +391,23 @@ def _persisted_agent_effect_state(events: list[dict[str, object]]) -> str:
         if not isinstance(call_id, str) or not call_id.strip():
             continue
         if event_type == "item.started":
-            started.add(call_id)
+            pending[call_id] = pending.get(call_id, 0) + 1
         elif event_type == "item.completed":
-            completed.add(call_id)
+            if pending.get(call_id, 0) > 0:
+                pending[call_id] -= 1
+            event_closures.add(call_id)
+            confirmed = True
         else:
-            failed.add(call_id)
-    completed.update(_persisted_agent_receipt_ids(events))
-    if started - completed - failed:
+            if pending.get(call_id, 0) > 0:
+                pending[call_id] -= 1
+            event_closures.add(call_id)
+    for receipt_id in _persisted_agent_receipt_ids(events):
+        if receipt_id not in event_closures and pending.get(receipt_id, 0) > 0:
+            pending[receipt_id] -= 1
+        confirmed = True
+    if any(count > 0 for count in pending.values()):
         return "unknown"
-    if completed:
+    if confirmed:
         return "confirmed"
     return "none"
 
@@ -484,6 +492,7 @@ def _agent_effect_state_from_rows(
     run_id: int,
 ) -> str:
     pending: dict[str, int] = {}
+    event_closures: set[str] = set()
     completed = False
     unreviewed = False
     for row in db.execute(
@@ -510,12 +519,19 @@ def _agent_effect_state_from_rows(
                 elif row["event_type"] == "item.completed":
                     if pending.get(call_id, 0) > 0:
                         pending[call_id] -= 1
+                    event_closures.add(call_id)
                     completed = True
                 elif row["event_type"] == "item.failed":
                     if pending.get(call_id, 0) > 0:
                         pending[call_id] -= 1
+                    event_closures.add(call_id)
         receipt_operation_id = row["receipt_operation_id"]
         if receipt_operation_id:
+            if (
+                receipt_operation_id not in event_closures
+                and pending.get(receipt_operation_id, 0) > 0
+            ):
+                pending[receipt_operation_id] -= 1
             completed = True
     if unreviewed or any(count > 0 for count in pending.values()):
         return "unknown"

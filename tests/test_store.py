@@ -1690,6 +1690,41 @@ def test_safe_persisted_receipt_closes_started_agent_effect(tmp_path: Path):
     assert confirmed.side_effect_state == "confirmed"
 
 
+def test_safe_persisted_receipt_closes_only_one_started_agent_effect(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
+    started = {
+        "type": "item.started",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    receipt = {
+        "type": "item.completed",
+        "item": {
+            "id": "receipt-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "read_only"},
+            "result": {
+                "receipt_id": "receipt-1",
+                "operation_id": "write-1",
+                "completed": True,
+                "persisted": True,
+                "safe_to_confirm": True,
+            },
+        },
+    }
+
+    store.append_agent_run_event(run.id, started, owner="worker-1")
+    store.append_agent_run_event(run.id, started, owner="worker-1")
+    persisted = store.append_agent_run_event(run.id, receipt, owner="worker-1")
+
+    assert persisted.side_effect_state == "unknown"
+
+
 def test_execution_receipt_requires_current_unexpired_owner(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
@@ -5246,6 +5281,29 @@ def test_removed_runtime_accepts_completed_effect_evidence(
         legacy_status="succeeded",
         result_json=json.dumps(receipt),
     ) == ("completed", "")
+
+
+def test_removed_runtime_does_not_collapse_duplicate_effect_starts() -> None:
+    started = {
+        "type": "item.started",
+        "item": {
+            "call_id": "call-1",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    receipt = {
+        "tool_events": [
+            started,
+            started,
+            {**started, "type": "item.completed"},
+        ]
+    }
+
+    assert AutoReplyStore._removed_runtime_attempt_status(
+        action="agent_action",
+        legacy_status="succeeded",
+        result_json=json.dumps(receipt),
+    ) == ("failed", "migrated_unverified_execution_receipt")
 
 
 def test_removed_runtime_structured_block_is_not_completed() -> None:

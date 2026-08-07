@@ -6,7 +6,6 @@ import pytest
 
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_contracts import ConsumerProposal, ProposedAction
-from app.agent_result import EffectKind
 from app.agent_runner import McpToolEffectRegistry
 from app.agent_turn_runner import _read_matches_action
 from app.audit_agent import AuditAgentRunner
@@ -812,21 +811,22 @@ def test_unrelated_read_cannot_authorize_recovery_write(setup):
 
 def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setup):
     store, task, audit_context, parent = setup
-    registry = McpToolEffectRegistry(
-        {
-            ("records", "get"): EffectKind.READ_ONLY,
-            ("records", "put"): EffectKind.EFFECTFUL,
-        },
-        readbacks={("records", "get"): {("records", "put")}},
-    )
+    registry = McpToolEffectRegistry.default()
     action = ProposedAction.model_validate(
         {
-            "description": "Update record",
-            "capability": "records",
-            "operation": "put",
-            "target": {"record_id": "record-1"},
-            "payload": {"record_id": "record-1", "value": "updated"},
-            "expected_verification": "Read the same record",
+            "description": "Upload interview result",
+            "capability": "xiaoqing_interview",
+            "operation": "upload_interview_result",
+            "target": {
+                "candidate_id": "candidate-1",
+                "interview_id": "interview-1",
+            },
+            "payload": {
+                "candidate_id": "candidate-1",
+                "interview_id": "interview-1",
+                "evaluation": "approved",
+            },
+            "expected_verification": "Read the same interview context",
         }
     )
     context = replace(
@@ -838,8 +838,8 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
         "item": {
             "type": "mcp_tool_call",
             "id": "direct-write",
-            "server": "records",
-            "tool": "put",
+            "server": "xiaoqing_interview",
+            "tool": "upload_interview_result",
             "arguments": action.payload,
             "status": "in_progress",
         },
@@ -874,9 +874,12 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
     read = {
         "type": "mcp_tool_call",
         "id": "direct-read",
-        "server": "records",
-        "tool": "get",
-        "arguments": {"record_id": "record-1"},
+        "server": "xiaoqing_interview",
+        "tool": "get_interview_context",
+        "arguments": {
+            "candidate_id": "candidate-1",
+            "interview_id": "interview-1",
+        },
         "status": "in_progress",
     }
     base = _audit_result_jsonl(
@@ -900,10 +903,18 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
                                 "content": [
                                     {
                                         "type": "text",
-                                        "text": json.dumps({"record_id": "record-1"}),
+                                        "text": json.dumps(
+                                            {
+                                                "candidate_id": "candidate-1",
+                                                "interview_id": "interview-1",
+                                            }
+                                        ),
                                     }
                                 ],
-                                "structuredContent": {"record_id": "record-1"},
+                                "structuredContent": {
+                                    "candidate_id": "candidate-1",
+                                    "interview_id": "interview-1",
+                                },
                                 "isError": False,
                             },
                         },
@@ -932,30 +943,116 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
 
 
 def test_direct_mcp_readback_requires_exact_target_identifiers():
-    registry = McpToolEffectRegistry(
-        {
-            ("records", "get"): EffectKind.READ_ONLY,
-            ("records", "put"): EffectKind.EFFECTFUL,
-        },
-        readbacks={("records", "get"): {("records", "put")}},
-    )
+    registry = McpToolEffectRegistry.default()
 
     assert not _read_matches_action(
         {
-            "reviewed_server": "records",
-            "reviewed_tool": "get",
-            "target_identifiers": {"record_id": "record-1"},
+            "reviewed_server": "xiaoqing_interview",
+            "reviewed_tool": "get_interview_context",
+            "target_identifiers": {
+                "candidate_id": "candidate-1",
+                "interview_id": "interview-2",
+            },
         },
         {
-            "reviewed_server": "records",
-            "reviewed_tool": "put",
+            "reviewed_server": "xiaoqing_interview",
+            "reviewed_tool": "upload_interview_result",
             "target_identifiers": {
-                "record_id": "record-1",
-                "tenant_id": "tenant-1",
+                "candidate_id": "candidate-1",
+                "interview_id": "interview-1",
             },
         },
         registry,
     )
+
+
+def test_memory_unknown_cannot_authorize_automatic_replay(setup):
+    store, task, audit_context, parent = setup
+    registry = McpToolEffectRegistry.default()
+    action = ProposedAction.model_validate(
+        {
+            "description": "Write durable memory",
+            "capability": "memory_connector",
+            "operation": "memory_write",
+            "target": {"scope": "current-user"},
+            "payload": {
+                "data": "durable fact",
+                "type": "text",
+                "created_at": "2026-08-07T00:00:00Z",
+            },
+            "expected_verification": "Read the returned memory identity",
+        }
+    )
+    context = replace(
+        audit_context,
+        proposal=audit_context.proposal.model_copy(update={"actions": (action,)}),
+    )
+    write = {
+        "type": "mcp_tool_call",
+        "id": "memory-write",
+        "server": "memory_connector",
+        "tool": "memory_write",
+        "arguments": action.payload,
+        "status": "in_progress",
+    }
+    initial = CapturingExecutor(
+        "\n".join(
+            (
+                json.dumps({"type": "thread.started", "thread_id": "memory-session"}),
+                json.dumps({"type": "item.started", "item": write}),
+            )
+        ),
+        returncode=1,
+    )
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=initial,
+            mcp_effect_registry=registry,
+        ).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.status == "unknown"
+    read = {
+        "type": "mcp_tool_call",
+        "id": "memory-read",
+        "server": "memory_connector",
+        "tool": "memory_get",
+        "arguments": {"uuid": "memory-1"},
+        "status": "completed",
+        "result": {
+            "content": [{"type": "text", "text": "memory-1"}],
+            "structuredContent": {"uuid": "memory-1"},
+            "isError": False,
+        },
+    }
+    recovery_lines = [
+        json.dumps({"type": "thread.started", "thread_id": "memory-session"}),
+        json.dumps({"type": "item.completed", "item": read}),
+        json.dumps({"type": "item.started", "item": {**write, "id": "memory-replay"}}),
+    ]
+
+    with pytest.raises(RuntimeError, match="audit_recovery_read_required"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor("\n".join(recovery_lines)),
+            mcp_effect_registry=registry,
+        ).recover(task, context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.status == "unknown"
+    assert sum(
+        event["type"] == "item.started"
+        and event["item"]["metadata"]["effect"] == "effectful"
+        for event in persisted.tool_events
+    ) == 1
 
 
 def test_definitely_absent_recovery_reads_before_executing_same_revision_once(setup):

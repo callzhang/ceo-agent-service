@@ -36,10 +36,7 @@
     {
       "server": "memory_connector",
       "tool": "memory_get",
-      "effect": "read_only",
-      "readback_for": [
-        {"server": "memory_connector", "tool": "memory_write"}
-      ]
+      "effect": "read_only"
     },
     {
       "server": "memory_connector",
@@ -79,7 +76,13 @@
     {
       "server": "xiaoqing_interview",
       "tool": "get_interview_context",
-      "effect": "read_only"
+      "effect": "read_only",
+      "readback_for": [
+        {
+          "server": "xiaoqing_interview",
+          "tool": "upload_interview_result"
+        }
+      ]
     },
     {
       "server": "xiaoqing_interview",
