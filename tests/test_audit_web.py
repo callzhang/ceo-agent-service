@@ -1087,6 +1087,42 @@ def test_history_chart_shows_provider_capacity_wait_without_failed_red_series(
     assert "💬 Failed" not in series_names
 
 
+def test_history_chart_marks_failed_reply_recovered_after_task_completion(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-recovered-reply",
+        conversation_title="Recovery",
+        single_chat=False,
+        trigger_message_id="msg-recovered-reply",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Recover this reply.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    payload = audit_web_module._history_chart_payload(store)
+    series_names = {series["name"] for series in payload["series"]}
+
+    assert "↻ Recovered" in series_names
+    assert "💬 Failed" not in series_names
+
+
 def test_history_chart_marks_recovered_meeting_retries_without_failed_red_series(
     tmp_path: Path,
 ):
