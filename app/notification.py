@@ -41,8 +41,17 @@ def send_browser_notification(
     title: str,
     message: str,
     url: str | None = None,
+    *,
+    notification_id: str | None = None,
+    detail_url: str | None = None,
 ) -> bool:
-    return _send_browser_notification(title=title, message=message, url=url)
+    return _send_browser_notification(
+        title=title,
+        message=message,
+        url=url,
+        notification_id=notification_id,
+        detail_url=detail_url,
+    )
 
 
 def _applescript_string(value: str) -> str:
@@ -79,10 +88,22 @@ def _send_terminal_notifier_notification(
     return completed.returncode == 0
 
 
-def _send_browser_notification(title: str, message: str, url: str | None) -> bool:
+def _send_browser_notification(
+    title: str,
+    message: str,
+    url: str | None,
+    *,
+    notification_id: str | None = None,
+    detail_url: str | None = None,
+) -> bool:
     endpoint = f"{notification_bridge_base_url()}/browser-notifications"
+    payload = {"title": title, "message": message, "url": url or ""}
+    if notification_id:
+        payload["id"] = notification_id
+    if detail_url:
+        payload["detail_url"] = detail_url
     body = json.dumps(
-        {"title": title, "message": message, "url": url or ""},
+        payload,
         ensure_ascii=False,
     ).encode("utf-8")
     http_request = request.Request(

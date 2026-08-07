@@ -3563,6 +3563,7 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
     assert "navigator.serviceWorker" in response.text
     assert '"/notification-service-worker.js"' in response.text
     assert "registration.showNotification(payload.title, options)" in response.text
+    assert "requireInteraction: true" in response.text
     assert "navigator.serviceWorker.addEventListener(\"message\"" in response.text
     assert "window.location.assign(targetPath)" in response.text
     assert "new Notification(" not in response.text
@@ -3574,6 +3575,85 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
     assert "granted standby" in response.text
     assert '<span class="nav-item active" aria-current="page">Notifications</span>' not in response.text
     assert '<a class="nav-item" href="/notifications">Notifications</a>' not in response.text
+
+
+def test_browser_notifications_page_shows_only_current_unresolved_problems(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    current_decision = store.record_reply_attempt(
+        conversation_id="cid-decision",
+        conversation_title="HR",
+        trigger_message_id="msg-decision",
+        trigger_sender="Mina",
+        trigger_text="need a choice",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="请选择下一步。",
+        send_status="needs_human",
+    )
+    current_failure = store.record_reply_attempt(
+        conversation_id="cid-failure",
+        conversation_title="Operations",
+        trigger_message_id="msg-failure",
+        trigger_sender="Mina",
+        trigger_text="current failure",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="Provider is unavailable.",
+        send_status="failed",
+    )
+    superseded_failure = store.record_reply_attempt(
+        conversation_id="cid-resolved",
+        conversation_title="Operations",
+        trigger_message_id="msg-resolved",
+        trigger_sender="Mina",
+        trigger_text="old failure",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="Old provider failure.",
+        send_status="failed",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-resolved",
+        conversation_title="Operations",
+        trigger_message_id="msg-resolved",
+        trigger_sender="Mina",
+        trigger_text="old failure",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+
+    response = TestClient(create_audit_app(store.path)).get("/notifications")
+
+    assert response.status_code == 200
+    assert "待处理问题" in response.text
+    assert f"Attempt #{current_decision}" in response.text
+    assert "请选择下一步。" in response.text
+    assert f"Attempt #{current_failure}" in response.text
+    assert "Provider is unavailable." in response.text
+    assert f"Attempt #{superseded_failure}" not in response.text
+
+
+def test_browser_notification_post_accepts_stable_inbox_notification(tmp_path: Path):
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post(
+        "/browser-notifications",
+        json={
+            "title": "CEO 有待处理问题",
+            "message": "2 项问题待处理。",
+            "url": "",
+            "id": "ceo-agent-service-problems",
+            "detail_url": "/notifications",
+        },
+    )
+
+    assert response.status_code == 200
+    event = audit_web_module._BROWSER_NOTIFICATION_HISTORY[-1]
+    assert event["id"] == "ceo-agent-service-problems"
+    assert event["detail_url"] == "/notifications"
 
 
 def test_browser_notification_post_reports_no_subscribers(tmp_path: Path):

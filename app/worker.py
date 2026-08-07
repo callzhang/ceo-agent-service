@@ -1564,7 +1564,7 @@ class DingTalkAutoReplyWorker:
                                 proposal_revision=failed_run.proposal_revision,
                                 turn_attempt=failed_run.turn_attempt,
                             )
-                    task_status = self._record_agent_runtime_failure_attempt(
+                    task_status, attempt_id = self._record_agent_runtime_failure_attempt(
                         task,
                         error,
                         retryable=True,
@@ -1586,10 +1586,11 @@ class DingTalkAutoReplyWorker:
                     "reply_task",
                     error,
                 )
-                self._notify(
-                    title=f"CEO task failed: {task.conversation_title}",
-                    message=error[:120],
-                    conversation=conversation,
+                self._notify_problem_attempt(
+                    task,
+                    attempt_id=attempt_id,
+                    send_status="failed",
+                    message=error,
                 )
                 continue
             if completed:
@@ -1651,7 +1652,7 @@ class DingTalkAutoReplyWorker:
         *,
         retryable: bool,
         prior_run_snapshot: dict[int, tuple[object, ...]],
-    ) -> str:
+    ) -> tuple[str, int]:
         run = self._latest_failed_agent_run(task, prior_run_snapshot)
         task_status = (
             "pending"
@@ -1708,9 +1709,9 @@ class DingTalkAutoReplyWorker:
                 send_error=error,
                 channel=task.channel,
             )
-        # consume_once emits the single terminal notification after recording
-        # the final reply-task error; retries do not notify.
-        return task_status
+        # consume_once emits the terminal notification after recording the
+        # persisted attempt, so the notification inbox has the same source.
+        return task_status, attempt_id
 
     @staticmethod
     def _agent_run_fingerprint(run: AgentRun) -> tuple[object, ...]:
@@ -4303,26 +4304,17 @@ class DingTalkAutoReplyWorker:
     ) -> None:
         if self.dry_run:
             return
-        conversation = DingTalkConversation(
-            open_conversation_id=task.conversation_id,
-            title=task.conversation_title,
-            single_chat=task.single_chat,
-            unread_point=1,
-        )
-        title = (
-            f"CEO task needs a decision: {task.conversation_title}"
-            if send_status == "needs_human"
-            else f"CEO task {send_status}: {task.conversation_title}"
-        )
-        url = self._notification_url(conversation, attempt_id=attempt_id)
+        problem_count = self.store.count_current_unresolved_problem_attempts()
         delivered = send_browser_notification(
-            title=title,
-            message=message[:120],
-            url=url,
+            title="CEO 有待处理问题",
+            message=f"{problem_count} 项问题待处理。",
+            url="",
+            notification_id="ceo-agent-service-problems",
+            detail_url="/notifications",
         )
         if send_status == "needs_human" and not delivered:
             send_macos_notification(
-                title=title,
+                title=f"CEO task needs a decision: {task.conversation_title}",
                 message=(f"{message[:96]} 请打开审计页选择 A/B/C 方案。"),
             )
 

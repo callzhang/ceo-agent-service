@@ -479,7 +479,7 @@ meeting producer 首次启用时会持久化激活时间。服务启动恢复队
 
 实际时长小于 5 分钟的听记在日历匹配和建队列前跳过；实际候选人面试由 agent 根据标题、摘要、参会人和完整转写识别并终止为 `no_action`。招聘站会、招聘计划、人才讨论和招聘需求对齐仍按普通业务会议处理。
 
-会后队列状态为 `waiting → pending → processing → no_action | ready_to_send → sent`；可重试错误进入 `retry` 并带 `available_at`，Codex 结构化输出或历史来源协议偶发不合格也会先按可重试错误处理，达到上限后才隔离。发送结果不确定但有 `openTaskId` 时只核验状态，不重复发送；notification 只在最终确认 `sent` 时弹出一次。普通 reply task 每产生一个新的 `failed` 或 `blocked` attempt，都会向已授权并连接 8765 的浏览器页面发布一次通知，点击进入对应 attempt 详情；dry-run 不发布。meeting run 和 reply attempt 共用 History 时间线、搜索、状态过滤、24 小时事件图和 Codex session 详情。
+会后队列状态为 `waiting → pending → processing → no_action | ready_to_send → sent`；可重试错误进入 `retry` 并带 `available_at`，Codex 结构化输出或历史来源协议偶发不合格也会先按可重试错误处理，达到上限后才隔离。发送结果不确定但有 `openTaskId` 时只核验状态，不重复发送；notification 只在最终确认 `sent` 时弹出一次。普通 reply task 的当前 `failed`、`blocked` 和未审阅 `needs_human` 状态汇总到 `/notifications`；浏览器只维护一条固定入口通知，点击后在该页面逐条查看问题和具体 attempt，dry-run 不发布。meeting run 和 reply attempt 共用 History 时间线、搜索、状态过滤、24 小时事件图和 Codex session 详情。
 
 本地 dry-run 验证：
 
