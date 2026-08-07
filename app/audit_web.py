@@ -614,6 +614,7 @@ DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
 HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
     "💬 Skipped": "#a8a8aa",
+    "↻ Recovered": "#00a889",
     "⏳ Provider recovery": "#c37d0d",
     "💬 Blocked": "#c37d0d",
     "💬 Processing": "#3772cf",
@@ -3114,6 +3115,9 @@ def _history_chart_payload(
             ):
                 event_label = "⏳ Provider recovery"
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
+    recovered_meeting_run_ids = store.recovered_meeting_alignment_run_ids_since(
+        since_utc
+    )
     for item in store.list_history_items(
         limit=None,
         kinds=("meeting", "task"),
@@ -3130,7 +3134,10 @@ def _history_chart_payload(
         bucket_index = label_indexes.get(local_bucket.strftime("%m-%d %H:%M"))
         if bucket_index is None:
             continue
-        event_label = _history_item_event_label(item)
+        if item.kind == "meeting" and item.source_id in recovered_meeting_run_ids:
+            event_label = "↻ Recovered"
+        else:
+            event_label = _history_item_event_label(item)
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     series = [
         {
