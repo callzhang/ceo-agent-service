@@ -497,7 +497,12 @@ class AgentTurnProcess(Generic[ResultT]):
                 operation_id=run.operation_id,
                 registry=self.effects,
             )[0]
-            if not (reconciled - completed_before):
+            unresolved = set(range(len(expected_effect_actions))) - completed_before
+            if not unresolved or any(
+                index not in reconciled
+                and _action_has_readback(expected_effect_actions[index], self.effects)
+                for index in unresolved
+            ):
                 raise RuntimeError("audit_recovery_evidence_missing")
             return
         if outcome in {AuditOutcome.UNKNOWN, AuditOutcome.FAILED}:
@@ -729,6 +734,16 @@ def _read_matches_action(
     )
 
 
+def _action_has_readback(
+    action: dict[str, object],
+    registry: McpToolEffectRegistry,
+) -> bool:
+    return registry.has_readback_for(
+        write_server=str(action.get("reviewed_server") or ""),
+        write_tool=str(action.get("reviewed_tool") or ""),
+    )
+
+
 def _matching_read_digest(
     events: list[dict[str, object]],
     action: dict[str, object],
@@ -866,8 +881,6 @@ def _action_completion_accounting(
 
     used_receipts: set[int] = set()
     for action_index, action in enumerate(actions):
-        if not _matching_read_digest(events, action, registry=registry):
-            continue
         expected_receipt_ids = {
             operation_id,
             _action_receipt_operation_id(operation_id, action),

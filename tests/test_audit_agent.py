@@ -966,7 +966,7 @@ def test_direct_mcp_readback_requires_exact_target_identifiers():
     )
 
 
-def test_memory_unknown_cannot_authorize_automatic_replay(setup):
+def _seed_crashed_memory_write(setup):
     store, task, audit_context, parent = setup
     registry = McpToolEffectRegistry.default()
     action = ProposedAction.model_validate(
@@ -1019,6 +1019,41 @@ def test_memory_unknown_cannot_authorize_automatic_replay(setup):
         turn_attempt=0,
     )
     assert run is not None and run.status == "unknown"
+    return store, task, context, run, registry, write
+
+
+def test_no_readback_unknown_becomes_needs_human_without_write(setup):
+    store, task, context, run, registry, _ = _seed_crashed_memory_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "needs_human",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            include_read=False,
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        mcp_effect_registry=registry,
+    ).recover(task, context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "needs_human"
+    assert persisted is not None and persisted.status == "completed"
+    assert persisted.side_effect_state == "unknown"
+    assert sum(
+        event["type"] == "item.started"
+        and event["item"]["metadata"]["effect"] == "effectful"
+        for event in persisted.tool_events
+    ) == 1
+    assert "Automatic readback is unavailable" in executor.prompts[0]
+
+
+def test_memory_unknown_cannot_authorize_automatic_replay(setup):
+    store, task, context, run, registry, write = _seed_crashed_memory_write(setup)
     read = {
         "type": "mcp_tool_call",
         "id": "memory-read",
@@ -1048,6 +1083,55 @@ def test_memory_unknown_cannot_authorize_automatic_replay(setup):
 
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.status == "unknown"
+    assert sum(
+        event["type"] == "item.started"
+        and event["item"]["metadata"]["effect"] == "effectful"
+        for event in persisted.tool_events
+    ) == 1
+
+
+def test_exact_receipt_confirms_no_readback_unknown(setup):
+    store, task, context, run, registry, _ = _seed_crashed_memory_write(setup)
+
+    class ReceiptExecutor(CapturingExecutor):
+        def __call__(self, command, *, on_stdout_line, **kwargs):
+            persisted = store.get_agent_run(run.id)
+            assert persisted is not None
+            metadata = persisted.tool_events[0]["item"]["metadata"]
+            store.record_agent_execution_receipt(
+                run.id,
+                receipt_id="memory-write-receipt",
+                operation_id=(
+                    f"{run.operation_id}:{metadata['arguments_digest']}"
+                ),
+                cli="memory_connector",
+                command_path="memory_write",
+                command_digest=metadata["operation_digest"],
+                exit_code=0,
+                owner="audit-owner",
+                expected_status="unknown",
+            )
+            return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=ReceiptExecutor(
+            _audit_result_jsonl(
+                "executed",
+                operation_id=run.operation_id,
+                session=run.codex_session_id,
+                include_read=False,
+            )
+        ),
+        owner="audit-owner",
+        mcp_effect_registry=registry,
+    ).recover(task, context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "executed"
+    assert persisted is not None and persisted.status == "completed"
+    assert persisted.side_effect_state == "confirmed"
     assert sum(
         event["type"] == "item.started"
         and event["item"]["metadata"]["effect"] == "effectful"

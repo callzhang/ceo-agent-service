@@ -69,11 +69,15 @@ def test_mcp_effect_registry_declares_structured_readback_relationship():
         write_server="records",
         write_tool="put",
     )
+    assert registry.has_readback_for(write_server="records", write_tool="put")
     assert not registry.can_readback(
         read_server="records",
         read_tool="get",
         write_server="records",
         write_tool="delete",
+    )
+    assert not registry.has_readback_for(
+        write_server="records", write_tool="delete"
     )
 
 
@@ -107,6 +111,9 @@ def test_default_mcp_effect_registry_has_only_verifiable_direct_readback():
         read_tool="memory_get",
         write_server="memory_connector",
         write_tool="memory_write",
+    )
+    assert not registry.has_readback_for(
+        write_server="memory_connector", write_tool="memory_write"
     )
 
 

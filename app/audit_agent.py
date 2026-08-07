@@ -135,6 +135,10 @@ class AuditAgentRunner:
         rendered_rules: str,
         recovery: bool,
     ) -> AgentTurnRunResult[AuditAgentResult]:
+        expected_effect_actions = tuple(
+            _expected_effect_action(action, self.effects)
+            for action in context.proposal.actions
+        )
         process = AgentTurnProcess[AuditAgentResult](
             store=self.store,
             task=task,
@@ -147,7 +151,7 @@ class AuditAgentRunner:
         return process.execute(
             run=run,
             prompt=(
-                _recovery_prompt(run, context)
+                _recovery_prompt(run, context, expected_effect_actions, self.effects)
                 if recovery
                 else context.render()
             ),
@@ -193,10 +197,7 @@ class AuditAgentRunner:
             ),
             parse_result=lambda raw: parse_typed_agent_result(raw, AuditAgentResult),
             persist_conversation_session=False,
-            expected_effect_actions=tuple(
-                _expected_effect_action(action, self.effects)
-                for action in context.proposal.actions
-            ),
+            expected_effect_actions=expected_effect_actions,
             recover_unknown=recovery,
         )
 
@@ -246,7 +247,12 @@ def _expected_effect_action(
     return expected
 
 
-def _recovery_prompt(run: AgentRun, context: AuditTurnContext) -> str:
+def _recovery_prompt(
+    run: AgentRun,
+    context: AuditTurnContext,
+    actions: tuple[dict[str, object], ...],
+    registry: McpToolEffectRegistry,
+) -> str:
     identity = json.dumps(
         {
             "operation_id": run.operation_id,
@@ -255,4 +261,19 @@ def _recovery_prompt(run: AgentRun, context: AuditTurnContext) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
-    return f"{context.render()}\n\nUnknown outcome recovery: {identity}"
+    unavailable = [
+        index
+        for index, action in enumerate(actions)
+        if not registry.has_readback_for(
+            write_server=str(action.get("reviewed_server") or ""),
+            write_tool=str(action.get("reviewed_tool") or ""),
+        )
+    ]
+    guidance = ""
+    if unavailable:
+        guidance = (
+            "\nAutomatic readback is unavailable for action indexes "
+            f"{unavailable}. Do not execute or replay these actions. Unless an exact "
+            "persisted receipt already confirms them, return needs_human."
+        )
+    return f"{context.render()}\n\nUnknown outcome recovery: {identity}{guidance}"

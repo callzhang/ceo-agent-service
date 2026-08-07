@@ -426,6 +426,10 @@ class McpToolEffectRegistry:
             (read_server, read_tool), ()
         )
 
+    def has_readback_for(self, *, write_server: str, write_tool: str) -> bool:
+        write = (write_server, write_tool)
+        return any(write in targets for targets in self._readbacks.values())
+
     def readback_targets_match(
         self,
         *,
