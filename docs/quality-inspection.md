@@ -68,6 +68,10 @@ violation 或必需数据源不可检查。
 - `unknown` 外部写入不是可重试失败；只能进入只读 reconciliation，确认未发生后才
   创建新的 generation。
 
+审批类记录按 `oa_process_instance_id` 收敛。后续 `agent_run` 持有同一审批实例的已验证
+动作回执时，它会解除旧 `oa_approval` 的 `failed` / `blocked` 告警；巡检不会因旧行保留
+而把已完成的审批重新标红。
+
 因此 `blocked` 不是“等管理决策”的同义词。它描述当前依赖、材料、权限或安全条件
 不满足；是否需要人做选择由 `needs_human` 的业务结果和对应 UI/通知承载。
 
