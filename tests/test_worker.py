@@ -14284,6 +14284,38 @@ def test_retryable_failed_agent_attempt_does_not_notify_before_limit(
     assert browser_notifications == []
 
 
+def test_provider_capacity_failure_stays_pending_after_retry_limit(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    script_agent_result(
+        worker,
+        explicit_agent_result(
+            ScriptOutcome.FAILED,
+            "Codex provider capacity is temporarily unavailable.",
+            code="codex_provider_unavailable",
+            retryable=True,
+        ),
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+
+    worker.run_once()
+
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.error == "codex_provider_unavailable"
+    assert task.available_at > ""
+    assert task.attempts == 0
+
+
 def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
     tmp_path: Path, monkeypatch
 ):

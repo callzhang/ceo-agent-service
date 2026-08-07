@@ -614,6 +614,7 @@ DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
 HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
     "💬 Skipped": "#a8a8aa",
+    "⏳ Provider recovery": "#c37d0d",
     "💬 Blocked": "#c37d0d",
     "💬 Processing": "#3772cf",
     "💬 Commented": "#3772cf",
@@ -3077,6 +3078,7 @@ def _history_chart_payload(
     attempts = store.list_reply_attempts_since(since_utc)
     bucket_values: dict[str, list[int]] = {}
     label_indexes = {label: index for index, label in enumerate(labels)}
+    task_cache: dict[tuple[str, str, str], object | None] = {}
     for attempt in attempts:
         created_at = _parse_utc_timestamp(attempt.created_at)
         if created_at is None:
@@ -3091,6 +3093,26 @@ def _history_chart_payload(
         if bucket_index is None:
             continue
         event_label = _history_event_label(attempt)
+        if attempt.send_status == "failed":
+            task_key = (
+                attempt.channel,
+                attempt.conversation_id,
+                attempt.trigger_message_id,
+            )
+            task = task_cache.get(task_key)
+            if task_key not in task_cache:
+                task = store.get_reply_task_for_message(
+                    attempt.conversation_id,
+                    attempt.trigger_message_id,
+                    channel=attempt.channel,
+                )
+                task_cache[task_key] = task
+            if (
+                task is not None
+                and task.status == "pending"
+                and task.error == "codex_provider_unavailable"
+            ):
+                event_label = "⏳ Provider recovery"
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     for item in store.list_history_items(
         limit=None,

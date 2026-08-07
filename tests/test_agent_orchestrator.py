@@ -406,6 +406,58 @@ def test_no_action_finishes_without_launching_audit(store):
     assert audit.calls == []
 
 
+def test_provider_capacity_failure_defers_without_in_process_retries(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(
+        store,
+        ConsumerAgentResult.model_validate(
+            {
+                "outcome": "failed",
+                "summary": "Codex provider capacity is temporarily unavailable.",
+                "proposal": None,
+                "error": {
+                    "code": "codex_provider_unavailable",
+                    "retryable": True,
+                    "authorization_required": False,
+                },
+            }
+        ),
+    )
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=consumer,
+            audit=ScriptedAudit(store),
+        ),
+        task,
+    )
+
+    assert result.status == "failed_retryable"
+    assert result.error.code == "codex_provider_unavailable"
+    assert len(consumer.calls) == 1
+
+
+def test_audit_provider_capacity_failure_defers_without_in_process_retries(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate"))
+    audit = ScriptedAudit(
+        store,
+        _audit_result(
+            "failed",
+            0,
+            code="codex_provider_unavailable",
+            retryable=True,
+        ),
+    )
+
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
+
+    assert result.status == "failed_retryable"
+    assert result.error.code == "codex_provider_unavailable"
+    assert len(audit.calls) == 1
+
+
 def test_proposal_is_executed_only_by_fresh_audit_session(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))

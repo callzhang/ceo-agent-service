@@ -34,6 +34,7 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
+CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,27 @@ class AgentTurnRunResult(Generic[ResultT]):
     result: ResultT
     transcript_start_line: int
     transcript_end_line: int
+
+
+def _process_failure_code(process: ProcessRunResult) -> str:
+    detail = f"{process.stdout}\n{process.stderr}".casefold()
+    if any(
+        marker in detail
+        for marker in (
+            "workspace is out of credits",
+            "hit your usage limit",
+            "quota exceeded",
+        )
+    ):
+        return CODEX_PROVIDER_UNAVAILABLE
+    return "codex_process_failed"
+
+
+def _agent_process_error_code(exc: Exception) -> str:
+    code = str(exc).strip()
+    if code == CODEX_PROVIDER_UNAVAILABLE:
+        return code
+    return "codex_process_failed"
 
 
 class AgentTurnProcess(Generic[ResultT]):
@@ -261,15 +283,22 @@ class AgentTurnProcess(Generic[ResultT]):
                 self._fail_running(run, "agent_read_only_violation")
             raise
         except Exception as exc:
+            provider_recovery = _agent_process_error_code(exc)
             code = (
-                str(exc)
-                if str(exc).startswith("audit_recovery_")
-                else "codex_process_failed"
+                provider_recovery
+                if provider_recovery == CODEX_PROVIDER_UNAVAILABLE
+                else (
+                    str(exc)
+                    if str(exc).startswith("audit_recovery_")
+                    else "codex_process_failed"
+                )
             )
             if recover_unknown:
                 self._defer_unknown(run, code)
             else:
-                self._fail_running(run, "codex_process_failed")
+                self._fail_running(run, code)
+            if provider_recovery == CODEX_PROVIDER_UNAVAILABLE:
+                raise RuntimeError(code) from exc
             raise
         transcript_end = transcript_start + line_count
         outcome = getattr(result, "outcome")
@@ -684,7 +713,7 @@ class AgentTurnProcess(Generic[ResultT]):
         if process.timed_out:
             raise RuntimeError("codex_process_timeout")
         if process.returncode != 0:
-            raise RuntimeError("codex_process_failed")
+            raise RuntimeError(_process_failure_code(process))
 
     def _fail_running(self, run: AgentRun, code: str) -> None:
         persisted = self.store.get_agent_run(run.id)

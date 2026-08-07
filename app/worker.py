@@ -1867,9 +1867,10 @@ class DingTalkAutoReplyWorker:
         task: ReplyTask,
         result: OrchestrationResult,
     ) -> bool:
+        provider_recovery = result.error.code == "codex_provider_unavailable"
         if result.status == "failed_retryable" and result.final_run_id == 0:
             error = result.error.code or "agent_orchestration_deferred"
-            if task.attempts < self.max_task_attempts:
+            if provider_recovery or task.attempts < self.max_task_attempts:
                 available_at = (
                     self._reply_task_authorization_available_at()
                     if result.error.authorization_required
@@ -1911,7 +1912,11 @@ class DingTalkAutoReplyWorker:
             send_status, task_status = ORCHESTRATION_ATTEMPT_STATUS[result.status]
         except KeyError as exc:
             raise ValueError("invalid orchestration status") from exc
-        if result.status == "failed_retryable" and task.attempts >= self.max_task_attempts:
+        if (
+            result.status == "failed_retryable"
+            and task.attempts >= self.max_task_attempts
+            and not provider_recovery
+        ):
             task_status = "failed"
         send_error = result.error.code
         if result.status == "needs_human":
@@ -1953,6 +1958,7 @@ class DingTalkAutoReplyWorker:
             send_status=send_status,
             send_error=send_error,
             channel=task.channel,
+            preserve_attempt_budget=provider_recovery and task_status == "pending",
             **self._orchestration_oa_metadata(task, result),
         )
         if send_status == "needs_human" or task_status == "failed":
