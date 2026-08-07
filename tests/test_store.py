@@ -5565,6 +5565,63 @@ def test_recover_orphaned_processing_reply_tasks_is_generation_aware(
     assert store.get_reply_task(task_ids[2]).status == "processing"
 
 
+def test_service_restart_recovers_running_no_effect_consumer_turn(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    store.upsert_conversation(task.conversation_id, task.conversation_title, False, "session-a")
+    assert store.acquire_codex_session_lock(task.conversation_id, "stopped-worker")
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="stopped-worker",
+        lease_seconds=3600,
+    ).run
+
+    recovered = store.recover_no_effect_agent_runs_after_service_restart()
+
+    assert [item.id for item in recovered] == [task.id]
+    recovered_task = store.get_reply_task(task.id)
+    recovered_run = store.get_agent_run(run.id)
+    assert recovered_task is not None and recovered_task.status == "pending"
+    assert recovered_task.error == "service_restart_before_effect"
+    assert recovered_run is not None and recovered_run.status == "failed"
+    assert json.loads(recovered_run.structured_error_json)["code"] == (
+        "service_restart_before_effect"
+    )
+    assert store.get_codex_session_id(task.conversation_id) == "session-a"
+    assert store.acquire_codex_session_lock(task.conversation_id, "next-worker") is True
+
+
+def test_service_restart_keeps_unknown_or_effectful_agent_turns_for_recovery(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="stopped-worker"
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": False},
+        owner="stopped-worker",
+    )
+
+    assert store.recover_no_effect_agent_runs_after_service_restart() == []
+    assert store.get_reply_task(task.id).status == "processing"
+    assert store.get_agent_run(run.id).status == "unknown"
+
+
 def test_recover_interrupted_wechat_read_only_decision_has_precise_reason(
     tmp_path: Path,
 ) -> None:

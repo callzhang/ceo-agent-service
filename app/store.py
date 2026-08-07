@@ -5039,6 +5039,88 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
+    def recover_no_effect_agent_runs_after_service_restart(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        """Release runs the stopped service can prove never started an effect."""
+        if limit <= 0:
+            return []
+        error_json = json.dumps(
+            {"code": "service_restart_before_effect", "retryable": True},
+            separators=(",", ":"),
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and runs.status='running'
+                        and runs.side_effect_state='none'
+                  )
+                  and not exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and (
+                            runs.status='unknown'
+                            or (
+                                runs.status='running'
+                                and runs.side_effect_state<>'none'
+                            )
+                        )
+                  )
+                order by tasks.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                task_id = int(row["id"])
+                generation = str(row["execution_generation"])
+                db.execute(
+                    """
+                    update agent_runs
+                    set status='failed', structured_error_json=?,
+                        lease_owner='', lease_expires_at='',
+                        completed_at=current_timestamp, updated_at=current_timestamp
+                    where reply_task_id=? and execution_generation=?
+                      and status='running' and side_effect_state='none'
+                    """,
+                    (error_json, task_id, generation),
+                )
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', locked_at=null, available_at='',
+                        error='service_restart_before_effect',
+                        updated_at=current_timestamp
+                    where id=? and status='processing' and execution_generation=?
+                    """,
+                    (task_id, generation),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                db.execute(
+                    "delete from codex_session_locks where conversation_id=?",
+                    (row["conversation_id"],),
+                )
+                updated = db.execute(
+                    "select * from reply_tasks where id=?", (task_id,)
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
     def mark_wechat_read_only_decision_started(
         self,
         task_id: int,

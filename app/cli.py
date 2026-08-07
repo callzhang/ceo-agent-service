@@ -2607,7 +2607,11 @@ def _recover_processing_work_summary_inputs_on_service_start(
 
 
 def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
-    return len(AutoReplyStore(settings.db_path).recover_orphaned_processing_reply_tasks())
+    store = AutoReplyStore(settings.db_path)
+    return len(
+        store.recover_orphaned_processing_reply_tasks()
+        + store.recover_no_effect_agent_runs_after_service_restart()
+    )
 
 
 def _recover_okr_review_requests_on_service_start(settings: WorkerSettings) -> int:
