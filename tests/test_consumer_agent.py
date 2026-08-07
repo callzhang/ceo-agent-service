@@ -239,6 +239,44 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
     assert '"retryable":true' in run.structured_error_json
 
 
+def test_consumer_preserves_codex_cli_authentication_failure(store, task, context):
+    stdout = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-auth"}),
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": (
+                        "unexpected status 401 Unauthorized: Missing bearer or "
+                        "basic authentication in header, url: "
+                        "https://api.openai.com/v1/responses"
+                    ),
+                }
+            ),
+            json.dumps({"type": "turn.failed"}),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="codex_provider_auth_failed"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=FailingExecutor(stdout),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert json.loads(run.structured_error_json)["code"].startswith(
+        "codex_provider_auth_failed"
+    )
+
+
 def test_consumer_reads_current_audit_rules_for_each_turn(
     store,
     task,

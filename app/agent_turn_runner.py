@@ -35,6 +35,7 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
+CODEX_PROVIDER_AUTH_FAILED = "codex_provider_auth_failed"
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,14 @@ class AgentTurnRunResult(Generic[ResultT]):
 
 def _process_failure_code(process: ProcessRunResult) -> str:
     detail = f"{process.stdout}\n{process.stderr}".casefold()
+    if (
+        "missing bearer or basic authentication" in detail
+        and "/v1/responses" in detail
+    ):
+        return (
+            f"{CODEX_PROVIDER_AUTH_FAILED}: native Codex CLI authentication "
+            "is unavailable"
+        )
     if any(
         marker in detail
         for marker in (
@@ -61,6 +70,8 @@ def _process_failure_code(process: ProcessRunResult) -> str:
 
 def _agent_process_error_code(exc: Exception) -> str:
     code = str(exc).strip()
+    if code.startswith(CODEX_PROVIDER_AUTH_FAILED):
+        return code
     if code == CODEX_PROVIDER_UNAVAILABLE:
         return code
     if isinstance(exc, ResultParseError):
