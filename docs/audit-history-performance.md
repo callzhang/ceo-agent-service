@@ -19,3 +19,12 @@ seconds. This prevents concurrent browser navigations from repeatedly running
 the same aggregate query while workers are writing audit records. Search,
 filters, pagination, and every action route bypass the snapshot and query the
 current database state.
+
+## Event Chart Semantics
+
+The 24-hour chart groups reply attempts by channel, conversation, and trigger.
+It shows the latest state for each trigger rather than every retry. A trigger
+that failed and later reached a completed delivery state is displayed as
+`Recovered`; only a trigger whose latest state is failed is red. The chart
+headline shows both trigger count and raw reply-attempt count so retry volume
+remains auditable.

@@ -605,7 +605,9 @@ HISTORY_CHART_HOURS = 24
 DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
 HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
+    "✅ Completed": "#00b48a",
     "💬 Skipped": "#a8a8aa",
+    "↻ Recovered": "#a8a8aa",
     "💬 Blocked": "#c37d0d",
     "💬 Processing": "#3772cf",
     "💬 Commented": "#3772cf",
@@ -2980,6 +2982,8 @@ def _history_event_label(attempt: ReplyAttempt) -> str:
     status = attempt.send_status.strip().lower()
     if status == "sent":
         return "💬 Sent"
+    if status == "completed":
+        return "✅ Completed"
     if status == "skipped":
         return "💬 Skipped"
     if status == "blocked":
@@ -3037,8 +3041,21 @@ def _history_chart_payload(
     attempts = store.list_reply_attempts_since(since_utc)
     bucket_values: dict[str, list[int]] = {}
     label_indexes = {label: index for index, label in enumerate(labels)}
+    attempt_groups: dict[tuple[str, str, str, int], list[ReplyAttempt]] = {}
     for attempt in attempts:
-        created_at = _parse_utc_timestamp(attempt.created_at)
+        conversation_id = attempt.conversation_id.strip()
+        trigger_message_id = attempt.trigger_message_id.strip()
+        trigger_key = (
+            attempt.channel.strip(),
+            conversation_id,
+            trigger_message_id,
+            attempt.id if not conversation_id or not trigger_message_id else 0,
+        )
+        attempt_groups.setdefault(trigger_key, []).append(attempt)
+
+    for attempts_for_trigger in attempt_groups.values():
+        latest_attempt = attempts_for_trigger[-1]
+        created_at = _parse_utc_timestamp(latest_attempt.created_at)
         if created_at is None:
             continue
         local_bucket = created_at.astimezone(local_tz).replace(
@@ -3050,7 +3067,16 @@ def _history_chart_payload(
         bucket_index = label_indexes.get(label)
         if bucket_index is None:
             continue
-        event_label = _history_event_label(attempt)
+        event_label = _history_event_label(latest_attempt)
+        if (
+            latest_attempt.send_status.strip().lower()
+            in {"sent", "skipped", "completed", "reacted", "commented", "calendar"}
+            and any(
+                item.send_status.strip().lower() == "failed"
+                for item in attempts_for_trigger[:-1]
+            )
+        ):
+            event_label = "↻ Recovered"
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     for item in store.list_history_items(
         limit=None,
@@ -3085,6 +3111,7 @@ def _history_chart_payload(
         "labels": labels,
         "series": series,
         "total": sum(sum(item["data"]) for item in series),
+        "attempt_total": len(attempts),
         "range": f"{labels[0]} - {labels[-1]}",
     }
 
@@ -3097,7 +3124,7 @@ def _render_history_chart(store: AutoReplyStore) -> str:
             "<div class=\"history-chart-head\">"
             "<div><h2 class=\"history-chart-title\">最近 24 小时事件</h2>"
             f"<div class=\"history-chart-subtitle\">{escape(str(payload['range']))}</div></div>"
-            "<span class=\"pill\">0 events</span>"
+            "<span class=\"pill\">0 triggers</span>"
             "</div><div class=\"history-chart-empty\">暂无事件</div></section>"
         )
     payload_json = json.dumps(payload, ensure_ascii=False)
@@ -3106,7 +3133,8 @@ def _render_history_chart(store: AutoReplyStore) -> str:
         "<div class=\"history-chart-head\">"
         "<div><h2 class=\"history-chart-title\">最近 24 小时事件</h2>"
         f"<div class=\"history-chart-subtitle\">{escape(str(payload['range']))}</div></div>"
-        f"<span class=\"pill\">{int(payload['total'])} events</span>"
+        f"<span class=\"pill\">{int(payload['total'])} triggers · "
+        f"{int(payload['attempt_total'])} reply attempts</span>"
         "</div>"
         "<div id=\"history-event-chart\" class=\"history-chart\" role=\"img\" "
         "aria-label=\"最近 24 小时事件数量堆叠柱状图\"></div>"

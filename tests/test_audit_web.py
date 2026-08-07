@@ -930,6 +930,70 @@ def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
     assert "💬 Processing" not in series_names
 
 
+def test_history_chart_collapses_retried_trigger_to_recovered_outcome(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-retry",
+        conversation_title="Retry Group",
+        trigger_message_id="msg-retry",
+        trigger_sender="Alex",
+        trigger_text="please handle this",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-retry",
+        conversation_title="Retry Group",
+        trigger_message_id="msg-retry",
+        trigger_sender="Alex",
+        trigger_text="please handle this",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="completed",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-unresolved",
+        conversation_title="Unresolved Group",
+        trigger_message_id="msg-unresolved",
+        trigger_sender="Mina",
+        trigger_text="needs a retry",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+
+    payload = audit_web_module._history_chart_payload(store)
+    series_names = {series["name"] for series in payload["series"]}
+
+    assert payload["total"] == 2
+    assert payload["attempt_total"] == 3
+    assert "↻ Recovered" in series_names
+    assert "💬 Failed" in series_names
+
+    chart_html = audit_web_module._render_history_chart(store)
+    assert "2 triggers · 3 reply attempts" in chart_html
+
+
+def test_history_chart_does_not_group_attempts_without_a_trigger(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for index in range(2):
+        store.record_reply_attempt(
+            conversation_id="",
+            conversation_title="Imported history",
+            trigger_message_id="",
+            trigger_sender="system",
+            trigger_text=f"import-{index}",
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status="failed",
+        )
+
+    payload = audit_web_module._history_chart_payload(store)
+
+    assert payload["total"] == 2
+
+
 def test_table_toolbar_uses_fixed_alignment_metrics(tmp_path: Path):
     html = render_attempt_list(AutoReplyStore(tmp_path / "worker.sqlite3"))
 
