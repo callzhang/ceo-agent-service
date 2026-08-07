@@ -189,6 +189,33 @@ def test_quality_gate_counts_only_latest_oa_failure_per_approval_instance(tmp_pa
     assert issue.count == 1
 
 
+def test_quality_gate_treats_user_rejected_wechat_delivery_as_terminal(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        task_id = db.execute(
+            """insert into reply_tasks (
+                channel, conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, status
+            ) values ('wechat', 'conversation', 'chat', 1, 'message',
+                '2026-08-07 00:00:00', 'sender', 'trigger', 'done')"""
+        ).lastrowid
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=task_id,
+        account_id="account",
+        target_type="direct",
+        target_id="target",
+        conversation_id="conversation",
+        reply_text="reply",
+    )
+    store.set_wechat_delivery_status(delivery_id, "failed", error="user_rejected")
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert not [item for item in report.violations if item.source == "wechat_deliveries"]
+
+
 def test_quality_gate_writes_coverage_state(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     state_path = tmp_path / "hourly-quality-gate.json"
