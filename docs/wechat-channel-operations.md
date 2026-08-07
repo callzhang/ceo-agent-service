@@ -41,6 +41,8 @@ row is created and no message can be sent by that retry. The task reaches
 `failed` only after the configured attempt limit. Other `stop_with_error`
 results remain terminal because the consumer has no evidence that retrying is
 safe or useful.
+`available_at` uses the SQLite queue timestamp format, so due retries are
+claimable by the normal channel worker.
 
 Durable-memory reads are optional. The decision command exposes their fixed
 read-only tool list only when the service manifest provides a complete
