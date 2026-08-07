@@ -6,6 +6,7 @@ import pytest
 
 from app.agent_context import AgentTaskContext
 from app.consumer_agent import ConsumerAgentRunner
+from app.agent_result import ResultParseError
 from app.native_cli_metadata import AgentReadOnlyViolationError
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
@@ -135,6 +136,34 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         "Output JSON Schema (validated locally):" in option
         for option in command
     )
+
+
+def test_consumer_rotates_damaged_session_after_missing_final_result(
+    store, task, context
+):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-a")
+    executor = CapturingExecutor(
+        json.dumps({"type": "thread.started", "thread_id": "session-a"})
+    )
+
+    with pytest.raises(ResultParseError, match="no valid typed result"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+            codex_session_exists=lambda _: True,
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert store.get_codex_session_id(task.conversation_id) is None
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert json.loads(run.structured_error_json)["code"] == "codex_result_missing"
 
 
 def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wait(

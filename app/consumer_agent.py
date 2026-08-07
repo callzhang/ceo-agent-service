@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import AuditFeedback, ConsumerAgentResult
-from app.agent_result import parse_typed_agent_result
+from app.agent_result import ResultParseError, parse_typed_agent_result
 from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
@@ -117,33 +117,44 @@ class ConsumerAgentRunner:
             ):
                 raise RuntimeError("codex_session_lock_lost")
 
-        return process.execute(
-            run=claim.run,
-            prompt=context.render(
-                proposal_revision=proposal_revision,
-                feedback=feedback,
-            ),
-            session_id=session_id,
-            schema_path=SCHEMA_PATH,
-            expected_schema=ConsumerAgentResult.model_json_schema(),
-            developer_instructions=_developer_instructions(
-                "Consumer Agent A is read-only.\n\n" + rendered_rules
-            ),
-            configure_command=lambda command: make_consumer_agent_command(
-                command,
-                controlled_cli=ControlledCliConfig(
-                    command=sys.executable,
-                    args=("-m", "app.agent_cli"),
-                    cwd=str(SERVICE_ROOT),
+        try:
+            return process.execute(
+                run=claim.run,
+                prompt=context.render(
+                    proposal_revision=proposal_revision,
+                    feedback=feedback,
                 ),
-            ),
-            parse_result=lambda raw: parse_typed_agent_result(
-                raw,
-                ConsumerAgentResult,
-            ),
-            persist_conversation_session=True,
-            on_progress=renew_session_lock,
-        )
+                session_id=session_id,
+                schema_path=SCHEMA_PATH,
+                expected_schema=ConsumerAgentResult.model_json_schema(),
+                developer_instructions=_developer_instructions(
+                    "Consumer Agent A is read-only.\n\n" + rendered_rules
+                ),
+                configure_command=lambda command: make_consumer_agent_command(
+                    command,
+                    controlled_cli=ControlledCliConfig(
+                        command=sys.executable,
+                        args=("-m", "app.agent_cli"),
+                        cwd=str(SERVICE_ROOT),
+                    ),
+                ),
+                parse_result=lambda raw: parse_typed_agent_result(
+                    raw,
+                    ConsumerAgentResult,
+                ),
+                persist_conversation_session=True,
+                on_progress=renew_session_lock,
+            )
+        except ResultParseError as exc:
+            persisted = self.store.get_agent_run(claim.run.id)
+            if (
+                session_id
+                and str(exc) == "no valid typed result JSON found in Codex JSONL"
+                and persisted is not None
+                and not persisted.tool_events
+            ):
+                self.store.clear_codex_session(task.conversation_id)
+            raise
 
 
 def _developer_instructions(role_instruction: str) -> str:

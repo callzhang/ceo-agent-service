@@ -13,7 +13,7 @@ from app.agent_contracts import (
     ConsumerOutcome,
     ReconciliationDisposition,
 )
-from app.agent_result import EffectKind, SideEffectState
+from app.agent_result import EffectKind, ResultParseError, SideEffectState
 from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
     LEASE_SECONDS,
@@ -63,6 +63,10 @@ def _agent_process_error_code(exc: Exception) -> str:
     code = str(exc).strip()
     if code == CODEX_PROVIDER_UNAVAILABLE:
         return code
+    if isinstance(exc, ResultParseError):
+        if code == "no valid typed result JSON found in Codex JSONL":
+            return "codex_result_missing"
+        return "codex_result_invalid"
     return "codex_process_failed"
 
 
@@ -286,7 +290,7 @@ class AgentTurnProcess(Generic[ResultT]):
             provider_recovery = _agent_process_error_code(exc)
             code = (
                 provider_recovery
-                if provider_recovery == CODEX_PROVIDER_UNAVAILABLE
+                if provider_recovery != "codex_process_failed"
                 else (
                     str(exc)
                     if str(exc).startswith("audit_recovery_")
