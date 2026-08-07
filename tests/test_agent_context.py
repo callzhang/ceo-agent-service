@@ -169,6 +169,9 @@ def test_oa_instance_id_only_still_requires_agent_live_detail_read():
     assert "process_instance_id=pid-only" in rendered
     assert command in rendered
     assert "execute the provided read commands" in rendered
+    assert "agent_cli.execute_reviewed_read" in rendered
+    assert "local CLI credential store" in rendered
+    assert "never emit `proposed_actions`" in rendered
     assert "query live detail" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
