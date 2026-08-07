@@ -9362,6 +9362,23 @@ class AutoReplyStore:
                       attempts.send_status != 'needs_human'
                       or attempts.reviewed_at is null
                   )
+                  and (
+                      attempts.send_status != 'failed'
+                      or not exists (
+                          select 1
+                          from reply_tasks as tasks
+                          where tasks.channel=attempts.channel
+                            and tasks.conversation_id=attempts.conversation_id
+                            and tasks.trigger_message_id=attempts.trigger_message_id
+                            and (
+                                tasks.status='processing'
+                                or (
+                                    tasks.status='pending'
+                                    and tasks.error='codex_provider_unavailable'
+                                )
+                            )
+                      )
+                  )
                   and attempts.id=(
                       select max(latest.id)
                       from reply_attempts as latest
@@ -9385,6 +9402,23 @@ class AutoReplyStore:
                   and (
                       attempts.send_status != 'needs_human'
                       or attempts.reviewed_at is null
+                  )
+                  and (
+                      attempts.send_status != 'failed'
+                      or not exists (
+                          select 1
+                          from reply_tasks as tasks
+                          where tasks.channel=attempts.channel
+                            and tasks.conversation_id=attempts.conversation_id
+                            and tasks.trigger_message_id=attempts.trigger_message_id
+                            and (
+                                tasks.status='processing'
+                                or (
+                                    tasks.status='pending'
+                                    and tasks.error='codex_provider_unavailable'
+                                )
+                            )
+                      )
                   )
                   and attempts.id=(
                       select max(latest.id)
