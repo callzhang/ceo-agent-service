@@ -157,12 +157,17 @@ def test_external_dependency_failure_defers_wechat_task_for_retry(
     assert task is not None
     assert task.status == "pending"
     assert task.attempts == 1
-    assert task.available_at == "2026-08-08T08:05:00+00:00"
+    assert task.available_at == "2026-08-08 08:05:00"
     assert task.error == "provider_unavailable"
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "failed"
     assert attempt.send_error == "provider_unavailable"
+    assert store.claim_reply_tasks(
+        1,
+        now="2026-08-08 08:05:01",
+        channel="wechat",
+    )[0].id == task.id
 
 
 def test_consumer_marks_read_only_decision_phase_before_calling_codex(

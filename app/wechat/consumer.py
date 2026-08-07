@@ -50,7 +50,7 @@ class WechatReplyConsumer:
     def _retry_available_at(self) -> str:
         return (
             self.now_provider().astimezone(timezone.utc) + self.retry_delay
-        ).isoformat()
+        ).strftime("%Y-%m-%d %H:%M:%S")
 
     def run_once(self, limit: int = 50) -> int:
         processed = 0
