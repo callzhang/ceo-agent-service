@@ -483,7 +483,9 @@ def _agent_effect_state_from_rows(
     db: sqlite3.Connection,
     run_id: int,
 ) -> str:
-    states: dict[str, str] = {}
+    pending: dict[str, int] = {}
+    completed = False
+    unreviewed = False
     for row in db.execute(
         """
         select event_type, call_id, effect_kind, receipt_operation_id
@@ -496,25 +498,28 @@ def _agent_effect_state_from_rows(
         call_id = row["call_id"]
         if call_id:
             if row["effect_kind"] == "unreviewed":
-                states[call_id] = "unreviewed"
+                unreviewed = True
             elif (
                 row["effect_kind"] == "read_only"
                 and row["event_type"] == "item.completed"
             ):
-                states[call_id] = "read_only"
+                pass
             elif row["effect_kind"] == "effectful":
                 if row["event_type"] == "item.started":
-                    states[call_id] = "started"
+                    pending[call_id] = pending.get(call_id, 0) + 1
                 elif row["event_type"] == "item.completed":
-                    states[call_id] = "completed"
+                    if pending.get(call_id, 0) > 0:
+                        pending[call_id] -= 1
+                    completed = True
                 elif row["event_type"] == "item.failed":
-                    states[call_id] = "failed"
+                    if pending.get(call_id, 0) > 0:
+                        pending[call_id] -= 1
         receipt_operation_id = row["receipt_operation_id"]
         if receipt_operation_id:
-            states[receipt_operation_id] = "completed"
-    if {"started", "unreviewed"} & set(states.values()):
+            completed = True
+    if unreviewed or any(count > 0 for count in pending.values()):
         return "unknown"
-    if "completed" in states.values():
+    if completed:
         return "confirmed"
     return "none"
 

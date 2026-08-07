@@ -194,7 +194,7 @@ class AuditAgentRunner:
             parse_result=lambda raw: parse_typed_agent_result(raw, AuditAgentResult),
             persist_conversation_session=False,
             expected_effect_actions=tuple(
-                _expected_effect_action(action)
+                _expected_effect_action(action, self.effects)
                 for action in context.proposal.actions
             ),
             recover_unknown=recovery,
@@ -211,7 +211,10 @@ def _json_digest(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _expected_effect_action(action) -> dict[str, object]:
+def _expected_effect_action(
+    action,
+    registry: McpToolEffectRegistry,
+) -> dict[str, object]:
     expected = {
         "capability": action.capability,
         "operation": action.operation,
@@ -224,6 +227,22 @@ def _expected_effect_action(action) -> dict[str, object]:
     if descriptor is not None:
         expected["operation_digest"] = descriptor.command_digest
         expected["target_identifiers"] = descriptor.target_identifiers
+        expected["reviewed_server"] = "agent_cli"
+        expected["reviewed_tool"] = "execute_reviewed_write"
+    else:
+        call = registry.classify(
+            {
+                "type": "mcp_tool_call",
+                "server": action.capability,
+                "tool": action.operation,
+                "arguments": action.payload,
+            }
+        )
+        if call is not None:
+            expected["operation_digest"] = call.operation_digest
+            expected["target_identifiers"] = call.target_identifiers
+            expected["reviewed_server"] = call.server
+            expected["reviewed_tool"] = call.tool
     return expected
 
 

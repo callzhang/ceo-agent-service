@@ -4,7 +4,14 @@
     {
       "server": "agent_cli",
       "tool": "execute_reviewed_read",
-      "effect": "read_only"
+      "effect": "read_only",
+      "readback_for": [
+        {
+          "server": "agent_cli",
+          "tool": "execute_reviewed_write",
+          "target_match": "shared"
+        }
+      ]
     },
     {
       "server": "agent_cli",
@@ -29,7 +36,10 @@
     {
       "server": "memory_connector",
       "tool": "memory_get",
-      "effect": "read_only"
+      "effect": "read_only",
+      "readback_for": [
+        {"server": "memory_connector", "tool": "memory_write"}
+      ]
     },
     {
       "server": "memory_connector",

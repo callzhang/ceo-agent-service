@@ -256,6 +256,26 @@ def test_failed_effect_closes_started_identity_without_confirmation(tmp_path):
     assert closed.side_effect_state == "none"
 
 
+def test_two_same_call_starts_with_one_completion_remains_unknown(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    run = _claim_audit(store, _task(store))
+    started = _effect_event(
+        operation_digest="same",
+        arguments_digest="same-arguments",
+        target_identifiers={"group": "cid"},
+    )
+
+    store.append_agent_run_event(run.id, started, owner="audit")
+    store.append_agent_run_event(run.id, started, owner="audit")
+    persisted = store.append_agent_run_event(
+        run.id,
+        {**started, "type": "item.completed"},
+        owner="audit",
+    )
+
+    assert persisted.side_effect_state == "unknown"
+
+
 def _create_pre_role_database(path: Path) -> Path:
     with sqlite3.connect(path) as db:
         db.executescript(

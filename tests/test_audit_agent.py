@@ -6,6 +6,9 @@ import pytest
 
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_contracts import ConsumerProposal, ProposedAction
+from app.agent_result import EffectKind
+from app.agent_runner import McpToolEffectRegistry
+from app.agent_turn_runner import _read_matches_action
 from app.audit_agent import AuditAgentRunner
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
@@ -807,6 +810,154 @@ def test_unrelated_read_cannot_authorize_recovery_write(setup):
         ).recover(task, audit_context, run=run)
 
 
+def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setup):
+    store, task, audit_context, parent = setup
+    registry = McpToolEffectRegistry(
+        {
+            ("records", "get"): EffectKind.READ_ONLY,
+            ("records", "put"): EffectKind.EFFECTFUL,
+        },
+        readbacks={("records", "get"): {("records", "put")}},
+    )
+    action = ProposedAction.model_validate(
+        {
+            "description": "Update record",
+            "capability": "records",
+            "operation": "put",
+            "target": {"record_id": "record-1"},
+            "payload": {"record_id": "record-1", "value": "updated"},
+            "expected_verification": "Read the same record",
+        }
+    )
+    context = replace(
+        audit_context,
+        proposal=audit_context.proposal.model_copy(update={"actions": (action,)}),
+    )
+    started = {
+        "type": "item.started",
+        "item": {
+            "type": "mcp_tool_call",
+            "id": "direct-write",
+            "server": "records",
+            "tool": "put",
+            "arguments": action.payload,
+            "status": "in_progress",
+        },
+    }
+    initial = CapturingExecutor(
+        "\n".join(
+            (
+                json.dumps(
+                    {"type": "thread.started", "thread_id": "direct-session"}
+                ),
+                json.dumps(started),
+            )
+        ),
+        returncode=1,
+    )
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=initial,
+            mcp_effect_registry=registry,
+        ).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.status == "unknown"
+
+    read = {
+        "type": "mcp_tool_call",
+        "id": "direct-read",
+        "server": "records",
+        "tool": "get",
+        "arguments": {"record_id": "record-1"},
+        "status": "in_progress",
+    }
+    base = _audit_result_jsonl(
+        "executed",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+        include_read=False,
+    ).splitlines()
+    recovery = CapturingExecutor(
+        "\n".join(
+            (
+                base[0],
+                json.dumps({"type": "item.started", "item": read}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            **read,
+                            "status": "completed",
+                            "result": {
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": json.dumps({"record_id": "record-1"}),
+                                    }
+                                ],
+                                "structuredContent": {"record_id": "record-1"},
+                                "isError": False,
+                            },
+                        },
+                    }
+                ),
+                base[-1],
+            )
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=recovery,
+        mcp_effect_registry=registry,
+    ).recover(task, context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "executed"
+    assert persisted is not None and persisted.side_effect_state == "confirmed"
+    assert sum(
+        event["type"] == "item.started"
+        and event["item"]["metadata"]["effect"] == "effectful"
+        for event in persisted.tool_events
+    ) == 1
+
+
+def test_direct_mcp_readback_requires_exact_target_identifiers():
+    registry = McpToolEffectRegistry(
+        {
+            ("records", "get"): EffectKind.READ_ONLY,
+            ("records", "put"): EffectKind.EFFECTFUL,
+        },
+        readbacks={("records", "get"): {("records", "put")}},
+    )
+
+    assert not _read_matches_action(
+        {
+            "reviewed_server": "records",
+            "reviewed_tool": "get",
+            "target_identifiers": {"record_id": "record-1"},
+        },
+        {
+            "reviewed_server": "records",
+            "reviewed_tool": "put",
+            "target_identifiers": {
+                "record_id": "record-1",
+                "tenant_id": "tenant-1",
+            },
+        },
+        registry,
+    )
+
+
 def test_definitely_absent_recovery_reads_before_executing_same_revision_once(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     executor = CapturingExecutor(
@@ -975,6 +1126,35 @@ def test_two_action_recovery_confirms_unknown_first_and_executes_second_once(set
     ]
     assert started_targets.count({"group": "cid-agent"}) == 1
     assert started_targets.count({"group": "cid-second"}) == 1
+
+
+def test_audit_two_starts_with_one_completion_remains_unknown(setup):
+    store, task, audit_context, parent = setup
+    lines = _audit_jsonl("operation-1", session="session-b").splitlines()
+    started_index = next(
+        index
+        for index, line in enumerate(lines)
+        if json.loads(line).get("type") == "item.started"
+    )
+    lines.insert(started_index + 1, lines[started_index])
+
+    with pytest.raises(RuntimeError, match="audit_execution_evidence_mismatch"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor("\n".join(lines)),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert run.status == "unknown"
+    assert run.side_effect_state == "unknown"
 
 
 def test_audit_rejects_different_operation_for_same_target_and_payload(setup):

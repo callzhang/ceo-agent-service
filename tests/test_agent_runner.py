@@ -10,7 +10,6 @@ from app.agent_result import AgentOutcome, EffectKind
 from app.agent_runner import (
     AGENT_RESULT_SCHEMA_PATH,
     AgentConversationLockedError,
-    AgentRunUnavailableError,
     DirectAgentRunner,
     McpToolEffectRegistry,
     direct_agent_developer_instructions,
@@ -52,6 +51,29 @@ def test_mcp_effect_registry_qualifies_operation_with_server():
     assert first.server == "server_a"
     assert second.server == "server_b"
     assert first.operation == second.operation == "write"
+
+
+def test_mcp_effect_registry_declares_structured_readback_relationship():
+    registry = McpToolEffectRegistry(
+        {
+            ("records", "get"): EffectKind.READ_ONLY,
+            ("records", "put"): EffectKind.EFFECTFUL,
+        },
+        readbacks={("records", "get"): {("records", "put")}},
+    )
+
+    assert registry.can_readback(
+        read_server="records",
+        read_tool="get",
+        write_server="records",
+        write_tool="put",
+    )
+    assert not registry.can_readback(
+        read_server="records",
+        read_tool="get",
+        write_server="records",
+        write_tool="delete",
+    )
 
 
 def _task(store: AutoReplyStore):

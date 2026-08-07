@@ -81,12 +81,13 @@ class AgentTurnProcess(Generic[ResultT]):
         recovery_started_actions: set[int] = set()
         recovery_event_start = len(run.tool_events)
         completed_before_recovery = (
-            _completed_action_indexes(
+            _action_completion_accounting(
                 run.tool_events,
                 self.store.list_agent_execution_receipts(run.id),
                 expected_effect_actions,
                 operation_id=run.operation_id,
-            )
+                registry=self.effects,
+            )[0]
             if recover_unknown
             else set()
         )
@@ -163,7 +164,11 @@ class AgentTurnProcess(Generic[ResultT]):
                         or action_index in completed_before_recovery
                         or action_index in recovery_started_actions
                         or not any(
-                            _read_matches_action(read, expected_effect_actions[action_index])
+                            _read_matches_action(
+                                read,
+                                expected_effect_actions[action_index],
+                                self.effects,
+                            )
                             for read in recovery_reads
                         )
                     ):
@@ -378,6 +383,8 @@ class AgentTurnProcess(Generic[ResultT]):
             "effect": call.effect.value,
             "capability": capability,
             "operation": operation,
+            "reviewed_server": call.server,
+            "reviewed_tool": call.tool,
             "operation_digest": operation_digest,
             "target_identifiers": target_identifiers,
             "arguments_digest": _json_digest(item.get("arguments")),
@@ -423,17 +430,14 @@ class AgentTurnProcess(Generic[ResultT]):
             if external_result.operation_id != run.operation_id:
                 self._fail_running(run, "audit_operation_mismatch")
                 raise RuntimeError("audit_operation_mismatch")
-            completed = _completed_action_indexes(
+            completed, all_effects_closed = _action_completion_accounting(
                 persisted.tool_events,
                 self.store.list_agent_execution_receipts(run.id),
                 expected_effect_actions,
                 operation_id=run.operation_id,
+                registry=self.effects,
             )
-            if completed == set(range(len(expected_effect_actions))) and not _has_duplicate_effects(
-                persisted.tool_events,
-                expected_effect_actions,
-                operation_id=run.operation_id,
-            ):
+            if completed == set(range(len(expected_effect_actions))) and all_effects_closed:
                 return
             code = (
                 "audit_execution_evidence_missing"
@@ -484,13 +488,15 @@ class AgentTurnProcess(Generic[ResultT]):
                 persisted.tool_events,
                 expected_effect_actions,
                 event_start=recovery_event_start,
+                registry=self.effects,
             )
-            completed_before = _completed_action_indexes(
+            completed_before = _action_completion_accounting(
                 persisted.tool_events[:recovery_event_start],
                 self.store.list_agent_execution_receipts(run.id),
                 expected_effect_actions,
                 operation_id=run.operation_id,
-            )
+                registry=self.effects,
+            )[0]
             if not (reconciled - completed_before):
                 raise RuntimeError("audit_recovery_evidence_missing")
             return
@@ -505,14 +511,16 @@ class AgentTurnProcess(Generic[ResultT]):
             persisted.tool_events,
             expected_effect_actions,
             event_start=recovery_event_start,
+            registry=self.effects,
         )
         receipts = self.store.list_agent_execution_receipts(run.id)
-        completed = _completed_action_indexes(
+        completed = _action_completion_accounting(
             persisted.tool_events,
             receipts,
             expected_effect_actions,
             operation_id=run.operation_id,
-        )
+            registry=self.effects,
+        )[0]
         for action_index in sorted(reconciled - completed):
             action = expected_effect_actions[action_index]
             metadata = _matching_effect_metadata(
@@ -525,6 +533,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 persisted.tool_events,
                 action,
                 event_start=recovery_event_start,
+                registry=self.effects,
             )
             if metadata is None or not read_result_digest:
                 continue
@@ -542,13 +551,14 @@ class AgentTurnProcess(Generic[ResultT]):
                 owner=self.owner,
                 expected_status="unknown",
             )
-        completed = _completed_action_indexes(
+        completed, all_effects_closed = _action_completion_accounting(
             persisted.tool_events,
             self.store.list_agent_execution_receipts(run.id),
             expected_effect_actions,
             operation_id=run.operation_id,
+            registry=self.effects,
         )
-        if completed != set(range(len(expected_effect_actions))):
+        if completed != set(range(len(expected_effect_actions))) or not all_effects_closed:
             raise RuntimeError("audit_execution_evidence_missing")
 
     @staticmethod
@@ -692,21 +702,31 @@ def _matching_action_index(
 def _read_matches_action(
     read: dict[str, object],
     action: dict[str, object],
+    registry: McpToolEffectRegistry,
 ) -> bool:
-    if read.get("capability") != action.get("capability"):
+    read_server = str(read.get("reviewed_server") or "")
+    read_tool = str(read.get("reviewed_tool") or "")
+    write_server = str(action.get("reviewed_server") or "")
+    write_tool = str(action.get("reviewed_tool") or "")
+    if not registry.can_readback(
+        read_server=read_server,
+        read_tool=read_tool,
+        write_server=write_server,
+        write_tool=write_tool,
+    ):
         return False
     read_target = read.get("target_identifiers")
     action_target = action.get("target_identifiers")
     if not isinstance(read_target, dict) or not isinstance(action_target, dict):
         return False
-    shared_keys = read_target.keys() & action_target.keys()
-    if not shared_keys or any(
-        read_target[key] != action_target[key] for key in shared_keys
-    ):
-        return False
-    read_operation = str(read.get("operation") or "").split()
-    action_operation = str(action.get("operation") or "").split()
-    return len(read_operation) > 1 and read_operation[:-1] == action_operation[:-1]
+    return registry.readback_targets_match(
+        read_server=read_server,
+        read_tool=read_tool,
+        write_server=write_server,
+        write_tool=write_tool,
+        read_targets=read_target,
+        write_targets=action_target,
+    )
 
 
 def _matching_read_digest(
@@ -715,6 +735,7 @@ def _matching_read_digest(
     *,
     event_start: int = 0,
     after_index: int = -1,
+    registry: McpToolEffectRegistry,
 ) -> str:
     for index, event in enumerate(events):
         if index < event_start or index <= after_index or event.get("type") != "item.completed":
@@ -723,7 +744,7 @@ def _matching_read_digest(
         if metadata is None or metadata.get("effect") != EffectKind.READ_ONLY.value:
             continue
         digest = metadata.get("result_digest")
-        if _read_matches_action(metadata, action) and isinstance(digest, str):
+        if _read_matches_action(metadata, action, registry) and isinstance(digest, str):
             return digest
     return ""
 
@@ -733,11 +754,17 @@ def _reconciled_action_indexes(
     actions: tuple[dict[str, object], ...],
     *,
     event_start: int,
+    registry: McpToolEffectRegistry,
 ) -> set[int]:
     return {
         index
         for index, action in enumerate(actions)
-        if _matching_read_digest(events, action, event_start=event_start)
+        if _matching_read_digest(
+            events,
+            action,
+            event_start=event_start,
+            registry=registry,
+        )
     }
 
 
@@ -748,40 +775,110 @@ def _action_receipt_operation_id(
     return f"{operation_id}:{action.get('arguments_digest', '')}"
 
 
-def _completed_action_indexes(
+def _action_completion_accounting(
     events: list[dict[str, object]],
     receipts: list[object],
     actions: tuple[dict[str, object], ...],
     *,
     operation_id: str,
-) -> set[int]:
-    completed: set[int] = set()
-    for action_index, action in enumerate(actions):
-        for event_index, event in enumerate(events):
-            metadata = _event_metadata(event)
-            if (
-                event.get("type") != "item.completed"
-                or metadata is None
-                or metadata.get("effect") != EffectKind.EFFECTFUL.value
-                or metadata.get("operation_id") != operation_id
-                or not _metadata_matches_action(metadata, action)
-            ):
-                continue
-            if _matching_read_digest(events, action, after_index=event_index):
-                completed.add(action_index)
-                break
-        if action_index in completed:
+    registry: McpToolEffectRegistry,
+) -> tuple[set[int], bool]:
+    starts: list[dict[str, object]] = []
+    starts_per_action = [0] * len(actions)
+    successes = [0] * len(actions)
+    for event_index, event in enumerate(events):
+        metadata = _event_metadata(event)
+        if (
+            metadata is None
+            or metadata.get("effect") != EffectKind.EFFECTFUL.value
+            or metadata.get("operation_id") != operation_id
+        ):
             continue
-        if not _matching_read_digest(events, action):
+        item = event.get("item")
+        call_id = str(item.get("id") or item.get("call_id") or "") if isinstance(item, dict) else ""
+        if event.get("type") == "item.started":
+            candidates = [
+                index
+                for index, action in enumerate(actions)
+                if _metadata_matches_action(metadata, action)
+            ]
+            action_index = (
+                min(candidates, key=starts_per_action.__getitem__)
+                if candidates
+                else None
+            )
+            if action_index is not None:
+                action = actions[action_index]
+                for prior in starts:
+                    if (
+                        not prior["closed"]
+                        and prior["action_index"] == action_index
+                        and _matching_read_digest(
+                            events[:event_index],
+                            action,
+                            after_index=int(prior["event_index"]),
+                            registry=registry,
+                        )
+                    ):
+                        prior["closed"] = True
+                starts_per_action[action_index] += 1
+            starts.append(
+                {
+                    "call_id": call_id,
+                    "action_index": action_index,
+                    "event_index": event_index,
+                    "closed": False,
+                }
+            )
+            continue
+        if event.get("type") not in {"item.completed", "item.failed"}:
+            continue
+        start = next(
+            (
+                candidate
+                for candidate in starts
+                if not candidate["closed"]
+                and candidate["call_id"] == call_id
+                and (
+                    candidate["action_index"] is None
+                    or _metadata_matches_action(
+                        metadata, actions[int(candidate["action_index"])]
+                    )
+                )
+            ),
+            None,
+        )
+        if start is None:
+            continue
+        start["closed"] = True
+        action_index = start["action_index"]
+        if (
+            event.get("type") == "item.completed"
+            and action_index is not None
+            and _matching_read_digest(
+                events,
+                actions[int(action_index)],
+                after_index=event_index,
+                registry=registry,
+            )
+        ):
+            successes[int(action_index)] += 1
+
+    used_receipts: set[int] = set()
+    for action_index, action in enumerate(actions):
+        if not _matching_read_digest(events, action, registry=registry):
             continue
         expected_receipt_ids = {
             operation_id,
             _action_receipt_operation_id(operation_id, action),
         }
         expected_cli = str(action.get("capability") or "").rsplit(".", 1)[-1]
-        for receipt in receipts:
-            if (
-                getattr(receipt, "operation_id", "") in expected_receipt_ids
+        receipt_index = next(
+            (
+                index
+                for index, receipt in enumerate(receipts)
+                if index not in used_receipts
+                and getattr(receipt, "operation_id", "") in expected_receipt_ids
                 and getattr(receipt, "completed", False)
                 and getattr(receipt, "persisted", False)
                 and getattr(receipt, "safe_to_confirm", False)
@@ -789,29 +886,28 @@ def _completed_action_indexes(
                 and getattr(receipt, "command_path", "") == action.get("operation")
                 and getattr(receipt, "command_digest", "")
                 == action.get("operation_digest")
-            ):
-                completed.add(action_index)
-                break
-    return completed
-
-
-def _has_duplicate_effects(
-    events: list[dict[str, object]],
-    actions: tuple[dict[str, object], ...],
-    *,
-    operation_id: str,
-) -> bool:
-    counts = [0] * len(actions)
-    for event in events:
-        if event.get("type") != "item.completed":
+            ),
+            None,
+        )
+        if receipt_index is None:
             continue
-        metadata = _event_metadata(event)
-        if metadata is None or metadata.get("operation_id") != operation_id:
-            continue
-        action_index = _matching_action_index(metadata, actions)
-        if action_index is not None:
-            counts[action_index] += 1
-    return any(count > 1 for count in counts)
+        used_receipts.add(receipt_index)
+        open_start = next(
+            (
+                start
+                for start in starts
+                if not start["closed"] and start["action_index"] == action_index
+            ),
+            None,
+        )
+        if open_start is not None:
+            open_start["closed"] = True
+        successes[action_index] += 1
+
+    completed = {
+        index for index, success_count in enumerate(successes) if success_count == 1
+    }
+    return completed, all(bool(start["closed"]) for start in starts)
 
 
 def _json_digest(value: object) -> str:
