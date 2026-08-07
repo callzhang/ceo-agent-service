@@ -6938,6 +6938,32 @@ class AutoReplyStore:
             ).fetchone()
         return self._meeting_alignment_run_from_row(row) if row is not None else None
 
+    def recovered_meeting_alignment_run_ids_since(
+        self,
+        created_since: str,
+    ) -> set[int]:
+        """Return retry runs superseded by a completed meeting outcome."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select earlier.id
+                from meeting_alignment_runs as earlier
+                join meeting_alignment_jobs as jobs on jobs.id=earlier.job_id
+                where earlier.created_at>=?
+                  and earlier.status in ('retry', 'failed')
+                  and jobs.status in ('sent', 'no_action')
+                  and exists (
+                      select 1
+                      from meeting_alignment_runs as later
+                      where later.job_id=earlier.job_id
+                        and later.id>earlier.id
+                        and later.status in ('ready_to_send', 'sent', 'no_action')
+                  )
+                """,
+                (created_since,),
+            ).fetchall()
+        return {int(row["id"]) for row in rows}
+
     def has_later_meeting_alignment_run(self, job_id: int, run_id: int) -> bool:
         with self._connect() as db:
             row = db.execute(
