@@ -71,7 +71,6 @@ class AuditAgentRunner:
             context,
             run=claim.run,
             rendered_rules=rendered_rules,
-            recovery=False,
         )
 
     def recover(
@@ -108,7 +107,7 @@ class AuditAgentRunner:
                 context,
                 run=claim.run,
                 rendered_rules=rendered_rules,
-                recovery=True,
+                recovery_phase="reconcile",
             )
         except Exception:
             persisted = self.store.get_agent_run(run.id)
@@ -126,6 +125,41 @@ class AuditAgentRunner:
                 )
             raise
 
+    def execute_recovery(
+        self,
+        task: ReplyTask,
+        context: AuditTurnContext,
+        *,
+        run: AgentRun,
+    ) -> AgentTurnRunResult[AuditAgentResult]:
+        if run.status != "unknown" or not run.final_result_json:
+            raise ValueError("audit recovery execution requires persisted reconciliation")
+        reconciliation = AuditAgentResult.model_validate_json(run.final_result_json)
+        if reconciliation.outcome.value != "reconciled":
+            raise ValueError("audit recovery execution requires reconciled outcome")
+        absent = frozenset(
+            entry.action_index
+            for entry in reconciliation.reconciliation
+            if entry.disposition.value == "absent"
+        )
+        if not absent:
+            raise ValueError("audit recovery execution requires absent actions")
+        claim = self.store.claim_unknown_agent_run(
+            run.id,
+            owner=self.owner,
+            lease_seconds=LEASE_SECONDS,
+        )
+        if not claim.claimed:
+            raise RuntimeError("agent_run_unavailable")
+        return self._execute_claimed(
+            task,
+            context,
+            run=claim.run,
+            rendered_rules=render_audit_rules(AgentRole.AUDIT),
+            recovery_phase="execute",
+            authorized_recovery_actions=absent,
+        )
+
     def _execute_claimed(
         self,
         task: ReplyTask,
@@ -133,11 +167,12 @@ class AuditAgentRunner:
         *,
         run: AgentRun,
         rendered_rules: str,
-        recovery: bool,
+        recovery_phase: str = "",
+        authorized_recovery_actions: frozenset[int] = frozenset(),
     ) -> AgentTurnRunResult[AuditAgentResult]:
         expected_effect_actions = tuple(
-            _expected_effect_action(action, self.effects)
-            for action in context.proposal.actions
+            _expected_effect_action(action, self.effects, action_index=index)
+            for index, action in enumerate(context.proposal.actions)
         )
         process = AgentTurnProcess[AuditAgentResult](
             store=self.store,
@@ -152,7 +187,13 @@ class AuditAgentRunner:
             run=run,
             prompt=(
                 _recovery_prompt(run, context, expected_effect_actions, self.effects)
-                if recovery
+                if recovery_phase == "reconcile"
+                else _recovery_execute_prompt(
+                    run,
+                    context,
+                    authorized_recovery_actions,
+                )
+                if recovery_phase == "execute"
                 else context.render()
             ),
             session_id=run.codex_session_id or None,
@@ -162,12 +203,15 @@ class AuditAgentRunner:
                 "Audit Agent B independently reviews and executes accepted candidates.\n\n"
                 + (
                     "This is recovery of an unknown external outcome in the same Audit "
-                    "session. Reconcile live state for the exact operation before any "
-                    "repeat. If live state confirms the operation, verify it and return "
-                    "executed without another write. If live state definitely confirms "
-                    "absence, execute this same revision once and verify it. If live state "
-                    "is ambiguous, return needs_human without a write.\n\n"
-                    if recovery
+                    "session. This phase is strictly read-only: reconcile live state for "
+                    "each exact operation and return outcome reconciled with structured "
+                    "per-action dispositions. Never execute or replay a write in this "
+                    "phase; a later turn will consume persisted absent dispositions.\n\n"
+                    if recovery_phase == "reconcile"
+                    else "This is recovery execution in the same Audit session. Execute "
+                    "only the action indexes that the persisted reconciliation proved "
+                    "absent. Do not repeat present or ambiguous actions.\n\n"
+                    if recovery_phase == "execute"
                     else ""
                 )
                 + (
@@ -185,7 +229,7 @@ class AuditAgentRunner:
                 command,
                 reviewed_mcp_tools=(
                     self.effects.reviewed_read_tools()
-                    if self.dry_run
+                    if self.dry_run or recovery_phase == "reconcile"
                     else self.effects.reviewed_tools()
                 ),
                 controlled_cli=ControlledCliConfig(
@@ -193,12 +237,13 @@ class AuditAgentRunner:
                     args=("-m", "app.agent_cli"),
                     cwd=str(SERVICE_ROOT),
                 ),
-                allow_write=not self.dry_run,
+                allow_write=not self.dry_run and recovery_phase != "reconcile",
             ),
             parse_result=lambda raw: parse_typed_agent_result(raw, AuditAgentResult),
             persist_conversation_session=False,
             expected_effect_actions=expected_effect_actions,
-            recover_unknown=recovery,
+            recovery_phase=recovery_phase,
+            authorized_recovery_actions=authorized_recovery_actions,
         )
 
 
@@ -215,8 +260,11 @@ def _json_digest(value: object) -> str:
 def _expected_effect_action(
     action,
     registry: McpToolEffectRegistry,
+    *,
+    action_index: int,
 ) -> dict[str, object]:
     expected = {
+        "action_index": action_index,
         "capability": action.capability,
         "operation": action.operation,
         "arguments_digest": _json_digest(action.payload),
@@ -245,6 +293,19 @@ def _expected_effect_action(
             expected["reviewed_server"] = call.server
             expected["reviewed_tool"] = call.tool
     return expected
+
+
+def _recovery_execute_prompt(
+    run: AgentRun,
+    context: AuditTurnContext,
+    absent: frozenset[int],
+) -> str:
+    return (
+        f"{context.render()}\n\nRecovery execution for operation {run.operation_id}, "
+        f"proposal revision {run.proposal_revision}. Persisted live reconciliation "
+        f"proved only action indexes {sorted(absent)} absent. Execute and verify only "
+        "those indexes; do not repeat any other action."
+    )
 
 
 def _recovery_prompt(
@@ -283,5 +344,6 @@ def _recovery_prompt(
         "absent, or ambiguous, and the exact result_digest from the matching live "
         "read completed in this recovery turn. Use present only when the read proves "
         "the old action happened, absent only when it proves the action did not "
-        "happen, and ambiguous only for needs_human."
+        "happen, and ambiguous when human judgment is required. Return outcome "
+        "reconciled with side_effect_state unknown and no external_result. Do not write."
     )

@@ -54,6 +54,14 @@ class AuditRunner(Protocol):
         run: AgentRun,
     ) -> AgentTurnRunResult[AuditAgentResult]: ...
 
+    def execute_recovery(
+        self,
+        task: ReplyTask,
+        context: AuditTurnContext,
+        *,
+        run: AgentRun,
+    ) -> AgentTurnRunResult[AuditAgentResult]: ...
+
 
 @dataclass(frozen=True)
 class OrchestrationResult:
@@ -92,6 +100,12 @@ class _RecoverAudit:
 
 
 @dataclass(frozen=True)
+class _ExecuteAuditRecovery:
+    run: AgentRun
+    proposal: ConsumerProposal
+
+
+@dataclass(frozen=True)
 class _Deferred:
     run: AgentRun | None
     code: str
@@ -120,7 +134,7 @@ class AgentOrchestrator:
     ) -> OrchestrationResult:
         if context.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
-        role_attempts: dict[tuple[AgentRole, int], int] = {}
+        role_attempts: dict[tuple[AgentRole, int, str], int] = {}
         for _ in range(MAX_TURNS_PER_PROCESS):
             state = self._derive_state(task)
             if isinstance(state, OrchestrationResult):
@@ -129,7 +143,7 @@ class AgentOrchestrator:
                 return self._deferred_result(state)
             try:
                 if isinstance(state, _NextConsumer):
-                    attempt_key = (AgentRole.CONSUMER, state.proposal_revision)
+                    attempt_key = (AgentRole.CONSUMER, state.proposal_revision, "run")
                     max_attempts = (
                         1
                         if state.authorization_error_code
@@ -164,8 +178,9 @@ class AgentOrchestrator:
                         feedback=state.feedback,
                     )
                 else:
-                    if isinstance(state, _RecoverAudit):
-                        attempt_key = (AgentRole.AUDIT, state.run.proposal_revision)
+                    if isinstance(state, (_RecoverAudit, _ExecuteAuditRecovery)):
+                        phase = "reconcile" if isinstance(state, _RecoverAudit) else "execute"
+                        attempt_key = (AgentRole.AUDIT, state.run.proposal_revision, phase)
                         if role_attempts.get(attempt_key, 0) >= 1:
                             result = _failed_audit_result(
                                 state.run,
@@ -179,10 +194,10 @@ class AgentOrchestrator:
                                 self._feedback_cycles(task),
                             )
                     else:
-                        attempt_key = (AgentRole.AUDIT, state.proposal_revision)
+                        attempt_key = (AgentRole.AUDIT, state.proposal_revision, "run")
                     max_attempts = (
                         1
-                        if isinstance(state, _RecoverAudit)
+                        if isinstance(state, (_RecoverAudit, _ExecuteAuditRecovery))
                         or state.authorization_error_code
                         else MAX_ROLE_ATTEMPTS_PER_PROCESS
                     )
@@ -222,7 +237,19 @@ class AgentOrchestrator:
                                 feedback_cycles=self._feedback_cycles(task),
                             )
                         )
-                    if isinstance(state, _RecoverAudit):
+                    if isinstance(state, _ExecuteAuditRecovery):
+                        self.audit.execute_recovery(
+                            task,
+                            AuditTurnContext(
+                                task=audit_task_context,
+                                proposal_revision=state.run.proposal_revision,
+                                operation_id=state.run.operation_id,
+                                proposal=state.proposal,
+                                audit_rules="",
+                            ),
+                            run=state.run,
+                        )
+                    elif isinstance(state, _RecoverAudit):
                         self.audit.recover(
                             task,
                             AuditTurnContext(
@@ -260,7 +287,10 @@ class AgentOrchestrator:
                         )
                     )
                 next_state = self._derive_state(task)
-                if isinstance(next_state, (_NextConsumer, _NextAudit, _RecoverAudit)):
+                if isinstance(
+                    next_state,
+                    (_NextConsumer, _NextAudit, _RecoverAudit, _ExecuteAuditRecovery),
+                ):
                     continue
                 if isinstance(next_state, _Deferred):
                     return self._deferred_result(next_state)
@@ -276,7 +306,7 @@ class AgentOrchestrator:
     def _derive_state(
         self,
         task: ReplyTask,
-    ) -> OrchestrationResult | _NextConsumer | _NextAudit | _RecoverAudit | _Deferred:
+    ) -> OrchestrationResult | _NextConsumer | _NextAudit | _RecoverAudit | _ExecuteAuditRecovery | _Deferred:
         runs = self.store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
@@ -344,6 +374,36 @@ class AgentOrchestrator:
                         latest,
                         feedback_cycles=revision,
                     )
+                if latest.final_result_json:
+                    reconciled = _audit_result(latest)
+                    if reconciled.outcome is AuditOutcome.RECONCILED:
+                        if any(
+                            entry.disposition.value == "ambiguous"
+                            for entry in reconciled.reconciliation
+                        ):
+                            return self._finalize_reconciled_audit(
+                                latest,
+                                reconciled,
+                                feedback_cycles=revision,
+                                needs_human=True,
+                            )
+                        if any(
+                            entry.disposition.value == "absent"
+                            for entry in reconciled.reconciliation
+                        ):
+                            return _ExecuteAuditRecovery(
+                                latest, consumer_state.proposal
+                            )
+                        return self._finalize_reconciled_audit(
+                            latest,
+                            reconciled,
+                            feedback_cycles=revision,
+                            needs_human=(
+                                not reconciled.reconciliation
+                                and latest.side_effect_state
+                                != SideEffectState.CONFIRMED.value
+                            ),
+                        )
                 return _RecoverAudit(latest, consumer_state.proposal)
             audit_state = self._audit_state(task, latest, revision)
             if isinstance(audit_state, _NextAudit):
@@ -409,6 +469,57 @@ class AgentOrchestrator:
             result,
             feedback_cycles,
         )
+
+    def _finalize_reconciled_audit(
+        self,
+        run: AgentRun,
+        reconciled: AuditAgentResult,
+        *,
+        feedback_cycles: int,
+        needs_human: bool,
+    ) -> OrchestrationResult | _Deferred:
+        owner = f"agent-orchestrator-reconciled-{run.id}"
+        claim = self.store.claim_unknown_agent_run(run.id, owner=owner)
+        if not claim.claimed:
+            return _Deferred(run, "agent_run_unavailable", feedback_cycles)
+        if needs_human:
+            result = _failed_audit_result(
+                claim.run,
+                AuditOutcome.NEEDS_HUMAN,
+                AgentError(code="audit_recovery_ambiguous", retryable=False),
+            )
+            status = "needs_human"
+            side_effect_state = SideEffectState.UNKNOWN.value
+        else:
+            result = AuditAgentResult(
+                outcome=AuditOutcome.EXECUTED,
+                summary=reconciled.summary,
+                proposal_revision=run.proposal_revision,
+                side_effect_state=SideEffectState.CONFIRMED,
+                feedback=None,
+                external_result={
+                    "operation_id": run.operation_id,
+                    "verification_summary": reconciled.summary,
+                    "live_result_reference": {
+                        "reconciliation": [
+                            entry.model_dump(mode="json")
+                            for entry in reconciled.reconciliation
+                        ]
+                    },
+                },
+                reconciliation=(),
+                error=AgentError(),
+            )
+            status = "completed"
+            side_effect_state = SideEffectState.CONFIRMED.value
+        completed = self.store.complete_agent_run(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=owner,
+            side_effect_state=side_effect_state,
+            expected_status="unknown",
+        )
+        return _audit_terminal(status, completed, result, feedback_cycles)
 
     def _consumer_state(
         self,

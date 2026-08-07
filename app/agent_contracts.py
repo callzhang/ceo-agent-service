@@ -60,6 +60,14 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
         },
         {
             "properties": {
+                "outcome": {"const": "reconciled"},
+                "side_effect_state": {"const": "unknown"},
+                "feedback": null_value,
+                "external_result": null_value,
+            }
+        },
+        {
+            "properties": {
                 "outcome": {"enum": ["needs_human", "failed"]},
                 "side_effect_state": {"const": "none"},
                 "feedback": null_value,
@@ -144,6 +152,7 @@ class AuditOutcome(StrEnum):
     NEEDS_HUMAN = "needs_human"
     FAILED = "failed"
     UNKNOWN = "unknown"
+    RECONCILED = "reconciled"
 
 
 class ReconciliationDisposition(StrEnum):
@@ -230,10 +239,12 @@ class AuditAgentResult(BaseModel):
                 raise ValueError("executed needs confirmed external result")
         elif self.external_result is not None:
             raise ValueError("external result is only valid for executed")
-        if self.outcome is AuditOutcome.UNKNOWN:
+        if self.outcome in {AuditOutcome.UNKNOWN, AuditOutcome.RECONCILED}:
             if self.side_effect_state is not SideEffectState.UNKNOWN:
-                raise ValueError("unknown outcome needs unknown side effect")
+                raise ValueError("unknown/reconciled outcome needs unknown side effect")
         elif self.outcome is not AuditOutcome.EXECUTED:
             if self.side_effect_state is not SideEffectState.NONE:
                 raise ValueError("non-executed result cannot claim a side effect")
+        if self.outcome is not AuditOutcome.RECONCILED and self.reconciliation:
+            raise ValueError("reconciliation entries are only valid for reconciled outcome")
         return self

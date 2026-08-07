@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_context import AgentContextMessage, AgentTaskContext
+from app.agent_context import AgentContextMessage, AgentTaskContext, AuditTurnContext
 from app.agent_contracts import (
     AuditAgentResult,
     AuditOutcome,
@@ -235,6 +235,9 @@ class ScriptedAudit:
     def recover(self, task, context, *, run):
         raise AssertionError(f"unexpected recovery for run {run.id}")
 
+    def execute_recovery(self, task, context, *, run):
+        raise AssertionError(f"unexpected recovery execution for run {run.id}")
+
 
 class RecoveringScriptedAudit(ScriptedAudit):
     def __init__(self, store, result):
@@ -276,6 +279,72 @@ class RecoveringScriptedAudit(ScriptedAudit):
             }
         )
         return AgentTurnRunResult(completed.id, result, 1, 2)
+
+
+class TwoPhaseScriptedAudit(ScriptedAudit):
+    def __init__(self, store):
+        super().__init__(store)
+        self.recovery_calls = 0
+        self.execute_calls = 0
+
+    def recover(self, task, context, *, run):
+        self.recovery_calls += 1
+        claim = self.store.claim_unknown_agent_run(run.id, owner=self.owner)
+        assert claim.claimed
+        result = AuditAgentResult.model_validate(
+            {
+                "outcome": "reconciled",
+                "summary": "Exact live read proved action absent.",
+                "proposal_revision": run.proposal_revision,
+                "side_effect_state": "unknown",
+                "feedback": None,
+                "external_result": None,
+                "reconciliation": [
+                    {
+                        "action_index": 0,
+                        "disposition": "absent",
+                        "read_result_digest": "digest-1",
+                    }
+                ],
+                "error": {
+                    "code": "",
+                    "retryable": False,
+                    "authorization_required": False,
+                },
+            }
+        )
+        persisted = self.store.persist_unknown_agent_run_result(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=self.owner,
+            transcript_end_line=2,
+        )
+        return AgentTurnRunResult(persisted.id, result, 1, 2)
+
+    def execute_recovery(self, task, context, *, run):
+        self.execute_calls += 1
+        claim = self.store.claim_unknown_agent_run(run.id, owner=self.owner)
+        assert claim.claimed
+        result = AuditAgentResult.model_validate(
+            {
+                **_audit_result("executed", run.proposal_revision).model_dump(
+                    mode="json"
+                ),
+                "external_result": {
+                    "operation_id": run.operation_id,
+                    "verification_summary": "Executed persisted absent action.",
+                    "live_result_reference": {"id": "result"},
+                },
+            }
+        )
+        completed = self.store.complete_agent_run(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=self.owner,
+            side_effect_state="confirmed",
+            expected_status="unknown",
+        )
+        return AgentTurnRunResult(completed.id, result, 2, 3)
 
 
 @pytest.fixture
@@ -543,6 +612,69 @@ def test_unknown_audit_without_session_finishes_needs_human(store):
     persisted = store.get_agent_run(unknown.id)
     assert persisted is not None and persisted.status == "completed"
     assert persisted.side_effect_state == "unknown"
+
+
+def test_persisted_reconciliation_resumes_execute_phase_without_repeating_read(store):
+    pending = _task(store)
+    task = store.claim_reply_task(pending.id)
+    assert task is not None
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    consumer.run(
+        task,
+        _context(task),
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+    parent = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert parent is not None
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
+        owner="crashed-audit",
+    ).run
+    store.set_agent_run_session(run.id, "audit-session", owner="crashed-audit")
+    unknown = store.mark_agent_run_unknown(
+        run.id,
+        {"code": "write_outcome_unknown", "retryable": False},
+        owner="crashed-audit",
+    )
+    phase_one = TwoPhaseScriptedAudit(store)
+    phase_one.recover(
+        task,
+        AuditTurnContext(
+            task=_context(task),
+            proposal_revision=0,
+            operation_id=unknown.operation_id,
+            proposal=_consumer_result("proposal", "candidate-0").proposal,
+            audit_rules="",
+        ),
+        run=unknown,
+    )
+
+    resumed = TwoPhaseScriptedAudit(store)
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=ScriptedConsumer(store),
+            audit=resumed,
+        ),
+        task,
+    )
+
+    assert result.status == "completed"
+    assert resumed.recovery_calls == 0
+    assert resumed.execute_calls == 1
 
 
 def test_infrastructure_retry_does_not_consume_feedback_cycle(store):

@@ -181,7 +181,8 @@ def test_audit_executed_requires_confirmed_external_result():
 def test_audit_reconciliation_is_strict_structured_per_action():
     result = AuditAgentResult.model_validate(
         _audit_payload(
-            outcome="needs_human",
+            outcome="reconciled",
+            side_effect_state="unknown",
             feedback=None,
             reconciliation=[
                 {

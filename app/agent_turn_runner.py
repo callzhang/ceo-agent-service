@@ -77,12 +77,17 @@ class AgentTurnProcess(Generic[ResultT]):
         persist_conversation_session: bool,
         expected_effect_actions: tuple[dict[str, object], ...] = (),
         on_progress: Callable[[], None] | None = None,
-        recover_unknown: bool = False,
+        recovery_phase: str = "",
+        authorized_recovery_actions: frozenset[int] = frozenset(),
     ) -> AgentTurnRunResult[ResultT]:
+        if recovery_phase not in {"", "reconcile", "execute"}:
+            raise ValueError("invalid recovery phase")
+        recover_unknown = bool(recovery_phase)
         line_count = 0
         saw_json = False
-        recovery_reads: list[dict[str, object]] = []
         recovery_started_actions: set[int] = set()
+        effect_action_counts = [0] * len(expected_effect_actions)
+        effect_action_by_call_id: dict[str, int] = {}
         recovery_event_start = len(run.tool_events)
         completed_before_recovery = (
             _action_completion_accounting(
@@ -147,43 +152,51 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
             event = self._normalized_effect_event(
                 payload,
-                read_only=run.role is AgentRole.CONSUMER,
+                read_only=(
+                    run.role is AgentRole.CONSUMER
+                    or recovery_phase == "reconcile"
+                ),
                 operation_id=run.operation_id,
             )
             if event is not None:
                 item = event.get("item")
                 metadata = item.get("metadata") if isinstance(item, dict) else None
                 effect = metadata.get("effect") if isinstance(metadata, dict) else None
+                if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
+                    call_id = str(item.get("id") or item.get("call_id") or "")
+                    if event.get("type") == "item.started":
+                        candidates = [
+                            index
+                            for index, action in enumerate(expected_effect_actions)
+                            if _metadata_matches_action(metadata, action)
+                        ]
+                        action_index = (
+                            min(candidates, key=effect_action_counts.__getitem__)
+                            if candidates
+                            else None
+                        )
+                        if action_index is not None:
+                            metadata["action_index"] = action_index
+                            effect_action_counts[action_index] += 1
+                            effect_action_by_call_id[call_id] = action_index
+                    else:
+                        action_index = effect_action_by_call_id.get(call_id)
+                        if action_index is not None:
+                            metadata["action_index"] = action_index
                 if (
-                    recover_unknown
+                    recovery_phase == "execute"
                     and event.get("type") == "item.started"
                     and effect == EffectKind.EFFECTFUL.value
                 ):
-                    action_index = _matching_action_index(
-                        metadata, expected_effect_actions
-                    )
+                    action_index = metadata.get("action_index")
                     if (
                         action_index is None
+                        or action_index not in authorized_recovery_actions
                         or action_index in completed_before_recovery
                         or action_index in recovery_started_actions
-                        or not any(
-                            _read_matches_action(
-                                read,
-                                expected_effect_actions[action_index],
-                                self.effects,
-                            )
-                            for read in recovery_reads
-                        )
                     ):
-                        raise RuntimeError("audit_recovery_read_required")
+                        raise RuntimeError("audit_recovery_action_not_authorized")
                     recovery_started_actions.add(action_index)
-                if (
-                    recover_unknown
-                    and event.get("type") == "item.completed"
-                    and effect == EffectKind.READ_ONLY.value
-                ):
-                    assert isinstance(metadata, dict)
-                    recovery_reads.append(metadata)
                 if recover_unknown:
                     self.store.append_unknown_agent_run_event(
                         run.id, event, owner=self.owner
@@ -247,14 +260,22 @@ class AgentTurnProcess(Generic[ResultT]):
         side_effect_state = getattr(result, "side_effect_state", SideEffectState.NONE)
         persisted = self.store.get_agent_run(run.id)
         assert persisted is not None
-        if run.role is AgentRole.AUDIT and recover_unknown:
-            self._validate_audit_recovery_result(
+        if run.role is AgentRole.AUDIT and recovery_phase == "reconcile":
+            self._validate_audit_reconciliation_result(
+                run,
+                result,
+                persisted,
+                expected_effect_actions=expected_effect_actions,
+                recovery_event_start=recovery_event_start,
+            )
+        elif run.role is AgentRole.AUDIT and recovery_phase == "execute":
+            self._validate_audit_recovery_execution_result(
                 run,
                 result,
                 persisted,
                 expected_effect_actions=expected_effect_actions,
                 recovery_started_actions=recovery_started_actions,
-                recovery_event_start=recovery_event_start,
+                authorized_recovery_actions=authorized_recovery_actions,
             )
         elif run.role is AgentRole.AUDIT:
             self._validate_audit_result(
@@ -263,22 +284,20 @@ class AgentTurnProcess(Generic[ResultT]):
                 persisted,
                 expected_effect_actions=expected_effect_actions,
             )
-        if recover_unknown:
+        if recovery_phase == "reconcile":
+            self.store.persist_unknown_agent_run_result(
+                run.id,
+                result.model_dump(mode="json"),
+                owner=self.owner,
+                transcript_end_line=transcript_end,
+            )
+        elif recovery_phase == "execute":
             if outcome is AuditOutcome.EXECUTED:
                 self.store.complete_agent_run(
                     run.id,
                     result.model_dump(mode="json"),
                     owner=self.owner,
                     side_effect_state=SideEffectState.CONFIRMED.value,
-                    transcript_end_line=transcript_end,
-                    expected_status="unknown",
-                )
-            elif outcome is AuditOutcome.NEEDS_HUMAN:
-                self.store.complete_agent_run(
-                    run.id,
-                    result.model_dump(mode="json"),
-                    owner=self.owner,
-                    side_effect_state=SideEffectState.UNKNOWN.value,
                     transcript_end_line=transcript_end,
                     expected_status="unknown",
                 )
@@ -473,19 +492,20 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             raise RuntimeError("audit_effect_without_executed_result")
 
-    def _validate_audit_recovery_result(
+    def _validate_audit_reconciliation_result(
         self,
         run: AgentRun,
         result: ResultT,
         persisted: AgentRun,
         *,
         expected_effect_actions: tuple[dict[str, object], ...],
-        recovery_started_actions: set[int],
         recovery_event_start: int,
     ) -> None:
         outcome = getattr(result, "outcome")
         if getattr(result, "proposal_revision") != run.proposal_revision:
             raise RuntimeError("audit_proposal_revision_mismatch")
+        if outcome is not AuditOutcome.RECONCILED:
+            raise RuntimeError("audit_reconciliation_result_invalid")
         reconciliation = _validated_reconciliation(
             getattr(result, "reconciliation"),
             persisted.tool_events,
@@ -493,41 +513,6 @@ class AgentTurnProcess(Generic[ResultT]):
             event_start=recovery_event_start,
             registry=self.effects,
         )
-        if outcome is AuditOutcome.NEEDS_HUMAN:
-            if recovery_started_actions:
-                raise RuntimeError("audit_recovery_effect_unresolved")
-            completed_by_events = _action_completion_accounting(
-                persisted.tool_events[:recovery_event_start],
-                [],
-                expected_effect_actions,
-                operation_id=run.operation_id,
-                registry=self.effects,
-            )[0]
-            unresolved = (
-                set(range(len(expected_effect_actions))) - completed_by_events
-            )
-            required = {
-                index
-                for index in unresolved
-                if _action_has_readback(expected_effect_actions[index], self.effects)
-            }
-            if (
-                not unresolved
-                or set(reconciliation) != required
-                or any(
-                    entry.disposition is not ReconciliationDisposition.AMBIGUOUS
-                    for entry in reconciliation.values()
-                )
-            ):
-                raise RuntimeError("audit_recovery_evidence_missing")
-            return
-        if outcome in {AuditOutcome.UNKNOWN, AuditOutcome.FAILED}:
-            return
-        if outcome is not AuditOutcome.EXECUTED:
-            raise RuntimeError("audit_recovery_result_invalid")
-        external_result = getattr(result, "external_result")
-        if external_result.operation_id != run.operation_id:
-            raise RuntimeError("audit_operation_mismatch")
         completed_by_events = _action_completion_accounting(
             persisted.tool_events[:recovery_event_start],
             [],
@@ -541,37 +526,15 @@ class AgentTurnProcess(Generic[ResultT]):
             if index not in completed_by_events
             and _action_has_readback(action, self.effects)
         }
-        if set(reconciliation) != required or any(
-            entry.disposition is ReconciliationDisposition.AMBIGUOUS
-            for entry in reconciliation.values()
-        ):
+        if set(reconciliation) != required:
             raise RuntimeError("audit_recovery_evidence_missing")
-        if any(
-            entry.disposition is ReconciliationDisposition.ABSENT
-            and index not in recovery_started_actions
-            for index, entry in reconciliation.items()
-        ):
-            raise RuntimeError("audit_recovery_effect_unresolved")
-        if any(
-            entry.disposition is ReconciliationDisposition.PRESENT
-            and index in recovery_started_actions
-            for index, entry in reconciliation.items()
-        ):
-            raise RuntimeError("audit_recovery_effect_unresolved")
-        receipts = self.store.list_agent_execution_receipts(run.id)
-        completed = _action_completion_accounting(
-            persisted.tool_events,
-            receipts,
-            expected_effect_actions,
-            operation_id=run.operation_id,
-            registry=self.effects,
-        )[0]
         present = {
             index
             for index, entry in reconciliation.items()
             if entry.disposition is ReconciliationDisposition.PRESENT
         }
-        for action_index in sorted(present - completed):
+        receipts = self.store.list_agent_execution_receipts(run.id)
+        for action_index in sorted(present - completed_by_events):
             action = expected_effect_actions[action_index]
             metadata = _matching_effect_metadata(
                 persisted.tool_events,
@@ -585,21 +548,74 @@ class AgentTurnProcess(Generic[ResultT]):
             command_digest = metadata.get("operation_digest")
             if command_digest != action.get("operation_digest"):
                 continue
-            self.store.record_agent_execution_receipt(
-                run.id,
-                receipt_id=(
-                    "reconciliation:"
-                    f"{_action_receipt_operation_id(run.operation_id, action)}:"
-                    f"{read_result_digest}"
-                ),
-                operation_id=_action_receipt_operation_id(run.operation_id, action),
-                cli=str(metadata.get("native_cli") or metadata.get("capability")),
-                command_path=str(metadata.get("operation")),
-                command_digest=str(command_digest),
-                exit_code=0,
-                owner=self.owner,
-                expected_status="unknown",
+            receipt_operation_id = _action_receipt_operation_id(
+                run.operation_id, action, action_index
             )
+            if not any(
+                getattr(receipt, "operation_id", "") == receipt_operation_id
+                for receipt in receipts
+            ):
+                self.store.record_agent_execution_receipt(
+                    run.id,
+                    receipt_id=(
+                        "reconciliation:"
+                        f"{receipt_operation_id}:{read_result_digest}"
+                    ),
+                    operation_id=receipt_operation_id,
+                    cli=str(metadata.get("native_cli") or metadata.get("capability")),
+                    command_path=str(metadata.get("operation")),
+                    command_digest=str(command_digest),
+                    exit_code=0,
+                    owner=self.owner,
+                    expected_status="unknown",
+                )
+            self.store.confirm_agent_execution_receipt(
+                run.id,
+                receipt_operation_id,
+                owner=self.owner,
+            )
+        receipt_completed = _action_completion_accounting(
+            persisted.tool_events,
+            self.store.list_agent_execution_receipts(run.id),
+            expected_effect_actions,
+            operation_id=run.operation_id,
+            registry=self.effects,
+        )[0]
+        for action_index, action in enumerate(expected_effect_actions):
+            if (
+                action_index in receipt_completed
+                and action_index not in completed_by_events
+                and not _action_has_readback(action, self.effects)
+            ):
+                self.store.confirm_agent_execution_receipt(
+                    run.id,
+                    _action_receipt_operation_id(
+                        run.operation_id, action, action_index
+                    ),
+                    owner=self.owner,
+                )
+
+    def _validate_audit_recovery_execution_result(
+        self,
+        run: AgentRun,
+        result: ResultT,
+        persisted: AgentRun,
+        *,
+        expected_effect_actions: tuple[dict[str, object], ...],
+        recovery_started_actions: set[int],
+        authorized_recovery_actions: frozenset[int],
+    ) -> None:
+        if getattr(result, "proposal_revision") != run.proposal_revision:
+            raise RuntimeError("audit_proposal_revision_mismatch")
+        if getattr(result, "outcome") is not AuditOutcome.EXECUTED:
+            raise RuntimeError("audit_recovery_result_invalid")
+        if getattr(result, "reconciliation"):
+            raise RuntimeError("audit_reconciliation_unexpected")
+        external_result = getattr(result, "external_result")
+        if external_result.operation_id != run.operation_id:
+            raise RuntimeError("audit_operation_mismatch")
+        if recovery_started_actions != set(authorized_recovery_actions):
+            raise RuntimeError("audit_recovery_effect_unresolved")
         completed, all_effects_closed = _action_completion_accounting(
             persisted.tool_events,
             self.store.list_agent_execution_receipts(run.id),
@@ -735,22 +751,6 @@ def _metadata_matches_action(
     )
 
 
-def _matching_action_index(
-    metadata: dict[str, object] | None,
-    actions: tuple[dict[str, object], ...],
-) -> int | None:
-    if metadata is None:
-        return None
-    return next(
-        (
-            index
-            for index, action in enumerate(actions)
-            if _metadata_matches_action(metadata, action)
-        ),
-        None,
-    )
-
-
 def _read_matches_action(
     read: dict[str, object],
     action: dict[str, object],
@@ -842,10 +842,12 @@ def _validated_reconciliation(
 def _action_receipt_operation_id(
     operation_id: str,
     action: dict[str, object],
+    action_index: int,
 ) -> str:
     return json.dumps(
         {
             "proposal_operation_id": operation_id,
+            "action_index": action_index,
             "capability": action.get("capability", ""),
             "operation": action.get("operation", ""),
             "operation_digest": action.get("operation_digest", ""),
@@ -884,8 +886,12 @@ def _action_completion_accounting(
                 for index, action in enumerate(actions)
                 if _metadata_matches_action(metadata, action)
             ]
+            persisted_index = metadata.get("action_index")
             action_index = (
-                min(candidates, key=starts_per_action.__getitem__)
+                int(persisted_index)
+                if isinstance(persisted_index, int)
+                and persisted_index in candidates
+                else min(candidates, key=starts_per_action.__getitem__)
                 if candidates
                 else None
             )
@@ -942,7 +948,9 @@ def _action_completion_accounting(
 
     used_receipts: set[int] = set()
     for action_index, action in enumerate(actions):
-        expected_receipt_id = _action_receipt_operation_id(operation_id, action)
+        expected_receipt_id = _action_receipt_operation_id(
+            operation_id, action, action_index
+        )
         expected_cli = str(action.get("capability") or "").rsplit(".", 1)[-1]
         receipt_index = next(
             (

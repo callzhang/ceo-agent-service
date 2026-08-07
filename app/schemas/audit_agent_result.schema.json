@@ -86,7 +86,8 @@
         "revision_required",
         "needs_human",
         "failed",
-        "unknown"
+        "unknown",
+        "reconciled"
       ],
       "title": "AuditOutcome",
       "type": "string"
@@ -174,6 +175,22 @@
       "properties": {
         "outcome": {
           "const": "unknown"
+        },
+        "side_effect_state": {
+          "const": "unknown"
+        },
+        "feedback": {
+          "type": "null"
+        },
+        "external_result": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "const": "reconciled"
         },
         "side_effect_state": {
           "const": "unknown"

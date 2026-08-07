@@ -276,6 +276,61 @@ def test_two_same_call_starts_with_one_completion_remains_unknown(tmp_path):
     )
 
     assert persisted.side_effect_state == "unknown"
+    assert persisted.effect_started_count == 2
+    assert persisted.effect_completed_count == 1
+
+
+def test_agent_effect_state_uses_incremental_counters_not_history_scan(tmp_path):
+    statements: list[str] = []
+
+    class TracedStore(AutoReplyStore):
+        def _open_connection(self):
+            connection = super()._open_connection()
+            connection.set_trace_callback(statements.append)
+            return connection
+
+    store = TracedStore(tmp_path / "turns.sqlite3")
+    run = _claim_audit(store, _task(store))
+    statements.clear()
+
+    persisted = store.append_agent_run_event(
+        run.id,
+        _effect_event(operation_digest="digest"),
+        owner="audit",
+    )
+
+    normalized = [statement.casefold() for statement in statements]
+    assert persisted.effect_started_count == 1
+    assert persisted.side_effect_state == "unknown"
+    assert not any("with call_state" in statement for statement in normalized)
+    assert sum("from agent_run_events" in statement for statement in normalized) <= 4
+
+
+def test_effect_counter_backfill_is_migration_safe(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    run = _claim_audit(store, _task(store))
+    started = _effect_event(operation_digest="digest")
+    store.append_agent_run_event(run.id, started, owner="audit")
+    store.append_agent_run_event(
+        run.id,
+        {**started, "type": "item.completed"},
+        owner="audit",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set effect_started_count=0, "
+            "effect_completed_count=0, effect_failed_count=0, "
+            "effect_receipt_count=0, effect_unreviewed_count=0 where id=?",
+            (run.id,),
+        )
+        db.row_factory = sqlite3.Row
+        AutoReplyStore._backfill_agent_run_effect_counters(db)
+
+    migrated = store.get_agent_run(run.id)
+    assert migrated is not None
+    assert migrated.effect_started_count == 1
+    assert migrated.effect_completed_count == 1
+    assert migrated.side_effect_state == "confirmed"
 
 
 def _create_pre_role_database(path: Path) -> Path:
@@ -415,6 +470,8 @@ def test_agent_run_migration_preserves_events_and_receipts(tmp_path):
         ).fetchone()
     assert event == (8, "2026-08-06 15:00:00")
     assert receipt == (9, "2026-08-06 15:01:00")
+    assert run.effect_started_count == 0
+    assert store.list_agent_execution_receipts(7)[0].effect_counted is False
 
 
 def test_agent_run_migration_preserves_existing_turn_identity(tmp_path):
