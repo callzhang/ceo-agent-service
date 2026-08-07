@@ -34,6 +34,7 @@ class ControlledCliConfig:
     command: str
     args: tuple[str, ...]
     cwd: str
+    env: tuple[tuple[str, str], ...] = ()
 
 
 def _jsonl_payloads(raw: str) -> Iterator[dict]:
@@ -182,6 +183,15 @@ def make_role_agent_command(
             "-c", f"mcp_servers.agent_cli.command={json.dumps(controlled_cli.command)}",
             "-c", "mcp_servers.agent_cli.args=" + json.dumps(list(controlled_cli.args)),
             "-c", f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli.cwd)}",
+            *(
+                [
+                    "-c",
+                    "mcp_servers.agent_cli.env="
+                    + json.dumps(dict(controlled_cli.env), separators=(",", ":")),
+                ]
+                if controlled_cli.env
+                else []
+            ),
             "-c", "mcp_servers.agent_cli.enabled_tools=" + json.dumps(agent_cli_tools),
         ],
     )

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from app.agent_turn_runner import (
     _json_digest,
     _read_matches_action,
 )
-from app.audit_agent import AuditAgentRunner
+from app.audit_agent import AuditAgentRunner, _recovery_authorizations
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
@@ -223,6 +224,7 @@ def _audit_jsonl(
     write_text: str = "done",
     include_verification: bool = True,
     proposal_revision: int = 0,
+    authorization_id: str = "",
 ) -> str:
     result = {
         "outcome": "executed", "summary": "Executed and verified.",
@@ -247,6 +249,8 @@ def _audit_jsonl(
                     "--yes",
                 ]
             }
+            if authorization_id:
+                arguments["authorization_id"] = authorization_id
             receipt = {
                 "cli": "dws",
                 "operation": "chat message send",
@@ -255,6 +259,9 @@ def _audit_jsonl(
                 "result_digest": "result-digest",
                 "stdout": "{}",
             }
+            if authorization_id:
+                receipt["authorization_id"] = authorization_id
+                receipt["action_index"] = -1
             if write_error:
                 receipt["error"] = {
                     "channel": "dws",
@@ -1018,7 +1025,7 @@ def _seed_crashed_xiaoqing_write(setup):
     return store, task, context, run, registry
 
 
-def _xiaoqing_recovery_jsonl(run, *, include_read):
+def _xiaoqing_recovery_jsonl(run, *, include_read, disposition="present"):
     read = {
         "type": "mcp_tool_call",
         "id": "direct-read",
@@ -1057,7 +1064,7 @@ def _xiaoqing_recovery_jsonl(run, *, include_read):
             [
                 {
                     "action_index": 0,
-                    "disposition": "present",
+                    "disposition": disposition,
                     "read_result_digest": _json_digest(read_result),
                 }
             ]
@@ -1101,6 +1108,42 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "reconciled"
     assert persisted is not None and persisted.status == "unknown"
+    assert sum(
+        event["type"] == "item.started"
+        and event["item"]["metadata"]["effect"] == "effectful"
+        for event in persisted.tool_events
+    ) == 1
+
+
+def test_direct_mcp_absent_recovery_requires_human_without_write(setup):
+    store, task, context, run, registry = _seed_crashed_xiaoqing_write(setup)
+    readback = _xiaoqing_recovery_jsonl(
+        run, include_read=True, disposition="absent"
+    )
+    runner = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(readback),
+        mcp_effect_registry=registry,
+    )
+    runner.recover(task, context, run=run)
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+
+    class NoWriteExecutor:
+        def __call__(self, *args, **kwargs):
+            raise AssertionError("direct MCP recovery must not execute")
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=NoWriteExecutor(),
+        mcp_effect_registry=registry,
+    ).execute_recovery(task, context, run=persisted)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "needs_human"
+    assert persisted is not None and persisted.status == "completed"
     assert sum(
         event["type"] == "item.started"
         and event["item"]["metadata"]["effect"] == "effectful"
@@ -1368,6 +1411,44 @@ def test_exact_receipt_confirms_no_readback_unknown(setup):
     ) == 1
 
 
+def test_pre_903_no_readback_start_binds_before_exact_receipt(setup):
+    store, task, context, run, registry, _ = _seed_crashed_memory_write(setup)
+    with sqlite3.connect(store.path) as db:
+        row = db.execute(
+            "select id, event_json from agent_run_events "
+            "where agent_run_id=? and event_type='item.started'",
+            (run.id,),
+        ).fetchone()
+        event = json.loads(row[1])
+        event["item"]["metadata"].pop("action_index", None)
+        db.execute(
+            "update agent_run_events set event_json=? where id=?",
+            (json.dumps(event, separators=(",", ":")), row[0]),
+        )
+
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=ExactReceiptExecutor(
+            _audit_result_jsonl(
+                "reconciled",
+                operation_id=run.operation_id,
+                session=run.codex_session_id,
+                include_read=False,
+            ),
+            store=store,
+            run=run,
+        ),
+        owner="audit-owner",
+        mcp_effect_registry=registry,
+    ).recover(task, context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.tool_events[0]["item"]["metadata"]["action_index"] == 0
+    assert persisted.effect_receipt_count == 1
+
+
 def test_definitely_absent_recovery_reads_before_executing_same_revision_once(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     reconcile = _audit_result_jsonl(
@@ -1383,7 +1464,17 @@ def test_definitely_absent_recovery_reads_before_executing_same_revision_once(se
             }
         ],
     )
-    execute = _audit_jsonl(run.operation_id, session=run.codex_session_id)
+    authorization = _recovery_authorizations(
+        run,
+        audit_context,
+        frozenset({0}),
+        McpToolEffectRegistry.default(),
+    )[0]
+    execute = _audit_jsonl(
+        run.operation_id,
+        session=run.codex_session_id,
+        authorization_id=authorization["authorization_id"],
+    )
     executor = SequencedExecutor(reconcile, execute)
 
     runner = AuditAgentRunner(
@@ -1414,6 +1505,7 @@ def test_definitely_absent_recovery_reads_before_executing_same_revision_once(se
     assert all(run.codex_session_id in command for command in executor.commands)
     assert "execute_reviewed_write" not in " ".join(executor.commands[0])
     assert "execute_reviewed_write" in " ".join(executor.commands[1])
+    assert "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST" in " ".join(executor.commands[1])
 
 
 def test_persisted_absence_resumes_execute_phase_without_reconciling_again(setup):
@@ -1441,14 +1533,17 @@ def test_persisted_absence_resumes_execute_phase_without_reconciling_again(setup
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.status == "unknown"
 
+    authorization = _recovery_authorizations(
+        run,
+        audit_context,
+        frozenset({0}),
+        McpToolEffectRegistry.default(),
+    )[0]
     resumed_executor = CapturingExecutor(
-        _audit_result_jsonl(
-            "executed",
-            operation_id=run.operation_id,
+        _audit_jsonl(
+            run.operation_id,
             session=run.codex_session_id,
-            include_read=False,
-            include_write=True,
-            reconciliation=[],
+            authorization_id=authorization["authorization_id"],
         )
     )
     result = AuditAgentRunner(
@@ -1571,10 +1666,17 @@ def test_two_action_recovery_confirms_unknown_first_and_executes_second_once(set
         operation_id=run.operation_id,
         session=run.codex_session_id,
     ).splitlines()
+    authorization = _recovery_authorizations(
+        run,
+        recovery_context,
+        frozenset({1}),
+        McpToolEffectRegistry.default(),
+    )[0]
     second_write = _audit_jsonl(
         run.operation_id,
         session=run.codex_session_id,
         write_target="cid-second",
+        authorization_id=authorization["authorization_id"],
     ).splitlines()
     second_read = _audit_result_jsonl(
         "reconciled",
@@ -1630,6 +1732,66 @@ def test_two_action_recovery_confirms_unknown_first_and_executes_second_once(set
     ]
     assert started_targets.count({"group": "cid-agent"}) == 1
     assert started_targets.count({"group": "cid-second"}) == 1
+
+
+def test_identical_recovery_actions_bind_to_authorized_index(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    identical_context = replace(
+        audit_context,
+        proposal=audit_context.proposal.model_copy(
+            update={"actions": (*audit_context.proposal.actions, audit_context.proposal.actions[0])}
+        ),
+    )
+    reconciliation = _audit_result_jsonl(
+        "reconciled",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+        reconciliation=[
+            {
+                "action_index": 0,
+                "disposition": "present",
+                "read_result_digest": "recovery-read-digest",
+            },
+            {
+                "action_index": 1,
+                "disposition": "absent",
+                "read_result_digest": "recovery-read-digest",
+            },
+        ],
+    )
+    authorization = _recovery_authorizations(
+        run,
+        identical_context,
+        frozenset({1}),
+        McpToolEffectRegistry.default(),
+    )[0]
+    execute = _audit_jsonl(
+        run.operation_id,
+        session=run.codex_session_id,
+        authorization_id=authorization["authorization_id"],
+    )
+    runner = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=SequencedExecutor(reconciliation, execute),
+    )
+
+    runner.recover(task, identical_context, run=run)
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    runner.execute_recovery(task, identical_context, run=persisted)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    recovered_starts = [
+        event["item"]["metadata"]
+        for event in persisted.tool_events
+        if event["type"] == "item.started"
+        and event["item"]["metadata"].get("authorization_id")
+    ]
+    assert [(item["action_index"], item["authorization_id"]) for item in recovered_starts] == [
+        (1, authorization["authorization_id"])
+    ]
 
 
 def test_audit_two_starts_with_one_completion_remains_unknown(setup):

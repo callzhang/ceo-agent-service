@@ -1747,6 +1747,141 @@ def test_worker_finalizes_unknown_audit_without_session_as_needs_human(
     assert attempt.send_error == "audit_recovery_session_missing"
 
 
+def test_worker_finalizes_absent_direct_mcp_recovery_without_write(tmp_path: Path):
+    trigger = _message("Submit the reviewed interview result.")
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    task = store.claim_reply_task(task_id)
+    assert task is not None
+    proposal = {
+        "objective": "Submit the reviewed interview result.",
+        "actions": [{
+            "description": "Upload interview result.",
+            "capability": "xiaoqing_interview",
+            "operation": "upload_interview_result",
+            "target": {"candidate_id": "candidate-1", "interview_id": "interview-1"},
+            "payload": {
+                "candidate_id": "candidate-1",
+                "interview_id": "interview-1",
+                "evaluation": "approved",
+            },
+            "expected_verification": "Read the same interview context.",
+        }],
+        "sourced_facts": [],
+        "authored_judgment": "The user requested delivery.",
+    }
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="seed-consumer",
+    ).run
+    store.complete_agent_run(
+        consumer.id,
+        _consumer_protocol_result(
+            "proposal", "Prepared an interview result.", proposal=proposal
+        ).model_dump(mode="json"),
+        owner="seed-consumer",
+    )
+    operation_id = "reply-task:g1:revision:0"
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id=operation_id,
+        owner="seed-audit",
+    ).run
+    store.set_agent_run_session(
+        audit.id, "audit-session", owner="seed-audit"
+    )
+    store.append_agent_run_event(
+        audit.id,
+        {
+            "type": "item.started",
+            "item": {
+                "id": "direct-write",
+                "metadata": {
+                    "effect": "effectful",
+                    "capability": "xiaoqing_interview",
+                    "operation": "upload_interview_result",
+                    "operation_id": operation_id,
+                    "operation_digest": "operation-digest",
+                    "arguments_digest": "arguments-digest",
+                    "target_identifiers": {
+                        "candidate_id": "candidate-1",
+                        "interview_id": "interview-1",
+                    },
+                },
+            },
+        },
+        owner="seed-audit",
+    )
+    store.mark_agent_run_unknown(
+        audit.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="seed-audit",
+    )
+    reconciled = AuditAgentResult.model_validate({
+        "outcome": "reconciled",
+        "summary": "Live readback proved the direct MCP action absent.",
+        "proposal_revision": 0,
+        "side_effect_state": "unknown",
+        "feedback": None,
+        "external_result": None,
+        "reconciliation": [{
+            "action_index": 0,
+            "disposition": "absent",
+            "read_result_digest": "read-digest",
+        }],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set final_result_json=? where id=?",
+            (reconciled.model_dump_json(), audit.id),
+        )
+        db.execute(
+            "update reply_tasks set status='pending', locked_at=null, available_at='' "
+            "where id=?",
+            (task.id,),
+        )
+
+    class NoWriteExecutor:
+        def __call__(self, *args, **kwargs):
+            raise AssertionError("worker must not replay direct MCP writes")
+
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        agent_orchestrator=AgentOrchestrator(
+            store=store,
+            consumer=UnexpectedRoleRunner(),
+            audit=AuditAgentRunner(
+                store=store,
+                workspace=tmp_path,
+                executor=NoWriteExecutor(),
+            ),
+        ),
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 1
+    persisted = store.get_agent_run(audit.id)
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert persisted is not None and persisted.status == "completed"
+    assert attempt is not None and attempt.send_status == "needs_human"
+    assert attempt.send_error == "audit_recovery_direct_mcp_replay_forbidden"
+
+
 def _worker(
     tmp_path: Path,
     messages: list[DingTalkMessage],

@@ -79,10 +79,12 @@ class AgentTurnProcess(Generic[ResultT]):
         on_progress: Callable[[], None] | None = None,
         recovery_phase: str = "",
         authorized_recovery_actions: frozenset[int] = frozenset(),
+        recovery_authorizations: dict[str, int] | None = None,
     ) -> AgentTurnRunResult[ResultT]:
         if recovery_phase not in {"", "reconcile", "execute"}:
             raise ValueError("invalid recovery phase")
         recover_unknown = bool(recovery_phase)
+        recovery_authorizations = recovery_authorizations or {}
         line_count = 0
         saw_json = False
         recovery_started_actions: set[int] = set()
@@ -165,16 +167,30 @@ class AgentTurnProcess(Generic[ResultT]):
                 if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
                     call_id = str(item.get("id") or item.get("call_id") or "")
                     if event.get("type") == "item.started":
-                        candidates = [
-                            index
-                            for index, action in enumerate(expected_effect_actions)
-                            if _metadata_matches_action(metadata, action)
-                        ]
-                        action_index = (
-                            min(candidates, key=effect_action_counts.__getitem__)
-                            if candidates
-                            else None
-                        )
+                        authorization_id = metadata.get("authorization_id")
+                        if recovery_phase == "execute":
+                            action_index = recovery_authorizations.get(
+                                str(authorization_id or "")
+                            )
+                            if (
+                                action_index is None
+                                or action_index >= len(expected_effect_actions)
+                                or not _metadata_matches_action(
+                                    metadata, expected_effect_actions[action_index]
+                                )
+                            ):
+                                action_index = None
+                        else:
+                            candidates = [
+                                index
+                                for index, action in enumerate(expected_effect_actions)
+                                if _metadata_matches_action(metadata, action)
+                            ]
+                            action_index = (
+                                min(candidates, key=effect_action_counts.__getitem__)
+                                if candidates
+                                else None
+                            )
                         if action_index is not None:
                             metadata["action_index"] = action_index
                             effect_action_counts[action_index] += 1
@@ -364,6 +380,7 @@ class AgentTurnProcess(Generic[ResultT]):
         operation_digest = call.operation_digest
         target_identifiers = call.target_identifiers
         native_cli = ""
+        authorization_id = ""
         validated_receipt: dict[str, object] | None = None
         if call.server == "agent_cli" and call.tool in {
             "execute_reviewed_read",
@@ -371,6 +388,10 @@ class AgentTurnProcess(Generic[ResultT]):
         }:
             arguments = item.get("arguments")
             argv = arguments.get("argv") if isinstance(arguments, dict) else None
+            if isinstance(arguments, dict):
+                candidate_authorization = arguments.get("authorization_id")
+                if isinstance(candidate_authorization, str):
+                    authorization_id = candidate_authorization
             descriptor = describe_native_command(
                 {"type": "command_execution", "argv": argv}
             )
@@ -389,6 +410,10 @@ class AgentTurnProcess(Generic[ResultT]):
                     or receipt.get("operation") != descriptor.command_path
                     or receipt.get("operation_digest") != operation_digest
                     or receipt.get("target_identifiers") != target_identifiers
+                    or (
+                        authorization_id
+                        and receipt.get("authorization_id") != authorization_id
+                    )
                 ):
                     raise AgentReadOnlyViolationError("agent_cli_receipt_invalid")
                 validated_receipt = receipt
@@ -408,7 +433,11 @@ class AgentTurnProcess(Generic[ResultT]):
             "reviewed_tool": call.tool,
             "operation_digest": operation_digest,
             "target_identifiers": target_identifiers,
-            "arguments_digest": _json_digest(item.get("arguments")),
+            "arguments_digest": _json_digest(
+                {"argv": argv}
+                if native_cli
+                else item.get("arguments")
+            ),
         }
         if call.effect is EffectKind.EFFECTFUL:
             metadata["operation_id"] = operation_id
@@ -422,6 +451,8 @@ class AgentTurnProcess(Generic[ResultT]):
                 metadata["result_digest"] = result_digest
         if native_cli:
             metadata["native_cli"] = native_cli
+        if authorization_id:
+            metadata["authorization_id"] = authorization_id
         return {
             "type": event_type,
             "item": {
@@ -541,10 +572,22 @@ class AgentTurnProcess(Generic[ResultT]):
                 action,
                 operation_id=run.operation_id,
                 event_type="item.started",
+                action_index=action_index,
             )
             read_result_digest = reconciliation[action_index].read_result_digest
             if metadata is None or not read_result_digest:
                 continue
+            persisted_index = metadata.get("action_index")
+            if persisted_index is None:
+                if not self.store.bind_legacy_unknown_effect_action(
+                    run.id,
+                    action_index=action_index,
+                    operation_id=run.operation_id,
+                    expected_identity=action,
+                    owner=self.owner,
+                ):
+                    continue
+                metadata["action_index"] = action_index
             command_digest = metadata.get("operation_digest")
             if command_digest != action.get("operation_digest"):
                 continue
@@ -587,6 +630,13 @@ class AgentTurnProcess(Generic[ResultT]):
                 and action_index not in completed_by_events
                 and not _action_has_readback(action, self.effects)
             ):
+                self.store.bind_legacy_unknown_effect_action(
+                    run.id,
+                    action_index=action_index,
+                    operation_id=run.operation_id,
+                    expected_identity=action,
+                    owner=self.owner,
+                )
                 self.store.confirm_agent_execution_receipt(
                     run.id,
                     _action_receipt_operation_id(
@@ -708,6 +758,7 @@ def _matching_effect_metadata(
     *,
     operation_id: str,
     event_type: str,
+    action_index: int,
 ) -> dict[str, object] | None:
     for event in events:
         if event.get("type") != event_type:
@@ -719,6 +770,7 @@ def _matching_effect_metadata(
         if (
             metadata.get("effect") == EffectKind.EFFECTFUL.value
             and metadata.get("operation_id") == operation_id
+            and metadata.get("action_index") in {None, action_index}
             and _metadata_matches_action(metadata, expected_action)
         ):
             return metadata
@@ -921,12 +973,17 @@ def _action_completion_accounting(
             continue
         if event.get("type") not in {"item.completed", "item.failed"}:
             continue
+        closure_action_index = metadata.get("action_index")
         start = next(
             (
                 candidate
                 for candidate in starts
                 if not candidate["closed"]
                 and candidate["call_id"] == call_id
+                and (
+                    not isinstance(closure_action_index, int)
+                    or candidate["action_index"] == closure_action_index
+                )
                 and (
                     candidate["action_index"] is None
                     or _metadata_matches_action(

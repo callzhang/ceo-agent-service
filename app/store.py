@@ -2895,6 +2895,68 @@ class AutoReplyStore:
                 (_agent_effect_state_from_counts(counts), run_id),
             )
 
+    def bind_legacy_unknown_effect_action(
+        self,
+        run_id: int,
+        *,
+        action_index: int,
+        operation_id: str,
+        expected_identity: dict[str, object],
+        owner: str,
+        now: str | datetime | None = None,
+    ) -> bool:
+        """Bind one pre-action-index unknown start to an exact reviewed action."""
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                expected_status="unknown",
+            )
+            rows = db.execute(
+                """
+                select id, event_json from agent_run_events
+                where agent_run_id=? and event_type='item.started'
+                  and effect_kind='effectful'
+                  and json_type(event_json, '$.item.metadata.action_index') is null
+                  and json_extract(event_json, '$.item.metadata.operation_id')=?
+                  and json_extract(event_json, '$.item.metadata.capability')=?
+                  and json_extract(event_json, '$.item.metadata.operation')=?
+                  and json_extract(event_json, '$.item.metadata.operation_digest')=?
+                  and json_extract(event_json, '$.item.metadata.arguments_digest')=?
+                order by sequence
+                """,
+                (
+                    run_id,
+                    operation_id,
+                    expected_identity.get("capability"),
+                    expected_identity.get("operation"),
+                    expected_identity.get("operation_digest"),
+                    expected_identity.get("arguments_digest"),
+                ),
+            ).fetchall()
+            target = expected_identity.get("target_identifiers")
+            for row in rows:
+                event = json.loads(row["event_json"])
+                identity = _agent_effect_identity(event) or {}
+                if identity.get("target_identifiers") != target:
+                    continue
+                event["item"]["metadata"]["action_index"] = action_index
+                cursor = db.execute(
+                    """
+                    update agent_run_events set event_json=?
+                    where id=?
+                      and json_type(event_json, '$.item.metadata.action_index') is null
+                    """,
+                    (
+                        json.dumps(event, ensure_ascii=False, separators=(",", ":")),
+                        row["id"],
+                    ),
+                )
+                return cursor.rowcount == 1
+            return False
+
     def list_agent_execution_receipts(
         self,
         run_id: int,

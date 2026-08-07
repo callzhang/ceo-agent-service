@@ -306,6 +306,73 @@ def test_agent_effect_state_uses_incremental_counters_not_history_scan(tmp_path)
     assert sum("from agent_run_events" in statement for statement in normalized) <= 4
 
 
+def test_legacy_unknown_start_binds_exact_action_index_once(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    run = _claim_audit(store, _task(store))
+    identity = {
+        "capability": "agent_cli.dws",
+        "operation": "chat message send",
+        "operation_digest": "command-digest",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {"group": "cid-one"},
+    }
+    store.append_agent_run_event(
+        run.id,
+        _effect_event(**identity),
+        owner="audit",
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "crash_after_write"},
+        owner="audit",
+    )
+    assert store.claim_unknown_agent_run(run.id, owner="recovery").claimed
+
+    assert store.bind_legacy_unknown_effect_action(
+        run.id,
+        action_index=1,
+        operation_id="operation-0",
+        expected_identity=identity,
+        owner="recovery",
+    )
+    assert not store.bind_legacy_unknown_effect_action(
+        run.id,
+        action_index=1,
+        operation_id="operation-0",
+        expected_identity=identity,
+        owner="recovery",
+    )
+    receipt_operation_id = (
+        '{"action_index":1,"arguments_digest":"arguments-digest",'
+        '"capability":"agent_cli.dws","operation":"chat message send",'
+        '"operation_digest":"command-digest",'
+        '"proposal_operation_id":"operation-0"}'
+    )
+    store.record_agent_execution_receipt(
+        run.id,
+        receipt_id="legacy-present",
+        operation_id=receipt_operation_id,
+        cli="dws",
+        command_path="chat message send",
+        command_digest="command-digest",
+        exit_code=0,
+        owner="recovery",
+        expected_status="unknown",
+    )
+    store.confirm_agent_execution_receipt(
+        run.id, receipt_operation_id, owner="recovery"
+    )
+    store.confirm_agent_execution_receipt(
+        run.id, receipt_operation_id, owner="recovery"
+    )
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.tool_events[0]["item"]["metadata"]["action_index"] == 1
+    assert persisted.effect_receipt_count == 1
+    assert persisted.side_effect_state == "confirmed"
+
+
 def test_effect_counter_backfill_is_migration_safe(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     run = _claim_audit(store, _task(store))

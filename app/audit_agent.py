@@ -7,8 +7,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
-from app.agent_contracts import AuditAgentResult
-from app.agent_result import parse_typed_agent_result
+from app.agent_contracts import AuditAgentResult, AuditOutcome
+from app.agent_result import AgentError, SideEffectState, parse_typed_agent_result
+from app.agent_cli import RECOVERY_WRITE_ALLOWLIST_ENV
 from app.audit_rules import render_audit_rules
 from app.agent_runner import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
@@ -144,6 +145,9 @@ class AuditAgentRunner:
         )
         if not absent:
             raise ValueError("audit recovery execution requires absent actions")
+        authorizations = _recovery_authorizations(
+            run, context, absent, self.effects
+        )
         claim = self.store.claim_unknown_agent_run(
             run.id,
             owner=self.owner,
@@ -151,6 +155,33 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
+        if len(authorizations) != len(absent):
+            result = AuditAgentResult(
+                outcome=AuditOutcome.NEEDS_HUMAN,
+                summary="An absent direct MCP effect cannot be replayed safely.",
+                proposal_revision=run.proposal_revision,
+                side_effect_state=SideEffectState.NONE,
+                feedback=None,
+                external_result=None,
+                reconciliation=(),
+                error=AgentError(
+                    code="audit_recovery_direct_mcp_replay_forbidden",
+                    retryable=False,
+                ),
+            )
+            completed = self.store.complete_agent_run(
+                run.id,
+                result.model_dump(mode="json"),
+                owner=self.owner,
+                side_effect_state=SideEffectState.UNKNOWN.value,
+                expected_status="unknown",
+            )
+            return AgentTurnRunResult(
+                run_id=run.id,
+                result=result,
+                transcript_start_line=completed.transcript_end_line,
+                transcript_end_line=completed.transcript_end_line,
+            )
         return self._execute_claimed(
             task,
             context,
@@ -158,6 +189,7 @@ class AuditAgentRunner:
             rendered_rules=render_audit_rules(AgentRole.AUDIT),
             recovery_phase="execute",
             authorized_recovery_actions=absent,
+            recovery_authorizations=authorizations,
         )
 
     def _execute_claimed(
@@ -169,6 +201,7 @@ class AuditAgentRunner:
         rendered_rules: str,
         recovery_phase: str = "",
         authorized_recovery_actions: frozenset[int] = frozenset(),
+        recovery_authorizations: tuple[dict[str, object], ...] = (),
     ) -> AgentTurnRunResult[AuditAgentResult]:
         expected_effect_actions = tuple(
             _expected_effect_action(action, self.effects, action_index=index)
@@ -191,7 +224,7 @@ class AuditAgentRunner:
                 else _recovery_execute_prompt(
                     run,
                     context,
-                    authorized_recovery_actions,
+                    recovery_authorizations,
                 )
                 if recovery_phase == "execute"
                 else context.render()
@@ -229,13 +262,25 @@ class AuditAgentRunner:
                 command,
                 reviewed_mcp_tools=(
                     self.effects.reviewed_read_tools()
-                    if self.dry_run or recovery_phase == "reconcile"
+                    if self.dry_run or recovery_phase in {"reconcile", "execute"}
                     else self.effects.reviewed_tools()
                 ),
                 controlled_cli=ControlledCliConfig(
                     command=sys.executable,
                     args=("-m", "app.agent_cli"),
                     cwd=str(SERVICE_ROOT),
+                    env=(
+                        (
+                            RECOVERY_WRITE_ALLOWLIST_ENV,
+                            json.dumps(
+                                recovery_authorizations,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                        ),
+                    )
+                    if recovery_phase == "execute"
+                    else (),
                 ),
                 allow_write=not self.dry_run and recovery_phase != "reconcile",
             ),
@@ -244,6 +289,10 @@ class AuditAgentRunner:
             expected_effect_actions=expected_effect_actions,
             recovery_phase=recovery_phase,
             authorized_recovery_actions=authorized_recovery_actions,
+            recovery_authorizations={
+                str(entry["authorization_id"]): int(entry["action_index"])
+                for entry in recovery_authorizations
+            },
         )
 
 
@@ -298,14 +347,57 @@ def _expected_effect_action(
 def _recovery_execute_prompt(
     run: AgentRun,
     context: AuditTurnContext,
-    absent: frozenset[int],
+    authorizations: tuple[dict[str, object], ...],
 ) -> str:
+    allowed = [
+        {
+            "action_index": entry["action_index"],
+            "authorization_id": entry["authorization_id"],
+        }
+        for entry in authorizations
+    ]
     return (
         f"{context.render()}\n\nRecovery execution for operation {run.operation_id}, "
         f"proposal revision {run.proposal_revision}. Persisted live reconciliation "
-        f"proved only action indexes {sorted(absent)} absent. Execute and verify only "
-        "those indexes; do not repeat any other action."
+        f"proved only these actions absent: {json.dumps(allowed, separators=(',', ':'))}. "
+        "Execute each through agent_cli.execute_reviewed_write with its exact "
+        "authorization_id, and verify only those actions. Do not repeat any other action."
     )
+
+
+def _recovery_authorizations(
+    run: AgentRun,
+    context: AuditTurnContext,
+    absent: frozenset[int],
+    registry: McpToolEffectRegistry,
+) -> tuple[dict[str, object], ...]:
+    entries: list[dict[str, object]] = []
+    for action_index in sorted(absent):
+        action = _expected_effect_action(
+            context.proposal.actions[action_index],
+            registry,
+            action_index=action_index,
+        )
+        if (
+            action.get("reviewed_server") != "agent_cli"
+            or action.get("reviewed_tool") != "execute_reviewed_write"
+        ):
+            continue
+        identity = {
+            "proposal_operation_id": run.operation_id,
+            "proposal_revision": run.proposal_revision,
+            **action,
+        }
+        authorization_id = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        entries.append(
+            {
+                "authorization_id": authorization_id,
+                **action,
+            }
+        )
+    return tuple(entries)
 
 
 def _recovery_prompt(
