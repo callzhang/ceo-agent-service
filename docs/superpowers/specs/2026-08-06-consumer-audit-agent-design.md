@@ -342,9 +342,10 @@ not prevent corrections.
 
 During normal runtime, an active lease always defers. On service startup, a
 running turn with `side_effect_state=none` is known to have been interrupted by
-the stopped supervisor, so it is returned to the queue without changing the
-conversation session. A confirmed or unknown possible side effect is never
-replayed by startup recovery; it remains in reconciliation. An expired turn
+the stopped supervisor, so it is returned to the queue in a new execution
+generation without changing the conversation session. A confirmed or unknown
+possible side effect is never replayed by startup recovery; it remains in
+reconciliation. An expired turn
 with a confirmed or unknown possible side effect is marked `unknown` and is not
 replayed. Reconciliation of that state is a separate recovery phase.
 

@@ -5592,6 +5592,7 @@ def test_service_restart_recovers_running_no_effect_consumer_turn(
     recovered_task = store.get_reply_task(task.id)
     recovered_run = store.get_agent_run(run.id)
     assert recovered_task is not None and recovered_task.status == "pending"
+    assert recovered_task.execution_generation != task.execution_generation
     assert recovered_task.error == "service_restart_before_effect"
     assert recovered_run is not None and recovered_run.status == "failed"
     assert json.loads(recovered_run.structured_error_json)["code"] == (
@@ -5599,6 +5600,18 @@ def test_service_restart_recovers_running_no_effect_consumer_turn(
     )
     assert store.get_codex_session_id(task.conversation_id) == "session-a"
     assert store.acquire_codex_session_lock(task.conversation_id, "next-worker") is True
+    next_claim = store.claim_agent_run(
+        task.id,
+        recovered_task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="next-worker",
+    )
+    assert next_claim.claimed is True
+    assert next_claim.run.id != run.id
 
 
 def test_service_restart_keeps_unknown_or_effectful_agent_turns_for_recovery(

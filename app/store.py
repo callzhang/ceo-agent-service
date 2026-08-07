@@ -5088,6 +5088,7 @@ class AutoReplyStore:
             for row in rows:
                 task_id = int(row["id"])
                 generation = str(row["execution_generation"])
+                next_generation = uuid4().hex
                 db.execute(
                     """
                     update agent_runs
@@ -5102,12 +5103,13 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """
                     update reply_tasks
-                    set status='pending', locked_at=null, available_at='',
+                    set force_new_decision=1, execution_generation=?,
+                        status='pending', locked_at=null, available_at='',
                         error='service_restart_before_effect',
                         updated_at=current_timestamp
                     where id=? and status='processing' and execution_generation=?
                     """,
-                    (task_id, generation),
+                    (next_generation, task_id, generation),
                 )
                 if cursor.rowcount != 1:
                     continue
