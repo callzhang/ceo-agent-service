@@ -1868,12 +1868,17 @@ class DingTalkAutoReplyWorker:
         result: OrchestrationResult,
     ) -> bool:
         provider_recovery = result.error.code == "codex_provider_unavailable"
+        authorization_wait = result.error.authorization_required
         if result.status == "failed_retryable" and result.final_run_id == 0:
             error = result.error.code or "agent_orchestration_deferred"
-            if provider_recovery or task.attempts < self.max_task_attempts:
+            if (
+                provider_recovery
+                or authorization_wait
+                or task.attempts < self.max_task_attempts
+            ):
                 available_at = (
                     self._reply_task_authorization_available_at()
-                    if result.error.authorization_required
+                    if authorization_wait
                     else self._reply_task_retry_available_at(max(task.attempts, 1))
                 )
                 self.store.defer_reply_task(
@@ -1916,6 +1921,7 @@ class DingTalkAutoReplyWorker:
             result.status == "failed_retryable"
             and task.attempts >= self.max_task_attempts
             and not provider_recovery
+            and not authorization_wait
         ):
             task_status = "failed"
         send_error = result.error.code
@@ -1928,7 +1934,11 @@ class DingTalkAutoReplyWorker:
 
         available_at = ""
         if task_status == "pending":
-            available_at = self._reply_task_retry_available_at(task.attempts)
+            available_at = (
+                self._reply_task_authorization_available_at()
+                if authorization_wait
+                else self._reply_task_retry_available_at(task.attempts)
+            )
 
         run = self.store.get_agent_run(result.final_run_id)
         if run is None:
@@ -1958,7 +1968,8 @@ class DingTalkAutoReplyWorker:
             send_status=send_status,
             send_error=send_error,
             channel=task.channel,
-            preserve_attempt_budget=provider_recovery and task_status == "pending",
+            preserve_attempt_budget=(provider_recovery or authorization_wait)
+            and task_status == "pending",
             **self._orchestration_oa_metadata(task, result),
         )
         if send_status == "needs_human" or task_status == "failed":
