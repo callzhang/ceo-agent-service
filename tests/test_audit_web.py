@@ -3781,6 +3781,65 @@ def test_browser_notifications_page_shows_only_current_unresolved_problems(
     assert f"Attempt #{superseded_failure}" not in response.text
 
 
+def test_browser_notifications_exclude_active_and_provider_recovery_tasks(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-active",
+        conversation_title="Active task",
+        single_chat=False,
+        trigger_message_id="msg-active",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Active task.",
+    )
+    [active_task] = store.claim_reply_tasks(limit=1)
+    active_attempt = store.record_reply_attempt(
+        conversation_id=active_task.conversation_id,
+        conversation_title=active_task.conversation_title,
+        trigger_message_id=active_task.trigger_message_id,
+        trigger_sender=active_task.trigger_sender,
+        trigger_text=active_task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+
+    store.enqueue_reply_task(
+        conversation_id="cid-provider",
+        conversation_title="Provider recovery",
+        single_chat=False,
+        trigger_message_id="msg-provider",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Provider recovery.",
+    )
+    [provider_task] = store.claim_reply_tasks(limit=1)
+    store.defer_reply_task(
+        provider_task.id,
+        "codex_provider_unavailable",
+        expected_execution_generation=provider_task.execution_generation,
+        available_at="2026-08-08 02:00:00",
+    )
+    provider_attempt = store.record_reply_attempt(
+        conversation_id=provider_task.conversation_id,
+        conversation_title=provider_task.conversation_title,
+        trigger_message_id=provider_task.trigger_message_id,
+        trigger_sender=provider_task.trigger_sender,
+        trigger_text=provider_task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+
+    html = audit_web_module.render_browser_notifications_page(store)
+
+    assert f"Attempt #{active_attempt}" not in html
+    assert f"Attempt #{provider_attempt}" not in html
+    assert store.count_current_unresolved_problem_attempts() == 0
+
+
 def test_browser_notification_post_accepts_stable_inbox_notification(tmp_path: Path):
     client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
