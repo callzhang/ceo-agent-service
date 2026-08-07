@@ -197,6 +197,34 @@ def test_quality_gate_deduplicates_oa_failure_after_later_success(tmp_path):
     assert not [item for item in report.violations if item.source == "reply_attempts"]
 
 
+def test_quality_gate_deduplicates_oa_failure_after_agent_receipt_success(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into reply_attempts (
+                channel, conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, action, sensitivity_kind,
+                oa_process_instance_id, send_status, updated_at
+            ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
+                'trigger', 'oa_approval', 'normal', 'approval-instance', 'blocked',
+                '2026-08-07 00:00:00')"""
+        )
+        db.execute(
+            """insert into reply_attempts (
+                channel, conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, action, sensitivity_kind,
+                oa_process_instance_id, oa_action_result_json, send_status, updated_at
+            ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
+                'trigger', 'agent_run', 'normal', 'approval-instance', '{"success":true}',
+                'completed', '2026-08-07 00:30:00')"""
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert not [item for item in report.violations if item.source == "reply_attempts"]
+
+
 def test_quality_gate_counts_only_latest_oa_failure_per_approval_instance(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
