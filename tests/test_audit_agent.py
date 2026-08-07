@@ -29,6 +29,33 @@ class CapturingExecutor:
         return ProcessRunResult(self.returncode, self.stdout, "")
 
 
+class ExactReceiptExecutor(CapturingExecutor):
+    def __init__(self, stdout, *, store, run, owner="audit-owner"):
+        super().__init__(stdout)
+        self.store = store
+        self.run = run
+        self.owner = owner
+
+    def __call__(self, command, *, on_stdout_line, **kwargs):
+        persisted = self.store.get_agent_run(self.run.id)
+        assert persisted is not None
+        metadata = persisted.tool_events[0]["item"]["metadata"]
+        self.store.record_agent_execution_receipt(
+            self.run.id,
+            receipt_id=f"receipt-{self.run.operation_id}",
+            operation_id=(
+                f"{self.run.operation_id}:{metadata['arguments_digest']}"
+            ),
+            cli=metadata["capability"],
+            command_path=metadata["operation"],
+            command_digest=metadata["operation_digest"],
+            exit_code=0,
+            owner=self.owner,
+            expected_status="unknown",
+        )
+        return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+
+
 def _audit_result_jsonl(
     outcome: str,
     *,
@@ -809,7 +836,7 @@ def test_unrelated_read_cannot_authorize_recovery_write(setup):
         ).recover(task, audit_context, run=run)
 
 
-def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setup):
+def _seed_crashed_xiaoqing_write(setup):
     store, task, audit_context, parent = setup
     registry = McpToolEffectRegistry.default()
     action = ProposedAction.model_validate(
@@ -870,6 +897,18 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
         turn_attempt=0,
     )
     assert run is not None and run.status == "unknown"
+    return store, task, context, run, registry
+
+
+def _xiaoqing_recovery_jsonl(run, *, include_read):
+    base = _audit_result_jsonl(
+        "executed",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+        include_read=False,
+    ).splitlines()
+    if not include_read:
+        return "\n".join(base)
 
     read = {
         "type": "mcp_tool_call",
@@ -882,48 +921,45 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
         },
         "status": "in_progress",
     }
-    base = _audit_result_jsonl(
-        "executed",
-        operation_id=run.operation_id,
-        session=run.codex_session_id,
-        include_read=False,
-    ).splitlines()
-    recovery = CapturingExecutor(
-        "\n".join(
-            (
-                base[0],
-                json.dumps({"type": "item.started", "item": read}),
-                json.dumps(
-                    {
-                        "type": "item.completed",
-                        "item": {
-                            **read,
-                            "status": "completed",
-                            "result": {
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": json.dumps(
-                                            {
-                                                "candidate_id": "candidate-1",
-                                                "interview_id": "interview-1",
-                                            }
-                                        ),
-                                    }
-                                ],
-                                "structuredContent": {
-                                    "candidate_id": "candidate-1",
-                                    "interview_id": "interview-1",
-                                },
-                                "isError": False,
+    return "\n".join(
+        (
+            base[0],
+            json.dumps({"type": "item.started", "item": read}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        **read,
+                        "status": "completed",
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(
+                                        {
+                                            "candidate_id": "candidate-1",
+                                            "interview_id": "interview-1",
+                                        }
+                                    ),
+                                }
+                            ],
+                            "structuredContent": {
+                                "candidate_id": "candidate-1",
+                                "interview_id": "interview-1",
                             },
+                            "isError": False,
                         },
-                    }
-                ),
-                base[-1],
-            )
+                    },
+                }
+            ),
+            base[-1],
         )
     )
+
+
+def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setup):
+    store, task, context, run, registry = _seed_crashed_xiaoqing_write(setup)
+    recovery = CapturingExecutor(_xiaoqing_recovery_jsonl(run, include_read=True))
 
     result = AuditAgentRunner(
         store=store,
@@ -940,6 +976,48 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
         and event["item"]["metadata"]["effect"] == "effectful"
         for event in persisted.tool_events
     ) == 1
+
+
+def test_readback_capable_receipt_without_live_read_stays_unknown(setup):
+    store, task, context, run, registry = _seed_crashed_xiaoqing_write(setup)
+
+    with pytest.raises(RuntimeError, match="audit_execution_evidence_missing"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=ExactReceiptExecutor(
+                _xiaoqing_recovery_jsonl(run, include_read=False),
+                store=store,
+                run=run,
+            ),
+            owner="audit-owner",
+            mcp_effect_registry=registry,
+        ).recover(task, context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.status == "unknown"
+    assert persisted.side_effect_state == "unknown"
+
+
+def test_readback_capable_receipt_with_matching_live_read_confirms(setup):
+    store, task, context, run, registry = _seed_crashed_xiaoqing_write(setup)
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=ExactReceiptExecutor(
+            _xiaoqing_recovery_jsonl(run, include_read=True),
+            store=store,
+            run=run,
+        ),
+        owner="audit-owner",
+        mcp_effect_registry=registry,
+    ).recover(task, context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "executed"
+    assert persisted is not None and persisted.status == "completed"
+    assert persisted.side_effect_state == "confirmed"
 
 
 def test_direct_mcp_readback_requires_exact_target_identifiers():
@@ -1093,36 +1171,18 @@ def test_memory_unknown_cannot_authorize_automatic_replay(setup):
 def test_exact_receipt_confirms_no_readback_unknown(setup):
     store, task, context, run, registry, _ = _seed_crashed_memory_write(setup)
 
-    class ReceiptExecutor(CapturingExecutor):
-        def __call__(self, command, *, on_stdout_line, **kwargs):
-            persisted = store.get_agent_run(run.id)
-            assert persisted is not None
-            metadata = persisted.tool_events[0]["item"]["metadata"]
-            store.record_agent_execution_receipt(
-                run.id,
-                receipt_id="memory-write-receipt",
-                operation_id=(
-                    f"{run.operation_id}:{metadata['arguments_digest']}"
-                ),
-                cli="memory_connector",
-                command_path="memory_write",
-                command_digest=metadata["operation_digest"],
-                exit_code=0,
-                owner="audit-owner",
-                expected_status="unknown",
-            )
-            return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
-
     result = AuditAgentRunner(
         store=store,
         workspace=Path("/workspace"),
-        executor=ReceiptExecutor(
+        executor=ExactReceiptExecutor(
             _audit_result_jsonl(
                 "executed",
                 operation_id=run.operation_id,
                 session=run.codex_session_id,
                 include_read=False,
-            )
+            ),
+            store=store,
+            run=run,
         ),
         owner="audit-owner",
         mcp_effect_registry=registry,

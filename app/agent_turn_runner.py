@@ -563,7 +563,17 @@ class AgentTurnProcess(Generic[ResultT]):
             operation_id=run.operation_id,
             registry=self.effects,
         )
-        if completed != set(range(len(expected_effect_actions))) or not all_effects_closed:
+        missing_live_readback = {
+            index
+            for index in completed
+            if _action_has_readback(expected_effect_actions[index], self.effects)
+            and index not in reconciled
+        }
+        if (
+            completed != set(range(len(expected_effect_actions)))
+            or not all_effects_closed
+            or missing_live_readback
+        ):
             raise RuntimeError("audit_execution_evidence_missing")
 
     @staticmethod
