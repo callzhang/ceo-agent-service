@@ -167,6 +167,27 @@ def test_recovery_keeps_unknown_when_read_only_history_has_no_confirmation(
     assert recovered[0].error == "sender_execution_interrupted"
 
 
+def test_recovery_uses_explicit_account_with_ipc_style_reader(store):
+    delivery = _seed_delivery(store)
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "send_unknown",
+        error="sender_execution_interrupted",
+    )
+    account = object()
+
+    class Reader:
+        @staticmethod
+        def read_messages(requested_account, *_args, **_kwargs):
+            assert requested_account is account
+            return [SimpleNamespace(direction="outbound", text="收到")]
+
+    recovered = reconcile_incomplete_deliveries(store, Reader(), account=account)
+
+    assert recovered[0].status == "sent"
+
+
 def test_open_target_waits_for_async_composer_after_session_click():
     row = object()
     composer = object()
@@ -455,6 +476,64 @@ def test_wechat_pid_comes_from_main_bundle_application():
 
     assert pid == 500
     assert seen == ["com.tencent.xinWeChat"]
+
+
+def test_preflight_requires_a_usable_accessibility_window(monkeypatch):
+    app = object()
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrusted=lambda: True,
+            AXUIElementCreateApplication=lambda _pid: app,
+            AXUIElementCopyAttributeValue=lambda _app, _attribute, _unused: (0, []),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "Quartz",
+        SimpleNamespace(
+            CGSessionCopyCurrentDictionary=lambda: {},
+            CGWindowListCopyWindowInfo=lambda _options, _window_id: [
+                {"kCGWindowOwnerPID": 500}
+            ],
+            kCGWindowListOptionAll=1,
+            kCGNullWindowID=0,
+        ),
+    )
+    runner = MacWechatAccessibility()
+    monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
+
+    assert runner.preflight() == "wechat_window_unavailable"
+
+
+def test_preflight_reports_ready_when_wechat_has_accessibility_window(monkeypatch):
+    app = object()
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrusted=lambda: True,
+            AXUIElementCreateApplication=lambda _pid: app,
+            AXUIElementCopyAttributeValue=lambda _app, _attribute, _unused: (0, [object()]),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "Quartz",
+        SimpleNamespace(
+            CGSessionCopyCurrentDictionary=lambda: {},
+            CGWindowListCopyWindowInfo=lambda _options, _window_id: [
+                {"kCGWindowOwnerPID": 500}
+            ],
+            kCGWindowListOptionAll=1,
+            kCGNullWindowID=0,
+        ),
+    )
+    runner = MacWechatAccessibility()
+    monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
+
+    assert runner.preflight() == "ready"
 
 
 def test_request_accessibility_asks_macos_to_show_prompt(monkeypatch):

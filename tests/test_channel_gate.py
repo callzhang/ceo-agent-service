@@ -318,7 +318,7 @@ def test_dws_gate_requires_status_and_authenticated_probe():
 
     assert result.state is ChannelGateState.NEEDS_LOGIN
     assert runner.commands == [
-        ["dws", "auth", "status", "--format", "json", "--timeout", "5"],
+        ["dws", "auth", "status", "--format", "json", "--timeout", "10"],
         ["dws", "contact", "user", "get-self", "--format", "json"],
     ]
 
@@ -725,3 +725,4 @@ def test_dws_gate_uses_local_noninteractive_auth_environment(monkeypatch):
     assert all(call["capture_output"] is True for call in runner.calls)
     assert all(call["text"] is True for call in runner.calls)
     assert all(call["check"] is False for call in runner.calls)
+    assert all(call["timeout"] == 10 for call in runner.calls)

@@ -1599,6 +1599,31 @@ class AutoReplyStore:
             )
             db.execute(
                 """
+                create index if not exists idx_reply_attempts_oa_history
+                    on reply_attempts(
+                        oa_process_instance_id, created_at desc, id desc
+                    )
+                    where oa_process_instance_id <> ''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_reply_attempts_trigger_history
+                    on reply_attempts(
+                        conversation_id, trigger_message_id, action, id desc
+                    )
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_sent_replies_history
+                    on sent_replies(
+                        conversation_id, trigger_message_id, sent_at
+                    )
+                """
+            )
+            db.execute(
+                """
                 create index if not exists idx_meeting_alignment_runs_created
                     on meeting_alignment_runs(created_at, id)
                 """
@@ -5369,11 +5394,10 @@ class AutoReplyStore:
                       limit 1
                   ), ?) < ?
                 """,
-                (max_retries, max_retries),
+                (0, max_retries),
             ).fetchall()
-            eligible = [row for row in rows if row["attempt_id"] is not None]
             requeued = 0
-            for row in eligible:
+            for row in rows:
                 delivery_id = int(row["delivery_id"])
                 cursor = db.execute(
                     """
@@ -5399,11 +5423,47 @@ class AutoReplyStore:
                     delivery_status="ready_to_send",
                     error="",
                 )
-                db.execute(
-                    "update reply_attempts set retry_count=retry_count + 1 "
-                    "where id=?",
-                    (row["attempt_id"],),
-                )
+                if row["attempt_id"] is None:
+                    task = db.execute(
+                        """
+                        select conversation_id, conversation_title,
+                               trigger_message_id, trigger_sender, trigger_text
+                        from reply_tasks
+                        where id=(
+                            select reply_task_id from wechat_deliveries where id=?
+                        )
+                        """,
+                        (delivery_id,),
+                    ).fetchone()
+                    if task is None:
+                        raise RuntimeError("wechat delivery retry task is missing")
+                    db.execute(
+                        """
+                        insert into reply_attempts (
+                            conversation_id, conversation_title,
+                            trigger_message_id, trigger_sender, trigger_text,
+                            action, sensitivity_kind, codex_reason, audit_summary,
+                            send_status, send_error, retry_count, channel
+                        ) values (?, ?, ?, ?, ?, 'send_reply', 'normal',
+                                  'legacy_wechat_delivery_recovery',
+                                  'created during bounded legacy delivery recovery',
+                                  'pending', 'wechat_delivery_ready_to_send', 1,
+                                  'wechat')
+                        """,
+                        (
+                            task["conversation_id"],
+                            task["conversation_title"],
+                            task["trigger_message_id"],
+                            task["trigger_sender"],
+                            task["trigger_text"],
+                        ),
+                    )
+                else:
+                    db.execute(
+                        "update reply_attempts set retry_count=retry_count + 1 "
+                        "where id=?",
+                        (row["attempt_id"],),
+                    )
                 requeued += 1
             return requeued
 
@@ -5523,6 +5583,87 @@ class AutoReplyStore:
                 delivery_status=status,
                 error=error,
             )
+            if status == "sent":
+                self._supersede_failed_wechat_deliveries_with_newer_sent(
+                    db,
+                    sent_delivery_id=delivery_id,
+                )
+
+    @classmethod
+    def _supersede_failed_wechat_deliveries_with_newer_sent(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        sent_delivery_id: int,
+    ) -> int:
+        """Close old pre-action failures once a newer reply reached the chat.
+
+        A later successful direct-chat reply makes earlier failed drafts stale.
+        Replaying them would reverse the conversation and duplicate a response,
+        so preserve the audit trail as ``superseded`` instead of retrying.
+        """
+        sent = db.execute(
+            """
+            select account_id, target_type, target_id, conversation_id, reply_task_id
+            from wechat_deliveries
+            where id=? and status='sent'
+            """,
+            (sent_delivery_id,),
+        ).fetchone()
+        if sent is None:
+            return 0
+        rows = db.execute(
+            """
+            select id
+            from wechat_deliveries
+            where account_id=?
+              and target_type=?
+              and target_id=?
+              and conversation_id=?
+              and reply_task_id < ?
+              and status='failed'
+              and error='action_not_performed'
+            """,
+            (
+                sent["account_id"],
+                sent["target_type"],
+                sent["target_id"],
+                sent["conversation_id"],
+                sent["reply_task_id"],
+            ),
+        ).fetchall()
+        error = f"superseded_by_newer_wechat_delivery:{sent_delivery_id}"
+        for row in rows:
+            delivery_id = int(row["id"])
+            db.execute(
+                """
+                update wechat_deliveries
+                set status='superseded', error=?, updated_at=current_timestamp
+                where id=? and status='failed' and error='action_not_performed'
+                """,
+                (error, delivery_id),
+            )
+            cls._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=delivery_id,
+                delivery_status="superseded",
+                error=error,
+            )
+        return len(rows)
+
+    def supersede_failed_wechat_deliveries_with_newer_sent(self) -> int:
+        """Reconcile historical failures after an interrupted sender restart."""
+        with self._connect() as db:
+            sent_rows = db.execute(
+                "select id from wechat_deliveries where status='sent' order by id"
+            ).fetchall()
+            total = 0
+            for row in sent_rows:
+                total += self._supersede_failed_wechat_deliveries_with_newer_sent(
+                    db,
+                    sent_delivery_id=int(row["id"]),
+                )
+            return total
 
     @staticmethod
     def _wechat_delivery_source_statuses(status: str, error: str) -> tuple[str, ...]:
@@ -8860,6 +9001,7 @@ class AutoReplyStore:
                         select process_attempts.id
                         from reply_attempts as process_attempts
                         where process_attempts.oa_process_instance_id = reply_attempts.oa_process_instance_id
+                          and process_attempts.oa_process_instance_id <> ''
                         order by
                             case
                                 when process_attempts.send_status in (

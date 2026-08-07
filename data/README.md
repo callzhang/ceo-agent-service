@@ -37,6 +37,18 @@ generated result rather than treating a missing or old file as healthy. See
 [`docs/quality-inspection.md`](../docs/quality-inspection.md) for the source
 matrix, trigger-level deduplication rule, thresholds, and planned coverage.
 
+Run the fail-closed queue coverage check with:
+
+`python -m app.cli quality-check --db "$CEO_WORKER_DB"`
+
+It records every required source it inspected. A missing source, new error in
+the four-hour repair window, unrecovered failure, stale processing item,
+overdue scheduled follow-up, unknown side effect, or unresolved feedback makes
+the command exit non-zero. Future
+scheduled follow-ups and fresh active processing are reported as attention,
+not failures. By default it also runs live DingTalk and WeChat channel health
+checks; use `--no-verify-channels` only for offline diagnostics.
+
 ## Cleanup policy
 
 Safe to delete:

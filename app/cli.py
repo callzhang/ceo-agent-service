@@ -2484,10 +2484,6 @@ def run_service(
     dependency_gate = NetworkDependencyGate()
     components = (
         (
-            "audit-web",
-            lambda: run_audit_web_command(settings, host=host, port=port, reload=False),
-        ),
-        (
             "database-backup",
             lambda: run_database_backup_loop(settings.db_path),
         ),
