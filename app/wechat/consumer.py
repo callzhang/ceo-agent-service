@@ -8,6 +8,7 @@ rejected as a failed decision rather than executed.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from pydantic import ValidationError
@@ -29,12 +30,27 @@ def _is_reply_transport_action(action: object) -> bool:
 
 class WechatReplyConsumer:
     def __init__(self, store, runner, reader, account: WechatAccount, *,
-                 leak_check: Callable[[str], str] | None = None):
+                 leak_check: Callable[[str], str] | None = None,
+                 max_task_attempts: int = 3,
+                 retry_delay: timedelta = timedelta(minutes=1),
+                 now_provider: Callable[[], datetime] | None = None):
+        if max_task_attempts <= 0:
+            raise ValueError("max_task_attempts must be positive")
+        if retry_delay.total_seconds() < 0:
+            raise ValueError("retry_delay must not be negative")
         self.store = store
         self.runner = runner
         self.reader = reader
         self.account = account
         self.leak_check = leak_check
+        self.max_task_attempts = max_task_attempts
+        self.retry_delay = retry_delay
+        self.now_provider = now_provider or (lambda: datetime.now().astimezone())
+
+    def _retry_available_at(self) -> str:
+        return (
+            self.now_provider().astimezone(timezone.utc) + self.retry_delay
+        ).isoformat()
 
     def run_once(self, limit: int = 50) -> int:
         processed = 0
@@ -142,7 +158,11 @@ class WechatReplyConsumer:
                 send_status="skipped",
                 send_error=getattr(decision.action, "value", str(decision.action)),
             )
-        else:  # STOP_WITH_ERROR (and anything unexpected) -> bounded retry via fail
+        else:  # STOP_WITH_ERROR (and anything unexpected)
+            retryable = (
+                bool(getattr(decision, "external_dependency_failed", False))
+                and task.attempts < self.max_task_attempts
+            )
             self.store.finalize_wechat_reply_task(
                 task_id=task.id,
                 expected_execution_generation=task.execution_generation,
@@ -153,5 +173,6 @@ class WechatReplyConsumer:
                 audit_summary=getattr(decision, "audit_summary", "") or "",
                 send_status="failed",
                 send_error=decision.reason or "stop_with_error",
-                task_status="failed",
+                task_status="pending" if retryable else "failed",
+                available_at=self._retry_available_at() if retryable else "",
             )

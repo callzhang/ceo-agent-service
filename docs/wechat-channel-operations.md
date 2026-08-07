@@ -32,6 +32,16 @@ column (default `dingtalk`); claims are channel-filtered so the DingTalk worker
 never claims WeChat work. New tables: `wechat_read_state`,
 `wechat_reply_scopes`, `wechat_deliveries`, `wechat_memory_candidates`.
 
+### Decision dependency retry
+
+The WeChat consumer treats a structured `external_dependency_failed` decision as
+a pre-action infrastructure failure. It records the failed decision attempt,
+then returns the same reply task to `pending` with `available_at`; no delivery
+row is created and no message can be sent by that retry. The task reaches
+`failed` only after the configured attempt limit. Other `stop_with_error`
+results remain terminal because the consumer has no evidence that retrying is
+safe or useful.
+
 ## One-time key capture (SIP stays on, real app untouched)
 
 See `~/wx_read_toolkit/README.md`. Summary: shadow-copy WeChat → re-sign the copy

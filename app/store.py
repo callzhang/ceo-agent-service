@@ -5558,6 +5558,7 @@ class AutoReplyStore:
         send_status: str,
         send_error: str = "",
         task_status: str = "done",
+        available_at: str = "",
         account_id: str = "",
         target_type: str = "",
         target_id: str = "",
@@ -5567,8 +5568,12 @@ class AutoReplyStore:
     ) -> int:
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
-        if task_status not in {"done", "failed"}:
-            raise ValueError("invalid WeChat task terminal status")
+        if task_status not in {"done", "failed", "pending"}:
+            raise ValueError("invalid WeChat task status")
+        if task_status == "pending" and not available_at.strip():
+            raise ValueError("pending WeChat task requires available_at")
+        if task_status != "pending" and available_at:
+            raise ValueError("terminal WeChat task cannot set available_at")
         has_delivery = bool(reply_text)
         if has_delivery and not all(
             value.strip()
@@ -5649,13 +5654,14 @@ class AutoReplyStore:
             task_cursor = db.execute(
                 """
                 update reply_tasks
-                set status=?, locked_at=null, available_at='', error=?,
+                set status=?, locked_at=null, available_at=?, error=?,
                     updated_at=current_timestamp
                 where id=? and status='processing' and execution_generation=?
                 """,
                 (
                     task_status,
-                    send_error if task_status == "failed" else "",
+                    available_at if task_status == "pending" else "",
+                    send_error if task_status in {"failed", "pending"} else "",
                     task_id,
                     expected_execution_generation,
                 ),

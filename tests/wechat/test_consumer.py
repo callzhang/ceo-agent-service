@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timedelta, timezone
 
 from app.store import AutoReplyStore
 from app.dingtalk_models import CodexAction, CodexDecision
@@ -122,6 +123,46 @@ def test_stop_with_error_records_failed_attempt(fake_codex, consumer, store):
     assert attempt is not None
     assert attempt.send_status == "failed"
     assert attempt.send_error == "missing_wechat_context"
+
+
+def test_external_dependency_failure_defers_wechat_task_for_retry(
+    fake_codex, store, account
+):
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u9", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-17T10:00:00", trigger_sender="Alex",
+        trigger_text="下午能给结论吗",
+    )
+    now = datetime(2026, 8, 8, 8, 0, tzinfo=timezone.utc)
+    consumer = WechatReplyConsumer(
+        store,
+        fake_codex,
+        reader=None,
+        account=account,
+        max_task_attempts=3,
+        retry_delay=timedelta(minutes=5),
+        now_provider=lambda: now,
+    )
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.STOP_WITH_ERROR,
+        reason="provider_unavailable",
+        audit_summary="外部推理服务暂不可用",
+        external_dependency_failed=True,
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 1
+    assert task.available_at == "2026-08-08T08:05:00+00:00"
+    assert task.error == "provider_unavailable"
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "provider_unavailable"
 
 
 def test_consumer_marks_read_only_decision_phase_before_calling_codex(
