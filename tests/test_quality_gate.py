@@ -207,7 +207,7 @@ def test_quality_gate_deduplicates_oa_failure_after_agent_receipt_success(tmp_pa
                 oa_process_instance_id, send_status, updated_at
             ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
                 'trigger', 'oa_approval', 'normal', 'approval-instance', 'blocked',
-                '2026-08-07 00:00:00')"""
+                '2026-08-07 01:00:00')"""
         )
         db.execute(
             """insert into reply_attempts (
@@ -215,7 +215,8 @@ def test_quality_gate_deduplicates_oa_failure_after_agent_receipt_success(tmp_pa
                 trigger_sender, trigger_text, action, sensitivity_kind,
                 oa_process_instance_id, oa_action_result_json, send_status, updated_at
             ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
-                'trigger', 'agent_run', 'normal', 'approval-instance', '{"success":true}',
+                'trigger', 'agent_run', 'normal', 'approval-instance',
+                '{"success":true,"taskStatus":"COMPLETED"}',
                 'completed', '2026-08-07 00:30:00')"""
         )
 

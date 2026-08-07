@@ -281,13 +281,17 @@ def _check_reply_attempts(
               and not exists (
                 select 1 from reply_attempts resolved
                 where resolved.oa_process_instance_id=a.oa_process_instance_id
-                  and datetime(resolved.updated_at) >= datetime(a.updated_at)
                   and json_valid(resolved.oa_action_result_json)
                   and coalesce(
                     json_extract(resolved.oa_action_result_json, '$.success'),
                     json_extract(resolved.oa_action_result_json, '$.result.success'),
                     json_extract(resolved.oa_action_result_json, '$.dws_action_result.success')
                   )=1
+                  and upper(coalesce(
+                    json_extract(resolved.oa_action_result_json, '$.taskStatus'),
+                    json_extract(resolved.oa_action_result_json, '$.result.taskStatus'),
+                    ''
+                  ))='COMPLETED'
               )
               and not exists (
                 select 1 from reply_tasks t
