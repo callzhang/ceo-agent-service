@@ -293,6 +293,9 @@ class AuditAgentRunner:
                 str(entry["authorization_id"]): int(entry["action_index"])
                 for entry in recovery_authorizations
             },
+            allow_effectful_tools=(
+                not self.dry_run and recovery_phase != "reconcile"
+            ),
         )
 
 

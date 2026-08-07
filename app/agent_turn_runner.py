@@ -80,6 +80,7 @@ class AgentTurnProcess(Generic[ResultT]):
         recovery_phase: str = "",
         authorized_recovery_actions: frozenset[int] = frozenset(),
         recovery_authorizations: dict[str, int] | None = None,
+        allow_effectful_tools: bool = False,
     ) -> AgentTurnRunResult[ResultT]:
         if recovery_phase not in {"", "reconcile", "execute"}:
             raise ValueError("invalid recovery phase")
@@ -236,9 +237,9 @@ class AgentTurnProcess(Generic[ResultT]):
                 session_id=session_id,
                 output_schema_path=schema_path,
                 use_output_schema=False,
-                approval_policy="never",
+                approval_policy="untrusted" if allow_effectful_tools else "never",
                 developer_instructions=contract_instructions,
-                use_approval_bypass=False,
+                use_approval_bypass=allow_effectful_tools,
                 ignore_user_config=True,
             )
             configure_command(command)

@@ -155,8 +155,9 @@ def make_role_agent_command(
     controlled_cli: ControlledCliConfig,
     allow_write: bool,
 ) -> None:
-    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
-        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
+    if not allow_write:
+        while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
+            command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     _remove_config_options(
         command,
         prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
@@ -171,15 +172,22 @@ def make_role_agent_command(
         else:
             _insert_command_options(command, ["-c", f"mcp_servers.{name}.enabled=false"])
     agent_cli_tools = ["execute_reviewed_read", "read_skill"]
+    approval_options = ["-c", 'approval_policy="never"']
     if allow_write:
         agent_cli_tools.insert(1, "execute_reviewed_write")
+        approval_options = [
+            "-c",
+            'approval_policy="untrusted"',
+            "-c",
+            'approvals_reviewer="auto_review"',
+        ]
     _insert_command_options(
         command,
         [
             "-c", "features.plugins=false",
             "-c", "features.apps=false",
             "--sandbox", "read-only",
-            "-c", 'approval_policy="never"',
+            *approval_options,
             "-c", f"mcp_servers.agent_cli.command={json.dumps(controlled_cli.command)}",
             "-c", "mcp_servers.agent_cli.args=" + json.dumps(list(controlled_cli.args)),
             "-c", f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli.cwd)}",
