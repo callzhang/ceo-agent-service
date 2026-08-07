@@ -146,6 +146,25 @@ class AuditOutcome(StrEnum):
     UNKNOWN = "unknown"
 
 
+class ReconciliationDisposition(StrEnum):
+    PRESENT = "present"
+    ABSENT = "absent"
+    AMBIGUOUS = "ambiguous"
+
+
+class AuditReconciliation(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    action_index: int = Field(ge=0)
+    disposition: ReconciliationDisposition
+    read_result_digest: str = Field(min_length=1)
+
+    @field_validator("disposition", mode="before")
+    @classmethod
+    def accept_json_disposition(cls, value: object) -> object:
+        return ReconciliationDisposition(value) if isinstance(value, str) else value
+
+
 class AuditFeedback(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -175,6 +194,7 @@ class AuditAgentResult(BaseModel):
     side_effect_state: SideEffectState
     feedback: AuditFeedback | None
     external_result: AuditExternalResult | None
+    reconciliation: tuple[AuditReconciliation, ...] = ()
     error: AgentError
 
     @field_validator("outcome", mode="before")
@@ -187,8 +207,16 @@ class AuditAgentResult(BaseModel):
     def accept_json_side_effect_state(cls, value: object) -> object:
         return SideEffectState(value) if isinstance(value, str) else value
 
+    @field_validator("reconciliation", mode="before")
+    @classmethod
+    def accept_json_reconciliation(cls, value: object) -> object:
+        return tuple(value) if isinstance(value, list) else value
+
     @model_validator(mode="after")
     def validate_outcome_payload(self) -> "AuditAgentResult":
+        indexes = [entry.action_index for entry in self.reconciliation]
+        if len(indexes) != len(set(indexes)):
+            raise ValueError("reconciliation action indexes must be unique")
         if self.outcome is AuditOutcome.REVISION_REQUIRED:
             if self.feedback is None or self.external_result is not None:
                 raise ValueError("revision_required needs feedback and no result")

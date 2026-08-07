@@ -494,6 +494,57 @@ def test_unknown_audit_is_recovered_in_same_session_and_revision(
     ]
 
 
+def test_unknown_audit_without_session_finishes_needs_human(store):
+    pending = _task(store)
+    task = store.claim_reply_task(pending.id)
+    assert task is not None
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    consumer.run(
+        task,
+        _context(task),
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+    parent = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert parent is not None
+    audit_run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
+        owner="crashed-audit",
+    ).run
+    unknown = store.mark_agent_run_unknown(
+        audit_run.id,
+        {"code": "write_outcome_unknown", "retryable": False},
+        owner="crashed-audit",
+    )
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=ScriptedConsumer(store),
+            audit=ScriptedAudit(store),
+        ),
+        task,
+    )
+
+    assert result.status == "needs_human"
+    assert result.error.code == "audit_recovery_session_missing"
+    persisted = store.get_agent_run(unknown.id)
+    assert persisted is not None and persisted.status == "completed"
+    assert persisted.side_effect_state == "unknown"
+
+
 def test_infrastructure_retry_does_not_consume_feedback_cycle(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))

@@ -339,6 +339,11 @@ class AgentOrchestrator:
                 return _NextAudit(revision, 0, consumer.id, consumer_state.proposal)
             latest = audits[-1]
             if latest.status == "unknown":
+                if not latest.codex_session_id:
+                    return self._finalize_unrecoverable_audit(
+                        latest,
+                        feedback_cycles=revision,
+                    )
                 return _RecoverAudit(latest, consumer_state.proposal)
             audit_state = self._audit_state(task, latest, revision)
             if isinstance(audit_state, _NextAudit):
@@ -371,6 +376,39 @@ class AgentOrchestrator:
                 )
             revision += 1
         return _Deferred(None, "agent_turn_state_incomplete", revision)
+
+    def _finalize_unrecoverable_audit(
+        self,
+        run: AgentRun,
+        *,
+        feedback_cycles: int,
+    ) -> OrchestrationResult | _Deferred:
+        owner = f"agent-orchestrator-missing-session-{run.id}"
+        claim = self.store.claim_unknown_agent_run(run.id, owner=owner)
+        if not claim.claimed:
+            return _Deferred(run, "agent_run_unavailable", feedback_cycles)
+        error = AgentError(
+            code="audit_recovery_session_missing",
+            retryable=False,
+        )
+        result = _failed_audit_result(
+            claim.run,
+            AuditOutcome.NEEDS_HUMAN,
+            error,
+        )
+        completed = self.store.complete_agent_run(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=owner,
+            side_effect_state=SideEffectState.UNKNOWN.value,
+            expected_status="unknown",
+        )
+        return _audit_terminal(
+            "needs_human",
+            completed,
+            result,
+            feedback_cycles,
+        )
 
     def _consumer_state(
         self,

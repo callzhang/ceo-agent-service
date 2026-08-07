@@ -185,8 +185,10 @@ def test_effect_started_persists_minimal_identity_and_matching_completion_confir
     )
     after_start = store.append_agent_run_event(run.id, started, owner="audit")
     assert after_start.side_effect_state == "unknown"
-    assert "arguments" not in after_start.tool_events[0]["item"]
-    assert "result" not in after_start.tool_events[0]["item"]
+    persisted_start = store.get_agent_run(run.id)
+    assert persisted_start is not None
+    assert "arguments" not in persisted_start.tool_events[0]["item"]
+    assert "result" not in persisted_start.tool_events[0]["item"]
 
     completed = {**started, "type": "item.completed"}
     after_completed = store.append_agent_run_event(run.id, completed, owner="audit")

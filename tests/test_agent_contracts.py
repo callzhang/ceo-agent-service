@@ -62,6 +62,7 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
             "requested_revision": "Remove that promise and retain the final result.",
         },
         "external_result": None,
+        "reconciliation": [],
         "error": _error(),
     }
     payload.update(overrides)
@@ -175,6 +176,56 @@ def test_audit_executed_requires_confirmed_external_result():
     assert result.outcome is AuditOutcome.EXECUTED
     assert result.external_result is not None
     assert result.external_result.operation_id == "op-1"
+
+
+def test_audit_reconciliation_is_strict_structured_per_action():
+    result = AuditAgentResult.model_validate(
+        _audit_payload(
+            outcome="needs_human",
+            feedback=None,
+            reconciliation=[
+                {
+                    "action_index": 0,
+                    "disposition": "ambiguous",
+                    "read_result_digest": "digest-1",
+                }
+            ],
+        )
+    )
+
+    assert result.reconciliation[0].action_index == 0
+    assert result.reconciliation[0].disposition.value == "ambiguous"
+
+
+@pytest.mark.parametrize(
+    "reconciliation",
+    (
+        [{"action_index": 0, "disposition": "present"}],
+        [
+            {
+                "action_index": 0,
+                "disposition": "present",
+                "read_result_digest": "digest-1",
+            },
+            {
+                "action_index": 0,
+                "disposition": "absent",
+                "read_result_digest": "digest-2",
+            },
+        ],
+    ),
+)
+def test_audit_reconciliation_rejects_missing_digest_or_duplicate_action(
+    reconciliation,
+):
+    with pytest.raises(ValidationError):
+        AuditAgentResult.model_validate(
+            _audit_payload(
+                outcome="needs_human",
+                feedback=None,
+                reconciliation=reconciliation,
+            )
+        )
 
 
 @pytest.mark.parametrize(

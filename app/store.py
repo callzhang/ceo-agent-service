@@ -491,51 +491,54 @@ def _agent_effect_state_from_rows(
     db: sqlite3.Connection,
     run_id: int,
 ) -> str:
-    pending: dict[str, int] = {}
-    event_closures: set[str] = set()
-    completed = False
-    unreviewed = False
-    for row in db.execute(
+    row = db.execute(
         """
-        select event_type, call_id, effect_kind, receipt_operation_id
-        from agent_run_events
-        where agent_run_id=?
-        order by sequence
+        with call_state as (
+            select call_id,
+                   sum(case when event_type='item.started' then 1 else 0 end)
+                       as starts,
+                   sum(case when event_type in ('item.completed', 'item.failed')
+                            then 1 else 0 end) as closures,
+                   sum(case when event_type='item.completed' then 1 else 0 end)
+                       as completed,
+                   min(case when event_type='item.started' then sequence end)
+                       as first_start
+            from agent_run_events
+            where agent_run_id=? and effect_kind='effectful' and call_id<>''
+            group by call_id
+        ),
+        receipt_state as (
+            select receipt_operation_id as call_id, count(*) as receipts
+            from agent_run_events
+            join call_state on call_state.call_id=receipt_operation_id
+            where agent_run_id=? and receipt_operation_id<>''
+              and sequence>call_state.first_start
+            group by receipt_operation_id
+        )
+        select
+            exists(
+                select 1 from agent_run_events
+                where agent_run_id=? and call_id<>'' and effect_kind='unreviewed'
+            ) as unreviewed,
+            exists(
+                select 1 from call_state
+                left join receipt_state using (call_id)
+                where starts > closures + case
+                    when closures=0 then min(starts, coalesce(receipts, 0))
+                    else 0
+                end
+            ) as pending,
+            exists(select 1 from call_state where completed>0)
+              or exists(
+                  select 1 from agent_run_events
+                  where agent_run_id=? and receipt_operation_id<>''
+              ) as completed
         """,
-        (run_id,),
-    ).fetchall():
-        call_id = row["call_id"]
-        if call_id:
-            if row["effect_kind"] == "unreviewed":
-                unreviewed = True
-            elif (
-                row["effect_kind"] == "read_only"
-                and row["event_type"] == "item.completed"
-            ):
-                pass
-            elif row["effect_kind"] == "effectful":
-                if row["event_type"] == "item.started":
-                    pending[call_id] = pending.get(call_id, 0) + 1
-                elif row["event_type"] == "item.completed":
-                    if pending.get(call_id, 0) > 0:
-                        pending[call_id] -= 1
-                    event_closures.add(call_id)
-                    completed = True
-                elif row["event_type"] == "item.failed":
-                    if pending.get(call_id, 0) > 0:
-                        pending[call_id] -= 1
-                    event_closures.add(call_id)
-        receipt_operation_id = row["receipt_operation_id"]
-        if receipt_operation_id:
-            if (
-                receipt_operation_id not in event_closures
-                and pending.get(receipt_operation_id, 0) > 0
-            ):
-                pending[receipt_operation_id] -= 1
-            completed = True
-    if unreviewed or any(count > 0 for count in pending.values()):
+        (run_id, run_id, run_id, run_id),
+    ).fetchone()
+    if row["unreviewed"] or row["pending"]:
         return "unknown"
-    if completed:
+    if row["completed"]:
         return "confirmed"
     return "none"
 
@@ -2279,13 +2282,16 @@ class AutoReplyStore:
         row: sqlite3.Row,
         *,
         db: sqlite3.Connection,
+        load_events: bool = True,
     ) -> AgentRun:
-        event_rows = db.execute(
-            "select event_json from agent_run_events "
-            "where agent_run_id=? order by sequence",
-            (row["id"],),
-        ).fetchall()
-        tool_events = [json.loads(event["event_json"]) for event in event_rows]
+        tool_events: list[dict[str, object]] = []
+        if load_events:
+            event_rows = db.execute(
+                "select event_json from agent_run_events "
+                "where agent_run_id=? order by sequence",
+                (row["id"],),
+            ).fetchall()
+            tool_events = [json.loads(event["event_json"]) for event in event_rows]
         return AgentRun(
             id=row["id"],
             reply_task_id=row["reply_task_id"],
@@ -3326,7 +3332,7 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated, db=db)
+            return self._agent_run_from_row(updated, db=db, load_events=False)
 
     @staticmethod
     def _validate_agent_effect_event_identity(
@@ -4608,7 +4614,10 @@ class AutoReplyStore:
                       where runs.reply_task_id=tasks.id
                         and runs.execution_generation=tasks.execution_generation
                         and (
-                            runs.side_effect_state='unknown'
+                            (
+                                runs.side_effect_state='unknown'
+                                and runs.codex_session_id<>''
+                            )
                             or (
                                 runs.status='running'
                                 and runs.lease_expires_at>current_timestamp

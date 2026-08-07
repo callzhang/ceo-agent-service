@@ -276,4 +276,12 @@ def _recovery_prompt(
             f"{unavailable}. Do not execute or replay these actions. Unless an exact "
             "persisted receipt already confirms them, return needs_human."
         )
-    return f"{context.render()}\n\nUnknown outcome recovery: {identity}{guidance}"
+    return (
+        f"{context.render()}\n\nUnknown outcome recovery: {identity}{guidance}\n"
+        "For every unresolved action that has a configured readback, return one "
+        "reconciliation entry with its action_index, a disposition of present, "
+        "absent, or ambiguous, and the exact result_digest from the matching live "
+        "read completed in this recovery turn. Use present only when the read proves "
+        "the old action happened, absent only when it proves the action did not "
+        "happen, and ambiguous only for needs_human."
+    )

@@ -81,6 +81,44 @@ def test_mcp_effect_registry_declares_structured_readback_relationship():
     )
 
 
+def test_shared_readback_requires_every_write_target_identifier():
+    registry = McpToolEffectRegistry(
+        {
+            ("records", "get"): EffectKind.READ_ONLY,
+            ("records", "put"): EffectKind.EFFECTFUL,
+        },
+        readbacks={("records", "get"): {("records", "put")}},
+        readback_target_modes={
+            ("records", "get", "records", "put"): "shared"
+        },
+    )
+
+    assert not registry.readback_targets_match(
+        read_server="records",
+        read_tool="get",
+        write_server="records",
+        write_tool="put",
+        read_targets={"group": "g-1", "message": "m-2"},
+        write_targets={"group": "g-1", "message": "m-1"},
+    )
+    assert not registry.readback_targets_match(
+        read_server="records",
+        read_tool="get",
+        write_server="records",
+        write_tool="put",
+        read_targets={"group": "g-1"},
+        write_targets={"group": "g-1", "message": "m-1"},
+    )
+    assert registry.readback_targets_match(
+        read_server="records",
+        read_tool="get",
+        write_server="records",
+        write_tool="put",
+        read_targets={"group": "g-1", "message": "m-1", "extra": "ok"},
+        write_targets={"group": "g-1", "message": "m-1"},
+    )
+
+
 def test_default_mcp_effect_registry_has_only_verifiable_direct_readback():
     registry = McpToolEffectRegistry.from_path(DEFAULT_MCP_EFFECTS_PATH)
 

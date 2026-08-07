@@ -445,9 +445,9 @@ class McpToolEffectRegistry:
         )
         if mode == "exact":
             return bool(read_targets) and read_targets == write_targets
-        shared = read_targets.keys() & write_targets.keys()
-        return bool(shared) and all(
-            read_targets[key] == write_targets[key] for key in shared
+        return bool(write_targets) and all(
+            key in read_targets and read_targets[key] == value
+            for key, value in write_targets.items()
         )
 
 

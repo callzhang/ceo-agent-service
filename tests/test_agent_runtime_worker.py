@@ -91,6 +91,11 @@ class BlockedUnknownOrchestrator:
             owner="blocked-audit",
         )
         assert claim.claimed
+        self.store.set_agent_run_session(
+            claim.run.id,
+            "blocked-audit-session",
+            owner="blocked-audit",
+        )
         self.store.append_agent_run_event(
             claim.run.id,
             _persisted_effect_evidence("blocked-write", "started"),
@@ -1628,6 +1633,118 @@ def test_stale_worker_recovers_completed_consumer_turn_without_legacy_parsing(
     assert recovered is not None and recovered.status == "done"
     attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None and attempt.send_status == "skipped"
+
+
+def test_worker_finalizes_unknown_audit_without_session_as_needs_human(
+    tmp_path: Path,
+):
+    trigger = _message("Send the reviewed message.")
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    task = store.claim_reply_task(task_id)
+    assert task is not None
+    proposal = {
+        "objective": "Send the reviewed message.",
+        "actions": [
+            {
+                "description": "Send the message.",
+                "capability": "agent_cli.dws",
+                "operation": "chat message send",
+                "target": {"group": "cid-1"},
+                "payload": {
+                    "argv": [
+                        "dws", "chat", "message", "send", "--group", "cid-1",
+                        "--text", "done", "--yes",
+                    ]
+                },
+                "expected_verification": "The message exists in the group.",
+            }
+        ],
+        "sourced_facts": [],
+        "authored_judgment": "The user requested delivery.",
+    }
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="seed-consumer",
+    ).run
+    store.complete_agent_run(
+        consumer.id,
+        _consumer_protocol_result(
+            "proposal",
+            "Prepared a reviewed message.",
+            proposal=proposal,
+        ).model_dump(mode="json"),
+        owner="seed-consumer",
+    )
+    operation_id = "reply-task:g1:revision:0"
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id=operation_id,
+        owner="seed-audit",
+    ).run
+    store.append_agent_run_event(
+        audit.id,
+        {
+            "type": "item.started",
+            "item": {
+                "id": "write-1",
+                "metadata": {
+                    "effect": "effectful",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "operation_id": operation_id,
+                    "operation_digest": "operation-digest",
+                    "arguments_digest": "arguments-digest",
+                    "target_identifiers": {"group": "cid-1"},
+                },
+            },
+        },
+        owner="seed-audit",
+    )
+    store.mark_agent_run_unknown(
+        audit.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="seed-audit",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at='2026-07-29 08:00:00' where id=?",
+            (task.id,),
+        )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        agent_orchestrator=AgentOrchestrator(
+            store=store,
+            consumer=UnexpectedRoleRunner(),
+            audit=UnexpectedRoleRunner(),
+        ),
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    persisted_task = store.get_reply_task(task.id)
+    persisted_run = store.get_agent_run(audit.id)
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert persisted_task is not None and persisted_task.status == "done"
+    assert persisted_run is not None and persisted_run.status == "completed"
+    assert persisted_run.side_effect_state == "unknown"
+    assert attempt is not None and attempt.send_status == "needs_human"
+    assert attempt.send_error == "audit_recovery_session_missing"
 
 
 def _worker(

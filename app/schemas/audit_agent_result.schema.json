@@ -91,7 +91,41 @@
       "title": "AuditOutcome",
       "type": "string"
     },
+    "AuditReconciliation": {
+      "additionalProperties": false,
+      "properties": {
+        "action_index": {
+          "minimum": 0,
+          "title": "Action Index",
+          "type": "integer"
+        },
+        "disposition": {
+          "$ref": "#/$defs/ReconciliationDisposition"
+        },
+        "read_result_digest": {
+          "minLength": 1,
+          "title": "Read Result Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_index",
+        "disposition",
+        "read_result_digest"
+      ],
+      "title": "AuditReconciliation",
+      "type": "object"
+    },
     "JsonValue": {},
+    "ReconciliationDisposition": {
+      "enum": [
+        "present",
+        "absent",
+        "ambiguous"
+      ],
+      "title": "ReconciliationDisposition",
+      "type": "string"
+    },
     "SideEffectState": {
       "enum": [
         "none",
@@ -208,6 +242,14 @@
           "type": "null"
         }
       ]
+    },
+    "reconciliation": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AuditReconciliation"
+      },
+      "title": "Reconciliation",
+      "type": "array"
     },
     "error": {
       "$ref": "#/$defs/AgentError"

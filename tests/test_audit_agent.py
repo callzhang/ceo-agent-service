@@ -7,7 +7,11 @@ import pytest
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_contracts import ConsumerProposal, ProposedAction
 from app.agent_runner import McpToolEffectRegistry
-from app.agent_turn_runner import _read_matches_action
+from app.agent_turn_runner import (
+    _action_receipt_operation_id,
+    _json_digest,
+    _read_matches_action,
+)
 from app.audit_agent import AuditAgentRunner
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
@@ -43,8 +47,9 @@ class ExactReceiptExecutor(CapturingExecutor):
         self.store.record_agent_execution_receipt(
             self.run.id,
             receipt_id=f"receipt-{self.run.operation_id}",
-            operation_id=(
-                f"{self.run.operation_id}:{metadata['arguments_digest']}"
+            operation_id=_action_receipt_operation_id(
+                self.run.operation_id,
+                metadata,
             ),
             cli=metadata["capability"],
             command_path=metadata["operation"],
@@ -65,6 +70,7 @@ def _audit_result_jsonl(
     include_read: bool = True,
     include_write: bool = False,
     read_target: str = "cid-agent",
+    reconciliation: list[dict[str, object]] | None = None,
 ) -> str:
     records = [json.dumps({"type": "thread.started", "thread_id": session})]
     if include_read:
@@ -154,6 +160,22 @@ def _audit_result_jsonl(
                 "authorization_required": False,
             },
         }
+    if reconciliation is None:
+        reconciliation = []
+        if include_read:
+            disposition = (
+                "ambiguous"
+                if outcome == "needs_human"
+                else "absent" if include_write else "present"
+            )
+            reconciliation.append(
+                {
+                    "action_index": 0,
+                    "disposition": disposition,
+                    "read_result_digest": "recovery-read-digest",
+                }
+            )
+    result["reconciliation"] = reconciliation
     records.append(
         json.dumps(
             {
@@ -182,6 +204,7 @@ def _audit_jsonl(
         "proposal_revision": proposal_revision, "side_effect_state": "confirmed", "feedback": None,
         "external_result": {"operation_id": operation_id, "verification_summary": "Present.", "live_result_reference": {"id": "one"}},
         "error": {"code": "", "retryable": False, "authorization_required": False},
+        "reconciliation": [],
     }
     records = [json.dumps({"type": "thread.started", "thread_id": session})]
     if include_write:
@@ -315,6 +338,7 @@ def _dry_run_suppressed_jsonl(*, proposal_revision: int = 0) -> str:
             "retryable": False,
             "authorization_required": False,
         },
+        "reconciliation": [],
     }
     return json.dumps(
         {
@@ -545,10 +569,19 @@ def test_audit_accepts_matching_persisted_execution_receipt_with_live_read(setup
                 }
             )
             assert descriptor is not None
+            action = audit_context.proposal.actions[0]
             store.record_agent_execution_receipt(
                 run.id,
                 receipt_id="receipt-operation-1",
-                operation_id=run.operation_id,
+                operation_id=_action_receipt_operation_id(
+                    run.operation_id,
+                    {
+                        "capability": action.capability,
+                        "operation": action.operation,
+                        "operation_digest": descriptor.command_digest,
+                        "arguments_digest": _json_digest(action.payload),
+                    },
+                ),
                 cli="dws",
                 command_path="chat message send",
                 command_digest=descriptor.command_digest,
@@ -569,6 +602,7 @@ def test_audit_accepts_matching_persisted_execution_receipt_with_live_read(setup
                 "executed",
                 operation_id="operation-1",
                 session="session-b",
+                reconciliation=[],
             )
         ),
         owner="audit-owner",
@@ -579,21 +613,24 @@ def test_audit_accepts_matching_persisted_execution_receipt_with_live_read(setup
     assert persisted.side_effect_state == "confirmed"
 
 
-def test_audit_rejects_executed_result_without_live_verification(setup):
+def test_audit_accepts_exact_completed_effect_without_extra_live_read(setup):
     store, task, audit_context, parent = setup
 
-    with pytest.raises(RuntimeError, match="audit_execution_evidence_mismatch"):
-        AuditAgentRunner(
-            store=store,
-            workspace=Path("/workspace"),
-            executor=CapturingExecutor(
-                _audit_jsonl(
-                    "operation-1",
-                    session="session-b",
-                    include_verification=False,
-                )
-            ),
-        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _audit_jsonl(
+                "operation-1",
+                session="session-b",
+                include_verification=False,
+            )
+        ),
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    persisted = store.get_agent_run(result.run_id)
+    assert persisted is not None and persisted.status == "completed"
+    assert persisted.side_effect_state == "confirmed"
 
 
 def test_audit_rejects_direct_shell_event(setup):
@@ -755,7 +792,10 @@ def test_crash_after_write_resumes_same_audit_session_and_confirms_without_repla
     ) == 1
     receipts = store.list_agent_execution_receipts(run.id)
     assert len(receipts) == 1
-    assert receipts[0].operation_id.startswith(f"{run.operation_id}:")
+    receipt_identity = json.loads(receipts[0].operation_id)
+    assert receipt_identity["proposal_operation_id"] == run.operation_id
+    assert receipt_identity["capability"] == "agent_cli.dws"
+    assert receipt_identity["operation"] == "chat message send"
     read_events = [
         event
         for event in persisted.tool_events
@@ -766,7 +806,8 @@ def test_crash_after_write_resumes_same_audit_session_and_confirms_without_repla
         "recovery-read-digest"
     )
     assert receipts[0].receipt_id == (
-        f"reconciliation:{run.operation_id}:recovery-read-digest"
+        "reconciliation:"
+        f"{receipts[0].operation_id}:recovery-read-digest"
     )
 
 
@@ -809,6 +850,50 @@ def test_ambiguous_recovery_requires_matching_live_read(setup):
     )
 
     with pytest.raises(RuntimeError, match="audit_recovery_evidence_missing"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).recover(task, audit_context, run=run)
+
+
+def test_matching_live_read_without_structured_disposition_does_not_confirm(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "executed",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            reconciliation=[],
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="audit_recovery_evidence_missing"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).recover(task, audit_context, run=run)
+
+
+def test_reconciliation_digest_must_match_completed_read_event(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "executed",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            reconciliation=[
+                {
+                    "action_index": 0,
+                    "disposition": "present",
+                    "read_result_digest": "wrong-read-digest",
+                }
+            ],
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="audit_reconciliation_evidence_mismatch"):
         AuditAgentRunner(
             store=store,
             workspace=Path("/workspace"),
@@ -901,15 +986,6 @@ def _seed_crashed_xiaoqing_write(setup):
 
 
 def _xiaoqing_recovery_jsonl(run, *, include_read):
-    base = _audit_result_jsonl(
-        "executed",
-        operation_id=run.operation_id,
-        session=run.codex_session_id,
-        include_read=False,
-    ).splitlines()
-    if not include_read:
-        return "\n".join(base)
-
     read = {
         "type": "mcp_tool_call",
         "id": "direct-read",
@@ -921,6 +997,44 @@ def _xiaoqing_recovery_jsonl(run, *, include_read):
         },
         "status": "in_progress",
     }
+    read_result = {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(
+                    {
+                        "candidate_id": "candidate-1",
+                        "interview_id": "interview-1",
+                    }
+                ),
+            }
+        ],
+        "structuredContent": {
+            "candidate_id": "candidate-1",
+            "interview_id": "interview-1",
+        },
+        "isError": False,
+    }
+    base = _audit_result_jsonl(
+        "executed",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+        include_read=False,
+        reconciliation=(
+            [
+                {
+                    "action_index": 0,
+                    "disposition": "present",
+                    "read_result_digest": _json_digest(read_result),
+                }
+            ]
+            if include_read
+            else []
+        ),
+    ).splitlines()
+    if not include_read:
+        return "\n".join(base)
+
     return "\n".join(
         (
             base[0],
@@ -931,24 +1045,7 @@ def _xiaoqing_recovery_jsonl(run, *, include_read):
                     "item": {
                         **read,
                         "status": "completed",
-                        "result": {
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": json.dumps(
-                                        {
-                                            "candidate_id": "candidate-1",
-                                            "interview_id": "interview-1",
-                                        }
-                                    ),
-                                }
-                            ],
-                            "structuredContent": {
-                                "candidate_id": "candidate-1",
-                                "interview_id": "interview-1",
-                            },
-                            "isError": False,
-                        },
+                        "result": read_result,
                     },
                 }
             ),
@@ -981,7 +1078,7 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
 def test_readback_capable_receipt_without_live_read_stays_unknown(setup):
     store, task, context, run, registry = _seed_crashed_xiaoqing_write(setup)
 
-    with pytest.raises(RuntimeError, match="audit_execution_evidence_missing"):
+    with pytest.raises(RuntimeError, match="audit_recovery_evidence_missing"):
         AuditAgentRunner(
             store=store,
             workspace=Path("/workspace"),
@@ -1042,6 +1139,48 @@ def test_direct_mcp_readback_requires_exact_target_identifiers():
         },
         registry,
     )
+
+
+def test_action_receipt_identity_separates_same_payload_across_actions(setup):
+    store, task, _context, parent = setup
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id="proposal-operation",
+        owner="audit-owner",
+    ).run
+    first = {
+        "capability": "server-a",
+        "operation": "write-a",
+        "operation_digest": "digest-a",
+        "arguments_digest": "same-arguments",
+    }
+    second = {
+        "capability": "server-b",
+        "operation": "write-b",
+        "operation_digest": "digest-b",
+        "arguments_digest": "same-arguments",
+    }
+
+    for index, action in enumerate((first, second), start=1):
+        store.record_agent_execution_receipt(
+            run.id,
+            receipt_id=f"receipt-{index}",
+            operation_id=_action_receipt_operation_id(run.operation_id, action),
+            cli=action["capability"],
+            command_path=action["operation"],
+            command_digest=action["operation_digest"],
+            exit_code=0,
+            owner="audit-owner",
+        )
+
+    receipts = store.list_agent_execution_receipts(run.id)
+    assert len(receipts) == 2
+    assert receipts[0].operation_id != receipts[1].operation_id
 
 
 def _seed_crashed_memory_write(setup):
@@ -1301,6 +1440,7 @@ def test_receipt_with_wrong_digest_or_target_does_not_confirm_action(setup, mism
                     "executed",
                     operation_id="operation-1",
                     session="session-b",
+                    reconciliation=[],
                 )
             ),
             owner="audit-owner",
@@ -1346,8 +1486,31 @@ def test_two_action_recovery_confirms_unknown_first_and_executes_second_once(set
         session=run.codex_session_id,
         read_target="cid-second",
     ).splitlines()
+    final_result = _audit_result_jsonl(
+        "executed",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+        include_read=False,
+        reconciliation=[
+            {
+                "action_index": 0,
+                "disposition": "present",
+                "read_result_digest": "recovery-read-digest",
+            },
+            {
+                "action_index": 1,
+                "disposition": "absent",
+                "read_result_digest": "recovery-read-digest",
+            },
+        ],
+    ).splitlines()
     executor = CapturingExecutor(
-        "\n".join(first_read[:-1] + second_read[1:-1] + second_write[1:])
+        "\n".join(
+            first_read[:-1]
+            + second_read[1:-1]
+            + second_write[1:-1]
+            + final_result[-1:]
+        )
     )
 
     result = AuditAgentRunner(

@@ -1070,7 +1070,7 @@ def test_agent_run_is_unique_per_task_generation(tmp_path: Path):
     assert second.run.lease_owner == "worker-1"
 
 
-def test_stale_processing_task_with_current_unknown_effect_is_not_recoverable(
+def test_stale_unknown_effect_without_session_is_recoverable_by_orchestrator(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1093,7 +1093,9 @@ def test_stale_processing_task_with_current_unknown_effect_is_not_recoverable(
             (task_id,),
         )
 
-    assert store.list_stale_processing_reply_tasks(30 * 60) == []
+    assert [
+        task.id for task in store.list_stale_processing_reply_tasks(30 * 60)
+    ] == [task_id]
     assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
 
 
@@ -1414,7 +1416,10 @@ def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
     )
 
     assert recovered.claimed is True
-    assert [event["call_id"] for event in appended.tool_events] == ["recovered"]
+    assert appended.tool_events == []
+    persisted = store.get_agent_run(first.run.id)
+    assert persisted is not None
+    assert [event["call_id"] for event in persisted.tool_events] == ["recovered"]
 
 
 def test_expired_agent_run_with_incomplete_effect_cannot_be_reclaimed(
@@ -1619,6 +1624,37 @@ def test_agent_run_events_use_append_only_rows_in_sequence(tmp_path: Path):
     ]
     assert compact == "[]"
     assert store.get_agent_run(run.id).tool_events == [first, second]
+
+
+def test_append_agent_events_does_not_reparse_prior_json(tmp_path: Path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
+    original_loads = store_module.json.loads
+    calls = 0
+
+    def counted_loads(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_loads(*args, **kwargs)
+
+    monkeypatch.setattr(store_module.json, "loads", counted_loads)
+    appended = None
+    for index in range(50):
+        appended = store.append_agent_run_event(
+            run.id,
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": f"read-{index}",
+                    "metadata": {"effect": "read_only"},
+                },
+            },
+            owner="worker-1",
+        )
+
+    assert appended is not None and appended.tool_events == []
+    assert calls <= 300
 
 
 def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
