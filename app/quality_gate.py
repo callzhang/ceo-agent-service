@@ -396,6 +396,9 @@ def _check_meetings(
     _add(attention, source="meeting_alignment_jobs", code="active", count=_count(
         db, "select count(*) from meeting_alignment_jobs where lower(status) in ('waiting','pending','processing','ready_to_send','retry')"
     ), severity="info", detail="meeting alignment work is pending")
+    _add(attention, source="meeting_alignment_jobs", code="quarantined", count=_count(
+        db, "select count(*) from meeting_alignment_jobs where lower(status)='quarantined'"
+    ), severity="info", detail="meeting delivery outcome cannot be verified")
 
 
 def _check_okr_reviews(
@@ -414,6 +417,9 @@ def _check_okr_reviews(
     _add(attention, source="okr_review_requests", code="active", count=_count(
         db, "select count(*) from okr_review_requests where lower(status) in ('pending','processing')"
     ), severity="info", detail="OKR review work is pending")
+    _add(attention, source="okr_review_requests", code="discarded", count=_count(
+        db, "select count(*) from okr_review_requests where lower(status)='discarded'"
+    ), severity="info", detail="OKR request is outside the principal's review scope")
 
 
 def _check_external_delivery_queues(
@@ -466,6 +472,14 @@ def _check_scan_health(
     _add(violations, source="daily_scan_state", code="last_error", count=_count(
         db, "select count(*) from daily_scan_state where trim(last_error) != ''"
     ), severity="error", detail="source scanner reports an unresolved error")
+    _add(attention, source="daily_scan_state", code="oa_detail_read", count=_count(
+        db,
+        """select count(*) from daily_scan_state
+           where scanner_name='oa_pending'
+             and json_array_length(
+                 coalesce(json_extract(cursor_json, '$.read_failure_process_instance_ids'), '[]')
+             ) > 0""",
+    ), severity="info", detail="some OA approval details need a later read")
     # A disabled reader only blocks quality when it has work to process. This
     # avoids treating an intentionally unconfigured channel as an outage.
     blocked_reader = _count(

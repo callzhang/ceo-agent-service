@@ -6637,6 +6637,7 @@ class AutoReplyStore:
                 "sent",
                 "retry",
                 "failed",
+                "quarantined",
             }:
                 filtered.setdefault("locked_at", None)
         assignments = [f"{column}=?" for column in filtered]
@@ -7161,6 +7162,20 @@ class AutoReplyStore:
                 where id=?
                 """,
                 (error, request_id),
+            )
+
+    def mark_okr_review_request_discarded(self, request_id: int, reason: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update okr_review_requests
+                set status='discarded',
+                    error=?,
+                    codex_session_id='',
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (reason, request_id),
             )
 
     def record_okr_review_run(

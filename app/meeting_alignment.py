@@ -831,7 +831,7 @@ def _deliver_meeting_job(
         if not _delivery_open_task_id(result):
             store.update_meeting_alignment_job(
                 job.id,
-                status="failed",
+                status="quarantined",
                 send_result_json=result_json,
                 error=_error_json(
                     "meeting_send_ambiguous_no_id",
@@ -906,7 +906,7 @@ def _reconcile_ambiguous_delivery(
     if not open_task_id:
         store.update_meeting_alignment_job(
             job.id,
-            status="failed",
+            status="quarantined",
             error=_error_json(
                 "meeting_send_ambiguous_no_id",
                 "stored ambiguous delivery has no verifiable identifier",
