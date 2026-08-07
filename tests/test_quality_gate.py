@@ -107,6 +107,88 @@ def test_quality_gate_deduplicates_historical_attempts_after_a_later_success(tmp
     assert not [item for item in report.violations if item.source == "reply_attempts"]
 
 
+def test_quality_gate_deduplicates_failed_delivery_after_sent_reply_receipt(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into reply_attempts (
+                channel, conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, action, sensitivity_kind,
+                final_reply_text, permission_action, send_status, updated_at
+            ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
+                'trigger', 'send_reply', 'normal', 'reply', 'send', 'failed', ?)""",
+            ("2026-08-07 00:30:00",),
+        )
+    store.record_sent_reply("conversation", "message", "reply")
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert not [item for item in report.violations if item.source == "reply_attempts"]
+
+
+def test_quality_gate_does_not_treat_agent_run_block_as_delivery_failure(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into reply_attempts (
+                channel, conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, action, sensitivity_kind,
+                final_reply_text, permission_action, send_status, updated_at
+            ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
+                'trigger', 'agent_run', 'normal', '', '', 'blocked', ?)""",
+            ("2026-08-07 00:30:00",),
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert not [item for item in report.violations if item.source == "reply_attempts"]
+
+
+def test_quality_gate_deduplicates_oa_failure_after_later_success(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        for status, updated_at in (
+            ("blocked", "2026-08-07 00:00:00"),
+            ("completed", "2026-08-07 00:30:00"),
+        ):
+            db.execute(
+                """insert into reply_attempts (
+                    channel, conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    oa_process_instance_id, send_status, updated_at
+                ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
+                    'trigger', 'oa_approval', 'normal', 'approval-instance', ?, ?)""",
+                (status, updated_at),
+            )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert not [item for item in report.violations if item.source == "reply_attempts"]
+
+
+def test_quality_gate_counts_only_latest_oa_failure_per_approval_instance(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        for updated_at in ("2026-08-07 00:00:00", "2026-08-07 00:30:00"):
+            db.execute(
+                """insert into reply_attempts (
+                    channel, conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    oa_process_instance_id, send_status, updated_at
+                ) values ('dingtalk', 'conversation', 'group', 'message', 'sender',
+                    'trigger', 'oa_approval', 'normal', 'approval-instance', 'failed', ?)""",
+                (updated_at,),
+            )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    issue = next(item for item in report.violations if item.source == "reply_attempts")
+    assert issue.count == 1
+
+
 def test_quality_gate_writes_coverage_state(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     state_path = tmp_path / "hourly-quality-gate.json"
