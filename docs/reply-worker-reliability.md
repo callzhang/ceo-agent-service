@@ -148,19 +148,21 @@ outcome because those results conflict at the conversation level.
 
 ## Human decisions
 
-`needs_human` is a completed Direct Agent result that waits for a real operator
-choice. It is not a `blocked` execution failure. The Direct Agent may use it
-only when evidence leaves materially different actions or requires personal
-judgment; established facts, targets, and explicit manual rerun choices must be
-executed without asking the same question again.
+`needs_human` is a completed Consumer Agent result that waits for an
+irreducible personal or management judgment. It is not a `blocked` execution
+failure and it is not used for missing evidence that can be obtained from the
+conversation participant. In that case Consumer A proposes one concrete
+clarifying message and Audit B reviews and sends it through the normal delivery
+path without asking Derek to choose whether to ask.
 
-The worker sends a local decision notification. Its audit-attempt page presents
-three choices: continue using the available facts, ask one specific clarifying
-question, or supply a custom instruction. Selecting a choice creates a durable
-manual rerun and marks the source attempt `decision_selected`. The worker then
-executes, verifies, and publishes through its normal delivery path. Because the
-choice is stored before processing, launchd restart recovery resumes the pending
-rerun without requiring the operator to select again.
+For a genuine `needs_human` result, the worker sends a local decision
+notification. The audit-attempt page shows the ambiguity and accepts one
+explicit judgment or processing instruction; it does not offer generic
+"continue with current facts" or "ask a question" shortcuts. Submitting the
+instruction creates a durable manual rerun and marks the source attempt
+`decision_selected`. The worker then executes, verifies, and publishes through
+its normal delivery path. Because the instruction is stored before processing,
+launchd restart recovery resumes the pending rerun without asking again.
 
 ## Scheduled follow-up delivery
 

@@ -6801,24 +6801,13 @@ def handle_needs_human_decision_post(
             render_page("Decision unavailable", "<p>该 attempt 不再等待人工选择。</p>"),
         )
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
-    choice = parsed.get("choice", [""])[0].strip().lower()
-    custom_instruction = parsed.get("instruction", [""])[0].strip()
-    choice_instructions = {
-        "a": "按当前事实选择最有依据的处理方式，完成、验证并发布对外回复或动作。",
-        "b": "不要猜测尚未确定的事实；向原消息发起人发送一个具体、最小化的澄清问题并验证发送。",
-    }
-    if choice == "c":
-        if not custom_instruction:
-            return (
-                400,
-                {},
-                render_page("Decision required", "<p>请填写自定义回复或执行指令。</p>"),
-            )
-        instruction = custom_instruction
-    else:
-        instruction = choice_instructions.get(choice, "")
+    instruction = parsed.get("instruction", [""])[0].strip()
     if not instruction:
-        return 400, {}, render_page("Decision unavailable", "<p>无效的选择。</p>")
+        return (
+            400,
+            {},
+            render_page("Decision required", "<p>请填写你的判断或处理指令。</p>"),
+        )
     reviewer_feedback = (
         f"Human decision for source attempt #{source.id}: {instruction}\n\n"
         f"Original ambiguity summary:\n{source.audit_summary or source.codex_reason}"
@@ -8056,20 +8045,13 @@ def _needs_human_decision_card(attempt: ReplyAttempt) -> str:
         return ""
     action = f"/attempts/{attempt.id}/human-decision"
     return (
-        '<section class="card needs-human-card"><h2>需要你选择</h2>'
-        '<p class="muted">当前证据不足以可靠地替你选定行动。选择后会创建可恢复任务，'
+        '<section class="card needs-human-card"><h2>需要你的判断</h2>'
+        '<p class="muted">这里存在无法通过事实追问解决的管理判断。提交后会创建可恢复任务，'
         '由 Agent 执行、验证并自动发布。</p>'
-        f'<form method="post" action="{action}">'
-        '<input type="hidden" name="choice" value="a">'
-        '<button type="submit">A. 按当前事实继续处理并发布</button></form>'
-        f'<form method="post" action="{action}">'
-        '<input type="hidden" name="choice" value="b">'
-        '<button type="submit">B. 先追问一个具体澄清问题并发布</button></form>'
         f'<form method="post" action="{action}" class="needs-human-custom">'
-        '<input type="hidden" name="choice" value="c">'
-        '<label> C. 自定义回复或执行指令</label>'
-        '<textarea name="instruction" required placeholder="例如：先回复对方，说明按方案二推进"></textarea>'
-        '<button type="submit">按自定义指令执行并发布</button></form>'
+        '<label>填写判断或处理指令</label>'
+        '<textarea name="instruction" required placeholder="例如：采用方案二，并说明交付边界"></textarea>'
+        '<button type="submit">执行并发布</button></form>'
         '</section>'
     )
 

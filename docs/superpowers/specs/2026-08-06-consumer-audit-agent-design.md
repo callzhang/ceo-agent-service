@@ -222,8 +222,10 @@ rules takes effect for the next Agent turn without a service restart.
 A returns one of three logical results:
 
 - `no_action`: no external action is needed;
-- `needs_human`: the business decision itself cannot be made from available
-  evidence;
+- `needs_human`: the business decision itself requires an irreducible personal
+  or management judgment. A missing fact that can be obtained from the
+  conversation participant instead becomes a proposal to send one concrete
+  clarifying question;
 - `proposal`: one or more ordered external actions are ready for B review.
 
 A proposal is generic and does not enumerate supported business systems. It

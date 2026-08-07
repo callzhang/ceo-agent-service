@@ -5659,7 +5659,7 @@ def test_handle_reviewed_message_reply_uses_immutable_attempt_binding(tmp_path: 
     assert task.status == "pending"
 
 
-def test_needs_human_decision_renders_choices_and_queues_resumable_rerun(
+def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -5699,15 +5699,15 @@ def test_needs_human_decision_renders_choices_and_queues_resumable_rerun(
 
     status, html = render_attempt_detail(store, attempt_id)
     assert status == 200
-    assert "需要你选择" in html
-    assert "A. 按当前事实继续处理并发布" in html
-    assert "B. 先追问一个具体澄清问题并发布" in html
-    assert "C. 自定义回复或执行指令" in html
+    assert "需要你的判断" in html
+    assert "按当前事实继续处理并发布" not in html
+    assert "先追问一个具体澄清问题并发布" not in html
+    assert "填写判断或处理指令" in html
 
     status, headers, body = handle_needs_human_decision_post(
         store,
         attempt_id,
-        b"choice=b",
+        "instruction=采用方案二并说明交付边界".encode(),
     )
 
     source = store.get_reply_attempt(attempt_id)
@@ -5724,7 +5724,7 @@ def test_needs_human_decision_renders_choices_and_queues_resumable_rerun(
     assert task.oa_url == "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
     assert selected_attempt is not None
     assert selected_attempt.reviewer_feedback == source.reviewer_feedback
-    assert "向原消息发起人发送一个具体" in selected_attempt.reviewer_feedback
+    assert "采用方案二并说明交付边界" in selected_attempt.reviewer_feedback
 
     wechat_attempt_id = store.record_reply_attempt(
         conversation_id="wechat-cid-1",

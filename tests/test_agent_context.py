@@ -251,6 +251,14 @@ def test_consumer_context_is_read_only_and_reuses_supplied_facts():
     assert "Raw material references and exact read commands" in rendered
 
 
+def test_consumer_context_turns_recoverable_evidence_gap_into_clarifying_proposal():
+    rendered = _context(trigger_text="这个候选人怎么样？").render()
+
+    assert "send one concrete clarifying question" in rendered
+    assert "Do not return needs_human for missing evidence" in rendered
+    assert "irreducible personal or management decision" in rendered
+
+
 def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     task = _oa_context(
         reference="process_instance_id=pid-1; task_id=tid-1",
