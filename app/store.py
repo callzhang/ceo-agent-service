@@ -4971,7 +4971,7 @@ class AutoReplyStore:
                       from agent_runs as runs
                       where runs.reply_task_id=tasks.id
                         and runs.execution_generation=tasks.execution_generation
-                        and runs.status='running'
+                        and runs.status in ('running', 'unknown')
                         and runs.lease_expires_at>current_timestamp
                   )
                 order by tasks.locked_at, tasks.id

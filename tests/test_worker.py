@@ -1798,7 +1798,6 @@ def test_produce_once_records_list_unread_failure_without_crashing(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
-
     queued = worker.produce_once()
 
     assert queued == 0
@@ -14144,6 +14143,7 @@ def test_handoff_ding_failure_does_not_block_ack(tmp_path: Path, monkeypatch):
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
+    monkeypatch.setattr("app.worker.send_browser_notification", lambda **_: False)
 
     worker.run_once()
 

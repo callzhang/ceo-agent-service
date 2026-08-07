@@ -1099,6 +1099,42 @@ def test_stale_unknown_effect_without_session_is_recoverable_by_orchestrator(
     assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
 
 
+def test_stale_task_waits_for_active_unknown_recovery_lease(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(store, task_id, "initial", owner="failed-worker").run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": False},
+        owner="failed-worker",
+    )
+    claimed = store.claim_unknown_agent_run(
+        run.id,
+        owner="recovery-worker",
+        lease_seconds=3600,
+    )
+    assert claimed.claimed is True
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') "
+            "where id=?",
+            (task_id,),
+        )
+
+    assert store.list_stale_processing_reply_tasks(30 * 60) == []
+
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set lease_expires_at=datetime('now', '-1 second') "
+            "where id=?",
+            (run.id,),
+        )
+
+    assert [
+        task.id for task in store.list_stale_processing_reply_tasks(30 * 60)
+    ] == [task_id]
+
+
 def test_agent_run_concurrent_claims_choose_exactly_one_owner(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     first_store = AutoReplyStore(db_path)
