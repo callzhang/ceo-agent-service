@@ -7,7 +7,7 @@ import pytest
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_contracts import ConsumerProposal, ProposedAction
 from app.audit_agent import AuditAgentRunner
-from app.native_cli_metadata import AgentReadOnlyViolationError
+from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 
@@ -35,17 +35,16 @@ def _audit_result_jsonl(
     proposal_revision: int = 0,
     include_read: bool = True,
     include_write: bool = False,
+    read_target: str = "cid-agent",
 ) -> str:
     records = [json.dumps({"type": "thread.started", "thread_id": session})]
     if include_read:
         arguments = {
             "argv": [
-                "dws", "chat", "message", "list", "--group", "cid-agent",
+                "dws", "chat", "message", "list", "--group", read_target,
                 "--time", "2026-08-06",
             ]
         }
-        from app.native_cli_metadata import describe_native_command
-
         descriptor = describe_native_command(
             {"type": "command_execution", "argv": arguments["argv"]}
         )
@@ -186,8 +185,6 @@ def _audit_jsonl(
                     "retryable": True,
                     "gate_state": "unavailable",
                 }
-            from app.native_cli_metadata import describe_native_command
-
             descriptor = describe_native_command(
                 {"type": "command_execution", "argv": arguments["argv"]}
             )
@@ -227,8 +224,6 @@ def _audit_jsonl(
                 "--time", "2026-08-06",
             ]
         }
-        from app.native_cli_metadata import describe_native_command
-
         descriptor = describe_native_command(
             {"type": "command_execution", "argv": arguments["argv"]}
         )
@@ -514,13 +509,20 @@ def test_audit_accepts_matching_persisted_execution_receipt_with_live_read(setup
                 turn_attempt=0,
             )
             assert run is not None
+            descriptor = describe_native_command(
+                {
+                    "type": "command_execution",
+                    **audit_context.proposal.actions[0].payload,
+                }
+            )
+            assert descriptor is not None
             store.record_agent_execution_receipt(
                 run.id,
                 receipt_id="receipt-operation-1",
                 operation_id=run.operation_id,
                 cli="dws",
                 command_path="chat message send",
-                command_digest="persisted-command-digest",
+                command_digest=descriptor.command_digest,
                 exit_code=0,
                 owner="audit-owner",
             )
@@ -723,7 +725,8 @@ def test_crash_after_write_resumes_same_audit_session_and_confirms_without_repla
         for event in persisted.tool_events
     ) == 1
     receipts = store.list_agent_execution_receipts(run.id)
-    assert [receipt.operation_id for receipt in receipts] == [run.operation_id]
+    assert len(receipts) == 1
+    assert receipts[0].operation_id.startswith(f"{run.operation_id}:")
     read_events = [
         event
         for event in persisted.tool_events
@@ -763,6 +766,45 @@ def test_ambiguous_recovery_becomes_needs_human_without_write(setup):
         and event["item"]["metadata"]["effect"] == "effectful"
         for event in persisted.tool_events
     ) == 1
+
+
+def test_ambiguous_recovery_requires_matching_live_read(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "needs_human",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            include_read=False,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="audit_recovery_evidence_missing"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).recover(task, audit_context, run=run)
+
+
+def test_unrelated_read_cannot_authorize_recovery_write(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "executed",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            include_write=True,
+            read_target="cid-unrelated",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="audit_recovery_read_required"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).recover(task, audit_context, run=run)
 
 
 def test_definitely_absent_recovery_reads_before_executing_same_revision_once(setup):
@@ -816,6 +858,123 @@ def test_unknown_recovery_rejects_blind_write_before_live_read(setup):
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.status == "unknown"
     assert persisted.side_effect_state == "unknown"
+
+
+@pytest.mark.parametrize("mismatch", ("digest", "target"))
+def test_receipt_with_wrong_digest_or_target_does_not_confirm_action(setup, mismatch):
+    store, task, audit_context, parent = setup
+
+    class WrongReceiptExecutor(CapturingExecutor):
+        def __call__(self, command, *, on_stdout_line, **kwargs):
+            run = store.get_agent_run_for_turn(
+                task.id,
+                task.execution_generation,
+                role=AgentRole.AUDIT,
+                proposal_revision=0,
+                turn_attempt=0,
+            )
+            assert run is not None
+            if mismatch == "target":
+                descriptor = describe_native_command(
+                    {
+                        "type": "command_execution",
+                        "argv": [
+                            "dws", "chat", "message", "send", "--group",
+                            "cid-unrelated", "--text", "done", "--yes",
+                        ],
+                    }
+                )
+                assert descriptor is not None
+                command_digest = descriptor.command_digest
+            else:
+                command_digest = "wrong-command-digest"
+            store.record_agent_execution_receipt(
+                run.id,
+                receipt_id="wrong-receipt",
+                operation_id=run.operation_id,
+                cli="dws",
+                command_path="chat message send",
+                command_digest=command_digest,
+                exit_code=0,
+                owner="audit-owner",
+            )
+            return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+
+    with pytest.raises(RuntimeError, match="audit_execution_evidence_missing"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=WrongReceiptExecutor(
+                _audit_result_jsonl(
+                    "executed",
+                    operation_id="operation-1",
+                    session="session-b",
+                )
+            ),
+            owner="audit-owner",
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+
+def test_two_action_recovery_confirms_unknown_first_and_executes_second_once(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    second = ProposedAction.model_validate(
+        {
+            "description": "Send second",
+            "capability": "agent_cli.dws",
+            "operation": "chat message send",
+            "target": {"group": "cid-second"},
+            "payload": {
+                "argv": [
+                    "dws", "chat", "message", "send", "--group", "cid-second",
+                    "--text", "done", "--yes",
+                ]
+            },
+            "expected_verification": "Second message exists",
+        }
+    )
+    recovery_context = replace(
+        audit_context,
+        proposal=audit_context.proposal.model_copy(
+            update={"actions": (*audit_context.proposal.actions, second)}
+        ),
+    )
+    first_read = _audit_result_jsonl(
+        "executed",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+    ).splitlines()
+    second_write = _audit_jsonl(
+        run.operation_id,
+        session=run.codex_session_id,
+        write_target="cid-second",
+    ).splitlines()
+    second_read = _audit_result_jsonl(
+        "executed",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+        read_target="cid-second",
+    ).splitlines()
+    executor = CapturingExecutor(
+        "\n".join(first_read[:-1] + second_read[1:-1] + second_write[1:])
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, recovery_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "executed"
+    assert persisted is not None and persisted.side_effect_state == "confirmed"
+    started_targets = [
+        event["item"]["metadata"].get("target_identifiers")
+        for event in persisted.tool_events
+        if event["type"] == "item.started"
+        and event["item"]["metadata"]["effect"] == "effectful"
+    ]
+    assert started_targets.count({"group": "cid-agent"}) == 1
+    assert started_targets.count({"group": "cid-second"}) == 1
 
 
 def test_audit_rejects_different_operation_for_same_target_and_payload(setup):

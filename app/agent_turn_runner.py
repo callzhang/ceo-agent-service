@@ -76,15 +76,27 @@ class AgentTurnProcess(Generic[ResultT]):
     ) -> AgentTurnRunResult[ResultT]:
         line_count = 0
         saw_json = False
-        recovery_read_completed = False
         recovery_effect_started = False
+        recovery_reads: list[dict[str, object]] = []
+        recovery_started_actions: set[int] = set()
+        recovery_event_start = len(run.tool_events)
+        completed_before_recovery = (
+            _completed_action_indexes(
+                run.tool_events,
+                self.store.list_agent_execution_receipts(run.id),
+                expected_effect_actions,
+                operation_id=run.operation_id,
+            )
+            if recover_unknown
+            else set()
+        )
         transcript_start = (
             run.transcript_end_line if recover_unknown else run.transcript_start_line
         )
 
         def persist_line(line: str) -> None:
             nonlocal line_count, saw_json
-            nonlocal recovery_read_completed, recovery_effect_started
+            nonlocal recovery_effect_started
             if not line.strip():
                 return
             try:
@@ -143,15 +155,28 @@ class AgentTurnProcess(Generic[ResultT]):
                     and event.get("type") == "item.started"
                     and effect == EffectKind.EFFECTFUL.value
                 ):
-                    if not recovery_read_completed:
+                    action_index = _matching_action_index(
+                        metadata, expected_effect_actions
+                    )
+                    if (
+                        action_index is None
+                        or action_index in completed_before_recovery
+                        or action_index in recovery_started_actions
+                        or not any(
+                            _read_matches_action(read, expected_effect_actions[action_index])
+                            for read in recovery_reads
+                        )
+                    ):
                         raise RuntimeError("audit_recovery_read_required")
+                    recovery_started_actions.add(action_index)
                     recovery_effect_started = True
                 if (
                     recover_unknown
                     and event.get("type") == "item.completed"
                     and effect == EffectKind.READ_ONLY.value
                 ):
-                    recovery_read_completed = True
+                    assert isinstance(metadata, dict)
+                    recovery_reads.append(metadata)
                 if recover_unknown:
                     self.store.append_unknown_agent_run_event(
                         run.id, event, owner=self.owner
@@ -221,8 +246,8 @@ class AgentTurnProcess(Generic[ResultT]):
                 result,
                 persisted,
                 expected_effect_actions=expected_effect_actions,
-                recovery_read_completed=recovery_read_completed,
                 recovery_effect_started=recovery_effect_started,
+                recovery_event_start=recovery_event_start,
             )
         elif run.role is AgentRole.AUDIT:
             self._validate_audit_result(
@@ -398,21 +423,16 @@ class AgentTurnProcess(Generic[ResultT]):
             if external_result.operation_id != run.operation_id:
                 self._fail_running(run, "audit_operation_mismatch")
                 raise RuntimeError("audit_operation_mismatch")
-            completed_events_match = _effect_actions_match(
+            completed = _completed_action_indexes(
                 persisted.tool_events,
+                self.store.list_agent_execution_receipts(run.id),
                 expected_effect_actions,
                 operation_id=run.operation_id,
             )
-            receipt_matches = _execution_receipt_matches(
-                self.store,
-                run,
+            if completed == set(range(len(expected_effect_actions))) and not _has_duplicate_effects(
+                persisted.tool_events,
                 expected_effect_actions,
-            )
-            if (
-                completed_events_match
-                and _effect_actions_were_verified(persisted.tool_events)
-                or receipt_matches
-                and _has_completed_read_event(persisted.tool_events)
+                operation_id=run.operation_id,
             ):
                 return
             code = (
@@ -451,8 +471,8 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted: AgentRun,
         *,
         expected_effect_actions: tuple[dict[str, object], ...],
-        recovery_read_completed: bool,
         recovery_effect_started: bool,
+        recovery_event_start: int,
     ) -> None:
         outcome = getattr(result, "outcome")
         if getattr(result, "proposal_revision") != run.proposal_revision:
@@ -460,6 +480,19 @@ class AgentTurnProcess(Generic[ResultT]):
         if outcome is AuditOutcome.NEEDS_HUMAN:
             if recovery_effect_started:
                 raise RuntimeError("audit_recovery_effect_unresolved")
+            reconciled = _reconciled_action_indexes(
+                persisted.tool_events,
+                expected_effect_actions,
+                event_start=recovery_event_start,
+            )
+            completed_before = _completed_action_indexes(
+                persisted.tool_events[:recovery_event_start],
+                self.store.list_agent_execution_receipts(run.id),
+                expected_effect_actions,
+                operation_id=run.operation_id,
+            )
+            if not (reconciled - completed_before):
+                raise RuntimeError("audit_recovery_evidence_missing")
             return
         if outcome in {AuditOutcome.UNKNOWN, AuditOutcome.FAILED}:
             return
@@ -468,63 +501,55 @@ class AgentTurnProcess(Generic[ResultT]):
         external_result = getattr(result, "external_result")
         if external_result.operation_id != run.operation_id:
             raise RuntimeError("audit_operation_mismatch")
-        if not recovery_read_completed:
-            raise RuntimeError("audit_recovery_read_required")
-        if not _effect_actions_match(
+        reconciled = _reconciled_action_indexes(
             persisted.tool_events,
             expected_effect_actions,
-            operation_id=run.operation_id,
-            event_type="item.started",
-            allow_extra=True,
-        ):
-            raise RuntimeError("audit_execution_evidence_mismatch")
-        if not _effect_actions_were_verified(
+            event_start=recovery_event_start,
+        )
+        receipts = self.store.list_agent_execution_receipts(run.id)
+        completed = _completed_action_indexes(
             persisted.tool_events,
-            effect_event_type="item.started",
-            operation_id=run.operation_id,
-        ):
-            raise RuntimeError("audit_execution_evidence_mismatch")
-        has_completion_evidence = _effect_actions_match(
-            persisted.tool_events,
+            receipts,
             expected_effect_actions,
             operation_id=run.operation_id,
-        ) or _execution_receipt_matches(self.store, run, expected_effect_actions)
-        if not has_completion_evidence:
+        )
+        for action_index in sorted(reconciled - completed):
+            action = expected_effect_actions[action_index]
             metadata = _matching_effect_metadata(
                 persisted.tool_events,
-                expected_effect_actions,
+                action,
                 operation_id=run.operation_id,
                 event_type="item.started",
             )
-            if metadata is None:
-                raise RuntimeError("audit_execution_evidence_missing")
-            capability = metadata.get("native_cli") or metadata.get("capability")
-            command_path = metadata.get("operation")
-            command_digest = metadata.get("operation_digest")
-            if not all(
-                isinstance(value, str) and value.strip()
-                for value in (capability, command_path, command_digest)
-            ):
-                raise RuntimeError("audit_execution_evidence_missing")
-            read_result_digest = _recovery_read_result_digest(
+            read_result_digest = _matching_read_digest(
                 persisted.tool_events,
-                operation_id=run.operation_id,
+                action,
+                event_start=recovery_event_start,
             )
-            if not read_result_digest:
-                raise RuntimeError("audit_execution_evidence_missing")
+            if metadata is None or not read_result_digest:
+                continue
+            command_digest = metadata.get("operation_digest")
+            if command_digest != action.get("operation_digest"):
+                continue
             self.store.record_agent_execution_receipt(
                 run.id,
-                receipt_id=(
-                    f"reconciliation:{run.operation_id}:{read_result_digest}"
-                ),
-                operation_id=run.operation_id,
-                cli=str(capability),
-                command_path=str(command_path),
+                receipt_id=f"reconciliation:{run.operation_id}:{read_result_digest}",
+                operation_id=_action_receipt_operation_id(run.operation_id, action),
+                cli=str(metadata.get("native_cli") or metadata.get("capability")),
+                command_path=str(metadata.get("operation")),
                 command_digest=str(command_digest),
                 exit_code=0,
                 owner=self.owner,
                 expected_status="unknown",
             )
+        completed = _completed_action_indexes(
+            persisted.tool_events,
+            self.store.list_agent_execution_receipts(run.id),
+            expected_effect_actions,
+            operation_id=run.operation_id,
+        )
+        if completed != set(range(len(expected_effect_actions))):
+            raise RuntimeError("audit_execution_evidence_missing")
 
     @staticmethod
     def _raise_for_process_failure(process: ProcessRunResult) -> None:
@@ -599,81 +624,13 @@ def _agent_cli_receipt(value: object) -> dict[str, object] | None:
     return None
 
 
-def _effect_actions_match(
-    events: list[dict[str, object]],
-    expected_actions: tuple[dict[str, object], ...],
-    *,
-    operation_id: str,
-    event_type: str = "item.completed",
-    allow_extra: bool = False,
-) -> bool:
-    actual_actions: list[dict[str, object]] = []
-    for event in events:
-        if event.get("type") != event_type:
-            continue
-        item = event.get("item")
-        metadata = item.get("metadata") if isinstance(item, dict) else None
-        if (
-            not isinstance(metadata, dict)
-            or metadata.get("effect") != "effectful"
-            or metadata.get("operation_id") != operation_id
-        ):
-            continue
-        operation = metadata.get("operation")
-        capability = metadata.get("capability")
-        arguments_digest = metadata.get("arguments_digest")
-        if (
-            not isinstance(capability, str)
-            or not isinstance(operation, str)
-            or not isinstance(arguments_digest, str)
-        ):
-            return False
-        actual_actions.append(
-            {
-                "capability": capability,
-                "operation": operation,
-                "arguments_digest": arguments_digest,
-            }
-        )
-    if len(actual_actions) < len(expected_actions) or (
-        not allow_extra and len(actual_actions) != len(expected_actions)
-    ):
-        return False
-    unmatched = list(actual_actions)
-    for expected in expected_actions:
-        expected_capability = expected.get("capability")
-        expected_operation = expected.get("operation")
-        expected_arguments_digest = expected.get("arguments_digest")
-        if (
-            not isinstance(expected_capability, str)
-            or not isinstance(expected_operation, str)
-            or not isinstance(expected_arguments_digest, str)
-        ):
-            return False
-        match_index = next(
-            (
-                index
-                for index, actual in enumerate(unmatched)
-                if actual == expected
-            ),
-            None,
-        )
-        if match_index is None:
-            return False
-        unmatched.pop(match_index)
-    return True
-
-
 def _matching_effect_metadata(
     events: list[dict[str, object]],
-    expected_actions: tuple[dict[str, object], ...],
+    expected_action: dict[str, object],
     *,
     operation_id: str,
     event_type: str,
 ) -> dict[str, object] | None:
-    if len(expected_actions) != 1:
-        return None
-    expected = expected_actions[0]
     for event in events:
         if event.get("type") != event_type:
             continue
@@ -684,43 +641,177 @@ def _matching_effect_metadata(
         if (
             metadata.get("effect") == EffectKind.EFFECTFUL.value
             and metadata.get("operation_id") == operation_id
-            and metadata.get("capability") == expected.get("capability")
-            and metadata.get("operation") == expected.get("operation")
-            and metadata.get("arguments_digest")
-            == expected.get("arguments_digest")
+            and _metadata_matches_action(metadata, expected_action)
         ):
             return metadata
     return None
 
 
-def _execution_receipt_matches(
-    store: AutoReplyStore,
-    run: AgentRun,
-    expected_actions: tuple[dict[str, object], ...],
+def _event_metadata(event: dict[str, object]) -> dict[str, object] | None:
+    item = event.get("item")
+    metadata = item.get("metadata") if isinstance(item, dict) else None
+    return metadata if isinstance(metadata, dict) else None
+
+
+def _metadata_matches_action(
+    metadata: dict[str, object],
+    action: dict[str, object],
 ) -> bool:
-    if len(expected_actions) != 1:
+    identity_matches = all(
+        metadata.get(key) == action.get(key)
+        for key in (
+            "capability",
+            "operation",
+            "arguments_digest",
+            "target_identifiers",
+        )
+    )
+    expected_command_digest = action.get("operation_digest")
+    return identity_matches and (
+        expected_command_digest is None
+        or metadata.get("operation_digest") == expected_command_digest
+    )
+
+
+def _matching_action_index(
+    metadata: dict[str, object] | None,
+    actions: tuple[dict[str, object], ...],
+) -> int | None:
+    if metadata is None:
+        return None
+    return next(
+        (
+            index
+            for index, action in enumerate(actions)
+            if _metadata_matches_action(metadata, action)
+        ),
+        None,
+    )
+
+
+def _read_matches_action(
+    read: dict[str, object],
+    action: dict[str, object],
+) -> bool:
+    if read.get("capability") != action.get("capability"):
         return False
-    expected = expected_actions[0]
-    receipts = store.list_agent_execution_receipts(run.id)
-    return any(
-        receipt.operation_id == run.operation_id
-        and receipt.completed
-        and receipt.persisted
-        and receipt.safe_to_confirm
-        and receipt.command_path == expected.get("operation")
-        for receipt in receipts
-    )
+    read_target = read.get("target_identifiers")
+    action_target = action.get("target_identifiers")
+    if not isinstance(read_target, dict) or not isinstance(action_target, dict):
+        return False
+    shared_keys = read_target.keys() & action_target.keys()
+    if not shared_keys or any(
+        read_target[key] != action_target[key] for key in shared_keys
+    ):
+        return False
+    read_operation = str(read.get("operation") or "").split()
+    action_operation = str(action.get("operation") or "").split()
+    return len(read_operation) > 1 and read_operation[:-1] == action_operation[:-1]
 
 
-def _has_completed_read_event(events: list[dict[str, object]]) -> bool:
-    return any(
-        event.get("type") == "item.completed"
-        and isinstance(event.get("item"), dict)
-        and isinstance(event["item"].get("metadata"), dict)
-        and event["item"]["metadata"].get("effect")
-        == EffectKind.READ_ONLY.value
-        for event in events
-    )
+def _matching_read_digest(
+    events: list[dict[str, object]],
+    action: dict[str, object],
+    *,
+    event_start: int = 0,
+    after_index: int = -1,
+) -> str:
+    for index, event in enumerate(events):
+        if index < event_start or index <= after_index or event.get("type") != "item.completed":
+            continue
+        metadata = _event_metadata(event)
+        if metadata is None or metadata.get("effect") != EffectKind.READ_ONLY.value:
+            continue
+        digest = metadata.get("result_digest")
+        if _read_matches_action(metadata, action) and isinstance(digest, str):
+            return digest
+    return ""
+
+
+def _reconciled_action_indexes(
+    events: list[dict[str, object]],
+    actions: tuple[dict[str, object], ...],
+    *,
+    event_start: int,
+) -> set[int]:
+    return {
+        index
+        for index, action in enumerate(actions)
+        if _matching_read_digest(events, action, event_start=event_start)
+    }
+
+
+def _action_receipt_operation_id(
+    operation_id: str,
+    action: dict[str, object],
+) -> str:
+    return f"{operation_id}:{action.get('arguments_digest', '')}"
+
+
+def _completed_action_indexes(
+    events: list[dict[str, object]],
+    receipts: list[object],
+    actions: tuple[dict[str, object], ...],
+    *,
+    operation_id: str,
+) -> set[int]:
+    completed: set[int] = set()
+    for action_index, action in enumerate(actions):
+        for event_index, event in enumerate(events):
+            metadata = _event_metadata(event)
+            if (
+                event.get("type") != "item.completed"
+                or metadata is None
+                or metadata.get("effect") != EffectKind.EFFECTFUL.value
+                or metadata.get("operation_id") != operation_id
+                or not _metadata_matches_action(metadata, action)
+            ):
+                continue
+            if _matching_read_digest(events, action, after_index=event_index):
+                completed.add(action_index)
+                break
+        if action_index in completed:
+            continue
+        if not _matching_read_digest(events, action):
+            continue
+        expected_receipt_ids = {
+            operation_id,
+            _action_receipt_operation_id(operation_id, action),
+        }
+        expected_cli = str(action.get("capability") or "").rsplit(".", 1)[-1]
+        for receipt in receipts:
+            if (
+                getattr(receipt, "operation_id", "") in expected_receipt_ids
+                and getattr(receipt, "completed", False)
+                and getattr(receipt, "persisted", False)
+                and getattr(receipt, "safe_to_confirm", False)
+                and getattr(receipt, "cli", "") == expected_cli
+                and getattr(receipt, "command_path", "") == action.get("operation")
+                and getattr(receipt, "command_digest", "")
+                == action.get("operation_digest")
+            ):
+                completed.add(action_index)
+                break
+    return completed
+
+
+def _has_duplicate_effects(
+    events: list[dict[str, object]],
+    actions: tuple[dict[str, object], ...],
+    *,
+    operation_id: str,
+) -> bool:
+    counts = [0] * len(actions)
+    for event in events:
+        if event.get("type") != "item.completed":
+            continue
+        metadata = _event_metadata(event)
+        if metadata is None or metadata.get("operation_id") != operation_id:
+            continue
+        action_index = _matching_action_index(metadata, actions)
+        if action_index is not None:
+            counts[action_index] += 1
+    return any(count > 1 for count in counts)
 
 
 def _json_digest(value: object) -> str:
@@ -731,85 +822,6 @@ def _json_digest(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _effect_actions_were_verified(
-    events: list[dict[str, object]],
-    *,
-    effect_event_type: str = "item.completed",
-    operation_id: str = "",
-) -> bool:
-    effects: list[tuple[int, dict[str, object]]] = []
-    reads: list[tuple[int, dict[str, object]]] = []
-    for index, event in enumerate(events):
-        item = event.get("item")
-        metadata = item.get("metadata") if isinstance(item, dict) else None
-        if not isinstance(metadata, dict):
-            continue
-        target = metadata.get("target_identifiers")
-        normalized_target = target if isinstance(target, dict) else {}
-        effect = metadata.get("effect")
-        if (
-            event.get("type") == effect_event_type
-            and effect == "effectful"
-            and (not operation_id or metadata.get("operation_id") == operation_id)
-        ):
-            effects.append((index, normalized_target))
-        elif event.get("type") == "item.completed" and effect == "read_only":
-            reads.append((index, normalized_target))
-    if not effects:
-        return False
-    for effect_index, effect_target in effects:
-        if not any(
-            read_index > effect_index
-            and (
-                not effect_target
-                or bool(set(effect_target.values()) & set(read_target.values()))
-            )
-            for read_index, read_target in reads
-        ):
-            return False
-    return True
-
-
-def _recovery_read_result_digest(
-    events: list[dict[str, object]],
-    *,
-    operation_id: str,
-) -> str:
-    effect_targets: list[tuple[int, dict[str, object]]] = []
-    for index, event in enumerate(events):
-        item = event.get("item")
-        metadata = item.get("metadata") if isinstance(item, dict) else None
-        if not isinstance(metadata, dict):
-            continue
-        target = metadata.get("target_identifiers")
-        normalized_target = target if isinstance(target, dict) else {}
-        if (
-            event.get("type") == "item.started"
-            and metadata.get("effect") == EffectKind.EFFECTFUL.value
-            and metadata.get("operation_id") == operation_id
-        ):
-            effect_targets.append((index, normalized_target))
-            continue
-        result_digest = metadata.get("result_digest")
-        if (
-            event.get("type") != "item.completed"
-            or metadata.get("effect") != EffectKind.READ_ONLY.value
-            or not isinstance(result_digest, str)
-            or not result_digest
-        ):
-            continue
-        if all(
-            index > effect_index
-            and (
-                not effect_target
-                or bool(set(effect_target.values()) & set(normalized_target.values()))
-            )
-            for effect_index, effect_target in effect_targets
-        ):
-            return result_digest
-    return ""
 
 
 def _contains_sensitive_value(value: object, *, depth: int = 0) -> bool:

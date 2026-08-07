@@ -13,6 +13,7 @@ from app.audit_rules import render_audit_rules
 from app.agent_runner import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
 from app.consumer_agent import _developer_instructions
+from app.native_cli_metadata import describe_native_command
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
@@ -193,11 +194,7 @@ class AuditAgentRunner:
             parse_result=lambda raw: parse_typed_agent_result(raw, AuditAgentResult),
             persist_conversation_session=False,
             expected_effect_actions=tuple(
-                {
-                    "capability": action.capability,
-                    "operation": action.operation,
-                    "arguments_digest": _json_digest(action.payload),
-                }
+                _expected_effect_action(action)
                 for action in context.proposal.actions
             ),
             recover_unknown=recovery,
@@ -212,6 +209,22 @@ def _json_digest(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _expected_effect_action(action) -> dict[str, object]:
+    expected = {
+        "capability": action.capability,
+        "operation": action.operation,
+        "arguments_digest": _json_digest(action.payload),
+        "target_identifiers": action.target,
+    }
+    descriptor = describe_native_command(
+        {"type": "command_execution", **action.payload}
+    )
+    if descriptor is not None:
+        expected["operation_digest"] = descriptor.command_digest
+        expected["target_identifiers"] = descriptor.target_identifiers
+    return expected
 
 
 def _recovery_prompt(run: AgentRun, context: AuditTurnContext) -> str:
