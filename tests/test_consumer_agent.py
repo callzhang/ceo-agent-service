@@ -272,9 +272,11 @@ def test_consumer_preserves_codex_cli_authentication_failure(store, task, contex
         turn_attempt=0,
     )
     assert run is not None
-    assert json.loads(run.structured_error_json)["code"].startswith(
+    error = json.loads(run.structured_error_json)
+    assert error["code"].startswith(
         "codex_provider_auth_failed"
     )
+    assert error["authorization_required"] is True
 
 
 def test_consumer_reads_current_audit_rules_for_each_turn(

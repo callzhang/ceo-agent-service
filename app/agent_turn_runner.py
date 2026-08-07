@@ -81,6 +81,10 @@ def _agent_process_error_code(exc: Exception) -> str:
     return "codex_process_failed"
 
 
+def _requires_authorization(code: str) -> bool:
+    return code.startswith(CODEX_PROVIDER_AUTH_FAILED)
+
+
 class AgentTurnProcess(Generic[ResultT]):
     def __init__(
         self,
@@ -747,7 +751,11 @@ class AgentTurnProcess(Generic[ResultT]):
             if persisted.side_effect_state == SideEffectState.NONE.value:
                 self.store.fail_agent_run(
                     run.id,
-                    {"code": code, "retryable": True},
+                    {
+                        "code": code,
+                        "retryable": True,
+                        "authorization_required": _requires_authorization(code),
+                    },
                     owner=self.owner,
                 )
             else:
