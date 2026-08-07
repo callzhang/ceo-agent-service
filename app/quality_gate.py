@@ -279,6 +279,21 @@ def _check_reply_attempts(
             where ordinal=1
               and lower(a.send_status) in ('failed','blocked')
               and not exists (
+                select 1 from reply_attempts resolved
+                where resolved.oa_process_instance_id=a.oa_process_instance_id
+                  and json_valid(resolved.oa_action_result_json)
+                  and coalesce(
+                    json_extract(resolved.oa_action_result_json, '$.success'),
+                    json_extract(resolved.oa_action_result_json, '$.result.success'),
+                    json_extract(resolved.oa_action_result_json, '$.dws_action_result.success')
+                  )=1
+                  and upper(coalesce(
+                    json_extract(resolved.oa_action_result_json, '$.taskStatus'),
+                    json_extract(resolved.oa_action_result_json, '$.result.taskStatus'),
+                    ''
+                  ))='COMPLETED'
+              )
+              and not exists (
                 select 1 from reply_tasks t
                 where t.channel=a.channel
                   and t.conversation_id=a.conversation_id
