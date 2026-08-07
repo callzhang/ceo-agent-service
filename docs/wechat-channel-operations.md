@@ -42,6 +42,11 @@ row is created and no message can be sent by that retry. The task reaches
 results remain terminal because the consumer has no evidence that retrying is
 safe or useful.
 
+Durable-memory reads are optional. The decision command exposes their fixed
+read-only tool list only when the service manifest provides a complete
+`memory_connector` transport; otherwise it decides from the supplied WeChat
+context without adding an invalid empty MCP configuration.
+
 ## One-time key capture (SIP stays on, real app untouched)
 
 See `~/wx_read_toolkit/README.md`. Summary: shadow-copy WeChat → re-sign the copy

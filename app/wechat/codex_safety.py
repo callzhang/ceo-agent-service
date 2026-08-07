@@ -243,13 +243,21 @@ def make_read_only_with_memory_tools(command: list[str]) -> None:
         command,
         prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
     )
+    configured = frozenset(configured_transport_server_names(command))
+    memory_connector_available = "memory_connector" in configured
     disable_configured_mcp_servers(
         command,
-        except_names=frozenset({"memory_connector"}),
+        except_names=(frozenset({"memory_connector"}) if memory_connector_available else frozenset()),
     )
-    enabled_tools = json.dumps(
-        list(WECHAT_MEMORY_READ_TOOLS), ensure_ascii=True, separators=(",", ":")
-    )
+    memory_options = []
+    if memory_connector_available:
+        enabled_tools = json.dumps(
+            list(WECHAT_MEMORY_READ_TOOLS), ensure_ascii=True, separators=(",", ":")
+        )
+        memory_options = [
+            "-c",
+            f"mcp_servers.memory_connector.enabled_tools={enabled_tools}",
+        ]
     _insert_command_options(
         command,
         [
@@ -263,8 +271,7 @@ def make_read_only_with_memory_tools(command: list[str]) -> None:
             'approval_policy="never"',
             "-c",
             'web_search="disabled"',
-            "-c",
-            f"mcp_servers.memory_connector.enabled_tools={enabled_tools}",
+            *memory_options,
         ],
     )
 
