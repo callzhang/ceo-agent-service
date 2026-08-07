@@ -110,6 +110,7 @@ from app.feedback_events import (
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AgentRole,
+    AgentRun,
     AgentRunLeaseLostError,
     AutoReplyStore,
     FeedbackEvent,
@@ -5728,6 +5729,14 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         attempt.conversation_id
     )
     later_attempt = _later_attempt_for_display(store, attempt)
+    agent_runs = []
+    if attempt.agent_run_id:
+        terminal_run = store.get_agent_run(attempt.agent_run_id)
+        if terminal_run is not None:
+            agent_runs = store.list_agent_runs_for_task_generation(
+                terminal_run.reply_task_id,
+                terminal_run.execution_generation,
+            )
     return 200, render_page(
         f"Attempt #{attempt.id}",
         _attempt_detail_body(
@@ -5736,6 +5745,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             codex_session_id,
             feedback_events,
             later_attempt,
+            agent_runs,
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
@@ -7642,7 +7652,9 @@ def _attempt_detail_body(
     codex_session_id: str | None,
     feedback_events: list[FeedbackEvent],
     later_attempt: ReplyAttempt | None = None,
+    agent_runs: list[AgentRun] | None = None,
 ) -> str:
+    agent_runs = agent_runs or []
     fields = [
         ("trigger message id", attempt.trigger_message_id),
         ("action", attempt.action),
@@ -7655,14 +7667,20 @@ def _attempt_detail_body(
         ("updated", _format_local_time(attempt.updated_at)),
         ("reviewed", _format_local_time(attempt.reviewed_at or "")),
     ]
+    revision_count = len(
+        {run.proposal_revision for run in agent_runs if run.role is AgentRole.CONSUMER}
+    )
+    if revision_count:
+        fields.append(("revisions", f"{revision_count} revisions"))
+    orchestration_links = _orchestration_session_links(agent_runs)
     return _agent_detail_body(
         title_label="群名",
         title=attempt.conversation_title,
         subtitle=(
             f"触发人：{attempt.trigger_sender}" if attempt.trigger_sender.strip() else ""
         ),
-        codex_session_id=codex_session_id,
-        actions_html=_attempt_row_actions(attempt, sent_reply),
+        codex_session_id=None if agent_runs else codex_session_id,
+        actions_html=orchestration_links + _attempt_row_actions(attempt, sent_reply),
         fields=fields,
         pills_html=_attempt_action_pills(attempt, later_attempt=later_attempt),
         trigger_title="Trigger",
@@ -7682,10 +7700,41 @@ def _attempt_detail_body(
             f"{_oa_metadata_card(attempt)}"
             f"{_calendar_metadata_card(attempt)}"
             f"{_text_card('Audit summary', attempt.audit_summary)}"
-            f"{_audit_tool_uses_card(attempt)}"
+            f"{'' if agent_runs else _audit_tool_uses_card(attempt)}"
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
         ),
     )
+
+
+def _orchestration_session_links(agent_runs: list[AgentRun]) -> str:
+    consumer = next(
+        (
+            run
+            for run in reversed(agent_runs)
+            if run.role is AgentRole.CONSUMER and run.codex_session_id
+        ),
+        None,
+    )
+    audit = next(
+        (
+            run
+            for run in reversed(agent_runs)
+            if run.role is AgentRole.AUDIT and run.codex_session_id
+        ),
+        None,
+    )
+    links = []
+    if consumer is not None:
+        links.append(
+            f'<a class="agent-log-button" href="/codex/{escape(consumer.codex_session_id)}">'
+            "View Consumer conversation</a>"
+        )
+    if audit is not None:
+        links.append(
+            f'<a class="agent-log-button" href="/codex/{escape(audit.codex_session_id)}">'
+            "View execution audit</a>"
+        )
+    return "".join(links)
 
 
 def _agent_detail_body(

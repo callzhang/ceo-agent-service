@@ -18,25 +18,6 @@ from app.agent_context import (
     PriorReceipt,
 )
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
-from app.agent_result import (
-    AgentError,
-    AgentOutcome,
-    AgentResult,
-    SideEffectState,
-)
-from app.agent_runner import (
-    LEASE_SECONDS,
-    AgentConversationLockedError,
-    AgentReadOnlyViolationError,
-    AgentRunNoEffectEvidenceError,
-    AgentRunUnavailableError,
-    ReconciliationResult,
-    ReconciliationDependencyError,
-    DirectAgentRunResult,
-    DirectAgentRunner,
-    structured_execution_evidence,
-    unknown_effect_reference,
-)
 from app.audit_agent import AuditAgentRunner
 from app.channel_gate import (
     ChannelGate,
@@ -94,6 +75,16 @@ from app.store import (
     AutoReplyStore,
     ReplyTask,
 )
+
+
+ORCHESTRATION_ATTEMPT_STATUS = {
+    "executed": ("completed", "done"),
+    "no_action": ("skipped", "done"),
+    "needs_human": ("needs_human", "done"),
+    "failed_retryable": ("failed", "pending"),
+    "failed_terminal": ("failed", "failed"),
+    "unknown": ("pending_reconciliation", "pending"),
+}
 logger = logging.getLogger(__name__)
 
 HANDOFF_ACK = handoff_ack()
@@ -203,10 +194,7 @@ def _is_codex_login_required_error(reason: str) -> bool:
     normalized = reason.lower()
     return (
         "failed to refresh token" in normalized
-        and (
-            "session has ended" in normalized
-            or "invalid refresh token" in normalized
-        )
+        and ("session has ended" in normalized or "invalid refresh token" in normalized)
     ) or "token_invalidated" in normalized
 
 
@@ -353,7 +341,9 @@ def _extract_text_emotion_background_id(payload: object) -> str:
 
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
 DINGTALK_FILE_ID_PATTERN = re.compile(r"(?:^|\s)fileId:\s*(?P<file_id>\S+)")
-IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)")
+IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(
+    r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)"
+)
 MARKDOWN_IMAGE_URL_PATTERN = re.compile(r"!\[[^\]]*]\((?P<url>https?://[^)]+)\)")
 DINGTALK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GROUP_CONTEXT_RECOVERY_WINDOW = timedelta(hours=24)
@@ -424,7 +414,6 @@ class DingTalkAutoReplyWorker:
         now_provider: Callable[[], datetime] | None = None,
         channel_gates: dict[str, ChannelGate] | None = None,
         login_coordinator: LoginCoordinator | None = None,
-        direct_agent_runner: DirectAgentRunner | None = None,
         agent_orchestrator: AgentOrchestrator | None = None,
     ):
         self.store = store
@@ -444,13 +433,14 @@ class DingTalkAutoReplyWorker:
         self.login_coordinator = login_coordinator or LoginCoordinator(
             store=store,
             launchers={
-                "dingtalk": lambda: getattr(self.dws, "dws", self.dws).start_auth_login(),
+                "dingtalk": lambda: getattr(
+                    self.dws, "dws", self.dws
+                ).start_auth_login(),
                 "lark": start_lark_auth_login,
             },
             now=lambda: self._now().astimezone(timezone.utc),
         )
         self._pass_channel_results: dict[str, ChannelGateResult] = {}
-        self.direct_agent_runner = direct_agent_runner
         self.agent_orchestrator = agent_orchestrator
 
     def _agent_orchestrator(self) -> AgentOrchestrator:
@@ -476,20 +466,6 @@ class DingTalkAutoReplyWorker:
             ),
         )
         return self.agent_orchestrator
-
-    def _direct_agent_runner(self) -> DirectAgentRunner:
-        if self.direct_agent_runner is not None:
-            return self.direct_agent_runner
-        runner = getattr(self.codex, "runner", None)
-        workspace = getattr(runner, "workspace", None)
-        if workspace is None:
-            raise RuntimeError("native Codex runner workspace is unavailable")
-        self.direct_agent_runner = DirectAgentRunner(
-            store=self.store,
-            workspace=Path(workspace),
-            codex_bin=str(getattr(runner, "codex_bin", "codex")),
-        )
-        return self.direct_agent_runner
 
     @staticmethod
     def _default_material_read_commands(
@@ -1024,7 +1000,9 @@ class DingTalkAutoReplyWorker:
         return event.status.strip().lower() != "cancelled"
 
     @staticmethod
-    def _calendar_event_has_attendee(event: DwsCalendarEvent, attendee_name: str) -> bool:
+    def _calendar_event_has_attendee(
+        event: DwsCalendarEvent, attendee_name: str
+    ) -> bool:
         expected = attendee_name.strip()
         if not expected:
             return False
@@ -1073,8 +1051,7 @@ class DingTalkAutoReplyWorker:
         if not should_recover:
             return conversations, set()
         existing_ids = {
-            conversation.open_conversation_id
-            for conversation in conversations
+            conversation.open_conversation_id for conversation in conversations
         }
         recovered = self._conversations_with_recent_single_chat_recovery(conversations)
         recovery_conversation_ids = {
@@ -1140,8 +1117,7 @@ class DingTalkAutoReplyWorker:
 
     def _mark_dws_read_forbidden(self, conversation_id: str) -> None:
         forbidden_until = (
-            self._now().astimezone(timezone.utc)
-            + DWS_FORBIDDEN_CONVERSATION_COOLDOWN
+            self._now().astimezone(timezone.utc) + DWS_FORBIDDEN_CONVERSATION_COOLDOWN
         ).isoformat()
         state = self._dws_forbidden_conversations()
         state[conversation_id] = forbidden_until
@@ -1190,9 +1166,7 @@ class DingTalkAutoReplyWorker:
         if not isinstance(payload, dict):
             return {}
         return {
-            str(key): value
-            for key, value in payload.items()
-            if isinstance(value, str)
+            str(key): value for key, value in payload.items() if isinstance(value, str)
         }
 
     @staticmethod
@@ -1220,9 +1194,7 @@ class DingTalkAutoReplyWorker:
         if not checked_at:
             return True
         try:
-            last_checked = datetime.fromisoformat(
-                checked_at.replace("Z", "+00:00")
-            )
+            last_checked = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
         except ValueError:
             return True
         if last_checked.tzinfo is None:
@@ -1521,17 +1493,6 @@ class DingTalkAutoReplyWorker:
             )
             try:
                 completed = self._process_queued_task(conversation, task)
-            except AgentConversationLockedError:
-                try:
-                    self.store.defer_reply_task(
-                        task.id,
-                        "codex_session_locked",
-                        expected_execution_generation=task.execution_generation,
-                        available_at=self._reply_task_retry_available_at(1),
-                    )
-                except AgentRunLeaseLostError:
-                    continue
-                continue
             except AgentRunLeaseLostError:
                 continue
             except Exception as exc:
@@ -1581,7 +1542,7 @@ class DingTalkAutoReplyWorker:
                             title=notification_prefix + task.conversation_title,
                             message=authorization_wait_error[:120],
                             conversation=conversation,
-                    )
+                        )
                     continue
                 try:
                     failed_run = self._latest_failed_agent_run(task)
@@ -1685,250 +1646,6 @@ class DingTalkAutoReplyWorker:
                 message=f"requeued {recovered} stale task(s)",
             )
 
-    def reconcile_unknown_agent_runs(self, *, limit: int = 50) -> int:
-        resolved = 0
-        now = self._sqlite_timestamp(self._now())
-        for run in self.store.list_suspended_unknown_agent_runs(limit=limit):
-            try:
-                unknown_effect_reference(run.tool_events)
-            except AgentRunNoEffectEvidenceError:
-                try:
-                    self.store.resume_suspended_unknown_agent_run(
-                        run.id,
-                        expected_execution_generation=run.execution_generation,
-                        now=now,
-                    )
-                except AgentRunLeaseLostError:
-                    continue
-            except ValueError:
-                continue
-        unknown_runs = self.store.list_unknown_agent_runs(limit=limit, now=now)
-        if not unknown_runs:
-            return 0
-        runner = self._direct_agent_runner()
-        reconcile = getattr(runner, "reconcile", None)
-        for run in unknown_runs:
-            task = self.store.get_reply_task(run.reply_task_id)
-            if task is None:
-                continue
-            if not self._required_channels_ready(self.required_channels_for_task(task)):
-                continue
-            if not callable(reconcile):
-                claim = self.store.claim_unknown_agent_run(
-                    run.id,
-                    owner=runner.owner,
-                    lease_seconds=LEASE_SECONDS,
-                    now=now,
-                )
-                if claim.claimed:
-                    self._defer_agent_reconciliation(
-                        run.id,
-                        runner.owner,
-                        code="reconciliation_tool_unavailable",
-                        retryable=False,
-                    )
-                continue
-            context = self._build_agent_reconciliation_context(task)
-            try:
-                result = reconcile(run, context, now=now)
-            except (AgentRunUnavailableError, AgentRunLeaseLostError):
-                continue
-            except AgentRunNoEffectEvidenceError as exc:
-                try:
-                    self.store.resolve_unknown_agent_run_absent(
-                        run.id,
-                        task.id,
-                        code=str(exc),
-                        owner=runner.owner,
-                        now=now,
-                    )
-                except AgentRunLeaseLostError:
-                    continue
-                resolved += 1
-                continue
-            except AgentReadOnlyViolationError:
-                self._defer_agent_reconciliation(
-                    run.id,
-                    runner.owner,
-                    code="reconciliation_write_forbidden",
-                    retryable=False,
-                )
-                continue
-            except ReconciliationDependencyError as exc:
-                service_channel = "dingtalk" if exc.channel == "dws" else "lark"
-                if exc.gate_state is ChannelGateState.NEEDS_LOGIN:
-                    self._pass_channel_results.pop(service_channel, None)
-                    self.login_coordinator.handle(
-                        ChannelGateResult(
-                            channel=service_channel,
-                            state=ChannelGateState.NEEDS_LOGIN,
-                            reason_code=exc.code,
-                        )
-                    )
-                self._defer_agent_reconciliation(
-                    run.id,
-                    runner.owner,
-                    code=exc.code,
-                    retryable=(
-                        exc.gate_state is ChannelGateState.NEEDS_LOGIN
-                        or (
-                            exc.gate_state is ChannelGateState.UNAVAILABLE
-                            and exc.retryable
-                        )
-                    ),
-                    gate_state=exc.gate_state,
-                )
-                continue
-            except Exception as exc:
-                code = str(exc).strip() or "reconciliation_tool_unavailable"
-                retryable = code in {
-                    "codex_process_failed",
-                    "codex_process_timeout",
-                    "codex_stream_invalid",
-                    "reconciliation_tool_unavailable",
-                }
-                self._defer_agent_reconciliation(
-                    run.id,
-                    runner.owner,
-                    code=code,
-                    retryable=retryable,
-                )
-                continue
-
-            outcome = result.result.outcome
-            if outcome is AgentOutcome.COMPLETED:
-                try:
-                    self.store.resolve_unknown_agent_run_confirmed(
-                        run.id,
-                        task.id,
-                        result.result.model_dump(mode="json"),
-                        owner=runner.owner,
-                        transcript_end_line=result.transcript_end_line,
-                        now=now,
-                    )
-                except AgentRunLeaseLostError:
-                    continue
-                resolved += 1
-                continue
-            if outcome is AgentOutcome.NO_ACTION:
-                code = "reconciliation_confirmed_no_effect"
-                try:
-                    self.store.resolve_unknown_agent_run_absent(
-                        run.id,
-                        task.id,
-                        code=code,
-                        owner=runner.owner,
-                        transcript_end_line=result.transcript_end_line,
-                        now=now,
-                    )
-                except AgentRunLeaseLostError:
-                    continue
-                resolved += 1
-                continue
-            code = result.result.error.code or (
-                "reconciliation_needs_human"
-                if outcome is AgentOutcome.NEEDS_HUMAN
-                else "reconciliation_failed"
-            )
-            terminalized = self._defer_agent_reconciliation(
-                run.id,
-                runner.owner,
-                code=code,
-                retryable=result.result.error.retryable,
-                authorization_required=result.result.error.authorization_required,
-            )
-            if not terminalized:
-                self._record_agent_attempt(
-                    task,
-                    result,
-                    send_status=(
-                        "blocked" if outcome is AgentOutcome.NEEDS_HUMAN else "failed"
-                    ),
-                    send_error=code,
-                )
-        return resolved
-
-    def _defer_agent_reconciliation(
-        self,
-        run_id: int,
-        owner: str,
-        *,
-        code: str,
-        retryable: bool,
-        authorization_required: bool = False,
-        gate_state: ChannelGateState | None = None,
-    ) -> bool:
-        run = self.store.get_agent_run(run_id)
-        if run is None:
-            return False
-        structured_error = {
-            "code": code,
-            "retryable": retryable,
-            **(
-                {"gate_state": gate_state.value}
-                if gate_state is not None
-                else {"authorization_required": authorization_required}
-            ),
-        }
-        if not retryable:
-            self.store.terminate_unknown_agent_run_unrecoverable(
-                run_id,
-                owner=owner,
-                code=code,
-                expected_execution_generation=run.execution_generation,
-                structured_error=structured_error,
-                now=self._sqlite_timestamp(self._now()),
-            )
-            return True
-        next_attempt = ""
-        delay_seconds = min(
-            3600,
-            60 * (2 ** max(run.reconciliation_attempts - 1, 0)),
-        )
-        next_attempt = self._sqlite_timestamp(
-            self._now() + timedelta(seconds=delay_seconds)
-        )
-        self.store.defer_unknown_agent_run_reconciliation(
-            run_id,
-            structured_error,
-            owner=owner,
-            expected_execution_generation=run.execution_generation,
-            next_attempt_at=next_attempt,
-            suspended=False,
-            now=self._sqlite_timestamp(self._now()),
-        )
-        return False
-
-    def _build_agent_reconciliation_context(
-        self,
-        task: ReplyTask,
-    ) -> AgentTaskContext:
-        try:
-            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-        except (ValueError, TypeError):
-            trigger = DingTalkMessage(
-                open_conversation_id=task.conversation_id,
-                open_message_id=task.trigger_message_id,
-                conversation_title=task.conversation_title,
-                single_chat=task.single_chat,
-                sender_name=task.trigger_sender,
-                create_time=task.trigger_create_time,
-                content=task.trigger_text,
-                raw_payload={},
-            )
-        conversation = DingTalkConversation(
-            open_conversation_id=task.conversation_id,
-            title=task.conversation_title,
-            single_chat=task.single_chat,
-            unread_point=1,
-        )
-        return self._build_agent_task_context(
-            conversation=conversation,
-            task=task,
-            trigger=trigger,
-            context_messages=[],
-        )
-
     def _record_agent_runtime_failure_attempt(
         self,
         task: ReplyTask,
@@ -1941,10 +1658,7 @@ class DingTalkAutoReplyWorker:
         task_status = (
             "pending"
             if retryable
-            and (
-                retry_beyond_limit
-                or task.attempts < self.max_task_attempts
-            )
+            and (retry_beyond_limit or task.attempts < self.max_task_attempts)
             else "failed"
         )
         available_at = (
@@ -1953,7 +1667,7 @@ class DingTalkAutoReplyWorker:
             else ""
         )
         if run is not None and run.status == "failed":
-            attempt_id = self.store.finalize_agent_reply_task(
+            attempt_id = self.store.finalize_orchestrated_reply_task(
                 task_id=task.id,
                 expected_execution_generation=task.execution_generation,
                 run_id=run.id,
@@ -2127,7 +1841,7 @@ class DingTalkAutoReplyWorker:
         task: ReplyTask,
         result: OrchestrationResult,
     ) -> bool:
-        if result.status == "deferred":
+        if result.status == "failed_retryable" and result.final_run_id == 0:
             available_at = (
                 self._reply_task_authorization_available_at()
                 if result.error.authorization_required
@@ -2141,36 +1855,26 @@ class DingTalkAutoReplyWorker:
             )
             return False
 
+        try:
+            send_status, task_status = ORCHESTRATION_ATTEMPT_STATUS[result.status]
+        except KeyError as exc:
+            raise ValueError("invalid orchestration status") from exc
         send_error = result.error.code
-        if result.status == "completed":
-            send_status = "completed"
-            task_status = "done"
-        elif result.status == "skipped":
-            send_status = "skipped"
-            task_status = "done"
-        elif result.status == "needs_human":
-            send_status = "needs_human"
-            task_status = "done"
+        if result.status == "needs_human":
             send_error = send_error or "needs_human"
-        elif result.status == "blocked":
-            send_status = "blocked"
-            task_status = "unchanged"
+        elif result.status == "unknown":
             send_error = send_error or "agent_side_effect_unknown"
-        else:
-            send_status = "failed"
-            task_status = "pending" if result.error.retryable else "failed"
+        elif result.status in {"failed_retryable", "failed_terminal"}:
             send_error = send_error or "agent_failed"
 
         available_at = ""
-        if task_status == "pending" and task.attempts < self.max_task_attempts:
+        if task_status == "pending":
             available_at = self._reply_task_retry_available_at(task.attempts)
-        elif task_status == "pending":
-            task_status = "failed"
 
         run = self.store.get_agent_run(result.final_run_id)
         if run is None:
             raise RuntimeError("orchestration final run was not persisted")
-        attempt_id = self.store.finalize_agent_reply_task(
+        attempt_id = self.store.finalize_orchestrated_reply_task(
             task_id=task.id,
             expected_execution_generation=task.execution_generation,
             run_id=run.id,
@@ -2197,7 +1901,7 @@ class DingTalkAutoReplyWorker:
             channel=task.channel,
             **self._orchestration_oa_metadata(task, result),
         )
-        if send_status in {"needs_human", "blocked", "failed"}:
+        if send_status in {"needs_human", "failed"}:
             self._notify_problem_attempt(
                 task,
                 attempt_id=attempt_id,
@@ -2323,7 +2027,9 @@ class DingTalkAutoReplyWorker:
                     kind=kind,
                     reference=reference,
                     source_message_id=source_message_id,
-                    read_commands=tuple(command for command in read_commands if command),
+                    read_commands=tuple(
+                        command for command in read_commands if command
+                    ),
                 )
             )
 
@@ -2385,9 +2091,9 @@ class DingTalkAutoReplyWorker:
                     )
                     commands = (
                         "dws api POST /v1.0/robot/messageFiles/download"
-                        " --data \"$(jq -cn --arg downloadCode "
+                        ' --data "$(jq -cn --arg downloadCode '
                         + shlex.quote(download_code)
-                        + " --arg robotCode \"$DINGTALK_DING_ROBOT_CODE\""
+                        + ' --arg robotCode "$DINGTALK_DING_ROBOT_CODE"'
                         " '{downloadCode:$downloadCode,robotCode:$robotCode}')\""
                         " --format json",
                     )
@@ -2443,9 +2149,7 @@ class DingTalkAutoReplyWorker:
             )
             process_instance_id = self._oa_process_instance_id_from_url(oa_url)
             task_id = self._oa_task_id_from_url(oa_url)
-            raw_process_id, raw_task_id = self._raw_oa_identifiers(
-                message.raw_payload
-            )
+            raw_process_id, raw_task_id = self._raw_oa_identifiers(message.raw_payload)
             process_instance_id = process_instance_id or raw_process_id
             task_id = task_id or raw_task_id
             if process_instance_id:
@@ -2589,197 +2293,6 @@ class DingTalkAutoReplyWorker:
             ),
         )
 
-    def _apply_agent_result(
-        self,
-        task: ReplyTask,
-        run_result: DirectAgentRunResult,
-    ) -> bool:
-        result = run_result.result
-        send_error = result.error.code
-        if result.outcome is AgentOutcome.COMPLETED:
-            send_status = "completed"
-            task_status = "done"
-        elif result.outcome is AgentOutcome.NO_ACTION:
-            send_status = "skipped"
-            task_status = "done"
-        elif result.outcome is AgentOutcome.NEEDS_HUMAN:
-            # A completed agent run can explicitly wait for the principal without
-            # being an execution failure or an unknown external side effect.
-            send_status = "needs_human"
-            task_status = "done"
-            send_error = send_error or "needs_human"
-        else:
-            send_status = "failed"
-            task_status = "pending" if result.error.retryable else "failed"
-            send_error = send_error or "agent_failed"
-
-        available_at = ""
-        retry_beyond_limit = (
-            send_error in RECOVERABLE_AGENT_RUNTIME_ERRORS
-            and task.attempts == self.max_task_attempts
-        )
-        if task_status == "pending" and (
-            retry_beyond_limit or task.attempts < self.max_task_attempts
-        ):
-            available_at = self._reply_task_retry_available_at(task.attempts)
-        elif task_status == "pending":
-            task_status = "failed"
-        attempt_id = self._finalize_agent_attempt_and_task(
-            task,
-            run_result,
-            send_status=send_status,
-            send_error=send_error,
-            task_status=task_status,
-            available_at=available_at,
-        )
-        if send_status in {"needs_human", "blocked", "failed"}:
-            self._notify_problem_attempt(
-                task,
-                attempt_id=attempt_id,
-                send_status=send_status,
-                message=result.summary or send_error,
-            )
-        if task_status == "done":
-            return True
-        return False
-
-    def _finalize_agent_attempt_and_task(
-        self,
-        task: ReplyTask,
-        run_result: DirectAgentRunResult,
-        *,
-        send_status: str,
-        send_error: str,
-        task_status: str,
-        available_at: str = "",
-    ) -> int:
-        run = self.store.get_agent_run(run_result.run_id)
-        if run is None:
-            raise RuntimeError("agent run was not persisted")
-        oa_metadata = self._agent_oa_audit_metadata(task, run_result.result)
-        return self.store.finalize_agent_reply_task(
-            task_id=task.id,
-            expected_execution_generation=task.execution_generation,
-            run_id=run.id,
-            task_status=task_status,
-            task_error=send_error,
-            available_at=available_at,
-            conversation_id=task.conversation_id,
-            conversation_title=task.conversation_title,
-            trigger_message_id=task.trigger_message_id,
-            trigger_sender=task.trigger_sender,
-            trigger_text=task.trigger_text,
-            codex_reason=run_result.result.summary,
-            codex_session_id=run.codex_session_id,
-            codex_transcript_start_line=run_result.transcript_start_line,
-            codex_transcript_end_line=run_result.transcript_end_line,
-            audit_tool_events_json=json.dumps(
-                run_result.events,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-            audit_summary=run_result.result.summary,
-            send_status=send_status,
-            send_error=send_error,
-            channel=task.channel,
-            **oa_metadata,
-        )
-
-    @staticmethod
-    def _agent_oa_audit_metadata(
-        task: ReplyTask,
-        result: AgentResult,
-    ) -> dict[str, str]:
-        receipt = result.oa_action_receipt
-        if receipt is None:
-            return {}
-        return {
-            "oa_process_instance_id": receipt.process_instance_id,
-            "oa_task_id": receipt.task_id,
-            "oa_url": task.oa_url,
-            "oa_action": receipt.action,
-            "oa_remark": receipt.remark,
-            "oa_action_result_json": json.dumps(
-                receipt.result,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-        }
-
-    def _record_agent_attempt(
-        self,
-        task: ReplyTask,
-        run_result: DirectAgentRunResult,
-        *,
-        send_status: str,
-        send_error: str = "",
-    ) -> int:
-        run = self.store.get_agent_run(run_result.run_id)
-        if run is None:
-            raise RuntimeError("agent run was not persisted")
-        attempt_id = self.store.record_reply_attempt(
-            conversation_id=task.conversation_id,
-            conversation_title=task.conversation_title,
-            trigger_message_id=task.trigger_message_id,
-            trigger_sender=task.trigger_sender,
-            trigger_text=task.trigger_text,
-            action="agent_run",
-            sensitivity_kind="general",
-            codex_reason=run_result.result.summary,
-            codex_session_id=run.codex_session_id,
-            codex_transcript_start_line=run_result.transcript_start_line,
-            codex_transcript_end_line=run_result.transcript_end_line,
-            audit_tool_events_json=json.dumps(
-                run_result.events,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-            audit_summary=run_result.result.summary,
-            send_status=send_status,
-            channel=task.channel,
-        )
-        if send_error:
-            self.store.update_reply_attempt(attempt_id, send_error=send_error)
-        if send_status in {"needs_human", "blocked", "failed"}:
-            self._notify_problem_attempt(
-                task,
-                attempt_id=attempt_id,
-                send_status=send_status,
-                message=run_result.result.summary or send_error,
-            )
-        return attempt_id
-
-    def _apply_unknown_agent_run(
-        self,
-        task: ReplyTask,
-        run,
-        reason: str,
-        *,
-        result: AgentResult | None = None,
-    ) -> None:
-        summary = result.summary if result is not None else "外部动作结果未知，等待只读核对。"
-        run_result = DirectAgentRunResult(
-            run_id=run.id,
-            result=result
-            or AgentResult(
-                outcome=AgentOutcome.FAILED,
-                summary=summary,
-                error=AgentError(
-                    code=reason or "agent_side_effect_unknown",
-                    side_effect_state=SideEffectState.UNKNOWN,
-                ),
-            ),
-            transcript_start_line=run.transcript_start_line,
-            transcript_end_line=run.transcript_end_line,
-            events=tuple(run.tool_events),
-        )
-        self._record_agent_attempt(
-            task,
-            run_result,
-            send_status="blocked",
-            send_error=reason or "agent_side_effect_unknown",
-        )
-
     def _queued_task_prompt_context_messages(
         self,
         conversation: DingTalkConversation,
@@ -2918,8 +2431,7 @@ class DingTalkAutoReplyWorker:
                 current_sender_key = sender_key
         flush_group()
         return [
-            DingTalkAutoReplyWorker._latest_trigger_message(group)
-            for group in groups
+            DingTalkAutoReplyWorker._latest_trigger_message(group) for group in groups
         ]
 
     @staticmethod
@@ -2952,8 +2464,7 @@ class DingTalkAutoReplyWorker:
             else:
                 groups.append([message])
         triggers = [
-            DingTalkAutoReplyWorker._latest_trigger_message(group)
-            for group in groups
+            DingTalkAutoReplyWorker._latest_trigger_message(group) for group in groups
         ]
         return sorted(
             triggers,
@@ -2989,8 +2500,7 @@ class DingTalkAutoReplyWorker:
         )
         raw_payload = dict(latest.raw_payload)
         raw_payload["coalesced_message_ids"] = [
-            message.open_message_id
-            for message in ordered_messages
+            message.open_message_id for message in ordered_messages
         ]
         raw_payload["coalesced_messages"] = [
             {
@@ -3057,7 +2567,9 @@ class DingTalkAutoReplyWorker:
             grouped.setdefault(message.open_conversation_id, []).append(message)
         return grouped
 
-    def _robot_direct_messages_by_conversation(self) -> dict[str, list[DingTalkMessage]]:
+    def _robot_direct_messages_by_conversation(
+        self,
+    ) -> dict[str, list[DingTalkMessage]]:
         read_robot_direct_messages = getattr(
             self.dws,
             "read_robot_direct_messages",
@@ -3173,9 +2685,13 @@ class DingTalkAutoReplyWorker:
             for message in prompt_context_messages
             if message.open_message_id == message_id
         ]
-        trigger = candidates[-1] if candidates else self._lookup_rerun_message_by_id(
-            conversation,
-            message_id,
+        trigger = (
+            candidates[-1]
+            if candidates
+            else self._lookup_rerun_message_by_id(
+                conversation,
+                message_id,
+            )
         )
         if trigger is None:
             raise ValueError(
@@ -3443,9 +2959,7 @@ class DingTalkAutoReplyWorker:
             include_resolved=include_resolved,
         )
         pending_candidates = [
-            event
-            for event in candidates
-            if self._calendar_event_is_self_pending(event)
+            event for event in candidates if self._calendar_event_is_self_pending(event)
         ]
         if include_resolved:
             matched = self._calendar_pending_invite_from_sender_candidates(
@@ -3517,10 +3031,7 @@ class DingTalkAutoReplyWorker:
             if self._calendar_event_is_active(event)
             and (
                 self._calendar_event_is_self_pending(event)
-                or (
-                    include_resolved
-                    and self._calendar_event_has_self_response(event)
-                )
+                or (include_resolved and self._calendar_event_has_self_response(event))
             )
         ]
 
@@ -3542,11 +3053,9 @@ class DingTalkAutoReplyWorker:
                 near_message_candidates,
                 message,
             )
-        upcoming_candidate = (
-            self._closest_upcoming_calendar_event_without_change_time(
-                candidates,
-                message,
-            )
+        upcoming_candidate = self._closest_upcoming_calendar_event_without_change_time(
+            candidates,
+            message,
         )
         if upcoming_candidate is not None:
             return upcoming_candidate
@@ -3701,7 +3210,9 @@ class DingTalkAutoReplyWorker:
         left: dict[str, float],
         right: dict[str, float],
     ) -> float:
-        return sum(left[keyword] * right[keyword] for keyword in left if keyword in right)
+        return sum(
+            left[keyword] * right[keyword] for keyword in left if keyword in right
+        )
 
     def _calendar_pending_invite_candidates_with_details(
         self,
@@ -3837,9 +3348,7 @@ class DingTalkAutoReplyWorker:
         message: DingTalkMessage,
     ) -> int | None:
         message_time_ms = int(
-            DingTalkAutoReplyWorker._message_create_time_as_instant(
-                message
-            ).timestamp()
+            DingTalkAutoReplyWorker._message_create_time_as_instant(message).timestamp()
             * 1000
         )
         deltas = [
@@ -3848,7 +3357,6 @@ class DingTalkAutoReplyWorker:
             if event_time_ms > 0
         ]
         return min(deltas) if deltas else None
-
 
     def _calendar_pending_invite_search_window(
         self,
@@ -3870,15 +3378,20 @@ class DingTalkAutoReplyWorker:
         message_type = (message.message_type or "").strip().lower()
         content = message.content.strip()
         decoded_content = unquote(content)
-        return message_type in {
-            "calendar",
-            "schedule",
-        } or content.startswith("[日程]") or any(
-            marker in decoded_content
-            for marker in (
-                "newCalendar=1",
-                "calendarDetail",
-                "uniqueId=",
+        return (
+            message_type
+            in {
+                "calendar",
+                "schedule",
+            }
+            or content.startswith("[日程]")
+            or any(
+                marker in decoded_content
+                for marker in (
+                    "newCalendar=1",
+                    "calendarDetail",
+                    "uniqueId=",
+                )
             )
         )
 
@@ -4031,9 +3544,10 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _has_rendered_non_text_prefix(content: str) -> bool:
-        return content.startswith(
-            RENDERED_NON_TEXT_PREFIXES
-        ) or RENDERED_NON_TEXT_PREFIX_PATTERN.match(content) is not None
+        return (
+            content.startswith(RENDERED_NON_TEXT_PREFIXES)
+            or RENDERED_NON_TEXT_PREFIX_PATTERN.match(content) is not None
+        )
 
     @staticmethod
     def _has_dingtalk_minutes_link(content: str) -> bool:
@@ -4118,9 +3632,7 @@ class DingTalkAutoReplyWorker:
                 max(current_user_message_times) if current_user_message_times else None
             )
             eligible_messages = [
-                message
-                for message in messages
-                if message.addresses_principal()
+                message for message in messages if message.addresses_principal()
             ]
             ignore_current_user_cutoff = False
         candidates = [
@@ -4241,8 +3753,7 @@ class DingTalkAutoReplyWorker:
             add(message)
 
         has_seen_context = any(
-            self.store.has_seen(message.open_message_id)
-            for message in context_messages
+            self.store.has_seen(message.open_message_id) for message in context_messages
         )
         if not has_seen_context:
             return sorted(result, key=lambda message: message.create_time)
@@ -4759,9 +4270,7 @@ class DingTalkAutoReplyWorker:
         if send_status == "needs_human" and not delivered:
             send_macos_notification(
                 title=title,
-                message=(
-                    f"{message[:96]} 请打开审计页选择 A/B/C 方案。"
-                ),
+                message=(f"{message[:96]} 请打开审计页选择 A/B/C 方案。"),
             )
 
     def _notification_url(

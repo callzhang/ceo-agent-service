@@ -401,7 +401,7 @@ def test_no_action_finishes_without_launching_audit(store):
 
     result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
-    assert result.status == "skipped"
+    assert result.status == "no_action"
     assert result.final_role is AgentRole.CONSUMER
     assert audit.calls == []
 
@@ -413,7 +413,7 @@ def test_proposal_is_executed_only_by_fresh_audit_session(store):
 
     result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
-    assert result.status == "completed"
+    assert result.status == "executed"
     assert result.final_role is AgentRole.AUDIT
     assert audit.calls[0]["session_id"] == "audit-session-0"
     assert audit.calls[0]["operation_id"] == (
@@ -438,7 +438,7 @@ def test_two_feedback_cycles_resume_same_consumer_and_create_fresh_auditors(stor
 
     result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
-    assert result.status == "completed"
+    assert result.status == "executed"
     assert result.feedback_cycles == 2
     assert [call["session_id"] for call in consumer.calls] == [
         "consumer-session",
@@ -458,7 +458,7 @@ def test_corrected_revision_is_not_blocked_by_old_exact_success(store):
         AgentOrchestrator(store=store, consumer=consumer, audit=audit),
         task,
     )
-    assert first.status == "completed"
+    assert first.status == "executed"
     old_audit = store.get_agent_run(first.final_run_id)
     assert old_audit is not None
 
@@ -482,7 +482,7 @@ def test_corrected_revision_is_not_blocked_by_old_exact_success(store):
         task,
     )
 
-    assert result.status == "completed"
+    assert result.status == "executed"
     assert corrected_audit.calls[0]["revision"] == 1
     assert corrected_audit.calls[0]["operation_id"] == (
         f"agent-task:{task.id}:{task.execution_generation}:proposal:1"
@@ -492,7 +492,7 @@ def test_corrected_revision_is_not_blocked_by_old_exact_success(store):
 
 @pytest.mark.parametrize(
     ("recovery_outcome", "expected_status"),
-    (("executed", "completed"), ("needs_human", "needs_human")),
+    (("executed", "executed"), ("needs_human", "needs_human")),
 )
 def test_unknown_audit_is_recovered_in_same_session_and_revision(
     store,
@@ -672,7 +672,7 @@ def test_persisted_reconciliation_resumes_execute_phase_without_repeating_read(s
         task,
     )
 
-    assert result.status == "completed"
+    assert result.status == "executed"
     assert resumed.recovery_calls == 0
     assert resumed.execute_calls == 1
 
@@ -688,7 +688,7 @@ def test_infrastructure_retry_does_not_consume_feedback_cycle(store):
 
     result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
-    assert result.status == "completed"
+    assert result.status == "executed"
     assert result.feedback_cycles == 0
     assert [call["revision"] for call in audit.calls] == [0, 0]
     assert [call["turn_attempt"] for call in audit.calls] == [0, 1]
@@ -707,7 +707,7 @@ def test_newer_context_stale_candidate_is_revised_without_write(store):
 
     result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
-    assert result.status == "skipped"
+    assert result.status == "no_action"
     assert result.final_role is AgentRole.CONSUMER
     assert len(audit.calls) == 1
     audit_run = store.get_agent_run(result.final_run_id - 1)
@@ -752,7 +752,7 @@ def test_authorization_wait_defers_without_consuming_feedback_cycle(store):
 
     result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
-    assert result.status == "deferred"
+    assert result.status == "failed_retryable"
     assert result.feedback_cycles == 0
     assert len(audit.calls) == 1
 
@@ -778,7 +778,7 @@ def test_expired_consumer_turn_without_session_is_reclaimed_in_place(store):
         task,
     )
 
-    assert result.status == "skipped"
+    assert result.status == "no_action"
     assert result.final_run_id == stale.id
     assert len(
         store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
@@ -821,7 +821,7 @@ def test_expired_audit_turn_without_session_is_reclaimed_in_place(store):
         task,
     )
 
-    assert result.status == "completed"
+    assert result.status == "executed"
     assert result.final_run_id == stale.id
     assert audit.calls[0]["turn_attempt"] == 0
 
@@ -873,7 +873,7 @@ def test_expired_audit_turn_with_possible_effect_is_persisted_unknown_without_re
         task,
     )
 
-    assert result.status == "blocked"
+    assert result.status == "unknown"
     assert audit.calls == []
     persisted = store.get_agent_run(stale.id)
     assert persisted is not None
@@ -903,7 +903,7 @@ def test_authorization_recovery_retries_same_persisted_turn_on_next_process(stor
     )
 
     first = _process(orchestrator, task)
-    assert first.status == "deferred"
+    assert first.status == "failed_retryable"
     store.defer_reply_task(
         task.id,
         first.error.code,
@@ -914,7 +914,7 @@ def test_authorization_recovery_retries_same_persisted_turn_on_next_process(stor
 
     second = _process(orchestrator, recovered_task)
 
-    assert second.status == "completed"
+    assert second.status == "executed"
     assert [call["turn_attempt"] for call in audit.calls] == [0, 0]
     audit_runs = [
         run
@@ -951,7 +951,7 @@ def test_authorization_recovery_defers_again_after_one_failed_retry(store):
 
     first = _process(orchestrator, task)
 
-    assert first.status == "deferred"
+    assert first.status == "failed_retryable"
     assert first.error.code == "authorization_wait"
     assert first.error.authorization_required is True
     assert first.feedback_cycles == 0
@@ -966,7 +966,7 @@ def test_authorization_recovery_defers_again_after_one_failed_retry(store):
 
     second = _process(orchestrator, recovered_task)
 
-    assert second.status == "deferred"
+    assert second.status == "failed_retryable"
     assert second.error.code == "authorization_wait"
     assert second.error.authorization_required is True
     assert second.feedback_cycles == 0
@@ -987,7 +987,7 @@ def test_retryable_audit_exhaustion_returns_failed_latest_run(store):
         task,
     )
 
-    assert result.status == "failed"
+    assert result.status == "failed_retryable"
     assert result.final_role is AgentRole.AUDIT
     assert result.final_run_id == audit.calls[-1]["run_id"]
     assert result.error.code == "audit_retry_exhausted"
@@ -1021,7 +1021,7 @@ def test_retryable_consumer_exhaustion_returns_failed_latest_run(store):
         task,
     )
 
-    assert result.status == "failed"
+    assert result.status == "failed_retryable"
     assert result.final_role is AgentRole.CONSUMER
     assert result.final_run_id == consumer.calls[-1]["run_id"]
     assert result.error.code == "consumer_retry_exhausted"
@@ -1073,7 +1073,7 @@ def test_consumer_retry_restores_identical_feedback_from_parent_audit(store):
         AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
     )
 
-    assert result.status == "skipped"
+    assert result.status == "no_action"
     revision_calls = [call for call in consumer.calls if call["revision"] == 1]
     assert len(revision_calls) == 2
     assert revision_calls[0]["feedback"] is not None
@@ -1105,7 +1105,7 @@ def test_audit_receives_context_refreshed_after_consumer_output(store):
         refresh_context=lambda: refreshed,
     )
 
-    assert result.status == "completed"
+    assert result.status == "executed"
     assert audit.calls[0]["context"].task.messages[0].text == "Use the updated target."
 
 
@@ -1126,7 +1126,7 @@ def test_context_refresh_failure_defers_before_audit(store):
         refresh_context=fail_refresh,
     )
 
-    assert result.status == "deferred"
+    assert result.status == "failed_retryable"
     assert result.error.code == "agent_context_refresh_failed"
     assert audit.calls == []
 
@@ -1190,11 +1190,13 @@ def test_concurrent_tasks_share_one_consumer_session_and_resume_serially(store):
     for thread in threads:
         thread.join()
 
-    deferred = [task for task, result in results if result.status == "deferred"]
+    deferred = [
+        task for task, result in results if result.status == "failed_retryable"
+    ]
     assert len(deferred) == 1
     retry = _process(orchestrator, deferred[0])
 
-    assert retry.status == "skipped"
+    assert retry.status == "no_action"
     assert consumer.max_active == 1
     assert set(consumer.sessions) == {"shared-consumer-session"}
     assert store.get_codex_session_id("same-conversation") == "shared-consumer-session"

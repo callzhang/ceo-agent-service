@@ -9,7 +9,7 @@ from app.agent_context import AgentTaskContext
 from app.agent_contracts import AuditFeedback, ConsumerAgentResult
 from app.agent_result import parse_typed_agent_result
 from app.audit_rules import render_audit_rules
-from app.agent_runner import LEASE_SECONDS, McpToolEffectRegistry
+from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
 from app.codex_history import find_codex_session_path
 from app.store import AgentRole, AutoReplyStore, ReplyTask

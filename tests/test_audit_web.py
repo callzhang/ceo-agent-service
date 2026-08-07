@@ -54,7 +54,7 @@ from app.store import AgentRole, AutoReplyStore
 from app.wechat.models import WechatMessage
 
 
-def _claim_direct_run(store, task, *, owner="worker"):
+def _claim_audit_run(store, task, *, owner="worker"):
     return store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -62,7 +62,7 @@ def _claim_direct_run(store, task, *, owner="worker"):
         proposal_revision=0,
         turn_attempt=0,
         parent_agent_run_id=None,
-        operation_id=f"direct-agent:{task.id}:{task.execution_generation}",
+        operation_id=f"audit-agent:{task.id}:{task.execution_generation}",
         owner=owner,
     )
 
@@ -78,6 +78,109 @@ def loopback_test_client(app) -> TestClient:
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
     )
+
+
+def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Product",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-07 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="Publish the reviewed update.",
+        trigger_message_json='{"openMessageId":"msg-1"}',
+        execution_generation="generation-1",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+
+    parent_id = None
+    terminal_run = None
+    for revision in range(2):
+        consumer = store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=revision,
+            turn_attempt=0,
+            parent_agent_run_id=parent_id,
+            operation_id="",
+            owner=f"consumer-{revision}",
+        ).run
+        store.set_agent_run_session(
+            consumer.id,
+            f"consumer-session-{revision}",
+            owner=f"consumer-{revision}",
+        )
+        store.complete_agent_run(
+            consumer.id,
+            {"outcome": "proposal", "summary": f"candidate {revision}"},
+            owner=f"consumer-{revision}",
+        )
+        audit = store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=revision,
+            turn_attempt=0,
+            parent_agent_run_id=consumer.id,
+            operation_id=f"operation-{revision}",
+            owner=f"audit-{revision}",
+        ).run
+        store.set_agent_run_session(
+            audit.id,
+            f"audit-session-{revision}",
+            owner=f"audit-{revision}",
+        )
+        terminal_run = store.complete_agent_run(
+            audit.id,
+            {"outcome": "executed", "summary": f"audit {revision}"},
+            owner=f"audit-{revision}",
+        )
+        parent_id = terminal_run.id
+
+    assert terminal_run is not None
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=terminal_run.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="Published and verified.",
+        codex_session_id=terminal_run.codex_session_id,
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=1,
+        audit_tool_events_json='[{"type":"mcp_tool_call","tool":"noise"}]',
+        audit_summary="Published and verified.",
+        send_status="completed",
+        send_error="",
+        channel="dingtalk",
+    )
+
+    attempt = store.get_reply_attempt(attempt_id)
+    status, detail = render_attempt_detail(store, attempt_id)
+    history = render_attempt_list(store, include_chart=False)
+
+    assert attempt is not None and attempt.agent_run_id == terminal_run.id
+    assert status == 200
+    assert "2 revisions" in detail
+    assert "View Consumer conversation" in detail
+    assert "/codex/consumer-session-1" in detail
+    assert "View execution audit" in detail
+    assert "/codex/audit-session-1" in detail
+    assert "Consumer Agent A" not in history
+    assert "Audit Agent B" not in history
+    assert "mcp_tool_call" not in history
 
 
 def seed_attempt(store: AutoReplyStore) -> int:
@@ -2018,8 +2121,17 @@ def test_tutorial_run_route_persists_failed_action_status(
     monkeypatch,
     tmp_path: Path,
 ):
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-codex-home"))
-    monkeypatch.setenv("CLAUDE_CONFIG_PATH", str(tmp_path / "claude.json"))
+    def fake_run(action_id, *, repo_root, env):
+        del repo_root, env
+        assert action_id == "setup_mcp"
+        return SetupWizardEvent(
+            step_id="mcp",
+            action_id="setup_mcp",
+            status="failed",
+            summary="MEMORY_CONNECTOR_URL is missing.",
+        )
+
+    monkeypatch.setattr(audit_web_module, "run_setup_action", fake_run)
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     store.upsert_setup_wizard_step(step_id="preflight", status="done", summary="ok")
@@ -5083,7 +5195,7 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
         trigger_text="请处理",
     )
     task = store.claim_reply_tasks(1)[0]
-    run = _claim_direct_run(store, task).run
+    run = _claim_audit_run(store, task).run
     store.mark_agent_run_unknown(run.id, {"code": "unknown"}, owner="worker")
     store.claim_unknown_agent_run(run.id, owner="reconciler")
     store.defer_unknown_agent_run_reconciliation(
@@ -5268,7 +5380,7 @@ def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
         trigger_text="请处理",
     )
     task = store.claim_reply_tasks(1)[0]
-    run = _claim_direct_run(store, task).run
+    run = _claim_audit_run(store, task).run
     store.mark_agent_run_unknown(run.id, {"code": "unknown"}, owner="worker")
     store.claim_unknown_agent_run(run.id, owner="reconciler")
     store.defer_unknown_agent_run_reconciliation(

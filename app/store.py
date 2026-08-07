@@ -64,6 +64,7 @@ class ReplyAttempt(BaseModel):
     trigger_text: str
     action: str
     sensitivity_kind: str
+    agent_run_id: int = 0
     codex_reason: str
     draft_reply_text: str
     direct_user_id: str = ""
@@ -768,6 +769,7 @@ class AutoReplyStore:
                     trigger_text text not null,
                     action text not null,
                     sensitivity_kind text not null,
+                    agent_run_id integer not null default 0,
                     codex_reason text not null default '',
                     draft_reply_text text not null default '',
                     direct_user_id text not null default '',
@@ -1499,6 +1501,7 @@ class AutoReplyStore:
                 for row in db.execute("pragma table_info(reply_attempts)").fetchall()
             }
             for column, definition in (
+                ("agent_run_id", "integer not null default 0"),
                 ("codex_session_id", "text not null default ''"),
                 ("direct_user_id", "text not null default ''"),
                 ("direct_open_dingtalk_id", "text not null default ''"),
@@ -8660,7 +8663,7 @@ class AutoReplyStore:
                     audit_tool_events_json,
                 )
 
-    def finalize_agent_reply_task(
+    def finalize_orchestrated_reply_task(
         self,
         *,
         task_id: int,
@@ -8690,7 +8693,7 @@ class AutoReplyStore:
         oa_remark: str = "",
         oa_action_result_json: str = "",
     ) -> int:
-        """Persist one Direct Agent result and its task transition atomically."""
+        """Persist one orchestration result and its task transition atomically."""
         if task_status not in {"done", "failed", "pending", "unchanged"}:
             raise ValueError("invalid reply task terminal status")
         if not expected_execution_generation.strip():
@@ -8720,13 +8723,13 @@ class AutoReplyStore:
                 insert into reply_attempts (
                     conversation_id, conversation_title, trigger_message_id,
                     trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, codex_session_id,
+                    agent_run_id, codex_reason, codex_session_id,
                     codex_transcript_start_line, codex_transcript_end_line,
                     audit_tool_events_json, audit_summary,
                     oa_process_instance_id, oa_task_id, oa_url, oa_action,
                     oa_remark, oa_action_result_json, send_status, send_error,
                     channel
-                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -8734,6 +8737,7 @@ class AutoReplyStore:
                     trigger_message_id,
                     trigger_sender,
                     trigger_text,
+                    run_id,
                     codex_reason,
                     codex_session_id,
                     codex_transcript_start_line,

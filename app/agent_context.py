@@ -188,7 +188,7 @@ _CONSUMER_AGENT_RULES = """Consumer Agent A responsibilities
 - Treat Safe prior execution receipts for the same OA process as idempotency evidence: do not repeat the same confirmed action; first read live OA state, then act only when new evidence requires a different action.
 - Never run authentication login, reset, or logout commands, including dws auth login, dws auth reset, dws auth logout, lark auth login, lark auth reset, or lark auth logout. Authentication readiness is owned by the service gate.
 - Never expose credentials, tokens, cookies, authorization codes, signed URLs, or local credential paths in externally visible output or persisted summaries.
-- Return one final JSON object matching the supplied ConsumerAgentResult schema."""
+- Return one final JSON object matching the supplied Consumer contract."""
 
 
 _AUDIT_AGENT_RULES = """Audit Agent B responsibilities
@@ -200,4 +200,4 @@ _AUDIT_AGENT_RULES = """Audit Agent B responsibilities
 - Use raw process/task IDs, material references, and exact read commands. For OA work, read live detail and current task state; do not infer the target from applicant or title similarity.
 - Never run authentication login, reset, or logout commands. Authentication readiness is owned by the service gate.
 - Never expose credentials, tokens, cookies, authorization codes, signed URLs, or local credential paths.
-- Return one final JSON object matching the supplied AuditAgentResult schema."""
+- Return one final JSON object matching the supplied Audit contract."""

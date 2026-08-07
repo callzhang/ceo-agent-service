@@ -8,7 +8,7 @@ import pytest
 
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_contracts import ConsumerProposal, ProposedAction
-from app.agent_runner import McpToolEffectRegistry
+from app.agent_effects import McpToolEffectRegistry
 from app.agent_turn_runner import (
     _action_receipt_operation_id,
     _json_digest,

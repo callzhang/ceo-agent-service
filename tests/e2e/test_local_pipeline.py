@@ -1,7 +1,7 @@
 from datetime import datetime
-from pathlib import Path
 
-from app.agent_runner import DirectAgentRunner
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
+from app.agent_orchestrator import OrchestrationResult
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.dingtalk_models import DingTalkMessage
 from app.store import AgentRole, AutoReplyStore
@@ -12,11 +12,10 @@ from app.meeting_alignment import (
     produce_meeting_alignment_jobs,
 )
 from app.meeting_alignment_models import MeetingAlignmentDecision
-from app.process_runner import ProcessRunResult
 from app.worker import DingTalkAutoReplyWorker
 
 
-def _get_direct_run(store, task_id: int, execution_generation: str):
+def _get_audit_run(store, task_id: int, execution_generation: str):
     return store.get_agent_run_for_turn(
         task_id,
         execution_generation,
@@ -227,23 +226,124 @@ class ContextOnlyDws:
         raise AttributeError(name)
 
 
-class CapturedJsonlExecutor:
-    def __init__(self, fixture: Path) -> None:
-        self.fixture = fixture
+class LocalPipelineOrchestrator:
+    def __init__(self, store: AutoReplyStore, *, no_action: bool = False) -> None:
+        self.store = store
+        self.no_action = no_action
 
-    def __call__(self, _command, *, on_stdout_line, **_kwargs) -> ProcessRunResult:
-        output = self.fixture.read_text(encoding="utf-8").strip()
-        for line in output.splitlines():
-            on_stdout_line(line)
-        return ProcessRunResult(returncode=0, stdout=output, stderr="")
+    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
+        del context, refresh_context
+        consumer_claim = self.store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner="local-pipeline",
+        )
+        consumer = ConsumerAgentResult.model_validate(
+            {
+                "outcome": "no_action" if self.no_action else "proposal",
+                "summary": "No action required."
+                if self.no_action
+                else "Send the reply.",
+                "proposal": None
+                if self.no_action
+                else {
+                    "objective": "Send the reply.",
+                    "actions": [
+                        {
+                            "description": "Send the reply.",
+                            "capability": "agent_cli.dws",
+                            "operation": "chat message send",
+                            "target": {"conversation_id": task.conversation_id},
+                            "payload": {"text": "Confirmed."},
+                            "expected_verification": "Message is visible.",
+                        }
+                    ],
+                    "sourced_facts": [],
+                    "authored_judgment": "",
+                },
+                "error": {},
+            }
+        )
+        self.store.set_agent_run_session(
+            consumer_claim.run.id,
+            "local-consumer-session",
+            owner="local-pipeline",
+        )
+        consumer_run = self.store.complete_agent_run(
+            consumer_claim.run.id,
+            consumer.model_dump(mode="json"),
+            owner="local-pipeline",
+        )
+        if self.no_action:
+            return OrchestrationResult(
+                status="no_action",
+                final_run_id=consumer_run.id,
+                final_role=AgentRole.CONSUMER,
+                summary=consumer.summary,
+                error=consumer.error,
+                feedback_cycles=0,
+                consumer_result=consumer,
+            )
+
+        operation_id = f"agent-task:{task.id}:{task.execution_generation}:proposal:0"
+        audit_claim = self.store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=consumer_run.id,
+            operation_id=operation_id,
+            owner="local-pipeline",
+        )
+        self.store.set_agent_run_session(
+            audit_claim.run.id,
+            "local-audit-session",
+            owner="local-pipeline",
+        )
+        audit = AuditAgentResult.model_validate(
+            {
+                "outcome": "executed",
+                "summary": "Reply sent and verified.",
+                "proposal_revision": 0,
+                "side_effect_state": "confirmed",
+                "feedback": None,
+                "external_result": {
+                    "operation_id": operation_id,
+                    "verification_summary": "Message is visible.",
+                    "live_result_reference": {"message_id": "sent-1"},
+                },
+                "error": {},
+            }
+        )
+        audit_run = self.store.complete_agent_run(
+            audit_claim.run.id,
+            audit.model_dump(mode="json"),
+            owner="local-pipeline",
+            side_effect_state="confirmed",
+        )
+        return OrchestrationResult(
+            status="executed",
+            final_run_id=audit_run.id,
+            final_role=AgentRole.AUDIT,
+            summary=audit.summary,
+            error=audit.error,
+            feedback_cycles=0,
+            audit_result=audit,
+        )
 
 
-def _direct_agent_pipeline(
+def _audit_pipeline(
     tmp_path,
     *,
-    fixture_name: str,
+    no_action: bool = False,
 ):
-    store = AutoReplyStore(tmp_path / "direct-agent.sqlite3")
+    store = AutoReplyStore(tmp_path / "audit-agent.sqlite3")
     trigger = DingTalkMessage(
         open_conversation_id="cid-1",
         open_message_id="msg-1",
@@ -265,19 +365,12 @@ def _direct_agent_pipeline(
         trigger_message_json=trigger.model_dump_json(),
         execution_generation="g1",
     )
-    runner = DirectAgentRunner(
-        store=store,
-        workspace=tmp_path,
-        executor=CapturedJsonlExecutor(
-            Path(__file__).parents[1] / "fixtures" / "codex_exec" / fixture_name
-        ),
-        owner="local-pipeline-agent",
-    )
+    orchestrator = LocalPipelineOrchestrator(store, no_action=no_action)
     worker = DingTalkAutoReplyWorker(
         store=store,
         dws=ContextOnlyDws(trigger),
         codex=object(),
-        direct_agent_runner=runner,
+        agent_orchestrator=orchestrator,
         channel_gates={
             "dingtalk": ReadyGate("dingtalk"),
             "lark": ReadyGate("lark"),
@@ -287,33 +380,33 @@ def _direct_agent_pipeline(
     return worker, store
 
 
-def test_direct_agent_local_pipeline_send_uses_codex_session_audit(tmp_path):
-    worker, store = _direct_agent_pipeline(
-        tmp_path,
-        fixture_name="dingtalk_send.jsonl",
-    )
+def test_audit_local_pipeline_send_uses_codex_session_audit(tmp_path):
+    worker, store = _audit_pipeline(tmp_path)
 
     assert worker.consume_once(max_tasks=1) == 1
 
     task = store.get_reply_task_for_message("cid-1", "msg-1")
-    run = _get_direct_run(store, task.id, "g1")
+    run = _get_audit_run(store, task.id, "g1")
     assert task.status == "done"
     assert store.list_agent_execution_receipts(run.id) == []
     assert run.codex_session_id
 
 
-def test_direct_agent_local_pipeline_handoff_uses_codex_session_audit(
+def test_audit_local_pipeline_handoff_uses_codex_session_audit(
     tmp_path,
 ):
-    worker, store = _direct_agent_pipeline(
-        tmp_path,
-        fixture_name="dingtalk_handoff.jsonl",
-    )
+    worker, store = _audit_pipeline(tmp_path, no_action=True)
 
     assert worker.consume_once(max_tasks=1) == 1
 
     task = store.get_reply_task_for_message("cid-1", "msg-1")
-    run = _get_direct_run(store, task.id, "g1")
+    run = store.get_agent_run_for_turn(
+        task.id,
+        "g1",
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
     assert task.status == "done"
     assert store.list_agent_execution_receipts(run.id) == []
     assert run.codex_session_id

@@ -14,7 +14,7 @@ from app.agent_contracts import (
     ReconciliationDisposition,
 )
 from app.agent_result import EffectKind, SideEffectState
-from app.agent_runner import (
+from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
     LEASE_SECONDS,
     TOTAL_TIMEOUT_SECONDS,

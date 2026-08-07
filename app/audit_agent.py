@@ -11,7 +11,7 @@ from app.agent_contracts import AuditAgentResult, AuditOutcome
 from app.agent_result import AgentError, SideEffectState, parse_typed_agent_result
 from app.agent_cli import RECOVERY_WRITE_ALLOWLIST_ENV
 from app.audit_rules import render_audit_rules
-from app.agent_runner import LEASE_SECONDS, McpToolEffectRegistry
+from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
 from app.consumer_agent import _developer_instructions
 from app.native_cli_metadata import describe_native_command
