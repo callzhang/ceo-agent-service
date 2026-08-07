@@ -3078,11 +3078,38 @@ def _history_chart_payload(
         ):
             event_label = "↻ Recovered"
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
-    for item in store.list_history_items(
+    history_items = store.list_history_items(
         limit=None,
         kinds=("meeting", "task"),
         created_since=since_utc,
-    ):
+    )
+    meeting_groups: dict[int, list] = {}
+    non_meeting_items = []
+    for item in history_items:
+        if item.kind == "meeting":
+            meeting_groups.setdefault(item.group_id or item.source_id, []).append(item)
+        else:
+            non_meeting_items.append(item)
+
+    chart_history_items: list[tuple[object, bool]] = [
+        (item, False) for item in non_meeting_items
+    ]
+    for items_for_meeting in meeting_groups.values():
+        latest_item = max(
+            items_for_meeting,
+            key=lambda item: (item.created_at, item.source_id),
+        )
+        recovered = (
+            latest_item.status.strip().lower() in {"sent", "skipped"}
+            and any(
+                item.status.strip().lower() == "failed"
+                for item in items_for_meeting
+                if item.source_id != latest_item.source_id
+            )
+        )
+        chart_history_items.append((latest_item, recovered))
+
+    for item, recovered in chart_history_items:
         created_at = _parse_utc_timestamp(item.created_at)
         if created_at is None:
             continue
@@ -3094,7 +3121,7 @@ def _history_chart_payload(
         bucket_index = label_indexes.get(local_bucket.strftime("%m-%d %H:%M"))
         if bucket_index is None:
             continue
-        event_label = _history_item_event_label(item)
+        event_label = "↻ Recovered" if recovered else _history_item_event_label(item)
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     series = [
         {

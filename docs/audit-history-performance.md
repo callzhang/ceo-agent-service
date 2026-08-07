@@ -22,9 +22,9 @@ current database state.
 
 ## Event Chart Semantics
 
-The 24-hour chart groups reply attempts by channel, conversation, and trigger.
-It shows the latest state for each trigger rather than every retry. A trigger
-that failed and later reached a completed delivery state is displayed as
-`Recovered`; only a trigger whose latest state is failed is red. The chart
-headline shows both trigger count and raw reply-attempt count so retry volume
-remains auditable.
+The 24-hour chart groups reply attempts by channel, conversation, and trigger,
+and meeting runs by their stable meeting job id. It shows the latest state for
+each grouped operation rather than every retry. An operation that failed and
+later reached a completed delivery state is displayed as `Recovered`; only an
+operation whose latest state is failed is red. The chart headline shows both
+operation count and raw reply-attempt count so retry volume remains auditable.

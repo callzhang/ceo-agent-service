@@ -16,6 +16,7 @@ class HistoryItem(BaseModel):
     kind: Literal["reply", "meeting", "task"]
     object_type: Literal["replay", "wechat", "approval", "meeting", "task"]
     source_id: int
+    group_id: int = 0
     source_title: str
     source_actor: str
     input_label: str

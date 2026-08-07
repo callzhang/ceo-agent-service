@@ -994,6 +994,43 @@ def test_history_chart_does_not_group_attempts_without_a_trigger(tmp_path: Path)
     assert payload["total"] == 2
 
 
+def test_history_chart_collapses_retried_meeting_to_recovered_outcome(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-retry",
+        title="Weekly review",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-08-07T09:00:00+08:00",
+        eligible_at="2026-08-07T09:10:00+08:00",
+        status="pending",
+    )
+    store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="",
+        decision_json="{}",
+        audit_summary="first run failed",
+        status="failed",
+        error="temporary failure",
+    )
+    store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="",
+        decision_json="{}",
+        audit_summary="second run sent",
+        status="ready_to_send",
+        error="",
+    )
+    store.update_meeting_alignment_job(job_id, status="sent")
+
+    payload = audit_web_module._history_chart_payload(store)
+    series_names = {series["name"] for series in payload["series"]}
+
+    assert payload["total"] == 1
+    assert "↻ Recovered" in series_names
+    assert "💬 Failed" not in series_names
+
+
 def test_table_toolbar_uses_fixed_alignment_metrics(tmp_path: Path):
     html = render_attempt_list(AutoReplyStore(tmp_path / "worker.sqlite3"))
 
