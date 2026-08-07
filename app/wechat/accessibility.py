@@ -283,9 +283,7 @@ def reconcile_incomplete_deliveries(store, reader, *, account=None) -> list:
             updated.append(refreshed if refreshed is not None else delivery)
             continue
         status = "sent" if confirmed else "send_unknown"
-        error = "" if confirmed else (
-            delivery.error or "read_only_reconciliation_inconclusive"
-        )
+        error = "" if confirmed else "read_only_reconciliation_inconclusive"
         store.set_wechat_delivery_status(
             delivery.id,
             status,

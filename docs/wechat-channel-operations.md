@@ -137,6 +137,11 @@ result remains failed with its retry count recorded. `send_unknown`, sent,
 manually rejected, and target-binding failures remain outside this retry path,
 so an uncertain or disallowed send is never repeated automatically.
 
+When a read-only reconciliation scan completes but finds no exact outbound
+record, the delivery stays `send_unknown` with
+`read_only_reconciliation_inconclusive`. This replaces an older availability
+error: the current state is an unresolved result, not a Reader outage.
+
 ## Diagnostic CLI
 
 ```bash

@@ -164,7 +164,28 @@ def test_recovery_keeps_unknown_when_read_only_history_has_no_confirmation(
     recovered = reconcile_incomplete_deliveries(store, Reader())
 
     assert recovered[0].status == "send_unknown"
-    assert recovered[0].error == "sender_execution_interrupted"
+    assert recovered[0].error == "read_only_reconciliation_inconclusive"
+
+
+def test_recovery_records_inconclusive_after_a_reader_scan(store):
+    delivery = _seed_delivery(store)
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "send_unknown",
+        error="read_only_reconciliation_unavailable",
+    )
+
+    class Reader:
+        account = object()
+
+        def read_messages(self, *_args, **_kwargs):
+            return []
+
+    recovered = reconcile_incomplete_deliveries(store, Reader())
+
+    assert recovered[0].status == "send_unknown"
+    assert recovered[0].error == "read_only_reconciliation_inconclusive"
 
 
 def test_recovery_uses_explicit_account_with_ipc_style_reader(store):
