@@ -3114,6 +3114,8 @@ def _history_chart_payload(
                 and task.error == "codex_provider_unavailable"
             ):
                 event_label = "⏳ Provider recovery"
+            elif task is not None and task.status == "done":
+                event_label = "↻ Recovered"
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     recovered_meeting_run_ids = store.recovered_meeting_alignment_run_ids_since(
         since_utc
