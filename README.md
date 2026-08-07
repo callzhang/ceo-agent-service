@@ -18,10 +18,10 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **钉钉消息发现**：通过 `dws` 读取未读会话、@ 消息、群聊广播消息、配置机器人私聊消息，并用慢路径补扫防止漏消息。
 - **消息路由**：区分群聊、私聊、文档、图片、日程、会议权限、OA 审批和系统通知。
 - **本地任务队列**：使用 SQLite 保存 `reply_tasks`、`reply_attempts`、`seen_messages`、`sent_replies`，避免重复处理和重复发送。
-- **Direct Agent 执行**：原生 `codex exec` 自行读取材料并使用当前 Codex 配置中的 CLI、MCP、plugin 和 skill，最后输出结构化终态；服务不再维护第二套 MCP 白名单、工具事件审计或副作用回执协议。
+- **Consumer / Audit Agent 执行**：Consumer A 代表管理者，用原生 `codex exec` 读取材料、判断业务并提出精确候选；Audit B 独立审阅、执行和读回外部动作。A 没有任务驱动的写权限，B 是唯一写入者。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
-- **材料与工具上下文**：服务传递材料引用、原始 ID、链接和精确读取命令；Direct Agent 自行决定读取哪些钉钉文档、文件、OA 材料和本地 workspace 资料。
-- **安全和质量检查**：服务校验严格结构化 result、队列 generation 和精确重复投递；业务判断、工具选择和动作核对由 Direct Agent 使用实时系统完成。
+- **材料与工具上下文**：服务传递材料引用、原始 ID、链接和精确读取命令；A 自行决定读取哪些钉钉文档、文件、OA 材料和本地 workspace 资料，B 在写入前独立核对实时状态。
+- **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。写入结果未知时只在原 B session 中核对，不能盲目重放。
 - **人工接管**：对需要本人处理的消息发送 handoff，并暂停该会话的自动回复直到检测到真人回复。
 - **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时生成跟进。多人会议默认发到 Agent 核验过、明确承接该业务或后续行动的团队群；涉及个人隐私、薪酬绩效或不适合公开的个人负面反馈时，可以私信相关参会人。
@@ -49,8 +49,8 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 3. **Producer Routing 路由判断层**：群聊必须 @ 触发；私聊不需要 @；系统通知跳过；OA/日程/会议权限进入专门 handler。
 4. **SQLite Queue 状态层**：保存待处理任务、处理尝试、已读消息、已发送回复。
 5. **Channel Gate 层**：用 CLI status 和 authenticated probe 确认通道可用；只有明确 `needs_login` 才协调一次登录流程。
-6. **Direct Agent 层**：同一对话复用一个原生 Codex session；每条新消息通过 `codex exec resume` 追加到该 session，并形成独立 run。
-7. **会话与投递层**：保存 Codex session 指针和 transcript 范围，并用 generation-aware claim 与 `sent_replies` 防止重复或过时投递。
+6. **Consumer Agent A 层**：同一对话复用一个原生 Codex session；每条新消息通过 `codex exec resume` 追加到该 session，并形成独立只读判断 run。
+7. **Audit Agent B 层**：每个 A 候选 revision 启动一个新的审计 session。B 接受后执行并读回；业务含义变化通过结构化反馈回到 A。
 8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd、fail-closed 质量巡检和结果未知写操作的只读核对。
 
 当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取仍以临时网络错误失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。
@@ -59,15 +59,15 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 `blocked` 只表示当前缺少权限、依赖、材料或安全条件。记录必须写明当前原因和恢复条件，始终保留在待处理 backlog；条件变化后通过原 trigger 的幂等 rerun 再次处理，不使用错误前缀把 blocked 永久排除。
 
-单个访问失败反馈只允许 Direct Agent 诊断和报告，不授权修改共享部署入口、域名、DNS、路由或基础设施配置。此类变更必须在上下文中已有至少 3 个相互独立的受影响案例，或 Derek 对该项具体变更给出当次明确授权；同一机器或网络上的重复探测只算一个案例。条件不足时保持配置不变并返回 `needs_human`。
+单个访问失败反馈只允许 A 诊断并提出候选，不授权修改共享部署入口、域名、DNS、路由或基础设施配置。此类变更必须在上下文中已有至少 3 个相互独立的受影响案例，或 Derek 对该项具体变更给出当次明确授权；同一机器或网络上的重复探测只算一个案例。条件不足时保持配置不变并返回 `needs_human`。
 
-一次 reply task generation 对应一次 Direct Agent run，同一 `conversation_id` 的 run 复用 `conversations.codex_session_id`。Reply consumer 本身按队列逐条处理消息，不再额外维护对话锁。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID 和本次 transcript 行范围，不复制工具事件或生成服务自定义回执。任务终态直接采用严格 `AgentResult`；服务在收到结果后本地校验 JSON，不使用 Codex CLI 的 `--output-schema` 传输参数，避免上游 schema 兼容性错误在 Agent 执行前中断任务。无错误时 Agent 仍返回空错误对象，避免结果解析把成功执行误标为失败。精确重复发送仍由 trigger 和 `sent_replies` 幂等记录阻止，人工修订后的新内容不被旧结果拦截。
+一次 reply task generation 对应一个或多个 A/B run：同一 `conversation_id` 的 A run 复用 `conversations.codex_session_id`，每个候选 revision 创建新的 B run。Reply consumer 本身按队列逐条处理消息；会话锁只保护同一 A session 的 JSONL 顺序。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID、transcript 行范围、角色关系、operation ID 和恢复状态。任务终态采用严格 A/B result；服务在收到结果后本地校验 JSON，不使用 Codex CLI 的 `--output-schema` 传输参数。精确重复动作由 trigger、generation 与 revision 共同阻止，人工修订后的新内容不被旧结果拦截。
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
-所有仍使用 `CodexDecisionRunner` 的通道（包括微信消费）也忽略过期的用户级 Codex 配置，并显式采用服务当前的模型供应商配置；这使其与 Direct Agent 使用同一认证和模型配置来源，避免旧刷新令牌阻塞新消息处理。
+所有服务启动的 Codex 通道（包括微信消费）均忽略用户级 Codex 配置，并显式采用服务当前的模型供应商和 MCP 配置来源，避免个人 OAuth、插件或旧刷新令牌阻塞新消息处理。
 
-Agent 必须如实返回动作结果；只完成诊断时返回 `needs_human` 或 `failed`。服务不再根据复制的工具事件二次判断 Agent 结论。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
+Agent 必须如实返回动作结果；只有诊断、没有完成用户要求的动作时不能标为 `executed`。可向对话参与者补齐的事实必须变成一个具体澄清消息候选，不得要求 Derek 选择“继续还是追问”。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
 
 重复发送保护命中已有 `sent_replies` 时，新的发送 attempt 记为 `skipped`，不记为 `blocked`，也不写入 service error；这表示同一触发消息已处理完成，只是跳过了重复投递。
 
@@ -296,7 +296,7 @@ cd /path/to/ceo-agent-service
   --dingtalk-kb-workspace '<workspace-id-or-url>'
 ```
 
-普通运行时不需要预先同步整个外部知识库。消息中出现钉钉在线文档、OA、日程、图片或文件材料时，worker 只把原始引用和精确读取命令交给 Direct Agent；Agent 决定读取、展开和核对哪些材料。读不到关键材料时，应追问、评论要求补材料或返回明确错误，而不是猜测。
+普通运行时不需要预先同步整个外部知识库。消息中出现钉钉在线文档、OA、日程、图片或文件材料时，worker 只把原始引用和精确读取命令交给 Consumer A；A 决定读取、展开和核对哪些材料，Audit B 在外部写入前独立复核。读不到但能向对话参与者补齐的关键材料时，A 提出具体追问候选；不能猜测，也不要求 Derek 在“继续”与“追问”之间选择。
 
 ### 5. 数据准备：CEO 人格蒸馏
 
@@ -379,7 +379,7 @@ recruiting, sales, finance, admin, HR, other
   确认当前登录用户存在 RUNNING 审批节点时入队，避免猜测 task id；同一审批仅在首次到达
   当前用户、任务 ID 变化或申请方产生新的审批操作/留言时再次入队；服务自身写入的审批
   评论不会触发同一审批单的重复审阅。该扫描器独立运行，不会被
-  长时间的普通消息处理阻塞。每个 Direct Agent 的已核验审批动作都会随流程 ID、任务 ID 和
+  长时间的普通消息处理阻塞。每个 Audit Agent B 的已核验审批动作都会随流程 ID、任务 ID 和
   回读结果写入审批 History；服务启动时还会从精确匹配的已完成扫描任务回填旧记录，避免把
   实际已审阅的审批误显示为普通回复或过期状态。审批 History 按流程实例显示当前有效审阅结果，
   同流程的技术重试仅保留在详情审计中，不会覆盖最近一次有效审阅。若 Codex 进程可安全重试但所属会话已卡住，
@@ -430,9 +430,9 @@ agent 的外部能力分两类：
 - CLI 能力：`dws` 和 Feishu/Lark CLI 由服务环境直接提供。DWS 负责钉钉消息、文档、审批、日历、通讯录和 AI 听记；Feishu/Lark CLI 负责飞书读取和显式开启后的回复发送。两者都不通过 MCP 透传。
 - MCP 能力：所有 transport 仅来自 `CEO_SERVICE_MCP_CONFIG_PATH` 指向的服务清单。URL、command 和 args 可由环境变量解析；bearer token 与动态 HTTP header 只在清单中保存环境变量名，不保存值。
 
-Direct Agent 不会扫描、禁用或注入个人 MCP 名称。Agent 可直接读取适用的
-`SKILL.md`，并调用服务提供的 DWS/Lark CLI 或 MCP。认证登录仍由服务 gate 和
-Tutorial 管理，Agent 不执行 login/reset/logout。
+Consumer A 与 Audit B 都不会扫描、禁用或注入个人 MCP 名称。两者只能使用服务提供的
+DWS/Lark CLI、显式 MCP 清单和适用的 `SKILL.md`；A 只拿读取工具，B 才能执行已接受候选
+中的写动作。认证登录仍由 service gate 和 Tutorial 管理，Agent 不执行 login/reset/logout。
 
 Codex CLI 的原生 session JSONL 是运行审计。服务只保存 session ID 和每个 run 的 transcript 起止行，避免复制工具参数、结果和另一套回执状态机。
 

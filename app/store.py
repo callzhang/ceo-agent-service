@@ -9725,7 +9725,7 @@ class AutoReplyStore:
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
     def backfill_oa_audit_metadata(self) -> int:
-        """Recover OA identity for historical Direct Agent attempts by exact task key."""
+        """Recover OA identity for historical agent attempts by exact task key."""
         with self._connect() as db:
             rows = db.execute(
                 """

@@ -1,463 +1,200 @@
-# Reply worker reliability
-
-## Failure visibility
-
-`produce-once` and `consume-once` record top-level failures in the `errors` table
-and raise a local macOS notification before exiting non-zero. Launchd keeps one
-main service alive; that process runs the audit web server, producer loop, and
-consumer loop. If any component stops unexpectedly, the process exits so launchd
-can restart the whole service.
-
-Per-conversation read failures are recorded and notified without blocking other
-conversations in the same producer pass.
-
-Service startup recovers durable work before any producer or consumer thread
-starts. Claimed reply tasks return to `pending`, work-summary inputs return to
-`pending`, meeting analysis jobs return to `retry`, and claimed meeting delivery
-jobs are unlocked. Recovery subtracts the interrupted claim from each queue's
-attempt counter because process termination is not a business execution failure.
-Persisted Direct Agent run events and verified terminal receipts remain
-unchanged, so recovery can reconcile completed external actions without sending
-them again.
-
-External dependencies use two retry levels. The call boundary performs a small
-number of immediate retries, then raises a typed external-dependency failure
-instead of flattening it into a generic runtime error. The reply, work-summary,
-and meeting queues preserve that type and schedule a later retry without
-exhausting the business task's attempt limit. This applies to Codex runners and
-to DWS operations that the client has classified as retryable.
-
-Authorization failures remain in the authorization recovery path. Local input,
-target-binding, privacy, schema, and business validation failures remain
-terminal or explicitly blocked. An external write with an unknown result is
-never replayed merely because its transport failed; the service must reconcile
-the existing operation first so retries cannot duplicate a message, approval,
-or other visible side effect.
-
-If a local result-envelope validation fails after an externally visible action,
-the failed run is not replayed. After read-back confirms the action, the
-audited manual-reconciliation command may transition that exact generation to
-`completed` and create a reconciliation attempt. It accepts this path only for
-`confirmed_occurred`; failed runs without verified evidence remain failed.
-
-An idempotent DWS message send that exits without a structured error result is
-also treated as a transient dependency failure. It is retried at the call
-boundary, then deferred with the same UUID for later recovery. A structured
-business rejection remains terminal; the service does not turn known validation
-or permission failures into an endless retry.
-
-Before starting an agent, the channel gate checks structured CLI auth status and
-one authenticated live probe. Only an explicit `needs_login` state may ask the
-login coordinator to launch the corresponding CLI login once. An unavailable
-status check, network failure, or command error remains a dependency failure and
-must not be guessed to mean that login is required.
-
-Short DWS read-path token verification failures are treated like transient read
-failures. The DWS client retries read-only commands such as message reads and
-contact lookups once; if a read still fails with `TOKEN_VERIFIED_FAILED`, the
-worker stores the rolling count under `service_state.dws_transient_error_count:*`
-and only writes an `errors` row when the threshold is reached. Message sends,
-calendar responses, approvals, and other write actions are not retried through
-this path.
-
-DWS may also return `PAT_AUTH_CALL_FAILED` for a temporary authenticated backend
-failure even while the local profile remains valid. AI-minutes list and get
-commands retry this code at the call boundary because they are reads and have no
-external side effect. Approval actions and other writes do not use this retry
-path, so an ambiguous write result cannot be duplicated.
-
-DWS may return `PREPARE_CALL_TOOL_ERROR` while preparing an otherwise valid
-authenticated read. Known message, calendar, contact, and AI-minutes read
-commands retry this code at the call boundary. Sends, approvals, and other
-mutations remain excluded because repeating an unknown write result could create
-a duplicate visible action.
-
-DWS message reads also treat server error codes ending in `_INVOKE_FAILED` as
-transient dependency failures. This covers infrastructure-side validation or
-gateway invocation changes without coupling recovery to one exact DWS error
-name. The rule applies only to the existing message-read command allowlist. It
-performs bounded immediate retries and preserves the worker's delayed transient
-recovery state after exhaustion; OA actions, sends, and other mutations are not
-replayed by this rule.
-
-DWS JSON commands may print progress text before their final structured result.
-The client uses `robust-json-parser` only to locate complete JSON objects or
-arrays in that mixed stdout. It disables partial extraction, requires the chosen
-JSON value to end at the end of stdout, and parses the extracted text again with
-the standard JSON parser. It never repairs truncated or malformed DWS action
-results.
-
-All synchronous DWS CLI executions share one process-wide gate. The service has
-separate producer, consumer, meeting, and task-maintenance threads, but only one
-of them may launch and wait for a DWS child process at a time. This keeps a slow
-macOS code-signing assessment from turning independent DWS retries into a burst
-of concurrent Gatekeeper requests. The gate covers JSON, text, cache-refresh,
-and resource-download commands; it does not change each command's timeout or
-retry policy. Process starts are also paced at least one second apart by default;
-`CEO_DWS_PROCESS_MIN_INTERVAL_SECONDS` may override that interval, or set it to
-zero when pacing is intentionally disabled.
-
-For single-chat recent-context reads, a missing direct-user mapping is treated as
-unavailable context rather than a business failure. The worker returns an empty
-recent-context list for that read and does not write an `errors` row; unread
-message reads still surface failures because they can affect trigger discovery.
-
-Local notifications first try the browser bridge exposed by the audit web
-service. Keep any `http://127.0.0.1:8765/` audit page open in Chrome after
-granting notification permission; the page keeps an SSE connection to 8765 and
-displays incoming worker notifications with Chrome's Web Notification API.
-`http://127.0.0.1:8765/notifications` remains available as a hidden
-authorization and diagnostics page, but it is not required for normal operation.
-Clicking the Chrome notification calls the local URL
-`http://127.0.0.1:8765/open-dingtalk?conversation_id=...` in the background; the
-audit web service then opens a DingTalk `page/link` bridge page inside the
-desktop client. That bridge calls the current DingTalk JSAPI
-`dd.openChatByConversationId` with the message's `openConversationId`. The click
-handler does not open a new browser tab.
-
-If no browser notification page is connected, the worker falls back to an
-AppleScript `display notification` call. That fallback is only a visibility path:
-it does not bind a click action to DingTalk, so conversation jump remains
-available through the browser bridge when an audit page is open.
-
-When `terminal-notifier` is available, its click action sends a `POST` request
-to the same local `/open-dingtalk` bridge. The bridge owns the desktop
-`dingtalk://` launch, so terminal-notifier and browser notifications use the
-same conversation-opening route.
-
-Handoff notifications use DING first so they can reach the operator inside
-DingTalk. Every service-generated handoff alert begins with the exact
-`【CEO Agent 转人工通知】` protocol marker. If that alert later appears in the
-operator's single-chat inbox, the producer marks it seen and removes it before
-candidate routing, so the service cannot treat its own alert as a new user
-trigger or recursively include earlier handoff text.
-
-If DING is unavailable, for example because the DING server quota is exhausted,
-the worker tries the configured robot direct-message path and then falls back to
-the local notification path instead of failing the reply attempt. The original
-chat acknowledgement remains the delivery source of truth; these operator
-alerts do not become reply candidates.
-
-## No-reply side effects
-
-A Direct Agent result may use `no_reply` after completing a non-chat action such
-as a reaction, calendar/OA operation, or `memory_write`. The action must still
-have a completed effectful tool event or an execution receipt. `no_reply` cannot
-be combined with another formal chat reply, handoff, blocked, or stop-with-error
-outcome because those results conflict at the conversation level.
-
-## Human decisions
-
-`needs_human` is a completed Consumer Agent result that waits for an
-irreducible personal or management judgment. It is not a `blocked` execution
-failure and it is not used for missing evidence that can be obtained from the
-conversation participant. In that case Consumer A proposes one concrete
-clarifying message and Audit B reviews and sends it through the normal delivery
-path without asking Derek to choose whether to ask.
-
-For a genuine `needs_human` result, the worker sends a local decision
-notification. The audit-attempt page shows the ambiguity and accepts one
-explicit judgment or processing instruction; it does not offer generic
-"continue with current facts" or "ask a question" shortcuts. Submitting the
-instruction creates a durable manual rerun and marks the source attempt
-`decision_selected`. The worker then executes, verifies, and publishes through
-its normal delivery path. Because the instruction is stored before processing,
-launchd restart recovery resumes the pending rerun without asking again.
-
-## Scheduled follow-up delivery
-
-Due follow-ups run in their own maintenance loop every 60 seconds and deliver
-independent batches of up to 50. This loop is separate from daily task-source
-scans, so a slow scan cannot delay an already due message. Its delivery budget
-is deliberately separate from `CEO_MAX_BATCHES`, which only limits new
-agent-task discovery. Delivery remains ordered, durable, and idempotent:
-working-hour, completion, daily-cap, sensitive-routing, and existing-send checks
-still run before each send, and a restart resumes from the persisted draft state.
-
-## Service-owned Memory MCP
-
-The Direct Agent receives `memory_connector` only from the service manifest
-selected by `CEO_SERVICE_MCP_CONFIG_PATH`. Every service Codex process uses
-`--ignore-user-config`, so personal Codex transports and plugin configuration
-cannot alter the runtime capability set. Deferred `tool_search` discovery is a
-read-only event; a claimed successful `memory_write` still requires its own
-completed tool event and receipt.
-
-The manifest stores only the bearer-token environment variable name and dynamic
-header environment variable names. Their values must be present in the service
-environment. Missing referenced values are configuration failures; the service
-does not fall back to personal Codex OAuth or `config.toml`.
-
-If Memory is unavailable before a write starts, the run may fail or request
-human action according to the returned error. If a write starts but its result
-cannot be confirmed, the run becomes `unknown` and recovery is read-only. The
-service does not replay the write from a cached action list.
-
-## DWS upgrade check
-
-The producer checks for `dws` updates inside the normal CEO system pass, once per
-local day. It uses the existing producer loop cadence instead of adding a
-separate system-level timer. If an update is available, the producer runs the
-upgrade before reading DingTalk messages. Upgrade check failures are stored in
-`service_state.dws_upgrade_check_result` so GitHub rate limits or short network
-outages do not create CEO business errors. If an update is available but the
-upgrade command fails, the failure is still recorded locally and notified. Either
-case does not block message discovery for that producer pass.
-
-## Org cache refresh
-
-The producer refreshes the DingTalk organization cache inside the normal CEO
-system pass when the last successful refresh is older than seven local days. The
-refresh shares the same service state as the manual `refresh-org-cache` command,
-so a manual refresh prevents an immediate duplicate refresh from the next
-producer pass. Refresh failures are recorded locally and notified, but they do
-not block message discovery for that producer pass.
-
-## Task source maintenance
-
-Task summary maintenance runs inside the main launchd service. It has three
-independent steps:
-
-- `scan-task-sources` finds new AI minutes and new Markdown/text files under the
-  configured `CEO_WORKSPACE`.
-- `process-work-items` lets the task agent merge Work Items into existing
-  projects or create new projects.
-- `process-follow-ups` processes due owner follow-up drafts.
-
-The service consumes pending Work Items every
-`CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` seconds, defaulting to 60 seconds. It runs
-the AI minutes, local file, and follow-up pass every
-`CEO_TASK_DAILY_INTERVAL_SECONDS` seconds, defaulting to 86400 seconds. The
-manual `daily-task-maintenance` command runs the same steps once and is intended
-for backfills, smoke checks, and debugging.
-
-AI minutes and local file cursors are kept in `daily_scan_state`, so scanner
-failures are visible without forgetting the last successful cursor. Local file
-identity includes path, size, mtime, and content hash so same-mtime edits can
-still be reprocessed.
-
-Follow-up dispatch is guarded separately from draft generation. Dry-run records
-the draft state without sending. Live CLI sends require the same
-`CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1` override as normal DingTalk replies.
-
-## CLI credential ownership
-
-LaunchAgents run under the current macOS user and reuse the normal credential
-stores maintained by DWS and Lark CLI. The service does not export, import,
-copy, decrypt, restore, or maintain a second set of CLI credentials.
-
-The channel gate performs structured status checks and a live authenticated
-probe before starting the Direct Agent. The agent is forbidden from running
-auth login, reset, or logout commands. When the gate explicitly reports
-`needs_login`, the login coordinator may launch one interactive CLI login and
-records the coordinator state in SQLite; concurrent processes and repeated
-checks within the suppression window cannot open another login flow. Network
-errors and unreadable auth status never trigger login.
-
-The Config channel page shows the current gate state, the status and live-probe
-commands that were executed, the most recent successful gate time, and whether
-an interactive login request is active or suppressed. It deliberately omits
-process IDs, session IDs, tokens, credential paths, and raw signed URLs.
-
-History is outcome-oriented. Each row links to its complete audit detail and
-shows the channel, conversation, sender, trigger, generated or sent text,
-terminal state, and the safe Direct Agent summary. Planner labels, action
-indexes, dependency graphs, confidence scores, and target-normalization details
-are not user-facing runtime concepts.
-
-The History homepage reads its count, rows, delivery state, feedback state, and
-chart from one SQLite read-only snapshot. This keeps a single render internally
-consistent and avoids accumulating lock waits while worker threads persist new
-events.
-
-## Processing acknowledgement
-
-The worker no longer sends `收到，我正在处理（by 分身）` before a final reply. Final
-reply delivery is usually close enough that the extra acknowledgement adds noise.
-Historical acknowledgement messages are still recognized and filtered from prompt
-context and unanswered-mention checks, so earlier processing messages do not hide
-messages that still need a real reply.
-
-## Reply quote fallback
-
-Final replies include a short text quote built from the trigger message. Compact
-assistant mentions such as `@明哥分身，请...` are stripped only up to the first
-message punctuation, so the remaining request text is preserved in the quote
-instead of producing an empty quote. If a non-text message has no readable text,
-the quote uses a type-specific placeholder such as `[图片]`; if no useful context
-can be inferred, the quote is omitted instead of falling back to `原消息`.
-
-## Image attachments
-
-When a message references an image, the worker attempts to download it before
-calling Codex and passes successfully downloaded files through `image_paths`. If
-DWS cannot return a usable image URL or the binary download fails, the worker
-records an `image_download` error and still calls Codex. The prompt includes a
-`图片读取状态` section with the failed image details and explicitly tells Codex not
-to guess visual content when the question depends on the missing image.
-
-## Material Reading Boundary
-
-The worker does not pre-read DingTalk documents, AI minutes, or ordinary files
-for ordinary reply decisions. It extracts material references and injects them
-into the CEO agent prompt. The agent decides whether the message can be answered
-from text context, whether to read one or more materials through DWS, and how to
-respond after reading.
-
-The worker still preprocesses:
-
-- Calendar invites, because calendar responses and calendar-context failures are
-  part of the service state machine.
-- Images, because Codex receives local image paths rather than DingTalk media
-  IDs.
-
-For OA work, the service passes only the original process/task identifiers,
-links, known form/card fields, and exact DWS read commands. The Direct Agent
-performs live reads for approval detail, current-user task ownership, comments,
-folders, documents, sheets, and attachments, then decides whether the evidence
-is sufficient. The service does not recover a target by applicant/title match,
-choose among ambiguous candidates, pre-read business content, or substitute a
-same-named document. Approval and comment actions are executed by the agent and
-must produce completed events or receipts.
-
-## Mail review and reply
-
-A quoted DingTalk mail card is treated as a locator, not as the complete mail
-body. The decision agent lists the principal's mailboxes, searches by the quoted
-sender and subject, reads the full original message, and opens linked review
-materials before making a decision. If a required result or attachment is still
-missing, the agent asks for that specific material instead of approving from the
-preview.
-
-When the trigger explicitly authorizes a reply and review is complete, the
-Direct Agent replies through DWS. The mail tool event and receipt are persisted
-before any DingTalk acknowledgement is considered complete. A retry reconciles
-the existing mail operation instead of blindly sending it again.
-
-If a historical calendar event id can no longer be read from DWS, the DWS client
-returns no event detail instead of failing the whole producer pass. The worker
-can then use an existing terminal attempt or the normal calendar-detail
-unreadable branch without turning a stale event into recurring producer errors.
-
-For DingTalk documents, AI minutes, and ordinary files, agent-side DWS calls must
-be visible in `audit_tool_events_json`. Permission failures are missing material
-context for the agent to reason about, not ordinary worker failures, unless the
-agent cannot answer without the material.
-
-## Mentioned arrangements
-
-When a human mentions the configured principal in a group and shares an
-arrangement, process, or decision that needs the principal to participate or
-confirm, the agent should treat it as
-reply-worthy even if the message is phrased as a statement rather than a
-question. It should only skip when the later context shows the principal already
-confirmed the arrangement.
-
-Mention discovery starts from the recent global configured mention feed, not only from the
-current unread conversation list. A mentioned group can therefore be processed
-after the user opens the conversation and clears the unread badge. Later context
-from the same conversation is used to decide whether the principal already gave a real
-reply; rendered files, images, cards, calendar invites, and processing
-acknowledgements do not count as a real reply.
-
-Fast-path unread discovery has a short human-reply backoff before the consumer
-can process a reply task. When the producer first sees an unread conversation,
-it reads the unread messages, records the trigger in `reply_tasks` as `pending`,
-and sets the task's availability to `FAST_PATH_UNREAD_BACKOFF` later. This makes
-the pending item visible in history immediately without letting the consumer
-reply while the principal may still be handling it. After the window, if the
-original trigger was recalled or is no longer returned by DWS `list-by-ids`, the
-task is completed and a `skipped` no-reply attempt is recorded. If the trigger is
-still active but later context shows the principal already replied after it, the
-task is also skipped. Otherwise the consumer can claim the task and move it to
-`processing`, even if the unread badge has already cleared.
-
-OA follow-ups preserve recent messages as raw conversation context. The service
-does not inherit or bind an approval target from an earlier card. It passes each
-available card URL, process/task identifier, and exact live-read command to the
-Direct Agent. The Agent resolves the current task through DWS, verifies current
-ownership, and stops without an approval write when the evidence is ambiguous,
-completed, or belongs to another user.
-
-Sender enrichment may replace `open_dingtalk_id` with `user_id` before Direct
-Agent context is rendered, but it does not choose or validate an OA target.
-
-## Consumer retry behavior
-
-Reply tasks move from `pending` to `processing` when claimed. If task processing
-raises an exception, the consumer records a retry error and moves the task back
-to `pending` until the task reaches the maximum attempt count. Intermediate
-attempts do not send failure notifications; the queue owns failure reporting so
-transient Codex startup, model refresh, or provider errors cannot produce a
-false alarm before a later attempt succeeds. The default maximum is three
-claimed attempts.
-
-The Direct Agent does not force Codex's optional reasoning-summary setting.
-The summary capability is presentation metadata rather than a task requirement;
-leaving it to the installed CLI avoids a model-cache schema update preventing a
-durable task from starting.
-
-The Agent result parser accepts Codex's current `response_item` output and
-canonicalizes only `error: null` to the explicit empty error object. All other
-result fields remain subject to the committed strict schema, so malformed or
-ambiguous decisions still fail instead of being guessed.
-
-Direct Agent and reconciliation invocations ignore personal Codex user config.
-They receive the service-selected model and reviewed MCP configuration explicitly,
-so interactive plugins or UI-only settings cannot prevent durable queue recovery.
-They do not add disabled-server entries for personal MCPs: with user config
-ignored, those entries would create incomplete transports instead of isolating
-the service.
-
-Delivery failures for an otherwise sendable reply are treated as task processing
-failures after the reply attempt has recorded the failed send. This keeps the
-original message retryable instead of completing the task with a failed attempt.
-
-When the maximum is reached, the task is marked `failed`, the final error is
-recorded, and a local notification is sent. A Codex runtime failure
-(`codex_process_failed`, `codex_process_timeout`, or `codex_stream_invalid`)
-with no external side effect receives one additional recovery claim after the
-ordinary business-attempt limit. The persisted Agent run and generation make
-that claim restart-resumable. If the additional claim also fails, the task
-becomes terminal and sends the normal failure notification instead of remaining
-in a permanent retry loop.
-
-Codex CLI login failures, explicit selected-provider authentication failures,
-and Codex Responses API transport failures are classified as wait states rather
-than ordinary processing failures. For the built-in `openai` provider, a
-Responses request that is missing its bearer/basic header is treated as a
-transient native Codex authentication-propagation failure: the worker records
-`codex_provider_unavailable`, sends a provider-recovery notification, and retries
-after the normal short backoff. An invalid API key, a missing header from an
-explicit non-OpenAI provider, or a rejected ChatGPT session remains an actual
-authorization wait. Both paths move the task back to `pending` without burning
-the business attempt budget. Work-summary inputs use the same classification and
-remain pending after the normal transient retry limit when the blocker is Codex
-authorization or provider availability.
-If Codex returns a structured `stop_with_error` for one of these wait states,
-the reply attempt is recorded as `blocked` with the same sanitized reason rather
-than as a failed send.
-
-If the agent can prove that required material or a required tool result is
-unavailable and continuing would guess at the answer, it must return
-`stop_with_error` with a reason starting `critical_info_unavailable:`. The worker
-treats that prefix as a non-retryable task failure: it records the failed
-attempt, marks the queued `reply_tasks` row `failed`, and sends the normal
-`CEO task failed` notification for human handling. Tool calls that are merely
-discouraged, such as retrying a DWS detail command after an OpenAPI recovery,
-stay as prompt guidance and audit evidence; they are not blocked by the runner.
-
-The Xiaoqing interview-call guard is classified from the current OA trigger and
-the current approval detail only. Conversation history remains available to the
-approval agent as supporting context, but unrelated historical hiring messages
-must not turn a contract or other non-hiring approval into a Xiaoqing-dependent
-task.
-
-Processing tasks older than the stale-task threshold return to `pending` only
-when their same-generation Direct Agent run has no live lease. The initial
-lease covers the maximum process duration, the idle-read window, and a short
-completion buffer; every valid streaming progress event renews it. A task with
-a live lease remains `processing`, even when its original queue lock is older
-than the stale threshold. This prevents a slow active run from being resumed
-concurrently; an expired lease still allows an interrupted task to recover and
-emits the local retry notification.
+# Reply Worker Reliability
+
+本文档描述 Consumer Agent A / Audit Agent B 回复链路的可靠性约束。目标是让服务在网络失败、
+Agent 超时、进程重启和外部写入结果未知时，仍能恢复而不重复发送或伪造完成。
+
+## 核心不变量
+
+1. Producer 只发现触发并把精确 source revision 入队。
+2. A 代表 Derek 做只读判断；B 独立审计并独占任务驱动的外部写入。
+3. 同一业务对话复用一个 A session；每个候选 revision 新建一个 B session。
+4. 同一任务最多两个内容反馈周期，基础设施重试不计入该上限。
+5. 完全相同的 revision 不执行两次；内容修订后的新 revision 可以执行。
+6. 写入结果未知时先在原 B session 中读回，禁止创建新 B 盲目重放。
+7. Codex JSONL 保存详细审计，SQLite 只保存恢复所需状态。
+8. 证据不足但可向参与者获得时，自动提出并发送一个具体澄清问题，不请求 Derek 选择。
+
+## 任务、generation 与 revision
+
+`reply_tasks` 是持久工作队列。每个 trigger 使用稳定来源身份；同一来源内容没有变化时不会
+产生重复任务。显式重跑会创建新的 execution generation，但仍复用业务对话的 A session。
+
+一个 generation 内：
+
+- A 的首个候选是 proposal revision 0。
+- B 接受后执行；要求修改时返回 `revision_required`。
+- A 收到 B 的结构化反馈后生成下一 revision。
+- 最多允许两个内容反馈周期。达到上限仍不能执行时进入明确终态，不无限循环。
+
+内容反馈周期只统计 A/B 对候选业务内容的往返。Codex 启动失败、通道暂时不可用、租约恢复
+和只读结果核对属于基础设施恢复，不消耗该上限。
+
+## 会话生命周期
+
+### Consumer Agent A
+
+每个 `conversation_id` 绑定一个 A Codex session。新消息通过 `codex exec resume` 追加到该
+session，使 A 能复用参与者、历史事实、已做决定和此前澄清结果。只有 session 文件缺失或
+损坏时才轮换会话。
+
+同一时刻只允许一个 A turn 更新该 session。服务使用短期可续租的 transcript 锁保证 JSONL
+顺序；后续消息仍保留在 SQLite 队列，不因锁存在而丢失。
+
+### Audit Agent B
+
+每个候选 revision 使用一个新的 B session，避免前一候选的审计结论污染新候选。B 读取
+最新事实和当前 Audit Rules，不能依赖 A 的结论代替独立核验。
+
+如果一次外部写入结果未知，恢复必须复用该次 B session。只有这一场景允许 B session 跨
+turn 复用，因为原 session 含有精确操作身份、工具参数和返回上下文。
+
+## 缺失事实与人工判断
+
+以下两类状态必须分开：
+
+- **可通过交流补齐的事实**：A 提出一个具体、可回答的澄清问题；B 审阅并通过正常发送
+  通路执行。系统不展示“继续处理 / 先追问”的二选一。
+- **不可约管理判断**：即使材料完整且参与者已回答，仍必须由 Derek 决定价值取舍、授权
+  边界或管理立场，才返回 `needs_human`。
+
+例如，缺少项目截止日期时应询问项目负责人；是否接受一个已知成本与收益的战略取舍，才是
+可能的 `needs_human`。权限缺失、网络失败、CLI 未登录和材料读取错误属于依赖状态，也不能
+包装成管理选择。
+
+## A/B 权限隔离
+
+A 的 Codex 命令只注入已审核的读取工具。A 可以读取 DWS、Lark、本地 workspace、Memory、
+Exa 和 Xiaoqing 中当前任务允许访问的材料，但不能调用发送、评论、审批或文档修改工具。
+
+B 的命令注入相同读取能力和固定写能力。B 只能执行 A 候选中明确列出的 capability、operation、
+target 和 payload；若实时读取发现业务参数需要变化，必须返回 `revision_required`，不能自行
+改写后执行。
+
+Audit Rules 对 A/B 同时可见，但只控制业务审阅规则。它不能改变角色权限、加载新的 MCP、
+取消精确去重或扩大恢复写入范围。
+
+## 外部写入与精确去重
+
+每个候选动作绑定 task generation、proposal revision、operation ID、目标和参数摘要。B 在写入
+前读取实时状态；若同一 revision 已有确定成功结果，则跳过该动作并记录已有结果。
+
+去重保护的是“同一条内容不发送两次”，不是禁止修复。A 根据 B 反馈改变正文、目标或业务参数
+后会产生新 revision，新 revision 经过独立审计后可以执行。
+
+发送层仍使用持久化 claim 和 `sent_replies` 保护精确 trigger 的消息投递。claim 成功不等于
+外部成功；最终状态必须来自 B 的执行结果和外部读回。
+
+## 未知结果恢复
+
+当 B 已开始写入但进程退出、连接断开或结果无法解析时，run 标记为 `unknown`。恢复顺序固定：
+
+1. 领取原 unknown run，并续租原 run。
+2. 使用原 B session 和原 operation ID 做只读查询。
+3. 对每个原动作判断 `present`、`absent` 或 `ambiguous`。
+4. `present`：收口为已确认，不再写入。
+5. `absent`：只有动作仍符合固定能力边界且原参数可精确绑定时，才在同一 B session 执行。
+6. `ambiguous`：保持未知或请求 Derek 处理，不重复写入。
+
+恢复不会从自然语言猜测动作，也不会新建一个无上下文的执行 Agent。MCP 直写若缺少可验证的
+精确恢复入口，即使读回为 absent 也不自动重放。
+
+## 租约与 stale recovery
+
+Agent run 和 reply task 都有租约。每次有效 Codex 流式进度会续租正在运行的 run；stale sweep
+只回收当前 generation 中没有有效 run 租约的任务。因此运行超过固定扫描周期但仍持续输出的
+Agent 不会被并发重入队。
+
+进程崩溃后租约停止续期。租约到期后，持久队列可以恢复 run：
+
+- A 未产生候选：重试同一 generation，并复用对话 session。
+- B 尚未开始写入：可以重新审计同一候选。
+- B 写入状态未知：进入原 B session 的只读结果核对。
+
+## 通道与 MCP gate
+
+Agent 启动前，service 使用 gate 检查依赖：
+
+```bash
+.venv/bin/ceo-agent channel-doctor
+.venv/bin/ceo-agent doctor-mcp --verify-live
+```
+
+`channel-doctor` 检查 DWS 和 Lark CLI 的结构化状态与认证探测。`doctor-mcp` 检查服务 MCP
+清单中的 Exa、Memory Connector 和 Xiaoqing。明确 `needs_login` 时，Tutorial/Login
+Coordinator 只启动一次登录流程；网络错误、命令超时或状态不可读不会触发重复登录页面。
+
+Agent 不执行 `auth login`、`reset` 或 `logout`。依赖未就绪时任务保留为可恢复状态，等 gate
+恢复后继续，不使用缺失材料生成猜测回复。
+
+## 服务专用 MCP 配置
+
+每个服务 Codex 进程都使用 `--ignore-user-config`，并从
+`CEO_SERVICE_MCP_CONFIG_PATH` 加载显式清单。运行时不会读取个人
+`~/.codex/config.toml`，也不会继承个人 MCP、plugin、hook 或 OAuth transport。
+
+默认服务清单包含：
+
+- `exa`：外部检索；
+- `memory_connector`：历史事实读取和经审计的记忆写入；
+- `xiaoqing_interview`：面试资料与评价通路。
+
+清单只保存 endpoint、命令和环境变量名。缺少被引用的环境变量会使该服务配置明确失败，
+不会从个人配置补值。
+
+## DWS 读取可靠性
+
+DWS 只读调用可以对明确的临时网络、限流和服务准备错误做有界重试；写操作不使用通用自动
+重试。未读消息读取使用重叠窗口防止同一时间锚点丢消息，但只把原始最新未读前缀交给解析，
+不会把窗口中的旧消息提升为新 trigger。
+
+结构化 JSON 命令允许标准进度输出，但最终结果必须是完整合法 JSON。截断或损坏的写操作
+结果不会被修补为成功。
+
+## `no_action`、`needs_human` 与失败
+
+- `no_action`：当前 trigger 不需要外部动作。
+- `needs_human`：必须由 Derek 作出的不可约管理判断。
+- 可重试失败：依赖、网络或进程问题，保留在持久队列等待恢复。
+- 不可重试失败：明确缺少权限、目标不存在或当前规则禁止执行，并记录具体原因。
+
+只有诊断或建议、没有完成用户要求的动作时，不能标记为执行成功。B 只有在外部系统确认结果
+后才能返回 `executed`。
+
+## Codex JSONL 与 SQLite
+
+每个 A/B turn 的完整提示、工具调用和输出保存在 Codex session JSONL。History 通过 session
+ID 和 transcript 行范围读取这些记录。SQLite 保存 task/run 关系、proposal revision、operation
+ID、租约、终态、外部结果状态和精确去重键，不复制完整 transcript。
+
+这使诊断可以回答：A 看到了什么、B 为什么要求修改、哪个 B session 执行了什么、外部结果
+是否已确认，同时避免维护另一套会漂移的详细审计格式。
+
+## 通知与审计页面
+
+`failed`、`unknown` 和真正的 `needs_human` 会进入 History，并按通知配置发送浏览器或 macOS
+通知。普通用户页面展示业务类型、对话、问题、候选/结果和恢复条件；A/B 内部标签、session
+ID、token、绝对路径和原始敏感工具输出不作为默认正文展示。
+
+Audit Rules 在 `Config -> Audit Rules` 可查看和修改。修改后新 A/B turn 使用同一份规则；已经
+完成的外部动作不会因规则变化自动重放。
+
+## 单一 supervisor 恢复
+
+生产只运行 `com.ceo-agent-service.main`。它的 supervisor 管理 worker 与 audit-web：
+
+- 任一子进程退出，另一子进程会被回收；
+- launchd 拉起新的 supervisor；
+- worker 从 SQLite 恢复任务和租约；
+- audit-web 从最近完整缓存快速提供 History，再后台预热；
+- 不存在独立 audit-web launchd job。
+
+运行代码或配置更新后：
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.ceo-agent-service.main
+launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'
+curl -fsS http://127.0.0.1:8765/ >/dev/null
+```
+
+完成报告前还要检查 reply tasks、agent runs、work summary、meeting 和外部投递队列中没有新增
+`failed` 或长期 `processing`。

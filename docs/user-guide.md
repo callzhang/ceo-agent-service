@@ -193,7 +193,7 @@ Agent 会 handoff 给管理者本人，而不是继续猜测，常见情况包�
 
 ### Agent 会检查什么
 
-Direct Agent 会通过当前 DWS 登录身份实时读取：
+Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行前再次核验：
 
 - 审批详情和表单字段；
 - 当前任务及归属；
@@ -224,8 +224,8 @@ Direct Agent 会通过当前 DWS 登录身份实时读取：
 - 形成项目决策、下一步和 owner；
 - 把处理结果回复到原群。
 
-不要要求 service 预先把所有文件正文塞进 prompt。消息中保留原始链接或文件引用后，Direct Agent 会根据任务
-自行决定是否调用 DWS/Lark CLI 展开材料。
+不要要求 service 预先把所有文件正文塞进 prompt。消息中保留原始链接或文件引用后，Consumer A 会根据任务
+自行决定是否调用 DWS/Lark CLI 展开材料；需要外部写入时由 Audit B 独立审阅并执行。
 
 如果某种内容类型没有 CLI 读取或导出能力，例如部分画布，Agent 应明确说明能力边界并请求可读版本，不能假装
 已经看过。

@@ -74,10 +74,10 @@ def test_read_prompt_templates_seed_missing_configured_files(tmp_path, monkeypat
     assert "CEO Agent Prompt" not in user_template
 
 
-def test_default_developer_prompt_assigns_tool_execution_to_direct_agent():
+def test_default_developer_prompt_assigns_tool_execution_to_current_agent_role():
     prompt = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
-    assert "你必须自行读取材料并直接调用获准的 CLI/MCP 工具完成任务" in prompt
+    assert "你必须自行读取材料并通过当前角色获准的 CLI/MCP 工具完成任务" in prompt
     assert "AI 只负责生成结构化计划" not in prompt
 
 

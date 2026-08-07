@@ -164,11 +164,26 @@ confirmation instead of asking the user to run commands.
 
 2. If Codex is not installed, set `CODEX_INSTALL_COMMAND` to the user's approved
    Codex installation command and run the bootstrapper. If Codex is not
-   authenticated, initiate the auth flow yourself. Do not store API keys in this
-   repository.
+   authenticated, complete the normal user login once outside the service. Do not
+   store API keys in this repository; Consumer A and Audit B never run login,
+   reset, or logout commands themselves.
 
 3. Confirm continuity support later through a dry-run worker pass; the service
    uses Codex sessions through the local runtime, not a cloud-only worker.
+
+### Runtime Roles And Audit Rules
+
+Consumer Agent A represents the installation owner: it reads evidence, reuses one
+Codex session per business conversation, and prepares exact candidates. Audit
+Agent B independently checks each candidate, starts a fresh session per revision,
+then performs and verifies accepted external writes. A has no task-driven write
+tools; B is the only task-driven writer.
+
+Review the shared rules at **Config -> Audit Rules** before enabling live sends.
+They apply to both roles and can refine business review requirements, but cannot
+change the read/write boundary, exact-revision dedupe, unknown-result readback, or
+two-cycle content-feedback limit. A missing fact that the sender can answer
+becomes one concrete clarification message candidate; it is not an operator choice.
 
 ### macOS Notifications
 
