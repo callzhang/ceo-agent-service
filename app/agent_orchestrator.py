@@ -19,6 +19,9 @@ from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 
+CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
+
+
 MAX_CONTENT_FEEDBACK_CYCLES = 2
 MAX_TURNS_PER_PROCESS = 32
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
@@ -558,6 +561,8 @@ class AgentOrchestrator:
                 authorization_required=True,
             )
         if run.status == "failed" and error.retryable:
+            if error.code == CODEX_PROVIDER_UNAVAILABLE:
+                return _Deferred(run, error.code, feedback_cycles)
             feedback = self._retry_feedback(run)
             if run.proposal_revision > 0 and feedback is None:
                 return _Deferred(run, "agent_feedback_missing", feedback_cycles)
@@ -614,6 +619,8 @@ class AgentOrchestrator:
                 authorization_required=True,
             )
         if run.status == "failed" and error.retryable and run.side_effect_state == "none":
+            if error.code == CODEX_PROVIDER_UNAVAILABLE:
+                return _Deferred(run, error.code, feedback_cycles)
             return _NextAudit(
                 run.proposal_revision,
                 run.turn_attempt + 1,

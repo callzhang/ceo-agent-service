@@ -8699,6 +8699,7 @@ class AutoReplyStore:
         send_status: str,
         send_error: str,
         channel: str,
+        preserve_attempt_budget: bool = False,
         oa_process_instance_id: str = "",
         oa_task_id: str = "",
         oa_url: str = "",
@@ -8778,13 +8779,15 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """
                     update reply_tasks
-                    set status=?, locked_at=null, available_at=?, error=?,
+                    set status=?, attempts=case when ? then max(attempts - 1, 0) else attempts end,
+                        locked_at=null, available_at=?, error=?,
                         updated_at=current_timestamp
                     where id=? and execution_generation=?
                       and status in ('processing', 'pending')
                     """,
                     (
                         task_status,
+                        int(preserve_attempt_budget),
                         available_at if task_status == "pending" else "",
                         task_error if task_status != "done" else "",
                         task_id,

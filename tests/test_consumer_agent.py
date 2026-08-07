@@ -24,6 +24,16 @@ class CapturingExecutor:
         return ProcessRunResult(0, self.stdout, "")
 
 
+class FailingExecutor(CapturingExecutor):
+    def __init__(self, stdout: str, *, stderr: str = "") -> None:
+        super().__init__(stdout)
+        self.stderr = stderr
+
+    def __call__(self, command, *, on_stdout_line, **kwargs):
+        super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+        return ProcessRunResult(1, self.stdout, self.stderr)
+
+
 def _result_jsonl(*, session: str = "session-a") -> str:
     result = {
         "outcome": "no_action",
@@ -125,6 +135,41 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         "Output JSON Schema (validated locally):" in option
         for option in command
     )
+
+
+def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wait(
+    store, task, context
+):
+    stdout = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-capacity"}),
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "You've hit your usage limit. Try again later.",
+                }
+            ),
+            json.dumps({"type": "turn.failed"}),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="codex_provider_unavailable"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=FailingExecutor(stdout),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert '"code":"codex_provider_unavailable"' in run.structured_error_json
+    assert '"retryable":true' in run.structured_error_json
 
 
 def test_consumer_reads_current_audit_rules_for_each_turn(
