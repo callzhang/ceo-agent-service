@@ -3537,6 +3537,7 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
     assert "navigator.serviceWorker" in response.text
     assert '"/notification-service-worker.js"' in response.text
     assert "registration.showNotification(payload.title, options)" in response.text
+    assert "requireInteraction: true" in response.text
     assert "navigator.serviceWorker.addEventListener(\"message\"" in response.text
     assert "window.location.assign(targetPath)" in response.text
     assert "new Notification(" not in response.text
@@ -3579,6 +3580,7 @@ def test_browser_notification_event_includes_attempt_detail_url():
     )
 
     assert event["detail_url"] == "/attempts/123"
+    assert event["id"] == "ceo-agent-service-attempt-123"
 
 
 def test_browser_notification_event_ignores_invalid_attempt_id():
@@ -3589,6 +3591,56 @@ def test_browser_notification_event_ignores_invalid_attempt_id():
     )
 
     assert event["detail_url"] == ""
+    assert event["id"].startswith("ceo-agent-service-")
+
+
+def test_browser_notifications_page_shows_only_current_unreviewed_decisions(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    stale_attempt = store.record_reply_attempt(
+        conversation_id="cid-stale",
+        conversation_title="Friday",
+        trigger_message_id="msg-stale",
+        trigger_sender="Mina",
+        trigger_text="old decision",
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="missing personnel subject",
+    )
+    store.update_reply_attempt(stale_attempt, send_status="needs_human")
+    replacement_attempt = store.record_reply_attempt(
+        conversation_id="cid-stale",
+        conversation_title="Friday",
+        trigger_message_id="msg-stale",
+        trigger_sender="Mina",
+        trigger_text="old decision",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="resolved",
+    )
+    store.update_reply_attempt(replacement_attempt, send_status="sent")
+    current_attempt = store.record_reply_attempt(
+        conversation_id="cid-current",
+        conversation_title="HR",
+        trigger_message_id="msg-current",
+        trigger_sender="Mina",
+        trigger_text="current decision",
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="choose a reply",
+        audit_summary="请选择下一步。",
+    )
+    store.update_reply_attempt(current_attempt, send_status="needs_human")
+
+    client = TestClient(create_audit_app(store.path))
+    response = client.get("/notifications")
+
+    assert response.status_code == 200
+    assert f"Attempt #{current_attempt}" in response.text
+    assert "请选择下一步。" in response.text
+    assert f"Attempt #{stale_attempt}" not in response.text
+    assert "missing personnel subject" not in response.text
 
 
 def test_env_file_overrides_existing_environment(tmp_path: Path, monkeypatch):

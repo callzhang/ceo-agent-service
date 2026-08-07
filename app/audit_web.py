@@ -746,8 +746,24 @@ def render_page(
     )
 
 
-def render_browser_notifications_page() -> str:
-    body = """
+def render_browser_notifications_page(store: AutoReplyStore) -> str:
+    decisions = store.list_current_unreviewed_human_decision_attempts()
+    if decisions:
+        decision_rows = "".join(
+            "<a class=\"attempt-item history-kind-task\" "
+            f"href=\"/attempts/{attempt.id}\">"
+            f"<strong>Attempt #{attempt.id} · {escape(attempt.conversation_title)}</strong>"
+            f"<div class=\"muted\">{escape(attempt.audit_summary or attempt.codex_reason)}</div>"
+            "</a>"
+            for attempt in decisions
+        )
+    else:
+        decision_rows = "<p class=\"muted\">当前没有待选择的消息。</p>"
+    body = f"""
+<section class="card">
+<h2>待处理决策</h2>
+<div class="attempt-feed" id="notification-inbox">{decision_rows}</div>
+</section>
 <section class="card">
 <h2>Chrome 通知</h2>
 <p class="muted">打开这个页面并允许通知后，CEO 服务会优先通过 Chrome 弹出通知。点击通知会打开对应的钉钉会话。</p>
@@ -1326,6 +1342,7 @@ def _browser_notification_client_script() -> str:
       body: payload.message,
       tag: payload.id,
       renotify: true,
+      requireInteraction: true,
       data: { url: payload.url || "", detailUrl: payload.detail_url || "" },
     };
     const registration = await ensureServiceWorker();
@@ -1491,12 +1508,18 @@ def _browser_notification_event(
     message: str,
     url: str,
 ) -> dict[str, str]:
+    detail_url = _notification_detail_url(url)
+    notification_id = (
+        f"ceo-agent-service-attempt-{detail_url.rsplit('/', 1)[-1]}"
+        if detail_url
+        else f"ceo-agent-service-{next(_BROWSER_NOTIFICATION_SEQUENCE)}"
+    )
     return {
-        "id": f"ceo-agent-service-{next(_BROWSER_NOTIFICATION_SEQUENCE)}",
+        "id": notification_id,
         "title": title,
         "message": message,
         "url": url,
-        "detail_url": _notification_detail_url(url),
+        "detail_url": detail_url,
     }
 
 
@@ -7291,7 +7314,7 @@ def create_audit_app(
 
     @app.get("/notifications", response_class=HTMLResponse)
     def browser_notifications() -> str:
-        return render_browser_notifications_page()
+        return render_browser_notifications_page(AutoReplyStore(db_path))
 
     @app.get("/notification-service-worker.js")
     def notification_service_worker() -> Response:

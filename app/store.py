@@ -8429,6 +8429,30 @@ class AutoReplyStore:
                 return None
             return ReplyAttempt.model_validate(dict(row))
 
+    def list_current_unreviewed_human_decision_attempts(
+        self, *, limit: int = 50
+    ) -> list[ReplyAttempt]:
+        """Return the active human-decision state for each message trigger."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from reply_attempts as attempts
+                where attempts.send_status='needs_human'
+                  and attempts.reviewed_at is null
+                  and attempts.id=(
+                      select max(latest.id)
+                      from reply_attempts as latest
+                      where latest.conversation_id=attempts.conversation_id
+                        and latest.trigger_message_id=attempts.trigger_message_id
+                  )
+                order by attempts.id desc
+                limit ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
     def list_reply_attempts(
         self,
         limit: int | None = None,

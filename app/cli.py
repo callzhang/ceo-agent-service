@@ -483,10 +483,7 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "quality-check":
             subparser.add_argument(
                 "--state-file",
-                default=os.getenv(
-                    "CEO_HOURLY_QUALITY_GATE_PATH",
-                    str(_default_data_dir() / "hourly-quality-gate.json"),
-                ),
+                default=os.getenv("CEO_HOURLY_QUALITY_GATE_PATH") or None,
                 help="path for the fail-closed queue coverage result",
             )
             subparser.add_argument(
@@ -1521,7 +1518,7 @@ def channel_doctor_command() -> dict[str, object]:
 def quality_check_command(
     settings: WorkerSettings,
     *,
-    state_file: str | Path,
+    state_file: str | Path | None,
     verify_channels: bool = False,
 ) -> int:
     from app.quality_gate import (
@@ -1539,7 +1536,12 @@ def quality_check_command(
             for name, gate in default_channel_gates().items()
         }
         report = add_channel_health(report, channel_states)
-    write_hourly_quality_state(report, state_file)
+    resolved_state_file = (
+        Path(state_file)
+        if state_file is not None
+        else settings.db_path.parent / "hourly-quality-gate.json"
+    )
+    write_hourly_quality_state(report, resolved_state_file)
     print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True), flush=True)
     return 0 if report.ok else 2
 

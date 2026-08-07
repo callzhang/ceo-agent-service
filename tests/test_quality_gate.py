@@ -243,6 +243,15 @@ def test_quality_check_command_writes_state_and_returns_nonzero_for_violation(tm
     assert quality_check_command(WorkerSettings(db_path=db_path), state_file=state_path) == 2
 
 
+def test_quality_check_command_defaults_state_file_to_runtime_database_directory(tmp_path):
+    db_path = tmp_path / "runtime" / "state.sqlite3"
+    AutoReplyStore(db_path)
+
+    assert quality_check_command(WorkerSettings(db_path=db_path), state_file=None) == 0
+
+    assert (db_path.parent / "hourly-quality-gate.json").is_file()
+
+
 def test_quality_gate_fails_when_a_live_channel_is_not_ready(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
 

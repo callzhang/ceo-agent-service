@@ -24,6 +24,8 @@ CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 D
 - 默认 launchd 命令：`python -m app.service_supervisor`；worker 子进程命令：`python -m app.cli service`
 - 审计页面：默认 `http://127.0.0.1:8765`
 - 运行库：默认 `~/Library/Application Support/ceo-agent-service/auto-reply.sqlite3`
+- 质量快照：默认写入运行库同目录的 `hourly-quality-gate.json`；仅显式设置
+  `CEO_HOURLY_QUALITY_GATE_PATH` 时覆盖该位置。
 
 `com.ceo-agent-service.main` 启动 `app.service_supervisor`。supervisor 运行两个独立子进程：`service` 负责数据库备份、消息 producer/consumer、会议处理、任务维护和可选微信组件，`audit-web` 负责审计页面。两个子进程共享同一 SQLite 事实源，但不争用同一 Python 解释器。任一子进程退出时，supervisor 会终止并回收另一方后以失败退出，交由同一个 launchd job 重启；收到停止信号时它也会回收两个子进程，因此不会留下孤儿进程。默认 History 在 Web 进程启动时预热，刷新期间继续返回最近一次完整页面；若初始预热遇到 SQLite 写锁，先缓存并返回轻量忙碌页，再自动刷新。主服务启动时只恢复当前队列和可安全恢复的运行状态；结果未知的写操作不会作为普通失败自动重试。
 
@@ -137,6 +139,13 @@ Direct Agent 按 OA skill 工作：
 | 服务状态 | `service_state`、`codex_session_locks` |
 
 外部可见动作必须留下本地事件或回执。Recoverable failed/blocked 不能伪装成完成；不可恢复原因必须明确落库，避免每轮重复处理。
+
+## 决策通知
+
+Chrome 通知以 attempt ID 作为稳定标签。同一 attempt 的重试会更新既有通知，
+不会产生并列弹窗，并要求用户显式关闭。`/notifications` 从运行库重建固定的
+“待处理决策”列表：只有同一触发消息的最新、未审阅 `needs_human` attempt
+才会显示。被后续发送、跳过或人工审阅覆盖的旧记录不会再作为待决事项提示。
 
 ## 其他链路
 
