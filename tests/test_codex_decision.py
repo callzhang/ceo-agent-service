@@ -364,7 +364,7 @@ def test_extract_codex_audit_events_preserves_tool_name_without_payload():
     ]
 
 
-def test_memory_connector_config_issue_reports_expired_token(tmp_path, monkeypatch):
+def test_memory_connector_config_issue_does_not_inspect_copied_service_token(tmp_path, monkeypatch):
     config = tmp_path / "service-mcp.json"
     config.write_text(
         json.dumps(
@@ -386,7 +386,7 @@ def test_memory_connector_config_issue_reports_expired_token(tmp_path, monkeypat
         "eyJhbGciOiJub25lIn0.eyJleHAiOjF9.",
     )
 
-    assert memory_connector_config_issue() == "memory connector token is expired"
+    assert memory_connector_config_issue() == ""
 
 
 def test_extract_codex_session_id_accepts_session_meta():
@@ -1147,7 +1147,7 @@ def test_subprocess_executor_passes_timeout(tmp_path: Path, monkeypatch):
     assert calls[0][1]["total_timeout_seconds"] == 7
     assert calls[0][1]["idle_timeout_seconds"] == 3
     assert calls[0][1]["prompt"] == "decide"
-    assert "--ignore-user-config" in calls[0][0]
+    assert "--ignore-user-config" not in calls[0][0]
 
 
 def test_subprocess_timeout_returns_stop_with_error(tmp_path: Path, monkeypatch):

@@ -134,12 +134,9 @@ def make_read_only_without_tools(command: list[str]) -> None:
         command,
         prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
     )
-    disable_configured_mcp_servers(command)
     _insert_command_options(
         command,
         [
-            "-c", "features.plugins=false",
-            "-c", "features.apps=false",
             "--sandbox", "read-only",
             "-c", 'approval_policy="never"',
             "-c", "tools.enabled_tools=[]",
@@ -151,7 +148,6 @@ def make_read_only_without_tools(command: list[str]) -> None:
 def make_role_agent_command(
     command: list[str],
     *,
-    reviewed_mcp_tools: dict[str, tuple[str, ...]],
     controlled_cli: ControlledCliConfig,
     allow_write: bool,
 ) -> None:
@@ -162,15 +158,6 @@ def make_role_agent_command(
         command,
         prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
     )
-    for name in configured_transport_server_names(command):
-        tools = reviewed_mcp_tools.get(name, ())
-        if tools:
-            encoded = json.dumps(list(tools), separators=(",", ":"))
-            _insert_command_options(
-                command, ["-c", f"mcp_servers.{name}.enabled_tools={encoded}"]
-            )
-        else:
-            _insert_command_options(command, ["-c", f"mcp_servers.{name}.enabled=false"])
     agent_cli_tools = ["execute_reviewed_read", "read_skill"]
     approval_options = ["-c", 'approval_policy="never"']
     if allow_write:
@@ -184,8 +171,6 @@ def make_role_agent_command(
     _insert_command_options(
         command,
         [
-            "-c", "features.plugins=false",
-            "-c", "features.apps=false",
             "--sandbox", "read-only",
             *approval_options,
             "-c", f"mcp_servers.agent_cli.command={json.dumps(controlled_cli.command)}",
@@ -209,12 +194,10 @@ def make_role_agent_command(
 def make_consumer_agent_command(
     command: list[str],
     *,
-    reviewed_mcp_tools: dict[str, tuple[str, ...]],
     controlled_cli: ControlledCliConfig,
 ) -> None:
     make_role_agent_command(
         command,
-        reviewed_mcp_tools=reviewed_mcp_tools,
         controlled_cli=controlled_cli,
         allow_write=False,
     )
@@ -223,13 +206,11 @@ def make_consumer_agent_command(
 def make_audit_agent_command(
     command: list[str],
     *,
-    reviewed_mcp_tools: dict[str, tuple[str, ...]],
     controlled_cli: ControlledCliConfig,
     allow_write: bool = True,
 ) -> None:
     make_role_agent_command(
         command,
-        reviewed_mcp_tools=reviewed_mcp_tools,
         controlled_cli=controlled_cli,
         allow_write=allow_write,
     )
@@ -243,35 +224,15 @@ def make_read_only_with_memory_tools(command: list[str]) -> None:
         command,
         prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
     )
-    configured = frozenset(configured_transport_server_names(command))
-    memory_connector_available = "memory_connector" in configured
-    disable_configured_mcp_servers(
-        command,
-        except_names=(frozenset({"memory_connector"}) if memory_connector_available else frozenset()),
-    )
-    memory_options = []
-    if memory_connector_available:
-        enabled_tools = json.dumps(
-            list(WECHAT_MEMORY_READ_TOOLS), ensure_ascii=True, separators=(",", ":")
-        )
-        memory_options = [
-            "-c",
-            f"mcp_servers.memory_connector.enabled_tools={enabled_tools}",
-        ]
     _insert_command_options(
         command,
         [
-            "-c",
-            "features.plugins=false",
-            "-c",
-            "features.apps=false",
             "--sandbox",
             "read-only",
             "-c",
             'approval_policy="never"',
             "-c",
             'web_search="disabled"',
-            *memory_options,
         ],
     )
 
@@ -291,27 +252,9 @@ def make_read_only_with_reviewed_tools(
         command,
         prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
     )
-    configured = configured_transport_server_names(command)
-    for name in configured:
-        tools = reviewed_mcp_tools.get(name, ())
-        if not tools:
-            _insert_command_options(
-                command,
-                ["-c", f"mcp_servers.{name}.enabled=false"],
-            )
-            continue
-        encoded = json.dumps(list(tools), ensure_ascii=True, separators=(",", ":"))
-        _insert_command_options(
-            command,
-            ["-c", f"mcp_servers.{name}.enabled_tools={encoded}"],
-        )
     _insert_command_options(
         command,
         [
-            "-c",
-            "features.plugins=false",
-            "-c",
-            "features.apps=false",
             "--sandbox",
             "read-only",
             "-c",
@@ -347,27 +290,9 @@ def make_direct_agent_sandbox(
         command,
         prefixes=("approval_policy=", "tools.enabled_tools=", "web_search="),
     )
-    configured = configured_transport_server_names(command)
-    for name in configured:
-        tools = reviewed_mcp_tools.get(name, ())
-        if not tools:
-            _insert_command_options(
-                command,
-                ["-c", f"mcp_servers.{name}.enabled=false"],
-            )
-            continue
-        encoded = json.dumps(list(tools), ensure_ascii=True, separators=(",", ":"))
-        _insert_command_options(
-            command,
-            ["-c", f"mcp_servers.{name}.enabled_tools={encoded}"],
-        )
     _insert_command_options(
         command,
         [
-            "-c",
-            "features.plugins=false",
-            "-c",
-            "features.apps=false",
             "--sandbox",
             "read-only",
             "-c",

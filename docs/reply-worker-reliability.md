@@ -126,20 +126,12 @@ Coordinator 只启动一次登录流程；网络错误、命令超时或状态�
 Agent 不执行 `auth login`、`reset` 或 `logout`。依赖未就绪时任务保留为可恢复状态，等 gate
 恢复后继续，不使用缺失材料生成猜测回复。
 
-## 服务专用 MCP 配置
+## 用户 Codex 能力复用
 
-每个服务 Codex 进程都使用 `--ignore-user-config`，并从
-`CEO_SERVICE_MCP_CONFIG_PATH` 加载显式清单。运行时不会读取个人
-`~/.codex/config.toml`，也不会继承个人 MCP、plugin、hook 或 OAuth transport。
-
-默认服务清单包含：
-
-- `exa`：外部检索；
-- `memory_connector`：历史事实读取和经审计的记忆写入；
-- `xiaoqing_interview`：面试资料与评价通路。
-
-清单只保存 endpoint、命令和环境变量名。缺少被引用的环境变量会使该服务配置明确失败，
-不会从个人配置补值。
+服务通过原生 `codex exec` 继承安装用户的 `~/.codex` 配置、MCP、plugin、hook 和 skills。
+MCP OAuth/token 继续由 Codex 原生凭证存储管理，服务不复制到 `.env`、数据库或仓库配置。
+因此 Memory、Xiaoqing、Exa 和其他用户安装能力可直接为任务服务。实际调用返回未授权时，
+任务记录准确的依赖失败并等待原生授权恢复；Agent 不自行触发登录。
 
 ## DWS 读取可靠性
 

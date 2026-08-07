@@ -802,7 +802,6 @@ class CodexDecisionRunner:
             prompt,
             session_id,
             image_paths=image_paths,
-            ignore_user_config=True,
             approval_policy=self.approval_policy,
             developer_instructions=self.developer_instructions,
             use_approval_bypass=self.use_approval_bypass,

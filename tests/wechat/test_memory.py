@@ -777,7 +777,7 @@ def test_recall_matcher_rejects_unbounded_candidate_count(tmp_path):
         ).match([candidate(f"fact {index}", category="fact") for index in range(101)])
 
 
-def test_service_exa_is_disabled_for_memory_only_recall_and_write(tmp_path, monkeypatch):
+def test_memory_only_recall_and_write_do_not_disable_principal_mcp_tools(tmp_path, monkeypatch):
     recall_final = {"matches": [{"statement": "fact", "relation": "none",
                                   "memory_id": "", "evidence": "",
                                   "merged_statement": ""}]}
@@ -810,7 +810,7 @@ def test_service_exa_is_disabled_for_memory_only_recall_and_write(tmp_path, monk
 
     CodexMemoryWriteBackend(tmp_path, executor=write_execute).write(
         "final", source_time_start="2026-07-17", source_time_end="")
-    assert all("mcp_servers.exa.enabled=false" in command for command in commands)
+    assert all("mcp_servers.exa.enabled=false" not in command for command in commands)
 
 
 def test_extraction_filters_sensitive_input_and_runs_read_only_without_tools(
@@ -863,9 +863,9 @@ def test_extraction_filters_sensitive_input_and_runs_read_only_without_tools(
     assert "read-only" in captured["command"]
     assert "tools.enabled_tools=[]" in captured["command"]
     assert 'web_search="disabled"' in captured["command"]
-    assert "mcp_servers.xiaoqing_interview.enabled=false" in captured["command"]
-    assert "mcp_servers.exa.enabled=false" in captured["command"]
-    assert "mcp_servers.github.enabled=false" in captured["command"]
+    assert "mcp_servers.xiaoqing_interview.enabled=false" not in captured["command"]
+    assert "mcp_servers.exa.enabled=false" not in captured["command"]
+    assert "mcp_servers.github.enabled=false" not in captured["command"]
 
 
 def test_extraction_fails_closed_if_codex_emits_any_tool_call(tmp_path):

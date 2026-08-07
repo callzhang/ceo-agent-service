@@ -114,21 +114,14 @@ Audit Rules 是 A 和 B 共享的可见业务规则：
 
 ## 能力与配置
 
-所有 Agent 都以 `--ignore-user-config` 启动，不继承个人 `~/.codex/config.toml`、个人 MCP、
-plugin、hook 或 OAuth transport。服务只注入显式配置：
+所有 Agent 直接继承安装用户的 `~/.codex/config.toml`、已安装 MCP、plugin、hook 和 skills。
+服务不复制 OAuth header、token 或 MCP transport，也不维护第二套 MCP 清单。这样同一套已登录
+的 Memory、Xiaoqing、Exa、Lark 等能力既可在 Codex 桌面端使用，也可在 CEO Agent 任务中使用。
 
-- CLI：`dws`、`lark-cli`，使用安装用户在各 CLI 标准位置维护的登录状态。
-- MCP：`CEO_SERVICE_MCP_CONFIG_PATH` 指向的服务清单，默认模板为
-  `config/service-mcp.json`。
-- 默认 MCP 名称：`exa`、`memory_connector`、`xiaoqing_interview`。
-- 凭证只通过环境变量引用；清单不保存 token 值。
-
-运行配置按照角色生成：A 只获得已审核的读取工具；B 获得读取工具和固定写能力。为让常驻
-的原生 `codex exec` 在无人值守时完成 B 的受控写操作，B 的正常执行与已授权恢复执行使用
-Codex bypass approval/sandbox 模式；因此 B 的 service MCP 清单和 `agent_cli` 写入口必须保持
-最小、显式且可审阅。A、B 的只读核对和 dry-run 不使用该模式。Audit Rules 不能新增 MCP、CLI
-或写权限。Agent 不执行 `auth login`、`reset` 或 `logout`；登录由 Tutorial/channel gate 在 Agent
-启动前协调。
+服务仍保留职责边界：A 生成候选并按共享 Audit Rules 自检；B 独立审阅并执行被接受的外部动作。
+两者都可以使用用户安装的工具和 skills。服务只负责 DWS/Lark channel gate、任务去重、发送回读、
+未知结果核对与持久化；Agent 不执行 `auth login`、`reset` 或 `logout`。某个 MCP 实际返回未授权时，
+任务如实记录该依赖不可用，不把认证失败伪装成材料缺失。
 
 ## 重复执行与恢复
 
@@ -193,7 +186,7 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 | `app.audit_agent.AuditAgentRunner` | 新建 B 审计 session，执行合格候选并处理未知结果。 |
 | `app.agent_contracts` | 严格定义 A proposal 与 B audit result。 |
 | `app.audit_rules` | 保存、校验并分别渲染共享 Audit Rules。 |
-| `app.service_codex_config` | 从服务清单生成显式 MCP 配置。 |
+| `app.codex_runner.CodexRunner` | 以原生 `codex exec` 启动并继承安装用户的 Codex 配置。 |
 | `app.channel_gate` / `app.mcp_doctor` | 在运行前检查 CLI 与 MCP 依赖。 |
 | `app.store.AutoReplyStore` | 保存队列、run 关系、租约、revision 和最小恢复状态。 |
 | `app.audit_web` | History、Agent session、Audit Rules、配置和恢复入口。 |
@@ -204,7 +197,7 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 # DWS + Lark 通道状态
 .venv/bin/ceo-agent channel-doctor
 
-# Exa + Memory + Xiaoqing 服务 MCP 配置；加 --verify-live 做实时探测
+# MCP 注册与可用性诊断；加 --verify-live 做实时探测
 .venv/bin/ceo-agent doctor-mcp --verify-live
 
 # 单次 dry-run

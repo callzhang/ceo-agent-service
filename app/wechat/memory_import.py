@@ -176,8 +176,7 @@ class CodexMemoryExtractionRunner:
 
     def extract(self, messages: list[WechatMessage]) -> list[ExtractedMemoryCandidate]:
         prompt = self._prompt(messages)
-        command = self.runner.build_command(prompt, None, output_schema_path=SCHEMA_PATH,
-                                            ignore_user_config=True)
+        command = self.runner.build_command(prompt, None, output_schema_path=SCHEMA_PATH)
         from app.wechat.codex_safety import make_read_only_without_tools
         make_read_only_without_tools(command)
         if self.executor is not None:
@@ -261,7 +260,7 @@ class CodexMemoryRecallMatcher:
         )
         command = self.runner.build_command(
             prompt, None, output_schema_path=DEDUPE_SCHEMA_PATH,
-            ignore_user_config=True)
+        )
         from app.wechat.codex_safety import disable_configured_mcp_servers
         disable_configured_mcp_servers(
             command, except_names=frozenset({"memory_connector"}))

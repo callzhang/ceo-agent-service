@@ -616,7 +616,9 @@ def test_structured_runner_default_executor_uses_process_runner_signature(tmp_pa
     assert kwargs["env"] == runner.runner.build_env()
     assert kwargs["total_timeout_seconds"] == 7
     assert kwargs["idle_timeout_seconds"] == 3
-    assert command[command.index("--disable") + 1] == "hooks"
+    assert "--ignore-user-config" not in command
+    assert "--ignore-rules" not in command
+    assert "--disable" not in command
     assert "--output-schema" not in command
 
 
