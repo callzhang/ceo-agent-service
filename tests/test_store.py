@@ -624,6 +624,36 @@ def test_forced_manual_rerun_rotates_failed_pending_generation(tmp_path: Path):
     assert rerun.status == "pending"
 
 
+def test_recover_retryable_failed_reply_tasks_requeues_side_effect_free_run(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        owner="worker-1",
+    ).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="worker-1",
+    )
+    store.fail_reply_task(
+        task_id,
+        "codex_process_failed",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    recovered = store.recover_retryable_failed_reply_tasks()
+
+    assert [item.id for item in recovered] == [task_id]
+    restored = store.get_reply_task(task_id)
+    assert restored is not None
+    assert restored.status == "pending"
+    assert restored.execution_generation == task.execution_generation
+
+
 def test_forced_manual_rerun_does_not_supersede_active_agent_run(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

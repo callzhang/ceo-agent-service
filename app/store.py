@@ -4200,6 +4200,70 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
+    def recover_retryable_failed_reply_tasks(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        """Return side-effect-free runtime failures to the queue after restart."""
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select tasks.*, runs.structured_error_json
+                from reply_tasks as tasks
+                join agent_runs as runs
+                  on runs.reply_task_id=tasks.id
+                 and runs.execution_generation=tasks.execution_generation
+                where tasks.status='failed'
+                  and runs.status='failed'
+                  and runs.side_effect_state='none'
+                order by tasks.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                try:
+                    structured_error = json.loads(
+                        str(row["structured_error_json"] or "{}")
+                    )
+                except json.JSONDecodeError:
+                    continue
+                if not (
+                    isinstance(structured_error, dict)
+                    and structured_error.get("retryable") is True
+                ):
+                    continue
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', attempts=max(attempts - 1, 0),
+                        locked_at=null, available_at='',
+                        error='recoverable_agent_runtime_failure',
+                        updated_at=current_timestamp
+                    where id=? and status='failed' and execution_generation=?
+                      and exists (
+                          select 1 from agent_runs
+                          where reply_task_id=reply_tasks.id
+                            and execution_generation=reply_tasks.execution_generation
+                            and status='failed' and side_effect_state='none'
+                      )
+                    """,
+                    (row["id"], row["execution_generation"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                updated = db.execute(
+                    "select * from reply_tasks where id=?",
+                    (row["id"],),
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
     def complete_reply_task(
         self,
         task_id: int,
