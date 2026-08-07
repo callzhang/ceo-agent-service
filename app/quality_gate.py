@@ -422,14 +422,20 @@ def _check_external_delivery_queues(
     violations: list[QualityIssue],
     attention: list[QualityIssue],
 ) -> None:
-    for source, status_column, failed_statuses, active_statuses in (
-        ("work_todo_dingtalk_links", "status", ("failed",), ("creating", "active")),
-        ("wechat_deliveries", "status", ("failed", "send_unknown"), ("pending", "sending", "ready_to_send")),
-        ("memory_write_events", "status", ("failed",), ("pending", "processing")),
+    for source, status_column, failed_statuses, active_statuses, resolved_filter in (
+        ("work_todo_dingtalk_links", "status", ("failed",), ("creating", "active"), ""),
+        # A rejected delivery is a deliberate user decision. Store already maps
+        # its reply attempt to skipped, so the external queue must do the same.
+        ("wechat_deliveries", "status", ("failed", "send_unknown"),
+         ("pending", "sending", "ready_to_send"),
+         "and lower(coalesce(error, '')) != 'user_rejected'"),
+        ("memory_write_events", "status", ("failed",), ("pending", "processing"), ""),
     ):
         failed = _count(
             db,
-            f"select count(*) from {source} where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})",
+            f"""select count(*) from {source}
+                where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})
+                {resolved_filter}""",
             failed_statuses,
         )
         _add(violations, source=source, code="failed", count=failed,
