@@ -137,7 +137,7 @@ def make_read_only_without_tools(command: list[str]) -> None:
     _insert_command_options(
         command,
         [
-            "--sandbox", "read-only",
+            *_read_only_sandbox_options(command),
             "-c", 'approval_policy="never"',
             "-c", "tools.enabled_tools=[]",
             "-c", 'web_search="disabled"',
@@ -171,7 +171,7 @@ def make_role_agent_command(
     _insert_command_options(
         command,
         [
-            "--sandbox", "read-only",
+            *_read_only_sandbox_options(command),
             *approval_options,
             "-c", f"mcp_servers.agent_cli.command={json.dumps(controlled_cli.command)}",
             "-c", "mcp_servers.agent_cli.args=" + json.dumps(list(controlled_cli.args)),
@@ -227,8 +227,7 @@ def make_read_only_with_memory_tools(command: list[str]) -> None:
     _insert_command_options(
         command,
         [
-            "--sandbox",
-            "read-only",
+            *_read_only_sandbox_options(command),
             "-c",
             'approval_policy="never"',
             "-c",
@@ -255,8 +254,7 @@ def make_read_only_with_reviewed_tools(
     _insert_command_options(
         command,
         [
-            "--sandbox",
-            "read-only",
+            *_read_only_sandbox_options(command),
             "-c",
             'approval_policy="never"',
             "-c",
@@ -293,8 +291,7 @@ def make_direct_agent_sandbox(
     _insert_command_options(
         command,
         [
-            "--sandbox",
-            "read-only",
+            *_read_only_sandbox_options(command),
             "-c",
             'approval_policy="never"',
             "-c",
@@ -318,6 +315,13 @@ def _insert_command_options(command: list[str], options: list[str]) -> None:
     if command[1:3] == ["exec", "resume"]:
         prompt_index -= 1
     command[prompt_index:prompt_index] = options
+
+
+def _read_only_sandbox_options(command: list[str]) -> list[str]:
+    """Use the CLI form accepted by both fresh and resumed Codex sessions."""
+    if command[1:3] == ["exec", "resume"]:
+        return ["-c", 'sandbox_mode="read-only"']
+    return ["--sandbox", "read-only"]
 
 
 def _remove_config_options(command: list[str], *, prefixes: tuple[str, ...]) -> None:

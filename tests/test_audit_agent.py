@@ -851,6 +851,8 @@ def test_crash_after_write_resumes_same_audit_session_and_confirms_without_repla
     assert persisted.side_effect_state == "confirmed"
     assert "resume" in executor.commands[0]
     assert run.codex_session_id in executor.commands[0]
+    assert "--sandbox" not in executor.commands[0]
+    assert 'sandbox_mode="read-only"' in executor.commands[0]
     assert sum(
         event["type"] == "item.started"
         and event["item"]["metadata"]["effect"] == "effectful"
