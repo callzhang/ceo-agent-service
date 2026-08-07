@@ -163,8 +163,13 @@ ID、租约、终态、外部结果状态和精确去重键，不复制完整 tr
 
 ## 通知与审计页面
 
-`failed`、`unknown` 和真正的 `needs_human` 会进入 History，并按通知配置发送浏览器或 macOS
-通知。普通用户页面展示业务类型、对话、问题、候选/结果和恢复条件；A/B 内部标签、session
+`failed`、`unknown` 和真正的 `needs_human` 会进入 History。审计页 `/notifications` 从 SQLite
+按同一原始触发的最新状态列出当前 `failed`、`blocked` 和未审阅 `needs_human`，因此旧失败在
+后续成功或审阅完成后不会继续占用收件箱。
+
+浏览器通知只维护一条固定的“CEO 有待处理问题”入口。新的问题会更新该入口中的数量，而不是
+为每个失败 attempt 反复弹出短暂通知；点击入口进入 `/notifications`，再从固定列表打开具体
+attempt。普通用户页面展示业务类型、对话、问题、候选/结果和恢复条件；A/B 内部标签、session
 ID、token、绝对路径和原始敏感工具输出不作为默认正文展示。
 
 Audit Rules 在 `Config -> Audit Rules` 可查看和修改。修改后新 A/B turn 使用同一份规则；已经

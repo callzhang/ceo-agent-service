@@ -10298,8 +10298,8 @@ def test_repeated_codex_process_failure_does_not_get_an_extra_claim_at_limit(
 
     worker._test_agent_runner = PersistentProcessFailureRunner(worker.store, [])
     monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: notifications.append(kwargs),
+        "app.worker.send_browser_notification",
+        lambda **kwargs: notifications.append(kwargs) or True,
     )
 
     worker.produce_once()
@@ -10308,7 +10308,13 @@ def test_repeated_codex_process_failure_does_not_get_an_extra_claim_at_limit(
     assert failed.attempts == 1
     assert failed.error == "codex_process_failed"
     assert len(notifications) == 1
-    assert notifications[0]["title"] == "CEO task failed: Friday"
+    assert notifications[0] == {
+        "title": "CEO 有待处理问题",
+        "message": "1 项问题待处理。",
+        "url": "",
+        "notification_id": "ceo-agent-service-problems",
+        "detail_url": "/notifications",
+    }
 
 
 def test_codex_stop_with_error_retry_waits_for_backoff(tmp_path: Path, monkeypatch):
@@ -14198,9 +14204,11 @@ def test_needs_human_agent_attempt_publishes_browser_notification(
     assert attempt.send_status == "needs_human"
     assert browser_notifications == [
         {
-            "title": "CEO task needs a decision: Friday",
-            "message": "需要本人确认。",
-            "url": worker._notification_url(conversation(), attempt_id=attempt.id),
+            "title": "CEO 有待处理问题",
+            "message": "1 项问题待处理。",
+            "url": "",
+            "notification_id": "ceo-agent-service-problems",
+            "detail_url": "/notifications",
         }
     ]
 
