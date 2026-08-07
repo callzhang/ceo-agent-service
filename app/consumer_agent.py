@@ -131,7 +131,6 @@ class ConsumerAgentRunner:
             ),
             configure_command=lambda command: make_consumer_agent_command(
                 command,
-                reviewed_mcp_tools=self.effects.reviewed_read_tools(),
                 controlled_cli=ControlledCliConfig(
                     command=sys.executable,
                     args=("-m", "app.agent_cli"),

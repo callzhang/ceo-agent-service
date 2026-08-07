@@ -35,7 +35,7 @@ def test_wechat_decision_runner_uses_read_only_memory_only_command(tmp_path):
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     assert "--sandbox read-only" in command_text
     assert 'approval_policy="never"' in command_text
-    assert "features.plugins=false" in command_text
-    assert "features.apps=false" in command_text
+    assert "features.plugins=false" not in command_text
+    assert "features.apps=false" not in command_text
     assert 'web_search="disabled"' in command_text
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_get","memory_recall","timeline_get","user_get"]' in command_text

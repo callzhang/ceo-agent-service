@@ -4,13 +4,6 @@ from pathlib import Path
 
 from app.dws_client import dws_noninteractive_environment
 from app.prompt import ceo_agent_thread_prompt
-from app.service_codex_config import (
-    ServiceMcpConfigError,
-    ServiceMcpServer,
-    jwt_token_is_expired,
-    load_service_mcp_servers,
-    service_mcp_config_options,
-)
 
 
 CODEX_DECISION_SCHEMA_PATH = (
@@ -78,34 +71,24 @@ DEFAULT_CODEX_MODEL = "gpt-5.5"
 DEFAULT_CODEX_MODEL_REASONING_EFFORT = "medium"
 
 
-def _memory_connector_runtime_instructions(
-    servers: tuple[ServiceMcpServer, ...] | None = None,
-) -> str:
-    issue = memory_connector_config_issue(servers)
-    if not issue:
-        return (
-            "Memory connector runtime\n\n"
-            "- memory_connector MCP is available in this Codex invocation."
-        )
+def _memory_connector_runtime_instructions() -> str:
     return (
         "Memory connector runtime\n\n"
-        f"- memory_connector MCP is unavailable in this Codex invocation: {issue}.\n"
-        "- Do not call memory_connector MCP tools. Use current prompt material, "
-        "DWS, Exa, Lark CLI, Xiaoqing MCP, or local files when available; if "
-        "critical information is still missing, return the appropriate blocked "
-        "or stop_with_error result."
+        "- This invocation inherits the principal's configured Codex MCP servers, "
+        "plugins, and skills, including memory_connector when it is installed.\n"
+        "- Use memory_connector when durable context is relevant. If the tool itself "
+        "reports unavailable or unauthorized, classify that as a tool dependency "
+        "issue; do not start an interactive login flow or infer missing user facts."
     )
 
 
-def codex_developer_instructions(
-    servers: tuple[ServiceMcpServer, ...] | None = None,
-) -> str:
+def codex_developer_instructions() -> str:
     return (
         f"{CODEX_DEVELOPER_INSTRUCTIONS_PREFIX}\n\n"
         f"{DWS_MATERIAL_READING_INSTRUCTIONS}\n\n"
         f"{XIAOQING_INTERVIEW_READING_INSTRUCTIONS}\n\n"
         f"{ceo_agent_thread_prompt()}\n\n"
-        f"{_memory_connector_runtime_instructions(servers)}"
+        f"{_memory_connector_runtime_instructions()}"
     )
 
 
@@ -158,23 +141,8 @@ def codex_model_config_options() -> list[str]:
     return options
 
 
-def memory_connector_config_issue(
-    servers: tuple[ServiceMcpServer, ...] | None = None,
-) -> str:
-    if servers is None:
-        try:
-            servers = load_service_mcp_servers()
-        except ServiceMcpConfigError as exc:
-            return f"service MCP configuration is invalid: {exc.reason}"
-    memory_connector = next(
-        (server for server in servers if server.name == "memory_connector"),
-        None,
-    )
-    if memory_connector is None:
-        return "memory_connector is not present in the service MCP manifest"
-    token_env = memory_connector.bearer_token_env_var
-    if token_env and jwt_token_is_expired(os.environ.get(token_env, "")):
-        return "memory connector token is expired"
+def memory_connector_config_issue() -> str:
+    """Do not infer native OAuth availability from a copied service config."""
     return ""
 
 
@@ -209,27 +177,20 @@ class CodexRunner:
         image_paths: list[Path] | None = None,
         output_schema_path: Path | None = None,
         use_output_schema: bool = True,
-        ignore_user_config: bool = True,
         approval_policy: str = "untrusted",
         developer_instructions: str | None = None,
         use_approval_bypass: bool = True,
         preserve_native_model_config: bool = False,
     ) -> list[str]:
-        if not ignore_user_config:
-            raise ValueError("service Codex runs require user config isolation")
         if approval_policy not in {"untrusted", "never"}:
             raise ValueError("unsupported approval policy")
         effective_approval_bypass = (
             use_approval_bypass and approval_policy != "never"
         )
-        service_mcp_servers = load_service_mcp_servers()
-        service_mcp_options = service_mcp_config_options(
-            servers=service_mcp_servers
-        )
         effective_developer_instructions = (
             developer_instructions
             if developer_instructions is not None
-            else codex_developer_instructions(service_mcp_servers)
+            else codex_developer_instructions()
         )
         image_options: list[str] = []
         for image_path in image_paths or []:
@@ -247,11 +208,6 @@ class CodexRunner:
                 if preserve_native_model_config
                 else codex_model_config_options()
             ),
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--disable",
-            "hooks",
-            *service_mcp_options,
             "-c",
             _config_string("approval_policy", approval_policy),
             *(
@@ -266,10 +222,6 @@ class CodexRunner:
             ),
             "-c",
             "include_permissions_instructions=false",
-            "-c",
-            "include_apps_instructions=false",
-            "-c",
-            "include_environment_context=false",
         ]
         if session_id:
             return [

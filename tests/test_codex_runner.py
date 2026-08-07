@@ -1,4 +1,3 @@
-import base64
 import json
 from pathlib import Path
 
@@ -14,22 +13,13 @@ from app.codex_runner import (
 from app.codex_decision import CodexDecisionRunner
 from app.dingtalk_models import CodexAction
 from app.dws_client import DWS_AGENT_CODE_ENV
-from app.wechat.codex_safety import disable_configured_mcp_servers
 
 
 @pytest.fixture(autouse=True)
 def _isolate_memory_connector_env(tmp_path: Path, monkeypatch):
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
-    service_manifest = tmp_path / "service-mcp.json"
-    service_manifest.write_text(
-        json.dumps(
-            {"servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}}
-        ),
-        encoding="utf-8",
-    )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(service_manifest))
     monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
     monkeypatch.delenv("MEMORY_CONNECTOR_AUTH_TYPE", raising=False)
     monkeypatch.delenv("MEMORY_CONNECTOR_CONTENT_TYPE", raising=False)
@@ -39,9 +29,6 @@ def _isolate_memory_connector_env(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CEO_CODEX_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("CEO_CODEX_MODEL_REASONING_EFFORT", raising=False)
     monkeypatch.delenv("CEO_CODEX_PROFILE", raising=False)
-    monkeypatch.delenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", raising=False)
-    monkeypatch.delenv("CEO_XIAOQING_MCP_COMMAND", raising=False)
-    monkeypatch.delenv("CEO_XIAOQING_MCP_ARGS_JSON", raising=False)
 
 
 def _developer_instructions_arg(command: list[str]) -> str:
@@ -52,20 +39,6 @@ def _developer_instructions_arg(command: list[str]) -> str:
         if value.startswith("developer_instructions="):
             return value
     raise AssertionError("developer_instructions config missing")
-
-
-def _set_service_servers(
-    tmp_path: Path,
-    monkeypatch,
-    servers: dict[str, object],
-) -> Path:
-    manifest = tmp_path / "service-mcp-override.json"
-    manifest.write_text(
-        json.dumps({"servers": servers}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
-    return manifest
 
 
 def _without_developer_instructions(command: list[str]) -> list[str]:
@@ -82,91 +55,16 @@ def _without_developer_instructions(command: list[str]) -> list[str]:
     return cleaned
 
 
-def _unsigned_jwt(payload: dict) -> str:
-    header = {"alg": "none"}
-
-    def encode(value: dict) -> str:
-        raw = json.dumps(value, separators=(",", ":")).encode()
-        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-    return f"{encode(header)}.{encode(payload)}."
-
-
-def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch):
-    _set_service_servers(
-        tmp_path,
-        monkeypatch,
-        {
-            "memory_connector": {
-                "url_env": "MEMORY_CONNECTOR_URL",
-                "bearer_token_env_var": "CONNECTOR_API_KEY",
-                "env_http_headers": {
-                    "X-Friday-Memory-Auth-Type": "MEMORY_CONNECTOR_AUTH_TYPE",
-                    "Content-Type": "MEMORY_CONNECTOR_CONTENT_TYPE",
-                },
-            }
-        },
-    )
-    monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp/")
-    monkeypatch.setenv("CONNECTOR_API_KEY", "secret-token")
-    monkeypatch.setenv("MEMORY_CONNECTOR_AUTH_TYPE", "api_key")
-    monkeypatch.setenv("MEMORY_CONNECTOR_CONTENT_TYPE", "application/json")
-    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
-
-    command = runner.build_command(
-        prompt="hello",
-        session_id=None,
-        ignore_user_config=True,
-    )
-
-    assert "--ignore-user-config" in command
-    disabled_features = [
-        command[index + 1]
-        for index, value in enumerate(command[:-1])
-        if value == "--disable"
-    ]
-    assert disabled_features == ["hooks"]
-    assert (
-        'mcp_servers.memory_connector.url="https://memory.example/mcp/"'
-        in command
-    )
-    assert (
-        'mcp_servers.memory_connector.bearer_token_env_var="CONNECTOR_API_KEY"'
-        in command
-    )
-    assert (
-        'mcp_servers.memory_connector.env_http_headers={'
-        '"X-Friday-Memory-Auth-Type" = "MEMORY_CONNECTOR_AUTH_TYPE", '
-        '"Content-Type" = "MEMORY_CONNECTOR_CONTENT_TYPE"}'
-        in command
-    )
-    assert "secret-token" not in command
-    assert "x-memory-user-id" not in " ".join(command)
-
-
-def test_codex_command_ignores_user_config_by_default(tmp_path: Path):
+def test_codex_command_inherits_principal_codex_config_and_skills(tmp_path: Path):
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert "--ignore-user-config" in command
-    disabled_features = [
-        command[index + 1]
-        for index, value in enumerate(command[:-1])
-        if value == "--disable"
-    ]
-    assert disabled_features == ["hooks"]
-
-
-def test_codex_command_rejects_enabling_personal_user_config(tmp_path: Path):
-    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
-
-    with pytest.raises(ValueError, match="service Codex runs require user config isolation"):
-        runner.build_command(
-            prompt="hello",
-            session_id=None,
-            ignore_user_config=False,
-        )
+    assert "--ignore-user-config" not in command
+    assert "--ignore-rules" not in command
+    assert "hooks" not in command
+    assert "features.plugins=false" not in command
+    assert "features.apps=false" not in command
 
 
 def test_codex_command_supports_strict_read_only_policy(tmp_path: Path):
@@ -185,7 +83,7 @@ def test_codex_command_supports_strict_read_only_policy(tmp_path: Path):
     assert "Read-only invocation. Do not write." in _developer_instructions_arg(command)
 
 
-def test_codex_command_read_only_resume_ignores_native_user_config(tmp_path: Path):
+def test_codex_command_read_only_resume_inherits_native_user_config(tmp_path: Path):
     command = CodexRunner(workspace=tmp_path).build_command(
         prompt="hello",
         session_id="session-1",
@@ -193,7 +91,7 @@ def test_codex_command_read_only_resume_ignores_native_user_config(tmp_path: Pat
     )
 
     assert command[:3] == ["codex", "exec", "resume"]
-    assert "--ignore-user-config" in command
+    assert "--ignore-user-config" not in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
 
 
@@ -226,7 +124,7 @@ def test_codex_command_does_not_require_reasoning_summary_support(tmp_path: Path
     )
 
 
-def test_codex_command_uses_service_manifest_instead_of_personal_mcp_config(
+def test_codex_command_does_not_copy_principal_mcp_configuration(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -252,150 +150,14 @@ def test_codex_command_uses_service_manifest_instead_of_personal_mcp_config(
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    _set_service_servers(
-        tmp_path,
-        monkeypatch,
-        {
-            "exa": {"url": "https://mcp.exa.ai/mcp"},
-            "xiaoqing_interview": {
-                "command_env": "CEO_XIAOQING_MCP_COMMAND",
-                "args_env": "CEO_XIAOQING_MCP_ARGS_JSON",
-            },
-        },
-    )
-    monkeypatch.setenv("CEO_XIAOQING_MCP_COMMAND", "/opt/service/xiaoqing-mcp")
-    monkeypatch.setenv("CEO_XIAOQING_MCP_ARGS_JSON", '["serve"]')
-
     command = CodexRunner(workspace=tmp_path).build_command(
         prompt="hello", session_id=None
     )
 
-    assert "--ignore-user-config" in command
-    assert 'mcp_servers.exa.url="https://mcp.exa.ai/mcp"' in command
-    assert 'mcp_servers.xiaoqing_interview.command="/opt/service/xiaoqing-mcp"' in command
-    assert 'mcp_servers.xiaoqing_interview.args=["serve"]' in command
+    assert "--ignore-user-config" not in command
     assert not any("EXA_API_KEY" in item for item in command)
     assert not any("secret-key" in item for item in command)
-    assert not any("unrelated_business_tool" in item for item in command)
-    assert not any(
-        item.startswith("mcp_servers.xiaoqing_interview.url=")
-        for item in command
-    )
-
-
-def test_legacy_passthrough_allowlist_cannot_override_service_manifest(
-    tmp_path: Path, monkeypatch
-):
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text(
-        "\n".join(
-            [
-                "[mcp_servers.xiaoqing_interview]",
-                'url = "https://interview.hr.startask.net/mcp/"',
-                "",
-                "[mcp_servers.other_safe_tool]",
-                'url = "https://other.example/mcp/"',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    monkeypatch.setenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", "xiaoqing_interview")
-    _set_service_servers(
-        tmp_path,
-        monkeypatch,
-        {"other_safe_tool": {"url": "https://service.example/mcp/"}},
-    )
-    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
-
-    command = runner.build_command(prompt="hello", session_id=None)
-
-    assert 'mcp_servers.other_safe_tool.url="https://service.example/mcp/"' in command
-    assert not any("xiaoqing_interview.url" in item for item in command)
-    assert not any("other.example" in item for item in command)
-
-
-def test_codex_command_does_not_import_personal_lark_or_exa_transports(
-    tmp_path: Path, monkeypatch
-):
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text(
-        "\n".join(
-            [
-                "[mcp_servers.lark]",
-                'url = "https://lark.example/mcp/"',
-                "",
-                "[mcp_servers.exa]",
-                'url = "https://exa.example/mcp/"',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
-
-    command = runner.build_command(prompt="hello", session_id=None)
-
-    assert 'mcp_servers.exa.url="https://mcp.exa.ai/mcp"' in command
-    assert not any("mcp_servers.lark" in item for item in command)
-    assert not any("exa.example" in item for item in command)
-
-
-def test_codex_command_preserves_exa_when_user_config_omits_it(
-    tmp_path: Path, monkeypatch
-):
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text("", encoding="utf-8")
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-
-    command = CodexRunner(workspace=tmp_path).build_command(
-        prompt="hello",
-        session_id=None,
-    )
-
-    assert 'mcp_servers.exa.url="https://mcp.exa.ai/mcp"' in command
-
-
-def test_ignore_user_config_command_never_disables_personal_mcp_transport(
-    tmp_path: Path, monkeypatch
-):
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text(
-        "\n".join(
-            [
-                "[mcp_servers.crm]",
-                'url = "https://personal.example/crm"',
-                "",
-                "[mcp_servers.xiaoqing_interview]",
-                'url = "https://personal.example/xiaoqing"',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    service_manifest = tmp_path / "service-mcp.json"
-    service_manifest.write_text(
-        json.dumps(
-            {"servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}}
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(service_manifest))
-
-    command = CodexRunner(workspace=tmp_path).build_command(
-        prompt="hello",
-        session_id=None,
-        ignore_user_config=True,
-    )
-    disable_configured_mcp_servers(command)
-
-    assert "mcp_servers.crm.enabled=false" not in command
-    assert not any("personal.example" in option for option in command)
-    assert not any("mcp_servers.xiaoqing_interview" in option for option in command)
+    assert not any("mcp_servers." in item for item in command)
 
 
 def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
@@ -513,7 +275,6 @@ def test_codex_command_does_not_use_agent_envelope_schema_by_default(tmp_path: P
     command = runner.build_command(
         prompt="hello",
         session_id=None,
-        ignore_user_config=True,
     )
 
     assert "--output-schema" in command
@@ -549,31 +310,6 @@ def test_codex_command_can_skip_output_schema_for_service_result_validation(
     )
 
     assert "--output-schema" not in command
-
-
-def test_codex_command_loads_one_service_mcp_snapshot(tmp_path: Path, monkeypatch):
-    import app.codex_runner as codex_runner_module
-
-    original = codex_runner_module.load_service_mcp_servers
-    calls = 0
-
-    def counted_load(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(
-        codex_runner_module,
-        "load_service_mcp_servers",
-        counted_load,
-    )
-
-    CodexRunner(workspace=tmp_path, codex_bin="codex").build_command(
-        prompt="hello",
-        session_id=None,
-    )
-
-    assert calls == 1
 
 
 def test_codex_runner_env_does_not_load_personal_memory_connector_env_file(
@@ -648,7 +384,7 @@ def test_codex_runner_can_preserve_native_local_cli_auth_environment(
     assert DWS_AGENT_CODE_ENV not in env
 
 
-def test_codex_runner_env_does_not_load_memory_secrets_from_personal_config(
+def test_codex_runner_inherits_personal_mcp_auth_without_copying_it(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -673,22 +409,18 @@ def test_codex_runner_env_does_not_load_memory_secrets_from_personal_config(
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     env = runner.build_env()
-    command = runner.build_command(
-        prompt="hello",
-        session_id=None,
-        ignore_user_config=True,
-    )
+    command = runner.build_command(prompt="hello", session_id=None)
 
     assert "CONNECTOR_API_KEY" not in env
     assert "MEMORY_CONNECTOR_AUTH_TYPE" not in env
     assert "MEMORY_CONNECTOR_CONTENT_TYPE" not in env
     assert "MEMORY_CONNECTOR_URL" not in env
-    assert "--ignore-user-config" in command
+    assert "--ignore-user-config" not in command
     assert "secret-token" not in command
     assert not any("mcp_servers.memory_connector" in item for item in command)
 
 
-def test_codex_command_does_not_inherit_personal_memory_oauth_transport(
+def test_codex_command_treats_native_memory_oauth_as_runtime_owned(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -707,19 +439,13 @@ def test_codex_command_does_not_inherit_personal_memory_oauth_transport(
     monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
-    command = runner.build_command(
-        prompt="hello",
-        session_id=None,
-        ignore_user_config=True,
-    )
+    command = runner.build_command(prompt="hello", session_id=None)
     developer_arg = _developer_instructions_arg(command)
 
     assert not any("mcp_servers.memory_connector" in item for item in command)
-    assert memory_connector_config_issue() == (
-        "memory_connector is not present in the service MCP manifest"
-    )
-    assert "memory_connector MCP is unavailable" in developer_arg
-    assert "Do not call memory_connector MCP tools" in developer_arg
+    assert memory_connector_config_issue() == ""
+    assert "inherits the principal's configured Codex MCP servers" in developer_arg
+    assert "do not start an interactive login flow" in developer_arg
 
 
 def test_codex_command_does_not_auto_fallback_to_configured_profile(
@@ -780,7 +506,7 @@ def test_codex_command_ignores_legacy_profile_env_for_service_default_model(
     assert 'model_provider="minimax"' not in command
 
 
-def test_ignore_user_config_does_not_import_personal_model_provider_definition(
+def test_command_does_not_copy_personal_model_provider_definition(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -807,53 +533,15 @@ def test_ignore_user_config_does_not_import_personal_model_provider_definition(
     monkeypatch.setenv("CEO_CODEX_MODEL_PROVIDER", "minimax")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
-    command = runner.build_command(
-        prompt="hello",
-        session_id=None,
-        ignore_user_config=True,
-    )
+    command = runner.build_command(prompt="hello", session_id=None)
 
-    assert "--ignore-user-config" in command
+    assert "--ignore-user-config" not in command
     assert command[command.index("-m") + 1] == "codex-MiniMax-M2.7"
     assert 'model_provider="minimax"' in command
     assert 'model_reasoning_effort="medium"' in command
     assert not any("model_providers.minimax.base_url" in item for item in command)
     assert not any("model_providers.minimax.env_key" in item for item in command)
     assert not any("api.minimaxi.com" in item for item in command)
-
-
-def test_codex_runner_reports_expired_service_memory_connector_token(
-    tmp_path: Path, monkeypatch
-):
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    expired_token = _unsigned_jwt({"exp": 1})
-    _set_service_servers(
-        tmp_path,
-        monkeypatch,
-        {
-            "memory_connector": {
-                "url_env": "MEMORY_CONNECTOR_URL",
-                "bearer_token_env_var": "CONNECTOR_API_KEY",
-            }
-        },
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    monkeypatch.setenv("CONNECTOR_API_KEY", expired_token)
-    monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp/")
-    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
-
-    env = runner.build_env()
-    command = runner.build_command(prompt="hello", session_id=None)
-
-    assert env["CONNECTOR_API_KEY"] == expired_token
-    assert "MEMORY_CONNECTOR_URL" in env
-    assert expired_token not in command
-    assert (
-        'mcp_servers.memory_connector.bearer_token_env_var="CONNECTOR_API_KEY"'
-        in command
-    )
-    assert memory_connector_config_issue() == "memory connector token is expired"
 
 
 def test_codex_runner_does_not_forward_memory_user_id(
@@ -912,52 +600,6 @@ def test_codex_developer_instructions_require_full_mail_lookup_and_structured_re
     assert "Do not expose tokens" in instructions
 
 
-def test_codex_command_uses_service_env_instead_of_personal_memory_env_file(
-    tmp_path: Path, monkeypatch
-):
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    (codex_home / "memory_connector.env").write_text(
-        "\n".join(
-            [
-                "export CONNECTOR_API_KEY='secret-token'",
-                "export MEMORY_CONNECTOR_URL='https://personal.example/mcp/'",
-                "export MEMORY_CONNECTOR_USER_ID='principal'",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    _set_service_servers(
-        tmp_path,
-        monkeypatch,
-        {
-            "memory_connector": {
-                "url_env": "MEMORY_CONNECTOR_URL",
-                "bearer_token_env_var": "CONNECTOR_API_KEY",
-            }
-        },
-    )
-    monkeypatch.setenv("CONNECTOR_API_KEY", "service-token")
-    monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://service.example/mcp/")
-    monkeypatch.delenv("MEMORY_CONNECTOR_USER_ID", raising=False)
-    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
-
-    command = runner.build_command(prompt="hello", session_id=None)
-
-    assert (
-        'mcp_servers.memory_connector.url="https://service.example/mcp/"'
-        in command
-    )
-    assert not any("personal.example" in item for item in command)
-    assert "service-token" not in command
-    assert (
-        'mcp_servers.memory_connector.bearer_token_env_var="CONNECTOR_API_KEY"'
-        in command
-    )
-    assert "x-memory-user-id" not in " ".join(command)
-
-
 def test_builds_new_thread_command(tmp_path: Path):
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
@@ -979,22 +621,12 @@ def test_builds_new_thread_command(tmp_path: Path):
         "gpt-5.5",
         "-c",
         'model_reasoning_effort="medium"',
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--disable",
-        "hooks",
-        "-c",
-        'mcp_servers.exa.url="https://mcp.exa.ai/mcp"',
         "-c",
         'approval_policy="untrusted"',
         "-c",
         'approvals_reviewer="auto_review"',
         "-c",
         "include_permissions_instructions=false",
-        "-c",
-        "include_apps_instructions=false",
-        "-c",
-        "include_environment_context=false",
         "--dangerously-bypass-approvals-and-sandbox",
         "--output-schema",
         str(CODEX_DECISION_SCHEMA_PATH),
@@ -1024,22 +656,12 @@ def test_builds_resume_command(tmp_path: Path):
         "gpt-5.5",
         "-c",
         'model_reasoning_effort="medium"',
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--disable",
-        "hooks",
-        "-c",
-        'mcp_servers.exa.url="https://mcp.exa.ai/mcp"',
         "-c",
         'approval_policy="untrusted"',
         "-c",
         'approvals_reviewer="auto_review"',
         "-c",
         "include_permissions_instructions=false",
-        "-c",
-        "include_apps_instructions=false",
-        "-c",
-        "include_environment_context=false",
         "--dangerously-bypass-approvals-and-sandbox",
         "abc",
         "-",

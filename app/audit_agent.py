@@ -260,11 +260,6 @@ class AuditAgentRunner:
             ),
             configure_command=lambda command: make_audit_agent_command(
                 command,
-                reviewed_mcp_tools=(
-                    self.effects.reviewed_read_tools()
-                    if self.dry_run or recovery_phase in {"reconcile", "execute"}
-                    else self.effects.reviewed_tools()
-                ),
                 controlled_cli=ControlledCliConfig(
                     command=sys.executable,
                     args=("-m", "app.agent_cli"),
