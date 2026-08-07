@@ -13104,6 +13104,20 @@ def test_mark_seen_tracks_all_latest_trigger_message_ids(tmp_path: Path, monkeyp
     assert worker.store.has_seen("msg-mentioned-3") is True
 
 
+def test_latest_trigger_message_uses_input_order_for_equal_timestamps():
+    older = message("first", message_id="msg-older", single_chat=True)
+    newer = message("second", message_id="msg-newer", single_chat=True)
+    older.create_time = newer.create_time = "2026-05-13 20:26:00"
+
+    trigger = DingTalkAutoReplyWorker._latest_trigger_message([older, newer])
+
+    assert trigger.open_message_id == "msg-newer"
+    assert trigger.raw_payload["coalesced_message_ids"] == [
+        "msg-older",
+        "msg-newer",
+    ]
+
+
 def test_group_all_mention_from_unread_conversation_is_processed(
     tmp_path: Path, monkeypatch
 ):

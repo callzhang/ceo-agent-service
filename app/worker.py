@@ -2974,9 +2974,12 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _latest_trigger_message(messages: list[DingTalkMessage]) -> DingTalkMessage:
-        latest = max(
-            messages,
-            key=DingTalkAutoReplyWorker._message_create_time_as_instant,
+        _, latest = max(
+            enumerate(messages),
+            key=lambda item: (
+                DingTalkAutoReplyWorker._message_create_time_as_instant(item[1]),
+                item[0],
+            ),
         )
         if len(messages) == 1:
             return latest

@@ -4225,6 +4225,36 @@ def test_read_unread_messages_reads_latest_window_and_returns_chronological_orde
     ]
 
 
+def test_read_unread_messages_discards_read_overlap_rows(monkeypatch):
+    monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
+    payload = {
+        "result": {
+            "messages": [
+                {
+                    "openConversationId": "cid-1",
+                    "openMessageId": f"msg-{index}",
+                    "sender": "Mina Zou",
+                    "createTime": "2026-05-13 20:26:00",
+                    "content": f"message {index}",
+                }
+                for index in range(5, 0, -1)
+            ]
+        }
+    }
+    client = RecordingDwsClient(payload)
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="Friday",
+        single_chat=False,
+        unread_point=1,
+        last_message_create_at=1778666181403,
+    )
+
+    messages = client.read_unread_messages(conversation)
+
+    assert [message.open_message_id for message in messages] == ["msg-5"]
+
+
 def test_read_recent_messages_prefers_exact_single_chat_nick_match(monkeypatch):
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
     payload = {"result": {"messages": []}}

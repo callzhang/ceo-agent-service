@@ -1886,7 +1886,7 @@ class DwsClient:
             return []
         conversation = self._with_single_chat_direct_target(conversation)
         payload = self.run_json(self.build_read_unread_messages_command(conversation))
-        return list(
+        messages = list(
             reversed(
                 self.parse_messages(
                     payload,
@@ -1895,6 +1895,7 @@ class DwsClient:
                 )
             )
         )
+        return messages[-conversation.unread_point :]
 
     def list_messages_by_ids(self, message_ids: list[str]) -> list[DingTalkMessage]:
         if not message_ids:
