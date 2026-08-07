@@ -14301,6 +14301,7 @@ def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
+    monkeypatch.setattr("app.worker.send_browser_notification", lambda **_: False)
 
     worker.run_once()
 
