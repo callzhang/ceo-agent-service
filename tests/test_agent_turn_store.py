@@ -498,9 +498,10 @@ def _create_pre_role_database(path: Path) -> Path:
                       '{"outcome":"completed"}', '2026-08-05 10:02:00',
                       '2026-08-05 10:00:00', '2026-08-05 10:02:00');
             insert into agent_run_events (
-                id, agent_run_id, sequence, event_json, event_type, created_at
+                id, agent_run_id, sequence, event_json, event_type,
+                event_scope, created_at
             ) values (8, 7, 1, '{"type":"item.completed"}', 'item.completed',
-                      '2026-08-06 15:00:00');
+                      'reconciliation', '2026-08-06 15:00:00');
             insert into agent_execution_receipts (
                 id, agent_run_id, receipt_id, operation_id, cli,
                 command_path, command_digest, exit_code, completed,
@@ -526,6 +527,7 @@ def test_agent_run_migration_preserves_events_and_receipts(tmp_path):
     assert run.parent_agent_run_id is None
     assert run.operation_id == ""
     assert run.tool_events == [{"type": "item.completed"}]
+    assert run.reconciliation_event_count == 1
     assert store.list_agent_execution_receipts(7)[0].receipt_id == "receipt-1"
     assert store.foreign_key_violations() == []
     with sqlite3.connect(db_path) as db:

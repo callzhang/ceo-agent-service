@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX
+from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX, _config_string
 
 _TRANSPORT_OPTION = re.compile(
     r"^mcp_servers\.([A-Za-z0-9_-]+)\.(?:url|command)="
@@ -186,8 +186,9 @@ def make_role_agent_command(
             *(
                 [
                     "-c",
-                    "mcp_servers.agent_cli.env="
-                    + json.dumps(dict(controlled_cli.env), separators=(",", ":")),
+                    _config_string(
+                        "mcp_servers.agent_cli.env", dict(controlled_cli.env)
+                    ),
                 ]
                 if controlled_cli.env
                 else []

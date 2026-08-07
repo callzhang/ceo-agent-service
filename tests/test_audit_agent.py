@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import tomllib
 from dataclasses import replace
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from app.audit_agent import AuditAgentRunner, _recovery_authorizations
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
+from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
 
 class CapturingExecutor:
@@ -71,6 +73,33 @@ class ExactReceiptExecutor(CapturingExecutor):
             expected_status="unknown",
         )
         return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+
+
+def test_recovery_mcp_env_override_is_a_toml_inline_table():
+    command = [
+        "codex", "exec", "prompt",
+        "-c", 'mcp_servers.xiaoqing_interview.command="server"',
+    ]
+    make_audit_agent_command(
+        command,
+        reviewed_mcp_tools={},
+        controlled_cli=ControlledCliConfig(
+            command="python",
+            args=("-m", "app.agent_cli"),
+            cwd="/tmp/service root",
+            env=(("ALLOWLIST", '[{"text":"quoted \\\" value"}]'),),
+        ),
+        allow_write=True,
+    )
+    override = next(
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "-c"
+        and command[index + 1].startswith("mcp_servers.agent_cli.env=")
+    )
+    parsed = tomllib.loads("value=" + override.partition("=")[2])
+
+    assert parsed["value"] == {"ALLOWLIST": '[{"text":"quoted \\\" value"}]'}
 
 
 def _audit_result_jsonl(

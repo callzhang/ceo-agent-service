@@ -2874,26 +2874,38 @@ def test_reconciliation_event_limit_excludes_direct_run_history(
         )
 
 
-def test_reconciliation_event_count_uses_run_scope_composite_index(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    AutoReplyStore(db_path)
+def test_reconciliation_event_limit_uses_incremental_run_counter(tmp_path: Path):
+    statements: list[str] = []
 
-    with sqlite3.connect(db_path) as db:
-        indexes = {
-            row[1]
-            for row in db.execute("pragma index_list(agent_run_events)").fetchall()
-        }
-        plan = db.execute(
-            "explain query plan select count(*) from agent_run_events "
-            "where agent_run_id=? and event_scope='reconciliation'",
-            (1,),
-        ).fetchall()
+    class TracedStore(AutoReplyStore):
+        def _open_connection(self):
+            connection = super()._open_connection()
+            connection.set_trace_callback(statements.append)
+            return connection
 
-    assert "idx_agent_run_events_run_scope" in indexes
-    assert any(
-        "USING COVERING INDEX idx_agent_run_events_run_scope" in row[3]
-        for row in plan
-    ), plan
+    store = TracedStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
+    store.mark_agent_run_unknown(
+        run.id, {"code": "effect_completion_missing"}, owner="worker-1"
+    )
+    store.claim_unknown_agent_run(run.id, owner="reconciler-1")
+    statements.clear()
+
+    store.append_unknown_agent_run_event(
+        run.id,
+        {"type": "item.completed", "item": {"id": "reconcile-1"}},
+        owner="reconciler-1",
+    )
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.reconciliation_event_count == 1
+    normalized = [statement.casefold() for statement in statements]
+    assert not any(
+        "count(*) from agent_run_events" in statement
+        and "event_scope='reconciliation'" in statement
+        for statement in normalized
+    )
 
 
 def test_legacy_agent_run_events_adds_scope_before_index_and_is_idempotent(

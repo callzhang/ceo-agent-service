@@ -333,6 +333,7 @@ class AgentRun(BaseModel):
     effect_failed_count: int = 0
     effect_receipt_count: int = 0
     effect_unreviewed_count: int = 0
+    reconciliation_event_count: int = 0
     lease_owner: str = ""
     lease_expires_at: str = ""
     reconciliation_attempts: int = 0
@@ -884,6 +885,7 @@ class AutoReplyStore:
                     effect_failed_count integer not null default 0,
                     effect_receipt_count integer not null default 0,
                     effect_unreviewed_count integer not null default 0,
+                    reconciliation_event_count integer not null default 0,
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
                     reconciliation_attempts integer not null default 0,
@@ -1386,6 +1388,7 @@ class AutoReplyStore:
                 "effect_failed_count",
                 "effect_receipt_count",
                 "effect_unreviewed_count",
+                "reconciliation_event_count",
             ):
                 if column not in agent_run_columns:
                     db.execute(
@@ -1404,6 +1407,13 @@ class AutoReplyStore:
                 db.execute(
                     "alter table agent_run_events add column "
                     "event_scope text not null default 'direct'"
+                )
+            if "reconciliation_event_count" not in agent_run_columns:
+                db.execute(
+                    "update agent_runs set reconciliation_event_count=("
+                    "select count(*) from agent_run_events "
+                    "where agent_run_id=agent_runs.id "
+                    "and event_scope='reconciliation')"
                 )
             db.execute(
                 "create index if not exists idx_agent_run_events_run_scope "
@@ -2395,6 +2405,7 @@ class AutoReplyStore:
             effect_failed_count=row["effect_failed_count"],
             effect_receipt_count=row["effect_receipt_count"],
             effect_unreviewed_count=row["effect_unreviewed_count"],
+            reconciliation_event_count=row["reconciliation_event_count"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],
             reconciliation_attempts=row["reconciliation_attempts"],
@@ -3684,12 +3695,7 @@ class AutoReplyStore:
                 raise ValueError("agent run reconciliation requires unknown status")
             if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
-            event_count = db.execute(
-                "select count(*) from agent_run_events "
-                "where agent_run_id=? and event_scope='reconciliation'",
-                (run_id,),
-            ).fetchone()[0]
-            if event_count >= MAX_RECONCILIATION_EVENTS:
+            if row["reconciliation_event_count"] >= MAX_RECONCILIATION_EVENTS:
                 raise ValueError("agent run reconciliation event limit exceeded")
             sequence = db.execute(
                 "select coalesce(max(sequence), 0) + 1 from agent_run_events "
@@ -3748,7 +3754,8 @@ class AutoReplyStore:
                 set effect_started_count=effect_started_count+?,
                     effect_completed_count=effect_completed_count+?,
                     effect_failed_count=effect_failed_count+?,
-                    effect_unreviewed_count=effect_unreviewed_count+?
+                    effect_unreviewed_count=effect_unreviewed_count+?,
+                    reconciliation_event_count=reconciliation_event_count+1
                 where id=?
                 """,
                 (
