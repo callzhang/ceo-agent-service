@@ -166,6 +166,44 @@ def test_consumer_rotates_damaged_session_after_missing_final_result(
     assert json.loads(run.structured_error_json)["code"] == "codex_result_missing"
 
 
+def test_consumer_rotates_session_when_codex_exits_without_a_final_result(
+    store, task, context
+):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-a")
+    executor = FailingExecutor(
+        "\n".join(
+            (
+                json.dumps({"type": "thread.started", "thread_id": "session-a"}),
+                json.dumps(
+                    {
+                        "type": "task_complete",
+                        "last_agent_message": None,
+                    }
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(ResultParseError, match="no valid typed result"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+            codex_session_exists=lambda _: True,
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert store.get_codex_session_id(task.conversation_id) is None
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert json.loads(run.structured_error_json)["code"] == "codex_result_missing"
+
+
 def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wait(
     store, task, context
 ):

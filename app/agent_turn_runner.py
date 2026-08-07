@@ -276,7 +276,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
                 on_stdout_line=persist_line,
             )
-            self._raise_for_process_failure(process)
+            self._raise_for_process_failure(process, run=run)
             result = parse_result(process.stdout)
             if _contains_sensitive_value(result.model_dump(mode="json")):
                 raise ValueError("agent_result_contains_sensitive_value")
@@ -712,12 +712,23 @@ class AgentTurnProcess(Generic[ResultT]):
         ):
             raise RuntimeError("audit_execution_evidence_missing")
 
-    @staticmethod
-    def _raise_for_process_failure(process: ProcessRunResult) -> None:
+    def _raise_for_process_failure(
+        self, process: ProcessRunResult, *, run: AgentRun
+    ) -> None:
         if process.timed_out:
             raise RuntimeError("codex_process_timeout")
         if process.returncode != 0:
-            raise RuntimeError(_process_failure_code(process))
+            failure_code = _process_failure_code(process)
+            persisted = self.store.get_agent_run(run.id)
+            if (
+                failure_code == "codex_process_failed"
+                and run.role is AgentRole.CONSUMER
+                and persisted is not None
+                and not persisted.tool_events
+                and _stream_has_no_agent_result(process.stdout)
+            ):
+                raise ResultParseError("no valid typed result JSON found in Codex JSONL")
+            raise RuntimeError(failure_code)
 
     def _fail_running(self, run: AgentRun, code: str) -> None:
         persisted = self.store.get_agent_run(run.id)
@@ -750,6 +761,37 @@ class AgentTurnProcess(Generic[ResultT]):
             expected_execution_generation=run.execution_generation,
             next_attempt_at="",
         )
+
+
+def _stream_has_no_agent_result(raw: str) -> bool:
+    saw_json = False
+    for line in raw.splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        saw_json = True
+        response_item = payload.get("payload")
+        if (
+            payload.get("type") == "response_item"
+            and isinstance(response_item, dict)
+            and response_item.get("type") == "message"
+            and response_item.get("role") == "assistant"
+        ):
+            return False
+        item = payload.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            return False
+        if isinstance(payload.get("last_agent_message"), str):
+            return False
+        if (
+            isinstance(payload.get("message"), str)
+            and payload.get("type") in (None, "agent_message", "task_complete")
+        ):
+            return False
+    return saw_json
 
 
 def _session_id(payload: dict[str, object]) -> str:
