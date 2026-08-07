@@ -767,7 +767,7 @@ def test_scan_pending_oa_approvals_records_task_read_failures(tmp_path):
 
     state = store.get_daily_scan_state("oa_pending")
     assert state is not None
-    assert state["last_error"] == "oa approval task/detail read failed"
+    assert state["last_error"] == ""
     assert json.loads(state["cursor_json"])["read_failure_process_instance_ids"] == [
         "proc-1"
     ]

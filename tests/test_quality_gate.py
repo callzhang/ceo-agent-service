@@ -84,6 +84,34 @@ def test_quality_gate_keeps_future_follow_up_as_attention_not_failure(tmp_path):
     ]
 
 
+def test_quality_gate_keeps_terminal_quarantine_and_discard_out_of_failures(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into meeting_alignment_jobs (meeting_id, status, error)
+               values ('meeting', 'quarantined', 'delivery could not be verified')"""
+        )
+        db.execute(
+            """insert into okr_review_requests (
+                conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, period_label, period_start,
+                period_end, status, error
+            ) values (
+                'conversation', 'group', 'message', 'sender', 'trigger', '2026 Q3',
+                '2026-07-01', '2026-09-30', 'discarded', 'not assigned to principal'
+            )"""
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert not [
+        item
+        for item in report.violations
+        if item.source in {"meeting_alignment_jobs", "okr_review_requests"}
+    ]
+
+
 def test_quality_gate_deduplicates_historical_attempts_after_a_later_success(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
