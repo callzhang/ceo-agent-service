@@ -4773,7 +4773,7 @@ def test_consume_once_keeps_reply_after_unanswered_feedback_deadline(
     assert worker.store.get_sent_reply("cid-1", "msg-1") is None
 
 
-def test_consume_once_keeps_retryable_orchestration_pending(
+def test_consume_once_stops_retryable_orchestration_at_limit(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -4814,7 +4814,7 @@ def test_consume_once_keeps_retryable_orchestration_pending(
     with worker.store._connect() as db:
         db.execute("update reply_tasks set available_at='' where id=?", (pending.id,))
     assert worker.consume_once(max_tasks=1) == 0
-    retried = worker.store.list_reply_tasks(limit=1, statuses=["pending"])[0]
+    retried = worker.store.list_reply_tasks(limit=1, statuses=["failed"])[0]
     assert retried.execution_generation == generation
     assert len(runner.calls) == 2
     assert runner.calls[1][3] == "retry-session"
@@ -4889,6 +4889,50 @@ def test_consume_once_retries_execution_generation_mismatch(
     assert "reply_task_retry" in [
         error.kind for error in worker.store.list_errors(limit=10)
     ]
+
+
+def test_pre_run_exception_does_not_link_an_older_failed_agent_run(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    worker.produce_once()
+    task = worker.store.claim_reply_task(1)
+    assert task is not None
+    old_run = _claim_audit_run(
+        worker.store,
+        task.id,
+        task.execution_generation,
+        owner="old-failed-run",
+    ).run
+    worker.store.fail_agent_run(
+        old_run.id,
+        {"code": "old_failure", "retryable": True},
+        owner="old-failed-run",
+    )
+    worker.store.requeue_reply_task(
+        task.id,
+        "old_failure",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    def fail_before_agent_run(*_args, **_kwargs):
+        raise RuntimeError("context_build_failed")
+
+    monkeypatch.setattr(worker, "_process_queued_task", fail_before_agent_run)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.agent_run_id is None
+    assert attempt.audit_summary == "context_build_failed"
+    assert attempt.send_error == "context_build_failed"
 
 
 @pytest.mark.parametrize("authorization", [False, True])
@@ -5504,7 +5548,7 @@ def test_consume_once_codex_provider_transport_failure_waits_for_recovery(
     )
 
 
-def test_consume_once_external_dependency_does_not_exhaust_business_attempts(
+def test_consume_once_external_dependency_honors_attempt_limit(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
@@ -5544,9 +5588,9 @@ def test_consume_once_external_dependency_does_not_exhaust_business_attempts(
     worker.produce_once()
 
     assert worker.consume_once(max_tasks=1) == 0
-    assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_tasks(status="failed") == 0
-    task = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    task = worker.store.list_reply_tasks(statuses=("failed",), limit=1)[0]
     assert task.attempts == 1
     assert task.error == "codex_dependency_unavailable"
     assert worker.store.get_codex_session_id("cid-1") == "full-codex-session"
@@ -10106,7 +10150,7 @@ def test_retryable_codex_timeout_does_not_notify_before_final_failure(
     assert notifications == []
 
 
-def test_codex_process_failure_recovers_after_normal_attempt_limit_without_alert(
+def test_codex_process_failure_is_terminal_at_attempt_limit(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -10164,21 +10208,10 @@ def test_codex_process_failure_recovers_after_normal_attempt_limit_without_alert
 
     worker.produce_once()
     assert worker.consume_once(max_tasks=1) == 0
-    pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
-    assert pending.attempts == 1
-    assert worker.store.count_reply_tasks(status="failed") == 0
-    assert notifications == []
-
-    with worker.store._connect() as db:
-        db.execute(
-            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
-            (pending.id,),
-        )
-
-    assert worker.consume_once(max_tasks=1) == 1
-    assert worker.store.count_reply_tasks(status="done") == 1
-    assert worker.store.count_reply_tasks(status="failed") == 0
-    assert notifications == []
+    failed = worker.store.list_reply_tasks(statuses=("failed",), limit=1)[0]
+    assert failed.attempts == 1
+    assert worker.store.count_reply_tasks(status="done") == 0
+    assert len(notifications) == 1
 
 
 def test_codex_process_failure_rotates_stuck_conversation_session_before_retry(
@@ -10225,7 +10258,7 @@ def test_codex_process_failure_rotates_stuck_conversation_session_before_retry(
     assert failed_run.codex_session_id == ""
 
 
-def test_codex_process_failure_becomes_terminal_after_one_extra_recovery_claim(
+def test_repeated_codex_process_failure_does_not_get_an_extra_claim_at_limit(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -10272,19 +10305,8 @@ def test_codex_process_failure_becomes_terminal_after_one_extra_recovery_claim(
 
     worker.produce_once()
     assert worker.consume_once(max_tasks=1) == 0
-    pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
-    assert pending.attempts == 1
-    assert notifications == []
-
-    with worker.store._connect() as db:
-        db.execute(
-            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
-            (pending.id,),
-        )
-
-    assert worker.consume_once(max_tasks=1) == 0
     failed = worker.store.list_reply_tasks(statuses=("failed",), limit=1)[0]
-    assert failed.attempts == 2
+    assert failed.attempts == 1
     assert failed.error == "codex_process_failed"
     assert len(notifications) == 1
     assert notifications[0]["title"] == "CEO task failed: Friday"
@@ -10472,7 +10494,7 @@ def test_xiaoqing_unavailable_without_mcp_call_forces_retry(
     assert attempt.send_status == "failed"
 
 
-def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
+def test_queued_stop_with_error_becomes_terminal_at_retry_limit(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
@@ -10536,8 +10558,8 @@ def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
         )
 
     assert worker.consume_once(max_tasks=1) == 0
-    assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="failed") == 1
     assert worker.store.count_reply_attempts() == 2
     assert len(runner.calls) == 2
     assert runner.calls[0][1] == runner.calls[1][1]
@@ -14005,7 +14027,7 @@ def test_send_failure_requeues_reply_task_for_consumer_retry(
     assert attempt.send_error == "send_failed_before_effect"
 
 
-def test_retryable_consumer_send_failure_does_not_emit_terminal_notification(
+def test_retryable_consumer_send_failure_at_limit_emits_one_terminal_notification(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -14034,15 +14056,16 @@ def test_retryable_consumer_send_failure_does_not_emit_terminal_notification(
         ),
     )
     monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: notifications.append(kwargs),
+        "app.worker.send_browser_notification",
+        lambda **kwargs: notifications.append(kwargs) or True,
     )
     worker.produce_once()
 
     worker.consume_once(max_tasks=1)
 
-    assert notifications == []
-    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert len(notifications) == 1
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="failed") == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
@@ -14217,7 +14240,7 @@ def test_needs_human_agent_attempt_falls_back_to_macos_notification(
     ]
 
 
-def test_retryable_failed_agent_attempt_publishes_browser_notification(
+def test_retryable_failed_agent_attempt_does_not_notify_before_limit(
     tmp_path: Path, monkeypatch
 ):
     browser_notifications: list[dict[str, str | None]] = []
@@ -14250,13 +14273,7 @@ def test_retryable_failed_agent_attempt_publishes_browser_notification(
     assert attempt is not None
     assert attempt.send_status == "failed"
     assert worker.store.count_reply_tasks(status="pending") == 1
-    assert browser_notifications == [
-        {
-            "title": "CEO task failed: Friday",
-            "message": "provider temporarily unavailable",
-            "url": worker._notification_url(conversation(), attempt_id=attempt.id),
-        }
-    ]
+    assert browser_notifications == []
 
 
 def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(

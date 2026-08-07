@@ -64,7 +64,7 @@ class ReplyAttempt(BaseModel):
     trigger_text: str
     action: str
     sensitivity_kind: str
-    agent_run_id: int = 0
+    agent_run_id: int | None = None
     codex_reason: str
     draft_reply_text: str
     direct_user_id: str = ""
@@ -769,7 +769,7 @@ class AutoReplyStore:
                     trigger_text text not null,
                     action text not null,
                     sensitivity_kind text not null,
-                    agent_run_id integer not null default 0,
+                    agent_run_id integer,
                     codex_reason text not null default '',
                     draft_reply_text text not null default '',
                     direct_user_id text not null default '',
@@ -1501,7 +1501,7 @@ class AutoReplyStore:
                 for row in db.execute("pragma table_info(reply_attempts)").fetchall()
             }
             for column, definition in (
-                ("agent_run_id", "integer not null default 0"),
+                ("agent_run_id", "integer"),
                 ("codex_session_id", "text not null default ''"),
                 ("direct_user_id", "text not null default ''"),
                 ("direct_open_dingtalk_id", "text not null default ''"),
@@ -4971,16 +4971,8 @@ class AutoReplyStore:
                       from agent_runs as runs
                       where runs.reply_task_id=tasks.id
                         and runs.execution_generation=tasks.execution_generation
-                        and (
-                            (
-                                runs.side_effect_state='unknown'
-                                and runs.codex_session_id<>''
-                            )
-                            or (
-                                runs.status='running'
-                                and runs.lease_expires_at>current_timestamp
-                            )
-                        )
+                        and runs.status='running'
+                        and runs.lease_expires_at>current_timestamp
                   )
                 order by tasks.locked_at, tasks.id
                 """,

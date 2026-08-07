@@ -1491,6 +1491,7 @@ class DingTalkAutoReplyWorker:
                 single_chat=task.single_chat,
                 unread_point=1,
             )
+            run_snapshot = self._agent_run_snapshot(task)
             try:
                 completed = self._process_queued_task(conversation, task)
             except AgentRunLeaseLostError:
@@ -1545,7 +1546,7 @@ class DingTalkAutoReplyWorker:
                         )
                     continue
                 try:
-                    failed_run = self._latest_failed_agent_run(task)
+                    failed_run = self._latest_failed_agent_run(task, run_snapshot)
                     if error in RECOVERABLE_AGENT_RUNTIME_ERRORS:
                         if failed_run is not None:
                             conversation_session = self.store.get_codex_session_id(
@@ -1567,10 +1568,7 @@ class DingTalkAutoReplyWorker:
                         task,
                         error,
                         retryable=True,
-                        retry_beyond_limit=(
-                            error in RECOVERABLE_AGENT_RUNTIME_ERRORS
-                            and task.attempts == self.max_task_attempts
-                        ),
+                        prior_run_snapshot=run_snapshot,
                     )
                 except AgentRunLeaseLostError:
                     continue
@@ -1652,13 +1650,12 @@ class DingTalkAutoReplyWorker:
         error: str,
         *,
         retryable: bool,
-        retry_beyond_limit: bool = False,
+        prior_run_snapshot: dict[int, tuple[object, ...]],
     ) -> str:
-        run = self._latest_failed_agent_run(task)
+        run = self._latest_failed_agent_run(task, prior_run_snapshot)
         task_status = (
             "pending"
-            if retryable
-            and (retry_beyond_limit or task.attempts < self.max_task_attempts)
+            if retryable and task.attempts < self.max_task_attempts
             else "failed"
         )
         available_at = (
@@ -1711,21 +1708,49 @@ class DingTalkAutoReplyWorker:
                 send_error=error,
                 channel=task.channel,
             )
-        self._notify_problem_attempt(
-            task,
-            attempt_id=attempt_id,
-            send_status="failed",
-            message=error,
-        )
+        # consume_once emits the single terminal notification after recording
+        # the final reply-task error; retries do not notify.
         return task_status
 
-    def _latest_failed_agent_run(self, task: ReplyTask) -> AgentRun | None:
+    @staticmethod
+    def _agent_run_fingerprint(run: AgentRun) -> tuple[object, ...]:
+        return (
+            run.status,
+            run.codex_session_id,
+            run.transcript_end_line,
+            run.final_result_json,
+            run.structured_error_json,
+            run.side_effect_state,
+            run.completed_at,
+            run.updated_at,
+        )
+
+    def _agent_run_snapshot(self, task: ReplyTask) -> dict[int, tuple[object, ...]]:
+        return {
+            run.id: self._agent_run_fingerprint(run)
+            for run in self.store.list_agent_runs_for_task_generation(
+                task.id,
+                task.execution_generation,
+            )
+        }
+
+    def _latest_failed_agent_run(
+        self,
+        task: ReplyTask,
+        prior_run_snapshot: dict[int, tuple[object, ...]],
+    ) -> AgentRun | None:
         runs = self.store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
         )
         return next(
-            (item for item in reversed(runs) if item.status == "failed"),
+            (
+                item
+                for item in reversed(runs)
+                if item.status == "failed"
+                and prior_run_snapshot.get(item.id)
+                != self._agent_run_fingerprint(item)
+            ),
             None,
         )
 
@@ -1842,16 +1867,42 @@ class DingTalkAutoReplyWorker:
         result: OrchestrationResult,
     ) -> bool:
         if result.status == "failed_retryable" and result.final_run_id == 0:
-            available_at = (
-                self._reply_task_authorization_available_at()
-                if result.error.authorization_required
-                else self._reply_task_retry_available_at(max(task.attempts, 1))
-            )
-            self.store.defer_reply_task(
-                task.id,
-                result.error.code or "agent_orchestration_deferred",
+            error = result.error.code or "agent_orchestration_deferred"
+            if task.attempts < self.max_task_attempts:
+                available_at = (
+                    self._reply_task_authorization_available_at()
+                    if result.error.authorization_required
+                    else self._reply_task_retry_available_at(max(task.attempts, 1))
+                )
+                self.store.defer_reply_task(
+                    task.id,
+                    error,
+                    expected_execution_generation=task.execution_generation,
+                    available_at=available_at,
+                )
+                return False
+            attempt_id = self.store.finalize_reply_task_without_run(
+                task_id=task.id,
                 expected_execution_generation=task.execution_generation,
-                available_at=available_at,
+                task_status="failed",
+                task_error=error,
+                available_at="",
+                conversation_id=task.conversation_id,
+                conversation_title=task.conversation_title,
+                trigger_message_id=task.trigger_message_id,
+                trigger_sender=task.trigger_sender,
+                trigger_text=task.trigger_text,
+                codex_reason=result.summary or error,
+                audit_summary=result.summary or error,
+                send_status="failed",
+                send_error=error,
+                channel=task.channel,
+            )
+            self._notify_problem_attempt(
+                task,
+                attempt_id=attempt_id,
+                send_status="failed",
+                message=result.summary or error,
             )
             return False
 
@@ -1859,6 +1910,8 @@ class DingTalkAutoReplyWorker:
             send_status, task_status = ORCHESTRATION_ATTEMPT_STATUS[result.status]
         except KeyError as exc:
             raise ValueError("invalid orchestration status") from exc
+        if result.status == "failed_retryable" and task.attempts >= self.max_task_attempts:
+            task_status = "failed"
         send_error = result.error.code
         if result.status == "needs_human":
             send_error = send_error or "needs_human"
@@ -1901,7 +1954,7 @@ class DingTalkAutoReplyWorker:
             channel=task.channel,
             **self._orchestration_oa_metadata(task, result),
         )
-        if send_status in {"needs_human", "failed"}:
+        if send_status == "needs_human" or task_status == "failed":
             self._notify_problem_attempt(
                 task,
                 attempt_id=attempt_id,

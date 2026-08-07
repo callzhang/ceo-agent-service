@@ -1972,7 +1972,7 @@ def test_worker_retries_authorization_failed_turn_after_gate_recovery(tmp_path: 
     assert audit_runs[0].status == "completed"
 
 
-def test_worker_keeps_retryable_orchestration_pending_across_runs(tmp_path: Path):
+def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
     trigger = _message("Send the approved message.")
     executor = RetryExhaustionProtocolExecutor()
     worker, _dws = _worker_with_protocol_executor(
@@ -2002,7 +2002,7 @@ def test_worker_keeps_retryable_orchestration_pending_across_runs(tmp_path: Path
     assert worker.consume_once(max_tasks=1) == 0
 
     retried = worker.store.get_reply_task(task_id)
-    assert retried is not None and retried.status == "pending"
+    assert retried is not None and retried.status == "failed"
     assert retried.attempts == 2
     attempts = [
         attempt
@@ -2222,7 +2222,7 @@ def test_retryable_failure_reuses_generation_and_session_then_succeeds(
     assert worker.store.get_reply_task(task_id).status == "done"
 
 
-def test_retryable_failure_remains_pending_at_worker_attempt_limit(tmp_path: Path):
+def test_retryable_failure_becomes_terminal_at_worker_attempt_limit(tmp_path: Path):
     trigger = _message("请读取材料后完成回复")
     scripts = [
         ScriptedRun(
@@ -2246,7 +2246,7 @@ def test_retryable_failure_remains_pending_at_worker_attempt_limit(tmp_path: Pat
     worker.consume_once(max_tasks=1)
 
     assert len(runner.calls) == 2
-    assert worker.store.get_reply_task(task_id).status == "pending"
+    assert worker.store.get_reply_task(task_id).status == "failed"
 
 
 def test_retryable_failure_is_requeued_without_custom_receipt_logic(
@@ -2728,57 +2728,150 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     ]
 
 
-def test_stale_processing_unknown_effect_does_not_resume_same_run(
-    tmp_path: Path,
-):
+def test_stale_unknown_audit_requeues_and_recovers_same_session(tmp_path: Path):
     trigger = _message("请发送一次通知")
-    worker, runner, _dws = _worker(tmp_path, [trigger], [])
-    task_id = _enqueue(worker.store, trigger)
-    task = worker.store.claim_reply_task(task_id, now="2026-07-28 07:00:00")
+    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
+    task_id = _enqueue(store, trigger)
+    task = store.claim_reply_task(task_id, now="2026-07-28 07:00:00")
     assert task is not None
-    claim = _claim_audit_run(
-        worker.store,
+    proposal = _consumer_protocol_result(
+        "proposal",
+        "Prepared one reviewed notification.",
+        proposal={
+            "objective": "Send one notification.",
+            "actions": [
+                {
+                    "description": "Send the notification.",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"group": "cid-1"},
+                    "payload": {
+                        "argv": [
+                            "dws", "chat", "message", "send", "--group", "cid-1",
+                            "--text", "approved", "--yes",
+                        ]
+                    },
+                    "expected_verification": "Read the target conversation.",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "",
+        },
+    )
+    consumer = store.claim_agent_run(
         task.id,
         task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="seed-consumer",
+    ).run
+    store.complete_agent_run(
+        consumer.id,
+        proposal.model_dump(mode="json"),
+        owner="seed-consumer",
+    )
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
         owner="dead-worker",
         lease_seconds=60,
         now="2026-07-28 07:00:00",
     )
-    worker.store.set_agent_run_session(
+    store.set_agent_run_session(
         claim.run.id,
         "session-stale",
         owner="dead-worker",
         now="2026-07-28 07:00:00",
     )
-    worker.store.append_agent_run_event(
+    store.append_agent_run_event(
         claim.run.id,
         _persisted_effect_evidence("send-1", "started"),
         owner="dead-worker",
         now="2026-07-28 07:00:01",
     )
-    worker.store.mark_expired_agent_run_unknown(
+    store.mark_expired_agent_run_unknown(
         claim.run.id,
         {"code": "expired_effect_requires_reconciliation", "retryable": False},
         expected_execution_generation=task.execution_generation,
         now="2026-07-28 07:02:00",
     )
-    with worker.store._connect() as db:
+    with store._connect() as db:
         db.execute(
             "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
             (task.id,),
         )
 
-    assert worker.consume_once(max_tasks=1) == 0
+    class SameSessionRecoveryAudit:
+        def __init__(self) -> None:
+            self.sessions: list[str] = []
 
-    assert runner.calls == []
-    run = _get_audit_run(worker.store, task_id, "g1")
+        def recover(self, _task, _context, *, run):
+            self.sessions.append(run.codex_session_id)
+            owner = "same-session-recovery"
+            recovered = store.claim_unknown_agent_run(run.id, owner=owner)
+            assert recovered.claimed
+            result = AuditAgentResult.model_validate(
+                {
+                    "outcome": "reconciled",
+                    "summary": "Live readback was ambiguous.",
+                    "proposal_revision": 0,
+                    "side_effect_state": "unknown",
+                    "feedback": None,
+                    "external_result": None,
+                    "reconciliation": [
+                        {
+                            "action_index": 0,
+                            "disposition": "ambiguous",
+                            "read_result_digest": "live-read-digest",
+                        }
+                    ],
+                    "error": {
+                        "code": "",
+                        "retryable": False,
+                        "authorization_required": False,
+                    },
+                }
+            )
+            store.persist_unknown_agent_run_result(
+                run.id,
+                result.model_dump(mode="json"),
+                owner=owner,
+                transcript_end_line=run.transcript_end_line,
+            )
+
+    audit_runner = SameSessionRecoveryAudit()
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=ContextOnlyDws([trigger]),
+        codex=object(),
+        agent_orchestrator=AgentOrchestrator(
+            store=store,
+            consumer=UnexpectedRoleRunner(),
+            audit=audit_runner,
+        ),
+        channel_gates={"dingtalk": ReadyGate("dingtalk")},
+        now_provider=lambda: NOW,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert audit_runner.sessions == ["session-stale"]
+    run = _get_audit_run(store, task_id, "g1")
     assert run is not None
-    assert run.status == "unknown"
+    assert run.status == "completed"
     assert run.side_effect_state == "unknown"
-    assert worker.store.get_reply_task(task_id).status == "processing"
-    assert [item.id for item in worker.store.list_unknown_agent_runs()] == [run.id]
-    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is None or attempt.send_status != "blocked"
+    assert store.get_reply_task(task_id).status == "done"
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "needs_human"
+    assert attempt.agent_run_id == run.id
 
 
 def test_context_reuses_confirmed_fact_and_does_not_pre_read_material(tmp_path: Path):

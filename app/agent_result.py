@@ -16,13 +16,6 @@ def _strict_agent_error_json_schema(schema: dict[str, object]) -> None:
     schema["required"] = list(properties)
 
 
-class AgentOutcome(StrEnum):
-    COMPLETED = "completed"
-    NO_ACTION = "no_action"
-    NEEDS_HUMAN = "needs_human"
-    FAILED = "failed"
-
-
 class SideEffectState(StrEnum):
     NONE = "none"
     CONFIRMED = "confirmed"
@@ -48,31 +41,6 @@ class AgentError(BaseModel):
     @classmethod
     def accept_json_side_effect_state(cls, value: object) -> object:
         return SideEffectState(value) if isinstance(value, str) else value
-
-
-class OaActionReceipt(BaseModel):
-    """A verified OA action that must remain attached to its approval history."""
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    process_instance_id: str = Field(min_length=1)
-    task_id: str = ""
-    action: str = Field(min_length=1)
-    remark: str = ""
-    result: dict[str, object] = Field(default_factory=dict)
-
-
-class AgentResult(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        strict=True,
-        json_schema_extra={"required": ["outcome", "summary", "error"]},
-    )
-
-    outcome: AgentOutcome
-    summary: str = Field(min_length=1)
-    error: AgentError = Field(default_factory=AgentError)
-    oa_action_receipt: OaActionReceipt | None = None
 
 
 class EffectKind(StrEnum):
@@ -109,17 +77,13 @@ class ResultParseError(ValueError):
     pass
 
 
-AgentResultType = TypeVar("AgentResultType", bound=BaseModel)
-
-
-def parse_agent_result(raw: str) -> AgentResult:
-    return parse_typed_agent_result(raw, AgentResult)
+ResultModelT = TypeVar("ResultModelT", bound=BaseModel)
 
 
 def parse_typed_agent_result(
     raw: str,
-    model_type: type[AgentResultType],
-) -> AgentResultType:
+    model_type: type[ResultModelT],
+) -> ResultModelT:
     payloads = _parse_jsonl_payloads(raw)
     for payload in reversed(payloads):
         candidate = _agent_message_candidate(payload)
@@ -127,27 +91,12 @@ def parse_typed_agent_result(
             continue
         try:
             normalized = _normalize_result_text(candidate)
-            candidate_payload = json.loads(normalized)
-            if (
-                model_type is AgentResult
-                and isinstance(candidate_payload, dict)
-                and candidate_payload.get("outcome")
-                in {"completed", "no_action", "needs_human"}
-                and candidate_payload.get("error") is None
-            ):
-                candidate_payload["error"] = {
-                    "code": "",
-                    "retryable": False,
-                    "authorization_required": False,
-                }
-            return model_type.model_validate_json(
-                json.dumps(candidate_payload, ensure_ascii=False, separators=(",", ":"))
-            )
+            return model_type.model_validate_json(normalized)
         except (json.JSONDecodeError, ResultParseError, ValidationError) as exc:
             raise ResultParseError(
                 "latest agent result candidate is malformed or does not match the strict schema"
             ) from exc
-    raise ResultParseError("no valid AgentResult JSON found in Codex JSONL")
+    raise ResultParseError("no valid typed result JSON found in Codex JSONL")
 
 
 def _parse_jsonl_payloads(raw: str) -> list[dict]:
