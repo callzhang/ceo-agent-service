@@ -1,30 +1,32 @@
 # CEO Agent Service Architecture
 
-本文档说明 CEO Agent Service 的当前运行架构、边界和排障入口。行为细节以代码、测试和专题文档为准。
+本文档描述当前 Consumer Agent A / Audit Agent B 运行架构。历史方案保留在
+`docs/superpowers/` 中，仅用于追溯，不代表当前运行方式。
 
-## 目标
+## 设计目标
 
-CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 Derek 处理的消息和审批，将原始触发、可用上下文和工具入口交给 Direct Agent，并保存结构化终态和原生 Codex session 审计指针。
+CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 Derek 处理的消息、
+审批和任务，把业务判断与外部执行拆给两个职责明确的 Agent：
 
-核心原则：
+- **Consumer Agent A** 代表 Derek 理解业务、读取证据并提出精确候选，但没有外部写权限。
+- **Audit Agent B** 独立审阅候选，是任务处理链路中唯一可以发送消息、评论、审批或执行
+  其他外部写操作的 Agent。
+- Service 负责触发发现、队列、会话指针、角色编排、严格结果校验、租约恢复和精确重复
+  投递保护，不替 Agent 做业务判断。
 
-- Producer 只发现触发并入队，不做业务判断。
-- Direct Agent 自行读取材料、判断任务并直接调用获准的 CLI/MCP 工具。
-- Service 只负责依赖 gate、队列生命周期、对话 session ID 复用、结果映射和精确重复投递幂等。
-- 已开始但结果不确定的写操作不自动重放，只进入只读 reconciliation。
-- 诊断不是完成；该规则由 Direct Agent 执行并通过严格 AgentResult 返回，service 不再复制工具事件后二次判断。
+## 单一服务进程模型
 
-## 运行形态
+生产环境只安装一个 launchd job：
 
-生产环境通常由 macOS launchd 启动：
+- job：`com.ceo-agent-service.main`
+- 入口：`python -m app.service_supervisor`
+- worker 子进程：`python -m app.cli service`
+- audit-web 子进程：由同一 supervisor 托管，默认监听
+  `http://127.0.0.1:8765`
 
-- 主服务：`com.ceo-agent-service.main`
-- 命令入口：`ceo-agent`，由 `app.cli:main` 提供
-- 默认服务命令：`python -m app.cli service`
-- 审计页面：默认 `http://127.0.0.1:8765`
-- 运行库：默认 `~/Library/Application Support/ceo-agent-service/auto-reply.sqlite3`
-
-`service` 模式在一个进程内运行审计页面、数据库备份、消息 producer/consumer、会议处理、任务维护和可选微信组件。服务启动时只恢复当前队列和可安全恢复的运行状态；结果未知的写操作不会作为普通失败自动重试。
+supervisor 同时管理 worker 和 audit-web。任一子进程异常退出时，supervisor 会回收另一个
+子进程并退出，由同一个 launchd job 拉起完整服务。不要安装第二个 audit-web plist，也不要
+恢复双 launchd 模型。
 
 ## 权威处理流
 
@@ -32,174 +34,183 @@ CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 D
 External trigger
       |
       v
-Channel gate
+Producer + channel gate
       |
       v
-reply_tasks queue
+reply_tasks (exact source revision)
       |
       v
-One Direct Agent run
+Consumer Agent A (read-only, conversation session)
       |
-      +--> live CLI/MCP reads
-      +--> approved CLI/MCP writes
-      |
-      v
-Append-only tool events and receipts
-      |
-      v
-Terminal result mapping
-      |
-      +--> delivery / completed / skipped / needs_human / failed
-      +--> unknown write -> read-only reconciliation
+      +--> proposal ------+
+      +--> no_action      |
+      +--> needs_human    |
+      +--> failed         |
+                         v
+                 Audit Agent B
+                 (fresh review session)
+                         |
+                         +--> execute + verify
+                         +--> revision_required -> A
+                         +--> needs_human
+                         +--> failed
+                         +--> unknown -> same B session read-back
 ```
 
-Direct Agent 的输入包括原始 trigger、已有对话事实、材料引用、process/task ID、链接和精确读取命令。已有事实必须复用，不能再次追问。OA 详情、当前任务归属、表单、评论和附件由 agent 通过 live DWS read 获取；service 不按申请人或标题猜目标，不预读正文，也不搜索同名材料作为替代。
+### Consumer Agent A
 
-Direct Agent 使用本机 Codex 原生配置暴露的 MCP、plugin、App、shell、skill 和 DWS/Lark CLI。Service 不维护第二套 MCP registry、effect 分类器、工具事件副本或写操作回执。认证由 channel gate 管理；Agent 不执行 login/reset/logout。
+A 的身份是 Derek 本人，而不是旁观审核员。A 会：
 
-## 模块边界
+1. 复用同一业务对话的 Codex session，理解此前已经确认的事实。
+2. 使用服务提供的只读 CLI/MCP 能力读取原始消息、文档、审批、日历、记忆和检索结果。
+3. 返回结构化候选，其中包含目标、动作、收件人/对象、正文或参数、事实引用和预期验证。
+4. 对不需要动作的触发返回 `no_action`。
+
+A 不能发送消息、评论、审批、修改文档或执行其他外部写操作。该边界固定在运行配置中，
+不能通过 Audit Rules 放宽。
+
+当缺失事实可以向当前对话参与者获得时，A 必须提出**一个具体澄清问题**作为普通候选，
+由 B 审阅并发送；不得把这种情况转成 `needs_human`，也不得要求 Derek 在“继续处理”和
+“先追问”之间选择。`needs_human` 只用于无法通过读取材料或向参与者提问解决、必须由
+Derek 作出的管理判断。
+
+### Audit Agent B
+
+B 不是 Derek 的第二个写作分身，而是独立审计与执行者。B 会：
+
+1. 重新读取执行前的实时事实和 Audit Rules。
+2. 检查 A 的候选是否有事实依据、目标准确、内容最小、权限合适且符合当前规则。
+3. 候选合格时按原样执行，并从外部系统读回结果。
+4. 业务含义需要变化时返回具体反馈，由 A 生成新 revision；B 不自行改写候选。
+5. 外部结果未知时不直接重放，而是在原 B session 内先做只读读回。
+
+每个候选 revision 使用一个新的 B session。只有同一个候选的未知结果恢复会复用原 B
+session，以保留该次执行的工具上下文和操作身份。
+
+## 会话与反馈周期
+
+- 每个 `conversation_id` 对应一个长期 A session；同一业务对话的新消息通过
+  `codex exec resume` 进入该 session。
+- 每个候选 revision 对应一个新的 B session。
+- B 的 `revision_required` 会通过持久化反馈消息送回 A。
+- 一个任务最多允许两个内容反馈周期。基础设施重试不消耗内容反馈周期。
+- A session 缺失或损坏时才创建新的会话；服务不会为每条消息无条件创建新 A session。
+
+同一对话在任一时刻只允许一个 A turn 写入会话 JSONL。会话锁只保护本地 transcript 的
+一致性，不代表业务消息被丢弃；新任务保留在持久队列中等待该 turn 完成。
+
+## Audit Rules
+
+Audit Rules 是 A 和 B 共享的可见业务规则：
+
+- 默认文件：`data/prompts/audit_rules.md`
+- 配置页面：`Config -> Audit Rules`
+- A 使用规则自检候选。
+- B 使用同一规则独立审计并决定是否执行。
+
+可配置内容包括表达、信息最小化、审批材料要求、特定业务风险和需要升级给 Derek 的判断。
+以下边界不可配置：A 只读、B 独占任务写权限、精确 revision 去重、最多两个内容反馈周期、
+未知结果先读回以及敏感凭证不进入提示词和审计页面。
+
+## 能力与配置
+
+所有 Agent 都以 `--ignore-user-config` 启动，不继承个人 `~/.codex/config.toml`、个人 MCP、
+plugin、hook 或 OAuth transport。服务只注入显式配置：
+
+- CLI：`dws`、`lark-cli`，使用安装用户在各 CLI 标准位置维护的登录状态。
+- MCP：`CEO_SERVICE_MCP_CONFIG_PATH` 指向的服务清单，默认模板为
+  `config/service-mcp.json`。
+- 默认 MCP 名称：`exa`、`memory_connector`、`xiaoqing_interview`。
+- 凭证只通过环境变量引用；清单不保存 token 值。
+
+运行配置按照角色生成：A 只获得已审核的读取工具；B 获得读取工具和固定写能力。为让常驻
+的原生 `codex exec` 在无人值守时完成 B 的受控写操作，B 的正常执行与已授权恢复执行使用
+Codex bypass approval/sandbox 模式；因此 B 的 service MCP 清单和 `agent_cli` 写入口必须保持
+最小、显式且可审阅。A、B 的只读核对和 dry-run 不使用该模式。Audit Rules 不能新增 MCP、CLI
+或写权限。Agent 不执行 `auth login`、`reset` 或 `logout`；登录由 Tutorial/channel gate 在 Agent
+启动前协调。
+
+## 重复执行与恢复
+
+### 精确 revision 去重
+
+重复保护绑定源 trigger、任务 generation 和候选 revision。完全相同的 revision 已有外部
+成功结果时不会再次执行；A 根据反馈产生的新 revision 不会被旧 revision 的结果阻止。
+
+### 未知外部结果
+
+如果 B 已开始写操作但没有得到确定结果，run 进入 `unknown`：
+
+1. 保留原 operation ID、候选 revision 和 B session。
+2. 在同一 B session 中只读查询目标系统。
+3. 已存在：记录确认结果，不再执行。
+4. 明确不存在：仅对通过固定能力边界且可精确绑定的原动作继续恢复执行。
+5. 无法判断：保持 `unknown` 或转 `needs_human`，禁止猜测和盲目重放。
+
+服务重启后，仍有有效租约的 run 不会被 stale recovery 抢占；租约过期且没有活动进程的
+run 才能被持久队列恢复。
+
+## 持久化与审计
+
+Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的提示、工具调用、输出和
+结果。SQLite 只保存恢复所需的最小状态：
+
+- task/generation、角色、proposal revision 和父子 run 关系；
+- A/B session ID 与 transcript 行范围；
+- operation ID、run 状态、租约和下一次可用时间；
+- 结构化最终结果、外部结果状态和精确去重键。
+
+服务不在 SQLite 复制完整 Codex transcript，也不维护另一套业务审计日志。History 页面按
+session 指针读取 JSONL，并只向普通用户展示业务结果；内部角色、规划标签和原始敏感工具
+输出保持折叠或脱敏。
+
+## 终态语义
+
+| 终态 | 含义 |
+| --- | --- |
+| `executed` | B 已执行并从外部系统确认结果。 |
+| `no_action` | A 确认当前触发无需外部动作。 |
+| `revision_required` | B 给出结构化反馈，等待 A 生成下一 revision。 |
+| `needs_human` | 只能由 Derek 作出的不可约管理判断；不是普通材料不足。 |
+| `failed` | 当前 run 失败；错误说明是否可重试。 |
+| `unknown` | 写操作可能发生但尚未确认，必须在原 B session 中先读回。 |
+
+只有诊断、没有完成用户要求的动作时，不能标记为 `executed`。如果缺的是参与者可以回答的
+事实，正确动作是发送一个具体澄清问题，而不是 `needs_human`。
+
+## 关键模块
 
 | 模块 | 职责 |
 | --- | --- |
-| `app.channel_gate` | 在 agent 启动前检查 DWS/Lark 等通道可用性并协调一次性登录请求 |
-| `app.worker.DingTalkAutoReplyWorker` | 发现、入队、领取、结果映射和恢复调度 |
-| `app.agent_context` | 向 Direct Agent 提供原始事实、材料引用和明确命令 |
-| `app.agent_runner.DirectAgentRunner` | 复用仍存在的对话 Codex session；若持久化指针对应的本地 session 已缺失，则清理旧指针并从新 session 继续，避免 `codex exec resume` 在任务启动前失败 |
-| `app.native_cli_metadata` | 为已审阅 CLI/MCP 能力提供结构化 effect metadata |
-| `app.store.AutoReplyStore` | 持久化任务、agent run、append-only events、attempt、delivery 和回执 |
-| `app.quality_gate` | 对所有必需持久化队列做 fail-closed 覆盖检查，区分须恢复的 violation 与正常进行中的 attention |
-| `app.audit_web` | 本地审计、人工核对和受保护的 mutation API |
-| `app.wechat.sender` | 通过 generation-aware 原子 claim 发送当前微信 delivery |
+| `app.worker.DingTalkAutoReplyWorker` | 领取任务、构造上下文、调用编排器并映射终态。 |
+| `app.agent_orchestrator.AgentOrchestrator` | 在 A、B、反馈和未知结果恢复之间推进状态机。 |
+| `app.consumer_agent.ConsumerAgentRunner` | 复用对话 A session，执行只读判断。 |
+| `app.audit_agent.AuditAgentRunner` | 新建 B 审计 session，执行合格候选并处理未知结果。 |
+| `app.agent_contracts` | 严格定义 A proposal 与 B audit result。 |
+| `app.audit_rules` | 保存、校验并分别渲染共享 Audit Rules。 |
+| `app.service_codex_config` | 从服务清单生成显式 MCP 配置。 |
+| `app.channel_gate` / `app.mcp_doctor` | 在运行前检查 CLI 与 MCP 依赖。 |
+| `app.store.AutoReplyStore` | 保存队列、run 关系、租约、revision 和最小恢复状态。 |
+| `app.audit_web` | History、Agent session、Audit Rules、配置和恢复入口。 |
 
-Service 不替 agent 阅读业务文档、选择业务材料、恢复 OA target、判断申请人或执行 agent 本应完成的外部动作。Service 只验证结构化 result、当前 generation 和重复投递事实，不从用户文本推断执行意图。
+## 运维入口
 
-## 凭证规则
+```bash
+# DWS + Lark 通道状态
+.venv/bin/ceo-agent channel-doctor
 
-- DWS 和 Lark CLI 复用当前 macOS 用户正常登录后保存在各 CLI 标准位置的凭证。
-- Service 不导出、导入、复制或恢复认证 archive，也不维护第二套 token。
-- Agent 永远不得执行 auth login/reset/logout，不能自行弹出授权页面。
-- Channel gate 使用结构化 status 和一次 live authenticated probe 判断 `ready`、`needs_login`、`blocked` 或 `unavailable`。
-- 只有 gate 明确返回 `needs_login` 时，Login Coordinator 才可启动一次对应 CLI 的登录流程；同一通道一小时内抑制重复启动，并持久化协调状态。
-- 网络故障、命令异常或不可读 status 不得被猜成需要登录。
+# Exa + Memory + Xiaoqing 服务 MCP 配置；加 --verify-live 做实时探测
+.venv/bin/ceo-agent doctor-mcp --verify-live
 
-## 外部依赖重试
+# 单次 dry-run
+CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message
 
-- DWS 是按操作使用的依赖，不是整个服务的启动闸门；本机网络不可用时暂停轮询，单个 DWS 接口失败只影响当前任务。
-- `DwsClient` 负责命令级超时、只读操作重试、进程并发控制和结构化错误分类。通用错误码和具体服务端错误码并存时，以具体错误码为准。
-- 日历、消息、通讯录、AI 听记、文档和钉盘下载等只读命令遇到可识别的临时 `ERROR`、`RATE_LIMIT_ERROR`、`PREPARE_CALL_TOOL_ERROR` 或网络错误时可有限重试；发送、审批等写操作没有幂等键时不得走通用重试。
-- 调用层重试耗尽后保留结构化外部依赖错误；队列层按状态把任务退回待处理或 retry，不从错误文案猜测是否可恢复。
+# 质量巡检并验证外部通道
+.venv/bin/ceo-agent quality-check --verify-channels
 
-## 终态与恢复
-
-`agent_runs` 保存一次 Direct Agent generation 的状态和最终 result；`agent_run_events` 按 sequence 追加 CLI/MCP 开始、完成和回执事件。
-
-| 状态 | 含义 |
-| --- | --- |
-| `completed` | 终态 result 已通过证据校验 |
-| `needs_human` | 权限、材料或业务条件需要人工处理 |
-| `failed` | 已确认失败，按任务策略决定是否生成新 generation |
-| `unknown` | 写操作可能发生但没有可靠回执，只允许只读核对 |
-
-当 result 声称 `completed + confirmed` 且任务要求外部动作时，必须存在持久化的 completed effectful event 或执行回执。只有诊断而没有动作时不能标 completed。Reconciliation 只能查询已有操作结果；确认未执行后，后续修正必须创建新的明确 generation，不能重放结果未知的调用。
-
-## 投递一致性
-
-- 同一 trigger 的已发送记录用于阻止完全重复投递，不阻止后续明确生成的修正版。
-- 微信 delivery 绑定 `reply_task` 当前 generation。
-- generation 旋转会原子废弃旧的 `ready_to_send` delivery。
-- 自动和人工 sender 在真实发送前都必须通过 Store compare-and-swap claim：`ready_to_send -> sending`，并再次匹配当前 generation。
-- 未 claim 成功的 sender 不得调用外部发送接口。
-
-## OA 审批
-
-Direct Agent 按 OA skill 工作：
-
-1. 从 service 提供的原始 `process_instance_id`、`task_id`、链接和精确 DWS 命令开始。
-2. Live 读取审批详情、当前用户任务归属、表单字段、评论和附件。
-3. 自行判断材料是否充分以及应评论、通过、拒绝、退回或请求人工处理。
-4. 直接执行获准动作，并让 completed tool event 或 DWS 回执进入审计流。
-
-表单字段齐全、卡片只有实例 ID、多候选不唯一、任务已完成或不属于当前用户，都由 agent 根据 live read 得出结论。Service 不通过姓名、标题或历史缓存猜测可执行 target。
-
-## SQLite 事实源
-
-主要当前表：
-
-| 分组 | 表 |
-| --- | --- |
-| 消息队列 | `conversations`、`seen_messages`、`reply_tasks` |
-| Agent 运行 | `agent_runs`、`agent_run_events` |
-| 回复审计 | `reply_attempts`、`sent_replies`、`errors` |
-| 微信投递 | `wechat_deliveries` |
-| 反馈 | `feedback_events`、`service_bugfix_candidates` |
-| 会议 | `meeting_alignment_jobs`、`meeting_alignment_runs` |
-| 工作事项 | `work_summary_inputs`、`work_projects`、`work_todos`、`work_updates`、`follow_up_drafts` |
-| 服务状态 | `service_state`、`codex_session_locks` |
-
-外部可见动作必须留下本地事件或回执。Recoverable failed/blocked 不能伪装成完成；不可恢复原因必须明确落库，避免每轮重复处理。
-
-## 质量巡检与收敛
-
-`quality-check` 是独立于审计页面的 fail-closed 状态检查。它验证所有必需 SQLite
-事实源都可检查，并扫描失败、陈旧 processing、到期未领取、未解决的最新 trigger、
-未知副作用、逾期 follow-up、外部投递状态、未处理反馈和近期服务错误。它同时附加
-DingTalk/Lark channel gate；结果写入本地机器可读状态文件。
-
-巡检的输出分为 `violations` 与 `attention`：前者使命令非零退出，后者表示新鲜的
-排队或恢复进行中。回复 attempt 以 `channel + conversation_id + trigger_message_id`
-取最新行，避免已经由后续 `sent` 或 `skipped` 收敛的旧 `blocked` 持续报警。
-
-巡检只发现并保留证据，不直接重放外部写入。写入结果未知时由只读 reconciliation
-核对；确认未发生后，才允许创建新的 generation。完整的事实源矩阵、阈值、JSON
-契约、测试不变量和待实现的 72 小时/增量检查见
-[docs/quality-inspection.md](quality-inspection.md)。
-
-## 其他链路
-
-- 会议对齐使用 `meeting_alignment_jobs` 和 `meeting_alignment_runs` 独立排队。
-- 工作事项由 scanners、task agent、project/TODO store 和 follow-up 流程处理。
-- 微信 reader/producer/consumer/sender 使用独立组件，但复用 generation、审计和投递幂等原则。
-- Memory Connector、DWS、Lark 和其他 MCP/CLI 调用必须出现在 agent event 审计中。
-- Task maintenance loop 每轮做本地周报到期检查；管理者 OKR 周报默认周日 18:00 后执行一次，失败按 `CEO_WEEKLY_OKR_RETRY_SECONDS` 重试。只有实时 OKR 获取、文档创建回读和群消息发送都确认后，才记录当周完成。
-
-## 安全边界
-
-- 群聊触发必须满足当前路由规则；Producer 不做业务语义裁决。
-- 回复不得泄露本地路径、token、session id、签名 URL 或原始敏感工具输出。
-- Live send 需要当前运行配置允许。
-- 未审阅 effect 保守处理，不使用命令关键词、正则或 HTTP method 猜测副作用。
-- Audit mutation 至少要求 loopback、严格 `application/json`，并拒绝外部 Origin/Referer；无浏览器来源头的本机 CLI 请求可以使用同一 API。
-
-## 排障入口
-
-| 问题 | 首选入口 |
-| --- | --- |
-| 某条消息为什么没处理 | attempt detail、`reply_tasks`、`agent_runs` |
-| 工具是否执行 | `agent_run_events`、result receipt、attempt audit events |
-| 是否真的发送 | `sent_replies`、delivery 状态、外部回执 |
-| 写操作结果是否未知 | `agent_runs.side_effect_state` 和 reconciliation 记录 |
-| OA 为什么不能执行 | live DWS detail/任务归属事件、result、回执 |
-| 微信旧文案为何未发 | task generation、delivery generation、claim 状态 |
-| 工具或权限 | channel gate、`service_state`、`errors` |
-| 质量门为什么失败或漏检 | `hourly-quality-gate.json`、`quality-check` JSON、[质量巡检文档](quality-inspection.md) |
-
-常用只读命令：
-
-```sh
-ceo-agent produce-once
-ceo-agent consume-once
-ceo-agent run-once
-ceo-agent audit-web --host 127.0.0.1 --port 8765
-ceo-agent quality-check --db "$CEO_WORKER_DB"
+# 当前唯一 launchd job
+launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'
 ```
 
-## 相关文档
-
-- `README.md`：产品目标、快速开始和运行配置。
-- `docs/product-logic.md`：产品规则和业务处理逻辑。
-- `docs/message-routing-rules.md`：消息路由规则。
-- `docs/reply-worker-reliability.md`：Direct Agent 回复链路可靠性。
-- `docs/quality-inspection.md`：质量巡检覆盖、阈值、收敛规则和演进边界。
-- `docs/dws-capabilities.md`：DWS 能力说明。
-- `docs/agent-installation-runbook.md`：安装和初始化。
-- `docs/superpowers/plans/`：历史计划，仅用于设计追溯。
+安装和配置细节见 [agent-installation-runbook.md](agent-installation-runbook.md)，任务恢复细节见
+[reply-worker-reliability.md](reply-worker-reliability.md)。

@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from collections.abc import Iterator
 from urllib.parse import parse_qs, urlsplit
@@ -63,6 +64,7 @@ class ReplyAttempt(BaseModel):
     trigger_text: str
     action: str
     sensitivity_kind: str
+    agent_run_id: int | None = None
     codex_reason: str
     draft_reply_text: str
     direct_user_id: str = ""
@@ -305,10 +307,20 @@ class ReplyTask(BaseModel):
     updated_at: str
 
 
+class AgentRole(StrEnum):
+    CONSUMER = "consumer"
+    AUDIT = "audit"
+
+
 class AgentRun(BaseModel):
     id: int
     reply_task_id: int
     execution_generation: str
+    role: AgentRole
+    proposal_revision: int
+    turn_attempt: int
+    parent_agent_run_id: int | None
+    operation_id: str
     status: str
     codex_session_id: str = ""
     transcript_start_line: int = 0
@@ -317,6 +329,12 @@ class AgentRun(BaseModel):
     structured_error_json: str = ""
     tool_events: list[dict[str, object]] = Field(default_factory=list)
     side_effect_state: str = "none"
+    effect_started_count: int = 0
+    effect_completed_count: int = 0
+    effect_failed_count: int = 0
+    effect_receipt_count: int = 0
+    effect_unreviewed_count: int = 0
+    reconciliation_event_count: int = 0
     lease_owner: str = ""
     lease_expires_at: str = ""
     reconciliation_attempts: int = 0
@@ -340,6 +358,7 @@ class AgentExecutionReceipt(BaseModel):
     completed: bool
     persisted: bool
     safe_to_confirm: bool
+    effect_counted: bool = False
     created_at: str
 
 
@@ -363,9 +382,9 @@ class AgentRunLeaseLostError(RuntimeError):
 
 
 def _persisted_agent_effect_state(events: list[dict[str, object]]) -> str:
-    started: set[str] = set()
-    completed: set[str] = set()
-    failed: set[str] = set()
+    pending: dict[str, int] = {}
+    event_closures: set[str] = set()
+    confirmed = False
     for event in events:
         event_type = event.get("type")
         item = event.get("item")
@@ -380,15 +399,23 @@ def _persisted_agent_effect_state(events: list[dict[str, object]]) -> str:
         if not isinstance(call_id, str) or not call_id.strip():
             continue
         if event_type == "item.started":
-            started.add(call_id)
+            pending[call_id] = pending.get(call_id, 0) + 1
         elif event_type == "item.completed":
-            completed.add(call_id)
+            if pending.get(call_id, 0) > 0:
+                pending[call_id] -= 1
+            event_closures.add(call_id)
+            confirmed = True
         else:
-            failed.add(call_id)
-    completed.update(_persisted_agent_receipt_ids(events))
-    if started - completed - failed:
+            if pending.get(call_id, 0) > 0:
+                pending[call_id] -= 1
+            event_closures.add(call_id)
+    for receipt_id in _persisted_agent_receipt_ids(events):
+        if receipt_id not in event_closures and pending.get(receipt_id, 0) > 0:
+            pending[receipt_id] -= 1
+        confirmed = True
+    if any(count > 0 for count in pending.values()):
         return "unknown"
-    if completed:
+    if confirmed:
         return "confirmed"
     return "none"
 
@@ -448,42 +475,35 @@ def _agent_event_columns(event: dict[str, object]) -> tuple[str, str, str, str]:
     return event_type, call_id, effect_kind, receipt_operation_id
 
 
-def _agent_effect_state_from_rows(
-    db: sqlite3.Connection,
-    run_id: int,
-) -> str:
-    states: dict[str, str] = {}
-    for row in db.execute(
-        """
-        select event_type, call_id, effect_kind, receipt_operation_id
-        from agent_run_events
-        where agent_run_id=?
-        order by sequence
-        """,
-        (run_id,),
-    ).fetchall():
-        call_id = row["call_id"]
-        if call_id:
-            if row["effect_kind"] == "unreviewed":
-                states[call_id] = "unreviewed"
-            elif (
-                row["effect_kind"] == "read_only"
-                and row["event_type"] == "item.completed"
-            ):
-                states[call_id] = "read_only"
-            elif row["effect_kind"] == "effectful":
-                if row["event_type"] == "item.started":
-                    states[call_id] = "started"
-                elif row["event_type"] == "item.completed":
-                    states[call_id] = "completed"
-                elif row["event_type"] == "item.failed":
-                    states[call_id] = "failed"
-        receipt_operation_id = row["receipt_operation_id"]
-        if receipt_operation_id:
-            states[receipt_operation_id] = "completed"
-    if {"started", "unreviewed"} & set(states.values()):
+def _agent_effect_identity(event: dict[str, object]) -> dict[str, object] | None:
+    item = event.get("item")
+    metadata = item.get("metadata") if isinstance(item, dict) else None
+    if not isinstance(metadata, dict) or metadata.get("effect") != "effectful":
+        return None
+    identity = {
+        key: metadata.get(key)
+        for key in (
+            "capability",
+            "operation",
+            "operation_id",
+            "operation_digest",
+            "arguments_digest",
+            "target_identifiers",
+            "action_index",
+        )
+        if key in metadata
+    }
+    return identity or None
+
+
+def _agent_effect_state_from_counts(row: sqlite3.Row) -> str:
+    starts = int(row["effect_started_count"])
+    completed = int(row["effect_completed_count"])
+    failed = int(row["effect_failed_count"])
+    receipts = int(row["effect_receipt_count"])
+    if int(row["effect_unreviewed_count"]) or starts > completed + failed + receipts:
         return "unknown"
-    if "completed" in states.values():
+    if completed + receipts:
         return "confirmed"
     return "none"
 
@@ -749,6 +769,7 @@ class AutoReplyStore:
                     trigger_text text not null,
                     action text not null,
                     sensitivity_kind text not null,
+                    agent_run_id integer,
                     codex_reason text not null default '',
                     draft_reply_text text not null default '',
                     direct_user_id text not null default '',
@@ -842,6 +863,13 @@ class AutoReplyStore:
                     id integer primary key autoincrement,
                     reply_task_id integer not null,
                     execution_generation text not null,
+                    role text not null check(role in ('consumer', 'audit')),
+                    proposal_revision integer not null default 0
+                        check(proposal_revision >= 0),
+                    turn_attempt integer not null default 0
+                        check(turn_attempt >= 0),
+                    parent_agent_run_id integer,
+                    operation_id text not null default '',
                     status text not null default 'pending'
                         check(status in (
                             'pending', 'running', 'completed', 'failed', 'unknown'
@@ -854,6 +882,12 @@ class AutoReplyStore:
                     tool_events_json text not null default '[]',
                     side_effect_state text not null default 'none'
                         check(side_effect_state in ('none', 'confirmed', 'unknown')),
+                    effect_started_count integer not null default 0,
+                    effect_completed_count integer not null default 0,
+                    effect_failed_count integer not null default 0,
+                    effect_receipt_count integer not null default 0,
+                    effect_unreviewed_count integer not null default 0,
+                    reconciliation_event_count integer not null default 0,
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
                     reconciliation_attempts integer not null default 0,
@@ -863,8 +897,12 @@ class AutoReplyStore:
                     completed_at text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
-                    unique(reply_task_id, execution_generation),
-                    foreign key(reply_task_id) references reply_tasks(id)
+                    unique(
+                        reply_task_id, execution_generation, role,
+                        proposal_revision, turn_attempt
+                    ),
+                    foreign key(reply_task_id) references reply_tasks(id),
+                    foreign key(parent_agent_run_id) references agent_runs(id)
                 );
                 create index if not exists idx_agent_runs_status
                     on agent_runs(status, updated_at);
@@ -898,6 +936,7 @@ class AutoReplyStore:
                     completed integer not null,
                     persisted integer not null,
                     safe_to_confirm integer not null,
+                    effect_counted integer not null default 0,
                     created_at text not null default current_timestamp,
                     unique(agent_run_id, operation_id),
                     foreign key(agent_run_id) references agent_runs(id)
@@ -1340,6 +1379,24 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table agent_runs add column {column} {definition}"
                     )
+            self._migrate_agent_run_turn_identity(db)
+            agent_run_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(agent_runs)").fetchall()
+            }
+            for column in (
+                "effect_started_count",
+                "effect_completed_count",
+                "effect_failed_count",
+                "effect_receipt_count",
+                "effect_unreviewed_count",
+                "reconciliation_event_count",
+            ):
+                if column not in agent_run_columns:
+                    db.execute(
+                        f"alter table agent_runs add column {column} "
+                        "integer not null default 0"
+                    )
             db.execute(
                 "create index if not exists idx_agent_runs_reconciliation_due "
                 "on agent_runs(status, reconciliation_next_attempt_at, id)"
@@ -1353,10 +1410,28 @@ class AutoReplyStore:
                     "alter table agent_run_events add column "
                     "event_scope text not null default 'direct'"
                 )
+            if "reconciliation_event_count" not in agent_run_columns:
+                db.execute(
+                    "update agent_runs set reconciliation_event_count=("
+                    "select count(*) from agent_run_events "
+                    "where agent_run_id=agent_runs.id "
+                    "and event_scope='reconciliation')"
+                )
             db.execute(
                 "create index if not exists idx_agent_run_events_run_scope "
                 "on agent_run_events(agent_run_id, event_scope)"
             )
+            receipt_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(agent_execution_receipts)"
+                ).fetchall()
+            }
+            if "effect_counted" not in receipt_columns:
+                db.execute(
+                    "alter table agent_execution_receipts add column "
+                    "effect_counted integer not null default 0"
+                )
             self._migrate_reply_task_channel_identity(db)
             db.execute(
                 """
@@ -1426,6 +1501,7 @@ class AutoReplyStore:
                 for row in db.execute("pragma table_info(reply_attempts)").fetchall()
             }
             for column, definition in (
+                ("agent_run_id", "integer"),
                 ("codex_session_id", "text not null default ''"),
                 ("direct_user_id", "text not null default ''"),
                 ("direct_open_dingtalk_id", "text not null default ''"),
@@ -1576,6 +1652,31 @@ class AutoReplyStore:
             )
             db.execute(
                 """
+                create index if not exists idx_reply_attempts_oa_history
+                    on reply_attempts(
+                        oa_process_instance_id, created_at desc, id desc
+                    )
+                    where oa_process_instance_id <> ''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_reply_attempts_trigger_history
+                    on reply_attempts(
+                        conversation_id, trigger_message_id, action, id desc
+                    )
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_sent_replies_history
+                    on sent_replies(
+                        conversation_id, trigger_message_id, sent_at
+                    )
+                """
+            )
+            db.execute(
+                """
                 create index if not exists idx_meeting_alignment_runs_created
                     on meeting_alignment_runs(created_at, id)
                 """
@@ -1622,6 +1723,138 @@ class AutoReplyStore:
                 )
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
+            self._backfill_agent_run_effect_counters(db)
+
+    @staticmethod
+    def _migrate_agent_run_turn_identity(db: sqlite3.Connection) -> None:
+        columns = {
+            row["name"] for row in db.execute("pragma table_info(agent_runs)").fetchall()
+        }
+        unique_columns = {
+            tuple(
+                row["name"]
+                for row in db.execute(
+                    "select name from pragma_index_info(?) order by seqno",
+                    (index["name"],),
+                ).fetchall()
+            )
+            for index in db.execute("pragma index_list(agent_runs)").fetchall()
+            if index["unique"]
+        }
+        desired_identity = (
+            "reply_task_id",
+            "execution_generation",
+            "role",
+            "proposal_revision",
+            "turn_attempt",
+        )
+        required_columns = {
+            "role",
+            "proposal_revision",
+            "turn_attempt",
+            "parent_agent_run_id",
+            "operation_id",
+        }
+        if required_columns <= columns and desired_identity in unique_columns:
+            return
+        existing_turn_columns = required_columns & columns
+        if existing_turn_columns and existing_turn_columns != required_columns:
+            raise sqlite3.IntegrityError("agent_runs has a partial turn identity schema")
+        preserve_turn_identity = required_columns <= columns
+        identity_select = (
+            "role, proposal_revision, turn_attempt, "
+            "parent_agent_run_id, operation_id"
+            if preserve_turn_identity
+            else "'audit', 0, 0, null, ''"
+        )
+
+        if db.in_transaction:
+            db.commit()
+        db.execute("pragma foreign_keys=off")
+        try:
+            db.executescript(
+                f"""
+                begin immediate;
+                create table agent_runs_turn_migration (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null,
+                    execution_generation text not null,
+                    role text not null check(role in ('consumer', 'audit')),
+                    proposal_revision integer not null default 0
+                        check(proposal_revision >= 0),
+                    turn_attempt integer not null default 0
+                        check(turn_attempt >= 0),
+                    parent_agent_run_id integer,
+                    operation_id text not null default '',
+                    status text not null default 'pending'
+                        check(status in (
+                            'pending', 'running', 'completed', 'failed', 'unknown'
+                        )),
+                    codex_session_id text not null default '',
+                    transcript_start_line integer not null default 0,
+                    transcript_end_line integer not null default 0,
+                    final_result_json text not null default '',
+                    structured_error_json text not null default '',
+                    tool_events_json text not null default '[]',
+                    side_effect_state text not null default 'none'
+                        check(side_effect_state in ('none', 'confirmed', 'unknown')),
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    reconciliation_attempts integer not null default 0,
+                    reconciliation_next_attempt_at text not null default '',
+                    reconciliation_suspended integer not null default 0,
+                    started_at text not null default '',
+                    completed_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(
+                        reply_task_id, execution_generation, role,
+                        proposal_revision, turn_attempt
+                    ),
+                    foreign key(reply_task_id) references reply_tasks(id),
+                    foreign key(parent_agent_run_id) references agent_runs(id)
+                );
+                insert into agent_runs_turn_migration (
+                    id, reply_task_id, execution_generation, role,
+                    proposal_revision, turn_attempt, parent_agent_run_id,
+                    operation_id, status, codex_session_id,
+                    transcript_start_line, transcript_end_line,
+                    final_result_json, structured_error_json, tool_events_json,
+                    side_effect_state, lease_owner, lease_expires_at,
+                    reconciliation_attempts, reconciliation_next_attempt_at,
+                    reconciliation_suspended, started_at, completed_at,
+                    created_at, updated_at
+                )
+                select
+                    id, reply_task_id, execution_generation, {identity_select},
+                    status, codex_session_id,
+                    transcript_start_line, transcript_end_line,
+                    final_result_json, structured_error_json, tool_events_json,
+                    side_effect_state, lease_owner, lease_expires_at,
+                    reconciliation_attempts, reconciliation_next_attempt_at,
+                    reconciliation_suspended, started_at, completed_at,
+                    created_at, updated_at
+                from agent_runs;
+                drop table agent_runs;
+                alter table agent_runs_turn_migration rename to agent_runs;
+                create index idx_agent_runs_status
+                    on agent_runs(status, updated_at);
+                create index idx_agent_runs_reconciliation_due
+                    on agent_runs(status, reconciliation_next_attempt_at, id);
+                """
+            )
+            violations = db.execute("pragma foreign_key_check").fetchall()
+            if violations:
+                raise sqlite3.IntegrityError(
+                    "agent_runs migration broke foreign keys"
+                )
+            db.commit()
+        except Exception:
+            if db.in_transaction:
+                db.rollback()
+            raise
+        finally:
+            db.execute("pragma foreign_keys=on")
 
     @staticmethod
     def _migrate_removed_runtime(db: sqlite3.Connection) -> None:
@@ -1936,6 +2169,90 @@ class AutoReplyStore:
             )
 
     @staticmethod
+    def _backfill_agent_run_effect_counters(db: sqlite3.Connection) -> None:
+        candidate_ids = [
+            row["id"]
+            for row in db.execute(
+                """
+                select id from agent_runs
+                where effect_started_count=0
+                  and effect_completed_count=0
+                  and effect_failed_count=0
+                  and effect_receipt_count=0
+                  and effect_unreviewed_count=0
+                  and exists (
+                      select 1 from agent_run_events
+                      where agent_run_id=agent_runs.id
+                  )
+                """
+            ).fetchall()
+        ]
+        if not candidate_ids:
+            return
+        db.execute(
+            """
+            update agent_runs
+            set effect_started_count=(
+                    select count(*) from agent_run_events
+                    where agent_run_id=agent_runs.id
+                      and effect_kind='effectful' and event_type='item.started'
+                ),
+                effect_completed_count=(
+                    select count(*) from agent_run_events
+                    where agent_run_id=agent_runs.id
+                      and effect_kind='effectful' and event_type='item.completed'
+                ),
+                effect_failed_count=(
+                    select count(*) from agent_run_events
+                    where agent_run_id=agent_runs.id
+                      and effect_kind='effectful' and event_type='item.failed'
+                ),
+                effect_receipt_count=min(
+                    (select count(*) from agent_run_events
+                     where agent_run_id=agent_runs.id
+                       and receipt_operation_id<>''),
+                    max(0,
+                        (select count(*) from agent_run_events
+                         where agent_run_id=agent_runs.id
+                           and effect_kind='effectful'
+                           and event_type='item.started')
+                        - (select count(*) from agent_run_events
+                           where agent_run_id=agent_runs.id
+                             and effect_kind='effectful'
+                             and event_type in ('item.completed', 'item.failed'))
+                    )
+                ),
+                effect_unreviewed_count=(
+                    select count(*) from agent_run_events
+                    where agent_run_id=agent_runs.id and effect_kind='unreviewed'
+                )
+            where effect_started_count=0
+              and effect_completed_count=0
+              and effect_failed_count=0
+              and effect_receipt_count=0
+              and effect_unreviewed_count=0
+              and exists (
+                  select 1 from agent_run_events
+                  where agent_run_id=agent_runs.id
+              )
+            """
+        )
+        for run_id in candidate_ids:
+            row = db.execute(
+                """
+                select id, effect_started_count, effect_completed_count,
+                       effect_failed_count, effect_receipt_count,
+                       effect_unreviewed_count
+                from agent_runs where id=?
+                """,
+                (run_id,),
+            ).fetchone()
+            db.execute(
+                "update agent_runs set side_effect_state=? where id=?",
+                (_agent_effect_state_from_counts(row), row["id"]),
+            )
+
+    @staticmethod
     def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
         """Replace the legacy cross-channel UNIQUE constraint in place."""
         columns = {
@@ -2059,17 +2376,25 @@ class AutoReplyStore:
         row: sqlite3.Row,
         *,
         db: sqlite3.Connection,
+        load_events: bool = True,
     ) -> AgentRun:
-        event_rows = db.execute(
-            "select event_json from agent_run_events "
-            "where agent_run_id=? order by sequence",
-            (row["id"],),
-        ).fetchall()
-        tool_events = [json.loads(event["event_json"]) for event in event_rows]
+        tool_events: list[dict[str, object]] = []
+        if load_events:
+            event_rows = db.execute(
+                "select event_json from agent_run_events "
+                "where agent_run_id=? order by sequence",
+                (row["id"],),
+            ).fetchall()
+            tool_events = [json.loads(event["event_json"]) for event in event_rows]
         return AgentRun(
             id=row["id"],
             reply_task_id=row["reply_task_id"],
             execution_generation=row["execution_generation"],
+            role=AgentRole(row["role"]),
+            proposal_revision=row["proposal_revision"],
+            turn_attempt=row["turn_attempt"],
+            parent_agent_run_id=row["parent_agent_run_id"],
+            operation_id=row["operation_id"],
             status=row["status"],
             codex_session_id=row["codex_session_id"],
             transcript_start_line=row["transcript_start_line"],
@@ -2078,6 +2403,12 @@ class AutoReplyStore:
             structured_error_json=row["structured_error_json"],
             tool_events=tool_events,
             side_effect_state=row["side_effect_state"],
+            effect_started_count=row["effect_started_count"],
+            effect_completed_count=row["effect_completed_count"],
+            effect_failed_count=row["effect_failed_count"],
+            effect_receipt_count=row["effect_receipt_count"],
+            effect_unreviewed_count=row["effect_unreviewed_count"],
+            reconciliation_event_count=row["reconciliation_event_count"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],
             reconciliation_attempts=row["reconciliation_attempts"],
@@ -2366,21 +2697,70 @@ class AutoReplyStore:
             ).fetchone()
             return self._agent_run_from_row(row, db=db) if row is not None else None
 
-    def get_agent_run_for_task_generation(
+    def get_agent_run_for_turn(
         self,
         reply_task_id: int,
         execution_generation: str,
+        *,
+        role: AgentRole,
+        proposal_revision: int,
+        turn_attempt: int,
     ) -> AgentRun | None:
+        role = AgentRole(role)
         with self._connect() as db:
             row = db.execute(
                 """
                 select *
                 from agent_runs
-                where reply_task_id=? and execution_generation=?
+                where reply_task_id=? and execution_generation=? and role=?
+                  and proposal_revision=? and turn_attempt=?
                 """,
-                (reply_task_id, execution_generation),
+                (
+                    reply_task_id,
+                    execution_generation,
+                    role.value,
+                    proposal_revision,
+                    turn_attempt,
+                ),
             ).fetchone()
             return self._agent_run_from_row(row, db=db) if row is not None else None
+
+    def list_agent_runs_for_task_generation(
+        self,
+        reply_task_id: int,
+        execution_generation: str,
+    ) -> list[AgentRun]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from agent_runs
+                where reply_task_id=? and execution_generation=?
+                order by proposal_revision,
+                         case role when 'consumer' then 0 else 1 end,
+                         turn_attempt, id
+                """,
+                (reply_task_id, execution_generation),
+            ).fetchall()
+            return [self._agent_run_from_row(row, db=db) for row in rows]
+
+    def agent_run_lease_is_active(
+        self,
+        run_id: int,
+        *,
+        now: str | datetime | None = None,
+    ) -> bool:
+        _, now_text = _utc_store_time(now)
+        with self._connect() as db:
+            row = db.execute(
+                "select 1 from agent_runs "
+                "where id=? and status='running' and lease_expires_at>?",
+                (run_id, now_text),
+            ).fetchone()
+            return row is not None
+
+    def foreign_key_violations(self) -> list[tuple[object, ...]]:
+        with self._connect() as db:
+            return [tuple(row) for row in db.execute("pragma foreign_key_check")]
 
     def record_agent_execution_receipt(
         self,
@@ -2393,6 +2773,7 @@ class AutoReplyStore:
         command_digest: str,
         exit_code: int,
         owner: str,
+        expected_status: str = "running",
         now: str | datetime | None = None,
     ) -> AgentExecutionReceipt:
         if not all(
@@ -2408,13 +2789,21 @@ class AutoReplyStore:
             raise ValueError("execution receipt identity must be non-empty")
         if exit_code != 0:
             raise ValueError("only successful executions can produce receipts")
+        if expected_status not in {"running", "unknown"}:
+            raise ValueError("invalid execution receipt run status")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             self._require_current_agent_run_write_access(
                 db,
                 run_id,
                 owner=owner,
                 now_text=now_text,
+                expected_status=expected_status,
             )
+            run_row = db.execute(
+                "select role from agent_runs where id=?", (run_id,)
+            ).fetchone()
+            if run_row is not None and run_row["role"] == AgentRole.CONSUMER.value:
+                raise ValueError("Consumer Agent cannot persist execution receipts")
             db.execute(
                 """
                 insert or ignore into agent_execution_receipts (
@@ -2452,6 +2841,135 @@ class AutoReplyStore:
             ):
                 raise ValueError("conflicting execution receipt")
             return AgentExecutionReceipt.model_validate(dict(row))
+
+    def confirm_agent_execution_receipt(
+        self,
+        run_id: int,
+        operation_id: str,
+        *,
+        owner: str,
+        expected_status: str = "unknown",
+        now: str | datetime | None = None,
+    ) -> None:
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                expected_status=expected_status,
+            )
+            receipt = db.execute(
+                """
+                select * from agent_execution_receipts
+                where agent_run_id=? and operation_id=?
+                  and completed=1 and persisted=1 and safe_to_confirm=1
+                """,
+                (run_id, operation_id),
+            ).fetchone()
+            if receipt is None:
+                raise ValueError("execution receipt is not confirmable")
+            if receipt["effect_counted"]:
+                return
+            action_index = int(json.loads(operation_id)["action_index"])
+            action_state = db.execute(
+                """
+                select
+                    sum(case when event_type='item.started' then 1 else 0 end) as starts,
+                    sum(case when event_type in ('item.completed', 'item.failed')
+                             then 1 else 0 end) as closures
+                from agent_run_events
+                where agent_run_id=? and effect_kind='effectful'
+                  and json_extract(event_json, '$.item.metadata.action_index')=?
+                """,
+                (run_id, action_index),
+            ).fetchone()
+            if int(action_state["starts"] or 0) <= int(action_state["closures"] or 0):
+                raise ValueError("execution receipt has no unmatched effect")
+            db.execute(
+                "update agent_execution_receipts set effect_counted=1 where id=?",
+                (receipt["id"],),
+            )
+            db.execute(
+                "update agent_runs set effect_receipt_count=effect_receipt_count+1 "
+                "where id=?",
+                (run_id,),
+            )
+            counts = db.execute(
+                """
+                select effect_started_count, effect_completed_count,
+                       effect_failed_count, effect_receipt_count,
+                       effect_unreviewed_count
+                from agent_runs where id=?
+                """,
+                (run_id,),
+            ).fetchone()
+            db.execute(
+                "update agent_runs set side_effect_state=? where id=?",
+                (_agent_effect_state_from_counts(counts), run_id),
+            )
+
+    def bind_legacy_unknown_effect_action(
+        self,
+        run_id: int,
+        *,
+        action_index: int,
+        operation_id: str,
+        expected_identity: dict[str, object],
+        owner: str,
+        now: str | datetime | None = None,
+    ) -> bool:
+        """Bind one pre-action-index unknown start to an exact reviewed action."""
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                expected_status="unknown",
+            )
+            rows = db.execute(
+                """
+                select id, event_json from agent_run_events
+                where agent_run_id=? and event_type='item.started'
+                  and effect_kind='effectful'
+                  and json_type(event_json, '$.item.metadata.action_index') is null
+                  and json_extract(event_json, '$.item.metadata.operation_id')=?
+                  and json_extract(event_json, '$.item.metadata.capability')=?
+                  and json_extract(event_json, '$.item.metadata.operation')=?
+                  and json_extract(event_json, '$.item.metadata.operation_digest')=?
+                  and json_extract(event_json, '$.item.metadata.arguments_digest')=?
+                order by sequence
+                """,
+                (
+                    run_id,
+                    operation_id,
+                    expected_identity.get("capability"),
+                    expected_identity.get("operation"),
+                    expected_identity.get("operation_digest"),
+                    expected_identity.get("arguments_digest"),
+                ),
+            ).fetchall()
+            target = expected_identity.get("target_identifiers")
+            for row in rows:
+                event = json.loads(row["event_json"])
+                identity = _agent_effect_identity(event) or {}
+                if identity.get("target_identifiers") != target:
+                    continue
+                event["item"]["metadata"]["action_index"] = action_index
+                cursor = db.execute(
+                    """
+                    update agent_run_events set event_json=?
+                    where id=?
+                      and json_type(event_json, '$.item.metadata.action_index') is null
+                    """,
+                    (
+                        json.dumps(event, ensure_ascii=False, separators=(",", ":")),
+                        row["id"],
+                    ),
+                )
+                return cursor.rowcount == 1
+            return False
 
     def list_agent_execution_receipts(
         self,
@@ -2557,6 +3075,7 @@ class AutoReplyStore:
                 side_effect_state='unknown', lease_owner='', lease_expires_at='',
                 updated_at=?
             where reply_task_id=? and execution_generation=? and status='running'
+              and role='audit'
               and side_effect_state<>'none'
             """,
             (error_json, now_text, task_id, execution_generation),
@@ -2565,6 +3084,7 @@ class AutoReplyStore:
             """
             select 1 from agent_runs
             where reply_task_id=? and execution_generation=? and status='unknown'
+              and role='audit'
             limit 1
             """,
             (task_id, execution_generation),
@@ -2576,12 +3096,43 @@ class AutoReplyStore:
         reply_task_id: int,
         execution_generation: str,
         *,
+        role: AgentRole,
+        proposal_revision: int,
+        turn_attempt: int,
+        parent_agent_run_id: int | None,
+        operation_id: str,
         owner: str,
         lease_seconds: int = 1800,
         now: str | datetime | None = None,
     ) -> AgentRunClaim:
+        role = AgentRole(role)
         if not execution_generation.strip():
             raise ValueError("execution_generation must be non-empty")
+        if proposal_revision < 0:
+            raise ValueError("proposal_revision must not be negative")
+        if turn_attempt < 0:
+            raise ValueError("turn_attempt must not be negative")
+        if parent_agent_run_id is not None and parent_agent_run_id <= 0:
+            raise ValueError("parent_agent_run_id must be positive")
+        operation_id = operation_id.strip()
+        if role is AgentRole.CONSUMER and operation_id:
+            raise ValueError("Consumer operation_id must be empty")
+        if role is AgentRole.AUDIT and not operation_id:
+            raise ValueError("Audit operation_id must be non-empty")
+        if role is AgentRole.CONSUMER and turn_attempt != 0:
+            raise ValueError("Consumer turn_attempt must be zero")
+        if (
+            role is AgentRole.CONSUMER
+            and proposal_revision == 0
+            and parent_agent_run_id is not None
+        ):
+            raise ValueError("Initial Consumer parent must be empty")
+        if (
+            role is AgentRole.CONSUMER
+            and proposal_revision > 0
+            and parent_agent_run_id is None
+        ):
+            raise ValueError("Revised Consumer parent must be non-empty")
         if not owner.strip():
             raise ValueError("owner must be non-empty")
         if lease_seconds <= 0:
@@ -2601,17 +3152,62 @@ class AutoReplyStore:
                 raise ValueError("reply task does not exist")
             if task["execution_generation"] != execution_generation:
                 raise ValueError("reply task execution generation mismatch")
+            parent = None
+            if role is AgentRole.AUDIT and parent_agent_run_id is not None:
+                parent = db.execute(
+                    """
+                    select id from agent_runs
+                    where id=? and role='consumer' and reply_task_id=?
+                      and execution_generation=? and proposal_revision=?
+                      and turn_attempt=0
+                    """,
+                    (
+                        parent_agent_run_id,
+                        reply_task_id,
+                        execution_generation,
+                        proposal_revision,
+                    ),
+                ).fetchone()
+                if parent is None:
+                    raise ValueError(
+                        "Audit parent must be the matching Consumer turn"
+                    )
+            if role is AgentRole.CONSUMER and proposal_revision > 0:
+                parent = db.execute(
+                    """
+                    select id from agent_runs
+                    where id=? and role='audit' and reply_task_id=?
+                      and execution_generation=? and proposal_revision=?
+                    """,
+                    (
+                        parent_agent_run_id,
+                        reply_task_id,
+                        execution_generation,
+                        proposal_revision - 1,
+                    ),
+                ).fetchone()
+                if parent is None:
+                    raise ValueError(
+                        "Revised Consumer parent must be the previous Audit turn"
+                    )
             cursor = db.execute(
                 """
                 insert or ignore into agent_runs (
-                    reply_task_id, execution_generation, status,
+                    reply_task_id, execution_generation, role,
+                    proposal_revision, turn_attempt, parent_agent_run_id,
+                    operation_id, status,
                     lease_owner, lease_expires_at, started_at,
                     created_at, updated_at
-                ) values (?, ?, 'running', ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
                 """,
                 (
                     reply_task_id,
                     execution_generation,
+                    role.value,
+                    proposal_revision,
+                    turn_attempt,
+                    parent_agent_run_id,
+                    operation_id,
                     owner,
                     lease_expires_at,
                     now_text,
@@ -2624,12 +3220,24 @@ class AutoReplyStore:
                 """
                 select *
                 from agent_runs
-                where reply_task_id=? and execution_generation=?
+                where reply_task_id=? and execution_generation=? and role=?
+                  and proposal_revision=? and turn_attempt=?
                 """,
-                (reply_task_id, execution_generation),
+                (
+                    reply_task_id,
+                    execution_generation,
+                    role.value,
+                    proposal_revision,
+                    turn_attempt,
+                ),
             ).fetchone()
             if row is None:
                 raise RuntimeError("agent run claim did not create a row")
+            if (
+                row["parent_agent_run_id"] != parent_agent_run_id
+                or row["operation_id"] != operation_id
+            ):
+                raise ValueError("conflicting agent turn identity")
             has_completed_receipt = db.execute(
                 """
                 select 1
@@ -2674,8 +3282,7 @@ class AutoReplyStore:
             if (
                 not claimed
                 and row["status"] == "running"
-                and bool(row["codex_session_id"])
-                and row["side_effect_state"] != "unknown"
+                and row["side_effect_state"] == "none"
                 and row["lease_expires_at"] <= now_text
             ):
                 reclaimed = db.execute(
@@ -2683,8 +3290,7 @@ class AutoReplyStore:
                     update agent_runs
                     set lease_owner=?, lease_expires_at=?, updated_at=?
                     where id=? and status='running'
-                      and codex_session_id<>''
-                      and side_effect_state<>'unknown'
+                      and side_effect_state='none'
                       and lease_expires_at<=?
                     """,
                     (owner, lease_expires_at, now_text, row["id"], now_text),
@@ -2733,12 +3339,15 @@ class AutoReplyStore:
         *,
         owner: str,
         lease_seconds: int = 1800,
+        expected_status: str = "running",
         now: str | datetime | None = None,
     ) -> AgentRun:
         if not owner.strip():
             raise ValueError("owner must be non-empty")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
+        if expected_status not in {"running", "unknown"}:
+            raise ValueError("invalid agent run lease status")
         with self._agent_run_write_transaction(now) as (
             db,
             (now_value, now_text),
@@ -2748,7 +3357,8 @@ class AutoReplyStore:
                 run_id,
                 owner=owner,
                 now_text=now_text,
-                status_error="agent run lease requires running status",
+                expected_status=expected_status,
+                status_error=f"agent run lease requires {expected_status} status",
             )
             lease_expires_at = (
                 now_value + timedelta(seconds=lease_seconds)
@@ -2757,10 +3367,17 @@ class AutoReplyStore:
                 """
                 update agent_runs
                 set lease_expires_at=?, updated_at=?
-                where id=? and status='running' and lease_owner=?
+                where id=? and status=? and lease_owner=?
                   and lease_expires_at>?
                 """,
-                (lease_expires_at, now_text, run_id, owner, now_text),
+                (
+                    lease_expires_at,
+                    now_text,
+                    run_id,
+                    expected_status,
+                    owner,
+                    now_text,
+                ),
             )
             if cursor.rowcount != 1:
                 row = db.execute(
@@ -2769,8 +3386,10 @@ class AutoReplyStore:
                 ).fetchone()
                 if row is None:
                     raise ValueError("agent run does not exist")
-                if row["status"] != "running":
-                    raise ValueError("agent run lease requires running status")
+                if row["status"] != expected_status:
+                    raise ValueError(
+                        f"agent run lease requires {expected_status} status"
+                    )
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
             updated = db.execute(
                 "select * from agent_runs where id=?",
@@ -2864,12 +3483,36 @@ class AutoReplyStore:
             _agent_event_columns(normalized_event)
         )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            self._require_current_agent_run_write_access(
+            run_row = self._require_current_agent_run_write_access(
                 db,
                 run_id,
                 owner=owner,
                 now_text=now_text,
                 status_error="cannot append event to terminal agent run",
+            )
+            if (
+                run_row["role"] == AgentRole.CONSUMER.value
+                and (
+                    effect_kind in {"effectful", "unreviewed"}
+                    or bool(receipt_operation_id)
+                )
+            ):
+                raise ValueError("Consumer Agent cannot persist side effects")
+            if effect_kind == "effectful":
+                identity = _agent_effect_identity(normalized_event)
+                if (
+                    isinstance(identity, dict)
+                    and identity.get("operation_id") is not None
+                    and identity.get("operation_id") != run_row["operation_id"]
+                ):
+                    raise ValueError("effect operation identity mismatch")
+            self._validate_agent_effect_event_identity(
+                db,
+                run_id,
+                normalized_event,
+                event_type=event_type,
+                call_id=call_id,
+                effect_kind=effect_kind,
             )
             sequence = db.execute(
                 "select coalesce(max(sequence), 0) + 1 from agent_run_events "
@@ -2894,7 +3537,73 @@ class AutoReplyStore:
                     now_text,
                 ),
             )
-            side_effect_state = _agent_effect_state_from_rows(db, run_id)
+            receipt_delta = 0
+            if receipt_operation_id:
+                call_state = db.execute(
+                    """
+                    select
+                        sum(case when effect_kind='effectful'
+                                  and event_type='item.started' then 1 else 0 end)
+                            as starts,
+                        sum(case when effect_kind='effectful'
+                                  and event_type in ('item.completed', 'item.failed')
+                                 then 1 else 0 end) as closures,
+                        sum(case when receipt_operation_id=? then 1 else 0 end)
+                            as receipts
+                    from agent_run_events
+                    where agent_run_id=?
+                      and (call_id=? or receipt_operation_id=?)
+                    """,
+                    (
+                        receipt_operation_id,
+                        run_id,
+                        receipt_operation_id,
+                        receipt_operation_id,
+                    ),
+                ).fetchone()
+                receipt_delta = int(
+                    (call_state["starts"] or 0)
+                    > (call_state["closures"] or 0) + (call_state["receipts"] or 0) - 1
+                )
+            started_delta = int(
+                effect_kind == "effectful" and event_type == "item.started"
+            )
+            completed_delta = int(
+                effect_kind == "effectful" and event_type == "item.completed"
+            )
+            failed_delta = int(
+                effect_kind == "effectful" and event_type == "item.failed"
+            )
+            unreviewed_delta = int(effect_kind == "unreviewed")
+            db.execute(
+                """
+                update agent_runs
+                set effect_started_count=effect_started_count+?,
+                    effect_completed_count=effect_completed_count+?,
+                    effect_failed_count=effect_failed_count+?,
+                    effect_receipt_count=effect_receipt_count+?,
+                    effect_unreviewed_count=effect_unreviewed_count+?
+                where id=?
+                """,
+                (
+                    started_delta,
+                    completed_delta,
+                    failed_delta,
+                    receipt_delta,
+                    unreviewed_delta,
+                    run_id,
+                ),
+            )
+            counts = db.execute(
+                """
+                select effect_started_count, effect_completed_count,
+                       effect_failed_count, effect_receipt_count,
+                       effect_unreviewed_count
+                from agent_runs where id=?
+                """,
+                (run_id,),
+            ).fetchone()
+            side_effect_state = _agent_effect_state_from_counts(counts)
             cursor = db.execute(
                 """
                 update agent_runs
@@ -2918,7 +3627,41 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated, db=db)
+            return self._agent_run_from_row(updated, db=db, load_events=False)
+
+    @staticmethod
+    def _validate_agent_effect_event_identity(
+        db: sqlite3.Connection,
+        run_id: int,
+        event: dict[str, object],
+        *,
+        event_type: str,
+        call_id: str,
+        effect_kind: str,
+    ) -> None:
+        if (
+            effect_kind != "effectful"
+            or event_type not in {"item.completed", "item.failed"}
+            or not call_id
+        ):
+            return
+        row = db.execute(
+            """
+            select event_json from agent_run_events
+            where agent_run_id=? and call_id=? and effect_kind='effectful'
+              and event_type='item.started'
+            order by sequence desc limit 1
+            """,
+            (run_id, call_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("effect completion requires matching start")
+        try:
+            started = json.loads(row["event_json"])
+        except json.JSONDecodeError as exc:
+            raise ValueError("effect start identity is invalid") from exc
+        if _agent_effect_identity(started) != _agent_effect_identity(event):
+            raise ValueError("effect completion identity mismatch")
 
     def append_unknown_agent_run_event(
         self,
@@ -2949,16 +3692,13 @@ class AutoReplyStore:
                 raise ValueError("agent run does not exist")
             if row["execution_generation"] != row["task_execution_generation"]:
                 raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
+            if row["role"] == AgentRole.CONSUMER.value:
+                raise ValueError("Consumer Agent cannot reconcile side effects")
             if row["status"] != "unknown":
                 raise ValueError("agent run reconciliation requires unknown status")
             if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
-            event_count = db.execute(
-                "select count(*) from agent_run_events "
-                "where agent_run_id=? and event_scope='reconciliation'",
-                (run_id,),
-            ).fetchone()[0]
-            if event_count >= MAX_RECONCILIATION_EVENTS:
+            if row["reconciliation_event_count"] >= MAX_RECONCILIATION_EVENTS:
                 raise ValueError("agent run reconciliation event limit exceeded")
             sequence = db.execute(
                 "select coalesce(max(sequence), 0) + 1 from agent_run_events "
@@ -2967,6 +3707,22 @@ class AutoReplyStore:
             ).fetchone()[0]
             event_type, call_id, effect_kind, receipt_operation_id = (
                 _agent_event_columns(normalized_event)
+            )
+            if effect_kind == "effectful":
+                identity = _agent_effect_identity(normalized_event)
+                if (
+                    isinstance(identity, dict)
+                    and identity.get("operation_id") is not None
+                    and identity.get("operation_id") != row["operation_id"]
+                ):
+                    raise ValueError("effect operation identity mismatch")
+            self._validate_agent_effect_event_identity(
+                db,
+                run_id,
+                normalized_event,
+                event_type=event_type,
+                call_id=call_id,
+                effect_kind=effect_kind,
             )
             db.execute(
                 """
@@ -2984,6 +3740,33 @@ class AutoReplyStore:
                     effect_kind,
                     receipt_operation_id,
                     now_text,
+                ),
+            )
+            started_delta = int(
+                effect_kind == "effectful" and event_type == "item.started"
+            )
+            completed_delta = int(
+                effect_kind == "effectful" and event_type == "item.completed"
+            )
+            failed_delta = int(
+                effect_kind == "effectful" and event_type == "item.failed"
+            )
+            db.execute(
+                """
+                update agent_runs
+                set effect_started_count=effect_started_count+?,
+                    effect_completed_count=effect_completed_count+?,
+                    effect_failed_count=effect_failed_count+?,
+                    effect_unreviewed_count=effect_unreviewed_count+?,
+                    reconciliation_event_count=reconciliation_event_count+1
+                where id=?
+                """,
+                (
+                    started_delta,
+                    completed_delta,
+                    failed_delta,
+                    int(effect_kind == "unreviewed"),
+                    run_id,
                 ),
             )
             cursor = db.execute(
@@ -3040,6 +3823,11 @@ class AutoReplyStore:
                 raise ValueError("agent run does not exist")
             if row["execution_generation"] != row["task_execution_generation"]:
                 raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
+            if (
+                row["role"] == AgentRole.CONSUMER.value
+                and side_effect_state != "none"
+            ):
+                raise ValueError("Consumer Agent cannot persist side effects")
             end_line = (
                 row["transcript_end_line"]
                 if transcript_end_line is None
@@ -3129,11 +3917,12 @@ class AutoReplyStore:
         owner: str,
         side_effect_state: str = "none",
         transcript_end_line: int | None = None,
+        expected_status: str = "running",
         now: str | datetime | None = None,
     ) -> AgentRun:
         return self._transition_agent_run(
             run_id,
-            expected_status="running",
+            expected_status=expected_status,
             owner=owner,
             target_status="completed",
             final_result_json=_json_object_text(
@@ -3195,6 +3984,47 @@ class AutoReplyStore:
             now=now,
         )
 
+    def persist_unknown_agent_run_result(
+        self,
+        run_id: int,
+        final_result: dict[str, object],
+        *,
+        owner: str,
+        transcript_end_line: int,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        result_json = _json_object_text(final_result, field="final_result")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                expected_status="unknown",
+            )
+            cursor = db.execute(
+                """
+                update agent_runs
+                set final_result_json=?, transcript_end_line=?,
+                    lease_owner='', lease_expires_at='',
+                    updated_at=?
+                where id=? and status='unknown' and lease_owner=?
+                  and lease_expires_at>?
+                """,
+                (
+                    result_json,
+                    transcript_end_line,
+                    now_text,
+                    run_id,
+                    owner,
+                    now_text,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            row = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
+            return self._agent_run_from_row(row, db=db)
+
     def mark_expired_agent_run_unknown(
         self,
         run_id: int,
@@ -3218,8 +4048,9 @@ class AutoReplyStore:
                     lease_expires_at='',
                     updated_at=?
                 where id=? and status='running'
+                  and role='audit'
                   and execution_generation=?
-                  and side_effect_state='unknown'
+                  and side_effect_state<>'none'
                   and lease_expires_at<=?
                   and exists (
                       select 1 from reply_tasks
@@ -3332,6 +4163,12 @@ class AutoReplyStore:
                     now_text,
                 ),
             )
+            self._supersede_running_agent_runs(
+                db,
+                task_id,
+                execution_generation,
+                now_text=now_text,
+            )
             task_cursor = db.execute(
                 """
                 update reply_tasks
@@ -3394,6 +4231,12 @@ class AutoReplyStore:
                     owner,
                     now_text,
                 ),
+            )
+            self._supersede_running_agent_runs(
+                db,
+                task_id,
+                execution_generation,
+                now_text=now_text,
             )
             task_cursor = db.execute(
                 """
@@ -3488,6 +4331,7 @@ class AutoReplyStore:
                 from agent_runs
                 join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.status='unknown'
+                  and agent_runs.role='audit'
                   and agent_runs.reconciliation_suspended=1
                   and reply_tasks.status='processing'
                   and reply_tasks.execution_generation=agent_runs.execution_generation
@@ -3514,6 +4358,7 @@ class AutoReplyStore:
                 set reconciliation_suspended=0,
                     reconciliation_next_attempt_at='', updated_at=?
                 where id=? and status='unknown' and reconciliation_suspended=1
+                  and role='audit'
                   and execution_generation=?
                   and exists (
                       select 1 from reply_tasks
@@ -3559,6 +4404,7 @@ class AutoReplyStore:
                 from agent_runs
                 join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.id=? and agent_runs.status='unknown'
+                  and agent_runs.role='audit'
                   and agent_runs.execution_generation=?
                   and agent_runs.lease_owner=? and agent_runs.lease_expires_at>?
                   and reply_tasks.status='processing'
@@ -3577,6 +4423,7 @@ class AutoReplyStore:
                     reconciliation_next_attempt_at='', lease_owner='',
                     lease_expires_at='', completed_at=?, updated_at=?
                 where id=? and status='unknown' and execution_generation=?
+                  and role='audit'
                   and lease_owner=? and lease_expires_at>?
                 """,
                 (
@@ -3641,6 +4488,7 @@ class AutoReplyStore:
                 from agent_runs
                 join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.id=?
+                  and agent_runs.role='audit'
                 """,
                 (run_id,),
             ).fetchone()
@@ -3731,6 +4579,13 @@ class AutoReplyStore:
                     expected_execution_generation,
                 ),
             )
+            if resolution == "confirmed_not_occurred":
+                self._supersede_running_agent_runs(
+                    db,
+                    task_id,
+                    expected_execution_generation,
+                    now_text=now_text,
+                )
             task_cursor = db.execute(
                 """
                 update reply_tasks
@@ -3785,6 +4640,7 @@ class AutoReplyStore:
             from agent_runs
             join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
             where agent_runs.id=? and agent_runs.reply_task_id=?
+              and agent_runs.role='audit'
               and reply_tasks.execution_generation=agent_runs.execution_generation
             """,
             (run_id, task_id),
@@ -3819,6 +4675,7 @@ class AutoReplyStore:
                 "select agent_runs.* from agent_runs "
                 "join reply_tasks on reply_tasks.id=agent_runs.reply_task_id "
                 "where agent_runs.status='unknown' "
+                "and agent_runs.role='audit' "
                 "and reply_tasks.status='processing' "
                 "and reply_tasks.execution_generation=agent_runs.execution_generation "
                 "and agent_runs.reconciliation_suspended=0 "
@@ -3856,6 +4713,7 @@ class AutoReplyStore:
                     reconciliation_attempts=reconciliation_attempts + 1,
                     updated_at=?
                 where id=? and status='unknown'
+                  and role='audit'
                   and reconciliation_suspended=0
                   and (reconciliation_next_attempt_at=''
                        or reconciliation_next_attempt_at<=?)
@@ -4113,7 +4971,7 @@ class AutoReplyStore:
                       from agent_runs as runs
                       where runs.reply_task_id=tasks.id
                         and runs.execution_generation=tasks.execution_generation
-                        and runs.status='running'
+                        and runs.status in ('running', 'unknown')
                         and runs.lease_expires_at>current_timestamp
                   )
                 order by tasks.locked_at, tasks.id
@@ -5020,11 +5878,10 @@ class AutoReplyStore:
                       limit 1
                   ), ?) < ?
                 """,
-                (max_retries, max_retries),
+                (0, max_retries),
             ).fetchall()
-            eligible = [row for row in rows if row["attempt_id"] is not None]
             requeued = 0
-            for row in eligible:
+            for row in rows:
                 delivery_id = int(row["delivery_id"])
                 cursor = db.execute(
                     """
@@ -5050,11 +5907,47 @@ class AutoReplyStore:
                     delivery_status="ready_to_send",
                     error="",
                 )
-                db.execute(
-                    "update reply_attempts set retry_count=retry_count + 1 "
-                    "where id=?",
-                    (row["attempt_id"],),
-                )
+                if row["attempt_id"] is None:
+                    task = db.execute(
+                        """
+                        select conversation_id, conversation_title,
+                               trigger_message_id, trigger_sender, trigger_text
+                        from reply_tasks
+                        where id=(
+                            select reply_task_id from wechat_deliveries where id=?
+                        )
+                        """,
+                        (delivery_id,),
+                    ).fetchone()
+                    if task is None:
+                        raise RuntimeError("wechat delivery retry task is missing")
+                    db.execute(
+                        """
+                        insert into reply_attempts (
+                            conversation_id, conversation_title,
+                            trigger_message_id, trigger_sender, trigger_text,
+                            action, sensitivity_kind, codex_reason, audit_summary,
+                            send_status, send_error, retry_count, channel
+                        ) values (?, ?, ?, ?, ?, 'send_reply', 'normal',
+                                  'legacy_wechat_delivery_recovery',
+                                  'created during bounded legacy delivery recovery',
+                                  'pending', 'wechat_delivery_ready_to_send', 1,
+                                  'wechat')
+                        """,
+                        (
+                            task["conversation_id"],
+                            task["conversation_title"],
+                            task["trigger_message_id"],
+                            task["trigger_sender"],
+                            task["trigger_text"],
+                        ),
+                    )
+                else:
+                    db.execute(
+                        "update reply_attempts set retry_count=retry_count + 1 "
+                        "where id=?",
+                        (row["attempt_id"],),
+                    )
                 requeued += 1
             return requeued
 
@@ -5174,6 +6067,87 @@ class AutoReplyStore:
                 delivery_status=status,
                 error=error,
             )
+            if status == "sent":
+                self._supersede_failed_wechat_deliveries_with_newer_sent(
+                    db,
+                    sent_delivery_id=delivery_id,
+                )
+
+    @classmethod
+    def _supersede_failed_wechat_deliveries_with_newer_sent(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        sent_delivery_id: int,
+    ) -> int:
+        """Close old pre-action failures once a newer reply reached the chat.
+
+        A later successful direct-chat reply makes earlier failed drafts stale.
+        Replaying them would reverse the conversation and duplicate a response,
+        so preserve the audit trail as ``superseded`` instead of retrying.
+        """
+        sent = db.execute(
+            """
+            select account_id, target_type, target_id, conversation_id, reply_task_id
+            from wechat_deliveries
+            where id=? and status='sent'
+            """,
+            (sent_delivery_id,),
+        ).fetchone()
+        if sent is None:
+            return 0
+        rows = db.execute(
+            """
+            select id
+            from wechat_deliveries
+            where account_id=?
+              and target_type=?
+              and target_id=?
+              and conversation_id=?
+              and reply_task_id < ?
+              and status='failed'
+              and error='action_not_performed'
+            """,
+            (
+                sent["account_id"],
+                sent["target_type"],
+                sent["target_id"],
+                sent["conversation_id"],
+                sent["reply_task_id"],
+            ),
+        ).fetchall()
+        error = f"superseded_by_newer_wechat_delivery:{sent_delivery_id}"
+        for row in rows:
+            delivery_id = int(row["id"])
+            db.execute(
+                """
+                update wechat_deliveries
+                set status='superseded', error=?, updated_at=current_timestamp
+                where id=? and status='failed' and error='action_not_performed'
+                """,
+                (error, delivery_id),
+            )
+            cls._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=delivery_id,
+                delivery_status="superseded",
+                error=error,
+            )
+        return len(rows)
+
+    def supersede_failed_wechat_deliveries_with_newer_sent(self) -> int:
+        """Reconcile historical failures after an interrupted sender restart."""
+        with self._connect() as db:
+            sent_rows = db.execute(
+                "select id from wechat_deliveries where status='sent' order by id"
+            ).fetchall()
+            total = 0
+            for row in sent_rows:
+                total += self._supersede_failed_wechat_deliveries_with_newer_sent(
+                    db,
+                    sent_delivery_id=int(row["id"]),
+                )
+            return total
 
     @staticmethod
     def _wechat_delivery_source_statuses(status: str, error: str) -> tuple[str, ...]:
@@ -6334,6 +7308,32 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def renew_codex_session_lock(
+        self,
+        conversation_id: str,
+        owner: str,
+        *,
+        now: str | datetime | None = None,
+    ) -> bool:
+        if not conversation_id.strip():
+            raise ValueError("missing conversation_id")
+        if not owner.strip():
+            raise ValueError("missing lock owner")
+        now_value, now_text = _utc_store_time(now)
+        stale_before = (
+            now_value - timedelta(seconds=CODEX_SESSION_LOCK_STALE_SECONDS)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update codex_session_locks
+                set locked_at=?
+                where conversation_id=? and owner=? and locked_at>?
+                """,
+                (now_text, conversation_id, owner, stale_before),
+            )
+            return cursor.rowcount == 1
+
     def codex_session_lock(self, conversation_id: str, owner: str) -> CodexSessionLock:
         return CodexSessionLock(self, conversation_id, owner)
 
@@ -6410,10 +7410,12 @@ class AutoReplyStore:
         error: str = "",
         channel: str = "dingtalk",
     ) -> int:
-        with self._connect() as db:
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             target = db.execute(
                 """
-                select id
+                select id, execution_generation, trigger_message_id,
+                       trigger_create_time, trigger_sender, trigger_text,
+                       trigger_message_json, available_at, error
                 from reply_tasks
                 where channel=?
                   and conversation_id=?
@@ -6429,6 +7431,34 @@ class AutoReplyStore:
             if target is None:
                 return 0
             task_id = int(target["id"])
+            current_generation = str(target["execution_generation"])
+            unchanged = all(
+                str(target[field]) == value
+                for field, value in (
+                    ("trigger_message_id", trigger_message_id),
+                    ("trigger_create_time", trigger_create_time),
+                    ("trigger_sender", trigger_sender),
+                    ("trigger_text", trigger_text),
+                    ("trigger_message_json", trigger_message_json),
+                    ("available_at", available_at),
+                    ("error", error),
+                )
+            )
+            if unchanged:
+                return 0
+            if self._hold_generation_for_unknown_effects(
+                db,
+                task_id,
+                current_generation,
+                now_text=now_text,
+            ):
+                return 0
+            self._supersede_running_agent_runs(
+                db,
+                task_id,
+                current_generation,
+                now_text=now_text,
+            )
             execution_generation = uuid4().hex
             cursor = db.execute(
                 """
@@ -6441,8 +7471,9 @@ class AutoReplyStore:
                     execution_generation=?,
                     available_at=?,
                     error=?,
-                    updated_at=current_timestamp
+                    updated_at=?
                 where id=?
+                  and execution_generation=?
                   and (
                     trigger_message_id != ?
                     or trigger_create_time != ?
@@ -6462,7 +7493,9 @@ class AutoReplyStore:
                     execution_generation,
                     available_at,
                     error,
+                    now_text,
                     task_id,
+                    current_generation,
                     trigger_message_id,
                     trigger_create_time,
                     trigger_sender,
@@ -6513,15 +7546,27 @@ class AutoReplyStore:
         self,
         reply_task_id: int,
         execution_generation: str,
+        *,
+        role: AgentRole,
+        proposal_revision: int,
+        turn_attempt: int,
     ) -> int:
+        role = AgentRole(role)
         with self._connect() as db:
             cursor = db.execute(
                 """
                 update agent_runs
                 set codex_session_id=''
-                where reply_task_id=? and execution_generation=?
+                where reply_task_id=? and execution_generation=? and role=?
+                  and proposal_revision=? and turn_attempt=?
                 """,
-                (reply_task_id, execution_generation),
+                (
+                    reply_task_id,
+                    execution_generation,
+                    role.value,
+                    proposal_revision,
+                    turn_attempt,
+                ),
             )
             return cursor.rowcount
 
@@ -7610,7 +8655,7 @@ class AutoReplyStore:
                     audit_tool_events_json,
                 )
 
-    def finalize_agent_reply_task(
+    def finalize_orchestrated_reply_task(
         self,
         *,
         task_id: int,
@@ -7640,7 +8685,7 @@ class AutoReplyStore:
         oa_remark: str = "",
         oa_action_result_json: str = "",
     ) -> int:
-        """Persist one Direct Agent result and its task transition atomically."""
+        """Persist one orchestration result and its task transition atomically."""
         if task_status not in {"done", "failed", "pending", "unchanged"}:
             raise ValueError("invalid reply task terminal status")
         if not expected_execution_generation.strip():
@@ -7670,13 +8715,13 @@ class AutoReplyStore:
                 insert into reply_attempts (
                     conversation_id, conversation_title, trigger_message_id,
                     trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, codex_session_id,
+                    agent_run_id, codex_reason, codex_session_id,
                     codex_transcript_start_line, codex_transcript_end_line,
                     audit_tool_events_json, audit_summary,
                     oa_process_instance_id, oa_task_id, oa_url, oa_action,
                     oa_remark, oa_action_result_json, send_status, send_error,
                     channel
-                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -7684,6 +8729,7 @@ class AutoReplyStore:
                     trigger_message_id,
                     trigger_sender,
                     trigger_text,
+                    run_id,
                     codex_reason,
                     codex_session_id,
                     codex_transcript_start_line,
@@ -8440,6 +9486,7 @@ class AutoReplyStore:
                         select process_attempts.id
                         from reply_attempts as process_attempts
                         where process_attempts.oa_process_instance_id = reply_attempts.oa_process_instance_id
+                          and process_attempts.oa_process_instance_id <> ''
                         order by
                             case
                                 when process_attempts.send_status in (
@@ -8678,7 +9725,7 @@ class AutoReplyStore:
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
     def backfill_oa_audit_metadata(self) -> int:
-        """Recover OA identity for historical Direct Agent attempts by exact task key."""
+        """Recover OA identity for historical agent attempts by exact task key."""
         with self._connect() as db:
             rows = db.execute(
                 """

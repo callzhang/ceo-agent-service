@@ -2,6 +2,9 @@ import json
 import asyncio
 import ipaddress
 import sqlite3
+import threading
+import time
+from contextlib import asynccontextmanager
 from collections.abc import Callable, Iterable, Mapping
 from collections import deque
 from datetime import datetime, timedelta, timezone, tzinfo
@@ -27,6 +30,12 @@ from app.codex_history import (
     RenderedCodexEvent,
     extract_codex_audit_events_from_session,
     render_local_codex_session,
+)
+from app.audit_rules import (
+    audit_rules_template_path,
+    read_audit_rules_template,
+    render_audit_rules,
+    write_audit_rules_template,
 )
 from app.codex_decision import audit_summary_explains_no_documents
 from app.config import (
@@ -100,6 +109,8 @@ from app.feedback_events import (
 )
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
+    AgentRole,
+    AgentRun,
     AgentRunLeaseLostError,
     AutoReplyStore,
     FeedbackEvent,
@@ -599,6 +610,7 @@ TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/cs
 TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"
 DEFAULT_ERROR_LIST_LIMIT = 20
 HISTORY_CHART_HOURS = 24
+DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
 HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
     "💬 Skipped": "#a8a8aa",
@@ -622,6 +634,83 @@ HISTORY_CHART_COLORS = {
     "🧾 Returned": "#c37d0d",
     "🧾 Rejected": "#d45656",
 }
+
+
+class _RecentHtmlCache:
+    """Serve the last complete page while one background refresh runs."""
+
+    def __init__(
+        self,
+        ttl_seconds: float,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        thread_factory: Callable[..., threading.Thread] = threading.Thread,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        self._thread_factory = thread_factory
+        self._html = ""
+        self._rendered_at = 0.0
+        self._refreshing = False
+        self._lock = threading.Lock()
+
+    def get_or_render(self, renderer: Callable[[], str]) -> str:
+        refresh_thread: threading.Thread | None = None
+        with self._lock:
+            now = self._clock()
+            if self._html and now - self._rendered_at < self._ttl_seconds:
+                return self._html
+            if self._html:
+                if not self._refreshing:
+                    self._refreshing = True
+                    refresh_thread = self._thread_factory(
+                        target=self._refresh,
+                        args=(renderer,),
+                        daemon=True,
+                    )
+                cached_html = self._html
+            else:
+                self._refreshing = True
+                cached_html = ""
+        if refresh_thread is not None:
+            refresh_thread.start()
+        if cached_html:
+            return cached_html
+        try:
+            html = renderer()
+        except Exception:
+            with self._lock:
+                self._refreshing = False
+            raise
+        with self._lock:
+            self._html = html
+            self._rendered_at = self._clock()
+            self._refreshing = False
+            return html
+
+    def _refresh(self, renderer: Callable[[], str]) -> None:
+        try:
+            html = renderer()
+        except Exception:
+            with self._lock:
+                self._refreshing = False
+            return
+        with self._lock:
+            self._html = html
+            self._rendered_at = self._clock()
+            self._refreshing = False
+
+    def refresh_in_background(self, renderer: Callable[[], str]) -> None:
+        with self._lock:
+            if self._refreshing:
+                return
+            self._refreshing = True
+            refresh_thread = self._thread_factory(
+                target=self._refresh,
+                args=(renderer,),
+                daemon=True,
+            )
+        refresh_thread.start()
 
 
 class _TutorialStep(TypedDict):
@@ -2127,11 +2216,19 @@ def render_config_page(
     active_tab: str = "info",
     saved: bool = False,
     db_path: Path | None = None,
+    audit_rules_error: str = "",
+    audit_rules_draft: str | None = None,
 ) -> str:
     if active_tab == "developer":
         content = _render_developer_prompt_editor_content(saved=saved)
     elif active_tab == "user":
         content = _render_user_prompt_editor_content(saved=saved)
+    elif active_tab == "audit-rules":
+        content = _render_audit_rules_editor_content(
+            saved=saved,
+            validation_error=audit_rules_error,
+            submitted_draft=audit_rules_draft,
+        )
     elif active_tab == "system":
         content = _render_system_config(db_path=db_path)
     elif active_tab == "channels":
@@ -2143,7 +2240,11 @@ def render_config_page(
     else:
         active_tab = "info"
         content = _render_config_info()
-    prompt_card = "" if active_tab == "wechat" else _prompt_config_card(active_tab)
+    prompt_card = (
+        ""
+        if active_tab in {"wechat", "audit-rules"}
+        else _prompt_config_card(active_tab)
+    )
     body = f"{prompt_card}{_config_tabs(active_tab)}{content}"
     pending_count = (
         AutoReplyStore(db_path).count_pending_user_feedback_items()
@@ -5628,6 +5729,14 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         attempt.conversation_id
     )
     later_attempt = _later_attempt_for_display(store, attempt)
+    agent_runs = []
+    if attempt.agent_run_id:
+        terminal_run = store.get_agent_run(attempt.agent_run_id)
+        if terminal_run is not None:
+            agent_runs = store.list_agent_runs_for_task_generation(
+                terminal_run.reply_task_id,
+                terminal_run.execution_generation,
+            )
     return 200, render_page(
         f"Attempt #{attempt.id}",
         _attempt_detail_body(
@@ -5636,6 +5745,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             codex_session_id,
             feedback_events,
             later_attempt,
+            agent_runs,
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
@@ -6179,6 +6289,9 @@ def _config_tabs(active_tab: str) -> str:
     )
     user_class = "prompt-tab active" if active_tab == "user" else "prompt-tab"
     wechat_class = "prompt-tab active" if active_tab == "wechat" else "prompt-tab"
+    audit_rules_class = (
+        "prompt-tab active" if active_tab == "audit-rules" else "prompt-tab"
+    )
     return (
         "<nav class=\"prompt-tabs\" aria-label=\"Config sections\">"
         f"<a class=\"{info_class}\" href=\"/config?tab=info\">Info</a>"
@@ -6190,6 +6303,8 @@ def _config_tabs(active_tab: str) -> str:
         "Developer Prompt</a>"
         f"<a class=\"{user_class}\" href=\"/config?tab=user\">"
         "User Prompt</a>"
+        f"<a class=\"{audit_rules_class}\" href=\"/config?tab=audit-rules\">"
+        "Audit Rules</a>"
         "</nav>"
     )
 
@@ -6289,6 +6404,68 @@ def _render_user_prompt_editor_content(*, saved: bool = False) -> str:
     )
 
 
+def _render_audit_rules_editor_content(
+    *,
+    saved: bool = False,
+    validation_error: str = "",
+    submitted_draft: str | None = None,
+) -> str:
+    template_path = audit_rules_template_path()
+    error_html = ""
+    try:
+        persisted_template = read_audit_rules_template()
+        consumer_preview = render_audit_rules(AgentRole.CONSUMER)
+        audit_preview = render_audit_rules(AgentRole.AUDIT)
+    except (OSError, DeveloperPromptTemplateError) as exc:
+        persisted_template = ""
+        consumer_preview = ""
+        audit_preview = ""
+        error_html = (
+            "<p class=\"attempt-warning\">"
+            f"Template render error: {escape(str(exc))}"
+            "</p>"
+        )
+    saved_at = (
+        datetime.fromtimestamp(template_path.stat().st_mtime, timezone.utc).isoformat()
+        if template_path.exists()
+        else ""
+    )
+    saved_html = "<p class=\"muted\">Saved.</p>" if saved else ""
+    template = (
+        persisted_template if submitted_draft is None else submitted_draft
+    )
+    if validation_error:
+        error_html = (
+            "<p class=\"attempt-warning\">"
+            f"Template validation error: {escape(validation_error)}"
+            "</p>"
+        )
+    return (
+        "<section class=\"card\">"
+        "<div class=\"grid\">"
+        "<div class=\"muted\">template path</div>"
+        f"<div>{escape(str(template_path))}</div>"
+        "<div class=\"muted\">Last saved</div>"
+        f"<div>{escape(_format_local_time(saved_at) or '-')}</div>"
+        "</div>"
+        f"{saved_html}{error_html}"
+        "<form method=\"post\" action=\"/config?tab=audit-rules\">"
+        "<label for=\"template\">Configurable rules</label>"
+        f"<textarea id=\"template\" name=\"template\" style=\"min-height:420px\">{escape(template)}</textarea>"
+        "<p><button type=\"submit\">Save rules</button></p>"
+        "</form>"
+        "</section>"
+        "<section class=\"card\">"
+        "<h2>Consumer preview</h2>"
+        f"<pre>{escape(consumer_preview)}</pre>"
+        "</section>"
+        "<section class=\"card\">"
+        "<h2>Audit preview</h2>"
+        f"<pre>{escape(audit_preview)}</pre>"
+        "</section>"
+    )
+
+
 def _user_prompt_dynamic_function_table() -> str:
     blocks = [
         UserPromptBlock(
@@ -6376,6 +6553,20 @@ def handle_developer_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]
     template = parsed.get("template", [""])[0]
     write_developer_prompt_template(template.strip())
     return 303, {"Location": "/config?tab=developer&saved=1"}, ""
+
+
+def handle_audit_rules_post(body: bytes) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    template = parsed.get("template", [""])[0]
+    try:
+        write_audit_rules_template(template)
+    except DeveloperPromptTemplateError as exc:
+        return 400, {}, render_config_page(
+            active_tab="audit-rules",
+            audit_rules_error=str(exc),
+            audit_rules_draft=template,
+        )
+    return 303, {"Location": "/config?tab=audit-rules&saved=1"}, ""
 
 
 def handle_prompt_variables_post(body: bytes) -> tuple[int, dict[str, str], str]:
@@ -6610,24 +6801,13 @@ def handle_needs_human_decision_post(
             render_page("Decision unavailable", "<p>该 attempt 不再等待人工选择。</p>"),
         )
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
-    choice = parsed.get("choice", [""])[0].strip().lower()
-    custom_instruction = parsed.get("instruction", [""])[0].strip()
-    choice_instructions = {
-        "a": "按当前事实选择最有依据的处理方式，完成、验证并发布对外回复或动作。",
-        "b": "不要猜测尚未确定的事实；向原消息发起人发送一个具体、最小化的澄清问题并验证发送。",
-    }
-    if choice == "c":
-        if not custom_instruction:
-            return (
-                400,
-                {},
-                render_page("Decision required", "<p>请填写自定义回复或执行指令。</p>"),
-            )
-        instruction = custom_instruction
-    else:
-        instruction = choice_instructions.get(choice, "")
+    instruction = parsed.get("instruction", [""])[0].strip()
     if not instruction:
-        return 400, {}, render_page("Decision unavailable", "<p>无效的选择。</p>")
+        return (
+            400,
+            {},
+            render_page("Decision required", "<p>请填写你的判断或处理指令。</p>"),
+        )
     reviewer_feedback = (
         f"Human decision for source attempt #{source.id}: {instruction}\n\n"
         f"Original ambiguity summary:\n{source.audit_summary or source.codex_reason}"
@@ -6863,7 +7043,31 @@ def create_audit_app(
     ding_robot_code: str | None = None,
     ding_robot_name: str | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="CEO Agent Audit")
+    default_attempt_list_cache = _RecentHtmlCache(
+        DEFAULT_HISTORY_CACHE_TTL_SECONDS
+    )
+
+    def render_default_attempt_list() -> str:
+        return render_attempt_list(
+            _audit_store(db_path),
+            limit=DEFAULT_ATTEMPT_LIST_LIMIT,
+            page=1,
+            type_filter=(),
+            query="",
+            query_embedding=None,
+            search_object_types=HISTORY_SEARCH_OBJECT_TYPES,
+            include_chart=True,
+            include_pending_tasks=False,
+            include_feedback_count=False,
+        )
+
+    @asynccontextmanager
+    async def audit_lifespan(_app: FastAPI):
+        default_attempt_list_cache.get_or_render(_render_history_busy_page)
+        default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
+        yield
+
+    app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
 
     @app.middleware("http")
     async def require_trusted_requests(request: Request, call_next):
@@ -6916,7 +7120,8 @@ def create_audit_app(
     @app.get("/", response_class=HTMLResponse)
     def attempt_list(request: Request) -> str:
         query = str(request.query_params.get("q", ""))
-        try:
+
+        def render() -> str:
             return render_attempt_list(
                 _audit_store(db_path),
                 limit=_attempt_list_limit(
@@ -6935,6 +7140,11 @@ def create_audit_app(
                 include_pending_tasks=bool(query or request.query_params),
                 include_feedback_count=False,
             )
+
+        try:
+            if not request.query_params:
+                return default_attempt_list_cache.get_or_render(render_default_attempt_list)
+            return render()
         except sqlite3.OperationalError as exc:
             if _is_sqlite_busy_error(exc):
                 return _render_history_busy_page()
@@ -7278,6 +7488,8 @@ def create_audit_app(
     async def config_save(request: Request):
         if request.query_params.get("tab") == "user":
             status, headers, html = handle_user_prompt_post(await request.body())
+        elif request.query_params.get("tab") == "audit-rules":
+            status, headers, html = handle_audit_rules_post(await request.body())
         else:
             status, headers, html = handle_developer_prompt_post(await request.body())
         return _fastapi_post_response(status, headers, html)
@@ -7429,7 +7641,9 @@ def _attempt_detail_body(
     codex_session_id: str | None,
     feedback_events: list[FeedbackEvent],
     later_attempt: ReplyAttempt | None = None,
+    agent_runs: list[AgentRun] | None = None,
 ) -> str:
+    agent_runs = agent_runs or []
     fields = [
         ("trigger message id", attempt.trigger_message_id),
         ("action", attempt.action),
@@ -7442,14 +7656,20 @@ def _attempt_detail_body(
         ("updated", _format_local_time(attempt.updated_at)),
         ("reviewed", _format_local_time(attempt.reviewed_at or "")),
     ]
+    revision_count = len(
+        {run.proposal_revision for run in agent_runs if run.role is AgentRole.CONSUMER}
+    )
+    if revision_count:
+        fields.append(("revisions", f"{revision_count} revisions"))
+    orchestration_links = _orchestration_session_links(agent_runs)
     return _agent_detail_body(
         title_label="群名",
         title=attempt.conversation_title,
         subtitle=(
             f"触发人：{attempt.trigger_sender}" if attempt.trigger_sender.strip() else ""
         ),
-        codex_session_id=codex_session_id,
-        actions_html=_attempt_row_actions(attempt, sent_reply),
+        codex_session_id=None if agent_runs else codex_session_id,
+        actions_html=orchestration_links + _attempt_row_actions(attempt, sent_reply),
         fields=fields,
         pills_html=_attempt_action_pills(attempt, later_attempt=later_attempt),
         trigger_title="Trigger",
@@ -7469,10 +7689,41 @@ def _attempt_detail_body(
             f"{_oa_metadata_card(attempt)}"
             f"{_calendar_metadata_card(attempt)}"
             f"{_text_card('Audit summary', attempt.audit_summary)}"
-            f"{_audit_tool_uses_card(attempt)}"
+            f"{'' if agent_runs else _audit_tool_uses_card(attempt)}"
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
         ),
     )
+
+
+def _orchestration_session_links(agent_runs: list[AgentRun]) -> str:
+    consumer = next(
+        (
+            run
+            for run in reversed(agent_runs)
+            if run.role is AgentRole.CONSUMER and run.codex_session_id
+        ),
+        None,
+    )
+    audit = next(
+        (
+            run
+            for run in reversed(agent_runs)
+            if run.role is AgentRole.AUDIT and run.codex_session_id
+        ),
+        None,
+    )
+    links = []
+    if consumer is not None:
+        links.append(
+            f'<a class="agent-log-button" href="/codex/{escape(consumer.codex_session_id)}">'
+            "View Consumer conversation</a>"
+        )
+    if audit is not None:
+        links.append(
+            f'<a class="agent-log-button" href="/codex/{escape(audit.codex_session_id)}">'
+            "View execution audit</a>"
+        )
+    return "".join(links)
 
 
 def _agent_detail_body(
@@ -7794,20 +8045,13 @@ def _needs_human_decision_card(attempt: ReplyAttempt) -> str:
         return ""
     action = f"/attempts/{attempt.id}/human-decision"
     return (
-        '<section class="card needs-human-card"><h2>需要你选择</h2>'
-        '<p class="muted">当前证据不足以可靠地替你选定行动。选择后会创建可恢复任务，'
+        '<section class="card needs-human-card"><h2>需要你的判断</h2>'
+        '<p class="muted">这里存在无法通过事实追问解决的管理判断。提交后会创建可恢复任务，'
         '由 Agent 执行、验证并自动发布。</p>'
-        f'<form method="post" action="{action}">'
-        '<input type="hidden" name="choice" value="a">'
-        '<button type="submit">A. 按当前事实继续处理并发布</button></form>'
-        f'<form method="post" action="{action}">'
-        '<input type="hidden" name="choice" value="b">'
-        '<button type="submit">B. 先追问一个具体澄清问题并发布</button></form>'
         f'<form method="post" action="{action}" class="needs-human-custom">'
-        '<input type="hidden" name="choice" value="c">'
-        '<label> C. 自定义回复或执行指令</label>'
-        '<textarea name="instruction" required placeholder="例如：先回复对方，说明按方案二推进"></textarea>'
-        '<button type="submit">按自定义指令执行并发布</button></form>'
+        '<label>填写判断或处理指令</label>'
+        '<textarea name="instruction" required placeholder="例如：采用方案二，并说明交付边界"></textarea>'
+        '<button type="submit">执行并发布</button></form>'
         '</section>'
     )
 

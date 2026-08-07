@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 from typing import get_args
@@ -26,6 +27,7 @@ from app.setup_wizard_models import (
     SetupWizardStatus,
 )
 from app.store import AutoReplyStore
+from app.service_codex_config import load_service_mcp_servers
 
 
 def test_setup_wizard_steps_are_ordered_and_gated():
@@ -491,12 +493,21 @@ def test_check_dry_run_reports_due_follow_up_backlog(tmp_path: Path):
 
 def test_check_service_config_accepts_env_and_directories(tmp_path: Path):
     (tmp_path / ".env").write_text(
-        "CEO_WORKSPACE=workspace\nCEO_WORKER_DB=data/auto-reply.sqlite3\nCEO_CORPUS_DIR=data/corpus\nCEO_NOT_SEND_MESSAGE=1\n",
+        "CEO_WORKSPACE=workspace\n"
+        "CEO_WORKER_DB=data/auto-reply.sqlite3\n"
+        "CEO_CORPUS_DIR=data/corpus\n"
+        "CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json\n"
+        "CEO_NOT_SEND_MESSAGE=1\n",
         encoding="utf-8",
     )
     (tmp_path / "workspace").mkdir()
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "corpus").mkdir()
+    (tmp_path / "data" / "config").mkdir()
+    (tmp_path / "data" / "config" / "service-mcp.json").write_text(
+        '{"servers": {}}',
+        encoding="utf-8",
+    )
 
     result = check_service_config(repo_root=tmp_path)
 
@@ -518,7 +529,13 @@ def test_check_service_config_expands_home_environment_value(
         "CEO_WORKSPACE=$HOME/Documents/memory\n"
         "CEO_WORKER_DB=data/auto-reply.sqlite3\n"
         "CEO_CORPUS_DIR=data/corpus\n"
+        "CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json\n"
         "CEO_NOT_SEND_MESSAGE=1\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "data" / "config").mkdir()
+    (tmp_path / "data" / "config" / "service-mcp.json").write_text(
+        '{"servers": {}}',
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
@@ -630,11 +647,15 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     assert (tmp_path / "data" / "corpus").is_dir()
     assert (tmp_path / "data" / "prompts" / "developer_prompt.md").exists()
     assert (tmp_path / "data" / "prompts" / "user_prompt.md").exists()
+    assert (tmp_path / "data" / "prompts" / "audit_rules.md").exists()
     assert (tmp_path / "data" / "work-profile" / "work_profile.md").exists()
     assert "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH=data/prompts/developer_prompt.md" in (
         tmp_path / ".env"
     ).read_text(encoding="utf-8")
     assert "CEO_USER_PROMPT_TEMPLATE_PATH=data/prompts/user_prompt.md" in (
+        tmp_path / ".env"
+    ).read_text(encoding="utf-8")
+    assert "CEO_AUDIT_RULES_TEMPLATE_PATH=data/prompts/audit_rules.md" in (
         tmp_path / ".env"
     ).read_text(encoding="utf-8")
     assert "CEO_WORK_PROFILE_PATH=data/work-profile/work_profile.md" in (
@@ -643,6 +664,18 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     assert "CEO_NOT_SEND_MESSAGE=1" in (tmp_path / ".env").read_text(
         encoding="utf-8"
     )
+    assert "CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json" in (
+        tmp_path / ".env"
+    ).read_text(encoding="utf-8")
+    service_manifest = tmp_path / "data" / "config" / "service-mcp.json"
+    assert service_manifest.is_file()
+    payload = json.loads(service_manifest.read_text(encoding="utf-8"))
+    assert payload == {
+        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}
+    }
+    assert [server.name for server in load_service_mcp_servers(service_manifest, env={})] == [
+        "exa"
+    ]
 
 
 def test_run_setup_service_config_defaults_database_to_application_support(
@@ -692,22 +725,62 @@ def test_run_setup_service_config_expands_example_environment_values(
     assert str(home) not in event.evidence["workspace"]
 
 
-def test_run_setup_mcp_writes_codex_config(tmp_path: Path):
-    codex_config = tmp_path / "config.toml"
+def test_run_setup_mcp_writes_service_manifest_and_environment(tmp_path: Path):
+    personal_config = tmp_path / "personal-config.toml"
 
     event = run_setup_action(
         "setup_mcp",
         repo_root=tmp_path,
         env={
             "MEMORY_CONNECTOR_URL": "https://memory.example/mcp/",
-            "CODEX_CONFIG_PATH": str(codex_config),
-            "CLAUDE_CONFIG_PATH": str(tmp_path / "claude.json"),
+            "CODEX_CONFIG_PATH": str(personal_config),
+            "CEO_SERVICE_MCP_CONFIG_PATH": "data/config/service-mcp.json",
         },
     )
 
     assert event.status == "done"
-    assert "memory_connector" in codex_config.read_text(encoding="utf-8")
-    assert event.evidence["codex_config"] == "[REDACTED_PATH]"
+    assert not personal_config.exists()
+    manifest = tmp_path / "data" / "config" / "service-mcp.json"
+    assert json.loads(manifest.read_text(encoding="utf-8")) == {
+        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}
+    }
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json" in env_text
+    assert "MEMORY_CONNECTOR_URL=https://memory.example/mcp/" in env_text
+    assert event.evidence["service_mcp_config"] == "[REDACTED_PATH]"
+
+
+def test_run_setup_mcp_adds_only_fully_configured_optional_servers(tmp_path: Path):
+    event = run_setup_action(
+        "setup_mcp",
+        repo_root=tmp_path,
+        env={
+            "MEMORY_CONNECTOR_URL": "https://memory.example/mcp/",
+            "CONNECTOR_API_KEY": "service-token",
+            "MEMORY_CONNECTOR_AUTH_TYPE": "mcp_access_token",
+            "MEMORY_CONNECTOR_CONTENT_TYPE": "application/json",
+            "CEO_XIAOQING_MCP_COMMAND": "/opt/service/xiaoqing-mcp",
+            "CEO_XIAOQING_MCP_ARGS_JSON": "[]",
+            "CEO_SERVICE_MCP_CONFIG_PATH": "data/config/service-mcp.json",
+        },
+    )
+
+    assert event.status == "done"
+    manifest = tmp_path / "data/config/service-mcp.json"
+    assert [
+        server.name
+        for server in load_service_mcp_servers(
+            manifest,
+            env={
+                "MEMORY_CONNECTOR_URL": "https://memory.example/mcp/",
+                "CONNECTOR_API_KEY": "service-token",
+                "MEMORY_CONNECTOR_AUTH_TYPE": "mcp_access_token",
+                "MEMORY_CONNECTOR_CONTENT_TYPE": "application/json",
+                "CEO_XIAOQING_MCP_COMMAND": "/opt/service/xiaoqing-mcp",
+                "CEO_XIAOQING_MCP_ARGS_JSON": "[]",
+            },
+        )
+    ] == ["exa", "memory_connector", "xiaoqing_interview"]
 
 
 def test_run_setup_cli_components_runs_bootstrap_script(monkeypatch, tmp_path: Path):
@@ -885,25 +958,25 @@ def test_setup_dingtalk_cli_uses_configured_installer_and_finishes_when_ready(
     assert event.evidence["channel_state"] == "ready"
 
 
-def test_run_setup_mcp_uses_os_config_path_and_redacts_output(
+def test_run_setup_mcp_uses_os_service_path_and_redacts_output(
     monkeypatch,
     tmp_path: Path,
 ):
-    codex_config = tmp_path / "config.toml"
+    service_config = tmp_path / "local" / "service-mcp.json"
     monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp/")
-    monkeypatch.setenv("CODEX_CONFIG_PATH", str(codex_config))
-    monkeypatch.setenv("CLAUDE_CONFIG_PATH", str(tmp_path / "claude.json"))
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(service_config))
 
     event = run_setup_action("setup_mcp", repo_root=tmp_path, env={})
 
     assert event.status == "done"
-    assert "memory_connector" in codex_config.read_text(encoding="utf-8")
-    assert event.evidence["codex_config"] == "[REDACTED_PATH]"
-    assert str(tmp_path) not in event.stdout_excerpt
-    assert "[REDACTED_PATH]" in event.stdout_excerpt
+    assert json.loads(service_config.read_text(encoding="utf-8")) == {
+        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}
+    }
+    assert event.evidence["service_mcp_config"] == "[REDACTED_PATH]"
+    assert str(tmp_path) not in json.dumps(event.evidence)
 
 
-def test_run_setup_mcp_uses_installed_codex_memory_connector_url(
+def test_run_setup_mcp_does_not_copy_personal_literal_transports(
     monkeypatch,
     tmp_path: Path,
 ):
@@ -911,48 +984,181 @@ def test_run_setup_mcp_uses_installed_codex_memory_connector_url(
     codex_home.mkdir()
     codex_config = codex_home / "config.toml"
     codex_config.write_text(
-        '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
+        "[mcp_servers.memory_connector]\n"
+        'url = "https://personal.example/mcp/literal-secret"\n'
+        'http_headers = { Authorization = "Bearer literal-secret" }\n'
+        "[mcp_servers.xiaoqing_interview]\n"
+        'command = "/personal/bin/xiaoqing"\n'
+        'args = ["--token", "literal-secret"]\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    monkeypatch.setenv("CLAUDE_CONFIG_PATH", str(tmp_path / "claude.json"))
     monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
 
-    event = run_setup_action("setup_mcp", repo_root=tmp_path, env={})
+    event = run_setup_action(
+        "setup_mcp",
+        repo_root=tmp_path,
+        env={"CEO_SERVICE_MCP_CONFIG_PATH": "data/config/service-mcp.json"},
+    )
 
     assert event.status == "done"
-    assert event.evidence["memory_url_source"] == "installed_codex_config"
-    assert event.evidence["codex_config"] == "[REDACTED_PATH]"
+    assert event.summary == "Service MCP manifest was configured and validated."
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    manifest_text = (tmp_path / "data/config/service-mcp.json").read_text(
+        encoding="utf-8"
+    )
+    for literal in ("personal.example", "/personal/bin/xiaoqing", "literal-secret"):
+        assert literal not in env_text
+        assert literal not in manifest_text
 
 
-def test_run_setup_mcp_handles_missing_and_failed_setup(monkeypatch, tmp_path: Path):
+def test_run_setup_mcp_uses_persisted_service_url_without_personal_config(
+    monkeypatch,
+    tmp_path: Path,
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    codex_config = codex_home / "config.toml"
+    codex_config.write_text(
+        '[mcp_servers.memory_connector]\nurl = "https://personal.example/mcp/"\n',
+        encoding="utf-8",
+    )
+    service_config = tmp_path / "data" / "config" / "service-mcp.json"
+    (tmp_path / ".env").write_text(
+        "CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json\n"
+        "MEMORY_CONNECTOR_URL=https://service.example/mcp/\n",
+        encoding="utf-8",
+    )
+    action_env = {
+        "CODEX_HOME": str(codex_home),
+        "CEO_SERVICE_MCP_CONFIG_PATH": str(service_config),
+    }
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+
+    event = run_setup_action("setup_mcp", repo_root=tmp_path, env=action_env)
+
+    assert event.status == "done"
+    assert event.evidence["memory_url_source"] == "service_env_file"
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "MEMORY_CONNECTOR_URL=https://service.example/mcp/" in env_text
+    assert "personal.example" not in env_text
+
+
+def test_run_setup_mcp_blank_submissions_preserve_persisted_optional_servers(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-codex-home"))
+    (tmp_path / ".env").write_text(
+        "CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json\n"
+        "MEMORY_CONNECTOR_URL=https://service.example/mcp/\n"
+        "CONNECTOR_API_KEY=service-token\n"
+        "MEMORY_CONNECTOR_AUTH_TYPE=mcp_access_token\n"
+        "MEMORY_CONNECTOR_CONTENT_TYPE=application/json\n"
+        "CEO_XIAOQING_MCP_COMMAND=/service/bin/xiaoqing\n"
+        'CEO_XIAOQING_MCP_ARGS_JSON=["serve"]\n',
+        encoding="utf-8",
+    )
+
+    event = run_setup_action(
+        "setup_mcp",
+        repo_root=tmp_path,
+        env={
+            "MEMORY_CONNECTOR_URL": "   ",
+            "CONNECTOR_API_KEY": " ",
+            "MEMORY_CONNECTOR_AUTH_TYPE": "\t",
+            "MEMORY_CONNECTOR_CONTENT_TYPE": "\n",
+            "CEO_XIAOQING_MCP_COMMAND": "   ",
+            "CEO_XIAOQING_MCP_ARGS_JSON": " ",
+        },
+    )
+
+    assert event.status == "done"
+    manifest = json.loads(
+        (tmp_path / "data/config/service-mcp.json").read_text(encoding="utf-8")
+    )
+    assert set(manifest["servers"]) == {
+        "exa",
+        "memory_connector",
+        "xiaoqing_interview",
+    }
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "CONNECTOR_API_KEY=service-token" in env_text
+    assert "CEO_XIAOQING_MCP_COMMAND=/service/bin/xiaoqing" in env_text
+
+
+def test_run_setup_mcp_reports_missing_memory_url(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-codex-home"))
     monkeypatch.setenv("CLAUDE_CONFIG_PATH", str(tmp_path / "claude.json"))
     missing = run_setup_action(
         "setup_mcp",
         repo_root=tmp_path,
-        env={"MEMORY_CONNECTOR_URL": "   "},
-    )
-
-    assert missing.status == "failed"
-    assert missing.summary == "MEMORY_CONNECTOR_URL is missing."
-
-    def fail_setup(**kwargs):
-        del kwargs
-        raise OSError("cannot write /tmp/config.toml")
-
-    monkeypatch.setattr("app.setup_wizard.setup_memory_connector_command", fail_setup)
-    failed = run_setup_action(
-        "setup_mcp",
-        repo_root=tmp_path,
         env={
-            "MEMORY_CONNECTOR_URL": "https://memory.example/mcp/",
-            "CODEX_CONFIG_PATH": str(tmp_path / "config.toml"),
+            "MEMORY_CONNECTOR_URL": "   ",
+            "CEO_SERVICE_MCP_CONFIG_PATH": "data/config/service-mcp.json",
         },
     )
 
-    assert failed.status == "failed"
-    assert "cannot write [REDACTED_PATH]" in failed.summary
+    assert missing.status == "done"
+    manifest = tmp_path / "data/config/service-mcp.json"
+    assert json.loads(manifest.read_text(encoding="utf-8")) == {
+        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}
+    }
+
+
+def test_run_setup_mcp_does_not_import_secret_bearing_personal_url(
+    monkeypatch,
+    tmp_path: Path,
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    secret = "must-not-appear"
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.memory_connector]\n"
+        f'url = "https://{secret}.memory.example/mcp/{secret}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+
+    event = run_setup_action("setup_mcp", repo_root=tmp_path, env={})
+
+    assert event.status == "done"
+    assert event.summary == "Service MCP manifest was configured and validated."
+    assert secret not in event.summary
+    assert secret not in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_setup_mcp_gate_reports_present_xiaoqing_without_command(
+    tmp_path: Path,
+    monkeypatch,
+):
+    manifest = tmp_path / "data" / "config" / "service-mcp.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "xiaoqing_interview": {
+                        "command_env": "CEO_XIAOQING_MCP_COMMAND",
+                        "args_env": "CEO_XIAOQING_MCP_ARGS_JSON",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json\n"
+        "CEO_XIAOQING_MCP_ARGS_JSON=[]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CEO_XIAOQING_MCP_COMMAND", raising=False)
+
+    status = check_setup_step("mcp", repo_root=tmp_path)
+
+    assert status.status == "needs_action"
+    assert status.summary == "service transport command is not configured"
 
 
 def test_run_setup_action_dispatches_wechat_connect(monkeypatch, tmp_path: Path):

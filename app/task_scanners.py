@@ -376,6 +376,7 @@ def scan_pending_oa_approvals(
 
     queued = 0
     skipped_missing_task_id: list[str] = []
+    read_failures: list[str] = []
     seen_process_ids: set[str] = set()
     queued_process_ids: list[str] = []
     process_revisions: dict[str, str] = {}
@@ -392,7 +393,7 @@ def scan_pending_oa_approvals(
             tasks_payload = read_tasks(process_instance_id)
             detail_payload = read_detail(process_instance_id)
         except Exception:
-            skipped_missing_task_id.append(process_instance_id)
+            read_failures.append(process_instance_id)
             continue
         task_id = _pending_oa_task_id_for_current_user(
             {"result": [detail_payload, tasks_payload]},
@@ -473,11 +474,19 @@ def scan_pending_oa_approvals(
                 "queued_process_instance_ids": queued_process_ids,
                 "process_revisions": process_revisions,
                 "skipped_missing_task_id_process_instance_ids": skipped_missing_task_id,
+                "read_failure_process_instance_ids": read_failures,
             },
             ensure_ascii=False,
             sort_keys=True,
         ),
-        last_error="" if not skipped_missing_task_id else "missing current-user task_id",
+        # A pending process can be visible to the scanner without being actionable
+        # by the current principal. Keep that evidence in the cursor, but do not
+        # report it as a service failure.
+        last_error=(
+            "oa approval task/detail read failed"
+            if read_failures
+            else ""
+        ),
     )
     return queued
 

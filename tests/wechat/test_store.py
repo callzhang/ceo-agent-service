@@ -322,6 +322,45 @@ def test_new_delivery_supersedes_older_unsent_delivery_for_same_conversation(
     assert new_attempt.send_status == "pending"
 
 
+def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
+    store = _store(tmp_path)
+    for task_id, message_id in ((1, "m1"), (2, "m2")):
+        store.enqueue_reply_task(
+            channel="wechat",
+            conversation_id="u1",
+            conversation_title="Alex",
+            single_chat=True,
+            trigger_message_id=message_id,
+            trigger_create_time=f"2026-07-28T10:0{task_id}:00",
+            trigger_sender="Alex",
+            trigger_text=f"message {task_id}",
+        )
+        store.create_wechat_delivery(
+            reply_task_id=task_id,
+            account_id="acct-1",
+            target_type="direct",
+            target_id="u1",
+            conversation_id="u1",
+            reply_text=f"reply {task_id}",
+        )
+
+    old = store.get_wechat_delivery_for_task(1)
+    newer = store.get_wechat_delivery_for_task(2)
+    # Simulate a legacy pre-action failure that existed before a later delivery
+    # was recorded; normal creation now supersedes this case immediately.
+    with store._connect() as db:
+        db.execute(
+            "update wechat_deliveries set status='failed', error='action_not_performed' where id=?",
+            (old.id,),
+        )
+    store.mark_wechat_delivery_sending(newer.id)
+    store.set_wechat_delivery_status(newer.id, "sent")
+
+    refreshed_old = store.get_wechat_delivery_for_task(1)
+    assert refreshed_old.status == "superseded"
+    assert refreshed_old.error == f"superseded_by_newer_wechat_delivery:{newer.id}"
+
+
 @pytest.mark.parametrize("status", ["sending", "send_unknown"])
 def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
     tmp_path,

@@ -164,11 +164,26 @@ confirmation instead of asking the user to run commands.
 
 2. If Codex is not installed, set `CODEX_INSTALL_COMMAND` to the user's approved
    Codex installation command and run the bootstrapper. If Codex is not
-   authenticated, initiate the auth flow yourself. Do not store API keys in this
-   repository.
+   authenticated, complete the normal user login once outside the service. Do not
+   store API keys in this repository; Consumer A and Audit B never run login,
+   reset, or logout commands themselves.
 
 3. Confirm continuity support later through a dry-run worker pass; the service
    uses Codex sessions through the local runtime, not a cloud-only worker.
+
+### Runtime Roles And Audit Rules
+
+Consumer Agent A represents the installation owner: it reads evidence, reuses one
+Codex session per business conversation, and prepares exact candidates. Audit
+Agent B independently checks each candidate, starts a fresh session per revision,
+then performs and verifies accepted external writes. A has no task-driven write
+tools; B is the only task-driven writer.
+
+Review the shared rules at **Config -> Audit Rules** before enabling live sends.
+They apply to both roles and can refine business review requirements, but cannot
+change the read/write boundary, exact-revision dedupe, unknown-result readback, or
+two-cycle content-feedback limit. A missing fact that the sender can answer
+becomes one concrete clarification message candidate; it is not an operator choice.
 
 ### macOS Notifications
 
@@ -182,21 +197,15 @@ scripts/bootstrap-local-components.sh --format json
 
 ### Memory Connector
 
-If the deployment uses Friday Memory or another Memory Connector MCP endpoint:
+If the deployment uses Friday Memory or another Memory Connector MCP endpoint,
+keep its URL and credential references in `.env` and the service-owned manifest.
+The setup wizard seeds the editable manifest at `data/config/service-mcp.json`;
+service runtime does not read personal Codex configuration.
 
-```sh
-.venv/bin/ceo-agent setup-memory-connector \
-  --memory-url '<memory-mcp-url>'
-```
-
-Codex config uses the installed MCP Authorization header as the authenticated
-OAuth identity. Do not provide or invent a separate `user_id`.
-
-In the Tutorial page, the Memory Connector "Fix automatically" action first
-uses `MEMORY_CONNECTOR_URL` when provided, then falls back to the existing
-`[mcp_servers.memory_connector].url` in the installed Codex config. If Codex
-already has `memory_connector` installed, the agent should not ask the user to
-re-enter the URL.
+In the Tutorial page, the Memory Connector "Fix automatically" action uses only
+`MEMORY_CONNECTOR_URL` from the service environment and persists the local
+`CEO_SERVICE_MCP_CONFIG_PATH`. It never imports personal Codex transport values,
+headers, commands, or tokens.
 
 ### Nvwa Persona Skill
 

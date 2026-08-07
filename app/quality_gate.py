@@ -19,6 +19,7 @@ from pathlib import Path
 REQUIRED_SOURCES = (
     "reply_tasks",
     "reply_attempts",
+    "sent_replies",
     "agent_runs",
     "work_summary_inputs",
     "follow_up_drafts",
@@ -235,11 +236,18 @@ def _check_reply_attempts(
             from reply_attempts
         )
     """
-    terminal = _count(
+    direct_terminal = _count(
         db,
         latest + """
             select count(*) from latest a
-            where ordinal=1 and lower(send_status) in ('failed','blocked')
+            where ordinal=1
+              and lower(action) in ('send_reply','ask_clarifying_question')
+              and lower(send_status) in ('failed','blocked')
+              and not exists (
+                select 1 from sent_replies sr
+                where sr.conversation_id=a.conversation_id
+                  and sr.trigger_message_id=a.trigger_message_id
+              )
               and not exists (
                 select 1 from reply_tasks t
                 where t.channel=a.channel
@@ -249,6 +257,37 @@ def _check_reply_attempts(
               )
         """,
     )
+    # Approvals do not create sent_replies. Their durable identity is the OA
+    # process instance, so a later successful OA attempt resolves the earlier
+    # failed or blocked record without conflating it with a reply delivery.
+    oa_terminal = _count(
+        db,
+        """
+            with oa_latest as (
+                select a.*, row_number() over (
+                    partition by case
+                        when trim(coalesce(a.oa_process_instance_id, '')) != ''
+                            then a.oa_process_instance_id
+                        else 'attempt:' || a.id
+                    end
+                    order by datetime(a.updated_at) desc, a.id desc
+                ) as ordinal
+                from reply_attempts a
+                where lower(a.action)='oa_approval'
+            )
+            select count(*) from oa_latest a
+            where ordinal=1
+              and lower(a.send_status) in ('failed','blocked')
+              and not exists (
+                select 1 from reply_tasks t
+                where t.channel=a.channel
+                  and t.conversation_id=a.conversation_id
+                  and t.trigger_message_id=a.trigger_message_id
+                  and lower(t.status) in ('pending','processing')
+              )
+        """,
+    )
+    terminal = direct_terminal + oa_terminal
     _add(violations, source="reply_attempts", code="unresolved_latest_attempt", count=terminal,
          severity="error", detail="latest reply attempt has no active task recovery")
     dry_run = _count(
@@ -383,14 +422,20 @@ def _check_external_delivery_queues(
     violations: list[QualityIssue],
     attention: list[QualityIssue],
 ) -> None:
-    for source, status_column, failed_statuses, active_statuses in (
-        ("work_todo_dingtalk_links", "status", ("failed",), ("creating", "active")),
-        ("wechat_deliveries", "status", ("failed", "send_unknown"), ("pending", "sending", "ready_to_send")),
-        ("memory_write_events", "status", ("failed",), ("pending", "processing")),
+    for source, status_column, failed_statuses, active_statuses, resolved_filter in (
+        ("work_todo_dingtalk_links", "status", ("failed",), ("creating", "active"), ""),
+        # A rejected delivery is a deliberate user decision. Store already maps
+        # its reply attempt to skipped, so the external queue must do the same.
+        ("wechat_deliveries", "status", ("failed", "send_unknown"),
+         ("pending", "sending", "ready_to_send"),
+         "and lower(coalesce(error, '')) != 'user_rejected'"),
+        ("memory_write_events", "status", ("failed",), ("pending", "processing"), ""),
     ):
         failed = _count(
             db,
-            f"select count(*) from {source} where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})",
+            f"""select count(*) from {source}
+                where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})
+                {resolved_filter}""",
             failed_statuses,
         )
         _add(violations, source=source, code="failed", count=failed,

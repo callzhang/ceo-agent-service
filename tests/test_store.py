@@ -11,7 +11,39 @@ import time
 import pytest
 
 import app.store as store_module
-from app.store import AgentRunLeaseLostError, AutoReplyStore
+from app.store import AgentRole, AgentRunLeaseLostError, AutoReplyStore
+
+
+def _claim_audit_run(
+    store: AutoReplyStore,
+    reply_task_id: int,
+    execution_generation: str,
+    **kwargs,
+):
+    return store.claim_agent_run(
+        reply_task_id,
+        execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=f"direct-agent:{reply_task_id}:{execution_generation}",
+        **kwargs,
+    )
+
+
+def _get_audit_run(
+    store: AutoReplyStore,
+    reply_task_id: int,
+    execution_generation: str,
+):
+    return store.get_agent_run_for_turn(
+        reply_task_id,
+        execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
 
 
 def _enqueue_manual_rerun_in_process(
@@ -275,6 +307,30 @@ def test_codex_session_lock_release_requires_owner(tmp_path):
     assert store.release_codex_session_lock("cid-1", "other") is False
     assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is False
     assert store.release_codex_session_lock("cid-1", "okr:1") is True
+
+
+def test_codex_session_lock_renewal_requires_current_owner(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    assert store.acquire_codex_session_lock("cid-1", "consumer:1") is True
+    with store._connect() as db:
+        db.execute(
+            "update codex_session_locks "
+            "set locked_at=datetime('now', '-19 minutes') "
+            "where conversation_id='cid-1'"
+        )
+
+    assert store.renew_codex_session_lock("cid-1", "other") is False
+    assert store.renew_codex_session_lock("cid-1", "consumer:1") is True
+    assert store.acquire_codex_session_lock("cid-1", "other") is False
+
+    with store._connect() as db:
+        db.execute(
+            "update codex_session_locks "
+            "set locked_at=datetime('now', '-21 minutes') "
+            "where conversation_id='cid-1'"
+        )
+    assert store.renew_codex_session_lock("cid-1", "consumer:1") is False
 
 
 def test_codex_session_lock_context_manager_releases_without_swallowing(tmp_path):
@@ -591,7 +647,7 @@ def test_forced_manual_rerun_rotates_failed_pending_generation(tmp_path: Path):
     task_id = _enqueue_universal_reply_task(store)
     original = store.get_reply_task(task_id)
     assert original is not None
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id,
         original.execution_generation,
         owner="worker-1",
@@ -629,7 +685,7 @@ def test_forced_manual_rerun_does_not_supersede_active_agent_run(tmp_path: Path)
     task_id = _enqueue_universal_reply_task(store)
     original = store.get_reply_task(task_id)
     assert original is not None
-    store.claim_agent_run(
+    _claim_audit_run(store,
         task_id,
         original.execution_generation,
         owner="worker-1",
@@ -784,7 +840,7 @@ def test_generation_rotation_waits_for_unknown_effect_reconciliation(
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-1",
@@ -813,7 +869,7 @@ def test_generation_rotation_waits_for_unknown_effect_reconciliation(
     assert task.status == "processing"
     assert unresolved is not None and unresolved.status == "unknown"
     assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
-    assert store.claim_agent_run(
+    assert _claim_audit_run(store,
         task_id,
         "initial",
         owner="new-worker",
@@ -825,7 +881,7 @@ def test_reconciliation_defer_rejects_stale_generation_even_with_live_lease(
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-1",
@@ -1005,13 +1061,78 @@ def test_agent_run_is_unique_per_task_generation(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
 
-    first = store.claim_agent_run(task_id, "initial", owner="worker-1")
-    second = store.claim_agent_run(task_id, "initial", owner="worker-2")
+    first = _claim_audit_run(store, task_id, "initial", owner="worker-1")
+    second = _claim_audit_run(store, task_id, "initial", owner="worker-2")
 
     assert first.claimed is True
     assert second.claimed is False
     assert second.run.id == first.run.id
     assert second.run.lease_owner == "worker-1"
+
+
+def test_stale_unknown_effect_without_session_is_recoverable_by_orchestrator(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store,
+        task_id,
+        "initial",
+        owner="failed-worker",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": False},
+        owner="failed-worker",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') "
+            "where id=?",
+            (task_id,),
+        )
+
+    assert [
+        task.id for task in store.list_stale_processing_reply_tasks(30 * 60)
+    ] == [task_id]
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+
+
+def test_stale_task_waits_for_active_unknown_recovery_lease(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(store, task_id, "initial", owner="failed-worker").run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": False},
+        owner="failed-worker",
+    )
+    claimed = store.claim_unknown_agent_run(
+        run.id,
+        owner="recovery-worker",
+        lease_seconds=3600,
+    )
+    assert claimed.claimed is True
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') "
+            "where id=?",
+            (task_id,),
+        )
+
+    assert store.list_stale_processing_reply_tasks(30 * 60) == []
+
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set lease_expires_at=datetime('now', '-1 second') "
+            "where id=?",
+            (run.id,),
+        )
+
+    assert [
+        task.id for task in store.list_stale_processing_reply_tasks(30 * 60)
+    ] == [task_id]
 
 
 def test_agent_run_concurrent_claims_choose_exactly_one_owner(tmp_path: Path):
@@ -1025,7 +1146,7 @@ def test_agent_run_concurrent_claims_choose_exactly_one_owner(tmp_path: Path):
     def claim(store: AutoReplyStore, owner: str) -> None:
         try:
             barrier.wait(timeout=5)
-            results.put((store.claim_agent_run(task_id, "initial", owner=owner), None))
+            results.put((_claim_audit_run(store, task_id, "initial", owner=owner), None))
         except BaseException as exc:
             results.put((None, exc))
 
@@ -1055,7 +1176,7 @@ def test_agent_run_fresh_lease_cannot_be_stolen_but_expired_lease_recovers(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    first = store.claim_agent_run(
+    first = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-1",
@@ -1070,13 +1191,13 @@ def test_agent_run_fresh_lease_cannot_be_stolen_but_expired_lease_recovers(
         now="2026-07-29 00:01:00",
     )
 
-    fresh = store.claim_agent_run(
+    fresh = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-2",
         now="2026-07-29 00:29:59",
     )
-    expired = store.claim_agent_run(
+    expired = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-2",
@@ -1091,10 +1212,10 @@ def test_agent_run_fresh_lease_cannot_be_stolen_but_expired_lease_recovers(
     assert expired.run.lease_owner == "worker-2"
 
 
-def test_expired_sessionless_agent_run_cannot_be_reclaimed(tmp_path: Path):
+def test_expired_sessionless_no_effect_agent_run_can_be_reclaimed(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    first = store.claim_agent_run(
+    first = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-1",
@@ -1102,18 +1223,18 @@ def test_expired_sessionless_agent_run_cannot_be_reclaimed(tmp_path: Path):
         now="2026-07-29 00:00:00",
     )
 
-    expired = store.claim_agent_run(
+    expired = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-2",
         now="2026-07-29 00:30:01",
     )
 
-    assert expired.claimed is False
+    assert expired.claimed is True
     assert expired.run.id == first.run.id
     assert expired.run.codex_session_id == ""
-    assert expired.run.lease_owner == "worker-1"
-    assert expired.run.lease_expires_at == first.run.lease_expires_at
+    assert expired.run.lease_owner == "worker-2"
+    assert expired.run.lease_expires_at > first.run.lease_expires_at
 
 
 def test_agent_run_claim_rejects_generation_not_owned_by_task(tmp_path: Path):
@@ -1121,13 +1242,13 @@ def test_agent_run_claim_rejects_generation_not_owned_by_task(tmp_path: Path):
     task_id = _enqueue_universal_reply_task(store)
 
     with pytest.raises(ValueError, match="execution generation mismatch"):
-        store.claim_agent_run(task_id, "other-generation", owner="worker-1")
+        _claim_audit_run(store, task_id, "other-generation", owner="worker-1")
 
 
 def test_agent_run_lease_renewal_requires_current_owner(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    claim = store.claim_agent_run(
+    claim = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-1",
@@ -1153,7 +1274,7 @@ def test_agent_run_lease_renewal_requires_current_owner(tmp_path: Path):
 def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    first = store.claim_agent_run(
+    first = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-a",
@@ -1165,7 +1286,7 @@ def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
         owner="worker-a",
         now="2026-07-29 00:01:00",
     )
-    reclaimed = store.claim_agent_run(
+    reclaimed = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-b",
@@ -1260,7 +1381,7 @@ def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
 def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    first = store.claim_agent_run(
+    first = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-a",
@@ -1317,7 +1438,7 @@ def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
             mutate()
         assert store.get_agent_run(first.run.id) == before
 
-    recovered = store.claim_agent_run(
+    recovered = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-b",
@@ -1331,7 +1452,10 @@ def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
     )
 
     assert recovered.claimed is True
-    assert [event["call_id"] for event in appended.tool_events] == ["recovered"]
+    assert appended.tool_events == []
+    persisted = store.get_agent_run(first.run.id)
+    assert persisted is not None
+    assert [event["call_id"] for event in persisted.tool_events] == ["recovered"]
 
 
 def test_expired_agent_run_with_incomplete_effect_cannot_be_reclaimed(
@@ -1339,7 +1463,7 @@ def test_expired_agent_run_with_incomplete_effect_cannot_be_reclaimed(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    first = store.claim_agent_run(
+    first = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-a",
@@ -1366,7 +1490,7 @@ def test_expired_agent_run_with_incomplete_effect_cannot_be_reclaimed(
         now="2026-07-29 00:00:02",
     )
 
-    reclaim = store.claim_agent_run(
+    reclaim = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-b",
@@ -1392,7 +1516,7 @@ def test_expired_agent_run_with_confirmed_receipt_enters_reconciliation_without_
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    first = store.claim_agent_run(
+    first = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-a",
@@ -1417,7 +1541,7 @@ def test_expired_agent_run_with_confirmed_receipt_enters_reconciliation_without_
         now="2026-07-29 00:00:02",
     )
 
-    reclaim = store.claim_agent_run(
+    reclaim = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-b",
@@ -1434,7 +1558,7 @@ def test_expired_agent_run_with_confirmed_receipt_enters_reconciliation_without_
 def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     started = {
         "type": "item.started",
         "call_id": "c1",
@@ -1458,7 +1582,7 @@ def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
 def test_agent_run_effect_state_tracks_structured_call_lifecycle(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     started = {
         "type": "item.started",
         "item": {
@@ -1486,7 +1610,7 @@ def test_agent_run_effect_state_tracks_structured_call_lifecycle(tmp_path: Path)
 def test_failed_agent_effect_is_terminal_and_not_unknown(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     started = {
         "type": "item.started",
         "item": {
@@ -1513,7 +1637,7 @@ def test_failed_agent_effect_is_terminal_and_not_unknown(tmp_path: Path):
 def test_agent_run_events_use_append_only_rows_in_sequence(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     first = {"type": "item.started", "call_id": "c1"}
     second = {"type": "item.completed", "call_id": "c1"}
 
@@ -1538,11 +1662,42 @@ def test_agent_run_events_use_append_only_rows_in_sequence(tmp_path: Path):
     assert store.get_agent_run(run.id).tool_events == [first, second]
 
 
+def test_append_agent_events_does_not_reparse_prior_json(tmp_path: Path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
+    original_loads = store_module.json.loads
+    calls = 0
+
+    def counted_loads(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_loads(*args, **kwargs)
+
+    monkeypatch.setattr(store_module.json, "loads", counted_loads)
+    appended = None
+    for index in range(50):
+        appended = store.append_agent_run_event(
+            run.id,
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": f"read-{index}",
+                    "metadata": {"effect": "read_only"},
+                },
+            },
+            owner="worker-1",
+        )
+
+    assert appended is not None and appended.tool_events == []
+    assert calls <= 300
+
+
 def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     legacy_events = [
         {"type": "item.started", "call_id": "legacy-1"},
         {"type": "item.failed", "call_id": "legacy-1"},
@@ -1576,7 +1731,7 @@ def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
 def test_safe_persisted_receipt_closes_started_agent_effect(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     started = {
         "type": "item.started",
         "item": {
@@ -1607,10 +1762,45 @@ def test_safe_persisted_receipt_closes_started_agent_effect(tmp_path: Path):
     assert confirmed.side_effect_state == "confirmed"
 
 
+def test_safe_persisted_receipt_closes_only_one_started_agent_effect(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
+    started = {
+        "type": "item.started",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    receipt = {
+        "type": "item.completed",
+        "item": {
+            "id": "receipt-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "read_only"},
+            "result": {
+                "receipt_id": "receipt-1",
+                "operation_id": "write-1",
+                "completed": True,
+                "persisted": True,
+                "safe_to_confirm": True,
+            },
+        },
+    }
+
+    store.append_agent_run_event(run.id, started, owner="worker-1")
+    store.append_agent_run_event(run.id, started, owner="worker-1")
+    persisted = store.append_agent_run_event(run.id, receipt, owner="worker-1")
+
+    assert persisted.side_effect_state == "unknown"
+
+
 def test_execution_receipt_requires_current_unexpired_owner(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-a",
@@ -1651,7 +1841,7 @@ def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):
     first_store = AutoReplyStore(db_path)
     second_store = AutoReplyStore(db_path)
     task_id = _enqueue_universal_reply_task(first_store)
-    run = first_store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(first_store, task_id, "initial", owner="worker-1").run
     barrier = Barrier(2)
     results: Queue = Queue()
 
@@ -1692,7 +1882,7 @@ def test_append_rechecks_default_time_after_waiting_for_write_lock(
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-1",
@@ -1757,7 +1947,7 @@ def test_append_rechecks_default_time_after_waiting_for_write_lock(
 def test_agent_run_event_must_be_a_json_object(tmp_path: Path, event):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
 
     with pytest.raises(ValueError, match="event must be a JSON object"):
         store.append_agent_run_event(run.id, event, owner="worker-1")
@@ -1766,7 +1956,7 @@ def test_agent_run_event_must_be_a_json_object(tmp_path: Path, event):
 def test_agent_run_event_rejects_non_json_object_values(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
 
     with pytest.raises(ValueError, match="event must be a JSON object"):
         store.append_agent_run_event(
@@ -1781,7 +1971,7 @@ def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     final_result = {"outcome": "completed", "summary": "sent"}
 
     completed = store.complete_agent_run(
@@ -1830,7 +2020,7 @@ def test_unknown_agent_run_resolves_atomically_and_cannot_return_to_running(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     unknown_error = {"code": "effect_completion_missing", "call_id": "c1"}
 
     unknown = store.mark_agent_run_unknown(
@@ -1866,7 +2056,7 @@ def test_unknown_agent_run_resolves_atomically_and_cannot_return_to_running(
 def test_unknown_agent_run_uses_explicit_reconciliation_event_path(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     store.mark_agent_run_unknown(
         run.id,
         {"code": "effect_completion_missing", "call_id": "c1"},
@@ -1895,7 +2085,7 @@ def test_unknown_agent_run_uses_explicit_reconciliation_event_path(tmp_path: Pat
 def test_failed_agent_run_rejects_conflicting_terminal_rewrite(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     error = {"code": "command_failed", "retryable": True}
 
     failed = store.fail_agent_run(
@@ -1924,7 +2114,7 @@ def test_failed_agent_run_rejects_conflicting_terminal_rewrite(tmp_path: Path):
 def test_unknown_agent_run_confirmed_absent_rotates_task(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     store.mark_agent_run_unknown(
         run.id,
         {"code": "effect_completion_missing", "call_id": "c1"},
@@ -1951,7 +2141,7 @@ def test_unknown_reconciliation_claim_is_atomic_and_stale_owner_cannot_append(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-1",
@@ -1991,7 +2181,7 @@ def test_unknown_reconciliation_claim_is_atomic_and_stale_owner_cannot_append(
 def test_confirmed_reconciliation_atomically_completes_run_and_reply_task(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
     store.mark_agent_run_unknown(
@@ -2026,7 +2216,7 @@ def test_absent_reconciliation_atomically_fails_run_and_rotates_pending_task(
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     original_generation = store.get_reply_task(task_id).execution_generation
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id, original_generation, owner="worker-1", now="2026-07-29 09:00:00"
     ).run
     store.mark_agent_run_unknown(
@@ -2077,7 +2267,7 @@ def test_suspended_unknown_run_requires_structured_manual_resolution(
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     original_generation = store.get_reply_task(task_id).execution_generation
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id, original_generation, owner="worker-1", now="2026-07-29 09:00:00"
     ).run
     store.mark_agent_run_unknown(
@@ -2125,7 +2315,7 @@ def test_suspended_unknown_run_requires_structured_manual_resolution(
 def test_suspended_unknown_run_remains_visible_until_manual_resolution(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
     store.mark_agent_run_unknown(
@@ -2162,7 +2352,7 @@ def test_manual_reconciliation_closes_failed_run_after_external_effect_is_confir
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
     assert task is not None
-    run = store.claim_agent_run(task_id, task.execution_generation, owner="worker").run
+    run = _claim_audit_run(store, task_id, task.execution_generation, owner="worker").run
     store.fail_agent_run(
         run.id,
         {"code": "codex_result_invalid", "retryable": False},
@@ -2210,7 +2400,7 @@ def test_manual_reconciliation_cannot_mark_failed_run_without_effect_as_complete
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
     assert task is not None
-    run = store.claim_agent_run(task_id, task.execution_generation, owner="worker").run
+    run = _claim_audit_run(store, task_id, task.execution_generation, owner="worker").run
     store.fail_agent_run(
         run.id,
         {"code": "codex_result_invalid", "retryable": False},
@@ -2249,7 +2439,7 @@ def test_manual_resolution_rolls_back_run_task_and_attempt_on_insert_failure(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
     store.mark_agent_run_unknown(
@@ -2303,7 +2493,7 @@ def test_automatic_reconciliation_rolls_back_terminal_state_when_attempt_fails(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
     store.mark_agent_run_unknown(
@@ -2387,7 +2577,7 @@ def test_completed_reconciliation_atomically_finishes_processing_task(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
     store.mark_agent_run_unknown(
@@ -2421,7 +2611,7 @@ def test_unknown_reconciliation_must_finish_before_generation_rotation(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
     store.mark_agent_run_unknown(
@@ -2457,7 +2647,7 @@ def test_generation_switch_revokes_old_run_write_access_and_only_new_run_claims(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    old = store.claim_agent_run(
+    old = _claim_audit_run(store,
         task_id,
         "initial",
         owner="old-worker",
@@ -2513,7 +2703,7 @@ def test_generation_switch_revokes_old_run_write_access_and_only_new_run_claims(
         now="2026-07-29 09:00:01",
     )
     assert claimed_task is not None
-    new_claim = store.claim_agent_run(
+    new_claim = _claim_audit_run(store,
         task_id,
         new_generation,
         owner="new-worker",
@@ -2526,7 +2716,7 @@ def test_generation_switch_revokes_old_run_write_access_and_only_new_run_claims(
 def test_rotation_request_keeps_unknown_run_due_and_claimable(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
     store.mark_agent_run_unknown(
@@ -2565,7 +2755,7 @@ def test_manual_rerun_waits_for_running_unknown_effect(tmp_path: Path):
         sensitivity_kind="general",
         send_status="failed",
     )
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-1",
@@ -2608,7 +2798,7 @@ def test_reviewed_rerun_does_not_persist_instruction_before_reconciliation(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(
+    run = _claim_audit_run(store,
         task_id,
         "initial",
         owner="worker-1",
@@ -2651,7 +2841,7 @@ def test_unknown_event_append_is_bounded_and_does_not_reload_agent_run(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     store.mark_agent_run_unknown(
         run.id,
         {"code": "effect_completion_missing"},
@@ -2688,7 +2878,7 @@ def test_reconciliation_event_limit_excludes_direct_run_history(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    run = store.claim_agent_run(task_id, "initial", owner="worker-1").run
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     for index in range(256):
         store.append_agent_run_event(
             run.id,
@@ -2720,26 +2910,38 @@ def test_reconciliation_event_limit_excludes_direct_run_history(
         )
 
 
-def test_reconciliation_event_count_uses_run_scope_composite_index(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    AutoReplyStore(db_path)
+def test_reconciliation_event_limit_uses_incremental_run_counter(tmp_path: Path):
+    statements: list[str] = []
 
-    with sqlite3.connect(db_path) as db:
-        indexes = {
-            row[1]
-            for row in db.execute("pragma index_list(agent_run_events)").fetchall()
-        }
-        plan = db.execute(
-            "explain query plan select count(*) from agent_run_events "
-            "where agent_run_id=? and event_scope='reconciliation'",
-            (1,),
-        ).fetchall()
+    class TracedStore(AutoReplyStore):
+        def _open_connection(self):
+            connection = super()._open_connection()
+            connection.set_trace_callback(statements.append)
+            return connection
 
-    assert "idx_agent_run_events_run_scope" in indexes
-    assert any(
-        "USING COVERING INDEX idx_agent_run_events_run_scope" in row[3]
-        for row in plan
-    ), plan
+    store = TracedStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
+    store.mark_agent_run_unknown(
+        run.id, {"code": "effect_completion_missing"}, owner="worker-1"
+    )
+    store.claim_unknown_agent_run(run.id, owner="reconciler-1")
+    statements.clear()
+
+    store.append_unknown_agent_run_event(
+        run.id,
+        {"type": "item.completed", "item": {"id": "reconcile-1"}},
+        owner="reconciler-1",
+    )
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.reconciliation_event_count == 1
+    normalized = [statement.casefold() for statement in statements]
+    assert not any(
+        "count(*) from agent_run_events" in statement
+        and "event_scope='reconciliation'" in statement
+        for statement in normalized
+    )
 
 
 def test_legacy_agent_run_events_adds_scope_before_index_and_is_idempotent(
@@ -2796,15 +2998,15 @@ def test_legacy_agent_run_events_adds_scope_before_index_and_is_idempotent(
     ), plan
 
 
-def test_get_agent_run_for_task_generation_returns_exact_row(tmp_path: Path):
+def test_get_agent_run_for_turn_returns_exact_row(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
-    claimed = store.claim_agent_run(task_id, "initial", owner="worker-1")
+    claimed = _claim_audit_run(store, task_id, "initial", owner="worker-1")
 
-    loaded = store.get_agent_run_for_task_generation(task_id, "initial")
+    loaded = _get_audit_run(store, task_id, "initial")
 
     assert loaded == claimed.run
-    assert store.get_agent_run_for_task_generation(task_id, "missing") is None
+    assert _get_audit_run(store, task_id, "missing") is None
 
 
 def test_claim_reply_tasks_marks_tasks_processing_atomically(tmp_path: Path):
@@ -4112,6 +4314,40 @@ def test_history_query_skips_search_text_materialization_without_search():
     assert args == [False, "reply", "meeting", "task"]
 
 
+def test_history_query_has_indexes_for_correlated_reply_lookups(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with sqlite3.connect(store.path) as db:
+        index_names = {
+            row[0]
+            for row in db.execute(
+                "select name from sqlite_master where type='index'"
+            ).fetchall()
+        }
+        query, args = store._history_items_query(
+            send_statuses=None,
+            query_text="",
+            kinds=None,
+            reply_channels=None,
+            object_types=("replay", "wechat", "approval", "task", "meeting"),
+            created_since="",
+        )
+        plan = [
+            str(row[3])
+            for row in db.execute(
+                f"explain query plan {query} order by created_at desc, source_id desc, kind desc limit 1",
+                args,
+            ).fetchall()
+        ]
+
+    assert {
+        "idx_reply_attempts_oa_history",
+        "idx_reply_attempts_trigger_history",
+        "idx_sent_replies_history",
+    } <= index_names
+    assert not any("scan process_attempts" in detail.lower() for detail in plan)
+    assert not any("scan sent" in detail.lower() for detail in plan)
+
+
 def test_history_treats_superseded_blocked_reply_as_skipped(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     blocked_id = store.record_reply_attempt(
@@ -5131,6 +5367,29 @@ def test_removed_runtime_accepts_completed_effect_evidence(
     ) == ("completed", "")
 
 
+def test_removed_runtime_does_not_collapse_duplicate_effect_starts() -> None:
+    started = {
+        "type": "item.started",
+        "item": {
+            "call_id": "call-1",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    receipt = {
+        "tool_events": [
+            started,
+            started,
+            {**started, "type": "item.completed"},
+        ]
+    }
+
+    assert AutoReplyStore._removed_runtime_attempt_status(
+        action="agent_action",
+        legacy_status="succeeded",
+        result_json=json.dumps(receipt),
+    ) == ("failed", "migrated_unverified_execution_receipt")
+
+
 def test_removed_runtime_structured_block_is_not_completed() -> None:
     assert AutoReplyStore._removed_runtime_attempt_status(
         action="oa_approval",
@@ -5258,12 +5517,12 @@ def test_recover_orphaned_processing_reply_tasks_is_generation_aware(
     running_task = store.get_reply_task(task_ids[1])
     unknown_task = store.get_reply_task(task_ids[2])
     assert running_task is not None and unknown_task is not None
-    store.claim_agent_run(
+    _claim_audit_run(store,
         running_task.id,
         running_task.execution_generation,
         owner="running-worker",
     )
-    unknown_run = store.claim_agent_run(
+    unknown_run = _claim_audit_run(store,
         unknown_task.id,
         unknown_task.execution_generation,
         owner="unknown-worker",

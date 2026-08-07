@@ -68,7 +68,7 @@ def run_codex_memory_write(
         prompt,
         None,
         output_schema_path=WRITE_SCHEMA_PATH,
-        ignore_user_config=False,
+        ignore_user_config=True,
     )
     _remove_config_option(command, "developer_instructions=")
     command[-1:-1] = [

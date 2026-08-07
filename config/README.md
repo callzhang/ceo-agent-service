@@ -1,5 +1,16 @@
 # Runtime capability registries
 
+`service-mcp.json` is the committed service MCP seed. Runtime resolves only the
+manifest selected by `CEO_SERVICE_MCP_CONFIG_PATH`; it never copies transports
+from `~/.codex/config.toml`. Setup creates an editable local copy at
+`data/config/service-mcp.json`. Delete optional server entries from that copy
+when they are not used. A present entry must resolve to one complete URL or
+command transport, otherwise runtime and MCP doctor fail closed.
+
+The manifest may contain non-secret static values and environment variable
+names. Bearer tokens and dynamic header values belong only in the service
+environment, never in the JSON file.
+
 `mcp-tool-effects.json` is the reviewed allowlist used to classify native Codex
 MCP events as read-only or effectful. Unknown server/tool pairs remain
 unclassified and cannot confirm an external write.

@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -62,3 +63,15 @@ def block_real_notifications_in_tests(monkeypatch, request):
                 noop_notification,
                 raising=False,
             )
+
+
+@pytest.fixture(autouse=True)
+def isolate_service_mcp_manifest(tmp_path, monkeypatch):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {"servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))

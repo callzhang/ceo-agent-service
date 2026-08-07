@@ -113,6 +113,7 @@ def recover_before_sender(store, reader, account=None) -> list:
     """Recover safe pre-action failures and reconcile uncertain sends."""
     from app.wechat.accessibility import reconcile_incomplete_deliveries
 
+    store.supersede_failed_wechat_deliveries_with_newer_sent()
     store.requeue_unperformed_wechat_deliveries()
     return reconcile_incomplete_deliveries(store, reader, account=account)
 

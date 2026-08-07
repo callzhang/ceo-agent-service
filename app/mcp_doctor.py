@@ -1,6 +1,6 @@
 import json
 import os
-import tomllib
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,13 +8,14 @@ from typing import Callable, Iterable
 
 import httpx
 
-from app.codex_runner import (
-    CODEX_PASSTHROUGH_MCP_SERVERS_ENV,
-    DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS,
-    DEFAULT_EXA_MCP_URL,
-)
-from app.memory_setup import codex_config_has_memory_connector, codex_memory_connector_url
 from app.notification import send_macos_notification
+from app.service_codex_config import (
+    ServiceMcpConfigError,
+    ServiceMcpConfigIssue,
+    ServiceMcpServer,
+    jwt_token_is_expired,
+    load_service_mcp_servers,
+)
 from app.store import AutoReplyStore
 
 MCP_DOCTOR_STATE_FILENAME = "mcp-doctor-state.json"
@@ -83,34 +84,41 @@ def mcp_doctor_state_path(db_path: Path) -> Path:
 
 def check_mcp_statuses(
     *,
-    codex_config_path: Path | None = None,
+    service_config_path: Path | None = None,
+    env: Mapping[str, str] = os.environ,
     verify_live: bool = False,
     memory_reachability_checker: Callable[[str], None] | None = None,
 ) -> list[McpStatus]:
-    config_path = codex_config_path or _codex_config_path()
-    config = _read_toml(config_path)
-    passthrough_names = _passthrough_mcp_server_names()
-    servers = config.get("mcp_servers") if isinstance(config, dict) else {}
-    if not isinstance(servers, dict):
-        servers = {}
-    return [
-        _memory_connector_status(
-            config_path=config_path,
+    issues: tuple[ServiceMcpConfigIssue, ...] = ()
+    try:
+        servers = load_service_mcp_servers(service_config_path, env=env)
+    except ServiceMcpConfigError as exc:
+        servers = ()
+        issues = exc.issues
+        blocked_servers = [
+            McpStatus(
+                name=server.name,
+                state="missing_config",
+                ready=False,
+                reason="service MCP manifest contains invalid entries",
+                recover_command="fix the service MCP manifest",
+            )
+            for server in exc.valid_servers
+        ]
+    else:
+        blocked_servers = []
+
+    statuses = blocked_servers + [
+        _service_server_status(
+            server,
+            env=env,
             verify_live=verify_live,
             memory_reachability_checker=memory_reachability_checker,
-        ),
-        _passthrough_server_status(
-            "exa",
-            servers=servers,
-            passthrough_names=passthrough_names,
-            default_server={"url": DEFAULT_EXA_MCP_URL},
-        ),
-        _passthrough_server_status(
-            "xiaoqing_interview",
-            servers=servers,
-            passthrough_names=passthrough_names,
-        ),
+        )
+        for server in servers
     ]
+    statuses.extend(_configuration_issue_status(issue) for issue in issues)
+    return statuses
 
 
 def record_and_notify_mcp_doctor(
@@ -147,12 +155,14 @@ def record_and_notify_mcp_doctor(
 def mcp_doctor_report(
     *,
     db_path: Path,
-    codex_config_path: Path | None = None,
+    service_config_path: Path | None = None,
+    env: Mapping[str, str] = os.environ,
     verify_live: bool = False,
     notify: bool = False,
 ) -> dict[str, object]:
     statuses = check_mcp_statuses(
-        codex_config_path=codex_config_path,
+        service_config_path=service_config_path,
+        env=env,
         verify_live=verify_live,
     )
     if notify:
@@ -167,124 +177,67 @@ def mcp_doctor_report(
     }
 
 
-def _memory_connector_status(
+def _service_server_status(
+    server: ServiceMcpServer,
     *,
-    config_path: Path,
+    env: Mapping[str, str],
     verify_live: bool,
     memory_reachability_checker: Callable[[str], None] | None,
 ) -> McpStatus:
-    if not codex_config_has_memory_connector(config_path):
+    bearer_token = (
+        env.get(server.bearer_token_env_var, "")
+        if server.bearer_token_env_var
+        else ""
+    )
+    if bearer_token and jwt_token_is_expired(bearer_token):
         return McpStatus(
-            name="memory_connector",
-            state="missing_config",
+            name=server.name,
+            state="token_expired",
             ready=False,
-            reason="[mcp_servers.memory_connector] is missing from Codex config",
-            recover_command="ceo-agent setup-memory-connector --memory-url <memory-mcp-url>",
+            reason="configured bearer token is expired",
+            authorization_required=True,
+            recover_command=f"configure {server.bearer_token_env_var}",
         )
-    url = codex_memory_connector_url(config_path)
-    if not url:
-        return McpStatus(
-            name="memory_connector",
-            state="missing_config",
-            ready=False,
-            reason="[mcp_servers.memory_connector] has no url",
-            recover_command="ceo-agent setup-memory-connector --memory-url <memory-mcp-url>",
-        )
-
-    if verify_live:
+    if verify_live and server.name == "memory_connector" and server.url is not None:
         try:
             if memory_reachability_checker is not None:
-                memory_reachability_checker(url)
+                memory_reachability_checker(server.url)
             else:
-                _check_http_reachable(url)
+                _check_http_reachable(server.url, bearer_token=bearer_token)
         except Exception as exc:
+            state, reason = _live_probe_failure(exc)
             return McpStatus(
-                name="memory_connector",
-                state=_network_or_tool_state(str(exc)),
+                name=server.name,
+                state=state,
                 ready=False,
-                reason=str(exc),
+                reason=reason,
+                authorization_required=state in AUTHORIZATION_STATES,
                 recover_command="ceo-agent doctor-mcp --verify-live",
             )
 
     return McpStatus(
-        name="memory_connector",
+        name=server.name,
         state="ready",
         ready=True,
-        reason="native Codex MCP configured",
+        reason="configured by service MCP manifest",
     )
 
 
-def _passthrough_server_status(
-    name: str,
-    *,
-    servers: dict[str, object],
-    passthrough_names: tuple[str, ...],
-    default_server: dict[str, object] | None = None,
-) -> McpStatus:
-    if name not in passthrough_names:
-        return McpStatus(
-            name=name,
-            state="tool_not_found",
-            ready=False,
-            reason=f"{name} is not enabled in {CODEX_PASSTHROUGH_MCP_SERVERS_ENV}",
-        )
-    server = servers.get(name)
-    if not isinstance(server, dict):
-        server = default_server
-    if not isinstance(server, dict):
-        return McpStatus(
-            name=name,
-            state="missing_config",
-            ready=False,
-            reason=f"[mcp_servers.{name}] is missing from Codex config",
-        )
-    if _server_has_launch_target(server):
-        return McpStatus(
-            name=name,
-            state="ready",
-            ready=True,
-            reason="configured",
-        )
+def _configuration_issue_status(issue: ServiceMcpConfigIssue) -> McpStatus:
+    reason = issue.reason
+    if issue.server_name == "xiaoqing_interview" and issue.field == "command":
+        reason = "service transport command is not configured"
     return McpStatus(
-        name=name,
+        name=issue.server_name,
         state="missing_config",
         ready=False,
-        reason=f"[mcp_servers.{name}] has no url or command",
+        reason=reason,
+        recover_command=(
+            "configure CEO_SERVICE_MCP_CONFIG_PATH"
+            if issue.server_name == "service_mcp_config"
+            else f"fix {issue.server_name} in the service MCP manifest"
+        ),
     )
-
-
-def _server_has_launch_target(server: dict[str, object]) -> bool:
-    for key in ("url", "command"):
-        value = server.get(key)
-        if isinstance(value, str) and value.strip():
-            return True
-    return False
-
-
-def _passthrough_mcp_server_names() -> tuple[str, ...]:
-    raw = os.environ.get(CODEX_PASSTHROUGH_MCP_SERVERS_ENV, "").strip()
-    if not raw:
-        return DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS
-    names = tuple(
-        name.strip()
-        for name in raw.replace(";", ",").split(",")
-        if name.strip()
-    )
-    return names or DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS
-
-
-def _codex_config_path() -> Path:
-    return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser() / "config.toml"
-
-
-def _read_toml(path: Path) -> dict[str, object]:
-    if not path.exists():
-        return {}
-    try:
-        payload = tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
 
 
 def _network_or_tool_state(message: str) -> str:
@@ -306,9 +259,28 @@ def _network_or_tool_state(message: str) -> str:
     return "tool_not_found"
 
 
-def _check_http_reachable(url: str) -> None:
+def _live_probe_failure(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code in {401, 403}:
+            return "needs_login", "HTTP authorization failed"
+        if status_code >= 500:
+            return "network_blocked", "HTTP service is unavailable"
+        return "tool_not_found", "HTTP probe was rejected"
+    state = _network_or_tool_state(type(exc).__name__ + " " + str(exc))
+    reasons = {
+        "network_blocked": "service endpoint is unreachable",
+        "needs_login": "service authorization is required",
+        "tool_not_found": "service probe failed",
+    }
+    return state, reasons[state]
+
+
+def _check_http_reachable(url: str, *, bearer_token: str = "") -> None:
+    headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else None
     with httpx.Client(timeout=10.0, trust_env=False) as client:
-        client.get(url)
+        response = client.get(url, headers=headers)
+        response.raise_for_status()
 
 
 def _error_detail(status: McpStatus) -> str:
@@ -320,5 +292,5 @@ def _notification_message(status: McpStatus) -> str:
     command = f" Run: {status.recover_command}." if status.recover_command else ""
     return (
         f"{status.name} is {status.state}: {status.reason}. "
-        f"Related tasks are blocked until this is fixed.{command}"
+        f"The service gate reports this dependency unavailable.{command}"
     )[:240]

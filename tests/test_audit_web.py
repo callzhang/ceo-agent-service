@@ -2,6 +2,8 @@ import json
 import os
 import sqlite3
 import subprocess
+import threading
+import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -12,6 +14,7 @@ import app.audit_web as audit_web_module
 from app.audit_web import (
     create_audit_app,
     create_default_audit_app,
+    handle_audit_rules_post,
     handle_developer_prompt_post,
     handle_prompt_variables_post,
     handle_system_config_post,
@@ -42,12 +45,26 @@ from app.audit_web import (
     render_user_feedback_list,
     run_audit_web,
 )
+from app.audit_rules import read_audit_rules_template
 from app.developer_prompt import read_developer_prompt_template
 from app.config import load_env_file
 from app.dingtalk_models import DingTalkMessage
 from app.setup_wizard_models import SetupWizardEvent
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 from app.wechat.models import WechatMessage
+
+
+def _claim_audit_run(store, task, *, owner="worker"):
+    return store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=f"audit-agent:{task.id}:{task.execution_generation}",
+        owner=owner,
+    )
 
 
 def task_script_json(html: str, element_id: str):
@@ -61,6 +78,109 @@ def loopback_test_client(app) -> TestClient:
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
     )
+
+
+def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Product",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-07 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="Publish the reviewed update.",
+        trigger_message_json='{"openMessageId":"msg-1"}',
+        execution_generation="generation-1",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+
+    parent_id = None
+    terminal_run = None
+    for revision in range(2):
+        consumer = store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=revision,
+            turn_attempt=0,
+            parent_agent_run_id=parent_id,
+            operation_id="",
+            owner=f"consumer-{revision}",
+        ).run
+        store.set_agent_run_session(
+            consumer.id,
+            f"consumer-session-{revision}",
+            owner=f"consumer-{revision}",
+        )
+        store.complete_agent_run(
+            consumer.id,
+            {"outcome": "proposal", "summary": f"candidate {revision}"},
+            owner=f"consumer-{revision}",
+        )
+        audit = store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=revision,
+            turn_attempt=0,
+            parent_agent_run_id=consumer.id,
+            operation_id=f"operation-{revision}",
+            owner=f"audit-{revision}",
+        ).run
+        store.set_agent_run_session(
+            audit.id,
+            f"audit-session-{revision}",
+            owner=f"audit-{revision}",
+        )
+        terminal_run = store.complete_agent_run(
+            audit.id,
+            {"outcome": "executed", "summary": f"audit {revision}"},
+            owner=f"audit-{revision}",
+        )
+        parent_id = terminal_run.id
+
+    assert terminal_run is not None
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=terminal_run.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="Published and verified.",
+        codex_session_id=terminal_run.codex_session_id,
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=1,
+        audit_tool_events_json='[{"type":"mcp_tool_call","tool":"noise"}]',
+        audit_summary="Published and verified.",
+        send_status="completed",
+        send_error="",
+        channel="dingtalk",
+    )
+
+    attempt = store.get_reply_attempt(attempt_id)
+    status, detail = render_attempt_detail(store, attempt_id)
+    history = render_attempt_list(store, include_chart=False)
+
+    assert attempt is not None and attempt.agent_run_id == terminal_run.id
+    assert status == 200
+    assert "2 revisions" in detail
+    assert "View Consumer conversation" in detail
+    assert "/codex/consumer-session-1" in detail
+    assert "View execution audit" in detail
+    assert "/codex/audit-session-1" in detail
+    assert "Consumer Agent A" not in history
+    assert "Audit Agent B" not in history
+    assert "mcp_tool_call" not in history
 
 
 def seed_attempt(store: AutoReplyStore) -> int:
@@ -1826,18 +1946,25 @@ def test_history_route_returns_busy_page_when_database_is_locked(
     monkeypatch,
     tmp_path: Path,
 ):
+    calls = 0
+    rendered = threading.Event()
+
     def locked_attempt_list(*args, **kwargs):
+        nonlocal calls
         del args, kwargs
+        calls += 1
+        rendered.set()
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(audit_web_module, "render_attempt_list", locked_attempt_list)
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
-
-    response = client.get("/")
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        assert rendered.wait(timeout=1)
+        response = client.get("/")
 
     assert response.status_code == 200
     assert "History is temporarily busy" in response.text
     assert "refresh" in response.text
+    assert calls == 1
 
 
 def test_history_route_renders_chart_on_default_page(tmp_path: Path):
@@ -1848,6 +1975,99 @@ def test_history_route_renders_chart_on_default_page(tmp_path: Path):
     assert response.status_code == 200
     assert "CEO Agent Audit" in response.text
     assert "最近 24 小时事件" in response.text
+
+
+def test_history_route_reuses_recent_default_render(monkeypatch, tmp_path: Path):
+    calls = 0
+
+    def render_once(*args, **kwargs):
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        return f"render-{calls}"
+
+    monkeypatch.setattr(audit_web_module, "render_attempt_list", render_once)
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    first = client.get("/")
+    second = client.get("/")
+    filtered = client.get("/?object_type=meeting")
+
+    assert first.text == "render-1"
+    assert second.text == "render-1"
+    assert filtered.text == "render-2"
+    assert calls == 2
+
+
+def test_audit_app_prewarms_default_history(monkeypatch, tmp_path: Path):
+    calls = 0
+    rendered = threading.Event()
+
+    def render_once(*args, **kwargs):
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        rendered.set()
+        return f"render-{calls}"
+
+    monkeypatch.setattr(audit_web_module, "render_attempt_list", render_once)
+
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")):
+        assert rendered.wait(timeout=1)
+        assert calls == 1
+
+
+def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp_path: Path):
+    release_render = threading.Event()
+    render_started = threading.Event()
+
+    def render_slowly(*args, **kwargs):
+        del args, kwargs
+        render_started.set()
+        release_render.wait(timeout=0.4)
+        return "ready"
+
+    monkeypatch.setattr(audit_web_module, "render_attempt_list", render_slowly)
+    started_at = time.monotonic()
+    try:
+        with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+            assert time.monotonic() - started_at < 0.2
+            assert render_started.wait(timeout=1)
+            response = client.get("/")
+            assert "History is temporarily busy" in response.text
+    finally:
+        release_render.set()
+
+
+def test_recent_html_cache_refreshes_after_ttl():
+    now = [0.0]
+
+    class ImmediateThread:
+        def __init__(self, *, target, args, daemon):
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self):
+            self.target(*self.args)
+
+    cache = audit_web_module._RecentHtmlCache(
+        2.0,
+        clock=lambda: now[0],
+        thread_factory=ImmediateThread,
+    )
+    calls = 0
+
+    def render_once():
+        nonlocal calls
+        calls += 1
+        return f"render-{calls}"
+
+    assert cache.get_or_render(render_once) == "render-1"
+    now[0] = 3.0
+    assert cache.get_or_render(render_once) == "render-1"
+    assert cache.get_or_render(render_once) == "render-2"
+    assert calls == 2
 
 
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
@@ -1901,8 +2121,17 @@ def test_tutorial_run_route_persists_failed_action_status(
     monkeypatch,
     tmp_path: Path,
 ):
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-codex-home"))
-    monkeypatch.setenv("CLAUDE_CONFIG_PATH", str(tmp_path / "claude.json"))
+    def fake_run(action_id, *, repo_root, env):
+        del repo_root, env
+        assert action_id == "setup_mcp"
+        return SetupWizardEvent(
+            step_id="mcp",
+            action_id="setup_mcp",
+            status="failed",
+            summary="MEMORY_CONNECTOR_URL is missing.",
+        )
+
+    monkeypatch.setattr(audit_web_module, "run_setup_action", fake_run)
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     store.upsert_setup_wizard_step(step_id="preflight", status="done", summary="ok")
@@ -3518,6 +3747,68 @@ def test_render_prompt_editor_shows_user_prompt_tab(tmp_path: Path, monkeypatch)
     assert "Saved." in html
 
 
+def test_render_config_page_shows_editable_audit_rules_and_fixed_previews(
+    tmp_path: Path,
+    monkeypatch,
+):
+    template_path = tmp_path / "audit_rules.md"
+    template_path.write_text("Check publication authority.", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(template_path))
+
+    html = render_config_page(active_tab="audit-rules", saved=True)
+
+    assert 'href="/config?tab=audit-rules"' in html
+    assert 'class="prompt-tab active"' in html
+    assert 'action="/config?tab=audit-rules"' in html
+    assert "Check publication authority." in html
+    assert "Consumer preview" in html
+    assert "Audit preview" in html
+    assert "Last saved" in html
+    assert "do not execute" in html
+    assert "do not rewrite" in html
+    textarea = html.split('<textarea id="template"', 1)[1].split("</textarea>", 1)[0]
+    assert "Check publication authority." in textarea
+    assert "do not execute" not in textarea
+    assert "do not rewrite" not in textarea
+    assert "Saved." in html
+
+
+def test_config_audit_rules_tab_saves_empty_custom_body(
+    tmp_path: Path,
+    monkeypatch,
+):
+    path = tmp_path / "audit_rules.md"
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(path))
+
+    status, headers, html = handle_audit_rules_post(b"template=")
+
+    assert status == 303
+    assert headers["Location"] == "/config?tab=audit-rules&saved=1"
+    assert html == ""
+    assert read_audit_rules_template() == ""
+
+
+def test_config_audit_rules_post_rejects_invalid_template_without_overwrite(
+    tmp_path: Path,
+    monkeypatch,
+):
+    path = tmp_path / "audit_rules.md"
+    path.write_text("Keep this rule.", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(path))
+
+    status, headers, html = handle_audit_rules_post(
+        b"template=%3Cvar%3A+missing_rule%3E"
+    )
+
+    assert status == 400
+    assert headers == {}
+    assert "Template validation error" in html
+    assert "plain text" in html
+    assert "&lt;var: missing_rule&gt;" in html
+    assert "Keep this rule." in html
+    assert path.read_text(encoding="utf-8") == "Keep this rule."
+
+
 def test_handle_developer_prompt_post_saves_template(tmp_path: Path, monkeypatch):
     template_path = tmp_path / "developer.md"
     template_path.write_text(
@@ -4904,7 +5195,7 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
         trigger_text="请处理",
     )
     task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(task.id, task.execution_generation, owner="worker").run
+    run = _claim_audit_run(store, task).run
     store.mark_agent_run_unknown(run.id, {"code": "unknown"}, owner="worker")
     store.claim_unknown_agent_run(run.id, owner="reconciler")
     store.defer_unknown_agent_run_reconciliation(
@@ -5089,7 +5380,7 @@ def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
         trigger_text="请处理",
     )
     task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(task.id, task.execution_generation, owner="worker").run
+    run = _claim_audit_run(store, task).run
     store.mark_agent_run_unknown(run.id, {"code": "unknown"}, owner="worker")
     store.claim_unknown_agent_run(run.id, owner="reconciler")
     store.defer_unknown_agent_run_reconciliation(
@@ -5368,7 +5659,7 @@ def test_handle_reviewed_message_reply_uses_immutable_attempt_binding(tmp_path: 
     assert task.status == "pending"
 
 
-def test_needs_human_decision_renders_choices_and_queues_resumable_rerun(
+def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -5408,15 +5699,15 @@ def test_needs_human_decision_renders_choices_and_queues_resumable_rerun(
 
     status, html = render_attempt_detail(store, attempt_id)
     assert status == 200
-    assert "需要你选择" in html
-    assert "A. 按当前事实继续处理并发布" in html
-    assert "B. 先追问一个具体澄清问题并发布" in html
-    assert "C. 自定义回复或执行指令" in html
+    assert "需要你的判断" in html
+    assert "按当前事实继续处理并发布" not in html
+    assert "先追问一个具体澄清问题并发布" not in html
+    assert "填写判断或处理指令" in html
 
     status, headers, body = handle_needs_human_decision_post(
         store,
         attempt_id,
-        b"choice=b",
+        "instruction=采用方案二并说明交付边界".encode(),
     )
 
     source = store.get_reply_attempt(attempt_id)
@@ -5433,7 +5724,7 @@ def test_needs_human_decision_renders_choices_and_queues_resumable_rerun(
     assert task.oa_url == "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
     assert selected_attempt is not None
     assert selected_attempt.reviewer_feedback == source.reviewer_feedback
-    assert "向原消息发起人发送一个具体" in selected_attempt.reviewer_feedback
+    assert "采用方案二并说明交付边界" in selected_attempt.reviewer_feedback
 
     wechat_attempt_id = store.record_reply_attempt(
         conversation_id="wechat-cid-1",

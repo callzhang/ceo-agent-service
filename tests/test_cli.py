@@ -40,7 +40,7 @@ from app.cli import (
 from app.corpus import CorpusRecord, append_records
 from app.dws_client import DwsError
 from app.external_retry import ExternalDependencyError
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 from app.task_models import TaskAgentDecision, WorkItem
 
 
@@ -124,7 +124,16 @@ def test_resolve_agent_run_command_records_manual_resolution(tmp_path, capsys):
     store = AutoReplyStore(settings.db_path)
     enqueue_trigger_task(store)
     task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(task.id, task.execution_generation, owner="worker").run
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=f"direct-agent:{task.id}:{task.execution_generation}",
+        owner="worker",
+    ).run
     store.mark_agent_run_unknown(
         run.id,
         {"code": "unknown"},
@@ -347,6 +356,20 @@ def test_parser_supports_setup_memory_connector():
     assert args.memory_url == "https://memory.example/mcp/"
     assert args.codex_config == "/tmp/codex.toml"
     assert args.claude_config == "/tmp/claude.json"
+
+
+def test_parser_supports_service_mcp_doctor_config():
+    args = build_parser().parse_args(
+        [
+            "doctor-mcp",
+            "--service-mcp-config",
+            "/tmp/service-mcp.json",
+        ]
+    )
+
+    assert args.command == "doctor-mcp"
+    assert args.service_mcp_config == "/tmp/service-mcp.json"
+    assert not hasattr(args, "codex_config")
 
 
 def test_setup_memory_connector_command_updates_codex_and_reports_claude(
@@ -5132,14 +5155,6 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         "_recover_meeting_alignment_jobs_on_service_start",
         lambda settings: calls.append(("meeting-recovery", settings.db_path)) or 0,
     )
-    monkeypatch.setattr(
-        cli,
-        "run_audit_web_command",
-        lambda settings, host, port, reload=False: calls.append(
-            ("audit-web", host, port, reload)
-        )
-        or stop("audit-web"),
-    )
     def task_maintenance_loop(
         settings,
         work_item_interval_seconds,
@@ -5216,8 +5231,6 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
 
     assert calls == [
         ("meeting-recovery", tmp_path / "worker.sqlite3"),
-        ("start", "ceo-agent-service-audit-web", True),
-        ("audit-web", "127.0.0.1", 8765, False),
         ("start", "ceo-agent-service-database-backup", True),
         ("database-backup", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-producer", True),
@@ -5237,7 +5250,6 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("wait",),
     ]
     assert failures == [
-        ("audit-web", "stop audit-web"),
         ("database-backup", "stop database-backup"),
         ("producer", "stop producer"),
         ("consumer", "stop consumer"),
@@ -5247,7 +5259,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("follow-up-delivery", "stop follow-up-delivery"),
         ("oa-pending-scan", "stop oa-pending-scan"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1, 1, 1]
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):

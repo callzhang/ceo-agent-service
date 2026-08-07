@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import errno
+import json
 import os
 import shutil
 import stat
@@ -19,6 +20,7 @@ from app.bounded_process import (
     run_bounded_process,
 )
 from app.channel_gate import classify_cli_read_failure
+from app.leak_check import is_sensitive_field_name
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
@@ -28,6 +30,7 @@ from app.native_cli_metadata import (
 
 MAX_CLI_OUTPUT_BYTES = MAX_PROCESS_OUTPUT_BYTES
 MAX_SKILL_BYTES = 256 * 1024
+RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 CliOutputLimitError = ProcessOutputLimitError
 AGENT_SKILL_ROOTS = (
     Path.home() / ".agents" / "skills",
@@ -72,15 +75,62 @@ def execute_reviewed_read(
 def execute_reviewed_write(
     argv: Sequence[str],
     *,
+    authorization_id: str | None = None,
     classifier: NativeCliMetadataClassifier | None = None,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, object]:
     return _execute_reviewed(
         argv,
         expected_effect=EffectKind.EFFECTFUL,
+        authorization_id=authorization_id,
         classifier=classifier,
         process_runner=process_runner,
     )
+
+
+def _json_digest(value: object) -> str:
+    encoded = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _recovery_write_authorization(
+    command,
+    argv: Sequence[str],
+    *,
+    authorization_id: str | None,
+) -> dict[str, object] | None:
+    raw_allowlist = os.environ.get(RECOVERY_WRITE_ALLOWLIST_ENV, "")
+    if not raw_allowlist:
+        return None
+    try:
+        allowlist = json.loads(raw_allowlist)
+    except json.JSONDecodeError as exc:
+        raise AgentReadOnlyViolationError("recovery_write_allowlist_invalid") from exc
+    if not isinstance(allowlist, list) or not isinstance(authorization_id, str):
+        raise AgentReadOnlyViolationError("recovery_write_not_authorized")
+    actual = {
+        "authorization_id": authorization_id,
+        "capability": f"agent_cli.{command.cli}",
+        "operation": command.command_path,
+        "operation_digest": command.command_digest,
+        "target_identifiers": command.target_identifiers,
+        "arguments_digest": _json_digest({"argv": list(argv)}),
+    }
+    match = next(
+        (
+            entry
+            for entry in allowlist
+            if isinstance(entry, dict)
+            and all(entry.get(key) == value for key, value in actual.items())
+            and isinstance(entry.get("action_index"), int)
+        ),
+        None,
+    )
+    if match is None:
+        raise AgentReadOnlyViolationError("recovery_write_not_authorized")
+    return match
 
 
 def read_skill(path: str) -> dict[str, str]:
@@ -114,14 +164,21 @@ def _execute_reviewed(
     expected_effect: EffectKind,
     classifier: NativeCliMetadataClassifier | None,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None,
+    authorization_id: str | None = None,
 ) -> dict[str, object]:
     if not argv:
-        raise AgentReadOnlyViolationError("reconciliation_command_invalid")
+        raise AgentReadOnlyViolationError("agent_cli_command_invalid")
+    if any(
+        argument.startswith("--")
+        and is_sensitive_field_name(argument[2:].partition("=")[0])
+        for argument in argv
+    ):
+        raise AgentReadOnlyViolationError("agent_cli_sensitive_argument")
     reviewed = classifier or NativeCliMetadataClassifier()
     item = {"type": "command_execution", "argv": list(argv)}
     descriptor = describe_native_command(item)
     if descriptor is None:
-        raise AgentReadOnlyViolationError("reconciliation_command_invalid")
+        raise AgentReadOnlyViolationError("agent_cli_command_invalid")
     try:
         reviewed.prewarm()
         command = reviewed.classify(item)
@@ -132,14 +189,21 @@ def _execute_reviewed(
             retryable=exc.retryable,
         )
     if command is None:
-        raise AgentReadOnlyViolationError("reconciliation_command_unreviewed")
+        raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
     if command.effect is not expected_effect:
         raise AgentReadOnlyViolationError("reviewed_cli_effect_mismatch")
+    authorization = None
+    if expected_effect is EffectKind.EFFECTFUL:
+        authorization = _recovery_write_authorization(
+            command,
+            argv,
+            authorization_id=authorization_id,
+        )
     executable = shutil.which(command.cli)
     if executable is None:
         return _process_failure_receipt(
             command,
-            code="reconciliation_cli_start_unavailable",
+            code="agent_cli_start_unavailable",
             retryable=True,
         )
     reviewed_argv = [executable, *argv[1:]]
@@ -170,7 +234,7 @@ def _execute_reviewed(
             "stdout": "",
             "error": {
                 "channel": command.cli,
-                "code": "reconciliation_cli_output_limit_exceeded",
+                "code": "agent_cli_output_limit_exceeded",
                 "retryable": False,
                 "gate_state": "blocked",
             },
@@ -178,7 +242,7 @@ def _execute_reviewed(
     except subprocess.TimeoutExpired:
         return _process_failure_receipt(
             command,
-            code="reconciliation_cli_timeout",
+            code="agent_cli_timeout",
             retryable=True,
         )
     except OSError as exc:
@@ -186,9 +250,9 @@ def _execute_reviewed(
         return _process_failure_receipt(
             command,
             code=(
-                "reconciliation_cli_start_unavailable"
+                "agent_cli_start_unavailable"
                 if retryable
-                else "reconciliation_cli_start_invalid"
+                else "agent_cli_start_invalid"
             ),
             retryable=retryable,
         )
@@ -200,6 +264,9 @@ def _execute_reviewed(
         "result_digest": hashlib.sha256(process.stdout.encode("utf-8")).hexdigest(),
         "stdout": process.stdout,
     }
+    if authorization is not None:
+        receipt["authorization_id"] = authorization["authorization_id"]
+        receipt["action_index"] = authorization["action_index"]
     if process.returncode != 0:
         failure = classify_cli_read_failure(command.cli, process)
         receipt["error"] = {
@@ -212,7 +279,7 @@ def _execute_reviewed(
 
 
 server = FastMCP(
-    "reconciliation_cli",
+    "agent_cli",
     instructions=(
         "Read installed Agent skills and run DWS or Lark commands only after "
         "reviewing installed effect metadata."
@@ -255,8 +322,10 @@ def execute_reviewed_read_tool(argv: list[str]) -> dict[str, object]:
         openWorldHint=True,
     ),
 )
-def execute_reviewed_write_tool(argv: list[str]) -> dict[str, object]:
-    return execute_reviewed_write(argv)
+def execute_reviewed_write_tool(
+    argv: list[str], authorization_id: str | None = None
+) -> dict[str, object]:
+    return execute_reviewed_write(argv, authorization_id=authorization_id)
 
 
 if __name__ == "__main__":

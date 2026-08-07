@@ -1,5 +1,6 @@
-from pathlib import Path
+import json
 import os
+from pathlib import Path
 from datetime import datetime
 
 from app.dws_client import DwsOaApprovalCandidate
@@ -737,4 +738,36 @@ def test_scan_pending_oa_approvals_does_not_guess_unowned_task_ids(tmp_path):
     assert store.claim_reply_tasks(limit=1) == []
     state = store.get_daily_scan_state("oa_pending")
     assert state is not None
-    assert state["last_error"] == "missing current-user task_id"
+    assert state["last_error"] == ""
+    assert json.loads(state["cursor_json"])[
+        "skipped_missing_task_id_process_instance_ids"
+    ] == ["proc-1"]
+
+
+def test_scan_pending_oa_approvals_records_task_read_failures(tmp_path):
+    class BrokenDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [
+                DwsOaApprovalCandidate(
+                    process_instance_id="proc-1",
+                    title="张三提交的录用申请",
+                    process_name="录用申请",
+                )
+            ]
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            raise RuntimeError("DWS unavailable")
+
+        def read_oa_approval_detail(self, process_instance_id):
+            return {"result": {"tasks": []}}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_pending_oa_approvals(store, BrokenDws()) == 0
+
+    state = store.get_daily_scan_state("oa_pending")
+    assert state is not None
+    assert state["last_error"] == "oa approval task/detail read failed"
+    assert json.loads(state["cursor_json"])["read_failure_process_instance_ids"] == [
+        "proc-1"
+    ]

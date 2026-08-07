@@ -1,0 +1,19 @@
+{
+  "servers": {
+    "exa": {
+      "url": "https://mcp.exa.ai/mcp"
+    },
+    "memory_connector": {
+      "url_env": "MEMORY_CONNECTOR_URL",
+      "bearer_token_env_var": "CONNECTOR_API_KEY",
+      "env_http_headers": {
+        "X-Friday-Memory-Auth-Type": "MEMORY_CONNECTOR_AUTH_TYPE",
+        "Content-Type": "MEMORY_CONNECTOR_CONTENT_TYPE"
+      }
+    },
+    "xiaoqing_interview": {
+      "command_env": "CEO_XIAOQING_MCP_COMMAND",
+      "args_env": "CEO_XIAOQING_MCP_ARGS_JSON"
+    }
+  }
+}

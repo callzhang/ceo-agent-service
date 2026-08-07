@@ -365,18 +365,26 @@ def test_extract_codex_audit_events_preserves_tool_name_without_payload():
 
 
 def test_memory_connector_config_issue_reports_expired_token(tmp_path, monkeypatch):
-    config = tmp_path / "config.toml"
+    config = tmp_path / "service-mcp.json"
     config.write_text(
-        """
-[mcp_servers.memory_connector]
-url = "https://memory.example/mcp/"
-
-[mcp_servers.memory_connector.http_headers]
-Authorization = "Bearer eyJhbGciOiJub25lIn0.eyJleHAiOjF9."
-""".strip(),
+        json.dumps(
+            {
+                "servers": {
+                    "memory_connector": {
+                        "url_env": "MEMORY_CONNECTOR_URL",
+                        "bearer_token_env_var": "CONNECTOR_API_KEY",
+                    }
+                }
+            }
+        ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(config))
+    monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp/")
+    monkeypatch.setenv(
+        "CONNECTOR_API_KEY",
+        "eyJhbGciOiJub25lIn0.eyJleHAiOjF9.",
+    )
 
     assert memory_connector_config_issue() == "memory connector token is expired"
 

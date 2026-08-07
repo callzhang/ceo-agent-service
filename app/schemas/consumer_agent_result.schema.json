@@ -1,0 +1,208 @@
+{
+  "$defs": {
+    "AgentError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "authorization_required": {
+          "title": "Authorization Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "retryable",
+        "authorization_required"
+      ],
+      "title": "AgentError",
+      "type": "object"
+    },
+    "ConsumerOutcome": {
+      "enum": [
+        "proposal",
+        "no_action",
+        "needs_human",
+        "failed"
+      ],
+      "title": "ConsumerOutcome",
+      "type": "string"
+    },
+    "ConsumerProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "objective": {
+          "minLength": 1,
+          "title": "Objective",
+          "type": "string"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/ProposedAction"
+          },
+          "minItems": 1,
+          "title": "Actions",
+          "type": "array"
+        },
+        "sourced_facts": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "title": "Sourced Facts",
+          "type": "array"
+        },
+        "authored_judgment": {
+          "title": "Authored Judgment",
+          "type": "string"
+        }
+      },
+      "required": [
+        "objective",
+        "actions",
+        "sourced_facts",
+        "authored_judgment"
+      ],
+      "title": "ConsumerProposal",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "ProposalFact": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion": {
+          "minLength": 1,
+          "title": "Assertion",
+          "type": "string"
+        },
+        "references": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "References",
+          "type": "array"
+        }
+      },
+      "required": [
+        "assertion",
+        "references"
+      ],
+      "title": "ProposalFact",
+      "type": "object"
+    },
+    "ProposedAction": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "capability": {
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "operation": {
+          "minLength": 1,
+          "title": "Operation",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "minProperties": 1,
+          "title": "Target",
+          "type": "object"
+        },
+        "payload": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Payload",
+          "type": "object"
+        },
+        "expected_verification": {
+          "minLength": 1,
+          "title": "Expected Verification",
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "capability",
+        "operation",
+        "target",
+        "payload",
+        "expected_verification"
+      ],
+      "title": "ProposedAction",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "properties": {
+        "outcome": {
+          "const": "proposal"
+        },
+        "proposal": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "enum": [
+            "no_action",
+            "needs_human",
+            "failed"
+          ]
+        },
+        "proposal": {
+          "type": "null"
+        }
+      }
+    }
+  ],
+  "properties": {
+    "outcome": {
+      "$ref": "#/$defs/ConsumerOutcome"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "proposal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ConsumerProposal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "$ref": "#/$defs/AgentError"
+    }
+  },
+  "required": [
+    "outcome",
+    "summary",
+    "proposal",
+    "error"
+  ],
+  "title": "ConsumerAgentResult",
+  "type": "object"
+}

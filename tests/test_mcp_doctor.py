@@ -1,3 +1,5 @@
+import base64
+import json
 from pathlib import Path
 
 import pytest
@@ -32,24 +34,37 @@ def clear_fake_store() -> None:
     FakeStore.rows = []
 
 
-def test_mcp_doctor_reports_native_memory_and_passthrough_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config = tmp_path / "config.toml"
-    config.write_text(
-        """
-[mcp_servers.memory_connector]
-url = "https://memory.example/mcp/"
+def _write_manifest(path: Path, servers: dict[str, object]) -> Path:
+    path.write_text(json.dumps({"servers": servers}), encoding="utf-8")
+    return path
 
-[mcp_servers.xiaoqing_interview]
-url = "https://xiaoqing.example/mcp"
-""",
-        encoding="utf-8",
+
+def _expired_jwt() -> str:
+    payload = base64.urlsafe_b64encode(b'{"exp":1}').decode().rstrip("=")
+    return f"header.{payload}.signature"
+
+
+def test_mcp_doctor_reports_service_manifest_transports_ready(
+    tmp_path: Path,
+) -> None:
+    config = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "memory_connector": {"url": "https://memory.example/mcp/"},
+            "exa": {"url": "https://mcp.exa.ai/mcp"},
+            "xiaoqing_interview": {
+                "command_env": "CEO_XIAOQING_MCP_COMMAND",
+                "args_env": "CEO_XIAOQING_MCP_ARGS_JSON",
+            },
+        },
     )
-    monkeypatch.delenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", raising=False)
 
     statuses = check_mcp_statuses(
-        codex_config_path=config,
+        service_config_path=config,
+        env={
+            "CEO_XIAOQING_MCP_COMMAND": "/opt/service/xiaoqing-mcp",
+            "CEO_XIAOQING_MCP_ARGS_JSON": "[]",
+        },
     )
     by_name = {status.name: status for status in statuses}
 
@@ -60,34 +75,162 @@ url = "https://xiaoqing.example/mcp"
     assert by_name["xiaoqing_interview"].ready is True
 
 
-def test_mcp_doctor_reports_missing_memory_config(tmp_path: Path) -> None:
+def test_mcp_doctor_reports_missing_service_manifest(tmp_path: Path) -> None:
     statuses = check_mcp_statuses(
-        codex_config_path=tmp_path / "missing.toml",
+        service_config_path=tmp_path / "missing.json",
+        env={},
     )
 
     assert statuses[0] == McpStatus(
-        name="memory_connector",
+        name="service_mcp_config",
         state="missing_config",
         ready=False,
-        reason="[mcp_servers.memory_connector] is missing from Codex config",
-        recover_command="ceo-agent setup-memory-connector --memory-url <memory-mcp-url>",
+        reason=(
+            "service MCP manifest is missing; set CEO_SERVICE_MCP_CONFIG_PATH "
+            "to an existing JSON file"
+        ),
+        recover_command="configure CEO_SERVICE_MCP_CONFIG_PATH",
     )
 
 
-def test_mcp_doctor_marks_disabled_passthrough_as_tool_not_found(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_mcp_doctor_reports_invalid_utf8_manifest_as_malformed_config(
+    tmp_path: Path,
 ) -> None:
-    config = tmp_path / "config.toml"
-    config.write_text("", encoding="utf-8")
-    monkeypatch.setenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", "exa")
+    config = tmp_path / "service-mcp.json"
+    config.write_bytes(b'{"servers":"must-not-appear\xff"}')
+
+    statuses = check_mcp_statuses(service_config_path=config, env={})
+
+    assert statuses == [
+        McpStatus(
+            name="service_mcp_config",
+            state="missing_config",
+            ready=False,
+            reason="service MCP manifest is not valid UTF-8",
+            recover_command="configure CEO_SERVICE_MCP_CONFIG_PATH",
+        )
+    ]
+    assert "must-not-appear" not in repr(statuses)
+
+
+def test_mcp_doctor_reports_missing_xiaoqing_command_without_secret_values(
+    tmp_path: Path,
+) -> None:
+    config = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "memory_connector": {
+                "url_env": "MEMORY_CONNECTOR_URL",
+                "bearer_token_env_var": "CONNECTOR_API_KEY",
+            },
+            "xiaoqing_interview": {
+                "command_env": "CEO_XIAOQING_MCP_COMMAND",
+                "args_env": "CEO_XIAOQING_MCP_ARGS_JSON",
+            },
+        },
+    )
+    secret = "must-not-appear"
 
     statuses = check_mcp_statuses(
-        codex_config_path=config,
+        service_config_path=config,
+        env={
+            "MEMORY_CONNECTOR_URL": "https://memory.example/mcp/",
+            "CONNECTOR_API_KEY": secret,
+            "CEO_XIAOQING_MCP_ARGS_JSON": "[]",
+        },
     )
     by_name = {status.name: status for status in statuses}
 
-    assert by_name["exa"].ready is True
-    assert by_name["xiaoqing_interview"].state == "tool_not_found"
+    assert by_name["memory_connector"].ready is False
+    assert by_name["memory_connector"].state == "missing_config"
+    assert by_name["xiaoqing_interview"] == McpStatus(
+        name="xiaoqing_interview",
+        state="missing_config",
+        ready=False,
+        reason="service transport command is not configured",
+        recover_command="fix xiaoqing_interview in the service MCP manifest",
+    )
+    assert secret not in repr(statuses)
+
+
+def test_mcp_doctor_reports_expired_manifest_bearer_token(tmp_path: Path) -> None:
+    config = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "memory_connector": {
+                "url": "https://memory.example/mcp/",
+                "bearer_token_env_var": "CONNECTOR_API_KEY",
+            }
+        },
+    )
+
+    statuses = check_mcp_statuses(
+        service_config_path=config,
+        env={"CONNECTOR_API_KEY": _expired_jwt()},
+    )
+
+    assert statuses == [
+        McpStatus(
+            name="memory_connector",
+            state="token_expired",
+            ready=False,
+            reason="configured bearer token is expired",
+            authorization_required=True,
+            recover_command="configure CONNECTOR_API_KEY",
+        )
+    ]
+
+
+def test_mcp_doctor_live_probe_uses_bearer_and_rejects_unauthorized(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {
+            "memory_connector": {
+                "url": "https://memory.example/mcp/",
+                "bearer_token_env_var": "CONNECTOR_API_KEY",
+            }
+        },
+    )
+    observed: dict[str, object] = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            request = httpx.Request("GET", "https://memory.example/mcp/")
+            response = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError("secret response", request=request, response=response)
+
+    class Client:
+        def __init__(self, **kwargs):
+            observed["client_kwargs"] = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, **kwargs):
+            observed["url"] = url
+            observed["headers"] = kwargs.get("headers")
+            return Response()
+
+    import httpx
+
+    monkeypatch.setattr("app.mcp_doctor.httpx.Client", Client)
+
+    statuses = check_mcp_statuses(
+        service_config_path=config,
+        env={"CONNECTOR_API_KEY": "must-not-appear"},
+        verify_live=True,
+    )
+
+    assert observed["headers"] == {"Authorization": "Bearer must-not-appear"}
+    assert statuses[0].state == "needs_login"
+    assert statuses[0].reason == "HTTP authorization failed"
+    assert "must-not-appear" not in repr(statuses)
 
 
 def test_mcp_doctor_notification_is_sent_once(tmp_path: Path) -> None:
@@ -118,7 +261,8 @@ def test_mcp_doctor_notification_is_sent_once(tmp_path: Path) -> None:
 def test_mcp_doctor_report_is_read_only_without_notify(tmp_path: Path) -> None:
     report = mcp_doctor_report(
         db_path=tmp_path / "auto-reply.sqlite3",
-        codex_config_path=tmp_path / "missing.toml",
+        service_config_path=tmp_path / "missing.json",
+        env={},
         notify=False,
     )
 

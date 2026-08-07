@@ -463,12 +463,9 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if command == "doctor-mcp":
             subparser.add_argument(
-                "--codex-config",
-                default=str(
-                    Path(os.getenv("CODEX_HOME", "~/.codex")).expanduser()
-                    / "config.toml"
-                ),
-                help="Codex config.toml path",
+                "--service-mcp-config",
+                default=os.getenv("CEO_SERVICE_MCP_CONFIG_PATH", ""),
+                help="service-owned MCP manifest JSON path",
             )
             subparser.add_argument(
                 "--verify-live",
@@ -1490,7 +1487,7 @@ def setup_memory_connector_command(
 def doctor_mcp_command(
     settings: WorkerSettings,
     *,
-    codex_config: str,
+    service_mcp_config: str = "",
     verify_live: bool = False,
     notify: bool = False,
 ) -> dict[str, object]:
@@ -1498,7 +1495,11 @@ def doctor_mcp_command(
 
     report = mcp_doctor_report(
         db_path=settings.db_path,
-        codex_config_path=Path(codex_config).expanduser(),
+        service_config_path=(
+            Path(service_mcp_config).expanduser()
+            if service_mcp_config.strip()
+            else None
+        ),
         verify_live=verify_live,
         notify=notify,
     )
@@ -2477,17 +2478,11 @@ def run_service(
     _recover_meeting_alignment_jobs_on_service_start(settings)
     doctor_mcp_command(
         settings,
-        codex_config=str(
-            Path(os.getenv("CODEX_HOME", "~/.codex")).expanduser() / "config.toml"
-        ),
+        service_mcp_config=os.getenv("CEO_SERVICE_MCP_CONFIG_PATH", ""),
         notify=True,
     )
     dependency_gate = NetworkDependencyGate()
     components = (
-        (
-            "audit-web",
-            lambda: run_audit_web_command(settings, host=host, port=port, reload=False),
-        ),
         (
             "database-backup",
             lambda: run_database_backup_loop(settings.db_path),
@@ -2923,7 +2918,7 @@ def main() -> None:
     elif args.command == "doctor-mcp":
         doctor_mcp_command(
             settings,
-            codex_config=args.codex_config,
+            service_mcp_config=args.service_mcp_config,
             verify_live=args.verify_live,
             notify=args.notify,
         )

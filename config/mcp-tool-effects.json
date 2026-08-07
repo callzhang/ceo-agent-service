@@ -2,17 +2,24 @@
   "version": 1,
   "tools": [
     {
-      "server": "reconciliation_cli",
+      "server": "agent_cli",
       "tool": "execute_reviewed_read",
-      "effect": "read_only"
+      "effect": "read_only",
+      "readback_for": [
+        {
+          "server": "agent_cli",
+          "tool": "execute_reviewed_write",
+          "target_match": "shared"
+        }
+      ]
     },
     {
-      "server": "reconciliation_cli",
+      "server": "agent_cli",
       "tool": "read_skill",
       "effect": "read_only"
     },
     {
-      "server": "reconciliation_cli",
+      "server": "agent_cli",
       "tool": "execute_reviewed_write",
       "effect": "effectful"
     },
@@ -69,7 +76,13 @@
     {
       "server": "xiaoqing_interview",
       "tool": "get_interview_context",
-      "effect": "read_only"
+      "effect": "read_only",
+      "readback_for": [
+        {
+          "server": "xiaoqing_interview",
+          "tool": "upload_interview_result"
+        }
+      ]
     },
     {
       "server": "xiaoqing_interview",

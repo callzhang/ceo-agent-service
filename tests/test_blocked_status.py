@@ -1,5 +1,5 @@
 from app.dingtalk_models import DingTalkMessage
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 
 
 def _message() -> DingTalkMessage:
@@ -42,7 +42,16 @@ def test_recoverable_blocked_attempt_does_not_suppress_direct_agent_task(tmp_pat
     task = store.get_reply_task_for_message("cid-1", "msg-1")
     assert task is not None
     assert task.status == "pending"
-    assert store.claim_agent_run(task.id, task.execution_generation, owner="worker").claimed
+    assert store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=f"direct-agent:{task.id}:{task.execution_generation}",
+        owner="worker",
+    ).claimed
 
 
 def test_explained_blocked_attempt_remains_recoverable_and_rerun_is_idempotent(
