@@ -4032,7 +4032,7 @@ def test_build_read_unread_messages_command_reads_latest_unread_window(
     ]
 
 
-def test_build_read_unread_messages_command_keeps_single_unread_limit(
+def test_build_read_unread_messages_command_uses_safe_window_for_single_unread(
     monkeypatch,
 ):
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
@@ -4047,7 +4047,7 @@ def test_build_read_unread_messages_command_keeps_single_unread_limit(
 
     command = client.build_read_unread_messages_command(conversation)
 
-    assert command[command.index("--limit") + 1] == "1"
+    assert command[command.index("--limit") + 1] == "5"
 
 
 def test_build_read_unread_messages_command_keeps_larger_unread_window(monkeypatch):
