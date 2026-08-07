@@ -479,14 +479,9 @@ def scan_pending_oa_approvals(
             ensure_ascii=False,
             sort_keys=True,
         ),
-        # A pending process can be visible to the scanner without being actionable
-        # by the current principal. Keep that evidence in the cursor, but do not
-        # report it as a service failure.
-        last_error=(
-            "oa approval task/detail read failed"
-            if read_failures
-            else ""
-        ),
+        # Keep per-process read failures in the cursor. The list scan itself
+        # completed, so this is follow-up evidence rather than scanner failure.
+        last_error="",
     )
     return queued
 

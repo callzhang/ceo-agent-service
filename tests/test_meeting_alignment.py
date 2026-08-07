@@ -1097,7 +1097,7 @@ def test_consumer_quarantines_ambiguous_send_without_verifiable_id(tmp_path):
         store, dws, runner, now=NOW + timedelta(minutes=1), limit=1
     )
     job = store.get_meeting_alignment_job(job_id)
-    assert job.status == "failed"
+    assert job.status == "quarantined"
     assert json.loads(job.error)["kind"] == "meeting_send_ambiguous_no_id"
     assert len(dws.send_calls) == 1
 

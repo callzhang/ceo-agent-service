@@ -3108,6 +3108,29 @@ def test_recreating_okr_review_request_requeues_failed_request(tmp_path):
     assert json.loads(loaded.okr_source_json)["processed"]["okrRows"] == []
 
 
+def test_marking_okr_review_request_discarded_keeps_it_out_of_the_claim_queue(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"objectives":[]}',
+    )
+
+    store.mark_okr_review_request_discarded(request_id, "not assigned to principal")
+
+    loaded = store.get_okr_review_request(request_id)
+    assert loaded.status == "discarded"
+    assert loaded.error == "not assigned to principal"
+    assert store.claim_okr_review_requests(limit=1) == []
+
+
 def test_recreating_okr_review_request_does_not_requeue_done_request(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(

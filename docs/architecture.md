@@ -150,7 +150,9 @@ Chrome 通知以 attempt ID 作为稳定标签。同一 attempt 的重试会更�
 ## 其他链路
 
 - 会议对齐使用 `meeting_alignment_jobs` 和 `meeting_alignment_runs` 独立排队。
+- 会议投递在没有可验证回执标识时进入 `quarantined`：保留原因和原始投递证据，停止重发，且不把未知投递伪装为发送成功或普通失败。误路由、无权处理的 OKR 请求进入 `discarded`，保留原因但不再进入执行队列。
 - 工作事项由 scanners、task agent、project/TODO store 和 follow-up 流程处理。
+- OA 列表读取成功后，个别审批任务或详情读取失败记录在扫描游标中，作为待跟进提示；只有列表扫描本身失败才写入扫描器错误状态。
 - 微信 reader/producer/consumer/sender 使用独立组件，但复用 generation、审计和投递幂等原则。
 - Memory Connector、DWS、Lark 和其他 MCP/CLI 调用必须出现在 agent event 审计中。
 - Task maintenance loop 每轮做本地周报到期检查；管理者 OKR 周报默认周日 18:00 后执行一次，失败按 `CEO_WEEKLY_OKR_RETRY_SECONDS` 重试。只有实时 OKR 获取、文档创建回读和群消息发送都确认后，才记录当周完成。

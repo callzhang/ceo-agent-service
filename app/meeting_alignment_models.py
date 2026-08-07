@@ -203,6 +203,7 @@ MeetingAlignmentQueueStatus = Literal[
     "sent",
     "retry",
     "failed",
+    "quarantined",
 ]
 
 
