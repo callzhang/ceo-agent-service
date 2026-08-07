@@ -1,4 +1,3 @@
-import json
 import threading
 import time
 from collections import deque
@@ -10,7 +9,6 @@ import pytest
 from app.agent_context import AgentContextMessage, AgentTaskContext
 from app.agent_contracts import (
     AuditAgentResult,
-    AuditFeedback,
     AuditOutcome,
     ConsumerAgentResult,
     ConsumerOutcome,
@@ -234,6 +232,51 @@ class ScriptedAudit:
         )
         return AgentTurnRunResult(claim.run.id, result, 0, 1)
 
+    def recover(self, task, context, *, run):
+        raise AssertionError(f"unexpected recovery for run {run.id}")
+
+
+class RecoveringScriptedAudit(ScriptedAudit):
+    def __init__(self, store, result):
+        super().__init__(store)
+        self.recovery_result = result
+        self.recovery_calls = []
+
+    def recover(self, task, context, *, run):
+        claim = self.store.claim_unknown_agent_run(
+            run.id,
+            owner=self.owner,
+        )
+        assert claim.claimed
+        result = self.recovery_result
+        if result.outcome is AuditOutcome.EXECUTED:
+            result = result.model_copy(
+                update={
+                    "external_result": result.external_result.model_copy(
+                        update={"operation_id": run.operation_id}
+                    )
+                }
+            )
+            side_effect_state = "confirmed"
+        else:
+            side_effect_state = "unknown"
+        completed = self.store.complete_agent_run(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=self.owner,
+            side_effect_state=side_effect_state,
+            expected_status="unknown",
+        )
+        self.recovery_calls.append(
+            {
+                "run_id": run.id,
+                "session_id": run.codex_session_id,
+                "operation_id": context.operation_id,
+                "revision": context.proposal_revision,
+            }
+        )
+        return AgentTurnRunResult(completed.id, result, 1, 2)
+
 
 @pytest.fixture
 def store(tmp_path: Path) -> AutoReplyStore:
@@ -336,6 +379,119 @@ def test_two_feedback_cycles_resume_same_consumer_and_create_fresh_auditors(stor
     assert [call["revision"] for call in audit.calls] == [0, 1, 2]
     assert len({call["session_id"] for call in audit.calls}) == 3
     assert all(call["feedback"] is not None for call in consumer.calls[1:])
+
+
+def test_corrected_revision_is_not_blocked_by_old_exact_success(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+    first = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=audit),
+        task,
+    )
+    assert first.status == "completed"
+    old_audit = store.get_agent_run(first.final_run_id)
+    assert old_audit is not None
+
+    corrected_consumer = ScriptedConsumer(
+        store, _consumer_result("proposal", "corrected-candidate")
+    )
+    corrected_consumer.run(
+        task,
+        _context(task),
+        proposal_revision=1,
+        parent_agent_run_id=old_audit.id,
+    )
+    corrected_audit = ScriptedAudit(store, _audit_result("executed", 1))
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=corrected_consumer,
+            audit=corrected_audit,
+        ),
+        task,
+    )
+
+    assert result.status == "completed"
+    assert corrected_audit.calls[0]["revision"] == 1
+    assert corrected_audit.calls[0]["operation_id"] == (
+        f"agent-task:{task.id}:{task.execution_generation}:proposal:1"
+    )
+    assert corrected_audit.calls[0]["operation_id"] != old_audit.operation_id
+
+
+@pytest.mark.parametrize(
+    ("recovery_outcome", "expected_status"),
+    (("executed", "completed"), ("needs_human", "needs_human")),
+)
+def test_unknown_audit_is_recovered_in_same_session_and_revision(
+    store,
+    recovery_outcome,
+    expected_status,
+):
+    pending = _task(store)
+    task = store.claim_reply_task(pending.id)
+    assert task is not None
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    consumer.run(
+        task,
+        _context(task),
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+    parent = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert parent is not None
+    operation_id = f"agent-task:{task.id}:{task.execution_generation}:proposal:0"
+    audit_run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=operation_id,
+        owner="crashed-audit",
+    ).run
+    store.set_agent_run_session(
+        audit_run.id,
+        "audit-session-exact",
+        owner="crashed-audit",
+    )
+    unknown = store.mark_agent_run_unknown(
+        audit_run.id,
+        {"code": "write_outcome_unknown", "retryable": False},
+        owner="crashed-audit",
+    )
+    recovery = RecoveringScriptedAudit(
+        store,
+        _audit_result(recovery_outcome, 0, code="audit_recovery_ambiguous"),
+    )
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=ScriptedConsumer(store),
+            audit=recovery,
+        ),
+        task,
+    )
+
+    assert result.status == expected_status
+    assert recovery.recovery_calls == [
+        {
+            "run_id": unknown.id,
+            "session_id": "audit-session-exact",
+            "operation_id": operation_id,
+            "revision": 0,
+        }
+    ]
 
 
 def test_infrastructure_retry_does_not_consume_feedback_cycle(store):

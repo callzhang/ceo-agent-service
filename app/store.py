@@ -459,6 +459,26 @@ def _agent_event_columns(event: dict[str, object]) -> tuple[str, str, str, str]:
     return event_type, call_id, effect_kind, receipt_operation_id
 
 
+def _agent_effect_identity(event: dict[str, object]) -> dict[str, object] | None:
+    item = event.get("item")
+    metadata = item.get("metadata") if isinstance(item, dict) else None
+    if not isinstance(metadata, dict) or metadata.get("effect") != "effectful":
+        return None
+    identity = {
+        key: metadata.get(key)
+        for key in (
+            "capability",
+            "operation",
+            "operation_id",
+            "operation_digest",
+            "arguments_digest",
+            "target_identifiers",
+        )
+        if key in metadata
+    }
+    return identity or None
+
+
 def _agent_effect_state_from_rows(
     db: sqlite3.Connection,
     run_id: int,
@@ -2626,6 +2646,7 @@ class AutoReplyStore:
         command_digest: str,
         exit_code: int,
         owner: str,
+        expected_status: str = "running",
         now: str | datetime | None = None,
     ) -> AgentExecutionReceipt:
         if not all(
@@ -2641,12 +2662,15 @@ class AutoReplyStore:
             raise ValueError("execution receipt identity must be non-empty")
         if exit_code != 0:
             raise ValueError("only successful executions can produce receipts")
+        if expected_status not in {"running", "unknown"}:
+            raise ValueError("invalid execution receipt run status")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             self._require_current_agent_run_write_access(
                 db,
                 run_id,
                 owner=owner,
                 now_text=now_text,
+                expected_status=expected_status,
             )
             run_row = db.execute(
                 "select role from agent_runs where id=?", (run_id,)
@@ -3059,12 +3083,15 @@ class AutoReplyStore:
         *,
         owner: str,
         lease_seconds: int = 1800,
+        expected_status: str = "running",
         now: str | datetime | None = None,
     ) -> AgentRun:
         if not owner.strip():
             raise ValueError("owner must be non-empty")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
+        if expected_status not in {"running", "unknown"}:
+            raise ValueError("invalid agent run lease status")
         with self._agent_run_write_transaction(now) as (
             db,
             (now_value, now_text),
@@ -3074,7 +3101,8 @@ class AutoReplyStore:
                 run_id,
                 owner=owner,
                 now_text=now_text,
-                status_error="agent run lease requires running status",
+                expected_status=expected_status,
+                status_error=f"agent run lease requires {expected_status} status",
             )
             lease_expires_at = (
                 now_value + timedelta(seconds=lease_seconds)
@@ -3083,10 +3111,17 @@ class AutoReplyStore:
                 """
                 update agent_runs
                 set lease_expires_at=?, updated_at=?
-                where id=? and status='running' and lease_owner=?
+                where id=? and status=? and lease_owner=?
                   and lease_expires_at>?
                 """,
-                (lease_expires_at, now_text, run_id, owner, now_text),
+                (
+                    lease_expires_at,
+                    now_text,
+                    run_id,
+                    expected_status,
+                    owner,
+                    now_text,
+                ),
             )
             if cursor.rowcount != 1:
                 row = db.execute(
@@ -3095,8 +3130,10 @@ class AutoReplyStore:
                 ).fetchone()
                 if row is None:
                     raise ValueError("agent run does not exist")
-                if row["status"] != "running":
-                    raise ValueError("agent run lease requires running status")
+                if row["status"] != expected_status:
+                    raise ValueError(
+                        f"agent run lease requires {expected_status} status"
+                    )
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
             updated = db.execute(
                 "select * from agent_runs where id=?",
@@ -3205,6 +3242,22 @@ class AutoReplyStore:
                 )
             ):
                 raise ValueError("Consumer Agent cannot persist side effects")
+            if effect_kind == "effectful":
+                identity = _agent_effect_identity(normalized_event)
+                if (
+                    isinstance(identity, dict)
+                    and identity.get("operation_id") is not None
+                    and identity.get("operation_id") != run_row["operation_id"]
+                ):
+                    raise ValueError("effect operation identity mismatch")
+            self._validate_agent_effect_event_identity(
+                db,
+                run_id,
+                normalized_event,
+                event_type=event_type,
+                call_id=call_id,
+                effect_kind=effect_kind,
+            )
             sequence = db.execute(
                 "select coalesce(max(sequence), 0) + 1 from agent_run_events "
                 "where agent_run_id=?",
@@ -3253,6 +3306,40 @@ class AutoReplyStore:
                 (run_id,),
             ).fetchone()
             return self._agent_run_from_row(updated, db=db)
+
+    @staticmethod
+    def _validate_agent_effect_event_identity(
+        db: sqlite3.Connection,
+        run_id: int,
+        event: dict[str, object],
+        *,
+        event_type: str,
+        call_id: str,
+        effect_kind: str,
+    ) -> None:
+        if (
+            effect_kind != "effectful"
+            or event_type not in {"item.completed", "item.failed"}
+            or not call_id
+        ):
+            return
+        row = db.execute(
+            """
+            select event_json from agent_run_events
+            where agent_run_id=? and call_id=? and effect_kind='effectful'
+              and event_type='item.started'
+            order by sequence desc limit 1
+            """,
+            (run_id, call_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("effect completion requires matching start")
+        try:
+            started = json.loads(row["event_json"])
+        except json.JSONDecodeError as exc:
+            raise ValueError("effect start identity is invalid") from exc
+        if _agent_effect_identity(started) != _agent_effect_identity(event):
+            raise ValueError("effect completion identity mismatch")
 
     def append_unknown_agent_run_event(
         self,
@@ -3303,6 +3390,22 @@ class AutoReplyStore:
             ).fetchone()[0]
             event_type, call_id, effect_kind, receipt_operation_id = (
                 _agent_event_columns(normalized_event)
+            )
+            if effect_kind == "effectful":
+                identity = _agent_effect_identity(normalized_event)
+                if (
+                    isinstance(identity, dict)
+                    and identity.get("operation_id") is not None
+                    and identity.get("operation_id") != row["operation_id"]
+                ):
+                    raise ValueError("effect operation identity mismatch")
+            self._validate_agent_effect_event_identity(
+                db,
+                run_id,
+                normalized_event,
+                event_type=event_type,
+                call_id=call_id,
+                effect_kind=effect_kind,
             )
             db.execute(
                 """
@@ -3470,11 +3573,12 @@ class AutoReplyStore:
         owner: str,
         side_effect_state: str = "none",
         transcript_end_line: int | None = None,
+        expected_status: str = "running",
         now: str | datetime | None = None,
     ) -> AgentRun:
         return self._transition_agent_run(
             run_id,
-            expected_status="running",
+            expected_status=expected_status,
             owner=owner,
             target_status="completed",
             final_result_json=_json_object_text(

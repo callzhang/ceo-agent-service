@@ -13,8 +13,9 @@ from app.store import AgentRole, AutoReplyStore
 
 
 class CapturingExecutor:
-    def __init__(self, stdout: str) -> None:
+    def __init__(self, stdout: str, *, returncode: int = 0) -> None:
         self.stdout = stdout
+        self.returncode = returncode
         self.commands: list[list[str]] = []
         self.prompts: list[str] = []
 
@@ -23,7 +24,117 @@ class CapturingExecutor:
         self.commands.append(command)
         for line in self.stdout.splitlines():
             on_stdout_line(line)
-        return ProcessRunResult(0, self.stdout, "")
+        return ProcessRunResult(self.returncode, self.stdout, "")
+
+
+def _audit_result_jsonl(
+    outcome: str,
+    *,
+    operation_id: str,
+    session: str,
+    proposal_revision: int = 0,
+    include_read: bool = True,
+    include_write: bool = False,
+) -> str:
+    records = [json.dumps({"type": "thread.started", "thread_id": session})]
+    if include_read:
+        arguments = {
+            "argv": [
+                "dws", "chat", "message", "list", "--group", "cid-agent",
+                "--time", "2026-08-06",
+            ]
+        }
+        from app.native_cli_metadata import describe_native_command
+
+        descriptor = describe_native_command(
+            {"type": "command_execution", "argv": arguments["argv"]}
+        )
+        assert descriptor is not None
+        receipt = {
+            "cli": "dws",
+            "operation": descriptor.command_path,
+            "operation_digest": descriptor.command_digest,
+            "target_identifiers": descriptor.target_identifiers,
+            "result_digest": "recovery-read-digest",
+            "stdout": "{}",
+        }
+        item = {
+            "type": "mcp_tool_call",
+            "id": "recovery-read",
+            "server": "agent_cli",
+            "tool": "execute_reviewed_read",
+            "arguments": arguments,
+            "status": "in_progress",
+        }
+        records.extend(
+            (
+                json.dumps({"type": "item.started", "item": item}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            **item,
+                            "status": "completed",
+                            "result": {
+                                "content": [
+                                    {"type": "text", "text": json.dumps(receipt)}
+                                ],
+                                "isError": False,
+                            },
+                        },
+                    }
+                ),
+            )
+        )
+    if include_write:
+        write_lines = _audit_jsonl(
+            operation_id,
+            session=session,
+            include_verification=True,
+            proposal_revision=proposal_revision,
+        ).splitlines()
+        records.extend(write_lines[1:-1])
+    if outcome == "executed":
+        result = {
+            "outcome": "executed",
+            "summary": "Live state confirms the exact operation.",
+            "proposal_revision": proposal_revision,
+            "side_effect_state": "confirmed",
+            "feedback": None,
+            "external_result": {
+                "operation_id": operation_id,
+                "verification_summary": "Confirmed from live state.",
+                "live_result_reference": {"id": "confirmed-message"},
+            },
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    else:
+        result = {
+            "outcome": "needs_human",
+            "summary": "Live state remains ambiguous.",
+            "proposal_revision": proposal_revision,
+            "side_effect_state": "none",
+            "feedback": None,
+            "external_result": None,
+            "error": {
+                "code": "audit_recovery_ambiguous",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    records.append(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": json.dumps(result)},
+            }
+        )
+    )
+    return "\n".join(records)
 
 
 def _audit_jsonl(
@@ -390,6 +501,53 @@ def test_audit_rejects_executed_result_without_completed_write(setup):
     assert run.side_effect_state == "none"
 
 
+def test_audit_accepts_matching_persisted_execution_receipt_with_live_read(setup):
+    store, task, audit_context, parent = setup
+
+    class ReceiptExecutor(CapturingExecutor):
+        def __call__(self, command, *, on_stdout_line, **kwargs):
+            run = store.get_agent_run_for_turn(
+                task.id,
+                task.execution_generation,
+                role=AgentRole.AUDIT,
+                proposal_revision=0,
+                turn_attempt=0,
+            )
+            assert run is not None
+            store.record_agent_execution_receipt(
+                run.id,
+                receipt_id="receipt-operation-1",
+                operation_id=run.operation_id,
+                cli="dws",
+                command_path="chat message send",
+                command_digest="persisted-command-digest",
+                exit_code=0,
+                owner="audit-owner",
+            )
+            return super().__call__(
+                command,
+                on_stdout_line=on_stdout_line,
+                **kwargs,
+            )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=ReceiptExecutor(
+            _audit_result_jsonl(
+                "executed",
+                operation_id="operation-1",
+                session="session-b",
+            )
+        ),
+        owner="audit-owner",
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    persisted = store.get_agent_run(result.run_id)
+    assert persisted is not None and persisted.status == "completed"
+    assert persisted.side_effect_state == "confirmed"
+
+
 def test_audit_rejects_executed_result_without_live_verification(setup):
     store, task, audit_context, parent = setup
 
@@ -497,6 +655,167 @@ def test_audit_rejects_write_with_different_payload_for_same_target(setup):
                 )
             ),
         ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+
+def _seed_crashed_audit_write(setup):
+    store, task, audit_context, parent = setup
+    initial_lines = _audit_jsonl(
+        "operation-1",
+        session="audit-session-recovery",
+        include_verification=False,
+    ).splitlines()
+    executor = CapturingExecutor("\n".join(initial_lines[:2]), returncode=1)
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert run.status == "unknown"
+    assert run.side_effect_state == "unknown"
+    assert run.codex_session_id == "audit-session-recovery"
+    assert len(run.tool_events) == 1
+    persisted_item = run.tool_events[0]["item"]
+    assert "arguments" not in persisted_item and "result" not in persisted_item
+    assert persisted_item["metadata"]["operation_id"] == "operation-1"
+    assert persisted_item["metadata"]["target_identifiers"] == {
+        "group": "cid-agent"
+    }
+    return store, task, audit_context, run
+
+
+def test_crash_after_write_resumes_same_audit_session_and_confirms_without_replay(
+    setup,
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "executed",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, audit_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.run_id == run.id
+    assert result.result.outcome.value == "executed"
+    assert persisted is not None and persisted.status == "completed"
+    assert persisted.side_effect_state == "confirmed"
+    assert "resume" in executor.commands[0]
+    assert run.codex_session_id in executor.commands[0]
+    assert sum(
+        event["type"] == "item.started"
+        and event["item"]["metadata"]["effect"] == "effectful"
+        for event in persisted.tool_events
+    ) == 1
+    receipts = store.list_agent_execution_receipts(run.id)
+    assert [receipt.operation_id for receipt in receipts] == [run.operation_id]
+    read_events = [
+        event
+        for event in persisted.tool_events
+        if event["type"] == "item.completed"
+        and event["item"]["metadata"]["effect"] == "read_only"
+    ]
+    assert read_events[0]["item"]["metadata"]["result_digest"] == (
+        "recovery-read-digest"
+    )
+    assert receipts[0].receipt_id == (
+        f"reconciliation:{run.operation_id}:recovery-read-digest"
+    )
+
+
+def test_ambiguous_recovery_becomes_needs_human_without_write(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "needs_human",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, audit_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "needs_human"
+    assert persisted is not None and persisted.status == "completed"
+    assert persisted.side_effect_state == "unknown"
+    assert sum(
+        event["type"] == "item.started"
+        and event["item"]["metadata"]["effect"] == "effectful"
+        for event in persisted.tool_events
+    ) == 1
+
+
+def test_definitely_absent_recovery_reads_before_executing_same_revision_once(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "executed",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            include_write=True,
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, audit_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.external_result.operation_id == run.operation_id
+    assert persisted is not None and persisted.status == "completed"
+    recovery_events = persisted.tool_events[1:]
+    assert recovery_events[0]["item"]["metadata"]["effect"] == "read_only"
+    assert sum(
+        event["type"] == "item.started"
+        and event["item"]["metadata"]["effect"] == "effectful"
+        for event in recovery_events
+    ) == 1
+
+
+def test_unknown_recovery_rejects_blind_write_before_live_read(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "executed",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            include_read=False,
+            include_write=True,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="audit_recovery_read_required"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).recover(task, audit_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.status == "unknown"
+    assert persisted.side_effect_state == "unknown"
 
 
 def test_audit_rejects_different_operation_for_same_target_and_payload(setup):

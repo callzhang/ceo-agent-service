@@ -46,6 +46,14 @@ class AuditRunner(Protocol):
         parent_agent_run_id: int,
     ) -> AgentTurnRunResult[AuditAgentResult]: ...
 
+    def recover(
+        self,
+        task: ReplyTask,
+        context: AuditTurnContext,
+        *,
+        run: AgentRun,
+    ) -> AgentTurnRunResult[AuditAgentResult]: ...
+
 
 @dataclass(frozen=True)
 class OrchestrationResult:
@@ -75,6 +83,12 @@ class _NextAudit:
     parent_run_id: int
     proposal: ConsumerProposal | None
     authorization_error_code: str = ""
+
+
+@dataclass(frozen=True)
+class _RecoverAudit:
+    run: AgentRun
+    proposal: ConsumerProposal
 
 
 @dataclass(frozen=True)
@@ -150,10 +164,26 @@ class AgentOrchestrator:
                         feedback=state.feedback,
                     )
                 else:
-                    attempt_key = (AgentRole.AUDIT, state.proposal_revision)
+                    if isinstance(state, _RecoverAudit):
+                        attempt_key = (AgentRole.AUDIT, state.run.proposal_revision)
+                        if role_attempts.get(attempt_key, 0) >= 1:
+                            result = _failed_audit_result(
+                                state.run,
+                                AuditOutcome.UNKNOWN,
+                                _run_error(state.run),
+                            )
+                            return _audit_terminal(
+                                "blocked",
+                                state.run,
+                                result,
+                                self._feedback_cycles(task),
+                            )
+                    else:
+                        attempt_key = (AgentRole.AUDIT, state.proposal_revision)
                     max_attempts = (
                         1
-                        if state.authorization_error_code
+                        if isinstance(state, _RecoverAudit)
+                        or state.authorization_error_code
                         else MAX_ROLE_ATTEMPTS_PER_PROCESS
                     )
                     if role_attempts.get(attempt_key, 0) >= max_attempts:
@@ -192,18 +222,31 @@ class AgentOrchestrator:
                                 feedback_cycles=self._feedback_cycles(task),
                             )
                         )
-                    self.audit.run(
-                        task,
-                        AuditTurnContext(
-                            task=audit_task_context,
-                            proposal_revision=state.proposal_revision,
-                            operation_id=_operation_id(task, state.proposal_revision),
-                            proposal=state.proposal,
-                            audit_rules="",
-                        ),
-                        turn_attempt=state.turn_attempt,
-                        parent_agent_run_id=state.parent_run_id,
-                    )
+                    if isinstance(state, _RecoverAudit):
+                        self.audit.recover(
+                            task,
+                            AuditTurnContext(
+                                task=audit_task_context,
+                                proposal_revision=state.run.proposal_revision,
+                                operation_id=state.run.operation_id,
+                                proposal=state.proposal,
+                                audit_rules="",
+                            ),
+                            run=state.run,
+                        )
+                    else:
+                        self.audit.run(
+                            task,
+                            AuditTurnContext(
+                                task=audit_task_context,
+                                proposal_revision=state.proposal_revision,
+                                operation_id=_operation_id(task, state.proposal_revision),
+                                proposal=state.proposal,
+                                audit_rules="",
+                            ),
+                            turn_attempt=state.turn_attempt,
+                            parent_agent_run_id=state.parent_run_id,
+                        )
             except RuntimeError as exc:
                 if str(exc) in {
                     "agent_run_unavailable",
@@ -217,7 +260,7 @@ class AgentOrchestrator:
                         )
                     )
                 next_state = self._derive_state(task)
-                if isinstance(next_state, (_NextConsumer, _NextAudit)):
+                if isinstance(next_state, (_NextConsumer, _NextAudit, _RecoverAudit)):
                     continue
                 if isinstance(next_state, _Deferred):
                     return self._deferred_result(next_state)
@@ -233,7 +276,7 @@ class AgentOrchestrator:
     def _derive_state(
         self,
         task: ReplyTask,
-    ) -> OrchestrationResult | _NextConsumer | _NextAudit | _Deferred:
+    ) -> OrchestrationResult | _NextConsumer | _NextAudit | _RecoverAudit | _Deferred:
         runs = self.store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
@@ -241,6 +284,14 @@ class AgentOrchestrator:
         by_revision: dict[int, list[AgentRun]] = {}
         for run in runs:
             by_revision.setdefault(run.proposal_revision, []).append(run)
+        highest_materialized_revision = max(
+            (
+                run.proposal_revision
+                for run in runs
+                if run.role is AgentRole.CONSUMER
+            ),
+            default=0,
+        )
 
         revision = 0
         while revision <= MAX_CONTENT_FEEDBACK_CYCLES:
@@ -287,6 +338,8 @@ class AgentOrchestrator:
             if not audits:
                 return _NextAudit(revision, 0, consumer.id, consumer_state.proposal)
             latest = audits[-1]
+            if latest.status == "unknown":
+                return _RecoverAudit(latest, consumer_state.proposal)
             audit_state = self._audit_state(task, latest, revision)
             if isinstance(audit_state, _NextAudit):
                 return _NextAudit(
@@ -299,6 +352,9 @@ class AgentOrchestrator:
             if not isinstance(audit_state, AuditAgentResult):
                 return audit_state
             if audit_state.outcome is AuditOutcome.EXECUTED:
+                if revision < highest_materialized_revision:
+                    revision += 1
+                    continue
                 return _audit_terminal("completed", latest, audit_state, revision)
             if audit_state.outcome is AuditOutcome.NEEDS_HUMAN:
                 return _audit_terminal("needs_human", latest, audit_state, revision)

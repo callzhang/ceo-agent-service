@@ -33,6 +33,35 @@ def _claim_consumer(store, task, *, revision=0, owner="consumer"):
     )
 
 
+def _claim_audit(store, task):
+    return store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="operation-0",
+        owner="audit",
+    ).run
+
+
+def _effect_event(event_type="item.started", **metadata):
+    return {
+        "type": event_type,
+        "item": {
+            "type": "mcp_tool_call",
+            "id": "write-1",
+            "status": "completed" if event_type == "item.completed" else "in_progress",
+            "metadata": {
+                "effect": "effectful",
+                "operation_id": "operation-0",
+                **metadata,
+            },
+        },
+    }
+
+
 def test_task_generation_can_store_consumer_and_multiple_audit_attempts(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
@@ -139,6 +168,92 @@ def test_consumer_turn_rejects_effectful_tool_events(tmp_path):
         )
 
     assert store.get_agent_run(run.id).side_effect_state == "none"
+
+
+def test_effect_started_persists_minimal_identity_and_matching_completion_confirms(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    started = _effect_event(
+        capability="agent_cli.dws",
+        operation="chat message send",
+        operation_digest="command-digest",
+        arguments_digest="arguments-digest",
+        target_identifiers={"group": "cid"},
+    )
+    after_start = store.append_agent_run_event(run.id, started, owner="audit")
+    assert after_start.side_effect_state == "unknown"
+    assert "arguments" not in after_start.tool_events[0]["item"]
+    assert "result" not in after_start.tool_events[0]["item"]
+
+    completed = {**started, "type": "item.completed"}
+    after_completed = store.append_agent_run_event(run.id, completed, owner="audit")
+    assert after_completed.side_effect_state == "confirmed"
+
+
+def test_mismatched_effect_completion_cannot_confirm_started_identity(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    started = _effect_event(
+        operation_digest="original",
+        arguments_digest="arguments",
+        target_identifiers={"group": "cid"},
+    )
+    store.append_agent_run_event(run.id, started, owner="audit")
+    mismatched = {
+        **started,
+        "type": "item.completed",
+        "item": {
+            **started["item"],
+            "metadata": {
+                **started["item"]["metadata"],
+                "operation_digest": "different",
+            },
+        },
+    }
+
+    with pytest.raises(ValueError, match="effect completion identity mismatch"):
+        store.append_agent_run_event(run.id, mismatched, owner="audit")
+
+    assert store.get_agent_run(run.id).side_effect_state == "unknown"
+
+
+def test_effect_event_operation_id_must_match_audit_run(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+
+    with pytest.raises(ValueError, match="effect operation identity mismatch"):
+        store.append_agent_run_event(
+            run.id,
+            {
+                "type": "item.started",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "id": "write-1",
+                    "metadata": {
+                        "effect": "effectful",
+                        "operation_id": "operation-other",
+                    },
+                },
+            },
+            owner="audit",
+        )
+
+
+def test_failed_effect_closes_started_identity_without_confirmation(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    started = _effect_event(operation_digest="same")
+    store.append_agent_run_event(run.id, started, owner="audit")
+    failed = {**started, "type": "item.failed"}
+    closed = store.append_agent_run_event(run.id, failed, owner="audit")
+
+    assert closed.side_effect_state == "none"
 
 
 def _create_pre_role_database(path: Path) -> Path:
