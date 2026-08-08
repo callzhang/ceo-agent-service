@@ -85,6 +85,7 @@ class _NextConsumer:
     parent_run_id: int | None
     feedback: AuditFeedback | None
     authorization_error_code: str = ""
+    deferred_error_code: str = ""
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ class _NextAudit:
     parent_run_id: int
     proposal: ConsumerProposal | None
     authorization_error_code: str = ""
+    deferred_error_code: str = ""
 
 
 @dataclass(frozen=True)
@@ -149,11 +151,17 @@ class AgentOrchestrator:
                     attempt_key = (AgentRole.CONSUMER, state.proposal_revision, "run")
                     max_attempts = (
                         1
-                        if state.authorization_error_code
+                        if (
+                            state.authorization_error_code
+                            or state.deferred_error_code
+                        )
                         else MAX_ROLE_ATTEMPTS_PER_PROCESS
                     )
                     if role_attempts.get(attempt_key, 0) >= max_attempts:
-                        if not state.authorization_error_code:
+                        if not (
+                            state.authorization_error_code
+                            or state.deferred_error_code
+                        ):
                             return self._retry_exhausted_result(
                                 task,
                                 role=AgentRole.CONSUMER,
@@ -164,6 +172,7 @@ class AgentOrchestrator:
                                 run=None,
                                 code=(
                                     state.authorization_error_code
+                                    or state.deferred_error_code
                                     or "consumer_retry_deferred"
                                 ),
                                 feedback_cycles=self._feedback_cycles(task),
@@ -202,10 +211,14 @@ class AgentOrchestrator:
                         1
                         if isinstance(state, (_RecoverAudit, _ExecuteAuditRecovery))
                         or state.authorization_error_code
+                        or state.deferred_error_code
                         else MAX_ROLE_ATTEMPTS_PER_PROCESS
                     )
                     if role_attempts.get(attempt_key, 0) >= max_attempts:
-                        if not state.authorization_error_code:
+                        if not (
+                            state.authorization_error_code
+                            or state.deferred_error_code
+                        ):
                             return self._retry_exhausted_result(
                                 task,
                                 role=AgentRole.AUDIT,
@@ -216,6 +229,7 @@ class AgentOrchestrator:
                                 run=None,
                                 code=(
                                     state.authorization_error_code
+                                    or state.deferred_error_code
                                     or "audit_retry_deferred"
                                 ),
                                 feedback_cycles=self._feedback_cycles(task),
@@ -421,6 +435,7 @@ class AgentOrchestrator:
                     consumer.id,
                     consumer_state.proposal,
                     audit_state.authorization_error_code,
+                    audit_state.deferred_error_code,
                 )
             if not isinstance(audit_state, AuditAgentResult):
                 return audit_state
@@ -562,6 +577,18 @@ class AgentOrchestrator:
             )
         if run.status == "failed" and error.retryable:
             if error.code == CODEX_PROVIDER_UNAVAILABLE:
+                if task.error == error.code:
+                    feedback = self._retry_feedback(run)
+                    if run.proposal_revision > 0 and feedback is None:
+                        return _Deferred(
+                            run, "agent_feedback_missing", feedback_cycles
+                        )
+                    return _NextConsumer(
+                        run.proposal_revision,
+                        run.parent_agent_run_id,
+                        feedback,
+                        deferred_error_code=error.code,
+                    )
                 return _Deferred(run, error.code, feedback_cycles)
             feedback = self._retry_feedback(run)
             if run.proposal_revision > 0 and feedback is None:
@@ -620,6 +647,14 @@ class AgentOrchestrator:
             )
         if run.status == "failed" and error.retryable and run.side_effect_state == "none":
             if error.code == CODEX_PROVIDER_UNAVAILABLE:
+                if task.error == error.code:
+                    return _NextAudit(
+                        run.proposal_revision,
+                        run.turn_attempt,
+                        run.parent_agent_run_id or 0,
+                        None,
+                        deferred_error_code=error.code,
+                    )
                 return _Deferred(run, error.code, feedback_cycles)
             return _NextAudit(
                 run.proposal_revision,

@@ -438,6 +438,48 @@ def test_provider_capacity_failure_defers_without_in_process_retries(store):
     assert len(consumer.calls) == 1
 
 
+def test_provider_capacity_failure_retries_on_later_task_attempt(store):
+    _task(store)
+    task = store.claim_reply_tasks(1)[0]
+    consumer = ScriptedConsumer(
+        store,
+        ConsumerAgentResult.model_validate(
+            {
+                "outcome": "failed",
+                "summary": "Codex provider capacity is temporarily unavailable.",
+                "proposal": None,
+                "error": {
+                    "code": "codex_provider_unavailable",
+                    "retryable": True,
+                    "authorization_required": False,
+                },
+            }
+        ),
+        _consumer_result("no_action", "Recovered on the later task attempt."),
+    )
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=consumer,
+        audit=ScriptedAudit(store),
+    )
+
+    first = _process(orchestrator, task)
+    assert first.status == "failed_retryable"
+    store.defer_reply_task(
+        task.id,
+        "codex_provider_unavailable",
+        expected_execution_generation=task.execution_generation,
+        available_at="2026-08-08 12:00:00",
+    )
+    retried_task = store.get_reply_task(task.id)
+
+    second = _process(orchestrator, retried_task)
+
+    assert second.status == "no_action"
+    assert len(consumer.calls) == 2
+    assert consumer.calls[0]["run_id"] == consumer.calls[1]["run_id"]
+
+
 def test_audit_provider_capacity_failure_defers_without_in_process_retries(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate"))
@@ -456,6 +498,39 @@ def test_audit_provider_capacity_failure_defers_without_in_process_retries(store
     assert result.status == "failed_retryable"
     assert result.error.code == "codex_provider_unavailable"
     assert len(audit.calls) == 1
+
+
+def test_audit_provider_capacity_failure_retries_on_later_task_attempt(store):
+    _task(store)
+    task = store.claim_reply_tasks(1)[0]
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate"))
+    audit = ScriptedAudit(
+        store,
+        _audit_result(
+            "failed",
+            0,
+            code="codex_provider_unavailable",
+            retryable=True,
+        ),
+        _audit_result("executed", 0),
+    )
+    orchestrator = AgentOrchestrator(store=store, consumer=consumer, audit=audit)
+
+    first = _process(orchestrator, task)
+    assert first.status == "failed_retryable"
+    store.defer_reply_task(
+        task.id,
+        "codex_provider_unavailable",
+        expected_execution_generation=task.execution_generation,
+        available_at="2026-08-08 12:00:00",
+    )
+    retried_task = store.get_reply_task(task.id)
+
+    second = _process(orchestrator, retried_task)
+
+    assert second.status == "executed"
+    assert len(audit.calls) == 2
+    assert audit.calls[0]["run_id"] == audit.calls[1]["run_id"]
 
 
 def test_proposal_is_executed_only_by_fresh_audit_session(store):
