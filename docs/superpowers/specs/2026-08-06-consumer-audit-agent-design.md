@@ -554,7 +554,8 @@ Pending proposals wait or become `needs_human` when no B execution path exists.
 - Blocking a corrected action because an older version already executed.
 ### Direct DingTalk reads
 
-Consumer A reads DingTalk evidence itself. For an installed DWS command whose
-exact schema declares `effect: read`, it uses the native command directly;
-the runtime records that read-only event. `agent_cli` is not a DWS proxy.
+Consumer A reads DingTalk evidence itself. It invokes
+`agent_cli.execute_reviewed_read` with the exact DWS command, so DWS runs with
+the principal's existing local credential store while the Codex sandbox stays
+read-only. The service does not pre-read material or select business targets.
 Unknown shell commands and any DWS write remain rejected for Consumer A.

@@ -455,7 +455,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert 'approval_policy="untrusted"' in command
     assert 'approvals_reviewer="auto_review"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
-    assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_write", "read_skill"]' in command
+    assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill"]' in command
     assert 'web_search="disabled"' not in command
     assert store.get_codex_session_id(task.conversation_id) == "session-a"
     run = store.get_agent_run(result.run_id)
@@ -523,7 +523,7 @@ def test_dry_run_audit_command_exposes_only_reviewed_read_tools(setup):
     assert result.result.error.code == "dry_run_execution_suppressed"
     assert result.result.side_effect_state.value == "none"
     assert (
-        'mcp_servers.agent_cli.enabled_tools=["read_skill"]'
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill"]'
         in command
     )
     assert "execute_reviewed_write" not in command
