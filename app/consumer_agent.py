@@ -134,6 +134,11 @@ class ConsumerAgentRunner:
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
         session_id = claim.run.codex_session_id or conversation_session_id
+        persist_conversation_session = not (
+            claim.run.codex_session_id
+            and conversation_session_id
+            and claim.run.codex_session_id != conversation_session_id
+        )
         process = AgentTurnProcess[ConsumerAgentResult](
             store=self.store,
             task=task,
@@ -177,7 +182,7 @@ class ConsumerAgentRunner:
                     raw,
                     ConsumerAgentResult,
                 ),
-                persist_conversation_session=True,
+                persist_conversation_session=persist_conversation_session,
                 on_progress=renew_session_lock,
             )
         except ResultParseError as exc:

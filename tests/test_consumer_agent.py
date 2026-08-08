@@ -373,6 +373,7 @@ def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advan
 
     assert executor.commands[0][:3] == ["codex", "exec", "resume"]
     assert executor.commands[0][-2:] == ["session-old", "-"]
+    assert store.get_codex_session_id(task.conversation_id) == "session-new"
 
 
 def test_old_run_parse_failure_does_not_clear_newer_conversation_session(
