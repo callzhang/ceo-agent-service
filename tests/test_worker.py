@@ -2046,6 +2046,37 @@ def test_read_recent_messages_missing_direct_chat_target_is_empty_context(
     assert state["last_error"] == ""
 
 
+def test_queued_single_chat_context_missing_direct_target_is_not_an_error(
+    tmp_path: Path, monkeypatch
+):
+    missing_target_error = DwsError(
+        "expected one direct chat user for '张静', got 0",
+        code=DwsError.DIRECT_CHAT_TARGET_NOT_FOUND_CODE,
+    )
+    trigger = message("请确认一下")
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": []},
+        read_errors={"cid-1": missing_target_error},
+        unread_errors={"cid-1": missing_target_error},
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="unused")),
+        monkeypatch,
+    )
+
+    context, prompt_context = worker._queued_task_prompt_context_messages(
+        conversation(single_chat=True),
+        trigger,
+    )
+
+    assert context == []
+    assert prompt_context == []
+    assert worker.store.count_errors() == 0
+
+
 def test_queued_task_starts_pat_authorization_when_context_read_needs_authorization(
     tmp_path: Path, monkeypatch
 ):

@@ -517,6 +517,7 @@ class DingTalkAutoReplyWorker:
         raise_authorization: bool = False,
         raise_errors: bool = False,
         record_forbidden_error: bool = True,
+        allow_missing_direct_chat_target: bool = False,
         default: T,
     ) -> T:
         try:
@@ -557,7 +558,10 @@ class DingTalkAutoReplyWorker:
                 self._record_dws_transient_error(kind, str(exc))
                 should_record_error = False
                 should_notify = False
-            elif self._is_missing_direct_chat_recent_context(kind, exc):
+            elif (
+                allow_missing_direct_chat_target
+                and self._is_missing_direct_chat_target_error(exc)
+            ):
                 self._clear_dws_transient_error(kind)
                 should_record_error = False
                 should_notify = False
@@ -619,10 +623,9 @@ class DingTalkAutoReplyWorker:
         )
 
     @staticmethod
-    def _is_missing_direct_chat_recent_context(kind: str, exc: Exception) -> bool:
+    def _is_missing_direct_chat_target_error(exc: Exception) -> bool:
         return (
-            kind == "read_recent_messages"
-            and isinstance(exc, DwsError)
+            isinstance(exc, DwsError)
             and exc.code == DwsError.DIRECT_CHAT_TARGET_NOT_FOUND_CODE
         )
 
@@ -691,6 +694,7 @@ class DingTalkAutoReplyWorker:
             raise_authorization=raise_authorization,
             raise_errors=raise_errors,
             record_forbidden_error=False,
+            allow_missing_direct_chat_target=conversation.single_chat,
             default=default,
         )
 

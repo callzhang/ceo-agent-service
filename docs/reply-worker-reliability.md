@@ -215,3 +215,10 @@ curl -fsS http://127.0.0.1:8765/ >/dev/null
 
 完成报告前还要检查 reply tasks、agent runs、work summary、meeting 和外部投递队列中没有新增
 `failed` 或长期 `processing`。
+### Unavailable single-chat context
+
+When a single-chat title cannot be resolved to one direct user, the worker may
+continue with the triggering message and no historical context. This is not a
+delivery failure and must not create an error event or user-facing failure
+notification. Group-chat resolution, authorization failures, transport errors,
+and every attempted external action remain error-reporting paths.
