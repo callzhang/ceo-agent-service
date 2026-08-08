@@ -464,6 +464,7 @@ class AgentTurnProcess(Generic[ResultT]):
         native_cli = ""
         authorization_id = ""
         validated_receipt: dict[str, object] | None = None
+        read_receipt_failed = False
         if call.server == "agent_cli" and call.tool in {
             "execute_reviewed_read",
             "execute_reviewed_write",
@@ -485,10 +486,12 @@ class AgentTurnProcess(Generic[ResultT]):
             target_identifiers = descriptor.target_identifiers
             native_cli = descriptor.cli
             if payload.get("type") == "item.completed":
-                receipt = _agent_cli_receipt(item.get("result"))
+                receipt = _agent_cli_receipt(
+                    item.get("result"),
+                    allow_error=call.effect is EffectKind.READ_ONLY,
+                )
                 if (
                     receipt is None
-                    or "error" in receipt
                     or receipt.get("operation") != descriptor.command_path
                     or receipt.get("operation_digest") != operation_digest
                     or receipt.get("target_identifiers") != target_identifiers
@@ -499,8 +502,13 @@ class AgentTurnProcess(Generic[ResultT]):
                 ):
                     raise AgentReadOnlyViolationError("agent_cli_receipt_invalid")
                 validated_receipt = receipt
+                read_receipt_failed = (
+                    call.effect is EffectKind.READ_ONLY and "error" in receipt
+                )
         event_type = str(payload["type"])
-        if event_type == "item.completed" and not _mcp_call_completed(payload):
+        if read_receipt_failed:
+            event_type = "item.failed"
+        elif event_type == "item.completed" and not _mcp_call_completed(payload):
             event_type = "item.failed"
         status = {
             "item.started": "in_progress",
@@ -857,26 +865,44 @@ def _session_id(payload: dict[str, object]) -> str:
     return ""
 
 
-def _agent_cli_receipt(value: object) -> dict[str, object] | None:
+def _agent_cli_receipt(
+    value: object, *, allow_error: bool = False
+) -> dict[str, object] | None:
     receipt = _controlled_cli_receipt(value)
     if receipt is not None or not isinstance(value, dict):
         return receipt
+    candidates: list[object] = [value.get("structuredContent"), value.get("structured_content")]
     content = value.get("content")
-    if not isinstance(content, list):
-        return None
-    for block in content:
-        if not isinstance(block, dict) or block.get("type") != "text":
-            continue
-        text = block.get("text")
-        if not isinstance(text, str) or len(text.encode("utf-8")) > 64 * 1024:
-            continue
-        try:
-            candidate = json.loads(text)
-        except json.JSONDecodeError:
+    if isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            text = block.get("text")
+            if not isinstance(text, str) or len(text.encode("utf-8")) > 64 * 1024:
+                continue
+            try:
+                candidates.append(json.loads(text))
+            except json.JSONDecodeError:
+                continue
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
             continue
         receipt = _controlled_cli_receipt(candidate)
-        if receipt is not None:
+        if receipt is not None and (
+            allow_error or not isinstance(candidate.get("error"), dict)
+        ):
             return receipt
+        if allow_error and all(
+            isinstance(candidate.get(key), expected)
+            for key, expected in (
+                ("result_digest", str),
+                ("operation_digest", str),
+                ("operation", str),
+                ("target_identifiers", dict),
+                ("error", dict),
+            )
+        ):
+            return candidate
     return None
 
 

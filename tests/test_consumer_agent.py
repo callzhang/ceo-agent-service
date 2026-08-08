@@ -87,6 +87,72 @@ def _proposal_jsonl(payload: dict[str, object]) -> str:
     )
 
 
+def _failed_reviewed_read_jsonl() -> str:
+    argv = ["dws", "oa", "approval", "detail", "--instance-id", "pid-1"]
+    from app.native_cli_metadata import describe_native_command
+
+    descriptor = describe_native_command({"type": "command_execution", "argv": argv})
+    assert descriptor is not None
+    receipt = {
+        "cli": descriptor.cli,
+        "operation": descriptor.command_path,
+        "operation_digest": descriptor.command_digest,
+        "target_identifiers": descriptor.target_identifiers,
+        "result_digest": "failed-read-digest",
+        "error": {"code": "credential_store_unavailable", "retryable": True},
+    }
+    result = {
+        "outcome": "failed",
+        "summary": "DWS read is unavailable.",
+        "proposal": None,
+        "error": {
+            "code": "dws_transient_dependency_unavailable",
+            "retryable": True,
+            "authorization_required": False,
+        },
+    }
+    return "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-a"}),
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "id": "read-1",
+                        "type": "mcp_tool_call",
+                        "server": "agent_cli",
+                        "tool": "execute_reviewed_read",
+                        "arguments": {"argv": argv},
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "read-1",
+                        "type": "mcp_tool_call",
+                        "server": "agent_cli",
+                        "tool": "execute_reviewed_read",
+                        "arguments": {"argv": argv},
+                        "status": "failed",
+                        "result": {
+                            "structuredContent": receipt,
+                            "isError": True,
+                        },
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": json.dumps(result)},
+                }
+            ),
+        )
+    )
+
+
 @pytest.fixture
 def store(tmp_path):
     return AutoReplyStore(tmp_path / "agent.sqlite3")
@@ -171,6 +237,22 @@ def test_consumer_rotates_damaged_session_after_missing_final_result(
     )
     assert run is not None
     assert json.loads(run.structured_error_json)["code"] == "codex_result_missing"
+
+
+def test_consumer_keeps_a_reviewed_read_failure_visible_to_the_agent(
+    store, task, context
+):
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(_failed_reviewed_read_jsonl()),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run(result.run_id)
+    assert result.result.outcome.value == "failed"
+    assert run is not None
+    assert run.tool_events[-1]["type"] == "item.failed"
+    assert run.tool_events[-1]["item"]["metadata"]["operation"] == "oa approval detail"
 
 
 def test_consumer_rotates_session_when_codex_exits_without_a_final_result(
