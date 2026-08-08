@@ -40,6 +40,15 @@ PENDING_STALE_SECONDS = 15 * 60
 MEETING_PROCESSING_STALE_SECONDS = 21 * 60
 OKR_PROCESSING_STALE_SECONDS = 21 * 60
 RECENT_ERROR_WINDOW_SECONDS = 4 * 60 * 60
+RECOVERED_REPLY_ATTEMPT_STATUSES = (
+    "calendar",
+    "commented",
+    "completed",
+    "document",
+    "reacted",
+    "sent",
+    "skipped",
+)
 
 
 @dataclass(frozen=True)
@@ -534,6 +543,21 @@ def _check_recent_errors(
 ) -> None:
     _add(violations, source="errors", code="recent_error", count=_count(
         db,
-        "select count(*) from errors where datetime(created_at) >= datetime(?)",
-        (_cutoff(now, RECENT_ERROR_WINDOW_SECONDS),),
+        """select count(*)
+           from errors error_event
+           where datetime(error_event.created_at) >= datetime(?)
+             and not exists (
+                select 1
+                from reply_attempts recovery
+                where recovery.conversation_id=error_event.conversation_id
+                  and recovery.trigger_message_id=error_event.message_id
+                  and datetime(recovery.updated_at) >= datetime(error_event.created_at)
+                  and lower(recovery.send_status) in ({})
+             )""".format(
+            ",".join("?" for _ in RECOVERED_REPLY_ATTEMPT_STATUSES)
+        ),
+        (
+            _cutoff(now, RECENT_ERROR_WINDOW_SECONDS),
+            *RECOVERED_REPLY_ATTEMPT_STATUSES,
+        ),
     ), severity="error", detail="a service error was recorded within the four-hour repair window")

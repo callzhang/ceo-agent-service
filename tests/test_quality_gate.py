@@ -66,6 +66,34 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
     }
 
 
+def test_quality_gate_excludes_recent_error_recovered_by_later_attempt(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into errors (
+                conversation_id, message_id, kind, detail, created_at
+            ) values ('conversation', 'message', 'consumer', 'temporary failure',
+                '2026-08-07 00:30:00')"""
+        )
+        db.execute(
+            """insert into reply_attempts (
+                conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, action, sensitivity_kind,
+                final_reply_text, permission_action, send_status, updated_at
+            ) values ('conversation', 'group', 'message', 'sender', 'trigger',
+                'agent_run', 'normal', '', 'none', 'completed',
+                '2026-08-07 00:45:00')"""
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not [
+        issue
+        for issue in report.violations
+        if issue.source == "errors" and issue.code == "recent_error"
+    ]
+
+
 def test_quality_gate_keeps_future_follow_up_as_attention_not_failure(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     future = (NOW + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")

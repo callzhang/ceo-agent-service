@@ -222,3 +222,10 @@ continue with the triggering message and no historical context. This is not a
 delivery failure and must not create an error event or user-facing failure
 notification. Group-chat resolution, authorization failures, transport errors,
 and every attempted external action remain error-reporting paths.
+
+### Recent error reconciliation
+
+The hourly quality check treats an error as open only until a later durable
+attempt for the same conversation and trigger records a completed delivery or
+operation. This keeps the audit evidence while preventing a recovered retry
+from remaining a red service failure for the rest of the repair window.
