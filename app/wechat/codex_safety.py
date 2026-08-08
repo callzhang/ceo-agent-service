@@ -181,10 +181,12 @@ def make_role_agent_command(
         command,
         [
             *(
-                [CODEX_BYPASS_APPROVALS_AND_SANDBOX, "-c", "tools.enabled_tools=[]"]
+                [CODEX_BYPASS_APPROVALS_AND_SANDBOX]
                 if allow_local_credential_store
                 else _read_only_sandbox_options(command)
             ),
+            "-c",
+            "tools.enabled_tools=[]",
             *approval_options,
             "-c", f"mcp_servers.agent_cli.command={json.dumps(controlled_cli.command)}",
             "-c", "mcp_servers.agent_cli.args=" + json.dumps(list(controlled_cli.args)),

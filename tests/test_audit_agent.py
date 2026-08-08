@@ -452,6 +452,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert "--output-schema" not in command
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command
+    assert "tools.enabled_tools=[]" in command
     assert 'approval_policy="untrusted"' in command
     assert 'approvals_reviewer="auto_review"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
@@ -460,6 +461,11 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert any(
         "Authoritative Audit role boundary" in option
         and "valid AuditAgentResult JSON" in option
+        for option in command
+    )
+    assert any(
+        "agent_cli.execute_reviewed_write" in option
+        and "Do not use exec_command" in option
         for option in command
     )
     assert "every write command remain forbidden for Consumer" not in " ".join(command)
@@ -1544,8 +1550,14 @@ def test_definitely_absent_recovery_reads_before_executing_same_revision_once(se
     assert persisted is not None and persisted.status == "completed"
     assert len(executor.commands) == 2
     assert all(run.codex_session_id in command for command in executor.commands)
-    assert "execute_reviewed_write" not in " ".join(executor.commands[0])
-    assert "execute_reviewed_write" in " ".join(executor.commands[1])
+    assert (
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill"]'
+        in executor.commands[0]
+    )
+    assert (
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill"]'
+        in executor.commands[1]
+    )
     assert "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST" in " ".join(executor.commands[1])
 
 

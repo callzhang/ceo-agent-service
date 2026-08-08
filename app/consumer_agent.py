@@ -195,8 +195,12 @@ def audit_developer_instructions(role_instruction: str) -> str:
     return _role_developer_instructions(
         role_instruction,
         capability_instructions=(
-            "Use only the capabilities enabled for this Audit turn. The turn-specific "
-            "execution permission determines whether an external write is allowed."
+            "Use agent_cli.execute_reviewed_read for every live read and "
+            "agent_cli.execute_reviewed_write for every allowed external write. "
+            "Do not use exec_command or another native shell tool: Audit B actions "
+            "must flow through the reviewed capability so they are checked and "
+            "receipted. The turn-specific execution permission determines whether "
+            "an external write is allowed."
         ),
         role_boundary=AUDIT_ROLE_BOUNDARY,
     )
