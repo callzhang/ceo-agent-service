@@ -301,6 +301,7 @@ class WorkTodoDingTalkLink(BaseModel):
     last_pull_at: str = ""
     last_push_at: str = ""
     last_error: str = ""
+    retry_count: int = 0
     created_at: str
     updated_at: str
 

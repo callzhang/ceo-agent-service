@@ -18,6 +18,7 @@ class FakeTodoDws:
     def __init__(self):
         self.created = []
         self.create_payload = {"todoTaskId": "dt-task-1"}
+        self.create_error = None
         self.get_calls = []
         self.get_payloads = {}
         self.get_errors = {}
@@ -48,6 +49,8 @@ class FakeTodoDws:
                 "files": files or [],
             }
         )
+        if self.create_error is not None:
+            raise self.create_error
         return self.create_payload
 
     def get_todo_task(self, task_id):
@@ -379,6 +382,72 @@ def test_maybe_create_dingtalk_todo_retries_token_failed_create_link(tmp_path):
     assert link.dingtalk_task_id == "dt-task-1"
     assert link.status == "active"
     assert link.last_error == ""
+    assert link.retry_count == 1
+
+
+def test_maybe_create_dingtalk_todo_retries_security_check_failure_once(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="",
+        status="failed",
+        last_error="code=SECURITY_CHECK_INVOKE_FAILED",
+    )
+    dws = FakeTodoDws()
+
+    link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:05:00",
+    )
+
+    assert link.id == link_id
+    assert link.status == "active"
+    assert link.retry_count == 1
+    assert len(dws.created) == 1
+
+    retry = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:10:00",
+    )
+
+    assert retry.id == link_id
+    assert len(dws.created) == 1
+
+
+def test_retry_failed_dingtalk_todo_links_does_not_repeat_security_failure(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="",
+        status="failed",
+        last_error="code=SECURITY_CHECK_INVOKE_FAILED",
+    )
+    dws = FakeTodoDws()
+    dws.create_error = DwsError("code=SECURITY_CHECK_INVOKE_FAILED")
+
+    first = retry_failed_dingtalk_todo_links(
+        store,
+        dws,
+        now="2026-06-27 10:05:00",
+    )
+    second = retry_failed_dingtalk_todo_links(
+        store,
+        dws,
+        now="2026-06-27 10:10:00",
+    )
+
+    link = store.get_work_todo_dingtalk_link(link_id)
+    assert first == 0
+    assert second == 0
+    assert link.status == "failed"
+    assert link.retry_count == 1
+    assert len(dws.created) == 1
 
 
 def test_retry_failed_dingtalk_todo_links_recovers_token_failures(tmp_path):
@@ -413,6 +482,7 @@ def test_retry_failed_dingtalk_todo_links_recovers_token_failures(tmp_path):
     assert existing_link.last_error == ""
     assert create_link.status == "active"
     assert create_link.dingtalk_task_id == "dt-task-1"
+    assert create_link.retry_count == 1
     assert len(dws.created) == 1
 
 

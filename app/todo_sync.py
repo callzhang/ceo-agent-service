@@ -11,6 +11,11 @@ from app.todo_completion import close_todo_with_completion_evidence
 WEAK_TITLES = {"跟进一下", "同步进展", "确认进展", "问一下", "推进一下"}
 DINGTALK_TODO_TITLE_LIMIT = 80
 DINGTALK_TODO_CONTEXT_LIMIT = 42
+MAX_DINGTALK_TODO_CREATE_RETRIES = 1
+DINGTALK_TODO_CREATE_RETRYABLE_ERROR_CODES = frozenset({
+    "TOKEN_VERIFIED_FAILED",
+    "SECURITY_CHECK_INVOKE_FAILED",
+})
 
 
 def _parse_datetime(value: str) -> datetime | None:
@@ -289,7 +294,7 @@ def _is_retryable_dingtalk_todo_error(error: str) -> bool:
     normalized = error.casefold()
     return any(
         code.casefold() in normalized
-        for code in DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES
+        for code in DINGTALK_TODO_CREATE_RETRYABLE_ERROR_CODES
     )
 
 
@@ -443,6 +448,12 @@ def maybe_create_dingtalk_todo(
 
     retryable_create_link = _find_retryable_failed_create_link(store, work_todo_id)
     if retryable_create_link is not None and _todo_is_eligible(store, todo):
+        if retryable_create_link.retry_count >= MAX_DINGTALK_TODO_CREATE_RETRIES:
+            return retryable_create_link
+        store.update_work_todo_dingtalk_link(
+            retryable_create_link.id,
+            retry_count=retryable_create_link.retry_count + 1,
+        )
         return _create_dingtalk_todo_for_link(
             store,
             dws,
@@ -544,8 +555,13 @@ def retry_failed_dingtalk_todo_links(
             if (
                 not _is_retryable_dingtalk_todo_error(link.last_error)
                 or not _todo_is_eligible(store, todo)
+                or link.retry_count >= MAX_DINGTALK_TODO_CREATE_RETRIES
             ):
                 continue
+            store.update_work_todo_dingtalk_link(
+                link.id,
+                retry_count=link.retry_count + 1,
+            )
             updated = _create_dingtalk_todo_for_link(
                 store,
                 dws,
