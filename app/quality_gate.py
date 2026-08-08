@@ -452,13 +452,28 @@ def _check_external_delivery_queues(
          "and lower(coalesce(error, '')) != 'user_rejected'"),
         ("memory_write_events", "status", ("failed",), ("pending", "processing"), ""),
     ):
-        failed = _count(
-            db,
-            f"""select count(*) from {source}
-                where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})
-                {resolved_filter}""",
-            failed_statuses,
-        )
+        if source == "work_todo_dingtalk_links":
+            failed = _count(
+                db,
+                """select count(*)
+                   from work_todo_dingtalk_links failed_link
+                   where lower(failed_link.status)='failed'
+                     and not exists (
+                        select 1
+                        from work_todo_dingtalk_links recovered_link
+                        where recovered_link.work_todo_id=failed_link.work_todo_id
+                          and recovered_link.id > failed_link.id
+                          and lower(recovered_link.status) in ('creating','active','done')
+                     )""",
+            )
+        else:
+            failed = _count(
+                db,
+                f"""select count(*) from {source}
+                    where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})
+                    {resolved_filter}""",
+                failed_statuses,
+            )
         _add(violations, source=source, code="failed", count=failed,
              severity="error", detail="external delivery queue has an unrecovered failure")
         active = _count(

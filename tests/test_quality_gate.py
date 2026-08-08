@@ -273,6 +273,38 @@ def test_quality_gate_treats_user_rejected_wechat_delivery_as_terminal(tmp_path)
     assert not [item for item in report.violations if item.source == "wechat_deliveries"]
 
 
+def test_quality_gate_deduplicates_failed_todo_link_after_later_active_link(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        cursor = db.execute(
+            """insert into work_projects (title, status)
+               values ('project', 'active')"""
+        )
+        project_id = cursor.lastrowid
+        cursor = db.execute(
+            """insert into work_todos (
+                project_id, title, owner_user_id, status, deadline_at
+            ) values (?, 'follow up', 'owner', 'open', '2026-08-08 12:00:00')""",
+            (project_id,),
+        )
+        todo_id = cursor.lastrowid
+        db.execute(
+            """insert into work_todo_dingtalk_links (work_todo_id, status, last_error)
+               values (?, 'failed', 'transient create error')""",
+            (todo_id,),
+        )
+        db.execute(
+            """insert into work_todo_dingtalk_links (
+                work_todo_id, dingtalk_task_id, status
+            ) values (?, 'external-task', 'active')""",
+            (todo_id,),
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not [item for item in report.violations if item.source == "work_todo_dingtalk_links"]
+
+
 def test_quality_gate_writes_coverage_state(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     state_path = tmp_path / "hourly-quality-gate.json"
