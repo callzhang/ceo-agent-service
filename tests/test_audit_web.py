@@ -361,6 +361,43 @@ def test_oa_approval_detail_route_shows_summary_and_history(tmp_path: Path):
     assert "Attempt history" in response.text
 
 
+def test_approvals_page_shows_only_approval_audit_items(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-1:revision",
+        trigger_sender="Derek OA",
+        trigger_text="胡明的录用申请",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="review",
+        send_status="failed",
+        codex_reason="DWS 审批详情解析失败。",
+        audit_summary="DWS 审批详情解析失败。",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-message",
+        conversation_title="普通会话",
+        trigger_message_id="msg-1",
+        trigger_sender="胡明",
+        trigger_text="普通消息",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+
+    response = TestClient(create_audit_app(store.path)).get("/approvals")
+
+    assert response.status_code == 200
+    assert "胡明的录用申请" in response.text
+    assert "DWS 审批详情解析失败。" in response.text
+    assert "普通会话" not in response.text
+    assert 'href="/approvals"' in response.text
+
+
 def test_service_bugfix_candidates_page_lists_pending_feedback(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.create_service_bugfix_candidate(

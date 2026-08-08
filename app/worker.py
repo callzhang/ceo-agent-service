@@ -2555,9 +2555,16 @@ class DingTalkAutoReplyWorker:
         elif result.outcome is AgentOutcome.NEEDS_HUMAN:
             # A completed agent run can explicitly wait for the principal without
             # being an execution failure or an unknown external side effect.
-            send_status = "needs_human"
-            task_status = "done"
-            send_error = send_error or "needs_human"
+            if send_error == "critical_info_unavailable":
+                # A required OA read failed inside the system.  It is not a
+                # request for the applicant to supply material, so keep it
+                # internal instead of surfacing it as an OA review outcome.
+                send_status = "failed"
+                task_status = "failed"
+            else:
+                send_status = "needs_human"
+                task_status = "done"
+                send_error = send_error or "needs_human"
         else:
             send_status = "failed"
             task_status = "pending" if result.error.retryable else "failed"

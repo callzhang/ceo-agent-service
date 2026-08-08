@@ -10239,6 +10239,44 @@ def test_critical_info_unavailable_stop_with_error_fails_queued_task(
     assert notifications == []
 
 
+def test_oa_detail_read_failure_is_internal_failed_without_notification(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message(
+        "[Ding]胡明提醒您审批他的录用申请 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    worker = make_worker(tmp_path, dws, FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)), monkeypatch)
+    worker.direct_agent_runner = FakeAgentResultRunner(
+        worker.store,
+        [(
+            explicit_agent_result(
+                AgentOutcome.NEEDS_HUMAN,
+                "DWS 审批详情解析失败。",
+                code="critical_info_unavailable",
+            ),
+            (),
+            "session-oa-detail-failed",
+        )],
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.run_once()
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "critical_info_unavailable"
+    assert final_sent(dws) == []
+    assert notifications == []
+
+
 def test_xiaoqing_unavailable_without_mcp_call_forces_retry(
     tmp_path: Path, monkeypatch
 ):

@@ -1788,6 +1788,7 @@ def _top_nav(
 ) -> str:
     items = [
         ("history", "History", "/"),
+        ("approvals", "审批", "/approvals"),
         ("tutorial", "Tutorial", "/tutorial"),
         ("tasks", "Tasks", "/tasks"),
         ("workers", "Workers", "/workers"),
@@ -7128,6 +7129,26 @@ def create_audit_app(
             if _is_sqlite_busy_error(exc):
                 return _render_history_busy_page()
             raise
+
+    @app.get("/approvals", response_class=HTMLResponse)
+    def approval_list(request: Request) -> str:
+        return render_attempt_list(
+            _audit_store(db_path),
+            limit=_attempt_list_limit(
+                _positive_int_query(
+                    request,
+                    "limit",
+                    default=DEFAULT_ATTEMPT_LIST_LIMIT,
+                )
+            ),
+            page=_positive_int_query(request, "page", default=1),
+            type_filter=request.query_params.getlist("type"),
+            query=str(request.query_params.get("q", "")),
+            search_object_types=("approval",),
+            include_chart=False,
+            include_pending_tasks=False,
+            include_feedback_count=False,
+        )
 
     @app.get("/user-feedback", response_class=HTMLResponse)
     def user_feedback_list(request: Request) -> str:
