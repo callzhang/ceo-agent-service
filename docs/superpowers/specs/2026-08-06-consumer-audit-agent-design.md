@@ -435,6 +435,11 @@ The following simplification decisions remain:
 - for OA work, the service passes only process/task identifiers and links from
   the trigger/task itself; it neither recovers targets from historical context
   nor lists pending approvals to choose a target when no exact ID is present;
+- when a process instance ID is available, the service supplies the exact
+  read-only commands `dws oa approval detail --instance-id <id> --format json`
+  and `dws oa approval tasks --instance-id <id> --format json`; Consumer A
+  executes those commands through its reviewed read capability and does not
+  invent a `--task-id` argument for either read;
 - Agents use installed Skills, native CLIs, and reviewed MCP tools directly;
 - the service does not infer business targets or repair content;
 - authentication readiness remains a service-owned gate;

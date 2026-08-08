@@ -2248,6 +2248,11 @@ class DingTalkAutoReplyWorker:
                     + shlex.quote(process_instance_id)
                     + " --format json"
                 )
+                tasks_command = (
+                    "dws oa approval tasks --instance-id "
+                    + shlex.quote(process_instance_id)
+                    + " --format json"
+                )
                 reference = json.dumps(
                     {
                         "process_instance_id": process_instance_id,
@@ -2261,7 +2266,7 @@ class DingTalkAutoReplyWorker:
                     "dingtalk_oa",
                     reference,
                     message.open_message_id,
-                    (detail_command,),
+                    (detail_command, tasks_command),
                 )
             elif oa_url or self._is_oa_approval_message(message):
                 reference = json.dumps(

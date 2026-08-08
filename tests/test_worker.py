@@ -8032,6 +8032,7 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     assert "Safe prior execution receipts" in agent_prompt(worker)
     assert "退回" in agent_prompt(worker)
     assert "dws oa approval detail --instance-id proc-1" in agent_prompt(worker)
+    assert "dws oa approval tasks --instance-id proc-1" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
     assert worker.store.count_reply_attempts() == 2
@@ -8593,6 +8594,7 @@ def test_oa_approval_detail_always_includes_openapi_comments(
     worker.run_once()
     prompt = agent_prompt(worker)
     assert "dws oa approval detail --instance-id proc-1 --format json" in prompt
+    assert "dws oa approval tasks --instance-id proc-1 --format json" in prompt
     assert "证据不严谨，需要补充模型对比结论。" not in prompt
 
 
@@ -8640,6 +8642,7 @@ def test_oa_approval_detail_param_error_is_recovered_by_openapi(
     worker.run_once()
     prompt = agent_prompt(worker)
     assert "dws oa approval detail --instance-id proc-1 --format json" in prompt
+    assert "dws oa approval tasks --instance-id proc-1 --format json" in prompt
     assert "recovered_by_openapi" not in prompt
     assert "奥迪第三曲线项目" not in prompt
 
@@ -10152,7 +10155,7 @@ def test_retryable_codex_timeout_does_not_notify_before_final_failure(
 def test_codex_process_failure_is_terminal_at_attempt_limit(
     tmp_path: Path, monkeypatch
 ):
-    notifications = []
+    browser_notifications = []
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
@@ -10201,8 +10204,8 @@ def test_codex_process_failure_is_terminal_at_attempt_limit(
         ],
     )
     monkeypatch.setattr(
-        "app.worker.send_macos_notification",
-        lambda **kwargs: notifications.append(kwargs),
+        "app.worker.send_browser_notification",
+        lambda **kwargs: browser_notifications.append(kwargs) or True,
     )
 
     worker.produce_once()
@@ -10210,7 +10213,8 @@ def test_codex_process_failure_is_terminal_at_attempt_limit(
     failed = worker.store.list_reply_tasks(statuses=("failed",), limit=1)[0]
     assert failed.attempts == 1
     assert worker.store.count_reply_tasks(status="done") == 0
-    assert len(notifications) == 1
+    assert len(browser_notifications) == 1
+    assert browser_notifications[0]["notification_id"] == "ceo-agent-service-problems"
 
 
 def test_invalid_agent_result_gets_one_clean_session_retry_at_attempt_limit(
@@ -11362,6 +11366,7 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
     assert '"task_id": "task-1"' in material.reference
     assert material.read_commands == (
         "dws oa approval detail --instance-id proc-1 --format json",
+        "dws oa approval tasks --instance-id proc-1 --format json",
     )
 
 

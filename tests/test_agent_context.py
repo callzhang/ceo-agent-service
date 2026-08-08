@@ -70,7 +70,8 @@ def test_context_renders_reference_and_command_without_resolved_body():
 def test_context_contains_only_the_agreed_business_rules():
     rendered = _context().render()
 
-    assert "query live detail" in rendered
+    assert "execute the provided live DWS commands" in rendered
+    assert "do not invent a `--task-id` argument" in rendered
     assert "internal_personnel" in rendered
     assert "HR conversation may skip counterpart identity matching" in rendered
     assert "Never expose credentials" in rendered
@@ -143,7 +144,7 @@ def test_oa_complete_form_fields_still_require_live_detail_read():
         reference="process_instance_id=pid-1; task_id=tid-1",
         read_commands=(
             "dws oa approval detail --instance-id pid-1 --format json",
-            "dws oa approval task list --instance-id pid-1 --format json",
+            "dws oa approval tasks --instance-id pid-1 --format json",
         ),
         trigger_text="申请人 ET；金额 1000；理由 已完整填写；请审核",
     )
@@ -153,8 +154,8 @@ def test_oa_complete_form_fields_still_require_live_detail_read():
     assert "process_instance_id=pid-1" in rendered
     assert "task_id=tid-1" in rendered
     assert "dws oa approval detail" in rendered
-    assert "dws oa approval task list --instance-id pid-1 --format json" in rendered
-    assert "query live detail" in rendered
+    assert "dws oa approval tasks --instance-id pid-1 --format json" in rendered
+    assert "execute the provided live DWS commands" in rendered
     assert "do not select by applicant or title similarity" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
@@ -172,14 +173,14 @@ def test_oa_instance_id_only_still_requires_agent_live_detail_read():
     assert "agent_cli.execute_reviewed_read" in rendered
     assert "local CLI credential store" in rendered
     assert "never emit `proposed_actions`" in rendered
-    assert "query live detail" in rendered
+    assert "execute the provided live DWS commands" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
 def test_oa_ambiguous_candidates_require_needs_human():
     rendered = _oa_context(
         reference="pending OA candidates",
-        read_commands=("dws oa approval task list --status pending --format json",),
+        read_commands=("dws oa approval tasks --instance-id pid-ambiguous --format json",),
     ).render()
 
     assert "multiple OA candidates remain" in rendered
@@ -204,7 +205,7 @@ def test_oa_lets_live_api_enforce_task_ownership():
     rendered = _oa_context(
         reference="process_instance_id=pid-foreign; task_id=tid-foreign",
         read_commands=(
-            "dws oa approval task list --instance-id pid-foreign --format json",
+            "dws oa approval tasks --instance-id pid-foreign --format json",
         ),
     ).render()
 

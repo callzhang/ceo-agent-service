@@ -899,7 +899,10 @@ class NativeCommandStub:
 
     def __call__(self, command: str) -> str:
         self.calls.append(command)
-        if command.startswith("dws oa approval detail "):
+        if command.startswith((
+            "dws oa approval detail ",
+            "dws oa approval tasks ",
+        )):
             return json.dumps(self.read_output)
         if command.startswith("dws oa approval approve "):
             self.write_calls.append(command)
@@ -3094,6 +3097,9 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
     assert "proc-1" in " ".join(codex_executor.read_commands)
     assert any(
         "dws oa approval detail" in command for command in codex_executor.read_commands
+    )
+    assert any(
+        "dws oa approval tasks" in command for command in codex_executor.read_commands
     )
     assert native_executor.calls[: len(codex_executor.read_commands)] == (
         codex_executor.read_commands
