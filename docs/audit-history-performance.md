@@ -30,3 +30,7 @@ reply task is pending or processing. Historical retries remain available in
 the audit trail, but they must not inflate the live failed count or attention
 list. A failed state remains visible only when its latest trigger has neither
 completion evidence nor active recovery.
+
+WeChat delivery rejection is a completed user decision and is shown as skipped.
+An unconfirmed send remains failed until read-only reconciliation can prove the
+delivery outcome.

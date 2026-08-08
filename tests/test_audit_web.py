@@ -4652,6 +4652,44 @@ def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' not in html
 
 
+def test_worker_status_uses_wechat_delivery_outcome_not_raw_failed_status(
+    tmp_path: Path,
+):
+    rejected_store = AutoReplyStore(tmp_path / "rejected.sqlite3")
+    rejected_delivery_id = _seed_wechat_pending(rejected_store)
+    rejected_store.set_wechat_delivery_status(
+        rejected_delivery_id,
+        "failed",
+        error="user_rejected",
+    )
+    rejected_payload = build_worker_status_payload(rejected_store)
+    rejected_queue = next(
+        queue
+        for queue in rejected_payload["queues"]
+        if queue["name"] == "WeChat deliveries"
+    )
+
+    unknown_store = AutoReplyStore(tmp_path / "unknown.sqlite3")
+    unknown_delivery_id = _seed_wechat_pending(unknown_store)
+    unknown_store.mark_wechat_delivery_sending(unknown_delivery_id)
+    unknown_store.set_wechat_delivery_status(
+        unknown_delivery_id,
+        "send_unknown",
+        error="read_only_reconciliation_inconclusive",
+    )
+    unknown_payload = build_worker_status_payload(unknown_store)
+    unknown_queue = next(
+        queue
+        for queue in unknown_payload["queues"]
+        if queue["name"] == "WeChat deliveries"
+    )
+
+    assert rejected_queue["failed"] == 0
+    assert rejected_queue["counts"]["skipped"] == 1
+    assert unknown_queue["failed"] == 1
+    assert unknown_queue["latest_error"] == "read_only_reconciliation_inconclusive"
+
+
 def test_render_attempt_list_labels_explained_blocked_as_blocked(
     tmp_path: Path,
 ):

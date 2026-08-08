@@ -2001,6 +2001,9 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
             if table == "reply_attempts":
                 snapshots.append(_reply_attempt_queue_snapshot(db))
                 continue
+            if table == "wechat_deliveries":
+                snapshots.append(_wechat_delivery_queue_snapshot(db))
+                continue
             counts = _queue_status_counts(db, table, status_column)
             retryable = _queue_retryable_count(db, table, status_column, error_column)
             raw_failed = _queue_count_for(counts, {"failed", "error"})
@@ -2105,6 +2108,54 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     }
 
 
+def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
+    """Keep deliberate user rejection out of the operational failure count."""
+    rows = db.execute(
+        """
+        select
+            case
+                when lower(status)='failed' and error='user_rejected'
+                    then 'skipped'
+                when lower(status)='send_unknown' then 'failed'
+                else lower(coalesce(status, ''))
+            end as status,
+            count(*) as count,
+            max(case
+                when lower(status)='send_unknown'
+                    then updated_at || char(31) || error
+                when lower(status)='failed' and error!='user_rejected'
+                    then updated_at || char(31) || error
+                else ''
+            end) as latest_error
+        from wechat_deliveries
+        group by status
+        order by status
+        """
+    ).fetchall()
+    counts = {
+        str(row["status"] or "-"): int(row["count"] or 0)
+        for row in rows
+    }
+    failed_row = next(
+        (row for row in rows if str(row["status"] or "") == "failed"),
+        None,
+    )
+    latest_error = "" if failed_row is None else str(failed_row["latest_error"] or "")
+    _, _, latest_error = latest_error.partition(chr(31))
+    latest_row = db.execute(
+        "select max(updated_at) as value from wechat_deliveries"
+    ).fetchone()
+    return {
+        "name": "WeChat deliveries",
+        "table": "wechat_deliveries (delivery outcome)",
+        "counts": counts,
+        "pending": _queue_count_for(counts, {"pending", "ready_to_send"}),
+        "processing": _queue_count_for(counts, {"processing", "sending"}),
+        "failed": _queue_count_for(counts, {"failed"}),
+        "retryable": 0,
+        "latest_updated_at": "" if latest_row is None else str(latest_row["value"] or ""),
+        "latest_error": latest_error,
+    }
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dict[str, str]]:
     specs = [
         ("Reply task", "reply_tasks", "status", "conversation_title", "trigger_text", "updated_at", "error"),
