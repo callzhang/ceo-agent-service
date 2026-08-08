@@ -192,8 +192,9 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     assert command[:3] == ["codex", "exec", "resume"]
     assert command[-2:] == ["session-a", "-"]
     assert "--sandbox" not in command
-    assert 'sandbox_mode="read-only"' in command
-    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert 'sandbox_mode="read-only"' not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" in command
+    assert "tools.enabled_tools=[]" in command
     assert "--output-schema" not in command
     assert 'approval_policy="never"' in command
     assert "features.plugins=false" not in command

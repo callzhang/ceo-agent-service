@@ -555,7 +555,8 @@ Pending proposals wait or become `needs_human` when no B execution path exists.
 ### Direct DingTalk reads
 
 Consumer A reads DingTalk evidence itself. It invokes
-`agent_cli.execute_reviewed_read` with the exact DWS command, so DWS runs with
-the principal's existing local credential store while the Codex sandbox stays
-read-only. The service does not pre-read material or select business targets.
+`agent_cli.execute_reviewed_read` with the exact DWS command. Its controlled
+MCP can use the principal's existing local credential store; Consumer A has no
+native command tools and cannot use that wider filesystem access itself. The
+service does not pre-read material or select business targets.
 Unknown shell commands and any DWS write remain rejected for Consumer A.

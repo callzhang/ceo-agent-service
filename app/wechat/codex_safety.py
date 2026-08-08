@@ -150,8 +150,14 @@ def make_role_agent_command(
     *,
     controlled_cli: ControlledCliConfig,
     allow_write: bool,
+    allow_local_credential_store: bool = False,
 ) -> None:
-    if not allow_write:
+    if allow_local_credential_store:
+        # DWS stores the principal's local login state outside the workspace.
+        # Let the controlled MCP reach it, but remove native command tools so
+        # Consumer A cannot use that wider filesystem access itself.
+        _remove_command_options(command, names=("--sandbox",))
+    elif not allow_write:
         while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
             command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     _remove_config_options(
@@ -174,7 +180,11 @@ def make_role_agent_command(
     _insert_command_options(
         command,
         [
-            *_read_only_sandbox_options(command),
+            *(
+                [CODEX_BYPASS_APPROVALS_AND_SANDBOX, "-c", "tools.enabled_tools=[]"]
+                if allow_local_credential_store
+                else _read_only_sandbox_options(command)
+            ),
             *approval_options,
             "-c", f"mcp_servers.agent_cli.command={json.dumps(controlled_cli.command)}",
             "-c", "mcp_servers.agent_cli.args=" + json.dumps(list(controlled_cli.args)),
@@ -203,6 +213,7 @@ def make_consumer_agent_command(
         command,
         controlled_cli=controlled_cli,
         allow_write=False,
+        allow_local_credential_store=True,
     )
 
 
