@@ -60,6 +60,7 @@ from app.notification import (
     send_browser_notification,
     send_macos_notification,
 )
+from app.leak_check import contains_forbidden_leak, redact_forbidden_leak_markers
 from app.oa_approval import extract_oa_url
 from app.org_cache import (
     ORG_CACHE_REFRESHED_DATE_STATE_KEY,
@@ -75,6 +76,7 @@ from app.store import (
     AutoReplyStore,
     ReplyTask,
 )
+from app.work_profile import safe_excerpt
 
 
 ORCHESTRATION_ATTEMPT_STATUS = {
@@ -4345,19 +4347,72 @@ class DingTalkAutoReplyWorker:
     ) -> None:
         if self.dry_run:
             return
-        problem_count = self.store.count_current_unresolved_problem_attempts()
+        title, notification_message = self._problem_notification_content(
+            task,
+            send_status=send_status,
+            message=message,
+        )
+        conversation = DingTalkConversation(
+            open_conversation_id=task.conversation_id,
+            title=task.conversation_title,
+            single_chat=task.single_chat,
+            unread_point=1,
+        )
         delivered = send_browser_notification(
-            title="CEO 有待处理问题",
-            message=f"{problem_count} 项问题待处理。",
-            url="",
-            notification_id="ceo-agent-service-problems",
-            detail_url="/notifications",
+            title=title,
+            message=notification_message,
+            url=self._notification_url(conversation, attempt_id=attempt_id),
+            notification_id=f"ceo-agent-service-attempt-{attempt_id}",
+            detail_url=f"/attempts/{attempt_id}",
         )
         if send_status == "needs_human" and not delivered:
             send_macos_notification(
-                title=f"CEO task needs a decision: {task.conversation_title}",
-                message=(f"{message[:96]} 请打开审计页选择 A/B/C 方案。"),
+                title=title,
+                message=notification_message,
             )
+
+    @staticmethod
+    def _problem_notification_content(
+        task: ReplyTask,
+        *,
+        send_status: str,
+        message: str,
+    ) -> tuple[str, str]:
+        subject = DingTalkAutoReplyWorker._notification_excerpt(
+            task.trigger_text,
+            limit=72,
+        ) or DingTalkAutoReplyWorker._notification_excerpt(
+            task.conversation_title,
+            limit=72,
+        )
+        detail = DingTalkAutoReplyWorker._notification_excerpt(message, limit=160)
+        state = "等待你的选择" if send_status == "needs_human" else send_status
+        next_step = (
+            "打开审计页选择 A/B/C。"
+            if send_status == "needs_human"
+            else "打开审计页查看原因并继续处理。"
+        )
+        return (
+            f"CEO 待处理：{subject or '未命名事项'}",
+            "\n".join(
+                (
+                    f"事项：{subject or '未提供事项'}",
+                    f"状态：{state}",
+                    f"原因：{detail or '未提供具体说明'}",
+                    f"操作：{next_step}",
+                )
+            ),
+        )
+
+    @staticmethod
+    def _notification_excerpt(value: str, *, limit: int) -> str:
+        without_links = MEDIA_OR_LINK_PATTERN.sub(" ", value)
+        if contains_forbidden_leak(without_links):
+            without_links = redact_forbidden_leak_markers(
+                without_links,
+                replacement="自动处理",
+            )
+        return safe_excerpt(without_links, limit=limit)
 
     def _notification_url(
         self,

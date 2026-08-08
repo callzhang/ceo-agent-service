@@ -10360,11 +10360,16 @@ def test_repeated_codex_process_failure_does_not_get_an_extra_claim_at_limit(
     assert failed.error == "codex_process_failed"
     assert len(notifications) == 1
     assert notifications[0] == {
-        "title": "CEO 有待处理问题",
-        "message": "1 项问题待处理。",
-        "url": "",
-        "notification_id": "ceo-agent-service-problems",
-        "detail_url": "/notifications",
+        "title": "CEO 待处理：@Alex Chen(明哥) 这个怎么处理？",
+        "message": (
+            "事项：@Alex Chen(明哥) 这个怎么处理？\n"
+            "状态：failed\n"
+            "原因：自动处理_process_failed\n"
+            "操作：打开审计页查看原因并继续处理。"
+        ),
+        "url": worker._notification_url(conversation(), attempt_id=1),
+        "notification_id": "ceo-agent-service-attempt-1",
+        "detail_url": "/attempts/1",
     }
 
 
@@ -14256,11 +14261,16 @@ def test_needs_human_agent_attempt_publishes_browser_notification(
     assert attempt.send_status == "needs_human"
     assert browser_notifications == [
         {
-            "title": "CEO 有待处理问题",
-            "message": "1 项问题待处理。",
-            "url": "",
-            "notification_id": "ceo-agent-service-problems",
-            "detail_url": "/notifications",
+            "title": "CEO 待处理：@Alex Chen(明哥) 需要本人确认",
+            "message": (
+                "事项：@Alex Chen(明哥) 需要本人确认\n"
+                "状态：等待你的选择\n"
+                "原因：需要本人确认。\n"
+                "操作：打开审计页选择 A/B/C。"
+            ),
+            "url": worker._notification_url(conversation(), attempt_id=attempt.id),
+            "notification_id": f"ceo-agent-service-attempt-{attempt.id}",
+            "detail_url": f"/attempts/{attempt.id}",
         }
     ]
 
@@ -14294,8 +14304,13 @@ def test_needs_human_agent_attempt_falls_back_to_macos_notification(
 
     assert notifications == [
         {
-            "title": "CEO task needs a decision: Friday",
-            "message": "需要本人确认。 请打开审计页选择 A/B/C 方案。",
+            "title": "CEO 待处理：@Alex Chen(明哥) 需要本人确认",
+            "message": (
+                "事项：@Alex Chen(明哥) 需要本人确认\n"
+                "状态：等待你的选择\n"
+                "原因：需要本人确认。\n"
+                "操作：打开审计页选择 A/B/C。"
+            ),
         }
     ]
 
