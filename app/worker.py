@@ -110,6 +110,8 @@ RECOVERABLE_AGENT_RUNTIME_ERRORS = frozenset(
     {
         "codex_process_failed",
         "codex_process_timeout",
+        "codex_result_invalid",
+        "codex_result_missing",
         "codex_stream_invalid",
     }
 )
