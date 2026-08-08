@@ -102,6 +102,10 @@ Audit Rules 对 A/B 同时可见，但只控制业务审阅规则。它不能改
 恢复不会从自然语言猜测动作，也不会新建一个无上下文的执行 Agent。MCP 直写若缺少可验证的
 精确恢复入口，即使读回为 absent 也不自动重放。
 
+受控 CLI 读回以 `operation_digest`、目标标识和 `result_digest` 组成的结构化回执为准。回执
+验证通过后，不再递归扫描可能很大的业务正文来二次判断成功；明确带错误的回执仍按失败处理。
+这样大量聊天记录等合法结果不会因通用 MCP 内容大小上限被误判，同时恢复判断仍只绑定精确动作。
+
 ## 租约与 stale recovery
 
 Agent run 和 reply task 都有租约。每次有效 Codex 流式进度会续租正在运行的 run；stale sweep

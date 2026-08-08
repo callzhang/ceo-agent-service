@@ -465,7 +465,7 @@ class AgentTurnProcess(Generic[ResultT]):
         native_cli = ""
         authorization_id = ""
         validated_receipt: dict[str, object] | None = None
-        read_receipt_failed = False
+        controlled_receipt_failed = False
         if call.server == "agent_cli" and call.tool in {
             "execute_reviewed_read",
             "execute_reviewed_write",
@@ -503,13 +503,17 @@ class AgentTurnProcess(Generic[ResultT]):
                 ):
                     raise AgentReadOnlyViolationError("agent_cli_receipt_invalid")
                 validated_receipt = receipt
-                read_receipt_failed = (
-                    call.effect is EffectKind.READ_ONLY and "error" in receipt
+                controlled_receipt_failed = (
+                    "error" in receipt or item.get("status") != "completed"
                 )
         event_type = str(payload["type"])
-        if read_receipt_failed:
+        if controlled_receipt_failed:
             event_type = "item.failed"
-        elif event_type == "item.completed" and not _mcp_call_completed(payload):
+        elif (
+            event_type == "item.completed"
+            and validated_receipt is None
+            and not _mcp_call_completed(payload)
+        ):
             event_type = "item.failed"
         status = {
             "item.started": "in_progress",

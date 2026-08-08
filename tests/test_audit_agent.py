@@ -114,6 +114,8 @@ def _audit_result_jsonl(
     include_read: bool = True,
     include_write: bool = False,
     read_target: str = "cid-agent",
+    read_stdout: str = "{}",
+    structured_read_receipt: bool = False,
     reconciliation: list[dict[str, object]] | None = None,
 ) -> str:
     records = [json.dumps({"type": "thread.started", "thread_id": session})]
@@ -134,7 +136,7 @@ def _audit_result_jsonl(
             "operation_digest": descriptor.command_digest,
             "target_identifiers": descriptor.target_identifiers,
             "result_digest": "recovery-read-digest",
-            "stdout": "{}",
+            "stdout": read_stdout,
         }
         item = {
             "type": "mcp_tool_call",
@@ -158,6 +160,11 @@ def _audit_result_jsonl(
                                     {"type": "text", "text": json.dumps(receipt)}
                                 ],
                                 "isError": False,
+                                **(
+                                    {"structuredContent": receipt}
+                                    if structured_read_receipt
+                                    else {}
+                                ),
                             },
                         },
                     }
@@ -892,6 +899,40 @@ def test_crash_after_write_resumes_same_audit_session_and_confirms_without_repla
     assert receipts[0].receipt_id == (
         "reconciliation:"
         f"{receipts[0].operation_id}:recovery-read-digest"
+    )
+
+
+def test_recovery_accepts_verified_controlled_read_receipt_with_large_stdout(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "reconciled",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            read_stdout=json.dumps(
+                {"messages": [{"text": str(index)} for index in range(2100)]}
+            ),
+            structured_read_receipt=True,
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, audit_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "reconciled"
+    assert persisted is not None
+    read_events = [
+        event
+        for event in persisted.tool_events
+        if event["item"]["metadata"]["effect"] == "read_only"
+    ]
+    assert read_events[-1]["type"] == "item.completed"
+    assert read_events[-1]["item"]["metadata"]["result_digest"] == (
+        "recovery-read-digest"
     )
 
 
