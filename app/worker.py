@@ -4406,10 +4406,16 @@ class DingTalkAutoReplyWorker:
         )
         detail = DingTalkAutoReplyWorker._notification_excerpt(message, limit=160)
         state = "等待你的选择" if send_status == "needs_human" else send_status
+        if send_status == "needs_human":
+            detail_lines = (
+                "需要你确认：系统不会代为作出这项管理决定。",
+                f"事项：{subject or '未提供事项'}",
+                f"已核验：{detail or '未提供具体说明'}",
+                "操作：打开审计页阅读已核验事实，并提交具体处理指令。",
+            )
+            return f"CEO 需要确认：{subject or '未命名事项'}", "\n".join(detail_lines)
         next_step = (
-            "打开审计页选择 A/B/C。"
-            if send_status == "needs_human"
-            else "打开审计页查看原因并继续处理。"
+            "打开审计页查看原因并继续处理。"
         )
         return (
             f"CEO 待处理：{subject or '未命名事项'}",

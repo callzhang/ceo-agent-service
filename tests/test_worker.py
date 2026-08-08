@@ -9669,9 +9669,16 @@ def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch
     runner = worker._test_agent_runner
     assert isinstance(runner, FakeAgentResultRunner)
     assert any(item.kind == "dingtalk_image" for item in runner.calls[0][2].materials)
+    assert dismissed_notification_ids == []
 
 
 def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "app.notification.request.urlopen",
+        lambda *_args, **_kwargs: pytest.fail(
+            "unit tests must not call the live browser notification bridge"
+        ),
+    )
     trigger = message(
         "@Alex Chen(明哥) 看下这个图[图片消息](mediaId=@img-token-1)",
         message_id="msg-image-1",
@@ -14257,12 +14264,12 @@ def test_handoff_ding_failure_does_not_block_ack(tmp_path: Path, monkeypatch):
     assert store.count_reply_tasks(status="done") == 1
     assert notifications == [
         {
-            "title": "CEO 待处理：@Alex Chen(明哥) 不要分身，真人看一下",
+            "title": "CEO 需要确认：@Alex Chen(明哥) 不要分身，真人看一下",
             "message": (
-                "事项：@Alex Chen(明哥) 不要分身，真人看一下\n"
-                "状态：等待你的选择\n"
-                "原因：Agent requested principal review.\n"
-                "操作：打开审计页选择 A/B/C。"
+            "需要你确认：系统不会代为作出这项管理决定。\n"
+            "事项：@Alex Chen(明哥) 不要分身，真人看一下\n"
+            "已核验：Agent requested principal review.\n"
+            "操作：打开审计页阅读已核验事实，并提交具体处理指令。"
             ),
         }
     ]
@@ -14305,15 +14312,17 @@ def test_needs_human_agent_attempt_publishes_browser_notification(
     assert attempt.send_status == "needs_human"
     assert browser_notifications == [
         {
-            "title": "CEO 待处理：@Alex Chen(明哥) 需要本人确认",
+            "title": "CEO 需要确认：@Alex Chen(明哥) 需要本人确认",
             "message": (
+                "需要你确认：系统不会代为作出这项管理决定。\n"
                 "事项：@Alex Chen(明哥) 需要本人确认\n"
-                "状态：等待你的选择\n"
-                "原因：需要本人确认。\n"
-                "操作：打开审计页选择 A/B/C。"
+                "已核验：需要本人确认。\n"
+                "操作：打开审计页阅读已核验事实，并提交具体处理指令。"
             ),
             "url": worker._notification_url(conversation(), attempt_id=attempt.id),
-            "notification_id": f"ceo-agent-service-attempt-{attempt.id}",
+            "notification_id": worker._problem_notification_id(
+                worker.store.get_reply_task(1)
+            ),
             "detail_url": f"/attempts/{attempt.id}",
         }
     ]
@@ -14348,12 +14357,12 @@ def test_needs_human_agent_attempt_falls_back_to_macos_notification(
 
     assert notifications == [
         {
-            "title": "CEO 待处理：@Alex Chen(明哥) 需要本人确认",
+            "title": "CEO 需要确认：@Alex Chen(明哥) 需要本人确认",
             "message": (
+                "需要你确认：系统不会代为作出这项管理决定。\n"
                 "事项：@Alex Chen(明哥) 需要本人确认\n"
-                "状态：等待你的选择\n"
-                "原因：需要本人确认。\n"
-                "操作：打开审计页选择 A/B/C。"
+                "已核验：需要本人确认。\n"
+                "操作：打开审计页阅读已核验事实，并提交具体处理指令。"
             ),
         }
     ]
@@ -14461,12 +14470,12 @@ def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
     assert dws.bot_direct_messages == []
     assert notifications == [
         {
-            "title": "CEO 待处理：@Alex Chen(明哥) 不要分身，真人看一下",
+            "title": "CEO 需要确认：@Alex Chen(明哥) 不要分身，真人看一下",
             "message": (
-                "事项：@Alex Chen(明哥) 不要分身，真人看一下\n"
-                "状态：等待你的选择\n"
-                "原因：Agent requested principal review.\n"
-                "操作：打开审计页选择 A/B/C。"
+            "需要你确认：系统不会代为作出这项管理决定。\n"
+            "事项：@Alex Chen(明哥) 不要分身，真人看一下\n"
+            "已核验：Agent requested principal review.\n"
+            "操作：打开审计页阅读已核验事实，并提交具体处理指令。"
             ),
         }
     ]

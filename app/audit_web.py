@@ -587,8 +587,8 @@ NO_AUDIT_CONTEXT_TOOLTIP = (
 NO_CODEX_SESSION_TOOLTIP = (
     "No Codex session is linked; review this attempt using the stored audit fields only."
 )
-_BROWSER_NOTIFICATION_SUBSCRIBERS: set[asyncio.Queue[dict[str, str | bool]]] = set()
-_BROWSER_NOTIFICATION_HISTORY: deque[dict[str, str | bool]] = deque(maxlen=20)
+_BROWSER_NOTIFICATION_SUBSCRIBERS: set[asyncio.Queue[dict[str, str]]] = set()
+_BROWSER_NOTIFICATION_HISTORY: deque[dict[str, str]] = deque(maxlen=20)
 _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
@@ -1347,16 +1347,6 @@ def _browser_notification_client_script() -> str:
     if (!canNotify()) {
       return;
     }
-    const registration = await ensureServiceWorker();
-    if (!registration) {
-      logLine("notification skipped: service worker unavailable");
-      return;
-    }
-    if (payload.dismiss) {
-      const notifications = await registration.getNotifications({ tag: payload.id });
-      notifications.forEach((notification) => notification.close());
-      return;
-    }
     const options = {
       body: payload.message,
       tag: payload.id,
@@ -1364,7 +1354,22 @@ def _browser_notification_client_script() -> str:
       requireInteraction: true,
       data: { url: payload.url || "", detailUrl: payload.detail_url || "" },
     };
+    const registration = await ensureServiceWorker();
+    if (!registration) {
+      logLine("notification skipped: service worker unavailable");
+      return;
+    }
     await registration.showNotification(payload.title, options);
+  }
+
+  async function dismissBrowserNotification(payload) {
+    const registration = await ensureServiceWorker();
+    if (!registration) {
+      logLine("notification dismissal skipped: service worker unavailable");
+      return;
+    }
+    const notifications = await registration.getNotifications({ tag: payload.id });
+    notifications.forEach((notification) => notification.close());
   }
 
   function stopEvents() {
@@ -1384,6 +1389,9 @@ def _browser_notification_client_script() -> str:
     events.onmessage = (event) => {
       showBrowserNotification(JSON.parse(event.data));
     };
+    events.addEventListener("dismiss", (event) => {
+      dismissBrowserNotification(JSON.parse(event.data));
+    });
   }
 
   function refreshPermission() {
@@ -1524,14 +1532,14 @@ def _browser_notification_event(
     notification_id: str = "",
     detail_url: str = "",
     dismiss: bool = False,
-) -> dict[str, str | bool]:
+) -> dict[str, str]:
     return {
         "id": notification_id or f"ceo-agent-service-{next(_BROWSER_NOTIFICATION_SEQUENCE)}",
         "title": title,
         "message": message,
         "url": url,
         "detail_url": detail_url or _notification_detail_url(url),
-        "dismiss": dismiss,
+        "event_type": "dismiss" if dismiss else "message",
     }
 
 
@@ -1763,7 +1771,7 @@ def render_dingtalk_open_popup(*, cid: str = "", conversation_id: str = "") -> s
 </html>"""
 
 
-def _publish_browser_notification(event: dict[str, str | bool]) -> bool:
+def _publish_browser_notification(event: dict[str, str]) -> bool:
     _BROWSER_NOTIFICATION_HISTORY.append(event)
     subscribers = list(_BROWSER_NOTIFICATION_SUBSCRIBERS)
     for queue in subscribers:
@@ -1773,14 +1781,19 @@ def _publish_browser_notification(event: dict[str, str | bool]) -> bool:
 
 def _browser_notification_event_stream() -> StreamingResponse:
     async def event_stream():
-        queue: asyncio.Queue[dict[str, str | bool]] = asyncio.Queue()
+        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
         _BROWSER_NOTIFICATION_SUBSCRIBERS.add(queue)
         try:
             yield ": connected\n\n"
             while True:
                 event = await queue.get()
-                data = json.dumps(event, ensure_ascii=False)
-                yield f"data: {data}\n\n"
+                event_type = event.get("event_type", "message")
+                data = json.dumps(
+                    {key: value for key, value in event.items() if key != "event_type"},
+                    ensure_ascii=False,
+                )
+                prefix = "" if event_type == "message" else f"event: {event_type}\n"
+                yield f"{prefix}data: {data}\n\n"
         finally:
             _BROWSER_NOTIFICATION_SUBSCRIBERS.discard(queue)
 

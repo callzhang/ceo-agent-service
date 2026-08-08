@@ -3886,7 +3886,7 @@ def test_browser_notification_post_accepts_stable_inbox_notification(tmp_path: P
     assert event["detail_url"] == "/notifications"
 
 
-def test_browser_notification_post_accepts_dismiss_event(tmp_path: Path):
+def test_browser_notification_post_emits_named_dismiss_event(tmp_path: Path):
     client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
     response = client.post(
@@ -3897,7 +3897,7 @@ def test_browser_notification_post_accepts_dismiss_event(tmp_path: Path):
     assert response.status_code == 200
     event = audit_web_module._BROWSER_NOTIFICATION_HISTORY[-1]
     assert event["id"] == "ceo-agent-service-trigger-current"
-    assert event["dismiss"] is True
+    assert event["event_type"] == "dismiss"
 
 
 def test_browser_notification_post_reports_no_subscribers(tmp_path: Path):
