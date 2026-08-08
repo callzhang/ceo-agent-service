@@ -925,6 +925,44 @@ def test_ambiguous_recovery_becomes_needs_human_without_write(setup):
     ) == 1
 
 
+def test_recovery_readback_confirms_completed_write_without_receipt(setup):
+    store, task, audit_context, parent = setup
+    initial_lines = _audit_jsonl("operation-1", session="session-b").splitlines()
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor("\n".join(initial_lines[:3]), returncode=1),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.status == "unknown"
+    assert store.list_agent_execution_receipts(run.id) == []
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _audit_result_jsonl(
+                "reconciled",
+                operation_id=run.operation_id,
+                session=run.codex_session_id,
+            )
+        ),
+    ).recover(task, audit_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "reconciled"
+    assert persisted is not None and persisted.side_effect_state == "confirmed"
+    assert len(store.list_agent_execution_receipts(run.id)) == 1
+
+
 def test_ambiguous_recovery_requires_matching_live_read(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     executor = CapturingExecutor(

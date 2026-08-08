@@ -2884,8 +2884,16 @@ class AutoReplyStore:
                 """,
                 (run_id, action_index),
             ).fetchone()
-            if int(action_state["starts"] or 0) <= int(action_state["closures"] or 0):
-                raise ValueError("execution receipt has no unmatched effect")
+            starts = int(action_state["starts"] or 0)
+            closures = int(action_state["closures"] or 0)
+            # Reconciliation may confirm a write that the Codex stream already
+            # marked completed, but for which no durable receipt was captured
+            # before the run became unknown.  A matching live read is validated
+            # by the caller before reaching this method, so that closed event is
+            # still an eligible effect to account for.  Reject only missing or
+            # inconsistent lifecycle evidence.
+            if starts == 0 or closures > starts:
+                raise ValueError("execution receipt has no matching effect")
             db.execute(
                 "update agent_execution_receipts set effect_counted=1 where id=?",
                 (receipt["id"],),

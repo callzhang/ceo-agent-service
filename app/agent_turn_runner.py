@@ -141,7 +141,7 @@ class AgentTurnProcess(Generic[ResultT]):
         recovery_event_start = len(run.tool_events)
         completed_before_recovery = (
             _action_completion_accounting(
-                run.tool_events,
+                [],
                 self.store.list_agent_execution_receipts(run.id),
                 expected_effect_actions,
                 operation_id=run.operation_id,
@@ -337,6 +337,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 persisted,
                 expected_effect_actions=expected_effect_actions,
                 recovery_event_start=recovery_event_start,
+                completed_before_recovery=completed_before_recovery,
             )
         elif run.role is AgentRole.AUDIT and recovery_phase == "execute":
             self._validate_audit_recovery_execution_result(
@@ -621,6 +622,7 @@ class AgentTurnProcess(Generic[ResultT]):
         *,
         expected_effect_actions: tuple[dict[str, object], ...],
         recovery_event_start: int,
+        completed_before_recovery: set[int],
     ) -> None:
         outcome = getattr(result, "outcome")
         if getattr(result, "proposal_revision") != run.proposal_revision:
@@ -634,13 +636,12 @@ class AgentTurnProcess(Generic[ResultT]):
             event_start=recovery_event_start,
             registry=self.effects,
         )
-        completed_by_events = _action_completion_accounting(
-            persisted.tool_events[:recovery_event_start],
-            [],
-            expected_effect_actions,
-            operation_id=run.operation_id,
-            registry=self.effects,
-        )[0]
+        # A completed tool lifecycle event is not enough to suppress recovery.
+        # This run is explicitly ``unknown`` because the original write has no
+        # durable receipt. Only a receipt that existed before the recovery turn
+        # can prove the action was already reconciled; a receipt produced during
+        # this turn must not suppress the readback required for that same turn.
+        completed_by_events = completed_before_recovery
         required = {
             index
             for index, action in enumerate(expected_effect_actions)
