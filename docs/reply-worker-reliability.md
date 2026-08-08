@@ -153,7 +153,8 @@ Codex 明确返回额度、配额或 usage limit 时，服务将其归类为 `co
 同一 turn 内连续重试，不消耗任务重试预算，并保留为延后执行的 pending 任务。审计图以“等待
 Provider 恢复”显示这类任务。退避到期后，下一次持久队列执行会重新领取同一个无副作用 run
 并真实调用 Codex；如果 Provider 仍不可用，则只执行这一次并再次延期，不能只刷新
-`available_at` 而不启动 Agent。只有当前仍处于终态的失败才使用红色。
+`available_at` 而不启动 Agent。重领旧 run 时必须 resume 该 run 自己已记录的 Codex session；
+同一对话后来产生的新 session 不能覆盖旧 run 的审计身份。只有当前仍处于终态的失败才使用红色。
 
 只有诊断或建议、没有完成用户要求的动作时，不能标记为执行成功。B 只有在外部系统确认结果
 后才能返回 `executed`。

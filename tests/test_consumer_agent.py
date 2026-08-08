@@ -334,6 +334,47 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
     assert '"retryable":true' in run.structured_error_json
 
 
+def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advances(
+    store, task, context
+):
+    provider_failure = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "session-old"}),
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "You've hit your usage limit. Try again later.",
+                }
+            ),
+            json.dumps({"type": "turn.failed"}),
+        )
+    )
+    with pytest.raises(RuntimeError, match="codex_provider_unavailable"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=FailingExecutor(provider_failure),
+            codex_session_exists=lambda _: True,
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    store.upsert_conversation(
+        task.conversation_id,
+        task.conversation_title,
+        task.single_chat,
+        "session-new",
+    )
+    executor = CapturingExecutor(_result_jsonl(session="session-old"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert executor.commands[0][-2:] == ["session-old", "-"]
+
+
 def test_consumer_preserves_codex_cli_authentication_failure(store, task, context):
     stdout = "\n".join(
         (
