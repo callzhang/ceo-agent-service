@@ -2006,7 +2006,7 @@ class DingTalkAutoReplyWorker:
                 send_status=send_status,
                 message=result.summary or send_error,
             )
-        else:
+        elif task_status == "done":
             self._dismiss_problem_notification(task)
         return task_status == "done"
 
