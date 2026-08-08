@@ -13,7 +13,7 @@ from app.agent_cli import RECOVERY_WRITE_ALLOWLIST_ENV
 from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
-from app.consumer_agent import _developer_instructions
+from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import describe_native_command
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
@@ -232,7 +232,7 @@ class AuditAgentRunner:
             session_id=run.codex_session_id or None,
             schema_path=SCHEMA_PATH,
             expected_schema=AuditAgentResult.model_json_schema(),
-            developer_instructions=_developer_instructions(
+            developer_instructions=audit_developer_instructions(
                 "Audit Agent B independently reviews and executes accepted candidates.\n\n"
                 + (
                     "This is recovery of an unknown external outcome in the same Audit "

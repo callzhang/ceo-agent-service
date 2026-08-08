@@ -457,6 +457,12 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill"]' in command
     assert 'web_search="disabled"' not in command
+    assert any(
+        "Authoritative Audit role boundary" in option
+        and "valid AuditAgentResult JSON" in option
+        for option in command
+    )
+    assert "every write command remain forbidden for Consumer" not in " ".join(command)
     assert store.get_codex_session_id(task.conversation_id) == "session-a"
     run = store.get_agent_run(result.run_id)
     assert run.role.value == "audit"

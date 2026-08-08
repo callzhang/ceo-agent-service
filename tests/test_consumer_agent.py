@@ -210,6 +210,11 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         "call `agent_cli.execute_reviewed_read`" in option
         for option in command
     )
+    assert any(
+        "Authoritative Consumer role boundary" in option
+        and "valid ConsumerAgentResult JSON" in option
+        for option in command
+    )
 
 
 def test_consumer_rotates_damaged_session_after_missing_final_result(
