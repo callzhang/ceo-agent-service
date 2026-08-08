@@ -552,3 +552,9 @@ Pending proposals wait or become `needs_human` when no B execution path exists.
 - Requiring explicit imperative wording before A may recognize work Derek needs
   to handle.
 - Blocking a corrected action because an older version already executed.
+### Direct DingTalk reads
+
+Consumer A reads DingTalk evidence itself. For an installed DWS command whose
+exact schema declares `effect: read`, it uses the native command directly;
+the runtime records that read-only event. `agent_cli` is not a DWS proxy.
+Unknown shell commands and any DWS write remain rejected for Consumer A.

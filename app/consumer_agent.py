@@ -20,6 +20,12 @@ from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_com
 SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "consumer_agent_result.schema.json"
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
+DIRECT_DWS_READ_INSTRUCTIONS = """
+When DingTalk evidence is required, run the exact read-only `dws` command
+directly from this Agent turn. Do not route DWS reads through `agent_cli`.
+The runtime records schema-classified native read commands; unknown shell
+commands and every write command remain forbidden for Consumer Agent A.
+""".strip()
 
 
 class ConsumerAgentRunner:
@@ -167,4 +173,5 @@ def _developer_instructions(role_instruction: str) -> str:
         if SHARED_RULES_PATH.is_file()
         else ""
     )
-    return role_instruction if not shared else role_instruction + "\n\n" + shared
+    instructions = role_instruction + "\n\n" + DIRECT_DWS_READ_INSTRUCTIONS
+    return instructions if not shared else instructions + "\n\n" + shared

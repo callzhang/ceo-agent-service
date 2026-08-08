@@ -139,6 +139,10 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         "Output JSON Schema (validated locally):" in option
         for option in command
     )
+    assert any(
+        "Do not route DWS reads through `agent_cli`." in option
+        for option in command
+    )
 
 
 def test_consumer_rotates_damaged_session_after_missing_final_result(
