@@ -320,7 +320,16 @@ def _expected_effect_action(
     descriptor = describe_native_command(
         {"type": "command_execution", **action.payload}
     )
+    legacy_argv = _legacy_dingtalk_chat_send_argv(action)
+    if descriptor is None and legacy_argv is not None:
+        descriptor = describe_native_command(
+            {"type": "command_execution", "argv": legacy_argv}
+        )
     if descriptor is not None:
+        if legacy_argv is not None:
+            expected["capability"] = f"agent_cli.{descriptor.cli}"
+            expected["operation"] = descriptor.command_path
+            expected["arguments_digest"] = _json_digest({"argv": legacy_argv})
         expected["operation_digest"] = descriptor.command_digest
         expected["target_identifiers"] = descriptor.target_identifiers
         expected["reviewed_server"] = "agent_cli"
@@ -340,6 +349,20 @@ def _expected_effect_action(
             expected["reviewed_server"] = call.server
             expected["reviewed_tool"] = call.tool
     return expected
+
+
+def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:
+    """Canonicalize only a persisted pre-contract DingTalk chat action."""
+    if action.capability != "dingtalk-chat" or action.operation != "dws chat message send":
+        return None
+    group = action.payload.get("group")
+    text = action.payload.get("text")
+    if not isinstance(group, str) or not group or not isinstance(text, str) or not text:
+        return None
+    return [
+        "dws", "chat", "message", "send", "--group", group,
+        "--text", text, "--yes",
+    ]
 
 
 def _recovery_execute_prompt(

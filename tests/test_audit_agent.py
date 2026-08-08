@@ -14,7 +14,11 @@ from app.agent_turn_runner import (
     _json_digest,
     _read_matches_action,
 )
-from app.audit_agent import AuditAgentRunner, _recovery_authorizations
+from app.audit_agent import (
+    AuditAgentRunner,
+    _expected_effect_action,
+    _recovery_authorizations,
+)
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
@@ -961,6 +965,26 @@ def test_recovery_readback_confirms_completed_write_without_receipt(setup):
     assert result.result.outcome.value == "reconciled"
     assert persisted is not None and persisted.side_effect_state == "confirmed"
     assert len(store.list_agent_execution_receipts(run.id)) == 1
+
+
+def test_legacy_dingtalk_chat_candidate_normalizes_for_reconciliation():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Ask for a missing fact",
+            "capability": "dingtalk-chat",
+            "operation": "dws chat message send",
+            "target": {"openConversationId": "cid-agent"},
+            "payload": {"group": "cid-agent", "text": "Please clarify."},
+            "expected_verification": "Message exists",
+        }
+    )
+    expected = _expected_effect_action(
+        action, McpToolEffectRegistry.default(), action_index=0
+    )
+    assert expected["capability"] == "agent_cli.dws"
+    assert expected["operation"] == "chat message send"
+    assert expected["target_identifiers"] == {"group": "cid-agent"}
+    assert expected["reviewed_tool"] == "execute_reviewed_write"
 
 
 def test_ambiguous_recovery_requires_matching_live_read(setup):
