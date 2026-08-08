@@ -209,6 +209,30 @@ def test_recovery_uses_explicit_account_with_ipc_style_reader(store):
     assert recovered[0].status == "sent"
 
 
+def test_recovery_scans_extended_read_only_history_for_unknown_delivery(store):
+    delivery = _seed_delivery(store)
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "send_unknown",
+        error="sender_execution_interrupted",
+    )
+
+    class Reader:
+        account = object()
+        requested_limit = None
+
+        def read_messages(self, *_args, **kwargs):
+            self.requested_limit = kwargs["limit"]
+            return [SimpleNamespace(direction="outbound", text="收到")]
+
+    reader = Reader()
+    recovered = reconcile_incomplete_deliveries(store, reader)
+
+    assert recovered[0].status == "sent"
+    assert reader.requested_limit == 200
+
+
 def test_open_target_waits_for_async_composer_after_session_click():
     row = object()
     composer = object()
