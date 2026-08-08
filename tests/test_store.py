@@ -2111,6 +2111,171 @@ def test_failed_agent_run_rejects_conflicting_terminal_rewrite(tmp_path: Path):
         )
 
 
+def test_retry_failed_reply_task_reopens_same_retryable_no_effect_run(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    claim = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    )
+    store.fail_agent_run(
+        claim.run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="worker-1",
+    )
+    store.fail_reply_task(
+        task_id,
+        "codex_process_failed",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    recovered = store.retry_failed_reply_task(
+        task_id,
+        claim.run.id,
+        reason="operator_retry_after_runtime_fix",
+    )
+
+    assert recovered.status == "pending"
+    assert recovered.execution_generation == task.execution_generation
+    assert recovered.error == "operator_retry_after_runtime_fix"
+    retry_claim = store.claim_reply_task(task_id)
+    assert retry_claim is not None
+    reclaimed = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-2",
+    )
+    assert reclaimed.claimed is True
+    assert reclaimed.run.id == claim.run.id
+
+
+@pytest.mark.parametrize(
+    ("retryable", "side_effect_state"),
+    ((False, "none"), (True, "unknown"), (True, "confirmed")),
+)
+def test_retry_failed_reply_task_rejects_unsafe_runs(
+    tmp_path: Path,
+    retryable: bool,
+    side_effect_state: str,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    if side_effect_state == "none":
+        claim = store.claim_agent_run(
+            task_id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner="worker-1",
+        )
+    else:
+        claim = _claim_audit_run(
+            store,
+            task_id,
+            task.execution_generation,
+            owner="worker-1",
+        )
+    store.fail_agent_run(
+        claim.run.id,
+        {"code": "runtime_failure", "retryable": retryable},
+        owner="worker-1",
+        side_effect_state=side_effect_state,
+    )
+    store.fail_reply_task(
+        task_id,
+        "runtime_failure",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    with pytest.raises(ValueError, match="not safely retryable"):
+        store.retry_failed_reply_task(
+            task_id,
+            claim.run.id,
+            reason="operator_retry_after_runtime_fix",
+        )
+
+    assert store.get_reply_task(task_id).status == "failed"
+
+
+def test_retry_failed_reply_task_rejects_older_and_audit_runs(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    older = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="audit-attempt-0",
+        owner="worker-1",
+    )
+    store.fail_agent_run(
+        older.run.id,
+        {"code": "runtime_failure", "retryable": True},
+        owner="worker-1",
+    )
+    latest = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=1,
+        parent_agent_run_id=None,
+        operation_id="audit-attempt-1",
+        owner="worker-1",
+    )
+    store.fail_agent_run(
+        latest.run.id,
+        {"code": "runtime_failure", "retryable": True},
+        owner="worker-1",
+    )
+    store.fail_reply_task(
+        task_id,
+        "runtime_failure",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    with pytest.raises(ValueError, match="not safely retryable"):
+        store.retry_failed_reply_task(
+            task_id,
+            older.run.id,
+            reason="operator_retry_after_runtime_fix",
+        )
+
+    with pytest.raises(ValueError, match="not safely retryable"):
+        store.retry_failed_reply_task(
+            task_id,
+            latest.run.id,
+            reason="operator_retry_after_runtime_fix",
+        )
+    assert store.get_reply_task(task_id).status == "failed"
+
+
 def test_unknown_agent_run_confirmed_absent_rotates_task(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

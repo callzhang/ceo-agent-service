@@ -156,6 +156,12 @@ Provider 恢复”显示这类任务。退避到期后，下一次持久队列�
 `available_at` 而不启动 Agent。重领旧 run 时必须 resume 该 run 自己已记录的 Codex session；
 同一对话后来产生的新 session 不能覆盖旧 run 的审计身份。只有当前仍处于终态的失败才使用红色。
 
+旧版本已经落为 `failed` 的 Consumer 运行时故障，只能通过 Store 的受限恢复迁移回原 generation：
+task 和指定 Consumer run 必须是同代最新 run 且仍为 `failed`，并明确 `retryable=true`、
+`side_effect_state=none`；同代
+不能存在 running/unknown run、已记录副作用或完成回执。恢复不会创建新 generation，也不会
+丢失该 run 的 Codex session；任何条件不满足时拒绝恢复并保留原终态。
+
 只有诊断或建议、没有完成用户要求的动作时，不能标记为执行成功。B 只有在外部系统确认结果
 后才能返回 `executed`。
 

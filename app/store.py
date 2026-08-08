@@ -5249,6 +5249,92 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
+    def retry_failed_reply_task(
+        self,
+        task_id: int,
+        run_id: int,
+        *,
+        reason: str,
+    ) -> ReplyTask:
+        """Reopen one failed task only when its persisted run is safe to retry."""
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("retry reason must be non-empty")
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select tasks.execution_generation, tasks.status as task_status,
+                       runs.role as run_role, runs.status as run_status,
+                       runs.side_effect_state,
+                       runs.structured_error_json
+                from reply_tasks as tasks
+                join agent_runs as runs on runs.reply_task_id=tasks.id
+                where tasks.id=? and runs.id=?
+                  and runs.execution_generation=tasks.execution_generation
+                  and runs.id=(
+                      select max(latest.id)
+                      from agent_runs as latest
+                      where latest.reply_task_id=tasks.id
+                        and latest.execution_generation=tasks.execution_generation
+                  )
+                """,
+                (task_id, run_id),
+            ).fetchone()
+            retryable = False
+            if row is not None:
+                try:
+                    structured_error = json.loads(row["structured_error_json"])
+                except json.JSONDecodeError:
+                    structured_error = {}
+                retryable = (
+                    row["task_status"] == "failed"
+                    and row["run_role"] == AgentRole.CONSUMER.value
+                    and row["run_status"] == "failed"
+                    and row["side_effect_state"] == "none"
+                    and isinstance(structured_error, dict)
+                    and structured_error.get("retryable") is True
+                )
+            unsafe_generation = None
+            if row is not None:
+                unsafe_generation = db.execute(
+                    """
+                    select 1
+                    from agent_runs as runs
+                    where runs.reply_task_id=? and runs.execution_generation=?
+                      and (
+                          runs.status in ('running', 'unknown')
+                          or runs.side_effect_state<>'none'
+                          or exists (
+                              select 1
+                              from agent_execution_receipts as receipts
+                              where receipts.agent_run_id=runs.id
+                                and receipts.completed=1 and receipts.persisted=1
+                          )
+                      )
+                    limit 1
+                    """,
+                    (task_id, row["execution_generation"]),
+                ).fetchone()
+            if not retryable or unsafe_generation is not None:
+                raise ValueError("failed reply task is not safely retryable")
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending', attempts=max(attempts - 1, 0),
+                    locked_at=null, available_at='', error=?, updated_at=?
+                where id=? and status='failed' and execution_generation=?
+                """,
+                (reason, now_text, task_id, row["execution_generation"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            updated = db.execute(
+                "select * from reply_tasks where id=?", (task_id,)
+            ).fetchone()
+            if updated is None:
+                raise RuntimeError("recovered reply task was not persisted")
+            return self._reply_task_from_row(updated)
+
     def rotate_reply_task_execution_generation(self, task_id: int) -> str:
         execution_generation = uuid4().hex
         blocked = False

@@ -1157,6 +1157,57 @@ def test_retryable_consumer_exhaustion_returns_failed_latest_run(store):
     assert len(consumer.calls) == 2
 
 
+def test_recovered_failed_consumer_task_reclaims_same_run(store):
+    failure = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "failed",
+            "summary": "Consumer runtime failed.",
+            "proposal": None,
+            "error": {
+                "code": "codex_process_failed",
+                "retryable": True,
+                "authorization_required": False,
+            },
+        }
+    )
+    pending = _task(store)
+    task = store.claim_reply_task(pending.id)
+    assert task is not None
+    consumer = ScriptedConsumer(
+        store,
+        failure,
+        failure,
+        _consumer_result("no_action", "Recovered without an external action."),
+    )
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=consumer,
+        audit=ScriptedAudit(store),
+    )
+
+    failed = _process(orchestrator, task)
+    assert failed.status == "failed_retryable"
+    failed_run_id = failed.final_run_id
+    store.fail_reply_task(
+        task.id,
+        failed.error.code,
+        expected_execution_generation=task.execution_generation,
+    )
+    store.retry_failed_reply_task(
+        task.id,
+        failed_run_id,
+        reason="operator_retry_after_runtime_fix",
+    )
+    recovered_task = store.claim_reply_task(task.id)
+    assert recovered_task is not None
+
+    recovered = _process(orchestrator, recovered_task)
+
+    assert recovered.status == "no_action"
+    assert recovered.final_run_id == failed_run_id
+    assert consumer.calls[-1]["run_id"] == failed_run_id
+
+
 class RevisionRetryConsumer(ScriptedConsumer):
     def __init__(self, store: AutoReplyStore) -> None:
         super().__init__(store)
