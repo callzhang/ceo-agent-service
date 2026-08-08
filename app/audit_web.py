@@ -481,7 +481,7 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .status-skipped{background:var(--surface);color:var(--stone)}
 .status-failed,.status-blocked,.status-active{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .status-action{background:var(--surface);color:var(--steel);border-color:var(--hairline)}
-.action-state-sent,.action-state-accepted,.action-state-approved,.action-state-resolved{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
+.action-state-sent,.action-state-accepted,.action-state-approved,.action-state-resolved,.action-state-recovered{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .action-state-skipped{background:var(--surface);color:var(--stone);border-color:var(--hairline)}
 .action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .action-state-needs-human,.action-state-tentative,.action-state-returned{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
@@ -1998,6 +1998,9 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         for name, table, status_column, updated_column, error_column in specs:
             if not _sqlite_table_exists(db, table):
                 continue
+            if table == "reply_attempts":
+                snapshots.append(_reply_attempt_queue_snapshot(db))
+                continue
             counts = _queue_status_counts(db, table, status_column)
             retryable = _queue_retryable_count(db, table, status_column, error_column)
             raw_failed = _queue_count_for(counts, {"failed", "error"})
@@ -2017,16 +2020,109 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
     return snapshots
 
 
+def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
+    """Summarize the current state of each message trigger, not retry history."""
+    current_attempts = """
+        with latest as (
+            select a.*, row_number() over (
+                partition by a.channel, a.conversation_id, a.trigger_message_id
+                order by datetime(a.updated_at) desc, a.id desc
+            ) as ordinal
+            from reply_attempts a
+        ), current as (
+            select
+                a.*,
+                case
+                    when lower(a.send_status) in ('failed', 'blocked')
+                     and exists (
+                        select 1 from reply_tasks t
+                        where t.channel=a.channel
+                          and t.conversation_id=a.conversation_id
+                          and t.trigger_message_id=a.trigger_message_id
+                          and lower(t.status) in ('pending', 'processing')
+                    ) then 'retryable'
+                    when lower(a.send_status)='failed'
+                     and (
+                        exists (
+                            select 1 from reply_tasks t
+                            where t.channel=a.channel
+                              and t.conversation_id=a.conversation_id
+                              and t.trigger_message_id=a.trigger_message_id
+                              and lower(t.status)='done'
+                        )
+                        or exists (
+                            select 1 from sent_replies sr
+                            where sr.conversation_id=a.conversation_id
+                              and sr.trigger_message_id=a.trigger_message_id
+                        )
+                    ) then 'recovered'
+                    else lower(coalesce(a.send_status, ''))
+                end as live_status
+            from latest a
+            where a.ordinal=1
+        )
+    """
+    rows = db.execute(
+        current_attempts
+        + """
+            select live_status as status, count(*) as count
+            from current
+            group by live_status
+            order by live_status
+        """
+    ).fetchall()
+    counts = {
+        str(row["status"] or "-"): int(row["count"] or 0)
+        for row in rows
+    }
+    latest_row = db.execute(
+        "select max(updated_at) as value from reply_attempts"
+    ).fetchone()
+    error_row = db.execute(
+        current_attempts
+        + """
+            select send_error as value
+            from current
+            where live_status='failed'
+              and trim(coalesce(send_error, ''))<>''
+            order by datetime(updated_at) desc, id desc
+            limit 1
+        """
+    ).fetchone()
+    return {
+        "name": "Reply attempts",
+        "table": "reply_attempts (current trigger state)",
+        "counts": counts,
+        "pending": _queue_count_for(counts, {"pending", "pending_reconciliation"}),
+        "processing": _queue_count_for(counts, {"processing", "sending"}),
+        "failed": _queue_count_for(counts, {"failed", "error"}),
+        "retryable": _queue_count_for(counts, {"retryable"}),
+        "latest_updated_at": "" if latest_row is None else str(latest_row["value"] or ""),
+        "latest_error": "" if error_row is None else str(error_row["value"] or ""),
+    }
+
+
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dict[str, str]]:
     specs = [
         ("Reply task", "reply_tasks", "status", "conversation_title", "trigger_text", "updated_at", "error"),
-        ("Reply", "reply_attempts", "send_status", "conversation_title", "trigger_text", "updated_at", "send_error"),
         ("Work item", "work_summary_inputs", "status", "source_type", "source_ref", "updated_at", "error"),
         ("Follow-up", "follow_up_drafts", "status", "owner_name", "question_text", "updated_at", "suppressed_reason"),
         ("Meeting", "meeting_alignment_jobs", "status", "title", "target_title", "updated_at", "error"),
         ("OKR", "okr_review_requests", "status", "conversation_title", "trigger_text", "updated_at", "error"),
     ]
     rows: list[dict[str, str]] = []
+    for attempt in store.list_current_unresolved_problem_attempts(limit=limit):
+        rows.append(
+            {
+                "category": "Reply",
+                "id": str(attempt.id),
+                "status": attempt.send_status,
+                "context": attempt.conversation_title,
+                "summary": attempt.trigger_text,
+                "updated_at": attempt.updated_at,
+                "error": attempt.send_error,
+            }
+        )
     with store._connect() as db:
         for category, table, status_column, context_column, summary_column, updated_column, error_column in specs:
             if not _sqlite_table_exists(db, table):
@@ -3885,6 +3981,7 @@ def _render_attempt_list(
         store,
         sent_replies_by_attempt.values(),
     )
+    reply_task_cache: dict[tuple[str, str, str], object | None] = {}
     for history_item in history_items:
         if history_item.kind == "task":
             items.append(_task_history_card(history_item))
@@ -3918,6 +4015,11 @@ def _render_attempt_list(
         wechat_delivery_id = wechat_ready_delivery_by_attempt.get(attempt.id)
         detail_href = f"/attempts/{attempt.id}"
         history_type = _history_attempt_type(attempt)
+        recovery_state = _attempt_recovery_display_state(
+            store,
+            attempt,
+            reply_task_cache,
+        )
         items.append(
             f"<article class=\"attempt-item history-kind-{history_type[0]}\" role=\"link\" tabindex=\"0\" "
             f"data-history-detail-href=\"{escape(detail_href, quote=True)}\">"
@@ -3926,7 +4028,7 @@ def _render_attempt_list(
             f"<a class=\"attempt-id\" href=\"{escape(detail_href, quote=True)}\">#{attempt.id}</a>"
             f"{_history_type_badge(*history_type)}"
             f"{info_html}"
-            f"{_attempt_action_pills(attempt)}"
+            f"{_attempt_action_pills(attempt, recovery_state=recovery_state)}"
             f"<div class=\"attempt-main\">{_channel_badge(attempt.channel)}{escape(attempt.conversation_title)}</div>"
             f"<div class=\"attempt-meta\">{escape(attempt.trigger_sender)}</div>"
             "</div>"
@@ -8250,6 +8352,7 @@ def _attempt_action_pills(
     attempt: ReplyAttempt,
     *,
     later_attempt: ReplyAttempt | None = None,
+    recovery_state: str = "",
 ) -> str:
     if later_attempt is not None:
         return (
@@ -8262,7 +8365,12 @@ def _attempt_action_pills(
         attempt.send_status.strip().lower() == "calendar"
         and attempt.calendar_response_status.strip()
     )
-    actions = [] if calendar_only else [_send_status_action(attempt)]
+    if calendar_only:
+        actions = []
+    elif recovery_state:
+        actions = [_recovery_action(recovery_state)]
+    else:
+        actions = [_send_status_action(attempt)]
     if attempt.oa_action.strip():
         actions.append((f"🧾 {attempt.oa_action.strip()}", attempt.oa_action))
     if attempt.calendar_response_status.strip():
@@ -8277,6 +8385,45 @@ def _attempt_action_pills(
         f"{escape(label)}</span>"
         for label, state in actions
     )
+
+
+def _attempt_recovery_display_state(
+    store: AutoReplyStore,
+    attempt: ReplyAttempt,
+    task_cache: dict[tuple[str, str, str], object | None],
+) -> str:
+    if attempt.send_status.strip().lower() != "failed":
+        return ""
+    task_key = (
+        attempt.channel,
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+    )
+    task = task_cache.get(task_key)
+    if task_key not in task_cache:
+        task = store.get_reply_task_for_message(
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+            channel=attempt.channel,
+        )
+        task_cache[task_key] = task
+    if task is None:
+        return ""
+    if task.status == "done":
+        return "recovered"
+    if task.status == "pending":
+        return "queued"
+    if task.status == "processing":
+        return "processing"
+    return ""
+
+
+def _recovery_action(state: str) -> tuple[str, str]:
+    return {
+        "recovered": ("↻ Recovered", "recovered"),
+        "queued": ("⏳ Recovery queued", "pending"),
+        "processing": ("💬 Processing", "processing"),
+    }[state]
 
 
 def _agent_status_pill(status: str) -> str:
