@@ -6,8 +6,11 @@ import pytest
 
 from app.agent_context import AgentTaskContext
 from app.consumer_agent import ConsumerAgentRunner
-from app.agent_result import ResultParseError
-from app.native_cli_metadata import AgentReadOnlyViolationError
+from app.agent_result import EffectKind, ResultParseError
+from app.native_cli_metadata import (
+    AgentReadOnlyViolationError,
+    NativeCliMetadataClassifier,
+)
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 
@@ -491,7 +494,55 @@ def test_consumer_rejects_effectful_stream_event(store, task, context):
         )
 
 
-def test_consumer_rejects_direct_shell_event(store, task, context):
+def test_consumer_allows_reviewed_direct_native_read(store, task, context):
+    command = "dws oa approval detail --instance-id process-1 --format json"
+    stream = "\n".join(
+        (
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "type": "command_execution",
+                        "id": "read-1",
+                        "command": command,
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "command_execution",
+                        "id": "read-1",
+                        "command": command,
+                    },
+                }
+            ),
+            _result_jsonl(),
+        )
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream),
+        native_cli_classifier=NativeCliMetadataClassifier(
+            reviewed_effects={
+                ("dws", "oa approval detail"): EffectKind.READ_ONLY,
+            }
+        ),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.outcome.value == "no_action"
+    run = store.get_agent_run(result.run_id)
+    assert run is not None
+    assert [event["item"]["metadata"]["operation"] for event in run.tool_events] == [
+        "oa approval detail",
+        "oa approval detail",
+    ]
+
+
+def test_consumer_rejects_direct_native_write(store, task, context):
     shell = json.dumps(
         {
             "type": "item.started",
@@ -506,10 +557,38 @@ def test_consumer_rejects_direct_shell_event(store, task, context):
 
     with pytest.raises(
         AgentReadOnlyViolationError,
-        match="agent_shell_execution_forbidden",
+        match="agent_write_forbidden",
     ):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
             executor=executor,
+            native_cli_classifier=NativeCliMetadataClassifier(
+                reviewed_effects={
+                    ("dws", "chat message send"): EffectKind.EFFECTFUL,
+                }
+            ),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+
+def test_consumer_rejects_unreviewed_direct_shell_command(store, task, context):
+    shell = json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "type": "command_execution",
+                "id": "shell-1",
+                "command": "date",
+            },
+        }
+    )
+
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="agent_shell_execution_forbidden",
+    ):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(shell + "\n" + _result_jsonl()),
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)

@@ -153,6 +153,9 @@ The capability boundary is enforced by the runner, not by editable prose.
 - Only reviewed MCP servers are visible.
 - MCP and native CLI tool metadata must classify an operation as read-only
   before A may call it.
+- A may invoke a native CLI directly when its installed metadata classifies the
+  exact command as read-only. Unknown shell commands and every native write
+  remain rejected; direct reads are recorded with their command identity.
 - DWS, Lark, Memory, Web Search, and other configured systems are available for
   reads when their channel gates are ready.
 - Authentication login, reset, logout, or browser authorization remains owned

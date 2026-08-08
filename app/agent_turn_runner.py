@@ -27,7 +27,11 @@ from app.agent_effects import (
 )
 from app.codex_runner import CodexRunner
 from app.leak_check import contains_credential
-from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
+from app.native_cli_metadata import (
+    AgentReadOnlyViolationError,
+    NativeCliMetadataClassifier,
+    describe_native_command,
+)
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
@@ -96,6 +100,7 @@ class AgentTurnProcess(Generic[ResultT]):
         executor: ProcessExecutor | None = None,
         codex_bin: str = "codex",
         mcp_effect_registry: McpToolEffectRegistry | None = None,
+        native_cli_classifier: NativeCliMetadataClassifier | None = None,
     ) -> None:
         self.store = store
         self.task = task
@@ -103,6 +108,7 @@ class AgentTurnProcess(Generic[ResultT]):
         self.codex = CodexRunner(workspace=workspace, codex_bin=codex_bin)
         self.executor = executor or run_process_with_idle_timeout
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
+        self.native_cli = native_cli_classifier or NativeCliMetadataClassifier()
 
     def execute(
         self,
@@ -415,7 +421,35 @@ class AgentTurnProcess(Generic[ResultT]):
         if not isinstance(item, dict):
             return None
         if item.get("type") == "command_execution":
-            raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
+            command = self.native_cli.classify(item)
+            if command is None:
+                raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
+            if command.effect is not EffectKind.READ_ONLY:
+                raise AgentReadOnlyViolationError("agent_write_forbidden")
+            status = {
+                "item.started": "in_progress",
+                "item.completed": "completed",
+                "item.failed": "failed",
+            }[str(payload["type"])]
+            return {
+                "type": str(payload["type"]),
+                "item": {
+                    "type": "command_execution",
+                    "id": str(item.get("id") or item.get("call_id") or ""),
+                    "status": status,
+                    "metadata": {
+                        "effect": EffectKind.READ_ONLY.value,
+                        "capability": f"native_cli.{command.cli}",
+                        "operation": command.command_path,
+                        "operation_digest": command.command_digest,
+                        "target_identifiers": command.target_identifiers,
+                        "arguments_digest": _json_digest(
+                            {"command": item.get("command")}
+                        ),
+                        "native_cli": command.cli,
+                    },
+                },
+            }
         if item.get("type") != "mcp_tool_call":
             return None
         call = self.effects.classify(item)

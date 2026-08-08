@@ -8,6 +8,7 @@ from uuid import uuid4
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import AuditFeedback, ConsumerAgentResult
 from app.agent_result import ResultParseError, parse_typed_agent_result
+from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
@@ -31,6 +32,7 @@ class ConsumerAgentRunner:
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
+        native_cli_classifier: NativeCliMetadataClassifier | None = None,
         codex_session_exists: Callable[[str], bool] | None = None,
     ) -> None:
         self.store = store
@@ -39,6 +41,7 @@ class ConsumerAgentRunner:
         self.executor = executor
         self.owner = owner or f"consumer-agent-{uuid4().hex}"
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
+        self.native_cli_classifier = native_cli_classifier
         self.codex_session_exists = codex_session_exists or (
             lambda session_id: find_codex_session_path(session_id) is not None
         )
@@ -108,6 +111,7 @@ class ConsumerAgentRunner:
             executor=self.executor,
             codex_bin=self.codex_bin,
             mcp_effect_registry=self.effects,
+            native_cli_classifier=self.native_cli_classifier,
         )
 
         def renew_session_lock() -> None:
