@@ -8,6 +8,7 @@ for later delivery evidence.
 
 - approval instance and recency for the latest approval attempt;
 - conversation, trigger, action, and attempt id for later-attempt checks;
+- channel, conversation, trigger, and recency for current-trigger status checks;
 - conversation, trigger, and send time for sent-reply checks.
 
 The approval lookup explicitly excludes an empty approval instance so SQLite

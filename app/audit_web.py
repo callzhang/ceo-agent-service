@@ -2026,7 +2026,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
         with latest as (
             select a.*, row_number() over (
                 partition by a.channel, a.conversation_id, a.trigger_message_id
-                order by datetime(a.updated_at) desc, a.id desc
+                order by a.updated_at desc, a.id desc
             ) as ordinal
             from reply_attempts a
         ), current as (
@@ -2065,7 +2065,15 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     rows = db.execute(
         current_attempts
         + """
-            select live_status as status, count(*) as count
+            select
+                live_status as status,
+                count(*) as count,
+                max(case
+                    when live_status='failed'
+                     and trim(coalesce(send_error, ''))<>''
+                    then updated_at || char(31) || send_error
+                    else ''
+                end) as latest_error
             from current
             group by live_status
             order by live_status
@@ -2078,17 +2086,12 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     latest_row = db.execute(
         "select max(updated_at) as value from reply_attempts"
     ).fetchone()
-    error_row = db.execute(
-        current_attempts
-        + """
-            select send_error as value
-            from current
-            where live_status='failed'
-              and trim(coalesce(send_error, ''))<>''
-            order by datetime(updated_at) desc, id desc
-            limit 1
-        """
-    ).fetchone()
+    failed_row = next(
+        (row for row in rows if str(row["status"] or "") == "failed"),
+        None,
+    )
+    latest_error = "" if failed_row is None else str(failed_row["latest_error"] or "")
+    _, _, latest_error = latest_error.partition(chr(31))
     return {
         "name": "Reply attempts",
         "table": "reply_attempts (current trigger state)",
@@ -2098,7 +2101,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
         "failed": _queue_count_for(counts, {"failed", "error"}),
         "retryable": _queue_count_for(counts, {"retryable"}),
         "latest_updated_at": "" if latest_row is None else str(latest_row["value"] or ""),
-        "latest_error": "" if error_row is None else str(error_row["value"] or ""),
+        "latest_error": latest_error,
     }
 
 
