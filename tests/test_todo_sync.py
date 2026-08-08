@@ -416,6 +416,33 @@ def test_retry_failed_dingtalk_todo_links_recovers_token_failures(tmp_path):
     assert len(dws.created) == 1
 
 
+def test_retry_failed_dingtalk_todo_links_cancels_completed_internal_todo(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(
+        store,
+        completion_evidence_json=json.dumps({"source": "work_update:1"}),
+    )
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="",
+        status="failed",
+        last_error="code=TOKEN_VERIFIED_FAILED",
+    )
+    dws = FakeTodoDws()
+
+    recovered = retry_failed_dingtalk_todo_links(
+        store,
+        dws,
+        now="2026-06-27 10:10:00",
+    )
+
+    assert recovered == 0
+    link = store.get_work_todo_dingtalk_link(link_id)
+    assert link.status == "cancelled"
+    assert link.last_error == "internal_todo_completed_before_dingtalk_delivery"
+    assert dws.created == []
+
+
 def test_maybe_create_dingtalk_todo_keeps_failed_link_when_recovery_get_fails(
     tmp_path,
 ):
