@@ -19,3 +19,13 @@ seconds. This prevents concurrent browser navigations from repeatedly running
 the same aggregate query while workers are writing audit records. Search,
 filters, pagination, and every action route bypass the snapshot and query the
 current database state.
+
+## Current Failure State
+
+The Worker page reports reply attempts by their current trigger state rather
+than by every retry record. A failed attempt is shown as recovered once its
+reply task is done or a delivery record exists, and as retryable while its
+reply task is pending or processing. Historical retries remain available in
+the audit trail, but they must not inflate the live failed count or attention
+list. A failed state remains visible only when its latest trigger has neither
+completion evidence nor active recovery.

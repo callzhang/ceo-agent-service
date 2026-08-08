@@ -528,9 +528,23 @@ def retry_failed_dingtalk_todo_links(
     for link in links:
         if link.dingtalk_task_id.strip():
             updated = _refresh_existing_dingtalk_link(store, dws, link, now=now)
-        elif _is_retryable_dingtalk_todo_error(link.last_error):
+        else:
             todo = store.get_work_todo(link.work_todo_id)
-            if todo is None or not _todo_is_eligible(store, todo):
+            if todo is None:
+                continue
+            if _has_completion_evidence(todo.completion_evidence_json):
+                # The internal work is already evidenced as complete. Retrying a
+                # historical create would produce an overdue duplicate task.
+                store.update_work_todo_dingtalk_link(
+                    link.id,
+                    status="cancelled",
+                    last_error="internal_todo_completed_before_dingtalk_delivery",
+                )
+                continue
+            if (
+                not _is_retryable_dingtalk_todo_error(link.last_error)
+                or not _todo_is_eligible(store, todo)
+            ):
                 continue
             updated = _create_dingtalk_todo_for_link(
                 store,
@@ -539,8 +553,6 @@ def retry_failed_dingtalk_todo_links(
                 link_id=link.id,
                 now=now,
             )
-        else:
-            continue
         if updated is not None and updated.status != "failed":
             recovered += 1
     return recovered

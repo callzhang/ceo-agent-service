@@ -4610,6 +4610,48 @@ def test_render_attempt_list_uses_failed_action_pill_color(tmp_path: Path):
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
+def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-recovered",
+        conversation_title="Recovery",
+        single_chat=False,
+        trigger_message_id="msg-recovered",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Recover this reply.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    payload = build_worker_status_payload(store)
+    reply_queue = next(
+        queue for queue in payload["queues"] if queue["name"] == "Reply attempts"
+    )
+    html = render_attempt_list(store)
+
+    assert reply_queue["failed"] == 0
+    assert reply_queue["counts"]["recovered"] == 1
+    assert all(row["category"] != "Reply" for row in payload["attention_rows"])
+    assert 'class="pill status-action action-state-recovered">↻ Recovered</span>' in html
+    assert 'class="pill status-action action-state-failed">💬 Failed</span>' not in html
+
+
 def test_render_attempt_list_labels_explained_blocked_as_blocked(
     tmp_path: Path,
 ):
