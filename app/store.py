@@ -6072,7 +6072,10 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update wechat_deliveries
-                set status='sending', action_started_at=?, error='',
+                set status='sending',
+                    action_started_at=case
+                        when ?='' then current_timestamp else ? end,
+                    error='',
                     updated_at=current_timestamp
                 where id=? and status='ready_to_send'
                   and execution_generation=?
@@ -6083,6 +6086,7 @@ class AutoReplyStore:
                   )
                 """,
                 (
+                    now,
                     now,
                     delivery_id,
                     expected_execution_generation,
@@ -6205,7 +6209,9 @@ class AutoReplyStore:
                 set status='superseded', error=?, updated_at=current_timestamp
                 where id=? and status='send_unknown'
                   and execution_generation=?
-                  and datetime(updated_at) <= datetime(?)
+                  and datetime(
+                    coalesce(nullif(action_started_at, ''), created_at)
+                  ) <= datetime(?)
                   and exists (
                     select 1 from reply_tasks
                     where reply_tasks.id=wechat_deliveries.reply_task_id

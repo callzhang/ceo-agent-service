@@ -435,10 +435,16 @@ def test_reconciled_unknown_delivery_can_be_superseded_without_replay(tmp_path):
 
     with store._connect() as db:
         db.execute(
-            "update wechat_deliveries set updated_at='2026-07-30 10:05:00' "
+            "update wechat_deliveries "
+            "set action_started_at='2026-07-30 10:05:00' "
             "where id=?",
             (delivery_id,),
         )
+    store.set_wechat_delivery_status(
+        delivery_id,
+        "send_unknown",
+        error="read_only_reconciliation_inconclusive",
+    )
 
     store.supersede_reconciled_wechat_delivery(
         delivery_id,
@@ -454,6 +460,33 @@ def test_reconciled_unknown_delivery_can_be_superseded_without_replay(tmp_path):
     assert attempt is not None
     assert attempt.send_status == "skipped"
     assert attempt.send_error == "stale_after_read_only_reconciliation"
+
+
+def test_wechat_delivery_claim_records_action_start_time(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="reply",
+    )
+
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    assert store.claim_wechat_delivery(
+        delivery_id,
+        expected_execution_generation=delivery.execution_generation,
+    ) is not None
+
+    with store._connect() as db:
+        row = db.execute(
+            "select action_started_at from wechat_deliveries where id=?",
+            (delivery_id,),
+        ).fetchone()
+    assert row["action_started_at"]
 
 
 def test_active_unknown_delivery_cannot_be_superseded(tmp_path):
