@@ -137,13 +137,17 @@ with the delivery error. `no_reply` and `handoff_to_human` decisions do not
 create a delivery and must be recorded as `skipped`, so the audit backlog does
 not retain stale WeChat `pending` attempts.
 
-The local database is the delivery receipt. If a read-only reconciliation scan
-does not find an exact outbound record, the delivery is classified as
-`action_not_performed`, rather than an ambiguous terminal send. The first such
-failure returns to `ready_to_send` and retries from the same delivery record;
-the retry count is persisted and a second failure remains failed. Legacy
-`send_unknown` records use the same reconciliation path. Sent, manually
-rejected, and target-binding failures remain outside this retry path.
+An Accessibility result that confirms no UI action occurred is different from an
+ambiguous send. Only the first `action_not_performed` returns to
+`ready_to_send` and is retried from the same delivery record; a second such
+result remains failed with its retry count recorded. `send_unknown`, sent,
+manually rejected, and target-binding failures remain outside this retry path,
+so an uncertain or disallowed send is never repeated automatically.
+
+When a read-only reconciliation scan completes but finds no exact outbound
+record, the delivery stays `send_unknown` with
+`read_only_reconciliation_inconclusive`. This replaces an older availability
+error: the current state is an unresolved result, not a Reader outage.
 
 ## Diagnostic CLI
 
@@ -262,9 +266,9 @@ pending.
    `@current account` group message → one task; no external send.
 4. Sender only after File Transfer Helper binding is `verified`: one fixed test
    reply, confirm delivery status `sent` + matching outbound DB record, restart
-   before a second send and confirm no duplicate; force a missing receipt and
-   verify one persisted retry is queued. This exact background-queue → dedicated
-   Sender → outbound DB readback passed on
+   before a second send and confirm no duplicate; force a post-action ambiguity
+   and verify `send_unknown` pauses the target with no auto-retry. This exact
+   background-queue → dedicated Sender → outbound DB readback passed on
    2026-07-21.
 5. Bounded Memory import on an approved test scope → review page shows cleaned
    pending rows only; approve one, write once, write again → same Memory id, one

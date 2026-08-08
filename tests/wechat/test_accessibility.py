@@ -116,38 +116,38 @@ def test_verified_binding_uses_persisted_unique_navigation_query(store):
     assert runner.calls == [("Alex", "收到", "melody115", "hi")]
 
 
-def test_post_action_without_persisted_receipt_becomes_retryable_failure(store):
+def test_post_action_without_persisted_receipt_remains_unknown(store):
     runner = FakeRunner(AccessibilityResult(action_performed=True, visible_confirmation=False))
     sender = WechatSender(store, runner)
     delivery = _seed_delivery(store)
     outcome = sender.send(delivery, _scope("verified"))
-    assert outcome.status == "failed"
+    assert outcome.status == "send_unknown"
     persisted = store.get_wechat_delivery_for_task(1)
-    assert persisted.status == "failed"
-    assert persisted.error == "action_not_performed"
+    assert persisted.status == "send_unknown"
+    assert persisted.error == "no_visible_confirmation"
 
 
-def test_sender_exception_after_claim_becomes_retryable_failure(store):
+def test_sender_exception_after_claim_remains_unknown(store):
     sender = WechatSender(store, RaisingRunner())
     delivery = _seed_delivery(store)
 
     outcome = sender.send(delivery, _scope("verified"))
 
-    assert outcome.status == "failed"
+    assert outcome.status == "send_unknown"
     persisted = store.get_wechat_delivery_for_task(1)
-    assert persisted.status == "failed"
-    assert persisted.error == "action_not_performed"
+    assert persisted.status == "send_unknown"
+    assert persisted.error == "sender_execution_interrupted"
 
 
-def test_recovery_marks_sending_without_receipt_as_not_performed(store):
+def test_recovery_keeps_sending_unknown_without_reader(store):
     delivery = _seed_delivery(store)
     store.mark_wechat_delivery_sending(delivery.id)
     recovered = reconcile_incomplete_deliveries(store, reader=None)
-    assert recovered[0].status == "failed"
-    assert recovered[0].error == "action_not_performed"
+    assert recovered[0].status == "send_unknown"
+    assert recovered[0].error == "read_only_reconciliation_unavailable"
 
 
-def test_recovery_marks_unknown_without_read_only_confirmation_as_not_performed(
+def test_recovery_keeps_unknown_without_read_only_confirmation(
     store,
 ):
     delivery = _seed_delivery(store)
@@ -166,8 +166,8 @@ def test_recovery_marks_unknown_without_read_only_confirmation_as_not_performed(
 
     recovered = reconcile_incomplete_deliveries(store, Reader())
 
-    assert recovered[0].status == "failed"
-    assert recovered[0].error == "action_not_performed"
+    assert recovered[0].status == "send_unknown"
+    assert recovered[0].error == "read_only_reconciliation_inconclusive"
 
 
 def test_recovery_records_inconclusive_after_a_reader_scan(store):
@@ -187,8 +187,8 @@ def test_recovery_records_inconclusive_after_a_reader_scan(store):
 
     recovered = reconcile_incomplete_deliveries(store, Reader())
 
-    assert recovered[0].status == "failed"
-    assert recovered[0].error == "action_not_performed"
+    assert recovered[0].status == "send_unknown"
+    assert recovered[0].error == "read_only_reconciliation_inconclusive"
 
 
 def test_recovery_uses_explicit_account_with_ipc_style_reader(store):

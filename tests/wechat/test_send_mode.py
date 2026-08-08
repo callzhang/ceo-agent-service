@@ -216,7 +216,7 @@ def test_auto_mode_skips_invisible_records_when_refreshing_binding_text(tmp_path
     assert Runner.calls == ["newest visible message"]
 
 
-def test_sender_round_retries_when_no_persisted_send_receipt_exists(tmp_path):
+def test_sender_round_does_not_retry_when_send_result_is_unknown(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery = _seed(store)
     store.mark_wechat_delivery_sending(delivery.id)
@@ -234,14 +234,7 @@ def test_sender_round_retries_when_no_persisted_send_receipt_exists(tmp_path):
             events.append("reconciled")
             return []
 
-    class Sender(FakeSender):
-        def send(self, delivery, scope):
-            events.append("sent")
-            store.mark_wechat_delivery_sending(delivery.id)
-            store.set_wechat_delivery_status(delivery.id, "sent")
-            return SendOutcome("sent")
-
-    sender = Sender()
+    sender = FakeSender()
 
     assert service.process_ready_wechat_deliveries(
         store,
@@ -249,9 +242,10 @@ def test_sender_round_retries_when_no_persisted_send_receipt_exists(tmp_path):
         mode="auto",
         sender_enabled=True,
         reader=Reader(),
-    ) == 1
-    assert events == ["reconciled", "sent"]
-    assert store.get_wechat_delivery_by_id(delivery.id).status == "sent"
+    ) == 0
+    assert events == ["reconciled"]
+    assert sender.sent == []
+    assert store.get_wechat_delivery_by_id(delivery.id).status == "send_unknown"
 
 
 def test_auto_mode_holds_delivery_while_sender_session_is_locked(tmp_path):
@@ -384,7 +378,7 @@ def test_unperformed_wechat_delivery_is_requeued_only_once(tmp_path):
     assert store.get_reply_attempt(attempt_id).retry_count == 1
 
 
-def test_recovery_requeues_missing_persisted_send_receipt(tmp_path):
+def test_recovery_keeps_missing_persisted_send_receipt_unknown(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery, attempt_id = _seed_with_attempt(store)
     store.mark_wechat_delivery_sending(delivery.id)
@@ -399,9 +393,9 @@ def test_recovery_requeues_missing_persisted_send_receipt(tmp_path):
 
     refreshed = store.get_wechat_delivery_for_task(1)
     attempt = store.get_reply_attempt(attempt_id)
-    assert refreshed.status == "ready_to_send"
+    assert refreshed.status == "send_unknown"
     assert attempt is not None
-    assert attempt.retry_count == 1
+    assert attempt.retry_count == 0
 
 
 def test_unperformed_legacy_delivery_without_attempt_is_requeued_once(tmp_path):
