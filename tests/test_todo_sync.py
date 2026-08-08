@@ -426,7 +426,7 @@ def test_retry_failed_dingtalk_todo_links_cancels_completed_internal_todo(tmp_pa
         work_todo_id=todo_id,
         dingtalk_task_id="",
         status="failed",
-        last_error="code=TOKEN_VERIFIED_FAILED",
+        last_error="code=SECURITY_CHECK_INVOKE_FAILED",
     )
     dws = FakeTodoDws()
 
