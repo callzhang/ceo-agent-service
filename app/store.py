@@ -1214,6 +1214,7 @@ class AutoReplyStore:
                     last_pull_at text not null default '',
                     last_push_at text not null default '',
                     last_error text not null default '',
+                    retry_count integer not null default 0,
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp
                 );
@@ -1527,6 +1528,17 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table work_todos add column {column} {definition}"
                     )
+            work_todo_dingtalk_link_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(work_todo_dingtalk_links)"
+                ).fetchall()
+            }
+            if "retry_count" not in work_todo_dingtalk_link_columns:
+                db.execute(
+                    "alter table work_todo_dingtalk_links add column "
+                    "retry_count integer not null default 0"
+                )
             follow_up_draft_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(follow_up_drafts)").fetchall()
@@ -9731,6 +9743,7 @@ class AutoReplyStore:
             "last_pull_at",
             "last_push_at",
             "last_error",
+            "retry_count",
         }
         filtered = self._filter_allowed_values(values, allowed_columns)
         if "work_todo_id" not in filtered:
@@ -9803,6 +9816,7 @@ class AutoReplyStore:
             "last_pull_at",
             "last_push_at",
             "last_error",
+            "retry_count",
         }
         filtered = self._filter_allowed_values(values, allowed_columns)
         if "status" in filtered:
