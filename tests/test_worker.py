@@ -10213,8 +10213,12 @@ def test_codex_process_failure_is_terminal_at_attempt_limit(
     assert len(notifications) == 1
 
 
-def test_codex_process_failure_rotates_stuck_conversation_session_before_retry(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    "failure_code",
+    ("codex_process_failed", "codex_result_invalid", "codex_result_missing"),
+)
+def test_recoverable_agent_runtime_failure_rotates_stuck_conversation_session_before_retry(
+    tmp_path: Path, monkeypatch, failure_code: str
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
@@ -10242,10 +10246,10 @@ def test_codex_process_failure_rotates_stuck_conversation_session_before_retry(
             )
             self.store.fail_agent_run(
                 claim.run.id,
-                {"code": "codex_process_failed", "retryable": True},
+                {"code": failure_code, "retryable": True},
                 owner=self.owner,
             )
-            raise RuntimeError("codex_process_failed")
+            raise RuntimeError(failure_code)
 
     worker._test_agent_runner = ProcessFailureRunner(worker.store, [])
 
