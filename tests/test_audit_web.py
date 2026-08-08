@@ -3886,6 +3886,20 @@ def test_browser_notification_post_accepts_stable_inbox_notification(tmp_path: P
     assert event["detail_url"] == "/notifications"
 
 
+def test_browser_notification_post_accepts_dismiss_event(tmp_path: Path):
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post(
+        "/browser-notifications",
+        json={"id": "ceo-agent-service-trigger-current", "dismiss": True},
+    )
+
+    assert response.status_code == 200
+    event = audit_web_module._BROWSER_NOTIFICATION_HISTORY[-1]
+    assert event["id"] == "ceo-agent-service-trigger-current"
+    assert event["dismiss"] is True
+
+
 def test_browser_notification_post_reports_no_subscribers(tmp_path: Path):
     client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
@@ -4929,12 +4943,13 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "allow" in detail_grid
     assert "permission reason" not in html
     assert "agent 执行记录" in html
-    assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' in html
-    assert f'action="/attempts/{attempt_id}/recall?return_to=/attempts/{attempt_id}"' in html
+    assert "无需操作" in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' not in html
+    assert f'action="/attempts/{attempt_id}/recall?return_to=/attempts/{attempt_id}"' not in html
     assert "/open-dingtalk-popup?conversation_id=cid-1" in html
     assert "window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260')" in html
     assert 'class="compact-button open-dingtalk-action"' in html
-    assert '<button class="rerun" type="submit">重跑</button>' in html
+    assert '<button class="rerun" type="submit">重新处理</button>' not in html
     assert html.index("群名") < html.index("内部反馈/建议修改")
     assert html.index('class="agent-log-button" href="/codex/session-1"') < html.index(
         "内部反馈/建议修改"
@@ -5390,8 +5405,9 @@ def test_render_codex_session_detail_uses_local_rendered_history(
     assert "已查看岗位画像" in html
     assert "Related history" in html
     assert f"/attempts/{attempt_id}" in html
-    assert f'action="/attempts/{attempt_id}/rerun?return_to=/codex/session-1"' in html
-    assert f'action="/attempts/{attempt_id}/recall?return_to=/codex/session-1"' in html
+    assert "无需操作" in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/codex/session-1"' not in html
+    assert f'action="/attempts/{attempt_id}/recall?return_to=/codex/session-1"' not in html
     assert "/open-dingtalk-popup?conversation_id=cid-1" in html
     assert "查看钉钉消息" in html
     assert "@Alex Chen 这个怎么处理？" in html
@@ -5457,20 +5473,26 @@ def test_render_attempt_detail_does_not_show_recall_action_card(
 
     assert status == 200
     assert "attempt-banner-actions" in html
-    assert f'action="/attempts/{attempt_id}/recall?return_to=/attempts/{attempt_id}"' in html
+    assert "这条回复已发送，无需你操作。" in html
+    assert f'action="/attempts/{attempt_id}/recall?return_to=/attempts/{attempt_id}"' not in html
     assert "recall-card" not in html
 
 
 def test_render_attempt_detail_shows_rerun_only_in_banner_actions(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="failed",
+        send_error="temporary failure",
+    )
 
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
     assert "attempt-banner-actions" in html
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' in html
-    assert "重跑 attempt" not in html
+    assert '<button class="rerun" type="submit">重新处理</button>' in html
     assert "rerun-card" not in html
 
 

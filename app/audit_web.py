@@ -587,8 +587,8 @@ NO_AUDIT_CONTEXT_TOOLTIP = (
 NO_CODEX_SESSION_TOOLTIP = (
     "No Codex session is linked; review this attempt using the stored audit fields only."
 )
-_BROWSER_NOTIFICATION_SUBSCRIBERS: set[asyncio.Queue[dict[str, str]]] = set()
-_BROWSER_NOTIFICATION_HISTORY: deque[dict[str, str]] = deque(maxlen=20)
+_BROWSER_NOTIFICATION_SUBSCRIBERS: set[asyncio.Queue[dict[str, str | bool]]] = set()
+_BROWSER_NOTIFICATION_HISTORY: deque[dict[str, str | bool]] = deque(maxlen=20)
 _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
@@ -1347,6 +1347,16 @@ def _browser_notification_client_script() -> str:
     if (!canNotify()) {
       return;
     }
+    const registration = await ensureServiceWorker();
+    if (!registration) {
+      logLine("notification skipped: service worker unavailable");
+      return;
+    }
+    if (payload.dismiss) {
+      const notifications = await registration.getNotifications({ tag: payload.id });
+      notifications.forEach((notification) => notification.close());
+      return;
+    }
     const options = {
       body: payload.message,
       tag: payload.id,
@@ -1354,11 +1364,6 @@ def _browser_notification_client_script() -> str:
       requireInteraction: true,
       data: { url: payload.url || "", detailUrl: payload.detail_url || "" },
     };
-    const registration = await ensureServiceWorker();
-    if (!registration) {
-      logLine("notification skipped: service worker unavailable");
-      return;
-    }
     await registration.showNotification(payload.title, options);
   }
 
@@ -1518,13 +1523,15 @@ def _browser_notification_event(
     url: str,
     notification_id: str = "",
     detail_url: str = "",
-) -> dict[str, str]:
+    dismiss: bool = False,
+) -> dict[str, str | bool]:
     return {
         "id": notification_id or f"ceo-agent-service-{next(_BROWSER_NOTIFICATION_SEQUENCE)}",
         "title": title,
         "message": message,
         "url": url,
         "detail_url": detail_url or _notification_detail_url(url),
+        "dismiss": dismiss,
     }
 
 
@@ -1756,7 +1763,7 @@ def render_dingtalk_open_popup(*, cid: str = "", conversation_id: str = "") -> s
 </html>"""
 
 
-def _publish_browser_notification(event: dict[str, str]) -> bool:
+def _publish_browser_notification(event: dict[str, str | bool]) -> bool:
     _BROWSER_NOTIFICATION_HISTORY.append(event)
     subscribers = list(_BROWSER_NOTIFICATION_SUBSCRIBERS)
     for queue in subscribers:
@@ -1766,7 +1773,7 @@ def _publish_browser_notification(event: dict[str, str]) -> bool:
 
 def _browser_notification_event_stream() -> StreamingResponse:
     async def event_stream():
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        queue: asyncio.Queue[dict[str, str | bool]] = asyncio.Queue()
         _BROWSER_NOTIFICATION_SUBSCRIBERS.add(queue)
         try:
             yield ": connected\n\n"
@@ -6096,6 +6103,7 @@ def render_meeting_attempt_detail(
         subtitle=f"参会人：{participant_preview}" if participant_preview else "",
         codex_session_id=run.codex_session_id,
         actions_html="",
+        status_html="",
         fields=fields,
         pills_html=_agent_status_pill(run_status),
         trigger_title="Trigger",
@@ -7567,6 +7575,7 @@ def create_audit_app(
             url=str(payload.get("url") or ""),
             notification_id=str(payload.get("id") or ""),
             detail_url=str(payload.get("detail_url") or ""),
+            dismiss=bool(payload.get("dismiss")),
         )
         delivered = _publish_browser_notification(event)
         return JSONResponse(
@@ -7880,7 +7889,12 @@ def _attempt_detail_body(
             f"触发人：{attempt.trigger_sender}" if attempt.trigger_sender.strip() else ""
         ),
         codex_session_id=None if agent_runs else codex_session_id,
-        actions_html=orchestration_links + _attempt_row_actions(attempt, sent_reply),
+        actions_html=orchestration_links + _attempt_row_actions(
+            attempt,
+            sent_reply,
+            later_attempt=later_attempt,
+        ),
+        status_html=_attempt_status_card(attempt, later_attempt),
         fields=fields,
         pills_html=_attempt_action_pills(attempt, later_attempt=later_attempt),
         trigger_title="Trigger",
@@ -7944,6 +7958,7 @@ def _agent_detail_body(
     subtitle: str,
     codex_session_id: str | None,
     actions_html: str,
+    status_html: str,
     fields: list[tuple[str, str]],
     pills_html: str,
     trigger_title: str,
@@ -7957,6 +7972,7 @@ def _agent_detail_body(
 ) -> str:
     return (
         f"{_agent_detail_banner(title_label, title, subtitle, codex_session_id, actions_html)}"
+        f"{status_html}"
         f"{_attempt_detail_grid(fields)}"
         f"{_agent_review_panel(pills_html, trigger_title, trigger_text, reason_title, reason_text, reply_title, reply_text, side_html)}"
         f"{extra_cards}"
@@ -8257,8 +8273,9 @@ def _needs_human_decision_card(attempt: ReplyAttempt) -> str:
     action = f"/attempts/{attempt.id}/human-decision"
     return (
         '<section class="card needs-human-card"><h2>需要你的判断</h2>'
-        '<p class="muted">这里存在无法通过事实追问解决的管理判断。提交后会创建可恢复任务，'
-        '由 Agent 执行、验证并自动发布。</p>'
+        '<p class="muted">已核验的事实和待决定原因：</p>'
+        f'<pre class="reply-pre">{escape(attempt.audit_summary or attempt.codex_reason)}</pre>'
+        '<p class="muted">提交后会创建可恢复任务，由 Agent 执行、验证并自动发布。</p>'
         f'<form method="post" action="{action}" class="needs-human-custom">'
         '<label>填写判断或处理指令</label>'
         '<textarea name="instruction" required placeholder="例如：采用方案二，并说明交付边界"></textarea>'
@@ -8686,6 +8703,7 @@ def _attempt_row_actions(
     sent_reply: SentReply | None,
     *,
     session_id: str = "",
+    later_attempt: ReplyAttempt | None = None,
 ) -> str:
     return_to = f"/codex/{quote(session_id, safe='')}" if session_id else f"/attempts/{attempt.id}"
     return_to_query = quote(return_to, safe="/")
@@ -8693,26 +8711,64 @@ def _attempt_row_actions(
         "/open-dingtalk-popup?"
         f"conversation_id={quote(attempt.conversation_id, safe='')}"
     )
+    terminal = later_attempt is not None or attempt.send_status.strip().lower() in {
+        "sent", "skipped", "completed", "commented", "calendar", "document", "reacted",
+    }
+    if terminal:
+        return (
+            '<div class="attempt-row-actions">'
+            '<span class="disabled-action">无需操作</span>'
+            f'<a class="compact-button open-dingtalk-action" href="{dingtalk_href}" '
+            "onclick=\"window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260'); return false;\" "
+            "target=\"ceo-open-dingtalk\" rel=\"noopener\">查看钉钉消息</a>"
+            "</div>"
+        )
     recall_html = (
         f"<form method=\"post\" action=\"/attempts/{attempt.id}/recall?return_to={return_to_query}\" "
         "onsubmit=\"return confirm('确认撤销这条已发送消息？')\">"
         "<button class=\"danger\" type=\"submit\">撤销发送</button>"
         "</form>"
         if _sent_reply_has_recall_target(sent_reply)
-        else "<span class=\"disabled-action\" title=\"没有可撤销消息 ID 或 key\">撤销发送</span>"
+        else ""
     )
     return (
         "<div class=\"attempt-row-actions\">"
-        f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun?return_to={return_to_query}\" "
-        "onsubmit=\"return confirm('确认重跑这条 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
-        "<button class=\"rerun\" type=\"submit\">重跑</button>"
-        "</form>"
-        f"{recall_html}"
-        f"<a class=\"compact-button open-dingtalk-action\" href=\"{dingtalk_href}\" "
+        + (
+            f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun?return_to={return_to_query}\" "
+            "onsubmit=\"return confirm('确认重新处理这条失败 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
+            "<button class=\"rerun\" type=\"submit\">重新处理</button>"
+            "</form>"
+            if attempt.send_status.strip().lower() == "failed"
+            else ""
+        )
+        + recall_html
+        + f"<a class=\"compact-button open-dingtalk-action\" href=\"{dingtalk_href}\" "
         "onclick=\"window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260'); return false;\" "
         "target=\"ceo-open-dingtalk\" rel=\"noopener\">查看钉钉消息</a>"
         "</div>"
     )
+
+
+def _attempt_status_card(
+    attempt: ReplyAttempt,
+    later_attempt: ReplyAttempt | None,
+) -> str:
+    if later_attempt is not None:
+        message = (
+            f'该历史记录已由 <a href="/attempts/{later_attempt.id}">'
+            f'Attempt #{later_attempt.id}</a> 后续处理，无需你操作。'
+        )
+    elif attempt.send_status == "sent":
+        message = "这条回复已发送，无需你操作。"
+    elif attempt.send_status == "skipped":
+        message = "这条事项已判定无需回复，无需你操作。"
+    elif attempt.send_status == "needs_human":
+        message = "这条事项等待你的决策。请阅读下方已核验的事实，再提交具体处理指令。"
+    elif attempt.send_status == "failed":
+        message = "这次处理没有完成。可使用“重新处理”重新读取材料并执行当前规则。"
+    else:
+        return ""
+    return f'<section class="card compact-card attempt-status-card"><strong>当前状态：</strong>{message}</section>'
 
 
 def _codex_event_card(event: RenderedCodexEvent) -> str:

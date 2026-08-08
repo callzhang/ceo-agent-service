@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import re
@@ -56,6 +57,7 @@ from app.dingtalk_models import (
 )
 from app.codex_runner import selected_codex_model_provider
 from app.notification import (
+    dismiss_browser_notification,
     dingtalk_conversation_notification_url,
     send_browser_notification,
     send_macos_notification,
@@ -2004,6 +2006,8 @@ class DingTalkAutoReplyWorker:
                 send_status=send_status,
                 message=result.summary or send_error,
             )
+        else:
+            self._dismiss_problem_notification(task)
         return task_status == "done"
 
     @staticmethod
@@ -4366,7 +4370,7 @@ class DingTalkAutoReplyWorker:
             title=title,
             message=notification_message,
             url=self._notification_url(conversation, attempt_id=attempt_id),
-            notification_id=f"ceo-agent-service-attempt-{attempt_id}",
+            notification_id=self._problem_notification_id(task),
             detail_url=f"/attempts/{attempt_id}",
         )
         if send_status == "needs_human" and not delivered:
@@ -4374,6 +4378,17 @@ class DingTalkAutoReplyWorker:
                 title=title,
                 message=notification_message,
             )
+
+    @staticmethod
+    def _problem_notification_id(task: ReplyTask) -> str:
+        identity = "\0".join(
+            (task.channel, task.conversation_id, task.trigger_message_id)
+        ).encode("utf-8")
+        return f"ceo-agent-service-trigger-{hashlib.sha256(identity).hexdigest()[:20]}"
+
+    def _dismiss_problem_notification(self, task: ReplyTask) -> None:
+        if not self.dry_run:
+            dismiss_browser_notification(self._problem_notification_id(task))
 
     @staticmethod
     def _problem_notification_content(

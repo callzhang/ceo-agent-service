@@ -10187,6 +10187,7 @@ def test_codex_process_failure_is_terminal_at_attempt_limit(
     tmp_path: Path, monkeypatch
 ):
     browser_notifications = []
+    dismissed_notification_ids = []
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
@@ -10238,6 +10239,10 @@ def test_codex_process_failure_is_terminal_at_attempt_limit(
         "app.worker.send_browser_notification",
         lambda **kwargs: browser_notifications.append(kwargs) or True,
     )
+    monkeypatch.setattr(
+        "app.worker.dismiss_browser_notification",
+        lambda notification_id: dismissed_notification_ids.append(notification_id) or True,
+    )
 
     worker.produce_once()
     assert worker.consume_once(max_tasks=1) == 0
@@ -10245,8 +10250,10 @@ def test_codex_process_failure_is_terminal_at_attempt_limit(
     assert failed.attempts == 1
     assert worker.store.count_reply_tasks(status="done") == 0
     assert len(browser_notifications) == 1
-    assert browser_notifications[0]["notification_id"] == "ceo-agent-service-attempt-1"
+    assert browser_notifications[0]["notification_id"] == worker._problem_notification_id(failed)
     assert browser_notifications[0]["detail_url"] == "/attempts/1"
+    worker._dismiss_problem_notification(failed)
+    assert dismissed_notification_ids == [worker._problem_notification_id(failed)]
 
 
 def test_invalid_agent_result_gets_one_clean_session_retry_at_attempt_limit(
@@ -10400,7 +10407,7 @@ def test_repeated_codex_process_failure_does_not_get_an_extra_claim_at_limit(
             "操作：打开审计页查看原因并继续处理。"
         ),
         "url": worker._notification_url(conversation(), attempt_id=1),
-        "notification_id": "ceo-agent-service-attempt-1",
+        "notification_id": worker._problem_notification_id(failed),
         "detail_url": "/attempts/1",
     }
 

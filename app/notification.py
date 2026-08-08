@@ -54,6 +54,16 @@ def send_browser_notification(
     )
 
 
+def dismiss_browser_notification(notification_id: str) -> bool:
+    return _send_browser_notification(
+        title="",
+        message="",
+        url=None,
+        notification_id=notification_id,
+        dismiss=True,
+    )
+
+
 def _applescript_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -95,6 +105,7 @@ def _send_browser_notification(
     *,
     notification_id: str | None = None,
     detail_url: str | None = None,
+    dismiss: bool = False,
 ) -> bool:
     endpoint = f"{notification_bridge_base_url()}/browser-notifications"
     payload = {"title": title, "message": message, "url": url or ""}
@@ -102,6 +113,8 @@ def _send_browser_notification(
         payload["id"] = notification_id
     if detail_url:
         payload["detail_url"] = detail_url
+    if dismiss:
+        payload["dismiss"] = True
     body = json.dumps(
         payload,
         ensure_ascii=False,
