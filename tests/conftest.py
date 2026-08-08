@@ -49,6 +49,10 @@ def block_real_notifications_in_tests(monkeypatch, request):
     def noop_notification(**kwargs):
         del kwargs
 
+    def noop_browser_notification(**kwargs):
+        del kwargs
+        return False
+
     for module_name in (
         "app.notification",
         "app.worker",
@@ -63,6 +67,10 @@ def block_real_notifications_in_tests(monkeypatch, request):
                 noop_notification,
                 raising=False,
             )
+    monkeypatch.setattr(
+        "app.notification._send_browser_notification",
+        noop_browser_notification,
+    )
 
 
 @pytest.fixture(autouse=True)

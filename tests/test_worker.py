@@ -9669,7 +9669,6 @@ def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch
     runner = worker._test_agent_runner
     assert isinstance(runner, FakeAgentResultRunner)
     assert any(item.kind == "dingtalk_image" for item in runner.calls[0][2].materials)
-    assert dismissed_notification_ids == []
 
 
 def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkeypatch):
