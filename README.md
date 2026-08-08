@@ -65,6 +65,8 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
+当人工选择触发的 rerun 所要求的直接外部动作已通过独立回读确认完成时，服务会把这条内部 rerun 指令标记为 `skipped`，注明它已被确认动作覆盖；不会把它错误显示为一条已发送的聊天消息。
+
 所有仍使用 `CodexDecisionRunner` 的通道（包括微信消费）也忽略过期的用户级 Codex 配置，并显式采用服务当前的模型供应商配置；这使其与 Direct Agent 使用同一认证和模型配置来源，避免旧刷新令牌阻塞新消息处理。
 
 Agent 必须如实返回动作结果；只完成诊断时返回 `needs_human` 或 `failed`。服务不再根据复制的工具事件二次判断 Agent 结论。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。

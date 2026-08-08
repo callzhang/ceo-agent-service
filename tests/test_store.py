@@ -2152,6 +2152,65 @@ def test_suspended_unknown_run_requires_structured_manual_resolution(
     assert store.list_suspended_unknown_agent_runs(limit=10) == []
 
 
+def test_manual_confirmed_effect_closes_pending_reviewed_rerun_instruction(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    instruction_id = store.record_reply_attempt(
+        conversation_id="cid-reviewed-rerun",
+        conversation_title="Reviewed rerun",
+        trigger_message_id="msg-reviewed-rerun",
+        trigger_sender="Derek",
+        trigger_text="Approve the request",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="reviewed_message_reply",
+        send_status="pending",
+    )
+    task = store.enqueue_manual_rerun_reply_task(
+        conversation_id="cid-reviewed-rerun",
+        conversation_title="Reviewed rerun",
+        single_chat=True,
+        trigger_message_id="msg-reviewed-rerun",
+        trigger_create_time="2026-07-29 09:00:00",
+        trigger_sender="Derek",
+        trigger_text="Approve the request",
+        trigger_message_json="{}",
+        attempt_id=instruction_id,
+    )
+    claimed = store.claim_reply_tasks(limit=1)
+    assert [item.id for item in claimed] == [task.id]
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, owner="worker-1", now="2026-07-29 09:00:01"
+    ).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="worker-1",
+        now="2026-07-29 09:00:02",
+    )
+    store.fail_reply_task(
+        task.id,
+        "codex_process_failed",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    store.resolve_agent_run_manually(
+        run.id,
+        expected_execution_generation=task.execution_generation,
+        resolution="confirmed_occurred",
+        reason="External approval was read back as completed.",
+        actor="Derek",
+        now="2026-07-29 09:00:03",
+    )
+
+    instruction = store.get_reply_attempt(instruction_id)
+    assert instruction is not None
+    assert instruction.send_status == "skipped"
+    assert instruction.send_error == "superseded_by_confirmed_direct_action"
+    assert "direct action was independently confirmed" in instruction.audit_summary
+
+
 def test_suspended_unknown_run_remains_visible_until_manual_resolution(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

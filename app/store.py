@@ -3674,7 +3674,8 @@ class AutoReplyStore:
             row = db.execute(
                 """
                 select agent_runs.*, reply_tasks.status as task_status,
-                       reply_tasks.execution_generation as task_generation
+                       reply_tasks.execution_generation as task_generation,
+                       reply_tasks.manual_rerun_attempt_id
                 from agent_runs
                 join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.id=?
@@ -3789,6 +3790,34 @@ class AutoReplyStore:
             if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(
                     f"manual reconciliation target is stale: {run_id}"
+                )
+            manual_rerun_attempt_id = int(row["manual_rerun_attempt_id"] or 0)
+            if resolution == "confirmed_occurred" and manual_rerun_attempt_id:
+                # A reviewed rerun is an instruction to the Agent, not proof that
+                # its suggested chat reply was sent. Once the direct action is
+                # independently confirmed, close that instruction without claiming
+                # a message delivery that did not occur.
+                db.execute(
+                    """
+                    update reply_attempts
+                    set send_status='skipped',
+                        send_error='superseded_by_confirmed_direct_action',
+                        audit_summary=case
+                            when audit_summary='' then ?
+                            else audit_summary || '\n' || ?
+                        end,
+                        updated_at=?
+                    where id=? and send_status='pending'
+                      and codex_reason='reviewed_message_reply'
+                    """,
+                    (
+                        "Manual rerun instruction closed after the direct action "
+                        "was independently confirmed.",
+                        "Manual rerun instruction closed after the direct action "
+                        "was independently confirmed.",
+                        now_text,
+                        manual_rerun_attempt_id,
+                    ),
                 )
             attempt_id = self._insert_reconciliation_attempt_in_connection(
                 db,
