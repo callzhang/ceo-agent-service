@@ -2397,7 +2397,7 @@ class DingTalkAutoReplyWorker:
         *,
         strict: bool = False,
     ) -> tuple[list[DingTalkMessage], list[DingTalkMessage]]:
-        if self._is_oa_pending_scan_trigger(trigger) and not strict:
+        if self._is_oa_pending_scan_trigger(trigger):
             return [trigger], [trigger]
         context_messages: list[DingTalkMessage] = []
         unread_messages: list[DingTalkMessage] = []

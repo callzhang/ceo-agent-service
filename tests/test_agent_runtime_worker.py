@@ -1862,7 +1862,9 @@ def test_worker_refreshes_conversation_after_consumer_before_audit(tmp_path: Pat
     assert dws.unread_reads == 2
 
 
-def test_oa_pending_scan_refreshes_conversation_before_audit(tmp_path: Path):
+def test_oa_pending_scan_refresh_reuses_synthetic_trigger_without_chat_lookup(
+    tmp_path: Path,
+):
     trigger = _message(
         "Review the queued approval.",
         raw_payload={"source": "oa_pending_scan"},
@@ -1901,9 +1903,10 @@ def test_oa_pending_scan_refreshes_conversation_before_audit(tmp_path: Path):
 
     assert worker.consume_once(max_tasks=1) == 1
 
-    assert "The approval context changed after the request." in executor.audit_prompt
-    assert dws.recent_reads == 1
-    assert dws.unread_reads == 1
+    assert "Review the queued approval." in executor.audit_prompt
+    assert "The approval context changed after the request." not in executor.audit_prompt
+    assert dws.recent_reads == 0
+    assert dws.unread_reads == 0
 
 
 def test_worker_defers_without_audit_when_context_refresh_fails(tmp_path: Path):

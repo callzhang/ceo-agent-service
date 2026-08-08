@@ -10214,7 +10214,8 @@ def test_codex_process_failure_is_terminal_at_attempt_limit(
     assert failed.attempts == 1
     assert worker.store.count_reply_tasks(status="done") == 0
     assert len(browser_notifications) == 1
-    assert browser_notifications[0]["notification_id"] == "ceo-agent-service-problems"
+    assert browser_notifications[0]["notification_id"] == "ceo-agent-service-attempt-1"
+    assert browser_notifications[0]["detail_url"] == "/attempts/1"
 
 
 def test_invalid_agent_result_gets_one_clean_session_retry_at_attempt_limit(
@@ -14218,8 +14219,13 @@ def test_handoff_ding_failure_does_not_block_ack(tmp_path: Path, monkeypatch):
     assert store.count_reply_tasks(status="done") == 1
     assert notifications == [
         {
-            "title": "CEO task needs a decision: Friday",
-            "message": "Agent requested principal review. 请打开审计页选择 A/B/C 方案。",
+            "title": "CEO 待处理：@Alex Chen(明哥) 不要分身，真人看一下",
+            "message": (
+                "事项：@Alex Chen(明哥) 不要分身，真人看一下\n"
+                "状态：等待你的选择\n"
+                "原因：Agent requested principal review.\n"
+                "操作：打开审计页选择 A/B/C。"
+            ),
         }
     ]
     attempt = store.get_reply_attempt(1)
@@ -14417,8 +14423,13 @@ def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
     assert dws.bot_direct_messages == []
     assert notifications == [
         {
-            "title": "CEO task needs a decision: Friday",
-            "message": "Agent requested principal review. 请打开审计页选择 A/B/C 方案。",
+            "title": "CEO 待处理：@Alex Chen(明哥) 不要分身，真人看一下",
+            "message": (
+                "事项：@Alex Chen(明哥) 不要分身，真人看一下\n"
+                "状态：等待你的选择\n"
+                "原因：Agent requested principal review.\n"
+                "操作：打开审计页选择 A/B/C。"
+            ),
         }
     ]
     attempt = store.get_reply_attempt(1)
