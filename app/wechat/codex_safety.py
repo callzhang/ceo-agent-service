@@ -158,10 +158,12 @@ def make_role_agent_command(
         command,
         prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
     )
-    agent_cli_tools = ["execute_reviewed_read", "read_skill"]
+    # Native schema-classified reads run directly in the Agent turn. agent_cli
+    # remains only for skills and Audit B's controlled writes.
+    agent_cli_tools = ["read_skill"]
     approval_options = ["-c", 'approval_policy="never"']
     if allow_write:
-        agent_cli_tools.insert(1, "execute_reviewed_write")
+        agent_cli_tools.insert(0, "execute_reviewed_write")
         approval_options = [
             "-c",
             'approval_policy="untrusted"',
