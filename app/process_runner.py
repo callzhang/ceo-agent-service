@@ -57,6 +57,7 @@ def run_process_with_idle_timeout(
 
     timeout_kind = ""
     timeout_reason = ""
+    parent_exited_with_open_streams = False
     try:
         while selector.get_map():
             now = time.monotonic()
@@ -96,12 +97,19 @@ def run_process_with_idle_timeout(
                     last_output_at = time.monotonic()
                 else:
                     selector.unregister(key.fileobj)
+            if process.poll() is not None:
+                # An MCP child can inherit Codex's stdio pipes. Do not treat
+                # that child retaining the pipes as an unfinished Codex turn.
+                parent_exited_with_open_streams = bool(selector.get_map())
+                break
         returncode = process.wait(timeout=5)
     finally:
         selector.close()
         if process.poll() is None:
             _terminate_process_group(process)
             returncode = process.wait(timeout=5)
+        elif parent_exited_with_open_streams:
+            _terminate_process_group(process)
 
     if on_stdout_line is not None:
         stdout_line_buffer += stdout_decoder.decode(b"", final=True)

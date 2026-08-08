@@ -43,6 +43,39 @@ def test_process_runner_keeps_process_alive_when_output_continues():
     assert result.stdout.splitlines() == ["first", "second"]
 
 
+def test_process_runner_returns_when_parent_exits_but_child_keeps_stdio_open():
+    child_pids = []
+    script = (
+        "import os, time; "
+        "child=os.fork(); "
+        "(time.sleep(30) if child == 0 else print(child, flush=True)); "
+        "os._exit(0)"
+    )
+
+    started_at = time.monotonic()
+    result = run_process_with_idle_timeout(
+        [sys.executable, "-c", script],
+        prompt="",
+        env=None,
+        total_timeout_seconds=30,
+        idle_timeout_seconds=30,
+    )
+
+    child_pids = [int(value) for value in result.stdout.splitlines()]
+    assert result.timed_out is False
+    assert result.returncode == 0
+    assert time.monotonic() - started_at < 3
+    assert len(child_pids) == 1
+    for _ in range(20):
+        try:
+            os.kill(child_pids[0], 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("stdio-holding child was not terminated")
+
+
 def test_process_runner_emits_complete_stdout_lines():
     lines = []
 
