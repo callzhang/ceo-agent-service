@@ -407,6 +407,47 @@ def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
     assert store.get_wechat_delivery_for_task(2) is None
 
 
+def test_reconciled_unknown_delivery_can_be_superseded_without_replay(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="u1", conversation_title="Alex",
+        trigger_message_id="m1", trigger_sender="Alex", trigger_text="hi",
+        action="send_reply", sensitivity_kind="normal",
+        send_status="pending", channel="wechat",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="stale reply",
+    )
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    store.mark_wechat_delivery_sending(delivery_id)
+    store.set_wechat_delivery_status(
+        delivery_id,
+        "send_unknown",
+        error="read_only_reconciliation_inconclusive",
+    )
+
+    store.supersede_reconciled_wechat_delivery(
+        delivery_id,
+        expected_execution_generation=delivery.execution_generation,
+        reason="stale_after_read_only_reconciliation",
+    )
+
+    refreshed = store.get_wechat_delivery_by_id(delivery_id)
+    attempt = store.get_reply_attempt(attempt_id)
+    assert refreshed.status == "superseded"
+    assert refreshed.error == "stale_after_read_only_reconciliation"
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "stale_after_read_only_reconciliation"
+
+
 def test_reject_cannot_overwrite_delivery_claimed_by_sender(tmp_path):
     store = _store(tmp_path)
     store.enqueue_reply_task(

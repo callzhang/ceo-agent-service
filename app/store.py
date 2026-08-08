@@ -6180,6 +6180,46 @@ class AutoReplyStore:
                     sent_delivery_id=delivery_id,
                 )
 
+    def supersede_reconciled_wechat_delivery(
+        self,
+        delivery_id: int,
+        *,
+        expected_execution_generation: str,
+        reason: str,
+    ) -> None:
+        """Close a stale unknown delivery after read-only reconciliation."""
+        generation = expected_execution_generation.strip()
+        explanation = reason.strip()
+        if not generation:
+            raise ValueError("expected_execution_generation must be non-empty")
+        if not explanation:
+            raise ValueError("reason must be non-empty")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update wechat_deliveries
+                set status='superseded', error=?, updated_at=current_timestamp
+                where id=? and status='send_unknown'
+                  and execution_generation=?
+                  and exists (
+                    select 1 from reply_tasks
+                    where reply_tasks.id=wechat_deliveries.reply_task_id
+                      and reply_tasks.execution_generation=?
+                  )
+                """,
+                (explanation, delivery_id, generation, generation),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"WeChat delivery superseded or not in expected state: {delivery_id}"
+                )
+            self._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=delivery_id,
+                delivery_status="superseded",
+                error=explanation,
+            )
+
     @classmethod
     def _supersede_failed_wechat_deliveries_with_newer_sent(
         cls,

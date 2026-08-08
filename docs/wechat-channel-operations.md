@@ -148,6 +148,11 @@ When a read-only reconciliation scan completes but finds no exact outbound
 record, the delivery stays `send_unknown` with
 `read_only_reconciliation_inconclusive`. This replaces an older availability
 error: the current state is an unresolved result, not a Reader outage.
+If that scan covers the original trigger and later conversation activity makes
+the draft obsolete, an operator may close the same generation through
+`supersede_reconciled_wechat_delivery`. That terminal transition records
+`superseded` and mirrors `skipped` to History; it does not assert whether the
+uncertain historical send occurred and never queues another send.
 
 ## Diagnostic CLI
 
