@@ -110,12 +110,13 @@ def run_consume_once(store, runner, reader, account) -> int:
 
 
 def recover_before_sender(store, reader, account=None) -> list:
-    """Recover safe pre-action failures and reconcile uncertain sends."""
+    """Reconcile receipts, then return unconfirmed sends to the bounded retry queue."""
     from app.wechat.accessibility import reconcile_incomplete_deliveries
 
     store.supersede_failed_wechat_deliveries_with_newer_sent()
+    recovered = reconcile_incomplete_deliveries(store, reader, account=account)
     store.requeue_unperformed_wechat_deliveries()
-    return reconcile_incomplete_deliveries(store, reader, account=account)
+    return recovered
 
 
 # ---- confirm-mode delivery gating (CEO_WECHAT_SEND_MODE) ----

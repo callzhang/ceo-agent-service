@@ -3,10 +3,9 @@
 Binding must be ``verified`` before any send is attempted (display-name-only match
 can never be verified). Delivery transitions are conditional and exact-once:
     ready_to_send -> sending -> sent
-                             -> send_unknown   (action performed, no confirmation)
-    ready_to_send -> failed  (only before the action, e.g. unverified binding)
-Recovery reconciles orphaned ``sending`` rows by inspecting outbound local
-messages; it never calls the sender.
+                             -> failed (no persisted sent receipt)
+Recovery checks outbound local messages before classifying a delivery. A missing
+receipt is treated as not sent and can use the bounded retry path.
 
 The real runner (MacWechatAccessibility) drives WeChat through the same stable
 AX identifiers proven in the send spike (search_item_function_<name>,
@@ -235,18 +234,18 @@ class WechatSender:
                 expected_recent_text=expected_recent_text,
             )
         except Exception:
-            error = "sender_execution_interrupted"
+            error = "action_not_performed"
             self.store.set_wechat_delivery_status(
                 delivery.id,
-                "send_unknown",
+                "failed",
                 error=error,
             )
-            return SendOutcome("send_unknown", error)
+            return SendOutcome("failed", error)
 
         if result.action_performed and result.visible_confirmation:
             status, error = "sent", ""
         elif result.action_performed:
-            status, error = "send_unknown", "no_visible_confirmation"
+            status, error = "failed", "action_not_performed"
         else:
             status, error = "failed", "action_not_performed"
         self.store.set_wechat_delivery_status(delivery.id, status, error=error)
@@ -254,7 +253,7 @@ class WechatSender:
 
 
 def reconcile_incomplete_deliveries(store, reader, *, account=None) -> list:
-    """Reconcile uncertain sends from read-only message history."""
+    """Reconcile in-flight or legacy uncertain sends from message history."""
     updated = []
     uncertain = (
         store.list_wechat_deliveries_by_status("sending")
@@ -265,8 +264,8 @@ def reconcile_incomplete_deliveries(store, reader, *, account=None) -> list:
         if reader is None or resolved_account is None:
             store.set_wechat_delivery_status(
                 delivery.id,
-                "send_unknown",
-                error=delivery.error or "read_only_reconciliation_unavailable",
+                "failed",
+                error="action_not_performed",
             )
             refreshed = store.get_wechat_delivery_for_task(delivery.task_id)
             updated.append(refreshed if refreshed is not None else delivery)
@@ -276,14 +275,14 @@ def reconcile_incomplete_deliveries(store, reader, *, account=None) -> list:
         except Exception:
             store.set_wechat_delivery_status(
                 delivery.id,
-                "send_unknown",
-                error=delivery.error or "read_only_reconciliation_failed",
+                "failed",
+                error="action_not_performed",
             )
             refreshed = store.get_wechat_delivery_for_task(delivery.task_id)
             updated.append(refreshed if refreshed is not None else delivery)
             continue
-        status = "sent" if confirmed else "send_unknown"
-        error = "" if confirmed else "read_only_reconciliation_inconclusive"
+        status = "sent" if confirmed else "failed"
+        error = "" if confirmed else "action_not_performed"
         store.set_wechat_delivery_status(
             delivery.id,
             status,
