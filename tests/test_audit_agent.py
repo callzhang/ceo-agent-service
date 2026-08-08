@@ -1367,6 +1367,48 @@ def test_direct_mcp_readback_requires_exact_target_identifiers():
     )
 
 
+def test_controlled_cli_readback_matches_shared_oa_instance_target():
+    registry = McpToolEffectRegistry.default()
+
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "target_identifiers": {"instance-id": "process-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "target_identifiers": {
+                "instance-id": "process-1",
+                "task-id": "task-1",
+            },
+        },
+        registry,
+    )
+
+
+def test_controlled_cli_readback_rejects_conflicting_shared_target():
+    registry = McpToolEffectRegistry.default()
+
+    assert not _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "target_identifiers": {"instance-id": "process-2"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "target_identifiers": {
+                "instance-id": "process-1",
+                "task-id": "task-1",
+            },
+        },
+        registry,
+    )
+
+
 def test_action_receipt_identity_separates_same_payload_across_actions(setup):
     store, task, _context, parent = setup
     run = store.claim_agent_run(
