@@ -10213,6 +10213,49 @@ def test_codex_process_failure_is_terminal_at_attempt_limit(
     assert len(notifications) == 1
 
 
+def test_invalid_agent_result_gets_one_clean_session_retry_at_attempt_limit(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    worker.store.upsert_conversation("cid-1", "Friday", False, "bad-session")
+
+    class InvalidResultRunner(FakeAgentResultRunner):
+        def run(self, task, context, **kwargs):
+            claim = _claim_audit_run(
+                self.store,
+                task.id,
+                task.execution_generation,
+                owner=self.owner,
+            )
+            assert claim.claimed
+            self.store.set_agent_run_session(
+                claim.run.id,
+                "bad-session",
+                owner=self.owner,
+            )
+            self.store.fail_agent_run(
+                claim.run.id,
+                {"code": "codex_result_invalid", "retryable": True},
+                owner=self.owner,
+            )
+            raise RuntimeError("codex_result_invalid")
+
+    worker._test_agent_runner = InvalidResultRunner(worker.store, [])
+
+    worker.run_once()
+
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert worker.store.get_codex_session_id("cid-1") is None
+
+
 @pytest.mark.parametrize(
     "failure_code",
     ("codex_process_failed", "codex_result_invalid", "codex_result_missing"),

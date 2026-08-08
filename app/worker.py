@@ -115,6 +115,9 @@ RECOVERABLE_AGENT_RUNTIME_ERRORS = frozenset(
         "codex_stream_invalid",
     }
 )
+INVALID_AGENT_RESULT_ERRORS = frozenset(
+    {"codex_result_invalid", "codex_result_missing"}
+)
 STALE_CODEX_RESUME_ATTEMPTS = 2
 CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
 CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
@@ -1549,6 +1552,14 @@ class DingTalkAutoReplyWorker:
                     continue
                 try:
                     failed_run = self._latest_failed_agent_run(task, run_snapshot)
+                    clean_session_retry = (
+                        error in INVALID_AGENT_RESULT_ERRORS
+                        and task.attempts == self.max_task_attempts
+                        and failed_run is not None
+                        and bool(failed_run.codex_session_id)
+                        and self.store.get_codex_session_id(task.conversation_id)
+                        == failed_run.codex_session_id
+                    )
                     if error in RECOVERABLE_AGENT_RUNTIME_ERRORS:
                         if failed_run is not None:
                             conversation_session = self.store.get_codex_session_id(
@@ -1571,6 +1582,7 @@ class DingTalkAutoReplyWorker:
                         error,
                         retryable=True,
                         prior_run_snapshot=run_snapshot,
+                        allow_clean_session_retry=clean_session_retry,
                     )
                 except AgentRunLeaseLostError:
                     continue
@@ -1654,11 +1666,16 @@ class DingTalkAutoReplyWorker:
         *,
         retryable: bool,
         prior_run_snapshot: dict[int, tuple[object, ...]],
+        allow_clean_session_retry: bool = False,
     ) -> tuple[str, int]:
         run = self._latest_failed_agent_run(task, prior_run_snapshot)
         task_status = (
             "pending"
-            if retryable and task.attempts < self.max_task_attempts
+            if retryable
+            and (
+                task.attempts < self.max_task_attempts
+                or allow_clean_session_retry
+            )
             else "failed"
         )
         available_at = (
