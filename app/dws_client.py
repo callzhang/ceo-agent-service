@@ -29,7 +29,6 @@ TEXT_AT_FILE_ESCAPE_PREFIX = " "
 DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 MIN_UNREAD_MESSAGE_LIST_LIMIT = 5
 DWS_AGENT_CODE_ENV = "DINGTALK_DWS_AGENTCODE"
-DWS_DEFAULT_AGENT_CODE = "ceo-agent-service"
 BRACKETED_EMOJI_PATTERN = re.compile(r"^\[([^\[\]]*)\]$")
 DWS_PROCESS_MIN_INTERVAL_SECONDS_ENV = "CEO_DWS_PROCESS_MIN_INTERVAL_SECONDS"
 _DWS_PROCESS_GATE = threading.Lock()
@@ -148,9 +147,11 @@ def dws_noninteractive_environment(env: dict[str, str] | None = None) -> dict[st
     agent_code = (
         next_env.get(DWS_AGENT_CODE_ENV)
         or next_env.get("CEO_DWS_AGENT_CODE")
-        or DWS_DEFAULT_AGENT_CODE
     )
-    next_env[DWS_AGENT_CODE_ENV] = agent_code
+    if agent_code:
+        next_env[DWS_AGENT_CODE_ENV] = agent_code
+    else:
+        next_env.pop(DWS_AGENT_CODE_ENV, None)
     return next_env
 
 
@@ -385,22 +386,23 @@ class DwsClient:
         return [self.dws_bin, "auth", "login"]
 
     def build_pat_authorization_command(self, scopes: list[str]) -> list[str]:
-        agent_code = dws_noninteractive_environment().get(
-            DWS_AGENT_CODE_ENV, DWS_DEFAULT_AGENT_CODE
-        )
-        return [
+        command = [
             self.dws_bin,
             "pat",
             "chmod",
             *scopes,
-            "--agentCode",
-            agent_code,
+        ]
+        agent_code = dws_noninteractive_environment().get(DWS_AGENT_CODE_ENV, "")
+        if agent_code:
+            command.extend(["--agentCode", agent_code])
+        command.extend([
             "--grant-type",
             "permanent",
             "--yes",
             "--format",
             "json",
-        ]
+        ])
+        return command
 
     def build_auth_status_command(self) -> list[str]:
         return [self.dws_bin, "auth", "status", "--format", "json"]

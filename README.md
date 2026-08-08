@@ -116,6 +116,7 @@ Agent 必须如实返回动作结果；只有诊断、没有完成用户要求�
 ## CLI 凭证
 
 - DWS 和 Lark CLI 复用安装用户在各 CLI 标准位置维护的本地登录状态；服务不维护第二套凭证。
+- 默认也不设置 `DINGTALK_DWS_AGENTCODE`。这样 DWS 的 PAT 行为授权与用户在终端直接运行 `dws` 时使用同一默认作用域；只有安装者显式设置 `CEO_DWS_AGENT_CODE` 或 `DINGTALK_DWS_AGENTCODE`，才会启用独立 AgentCode 作用域。
 - Agent 不得执行 auth login/reset/logout，也不能自行弹出授权页面。
 - Channel gate 在 Agent 前运行结构化 status 和 live authenticated probe。
 - 只有明确 `needs_login` 时，Login Coordinator 才启动一次相应 CLI 登录；并发和抑制窗口内不会重复启动。

@@ -359,7 +359,7 @@ def test_codex_runner_env_preserves_process_auth_env_while_stripping_tool_secret
     assert "MEMORY_CONNECTOR_USER_ID" not in env
 
 
-def test_codex_runner_env_forces_dws_host_owned_pat_without_browser(
+def test_codex_runner_env_reuses_default_user_dws_pat_scope(
     tmp_path: Path, monkeypatch
 ):
     monkeypatch.delenv(DWS_AGENT_CODE_ENV, raising=False)
@@ -368,7 +368,7 @@ def test_codex_runner_env_forces_dws_host_owned_pat_without_browser(
 
     env = runner.build_env()
 
-    assert env[DWS_AGENT_CODE_ENV] == "ceo-agent-service"
+    assert DWS_AGENT_CODE_ENV not in env
 
 
 def test_codex_runner_can_preserve_native_local_cli_auth_environment(

@@ -3369,13 +3369,13 @@ def test_get_user_profile_keeps_base_profile_when_title_enrichment_needs_agent_c
     ]
 
 
-def test_dws_cli_environment_forces_host_owned_pat_without_browser(monkeypatch):
+def test_dws_cli_environment_reuses_the_default_user_pat_scope(monkeypatch):
     monkeypatch.delenv(DWS_AGENT_CODE_ENV, raising=False)
     monkeypatch.delenv("CEO_DWS_AGENT_CODE", raising=False)
 
     env = DwsClient._cli_environment()
 
-    assert env[DWS_AGENT_CODE_ENV] == "ceo-agent-service"
+    assert DWS_AGENT_CODE_ENV not in env
 
 
 def test_dws_cli_environment_preserves_configured_agent_code(monkeypatch):
@@ -5885,6 +5885,26 @@ def test_start_pat_authorization_grants_service_agent_code(monkeypatch):
     ]
     assert "DINGTALK_DWS_AGENTCODE" not in calls[0]["env"]
     assert "CEO_DWS_AGENT_CODE" not in calls[0]["env"]
+
+
+def test_start_pat_authorization_reuses_default_user_scope(monkeypatch):
+    calls = []
+    monkeypatch.delenv(DWS_AGENT_CODE_ENV, raising=False)
+    monkeypatch.delenv("CEO_DWS_AGENT_CODE", raising=False)
+
+    class FakeProcess:
+        pid = 1234
+
+    def fake_popen(command, text, start_new_session, env):
+        calls.append({"command": command, "env": env})
+        return FakeProcess()
+
+    monkeypatch.setattr(dws_client.subprocess, "Popen", fake_popen)
+
+    DwsClient(dws_bin="dws-test").start_pat_authorization(["chat.message:list"])
+
+    assert "--agentCode" not in calls[0]["command"]
+    assert DWS_AGENT_CODE_ENV not in calls[0]["env"]
 
 
 def test_run_json_raises_dws_error_on_invalid_json(monkeypatch):
