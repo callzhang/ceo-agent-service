@@ -116,6 +116,7 @@ Agent 必须如实返回动作结果；只完成诊断时返回 `needs_human` �
 ## CLI 凭证
 
 - DWS 和 Lark CLI 复用安装用户在各 CLI 标准位置维护的本地登录状态；服务不维护第二套凭证。
+- 默认也不设置 `DINGTALK_DWS_AGENTCODE`。这样 DWS 的 PAT 行为授权与用户在终端直接运行 `dws` 时使用同一默认作用域；只有安装者显式设置 `CEO_DWS_AGENT_CODE` 或 `DINGTALK_DWS_AGENTCODE`，才会启用独立 AgentCode 作用域。
 - Agent 不得执行 auth login/reset/logout，也不能自行弹出授权页面。
 - Channel gate 在 Agent 前运行结构化 status 和 live authenticated probe。
 - 只有明确 `needs_login` 时，Login Coordinator 才启动一次相应 CLI 登录；并发和抑制窗口内不会重复启动。
@@ -381,6 +382,8 @@ recruiting, sales, finance, admin, HR, other
   长时间的普通消息处理阻塞。每个 Direct Agent 的已核验审批动作都会随流程 ID、任务 ID 和
   回读结果写入审批 History；服务启动时还会从精确匹配的已完成扫描任务回填旧记录，避免把
   实际已审阅的审批误显示为普通回复或过期状态。审批 History 按流程实例显示当前有效审阅结果，
+  关键 OA 详情、任务、记录、表单或附件读取/解析失败属于服务内部失败：只记入审批审计，不向
+  申请人发送消息、也不在 OA 中评论。`/approvals` 提供独立审批审计视图。
   同流程的技术重试仅保留在详情审计中，不会覆盖最近一次有效审阅。若 Codex 进程可安全重试但所属会话已卡住，
   服务会清除该任务和会话的关联，在下一次重试时建立干净会话并重新读取实时审批状态。
   对同一流程的后续扫描，服务会把已核验的审批动作作为幂等依据交给 Agent：先读取实时状态，
