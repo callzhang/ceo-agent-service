@@ -152,7 +152,14 @@ If that scan covers the original trigger and later conversation activity makes
 the draft obsolete, an operator may close the same generation through
 `supersede_reconciled_wechat_delivery`. That terminal transition records
 `superseded` and mirrors `skipped` to History; it does not assert whether the
-uncertain historical send occurred and never queues another send.
+uncertain historical send occurred and never queues another send. The delivery
+must also remain inactive beyond the sender timeout window, so this operator
+transition cannot race a still-running sender.
+
+IPC failures are classified at the request boundary. A Unix-socket connection
+failure occurs before the helper can receive the request and is retryable. Once
+the request may have reached the helper, any timeout or broken response remains
+`send_unknown` and is reconciled read-only instead of replayed.
 
 ## Diagnostic CLI
 

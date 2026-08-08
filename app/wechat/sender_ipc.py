@@ -10,7 +10,7 @@ import socketserver
 import stat
 from typing import Any
 
-from app.wechat.accessibility import AccessibilityResult
+from app.wechat.accessibility import AccessibilityResult, SenderExecutionError
 
 
 PROTOCOL_VERSION = 1
@@ -169,14 +169,23 @@ class WechatSenderClient:
             "method": method,
             "params": params or {},
         }, separators=(",", ":")).encode("utf-8") + b"\n"
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-                connection.settimeout(self.timeout_seconds)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(self.timeout_seconds)
+            try:
                 connection.connect(str(self.socket_path))
+            except (OSError, TimeoutError) as exc:
+                raise SenderExecutionError(
+                    f"WeChat sender unavailable: {exc}",
+                    action_may_have_started=False,
+                ) from exc
+            try:
                 connection.sendall(request)
                 raw = connection.makefile("rb").readline(self.max_response_bytes + 1)
-        except (OSError, TimeoutError) as exc:
-            raise SenderIpcError(f"WeChat sender unavailable: {exc}") from exc
+            except (OSError, TimeoutError) as exc:
+                raise SenderExecutionError(
+                    f"WeChat sender unavailable: {exc}",
+                    action_may_have_started=True,
+                ) from exc
         if len(raw) > self.max_response_bytes or not raw.endswith(b"\n"):
             raise SenderIpcError("invalid or oversized WeChat sender response")
         try:

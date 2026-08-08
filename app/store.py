@@ -6186,14 +6186,18 @@ class AutoReplyStore:
         *,
         expected_execution_generation: str,
         reason: str,
+        inactive_before: str,
     ) -> None:
         """Close a stale unknown delivery after read-only reconciliation."""
         generation = expected_execution_generation.strip()
         explanation = reason.strip()
+        inactivity_cutoff = inactive_before.strip()
         if not generation:
             raise ValueError("expected_execution_generation must be non-empty")
         if not explanation:
             raise ValueError("reason must be non-empty")
+        if not inactivity_cutoff:
+            raise ValueError("inactive_before must be non-empty")
         with self._connect() as db:
             cursor = db.execute(
                 """
@@ -6201,13 +6205,20 @@ class AutoReplyStore:
                 set status='superseded', error=?, updated_at=current_timestamp
                 where id=? and status='send_unknown'
                   and execution_generation=?
+                  and datetime(updated_at) <= datetime(?)
                   and exists (
                     select 1 from reply_tasks
                     where reply_tasks.id=wechat_deliveries.reply_task_id
                       and reply_tasks.execution_generation=?
                   )
                 """,
-                (explanation, delivery_id, generation, generation),
+                (
+                    explanation,
+                    delivery_id,
+                    generation,
+                    inactivity_cutoff,
+                    generation,
+                ),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(

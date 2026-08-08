@@ -120,5 +120,6 @@ def test_sender_client_round_trip_over_owner_only_socket():
 def test_sender_client_fails_closed_when_helper_is_not_running(tmp_path):
     module = _module()
     client = module.WechatSenderClient(tmp_path / "missing.sock", timeout_seconds=0.1)
-    with pytest.raises(module.SenderIpcError, match="unavailable"):
+    with pytest.raises(module.SenderExecutionError, match="unavailable") as exc:
         client.health()
+    assert exc.value.action_may_have_started is False

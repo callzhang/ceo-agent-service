@@ -7,9 +7,10 @@ import pytest
 import app.wechat.accessibility as accessibility
 from app.store import AutoReplyStore
 from app.wechat.accessibility import (
-    AccessibilityResult, MacWechatAccessibility, WechatSender, _open_target,
+    AccessibilityResult, MacWechatAccessibility, SenderExecutionError,
+    WechatSender, _open_target,
     _attribute_text_matches, _screen_is_locked, _text_evidence_matches,
-    _walk_accessibility_tree,
+    _walk_accessibility_tree, _result_after_return,
     reconcile_incomplete_deliveries,
 )
 from app.wechat.models import WechatReplyScope
@@ -33,6 +34,13 @@ class FakeRunner:
 class RaisingRunner:
     def send(self, *_args, **_kwargs):
         raise RuntimeError("sender transport stopped after action may have started")
+
+
+class PreDispatchFailureRunner:
+    def send(self, *_args, **_kwargs):
+        raise SenderExecutionError(
+            "sender helper is unavailable", action_may_have_started=False,
+        )
 
 
 def _scope(binding_status):
@@ -137,6 +145,27 @@ def test_sender_exception_after_claim_remains_unknown(store):
     persisted = store.get_wechat_delivery_for_task(1)
     assert persisted.status == "send_unknown"
     assert persisted.error == "sender_execution_interrupted"
+
+
+def test_sender_failure_before_request_dispatch_is_retryable(store):
+    sender = WechatSender(store, PreDispatchFailureRunner())
+    delivery = _seed_delivery(store)
+
+    outcome = sender.send(delivery, _scope("verified"))
+
+    assert outcome.status == "failed"
+    assert outcome.error == "action_not_performed"
+    assert store.get_wechat_delivery_for_task(1).status == "failed"
+
+
+def test_return_key_attempt_is_unknown_when_composer_confirmation_fails():
+    result = _result_after_return(cleared=False, target_fingerprint="fp-1")
+
+    assert result == AccessibilityResult(
+        action_performed=True,
+        visible_confirmation=False,
+        target_fingerprint="fp-1",
+    )
 
 
 def test_recovery_keeps_sending_unknown_without_reader(store):

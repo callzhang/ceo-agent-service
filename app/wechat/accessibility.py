@@ -32,6 +32,25 @@ class SendOutcome:
     error: str = ""
 
 
+class SenderExecutionError(RuntimeError):
+    """Sender transport failed with an explicit action-dispatch boundary."""
+
+    def __init__(self, message: str, *, action_may_have_started: bool):
+        super().__init__(message)
+        self.action_may_have_started = action_may_have_started
+
+
+def _result_after_return(
+    *, cleared: bool, target_fingerprint: str,
+) -> AccessibilityResult:
+    """Return was posted; composer clearing is confirmation, not dispatch proof."""
+    return AccessibilityResult(
+        action_performed=True,
+        visible_confirmation=cleared,
+        target_fingerprint=target_fingerprint,
+    )
+
+
 def target_fingerprint(account_id: str, target_type: str, target_id: str, visible_identity: str) -> str:
     raw = f"{account_id}\0{target_type}\0{target_id}\0{visible_identity}".encode()
     return hashlib.sha256(raw).hexdigest()
@@ -234,6 +253,22 @@ class WechatSender:
                 search_query=scope.binding_evidence.get("navigation_query") or None,
                 expected_recent_text=expected_recent_text,
             )
+        except SenderExecutionError as exc:
+            if not exc.action_may_have_started:
+                error = "action_not_performed"
+                self.store.set_wechat_delivery_status(
+                    delivery.id,
+                    "failed",
+                    error=error,
+                )
+                return SendOutcome("failed", error)
+            error = "sender_execution_interrupted"
+            self.store.set_wechat_delivery_status(
+                delivery.id,
+                "send_unknown",
+                error=error,
+            )
+            return SendOutcome("send_unknown", error)
         except Exception:
             error = "sender_execution_interrupted"
             self.store.set_wechat_delivery_status(
@@ -571,8 +606,10 @@ class MacWechatAccessibility:
             time.sleep(1.0)
             cleared = (g(first(id_eq="chat_input_field"), "AXValue") or "").strip() == ""
             fp = target_fingerprint("", "", target_label, target_label)
-            return AccessibilityResult(action_performed=cleared, visible_confirmation=cleared,
-                                       target_fingerprint=fp)
+            return _result_after_return(
+                cleared=cleared,
+                target_fingerprint=fp,
+            )
         finally:
             if self.restore_focus:
                 self._reactivate(prev_app)
