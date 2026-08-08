@@ -136,9 +136,7 @@ def _recovery_write_authorization(
 def read_skill(path: str) -> dict[str, str]:
     skill_path = Path(path).expanduser().resolve(strict=True)
     roots = tuple(root.expanduser().resolve() for root in AGENT_SKILL_ROOTS)
-    if skill_path.name != "SKILL.md" or not any(
-        skill_path.is_relative_to(root) for root in roots
-    ):
+    if not _is_authorized_skill_markdown(skill_path, roots):
         raise AgentReadOnlyViolationError("skill_path_forbidden")
     flags = os.O_RDONLY | os.O_NONBLOCK
     flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -156,6 +154,20 @@ def read_skill(path: str) -> dict[str, str]:
         "content": content,
         "sha256": hashlib.sha256(content_bytes).hexdigest(),
     }
+
+
+def _is_authorized_skill_markdown(skill_path: Path, roots: Sequence[Path]) -> bool:
+    if skill_path.suffix.casefold() != ".md":
+        return False
+    for root in roots:
+        if not skill_path.is_relative_to(root):
+            continue
+        parent = skill_path.parent
+        while parent != root:
+            if (parent / "SKILL.md").is_file():
+                return True
+            parent = parent.parent
+    return False
 
 
 def _execute_reviewed(
