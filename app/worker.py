@@ -1565,11 +1565,11 @@ class DingTalkAutoReplyWorker:
                             conversation_session = self.store.get_codex_session_id(
                                 task.conversation_id
                             )
-                            if (
-                                failed_run.role is AgentRole.CONSUMER
-                                or conversation_session == failed_run.codex_session_id
-                            ):
-                                self.store.clear_codex_session(task.conversation_id)
+                            if conversation_session == failed_run.codex_session_id:
+                                self.store.clear_codex_session_if_matches(
+                                    task.conversation_id,
+                                    failed_run.codex_session_id,
+                                )
                             self.store.clear_agent_run_session(
                                 task.id,
                                 task.execution_generation,

@@ -115,7 +115,10 @@ class ConsumerAgentRunner:
             conversation_session_id
             and not self.codex_session_exists(conversation_session_id)
         ):
-            self.store.clear_codex_session(task.conversation_id)
+            self.store.clear_codex_session_if_matches(
+                task.conversation_id,
+                conversation_session_id,
+            )
             conversation_session_id = None
         claim = self.store.claim_agent_run(
             task.id,
@@ -131,8 +134,6 @@ class ConsumerAgentRunner:
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
         session_id = claim.run.codex_session_id or conversation_session_id
-        if session_id and not self.codex_session_exists(session_id):
-            raise RuntimeError("agent_run_session_unavailable")
         process = AgentTurnProcess[ConsumerAgentResult](
             store=self.store,
             task=task,
@@ -187,7 +188,10 @@ class ConsumerAgentRunner:
                 and persisted is not None
                 and not persisted.tool_events
             ):
-                self.store.clear_codex_session(task.conversation_id)
+                self.store.clear_codex_session_if_matches(
+                    task.conversation_id,
+                    session_id,
+                )
             raise
 
 

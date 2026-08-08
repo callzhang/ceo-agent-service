@@ -7747,6 +7747,24 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def clear_codex_session_if_matches(
+        self,
+        conversation_id: str,
+        expected_session_id: str,
+    ) -> int:
+        if not expected_session_id.strip():
+            raise ValueError("expected_session_id must be non-empty")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update conversations
+                set codex_session_id=null
+                where conversation_id=? and codex_session_id=?
+                """,
+                (conversation_id, expected_session_id),
+            )
+            return cursor.rowcount
+
     def clear_agent_run_session(
         self,
         reply_task_id: int,
