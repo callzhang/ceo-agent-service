@@ -245,6 +245,11 @@ def test_eval_cases_traverse_orchestration_with_exactly_the_expected_write(case:
         assert audit.session_ids == []
         assert sink.row_count(f"agent-task:{task.id}:{task.execution_generation}:proposal:0") == 0
         return
+    if case.consumer_outcome == "no_action":
+        assert result.status == "no_action"
+        assert audit.session_ids == []
+        assert sink.row_count(f"agent-task:{task.id}:{task.execution_generation}:proposal:0") == 0
+        return
     if case.audit_outcome == "executed":
         assert result.status == "executed"
         assert result.final_role is AgentRole.AUDIT

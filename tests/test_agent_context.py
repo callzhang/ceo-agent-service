@@ -257,7 +257,9 @@ def test_oa_completed_task_requires_no_action():
     ).render()
 
     assert "already completed" in rendered
+    assert "applicant notification is confirmed" in rendered
     assert "return no_action" in rendered
+    assert "propose only the missing notification" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
@@ -323,6 +325,35 @@ def test_consumer_context_turns_recoverable_evidence_gap_into_clarifying_proposa
     assert "irreducible personal or management decision" in rendered
 
 
+def test_oa_context_requires_autonomous_review_before_escalating_to_derek():
+    rendered = _oa_context(
+        reference="process_instance_id=pid-1; task_id=tid-1",
+        read_commands=(
+            "dws oa approval detail --instance-id pid-1 --format json",
+            "dws oa approval tasks --instance-id pid-1 --format json",
+        ),
+        trigger_text="请审批这个申请",
+    ).render()
+
+    assert "review each OA instance to a business outcome" in rendered
+    assert "propose the approval action" in rendered
+    assert "comment on that OA instance" in rendered
+    assert "notify the actual applicant" in rendered
+    assert "Do not ask Derek to choose between continuing and clarifying" in rendered
+    assert "Only an irreducible management choice" in rendered
+
+
+def test_single_chat_context_requires_direct_message_target():
+    group_context = _context()
+    rendered = AgentTaskContext(
+        **{**group_context.__dict__, "single_chat": True}
+    ).render()
+
+    assert "For a single chat, address the verified participant directly" in rendered
+    assert "never pass a single-chat conversation ID to a group-send command" in rendered
+    assert "For a group chat, use the supplied group conversation ID" in rendered
+
+
 def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     task = _oa_context(
         reference="process_instance_id=pid-1; task_id=tid-1",
@@ -369,6 +400,9 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert "Execute the named operation" in rendered
     assert "payload unchanged" in rendered
     assert "return revision_required" in rendered
+    assert "Reject a group-send candidate for a single-chat task" in rendered
+    assert "OA factual gap" in rendered
+    assert "exact OA comment and applicant notification" in rendered
     assert "Effective Audit Rules" not in rendered
     assert "Only publish supported facts." not in rendered
     _assert_no_service_oa_resolution_fields(rendered)

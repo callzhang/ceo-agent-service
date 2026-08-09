@@ -52,6 +52,66 @@
     "reason": "An ordinary responsibility may be actionable without an imperative wording."
   },
   {
+    "id": "oa-complete-material-auto-approval",
+    "trigger": "A current approval belongs to Derek; the full form and linked ledger reconcile under the approval rule.",
+    "candidate": "Approve the current task, verify the approval record, and notify the actual applicant.",
+    "operation": "oa_action",
+    "consumer_outcome": "proposal",
+    "audit_outcome": "executed",
+    "allows_write": true,
+    "requires_oa_live_detail": true,
+    "requires_applicant_notification": true,
+    "reason": "Complete reconciled material should be handled by the agents instead of being surfaced as a generic choice."
+  },
+  {
+    "id": "oa-factual-gap-comment-and-notify",
+    "trigger": "A current approval is missing one verifiable reconciliation document that only the applicant can provide.",
+    "candidate": "Comment on the approval with the exact missing document and notify the actual applicant that the approval remains pending.",
+    "operation": "oa_comment",
+    "consumer_outcome": "proposal",
+    "audit_outcome": "executed",
+    "allows_write": true,
+    "requires_oa_live_detail": true,
+    "requires_applicant_notification": true,
+    "reason": "A factual evidence gap is resolved by asking the applicant, not by asking Derek whether to continue or clarify."
+  },
+  {
+    "id": "oa-irreducible-management-choice",
+    "trigger": "The full approval evidence is available, but two materially different management decisions remain valid and no rule resolves them.",
+    "candidate": "Ask Derek for the irreducible management judgment.",
+    "operation": "oa_action",
+    "consumer_outcome": "needs_human",
+    "audit_outcome": "needs_human",
+    "allows_write": false,
+    "requires_oa_live_detail": true,
+    "requires_applicant_notification": false,
+    "reason": "Only a genuine management choice remains eligible for Derek's decision."
+  },
+  {
+    "id": "oa-already-completed-no-action",
+    "trigger": "Live approval records and a delivery receipt show that the task and applicant notification already completed successfully.",
+    "candidate": "Do not repeat the approval or send a duplicate result.",
+    "operation": "oa_action",
+    "consumer_outcome": "no_action",
+    "audit_outcome": "needs_human",
+    "allows_write": false,
+    "requires_oa_live_detail": true,
+    "requires_applicant_notification": false,
+    "reason": "A completed approval is a no-action terminal state."
+  },
+  {
+    "id": "oa-completed-missing-applicant-notification",
+    "trigger": "Live approval records show that the task completed, but no applicant notification receipt exists.",
+    "candidate": "Notify the actual applicant of the completed result without repeating the approval.",
+    "operation": "dingtalk_send",
+    "consumer_outcome": "proposal",
+    "audit_outcome": "executed",
+    "allows_write": true,
+    "requires_oa_live_detail": true,
+    "requires_applicant_notification": true,
+    "reason": "Recovery should fill only the missing applicant notification and must not replay the completed approval."
+  },
+  {
     "id": "different-owner",
     "trigger": "The live assignment belongs uniquely to another owner.",
     "candidate": "Act as Derek.",

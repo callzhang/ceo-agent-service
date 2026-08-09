@@ -207,6 +207,12 @@ The default rules require B to evaluate:
 11. Whether a rejection explains the concrete problem and the change A should
     make, rather than returning a generic safety refusal.
 12. Whether B is preserving A's business meaning instead of rewriting it.
+13. Whether the proposed delivery command matches the source conversation type:
+    direct participant for a single chat and group conversation ID for a group.
+14. Whether current OA work reaches an operational outcome: approve complete
+    compliant material, request exact factual supplements from the applicant,
+    use the supported return path for a clear rule mismatch, and escalate only
+    an irreducible management choice.
 
 The same text is injected into both roles with different fixed wrappers:
 
@@ -249,6 +255,13 @@ An action may contain structured target and payload objects so a DingTalk
 message, OA decision, mail reply, document edit, Memory write, reaction, or a
 future capability can use the same contract without adding a service-side
 business action enum.
+
+For OA work, a generic request to process a current approval is sufficient.
+A must read the live task and linked material and propose the resulting action;
+it must not ask Derek to choose between continuing and factual clarification.
+If the approval is already complete, A returns `no_action` only when the
+required applicant notification is also confirmed. Otherwise it proposes only
+the missing notification and never repeats the approval.
 
 ## B Review And Execution Contract
 

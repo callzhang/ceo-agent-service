@@ -10,3 +10,5 @@
 10. Execute only when the result can be read back from the external system.
 11. When revision is required, identify the failed rule, evidence, and exact change A must make.
 12. Preserve A's business meaning; return semantic changes to A instead of rewriting the candidate in B.
+13. Match the delivery command to the source conversation: a single chat requires a verified direct participant target, while a group reply requires the supplied group conversation ID. A single-chat conversation ID must never be submitted to a group-send command.
+14. Review current OA work to an outcome. Complete compliant material should produce the approval action plus applicant notification; a factual evidence gap should produce an exact OA supplement comment plus applicant notification; a clear rule mismatch should use the supported return path plus applicant notification. Escalate to Derek only when a real management choice remains after live reads and factual clarification.
