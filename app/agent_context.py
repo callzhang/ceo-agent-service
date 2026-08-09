@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from app.agent_contracts import AuditFeedback, ConsumerProposal
 
@@ -60,8 +61,12 @@ class AgentTaskContext:
         *,
         proposal_revision: int = 0,
         feedback: AuditFeedback | None = None,
+        current_time: str | None = None,
     ) -> str:
-        sections = [_CONSUMER_AGENT_RULES, self.render_business_context()]
+        sections = [
+            _CONSUMER_AGENT_RULES,
+            self.render_business_context(current_time=current_time),
+        ]
         if feedback is not None:
             sections.append(
                 "Audit feedback requiring a complete replacement proposal\n"
@@ -74,7 +79,7 @@ class AgentTaskContext:
             )
         return "\n\n".join(sections)
 
-    def render_business_context(self) -> str:
+    def render_business_context(self, *, current_time: str | None = None) -> str:
         trigger = {
             "task_id": self.task_id,
             "channel": self.channel,
@@ -109,6 +114,8 @@ class AgentTaskContext:
             for material in self.materials
         ]
         sections = [
+            "Current turn execution time\n"
+            + (current_time or _current_local_time()),
             "Original trigger\n" + _json(trigger),
             "Recent conversation context\n" + _json(messages),
             "Raw material references and exact read commands\n" + _json(materials),
@@ -150,11 +157,11 @@ class AuditTurnContext:
     proposal: ConsumerProposal
     audit_rules: str
 
-    def render(self) -> str:
+    def render(self, *, current_time: str | None = None) -> str:
         return "\n\n".join(
             (
                 _AUDIT_AGENT_RULES,
-                self.task.render_business_context(),
+                self.task.render_business_context(current_time=current_time),
                 "Candidate revision\n"
                 + _json(
                     {
@@ -169,6 +176,10 @@ class AuditTurnContext:
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _current_local_time() -> str:
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
 
 
 _CONSUMER_AGENT_RULES = """Consumer Agent A responsibilities
@@ -187,6 +198,7 @@ _CONSUMER_AGENT_RULES = """Consumer Agent A responsibilities
 - For every DWS or Lark CLI action, use the controlled capability (`agent_cli.dws` or `agent_cli.lark-cli`), the normalized command operation (for example `chat message send`), a normalized target (for example `{"group":"<conversation-id>"}`), and `payload.argv` containing the exact complete command. Do not use abstract channel capability names, alternate target keys, or partial command fields: Audit validates this exact identity and never reconstructs it.
 - Do not change shared deployment entry points, domains, DNS, routing, or infrastructure configuration in response to one reported failure. Diagnose and report first. Such a change requires either explicit current authorization for that exact change or at least three independently confirmed affected cases in the supplied context. Repeated probes from one machine or network are one case, not independent cases. Without that evidence, leave shared configuration unchanged and return needs_human.
 - Before proposing a repeated external action, query live state to avoid an exact duplicate. A corrected action with changed content is a new requested action, not an exact duplicate.
+- Compare the current turn execution time with the trigger and relevant evidence times before proposing a time-sensitive action. Account for elapsed time and newer context. If the original action no longer serves the user's present intent, return no_action instead of sending a late clarification, confirmation, reminder, or coordination message.
 - Treat Safe prior execution receipts for the same OA process as idempotency evidence: do not repeat the same confirmed action; first read live OA state, then act only when new evidence requires a different action.
 - Never run authentication login, reset, or logout commands, including dws auth login, dws auth reset, dws auth logout, lark auth login, lark auth reset, or lark auth logout. Authentication readiness is owned by the service gate.
 - Never expose credentials, tokens, cookies, authorization codes, signed URLs, or local credential paths in externally visible output or persisted summaries.
@@ -199,6 +211,7 @@ _AUDIT_AGENT_RULES = """Audit Agent B responsibilities
 - Independently review Consumer Agent A's complete candidate and execute only an accepted candidate.
 - Preserve the candidate unchanged. Execute the named operation with the candidate payload unchanged. If live reading shows that an ID, tool, or argument must change, return revision_required so A produces a replacement proposal.
 - Read live external state before execution, suppress only an exact already-executed revision, execute through the applicable installed capability, and verify the result from the external system.
+- Compare the current turn execution time with the trigger and evidence times. Reject a time-sensitive candidate whose purpose has expired and return revision_required so A can decide whether a still-useful replacement exists or the task is now no_action. Never execute a stale action merely because no duplicate exists.
 - If business meaning must change, return concrete revision_required feedback. Do not rewrite the candidate yourself.
 - Use raw process/task IDs, material references, and exact read commands. For OA work, read live detail and current task state; do not infer the target from applicant or title similarity.
 - Never run authentication login, reset, or logout commands. Authentication readiness is owned by the service gate.

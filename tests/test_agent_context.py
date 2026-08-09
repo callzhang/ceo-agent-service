@@ -86,6 +86,66 @@ def test_context_reuses_confirmed_facts_without_reasking():
     assert "预算已经确认" in rendered
 
 
+def test_context_gives_each_agent_turn_an_explicit_execution_time():
+    context = _context(trigger_text="现在出发吃饭吗？")
+
+    consumer = context.render(current_time="2026-07-28 14:15:00 +0800")
+    audit = AuditTurnContext(
+        task=context,
+        proposal_revision=0,
+        operation_id="op-time-sensitive",
+        proposal=ConsumerProposal.model_validate(
+            {
+                "objective": "Clarify whether the immediate plan is still active.",
+                "actions": [
+                    {
+                        "description": "Ask whether to leave now.",
+                        "capability": "agent_cli.dws",
+                        "operation": "chat message send",
+                        "target": {"open_dingtalk_id": "recipient-1"},
+                        "payload": {
+                            "argv": [
+                                "dws",
+                                "chat",
+                                "message",
+                                "send",
+                                "--open-dingtalk-id",
+                                "recipient-1",
+                                "--text",
+                                "现在出发吗？",
+                            ]
+                        },
+                        "expected_verification": "Read back the sent message.",
+                    }
+                ],
+                "sourced_facts": [
+                    {
+                        "assertion": "The trigger proposed leaving now.",
+                        "references": ["message:mid"],
+                    }
+                ],
+                "authored_judgment": "Ask a timing clarification.",
+            }
+        ),
+        audit_rules="Reject stale time-sensitive actions.",
+    ).render(current_time="2026-07-28 14:16:00 +0800")
+
+    assert "Current turn execution time" in consumer
+    assert "2026-07-28 14:15:00 +0800" in consumer
+    assert "2026-07-28 14:16:00 +0800" in audit
+    assert '"create_time": "2026-07-28 12:00:00"' in audit
+
+
+def test_agent_rules_require_elapsed_time_review_for_time_sensitive_actions():
+    rendered = _context(trigger_text="现在出发吗？").render(
+        current_time="2026-07-28 14:15:00 +0800"
+    )
+
+    assert "elapsed time" in rendered
+    assert "time-sensitive" in rendered
+    assert "return no_action" in rendered
+
+
 def test_context_renders_only_minimal_manual_review_instruction():
     original = _context()
     context = AgentTaskContext(
