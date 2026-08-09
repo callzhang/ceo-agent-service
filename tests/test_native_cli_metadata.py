@@ -19,6 +19,34 @@ def test_agent_cli_uses_agent_cli_error_codes(monkeypatch):
     assert receipt["error"]["code"] == "agent_cli_timeout"
 
 
+def test_agent_cli_allows_incomplete_dws_help_as_read_only(monkeypatch):
+    argv = ["dws", "chat", "message", "--help"]
+    monkeypatch.setattr("app.agent_cli.shutil.which", lambda _: "/bin/dws")
+    launched = []
+
+    def process_runner(*args, **kwargs):
+        launched.append(args[0])
+        return subprocess.CompletedProcess(args[0], 0, "Usage: dws chat message", "")
+
+    receipt = execute_reviewed_read(
+        argv,
+        classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+        process_runner=process_runner,
+    )
+
+    assert launched == [["/bin/dws", "chat", "message", "--help"]]
+    assert receipt["operation"] == "chat message"
+    assert "error" not in receipt
+
+
+def test_agent_cli_help_cannot_use_write_capability():
+    with pytest.raises(AgentReadOnlyViolationError, match="effect_mismatch"):
+        execute_reviewed_write(
+            ["dws", "chat", "message", "--help"],
+            classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+        )
+
+
 def test_agent_cli_rejects_sensitive_argv_before_process_launch():
     launched = False
 

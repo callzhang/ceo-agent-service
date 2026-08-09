@@ -137,6 +137,10 @@ Coordinator 只启动一次登录流程；网络错误、命令超时或状态�
 Agent 不执行 `auth login`、`reset` 或 `logout`。依赖未就绪时任务保留为可恢复状态，等 gate
 恢复后继续，不使用缺失材料生成猜测回复。
 
+受控 DWS/Lark 通路允许以 `--help` 或 `-h` 结尾的帮助查询作为只读操作，即使查询停在命令组
+而不是具体业务子命令。这样 Agent 可以先确认安装版本的真实语法；帮助查询不能获得写权限，
+真正的业务命令仍按 CLI schema 中的 read/write 元数据分类。
+
 ## 用户 Codex 能力复用
 
 服务通过原生 `codex exec` 继承安装用户的 `~/.codex` 配置、MCP、plugin、hook 和 skills。

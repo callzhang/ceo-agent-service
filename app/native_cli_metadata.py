@@ -227,6 +227,9 @@ class NativeCliMetadataClassifier:
         argv = native_command_argv(item)
         if argv is None or "--dry-run" in argv:
             return None
+        help_command = _classify_cli_help(argv)
+        if help_command is not None:
+            return help_command
         cli = Path(argv[0]).name
         for command_path in _command_path_candidates(argv[1:]):
             cache_key = (cli, command_path)
@@ -250,6 +253,9 @@ class NativeCliMetadataClassifier:
         argv = native_command_argv(item)
         if argv is None or "--dry-run" in argv:
             return None
+        help_command = _classify_cli_help(argv)
+        if help_command is not None:
+            return help_command
         cli = Path(argv[0]).name
         for command_path in _command_path_candidates(argv[1:]):
             effect = self._cache.get((cli, command_path))
@@ -582,6 +588,21 @@ def _classified_native_command(
         effect=effect,
         command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
         target_identifiers=_argv_target_identifiers(argv),
+    )
+
+
+def _classify_cli_help(argv: tuple[str, ...]) -> NativeCliCommand | None:
+    cli = Path(argv[0]).name
+    if cli not in {"dws", "lark-cli"} or argv[-1] not in {"--help", "-h"}:
+        return None
+    command_paths = _command_path_candidates(argv[1:])
+    if not command_paths:
+        return None
+    return _classified_native_command(
+        cli,
+        command_paths[0],
+        argv,
+        EffectKind.READ_ONLY,
     )
 
 
