@@ -14,7 +14,7 @@ from app.agent_contracts import (
     ConsumerOutcome,
     ConsumerProposal,
 )
-from app.agent_result import AgentError, SideEffectState
+from app.agent_result import AgentError, ResultParseError, SideEffectState
 from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
@@ -291,7 +291,7 @@ class AgentOrchestrator:
                             turn_attempt=state.turn_attempt,
                             parent_agent_run_id=state.parent_run_id,
                         )
-            except RuntimeError as exc:
+            except (RuntimeError, ResultParseError) as exc:
                 if str(exc) in {
                     "agent_run_unavailable",
                     "codex_session_locked",

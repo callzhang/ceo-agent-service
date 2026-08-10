@@ -14,7 +14,7 @@ from app.agent_contracts import (
     ConsumerOutcome,
 )
 from app.agent_orchestrator import AgentOrchestrator
-from app.agent_result import SideEffectState
+from app.agent_result import ResultParseError, SideEffectState
 from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AutoReplyStore
 
@@ -279,6 +279,32 @@ class RecoveringScriptedAudit(ScriptedAudit):
             }
         )
         return AgentTurnRunResult(completed.id, result, 1, 2)
+
+
+class ParseFailingEffectfulAudit(ScriptedAudit):
+    def run(self, task, context, *, turn_attempt, parent_agent_run_id):
+        claim = self.store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=context.proposal_revision,
+            turn_attempt=turn_attempt,
+            parent_agent_run_id=parent_agent_run_id,
+            operation_id=context.operation_id,
+            owner=self.owner,
+        )
+        assert claim.claimed
+        self.store.set_agent_run_session(
+            claim.run.id,
+            "audit-session-with-effect",
+            owner=self.owner,
+        )
+        self.store.mark_agent_run_unknown(
+            claim.run.id,
+            {"code": "codex_result_invalid", "retryable": True},
+            owner=self.owner,
+        )
+        raise ResultParseError("latest agent result candidate is malformed")
 
 
 class TwoPhaseScriptedAudit(ScriptedAudit):
@@ -688,6 +714,27 @@ def test_unknown_audit_is_recovered_in_same_session_and_revision(
             "revision": 0,
         }
     ]
+
+
+def test_invalid_audit_result_with_unknown_effect_recovers_instead_of_failing_task(store):
+    pending = _task(store)
+    task = store.claim_reply_task(pending.id)
+    assert task is not None
+    recovery = RecoveringScriptedAudit(store, _audit_result("executed", 0))
+    failing_audit = ParseFailingEffectfulAudit(store)
+    failing_audit.recover = recovery.recover
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=ScriptedConsumer(store, _consumer_result("proposal", "candidate-0")),
+            audit=failing_audit,
+        ),
+        task,
+    )
+
+    assert result.status == "executed"
+    assert recovery.recovery_calls[0]["session_id"] == "audit-session-with-effect"
 
 
 def test_unknown_audit_without_session_finishes_needs_human(store):
