@@ -243,6 +243,11 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         for option in command
     )
     assert any(
+        "dingtalk-chat/SKILL.md" in option
+        and "not a reason to return `needs_human`" in option
+        for option in command
+    )
+    assert any(
         "Authoritative Consumer role boundary" in option
         and "valid ConsumerAgentResult JSON" in option
         for option in command

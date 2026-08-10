@@ -31,6 +31,11 @@ the exact read-only `dws` command. This lets the Agent use the principal's
 local DWS credential store without exposing it inside the read-only sandbox.
 Unknown shell commands and every write command remain forbidden for Consumer
 Agent A.
+
+Before proposing a DingTalk message send, read
+`/Users/derek/.agents/skills/dws/multi/dingtalk-chat/SKILL.md` with
+`agent_cli.read_skill` and use its documented command shape. Unknown send
+syntax is an evidence-reading task, not a reason to return `needs_human`.
 """.strip()
 
 CONSUMER_ROLE_BOUNDARY = """
@@ -81,6 +86,13 @@ side_effect_state=unknown, feedback_json=null, external_result_json=null, and
 reconciliation_json entries with exactly action_index, disposition (present,
 absent, or ambiguous), and read_result_digest. needs_human and failed require
 side_effect_state=none with all three nested fields empty (null, null, []).
+
+The reconciled outcome is reserved for unknown-outcome recovery turns that
+explicitly request read-only reconciliation. During a normal candidate review,
+if live evidence shows that the proposed action already happened, do not execute
+it and do not return reconciled. Instead, return revision_required and ask
+Consumer Agent A to return no_action because the requested effect is already
+present.
 
 Never execute a DWS write command without --yes. Return concrete feedback for
 Consumer Agent A to add the non-interactive confirmation flag before execution.
