@@ -26,11 +26,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from app.codex_history import (
-    RenderedCodexEvent,
-    extract_codex_audit_events_from_session,
-    render_local_codex_session,
-)
+from app.agent_contracts import ConsumerAgentResult
 from app.audit_rules import (
     audit_rules_template_path,
     read_audit_rules_template,
@@ -38,6 +34,11 @@ from app.audit_rules import (
     write_audit_rules_template,
 )
 from app.codex_decision import audit_summary_explains_no_documents
+from app.codex_history import (
+    RenderedCodexEvent,
+    extract_codex_audit_events_from_session,
+    render_local_codex_session,
+)
 from app.config import (
     agent_names,
     assistant_signature,
@@ -8160,7 +8161,7 @@ def _attempt_detail_body(
             sent_reply,
             later_attempt=later_attempt,
         ),
-        status_html=_attempt_status_card(attempt, later_attempt),
+        status_html=_attempt_status_card(attempt, later_attempt, agent_runs),
         fields=fields,
         pills_html=_attempt_action_pills(attempt, later_attempt=later_attempt),
         trigger_title="Trigger",
@@ -9055,29 +9056,86 @@ def _attempt_row_actions(
 def _attempt_status_card(
     attempt: ReplyAttempt,
     later_attempt: ReplyAttempt | None,
+    agent_runs: list[AgentRun] | None = None,
 ) -> str:
-    if later_attempt is not None:
+    active_attempt = later_attempt or attempt
+    later_is_terminal = later_attempt is not None and _attempt_is_terminal(
+        later_attempt
+    )
+    if later_is_terminal:
         message = (
             f'该历史记录已由 <a href="/attempts/{later_attempt.id}">'
             f'Attempt #{later_attempt.id}</a> 后续处理，无需你操作。'
         )
-    elif attempt.send_status == "sent":
+    elif active_attempt.send_status == "sent":
         message = "这条回复已发送，无需你操作。"
-    elif attempt.send_status == "skipped":
+    elif active_attempt.send_status == "skipped":
         message = "这条事项已判定无需回复，无需你操作。"
-    elif attempt.send_status == "needs_human":
+    elif active_attempt.send_status == "needs_human":
         message = "这条事项等待你的决策。请阅读下方已核验的事实，再提交具体处理指令。"
-    elif attempt.send_status == "pending_reconciliation":
-        message = (
-            "正在核对执行结果。此前外部动作是否成功尚未形成可验证回执；"
-            "系统只会读取外部状态，不会重复审批或发送通知。"
-            "你当前无需操作；核对完成后会自动更新为已完成、可安全重试或明确失败。"
-        )
-    elif attempt.send_status == "failed":
+    elif active_attempt.send_status == "pending_reconciliation":
+        continuation = ""
+        if later_attempt is not None:
+            continuation = (
+                f'<a href="/attempts/{later_attempt.id}">Attempt #{later_attempt.id}</a> '
+                "正在继续核对同一事项。"
+            )
+        message = continuation + _pending_reconciliation_message(agent_runs or [])
+    elif active_attempt.send_status == "failed":
         message = "这次处理没有完成。可使用“重新处理”重新读取材料并执行当前规则。"
     else:
         return ""
     return f'<section class="card compact-card attempt-status-card"><strong>当前状态：</strong>{message}</section>'
+
+
+def _pending_reconciliation_message(agent_runs: list[AgentRun]) -> str:
+    objective, action_descriptions = _consumer_proposal_display(agent_runs)
+    business_context = ""
+    if objective:
+        business_context += f"事项：{escape(objective)}。"
+    if action_descriptions:
+        business_context += "正在核对：" + "；".join(
+            escape(description) for description in action_descriptions
+        ) + "。"
+    return (
+        business_context
+        + (
+            "正在核对执行结果。此前外部动作是否成功尚未形成可验证回执；"
+            "系统只会读取外部状态，不会重复审批或发送通知。"
+            "你当前无需操作；核对完成后会自动更新为已完成、可安全重试或明确失败。"
+        )
+    )
+
+
+def _consumer_proposal_display(
+    agent_runs: list[AgentRun],
+) -> tuple[str, tuple[str, ...]]:
+    for run in reversed(agent_runs):
+        if run.role is not AgentRole.CONSUMER or not run.final_result_json.strip():
+            continue
+        try:
+            result = ConsumerAgentResult.model_validate_json(run.final_result_json)
+        except ValueError:
+            continue
+        if result.proposal is None:
+            continue
+        return (
+            result.proposal.objective,
+            tuple(action.description for action in result.proposal.actions),
+        )
+    return "", ()
+
+
+def _attempt_is_terminal(attempt: ReplyAttempt) -> bool:
+    return attempt.send_status.strip().lower() in {
+        "calendar",
+        "commented",
+        "completed",
+        "document",
+        "reacted",
+        "sent",
+        "skipped",
+    }
 
 
 def _codex_event_card(event: RenderedCodexEvent) -> str:

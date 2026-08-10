@@ -51,7 +51,7 @@ from app.config import load_env_file
 from app.dingtalk_models import DingTalkMessage
 from app.setup_wizard_models import SetupWizardEvent
 from app.setup_wizard import SETUP_WIZARD_STEPS
-from app.store import AgentRole, AutoReplyStore
+from app.store import AgentRole, AgentRun, AutoReplyStore
 from app.wechat.models import WechatMessage
 
 
@@ -4474,6 +4474,115 @@ def test_pending_reconciliation_explains_context_and_requires_no_user_decision(
     assert "等待你的决策" not in detail
     assert "🔎 正在核对执行结果" in history
     assert "Pending Reconciliation" not in history
+
+
+def test_pending_reconciliation_names_objective_and_actions():
+    attempt = audit_web_module.ReplyAttempt(
+        id=1,
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        codex_reason="",
+        draft_reply_text="",
+        final_reply_text="",
+        permission_action="",
+        permission_reason="",
+        send_status="pending_reconciliation",
+        send_error="audit_recovery_failed",
+        retry_count=0,
+        created_at="2026-08-10 12:00:00",
+        updated_at="2026-08-10 12:00:00",
+    )
+    consumer = AgentRun(
+        id=10,
+        reply_task_id=20,
+        execution_generation="initial",
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        status="completed",
+        final_result_json=json.dumps(
+            {
+                "outcome": "proposal",
+                "summary": "准备处理审批",
+                "proposal": {
+                    "objective": "处理招聘需求审批",
+                    "actions": [
+                        {
+                            "description": "同意招聘需求申请",
+                            "capability": "agent_cli.dws",
+                            "operation": "oa approval approve",
+                            "target": {"instance_id": "process-1"},
+                            "payload": {"argv": ["dws", "oa"]},
+                            "expected_verification": "读回审批结果",
+                        },
+                        {
+                            "description": "通知申请人审批结果",
+                            "capability": "agent_cli.dws",
+                            "operation": "chat message send",
+                            "target": {"user": "user-1"},
+                            "payload": {"argv": ["dws", "chat"]},
+                            "expected_verification": "读回消息",
+                        },
+                    ],
+                    "sourced_facts": [],
+                    "authored_judgment": "材料满足当前审批条件。",
+                },
+                "error": {
+                    "code": "",
+                    "retryable": False,
+                    "authorization_required": False,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        created_at="2026-08-10 12:00:00",
+        updated_at="2026-08-10 12:00:00",
+    )
+
+    html = audit_web_module._attempt_status_card(attempt, None, [consumer])
+
+    assert "事项：处理招聘需求审批" in html
+    assert "同意招聘需求申请" in html
+    assert "通知申请人审批结果" in html
+    assert "你当前无需操作" in html
+
+
+def test_nonterminal_later_attempt_is_not_reported_as_completed(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="pending_reconciliation",
+    )
+    later_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="pending_reconciliation",
+    )
+
+    status, html = render_attempt_detail(store, old_id)
+
+    assert status == 200
+    assert f"Attempt #{later_id}" in html
+    assert "继续核对同一事项" in html
+    assert "后续处理，无需你操作" not in html
 
 
 def test_render_attempt_detail_suppresses_quality_warnings_for_skipped_attempts(
