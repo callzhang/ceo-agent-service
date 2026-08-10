@@ -95,6 +95,7 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
     assert "reconciliation_json must be a JSON-encoded array" in prompt
     assert "Do not wrap the array in an operation_id/entries object" in prompt
     assert "read_result_digest" in prompt
+    assert "unknown readback command is an evidence task" in prompt
 
 
 def test_audit_developer_instructions_define_wire_json_field_shapes():
@@ -110,6 +111,7 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
     assert "reconciled outcome is reserved for unknown-outcome recovery" in instructions
     assert "return revision_required and ask\nConsumer Agent A to return no_action" in instructions
     assert "Never execute a DWS write command without --yes" in instructions
+    assert "missing command syntax is a read-only evidence task" in instructions
 
 
 def _wire_result(result: dict[str, object]) -> dict[str, object]:

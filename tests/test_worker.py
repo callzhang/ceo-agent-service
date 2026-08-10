@@ -5170,12 +5170,8 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
 
     worker.consume_once(max_tasks=1)
 
-    errors = store.list_errors()
-    assert any(error.kind == "reply_task_stale" for error in errors)
-    stale_error = next(error for error in errors if error.kind == "reply_task_stale")
-    assert f"task={claimed[0].id}" in stale_error.detail
-    assert f"generation={claimed[0].execution_generation}" in stale_error.detail
-    assert notifications[0]["title"] == "CEO task retrying stale tasks"
+    assert not any(error.kind == "reply_task_stale" for error in store.list_errors())
+    assert notifications == []
     run = _get_audit_run(
         store,
         claimed[0].id,
@@ -5230,7 +5226,7 @@ def test_stale_wechat_read_only_decision_requeues_with_precise_reason(
     assert recovered is not None
     assert recovered.status == "pending"
     assert recovered.error == "interrupted_read_only_decision"
-    assert notifications[0]["title"] == "CEO task retrying stale tasks"
+    assert notifications == []
 
 
 def test_consume_once_does_not_requeue_stale_task_with_live_agent_lease(
@@ -10853,7 +10849,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
     assert attempt is not None
     assert attempt.action == "agent_run"
     assert attempt.send_status == "skipped"
-    assert [error.kind for error in worker.store.list_errors()] == ["reply_task_stale"]
+    assert worker.store.list_errors() == []
 
 
 @pytest.mark.parametrize(
@@ -10952,7 +10948,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
     assert attempt.action == "agent_run"
     assert attempt.send_status == "failed"
     assert attempt.send_error == stale_reason
-    assert [error.kind for error in worker.store.list_errors()] == ["reply_task_stale"]
+    assert worker.store.list_errors() == []
 
 
 def test_sent_reply_records_recall_key_from_send_result(tmp_path: Path, monkeypatch):

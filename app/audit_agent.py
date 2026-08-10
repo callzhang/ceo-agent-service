@@ -555,5 +555,8 @@ def _recovery_prompt(
         "reconciled with side_effect_state unknown and no external_result. "
         "reconciliation_json must be a JSON-encoded array whose entries contain "
         "exactly action_index, disposition, and read_result_digest. Do not wrap the "
-        "array in an operation_id/entries object. Do not write."
+        "array in an operation_id/entries object. Before any DWS read, load the "
+        "operation-specific installed skill with agent_cli.read_skill; an unknown "
+        "readback command is an evidence task, not a reason to fail or escalate. "
+        "Do not write."
     )

@@ -1625,7 +1625,6 @@ class DingTalkAutoReplyWorker:
         )
         if not stale_tasks:
             return
-        recovered = 0
         for task in stale_tasks:
             runs = self.store.list_agent_runs_for_task_generation(
                 task.id,
@@ -1643,28 +1642,11 @@ class DingTalkAutoReplyWorker:
                     recovery_error,
                     expected_execution_generation=task.execution_generation,
                 )
-                recovered += 1
                 continue
             self.store.requeue_reply_task(
                 task.id,
                 "stale_agent_turn_recovery",
                 expected_execution_generation=task.execution_generation,
-            )
-            recovered += 1
-            self.store.record_error(
-                task.conversation_id,
-                task.trigger_message_id,
-                "reply_task_stale",
-                (
-                    "requeued stale task for persisted turn recovery: "
-                    f"task={task.id} generation={task.execution_generation} "
-                    f"turns={len(runs)}"
-                ),
-            )
-        if recovered:
-            self._notify(
-                title="CEO task retrying stale tasks",
-                message=f"requeued {recovered} stale task(s)",
             )
 
     def _record_agent_runtime_failure_attempt(

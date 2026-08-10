@@ -105,6 +105,11 @@ Lark。任一 gate 不是 `ready` 都作为 `channel:<name>/not_ready` violation
 
 ## 巡检、reconciliation 与修复的关系
 
+自动恢复的陈旧任务不是用户可处理的失败。服务会保留任务的恢复状态，并在下一轮
+按既有 Agent turn 和外部回执继续处理；只有恢复最终失败、外部结果无法对账，或确有
+管理选择时才产生错误记录和用户通知。对账 Agent 必须先读取对应能力说明并完成最小
+只读回查，不能把“尚未读取命令语法”升级为人工决策。
+
 ```text
 Scheduler / hourly heartbeat
             |

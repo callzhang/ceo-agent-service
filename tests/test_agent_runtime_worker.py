@@ -2743,9 +2743,7 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     recovered_task = worker.store.get_reply_task(task_id)
     assert recovered_task is not None and recovered_task.status == "pending"
     assert recovered_task.attempts == 1
-    assert [notification["title"] for notification in notifications] == [
-        "CEO task retrying stale tasks"
-    ]
+    assert notifications == []
     notifications.clear()
     with worker.store._connect() as db:
         db.execute(
@@ -2785,9 +2783,7 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     assert failed_task is not None and failed_task.status == "pending"
     assert failed_task.error == "stale_agent_turn_recovery"
     assert failed_task.attempts == 2
-    assert [notification["title"] for notification in notifications] == [
-        "CEO task retrying stale tasks"
-    ]
+    assert notifications == []
 
 
 def test_stale_unknown_audit_requeues_and_recovers_same_session(tmp_path: Path):

@@ -36,6 +36,13 @@ Before proposing a DingTalk message send, read
 `/Users/derek/.agents/skills/dws/multi/dingtalk-chat/SKILL.md` with
 `agent_cli.read_skill` and use its documented command shape. Unknown send
 syntax is an evidence-reading task, not a reason to return `needs_human`.
+
+Requests to inspect, evaluate, or improve a referenced skill, document,
+configuration, or other readable material are normal Agent work. Read the
+material, complete the requested analysis, and propose the resulting reply or
+safe follow-up yourself. Do not return `needs_human` merely because the work
+requires tool use, research, or technical judgment. Reserve `needs_human` for
+an actual unresolved management choice or an ambiguous irreversible target.
 """.strip()
 
 CONSUMER_ROLE_BOUNDARY = """
@@ -284,6 +291,11 @@ def audit_developer_instructions(role_instruction: str) -> str:
         capability_instructions=(
             "Use agent_cli.execute_reviewed_read for every live read and "
             "agent_cli.execute_reviewed_write for every allowed external write. "
+            "Before using a DWS command, read the operation-specific installed "
+            "skill with agent_cli.read_skill. In a reconciliation turn, missing "
+            "command syntax is a read-only evidence task: load the skill, run the "
+            "minimal matching readback, and return its digest rather than failing "
+            "or escalating. "
             "Do not use exec_command or another native shell tool: Audit B actions "
             "must flow through the reviewed capability so they are checked and "
             "receipted. The turn-specific execution permission determines whether "

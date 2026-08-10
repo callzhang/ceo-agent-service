@@ -247,6 +247,9 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         and "not a reason to return `needs_human`" in option
         for option in command
     )
+    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+    assert "referenced skill, document,\nconfiguration" in instructions
+    assert "normal Agent work" in instructions
     assert any(
         "Authoritative Consumer role boundary" in option
         and "valid ConsumerAgentResult JSON" in option
