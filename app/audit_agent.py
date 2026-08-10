@@ -444,9 +444,8 @@ def _database_delivery_absence_reconciliation(
 
 def _is_direct_chat_send(action: object) -> bool:
     capability = getattr(action, "capability", "")
-    operation = getattr(action, "operation", "")
     payload = getattr(action, "payload", None)
-    if capability != "agent_cli.dws" or operation != "chat message send":
+    if capability != "agent_cli.dws":
         return False
     if not isinstance(payload, dict):
         return False

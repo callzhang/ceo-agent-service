@@ -296,6 +296,12 @@ use persisted exponential retry delays from one minute up to fifteen minutes.
 They are never immediately reclaimed in a hot loop, and the delay does not
 authorize replaying an approval, message, or other external action.
 
+Unknown DingTalk message delivery uses the reviewed command descriptor and the
+service delivery ledger as its identity. The Agent's free-form operation label
+does not decide whether an action is a message send. When the exact trigger has
+no delivery record, the unknown run is closed as absent and the task rotates to
+a fresh generation; the old write is never replayed.
+
 Browser notification clicks call the local DingTalk bridge with `POST`, matching
 the bridge's external-action boundary. The click may then focus an existing audit
 window and navigate it to the exact attempt detail; it does not issue a `GET`

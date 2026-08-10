@@ -1133,6 +1133,52 @@ def test_controlled_group_chat_without_delivery_record_rotates_generation(setup)
     assert executor.commands == []
 
 
+def test_controlled_group_chat_uses_reviewed_command_identity_for_delivery_recovery(
+    setup,
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    group_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send group result",
+            "actions": [
+                {
+                    "description": "Send group message",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat +send-to-group",
+                    "target": {"group": "group-1"},
+                    "payload": {
+                        "argv": [
+                            "dws",
+                            "chat",
+                            "+send-to-group",
+                            "--group",
+                            "group-1",
+                            "--text",
+                            "done",
+                        ]
+                    },
+                    "expected_verification": "Message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Requested by Derek",
+        }
+    )
+
+    executor = CapturingExecutor("")
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
+
+    assert result.result.error is not None
+    assert result.result.error.code == "persisted_delivery_absent"
+    assert store.get_agent_run(run.id).status == "failed"
+    assert store.get_reply_task(task.id).execution_generation != task.execution_generation
+    assert executor.commands == []
+
+
 def test_persisted_direct_chat_recovery_without_delivery_record_rotates_generation(
     setup, monkeypatch,
 ):
