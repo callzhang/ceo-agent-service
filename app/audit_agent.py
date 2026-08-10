@@ -112,35 +112,7 @@ class AuditAgentRunner:
             claim.run,
         )
         if database_absence:
-            self.store.resolve_unknown_agent_run_absent(
-                run.id,
-                task.id,
-                code="persisted_delivery_absent",
-                owner=self.owner,
-                transcript_end_line=claim.run.transcript_end_line,
-            )
-            result = AuditAgentResult(
-                outcome=AuditOutcome.FAILED,
-                summary=(
-                    "No persisted delivery record exists for the exact trigger; "
-                    "the direct chat action was requeued in a new generation."
-                ),
-                proposal_revision=run.proposal_revision,
-                side_effect_state=SideEffectState.NONE,
-                feedback=None,
-                external_result=None,
-                reconciliation=(),
-                error=AgentError(
-                    code="persisted_delivery_absent",
-                    retryable=True,
-                ),
-            )
-            return AgentTurnRunResult(
-                run_id=run.id,
-                result=result,
-                transcript_start_line=claim.run.transcript_start_line,
-                transcript_end_line=claim.run.transcript_end_line,
-            )
+            return self._requeue_absent_direct_delivery(task, claim.run)
         try:
             return self._execute_claimed(
                 task,
@@ -194,6 +166,13 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
+        if _database_delivery_absence_reconciliation(
+            self.store,
+            task,
+            context,
+            claim.run,
+        ):
+            return self._requeue_absent_direct_delivery(task, claim.run)
         if len(authorizations) != len(absent):
             result = AuditAgentResult(
                 outcome=AuditOutcome.NEEDS_HUMAN,
@@ -229,6 +208,38 @@ class AuditAgentRunner:
             recovery_phase="execute",
             authorized_recovery_actions=absent,
             recovery_authorizations=authorizations,
+        )
+
+    def _requeue_absent_direct_delivery(
+        self,
+        task: ReplyTask,
+        run: AgentRun,
+    ) -> AgentTurnRunResult[AuditAgentResult]:
+        self.store.resolve_unknown_agent_run_absent(
+            run.id,
+            task.id,
+            code="persisted_delivery_absent",
+            owner=self.owner,
+            transcript_end_line=run.transcript_end_line,
+        )
+        result = AuditAgentResult(
+            outcome=AuditOutcome.FAILED,
+            summary=(
+                "No persisted delivery record exists for the exact trigger; "
+                "the direct chat action was requeued in a new generation."
+            ),
+            proposal_revision=run.proposal_revision,
+            side_effect_state=SideEffectState.NONE,
+            feedback=None,
+            external_result=None,
+            reconciliation=(),
+            error=AgentError(code="persisted_delivery_absent", retryable=True),
+        )
+        return AgentTurnRunResult(
+            run_id=run.id,
+            result=result,
+            transcript_start_line=run.transcript_start_line,
+            transcript_end_line=run.transcript_end_line,
         )
 
     def _execute_claimed(

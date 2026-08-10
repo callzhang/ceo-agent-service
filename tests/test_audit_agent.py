@@ -998,6 +998,74 @@ def test_historical_direct_chat_alias_without_delivery_record_rotates_generation
     assert requeued is not None and requeued.execution_generation != task.execution_generation
 
 
+def test_persisted_direct_chat_recovery_without_delivery_record_rotates_generation(
+    setup,
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    runner = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _audit_result_jsonl(
+                "reconciled",
+                operation_id=run.operation_id,
+                session=run.codex_session_id,
+                include_write=False,
+                reconciliation=[
+                    {
+                        "action_index": 0,
+                        "disposition": "absent",
+                        "read_result_digest": "recovery-read-digest",
+                    }
+                ],
+            )
+        ),
+    )
+    runner.recover(task, audit_context, run=run)
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.status == "unknown"
+
+    direct_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send direct result",
+            "actions": [
+                {
+                    "description": "Send direct message",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"open_dingtalk_id": "direct-user"},
+                    "payload": {
+                        "argv": [
+                            "dws", "chat", "+messages-send", "--as", "user",
+                            "--open-dingtalk-id", "direct-user",
+                            "--text", "done", "--yes",
+                        ]
+                    },
+                    "expected_verification": "Message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Requested by Derek",
+        }
+    )
+    execute = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(""),
+    )
+
+    result = execute.execute_recovery(
+        task, replace(audit_context, proposal=direct_proposal), run=persisted
+    )
+
+    requeued = store.get_reply_task(task.id)
+    assert result.result.error is not None
+    assert result.result.error.code == "persisted_delivery_absent"
+    assert store.get_agent_run(run.id).status == "failed"
+    assert requeued is not None and requeued.execution_generation != task.execution_generation
+    assert execute.executor.commands == []
+
+
 def test_controlled_receipt_uses_command_digest_not_display_operation_name():
     action = {
         "capability": "agent_cli.dws",
