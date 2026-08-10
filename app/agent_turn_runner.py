@@ -331,13 +331,20 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted = self.store.get_agent_run(run.id)
         assert persisted is not None
         if run.role is AgentRole.AUDIT and recovery_phase == "reconcile":
-            self._validate_audit_reconciliation_result(
+            reconciliation = self._validate_audit_reconciliation_result(
                 run,
                 result,
                 persisted,
                 expected_effect_actions=expected_effect_actions,
                 recovery_event_start=recovery_event_start,
                 completed_before_recovery=completed_before_recovery,
+            )
+            result = result.model_copy(
+                update={
+                    "reconciliation": tuple(
+                        reconciliation[index] for index in sorted(reconciliation)
+                    )
+                }
             )
         elif run.role is AgentRole.AUDIT and recovery_phase == "execute":
             self._validate_audit_recovery_execution_result(
@@ -627,7 +634,7 @@ class AgentTurnProcess(Generic[ResultT]):
         expected_effect_actions: tuple[dict[str, object], ...],
         recovery_event_start: int,
         completed_before_recovery: set[int],
-    ) -> None:
+    ) -> dict[int, AuditReconciliation]:
         outcome = getattr(result, "outcome")
         if getattr(result, "proposal_revision") != run.proposal_revision:
             raise RuntimeError("audit_proposal_revision_mismatch")
@@ -739,6 +746,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     ),
                     owner=self.owner,
                 )
+        return reconciliation
 
     def _validate_audit_recovery_execution_result(
         self,
@@ -1035,18 +1043,23 @@ def _validated_reconciliation(
         action_index = entry.action_index
         if action_index >= len(actions):
             raise RuntimeError("audit_reconciliation_action_mismatch")
-        matching_digest = any(
-            index >= event_start
+        matching_digests = [
+            str(metadata["result_digest"])
+            for index, event in enumerate(events)
+            if index >= event_start
             and event.get("type") == "item.completed"
             and (metadata := _event_metadata(event)) is not None
             and metadata.get("effect") == EffectKind.READ_ONLY.value
-            and metadata.get("result_digest") == entry.read_result_digest
+            and isinstance(metadata.get("result_digest"), str)
             and _read_matches_action(metadata, actions[action_index], registry)
-            for index, event in enumerate(events)
-        )
-        if not matching_digest:
+        ]
+        if not matching_digests:
             raise RuntimeError("audit_reconciliation_evidence_mismatch")
-        validated[action_index] = entry
+        if len(matching_digests) != 1:
+            raise RuntimeError("audit_reconciliation_evidence_ambiguous")
+        validated[action_index] = entry.model_copy(
+            update={"read_result_digest": matching_digests[0]}
+        )
     return validated
 
 

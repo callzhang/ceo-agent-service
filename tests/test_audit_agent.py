@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import AgentTaskContext, AuditTurnContext
-from app.agent_contracts import ConsumerProposal, ProposedAction
+from app.agent_contracts import AuditAgentResult, ConsumerProposal, ProposedAction
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_turn_runner import (
     _action_receipt_operation_id,
@@ -1066,7 +1066,7 @@ def test_matching_live_read_without_structured_disposition_does_not_confirm(setu
         ).recover(task, audit_context, run=run)
 
 
-def test_reconciliation_digest_must_match_completed_read_event(setup):
+def test_reconciliation_binds_single_completed_read_event_digest(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     executor = CapturingExecutor(
         _audit_result_jsonl(
@@ -1083,7 +1083,48 @@ def test_reconciliation_digest_must_match_completed_read_event(setup):
         )
     )
 
-    with pytest.raises(RuntimeError, match="audit_reconciliation_evidence_mismatch"):
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, audit_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    result = AuditAgentResult.model_validate_json(persisted.final_result_json)
+    assert result.reconciliation[0].read_result_digest == "recovery-read-digest"
+
+
+def test_reconciliation_rejects_ambiguous_matching_readbacks(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    first = _audit_result_jsonl(
+        "reconciled",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+    ).splitlines()
+    second = _audit_result_jsonl(
+        "reconciled",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+    ).splitlines()
+    final = _audit_result_jsonl(
+        "reconciled",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+        include_read=False,
+        reconciliation=[
+            {
+                "action_index": 0,
+                "disposition": "present",
+                "read_result_digest": "untrusted-agent-value",
+            }
+        ],
+    ).splitlines()
+    executor = CapturingExecutor(
+        "\n".join(first[:-1] + second[1:-1] + final[-1:])
+    )
+
+    with pytest.raises(RuntimeError, match="audit_reconciliation_evidence_ambiguous"):
         AuditAgentRunner(
             store=store,
             workspace=Path("/workspace"),
