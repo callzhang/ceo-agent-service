@@ -3309,10 +3309,8 @@ def test_peek_pending_reconciliation_reply_tasks_respects_run_backoff(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(
-        store, trigger_message_id="msg-reconcile-later"
-    )
-    task = store.claim_reply_task(task_id)
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
     assert task is not None
     run = _claim_audit_run(
         store,
@@ -3343,7 +3341,6 @@ def test_peek_pending_reconciliation_reply_tasks_respects_run_backoff(
         task.id,
         "awaiting_reconciliation",
         expected_execution_generation=task.execution_generation,
-        now="2026-08-10 10:00:02",
     )
 
     assert store.peek_pending_reconciliation_reply_tasks(
