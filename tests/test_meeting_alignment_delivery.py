@@ -44,6 +44,7 @@ def meeting_source(*, one_to_one: bool = False, unresolved_other: bool = False):
 
 
 def send_decision(*, target="group", mention_names=None):
+    resolved_mention_names = mention_names if mention_names is not None else ["A", "B"]
     if target == "group":
         target_payload = {
             "kind": "group",
@@ -93,9 +94,12 @@ def send_decision(*, target="group", mention_names=None):
             "key_questions": [
                 {"question": "选择哪个范围？", "answer_owner_names": ["A"]}
             ],
-            "mention_names": mention_names if mention_names is not None else ["A", "B"],
+            "mention_names": resolved_mention_names,
             "target": target_payload,
-            "final_message": "会后对齐｜上线评审\n\n需要回答的关键问题",
+            "final_message": "会后对齐｜上线评审\n\n"
+            + "\n".join(
+                f"@{name} 请确认对应事项。" for name in resolved_mention_names
+            ),
             "audit_summary": "发现未对齐议题",
             "confidence": 0.7,
         }
@@ -196,6 +200,38 @@ def test_group_delivery_uses_first_candidate_and_real_mentions():
     )
     assert dws.sent[0]["text"].endswith(send_decision().final_message)
     assert result.message_text == dws.sent[0]["text"]
+
+
+def test_group_delivery_retries_when_a_structured_mention_is_not_in_its_message():
+    dws = FakeDws()
+    decision = send_decision()
+    payload = decision.model_dump()
+    payload["final_message"] = "会后对齐｜上线评审\n\n请确认对应事项。"
+
+    with pytest.raises(MeetingDeliveryRetry, match="embedded in final_message"):
+        deliver_meeting_alignment(
+            MeetingAlignmentDecision.model_validate(payload),
+            meeting_source(),
+            dws,
+        )
+
+    assert dws.sent == []
+
+
+def test_group_delivery_retries_when_message_starts_with_a_mention_roster():
+    dws = FakeDws()
+    decision = send_decision()
+    payload = decision.model_dump()
+    payload["final_message"] = "@A @B 请确认对应事项。"
+
+    with pytest.raises(MeetingDeliveryRetry, match="mention roster"):
+        deliver_meeting_alignment(
+            MeetingAlignmentDecision.model_validate(payload),
+            meeting_source(),
+            dws,
+        )
+
+    assert dws.sent == []
 
 
 def test_multi_person_no_group_without_agent_selected_creator_retries():

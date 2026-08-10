@@ -576,6 +576,7 @@ class DwsClient:
             send_text = self._with_open_dingtalk_at_placeholders(
                 text,
                 at_open_dingtalk_ids,
+                at_open_dingtalk_names or [],
             )
         command.extend(
             ["--text", self._literal_cli_value(send_text), "--format", "json", "--yes"]
@@ -3643,19 +3644,58 @@ class DwsClient:
     def _with_open_dingtalk_at_placeholders(
         text: str,
         open_dingtalk_ids: list[str],
+        display_names: list[str],
     ) -> str:
+        send_text = text
+        mention_pairs = []
+        for open_dingtalk_id, display_name in zip(
+            open_dingtalk_ids,
+            display_names,
+            strict=False,
+        ):
+            cleaned_id = open_dingtalk_id.strip()
+            cleaned_name = display_name.removeprefix("@").strip()
+            if cleaned_id and cleaned_name:
+                mention_pairs.append((cleaned_id, cleaned_name))
+        for cleaned_id, cleaned_name in sorted(
+            mention_pairs,
+            key=lambda pair: len(pair[1]),
+            reverse=True,
+        ):
+            placeholder = f"<@{cleaned_id}>"
+            send_text = DwsClient._replace_visible_at_name(
+                send_text,
+                cleaned_name,
+                placeholder,
+            )
+
         placeholders = []
         for open_dingtalk_id in open_dingtalk_ids:
             cleaned = open_dingtalk_id.strip()
             placeholder = f"<@{cleaned}>"
-            if cleaned and placeholder not in text:
+            if cleaned and placeholder not in send_text:
                 placeholders.append(placeholder)
         if not placeholders:
-            return text
+            return send_text
         mention_text = " ".join(placeholders)
-        if text.lstrip().startswith(mention_text):
-            return text
-        return f"{mention_text} {text}"
+        if send_text.lstrip().startswith(mention_text):
+            return send_text
+        return f"{mention_text} {send_text}"
+
+    @staticmethod
+    def _replace_visible_at_name(text: str, name: str, placeholder: str) -> str:
+        needle = f"@{name}"
+        start = 0
+        while True:
+            index = text.find(needle, start)
+            if index < 0:
+                return text
+            end = index + len(needle)
+            if end < len(text) and (text[end].isalnum() or text[end] == "_"):
+                start = end
+                continue
+            text = f"{text[:index]}{placeholder}{text[end:]}"
+            start = index + len(placeholder)
 
     @staticmethod
     def _message_title_source(text: str) -> str:

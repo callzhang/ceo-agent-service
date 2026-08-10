@@ -164,7 +164,18 @@ def deliver_meeting_alignment(
         recent_messages,
     )
     mention_ids = [mention.open_dingtalk_id for mention in resolved_mentions]
-    mention_display_names = [mention.display_name for mention in resolved_mentions]
+    mention_display_names = []
+    for mention in resolved_mentions:
+        embedded_name = _embedded_mention_name(decision.final_message, mention)
+        if embedded_name is None:
+            raise MeetingDeliveryRetry(
+                f"resolved mention {mention.mention_name!r} must be embedded in final_message"
+            )
+        mention_display_names.append(embedded_name)
+    if _starts_with_mention_roster(decision.final_message, resolved_mentions):
+        raise MeetingDeliveryRetry(
+            "meeting final_message must embed mentions in context, not start with a mention roster"
+        )
     message_text = meeting_followup_message(decision, source)
     try:
         if target_kind == "group":
@@ -345,6 +356,68 @@ def _resolve_mentions(
         seen_open_ids.add(mention.open_dingtalk_id)
         resolved.append(mention)
     return resolved, unresolved
+
+
+def _embedded_mention_name(
+    text: str,
+    mention: ResolvedMention,
+) -> str | None:
+    candidates = dict.fromkeys((mention.mention_name, mention.display_name))
+    for candidate in candidates:
+        cleaned = candidate.removeprefix("@").strip()
+        if cleaned and _contains_visible_mention(text, cleaned):
+            return cleaned
+    return None
+
+
+def _contains_visible_mention(text: str, name: str) -> bool:
+    needle = f"@{name}"
+    start = 0
+    while True:
+        index = text.find(needle, start)
+        if index < 0:
+            return False
+        end = index + len(needle)
+        if end == len(text) or not (text[end].isalnum() or text[end] == "_"):
+            return True
+        start = end
+
+
+def _starts_with_mention_roster(
+    text: str,
+    mentions: list[ResolvedMention],
+) -> bool:
+    candidate_names = {
+        candidate.removeprefix("@").strip()
+        for mention in mentions
+        for candidate in (mention.mention_name, mention.display_name)
+        if candidate.removeprefix("@").strip()
+    }
+    remaining = text.lstrip()
+    leading_mentions = 0
+    while remaining.startswith("@"):
+        matched_name = next(
+            (
+                name
+                for name in sorted(candidate_names, key=len, reverse=True)
+                if remaining.startswith(f"@{name}")
+                and (
+                    len(remaining) == len(name) + 1
+                    or not (
+                        remaining[len(name) + 1].isalnum()
+                        or remaining[len(name) + 1] == "_"
+                    )
+                )
+            ),
+            None,
+        )
+        if matched_name is None:
+            break
+        leading_mentions += 1
+        if leading_mentions >= 2:
+            return True
+        remaining = remaining[len(matched_name) + 1 :].lstrip()
+    return False
 
 
 def _resolve_profile(

@@ -1799,8 +1799,21 @@ def test_send_message_command_does_not_duplicate_mentions_already_in_body():
     )
 
     assert command[command.index("--text") + 1] == (
-        "<@open-et> <@open-roy> @ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。"
+        "<@open-et>(张毅倜) 先出方案；<@open-roy>(韩露) 补材料。"
     )
+
+
+def test_send_message_command_does_not_replace_a_longer_visible_name():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text="@ETC 先出方案。",
+        at_open_dingtalk_ids=["open-et"],
+        at_open_dingtalk_names=["ET"],
+    )
+
+    assert command[command.index("--text") + 1] == "<@open-et> @ETC 先出方案。"
 
 
 def test_direct_send_message_ignores_open_dingtalk_id_mentions_without_group_at_flag():

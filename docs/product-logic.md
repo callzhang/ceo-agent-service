@@ -133,7 +133,12 @@ Real mentions default to meeting participants. Non-participants can be mentioned
 only when the meeting transcript explicitly says the task is theirs, assigns
 them ownership, or asks them to confirm or follow up. Otherwise their name may
 appear in the message body as context, but the delivery layer will not resolve
-it into a DingTalk @ mention.
+it into a DingTalk @ mention. When the generated body already contains a
+resolved `@Name`, the DingTalk adapter replaces that occurrence with the real
+structured mention at the same position. Meeting messages place each mention
+inside the specific task, question, or information that concerns that person;
+they do not start with a separate mention roster. A resolved mention missing
+from the body is rejected for regeneration instead of being prepended.
 
 Every sent meeting follow-up starts with a deterministic source header:
 `【会议跟进】<meeting title>（<meeting time>）`. The header is added by the

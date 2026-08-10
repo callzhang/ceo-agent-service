@@ -177,6 +177,8 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "让队列重试原群发现" in prompt
     assert "不能改成 no_action" in prompt
     assert "真实 @" in prompt
+    assert "放在对应的任务、问题或信息所在句子中" in prompt
+    assert "禁止在消息开头集中列一排 @ 人员" in prompt
 
 
 def test_one_to_one_prompt_requires_direct_other_participant():
