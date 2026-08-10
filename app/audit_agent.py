@@ -156,9 +156,6 @@ class AuditAgentRunner:
         )
         if not absent:
             raise ValueError("audit recovery execution requires absent actions")
-        authorizations = _recovery_authorizations(
-            run, context, absent, self.effects
-        )
         claim = self.store.claim_unknown_agent_run(
             run.id,
             owner=self.owner,
@@ -173,6 +170,9 @@ class AuditAgentRunner:
             claim.run,
         ):
             return self._requeue_absent_direct_delivery(task, claim.run)
+        authorizations = _recovery_authorizations(
+            run, context, absent, self.effects
+        )
         if len(authorizations) != len(absent):
             result = AuditAgentResult(
                 outcome=AuditOutcome.NEEDS_HUMAN,

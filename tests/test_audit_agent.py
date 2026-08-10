@@ -999,7 +999,7 @@ def test_historical_direct_chat_alias_without_delivery_record_rotates_generation
 
 
 def test_persisted_direct_chat_recovery_without_delivery_record_rotates_generation(
-    setup,
+    setup, monkeypatch,
 ):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     runner = AuditAgentRunner(
@@ -1052,6 +1052,12 @@ def test_persisted_direct_chat_recovery_without_delivery_record_rotates_generati
         store=store,
         workspace=Path("/workspace"),
         executor=CapturingExecutor(""),
+    )
+    monkeypatch.setattr(
+        "app.audit_agent._recovery_authorizations",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("authorization must not be built for an absent delivery")
+        ),
     )
 
     result = execute.execute_recovery(
