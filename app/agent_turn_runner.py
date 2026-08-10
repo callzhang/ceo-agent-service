@@ -1191,7 +1191,7 @@ def _validated_reconciliation(
         ]
         if not matching_digests:
             raise RuntimeError("audit_reconciliation_evidence_mismatch")
-        if entry.read_result_digest != matching_digests[-1]:
+        if entry.read_result_digest not in matching_digests:
             raise RuntimeError("audit_reconciliation_evidence_mismatch")
         validated[action_index] = entry
     return validated

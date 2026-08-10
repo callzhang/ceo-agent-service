@@ -283,7 +283,9 @@ Audit recovery encodes `reconciliation_json` as a JSON array string. Each entry
 contains only `action_index`, `disposition`, and `read_result_digest`; operation
 identity remains in the persisted run and must not be repeated as an outer JSON
 envelope. This keeps the transport shape unambiguous while the full contract binds
-each disposition to the completed read event stored for that run.
+each disposition to a completed, target-matching read event from the current recovery
+turn. Repeating an exact scoped read does not invalidate another scoped read from the
+same turn; unrelated or historical digests remain invalid.
 
 `reconciled` is limited to an explicit unknown-outcome recovery turn. During a
 normal Audit review, live evidence that the proposed action already happened is

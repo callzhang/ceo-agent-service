@@ -1556,6 +1556,47 @@ def test_reconciliation_accepts_repeated_matching_readbacks(setup):
     assert result.reconciliation[0].read_result_digest == "recovery-read-digest"
 
 
+def test_reconciliation_accepts_any_cited_matching_readback_from_current_turn(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    first = _audit_result_jsonl(
+        "reconciled",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+    ).replace("recovery-read-digest", "first-matching-read-digest").splitlines()
+    second = _audit_result_jsonl(
+        "reconciled",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+    ).replace("recovery-read-digest", "second-matching-read-digest").splitlines()
+    final = _audit_result_jsonl(
+        "reconciled",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+        include_read=False,
+        reconciliation=[
+            {
+                "action_index": 0,
+                "disposition": "present",
+                "read_result_digest": "first-matching-read-digest",
+            }
+        ],
+    ).splitlines()
+    executor = CapturingExecutor(
+        "\n".join(first[:-1] + second[1:-1] + final[-1:])
+    )
+
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, audit_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    result = AuditAgentResult.model_validate_json(persisted.final_result_json)
+    assert result.reconciliation[0].read_result_digest == "first-matching-read-digest"
+
+
 def test_unrelated_read_cannot_authorize_recovery_write(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     executor = CapturingExecutor(
