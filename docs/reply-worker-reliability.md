@@ -279,6 +279,12 @@ those values against the full Pydantic business contracts before any action can 
 accepted. The service does not fall back to the former result shape when the wire
 schema is violated.
 
+For an executed Audit result, `external_result_json` has one strict shape:
+`operation_id` must match the reviewed proposal, `verification_summary` describes
+the live readback, and `live_result_reference` contains the external identifiers
+needed to locate that readback. Richer free-form execution summaries do not replace
+these fields; this keeps successful writes machine-verifiable and recoverable.
+
 Audit recovery encodes `reconciliation_json` as a JSON array string. Each entry
 contains only `action_index`, `disposition`, and `read_result_digest`; operation
 identity remains in the persisted run and must not be repeated as an outer JSON

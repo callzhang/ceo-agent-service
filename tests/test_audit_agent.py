@@ -105,6 +105,15 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
 def test_audit_developer_instructions_define_wire_json_field_shapes():
     instructions = audit_developer_instructions("Audit role test")
 
+    assert "external_result_json\nmust contain exactly" in instructions
+    assert (
+        "operation_id, verification_summary, and\nlive_result_reference"
+        in instructions
+    )
+    assert (
+        "operation_id must equal the candidate proposal\noperation_id"
+        in instructions
+    )
     assert "reconciliation_json is always a\nJSON-encoded array" in instructions
     assert "use [] unless outcome is reconciled" in instructions
     assert "object wrapper in reconciliation_json" in instructions

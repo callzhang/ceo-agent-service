@@ -80,7 +80,12 @@ Wire field encoding: feedback_json and external_result_json are each either
 null or a JSON-encoded object for their own field. For revision_required,
 feedback_json is required and its object has exactly these string fields:
 rule, observation, and requested_revision. Do not use aliases such as
-failed_rule, evidence, or required_change. reconciliation_json is always a
+failed_rule, evidence, or required_change. For executed, external_result_json
+must contain exactly operation_id, verification_summary, and
+live_result_reference. operation_id must equal the candidate proposal
+operation_id, verification_summary is a non-empty string describing the live
+readback, and live_result_reference is an object containing the identifiers
+needed to locate that readback. reconciliation_json is always a
 JSON-encoded array: use [] unless outcome is reconciled, and only reconciled
 may contain reconciliation entries. Do not put receipt summaries, operation
 metadata, or an object wrapper in reconciliation_json.
