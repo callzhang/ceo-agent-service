@@ -956,22 +956,22 @@ def test_direct_chat_unknown_without_delivery_record_replays_through_recovery(
     assert executor.commands == []
 
 
-def test_legacy_direct_chat_unknown_without_delivery_record_rotates_generation(
+def test_historical_direct_chat_alias_without_delivery_record_rotates_generation(
     setup,
 ):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
-    legacy_proposal = ConsumerProposal.model_validate(
+    historical_proposal = ConsumerProposal.model_validate(
         {
             "objective": "Send direct result",
             "actions": [
                 {
                     "description": "Send direct message",
                     "capability": "agent_cli.dws",
-                    "operation": "dws chat message send",
+                    "operation": "chat message send",
                     "target": {"open_dingtalk_id": "direct-user"},
                     "payload": {
                         "argv": [
-                            "dws", "chat", "message", "send",
+                            "dws", "chat", "+messages-send", "--as", "user",
                             "--open-dingtalk-id", "direct-user",
                             "--text", "done", "--yes",
                         ]
@@ -988,7 +988,7 @@ def test_legacy_direct_chat_unknown_without_delivery_record_rotates_generation(
         store=store,
         workspace=Path("/workspace"),
         executor=CapturingExecutor(""),
-    ).recover(task, replace(audit_context, proposal=legacy_proposal), run=run)
+    ).recover(task, replace(audit_context, proposal=historical_proposal), run=run)
 
     persisted = store.get_agent_run(run.id)
     requeued = store.get_reply_task(task.id)

@@ -410,19 +410,20 @@ def _database_delivery_absence_reconciliation(
 
 def _is_direct_chat_send(action: object) -> bool:
     capability = getattr(action, "capability", "")
+    operation = getattr(action, "operation", "")
     payload = getattr(action, "payload", None)
-    if capability != "agent_cli.dws":
+    if capability != "agent_cli.dws" or operation != "chat message send":
         return False
     if not isinstance(payload, dict):
         return False
-    argv = payload.get("argv")
-    # Persisted candidates before the operation-contract migration used a
-    # different display label. The reviewed native command is the stable
-    # identity, so use it rather than the historical label here.
+    # DWS has used more than one reviewed CLI spelling for the same message
+    # send operation. Resolve the stored command and trust its typed target
+    # metadata instead of assuming a particular argv spelling.
+    descriptor = describe_native_command({"type": "command_execution", **payload})
     return (
-        isinstance(argv, list)
-        and argv[:4] == ["dws", "chat", "message", "send"]
-        and "--open-dingtalk-id" in argv
+        descriptor is not None
+        and descriptor.cli == "dws"
+        and "open-dingtalk-id" in descriptor.target_identifiers
     )
 
 
