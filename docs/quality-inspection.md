@@ -110,6 +110,10 @@ Lark。任一 gate 不是 `ready` 都作为 `channel:<name>/not_ready` violation
 管理选择时才产生错误记录和用户通知。对账 Agent 必须先读取对应能力说明并完成最小
 只读回查，不能把“尚未读取命令语法”升级为人工决策。
 
+待领取任务中，只要当前 generation 存在 `unknown` 的 Audit run，消费者会优先领取它
+进入只读 reconciliation，再领取普通待办。这个排序不增加并发，也不允许重放外部写入；
+它只保证已经发生但尚未落回执的动作不会被普通重试长期饿死。
+
 ```text
 Scheduler / hourly heartbeat
             |

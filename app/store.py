@@ -4864,6 +4864,52 @@ class AutoReplyStore:
             ).fetchall()
             return [self._reply_task_from_row(row) for row in rows]
 
+    def peek_pending_reconciliation_reply_tasks(
+        self,
+        limit: int,
+        now: str | None = None,
+        *,
+        channel: str | None = None,
+        max_id: int | None = None,
+    ) -> list[ReplyTask]:
+        """Return pending tasks whose current audit run has an unknown effect."""
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            now_expression = "current_timestamp" if now is None else "?"
+            clauses = [
+                "reply_tasks.status='pending'",
+                f"(reply_tasks.available_at='' or reply_tasks.available_at <= {now_expression})",
+                "agent_runs.role='audit'",
+                "agent_runs.status='unknown'",
+                "agent_runs.execution_generation=reply_tasks.execution_generation",
+                "agent_runs.reconciliation_suspended=0",
+                f"(agent_runs.reconciliation_next_attempt_at='' or agent_runs.reconciliation_next_attempt_at <= {now_expression})",
+                f"(agent_runs.lease_owner='' or agent_runs.lease_expires_at <= {now_expression})",
+            ]
+            args: list[str | int] = []
+            if now is not None:
+                args.extend((now, now, now))
+            if channel is not None:
+                clauses.append("reply_tasks.channel=?")
+                args.append(channel)
+            if max_id is not None:
+                clauses.append("reply_tasks.id<=?")
+                args.append(max_id)
+            args.append(limit)
+            rows = db.execute(
+                f"""
+                select distinct reply_tasks.*
+                from reply_tasks
+                join agent_runs on agent_runs.reply_task_id=reply_tasks.id
+                where {' and '.join(clauses)}
+                order by reply_tasks.id
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in rows]
+
     def max_pending_reply_task_id(
         self,
         now: str | None = None,

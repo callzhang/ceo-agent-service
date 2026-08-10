@@ -4394,6 +4394,56 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
     assert final_sent(dws) == []
 
 
+def test_consume_once_prioritizes_pending_reconciliation(
+    tmp_path: Path, monkeypatch
+):
+    first = message("@Alex Chen(明哥) 先处理这条")
+    second = message("@Alex Chen(明哥) 先对账这条")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [first, second]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="unused")),
+        monkeypatch,
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id=first.open_conversation_id,
+        conversation_title=first.conversation_title,
+        single_chat=first.single_chat,
+        trigger_message_id=first.open_message_id,
+        trigger_create_time=first.create_time,
+        trigger_sender=first.sender_name,
+        trigger_text=first.content,
+        trigger_message_json=first.model_dump_json(),
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id=second.open_conversation_id,
+        conversation_title=second.conversation_title,
+        single_chat=second.single_chat,
+        trigger_message_id=second.open_message_id,
+        trigger_create_time=second.create_time,
+        trigger_sender=second.sender_name,
+        trigger_text=second.content,
+        trigger_message_json=second.model_dump_json(),
+    )
+    priority = worker.store.peek_reply_tasks(limit=10)[-1]
+    claimed_task_ids: list[int] = []
+    monkeypatch.setattr(
+        worker.store,
+        "peek_pending_reconciliation_reply_tasks",
+        lambda *args, **kwargs: [priority],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_process_queued_task",
+        lambda _conversation, task: claimed_task_ids.append(task.id) or True,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert claimed_task_ids == [priority.id]
+
+
 def test_consumer_does_not_claim_task_when_required_gate_is_not_ready(
     tmp_path, monkeypatch
 ):

@@ -3259,6 +3259,104 @@ def test_peek_reply_tasks_does_not_claim_or_increment_attempts(tmp_path: Path):
     assert task.attempts == 0
 
 
+def test_peek_pending_reconciliation_reply_tasks_prioritizes_unknown_audit(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-normal",
+        conversation_title="Normal",
+        single_chat=False,
+        trigger_message_id="msg-normal",
+        trigger_create_time="2026-07-20 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Normal task",
+    )
+    store.enqueue_reply_task(
+        conversation_id="cid-reconcile",
+        conversation_title="Reconcile",
+        single_chat=False,
+        trigger_message_id="msg-reconcile",
+        trigger_create_time="2026-07-20 10:01:00",
+        trigger_sender="Derek",
+        trigger_text="Reconciliation task",
+    )
+    priority = store.claim_reply_task(store.peek_reply_tasks(limit=10)[-1].id)
+    assert priority is not None
+    run = _claim_audit_run(
+        store,
+        priority.id,
+        priority.execution_generation,
+        owner="crashed-audit",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="crashed-audit",
+    )
+    store.requeue_reply_task(
+        priority.id,
+        "awaiting_reconciliation",
+        expected_execution_generation=priority.execution_generation,
+    )
+
+    tasks = store.peek_pending_reconciliation_reply_tasks(limit=10)
+
+    assert [task.id for task in tasks] == [priority.id]
+
+
+def test_peek_pending_reconciliation_reply_tasks_respects_run_backoff(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(
+        store, trigger_message_id="msg-reconcile-later"
+    )
+    task = store.claim_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="crashed-audit",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="crashed-audit",
+    )
+    claim = store.claim_unknown_agent_run(
+        run.id,
+        owner="recovery",
+        now="2026-08-10 10:00:00",
+    )
+    assert claim.claimed
+    store.defer_unknown_agent_run_reconciliation(
+        run.id,
+        {"code": "audit_recovery_failed"},
+        owner="recovery",
+        expected_execution_generation=task.execution_generation,
+        next_attempt_at="2026-08-10 10:15:00",
+        now="2026-08-10 10:00:01",
+    )
+    store.requeue_reply_task(
+        task.id,
+        "awaiting_reconciliation",
+        expected_execution_generation=task.execution_generation,
+        now="2026-08-10 10:00:02",
+    )
+
+    assert store.peek_pending_reconciliation_reply_tasks(
+        limit=10, now="2026-08-10 10:14:59"
+    ) == []
+    assert [
+        item.id
+        for item in store.peek_pending_reconciliation_reply_tasks(
+            limit=10, now="2026-08-10 10:15:00"
+        )
+    ] == [task.id]
+
+
 def test_peek_reply_tasks_pages_after_id_without_claiming(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     for index in range(3):

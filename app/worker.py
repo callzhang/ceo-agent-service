@@ -1769,6 +1769,14 @@ class DingTalkAutoReplyWorker:
     ) -> Iterator[ReplyTask]:
         if max_id is None:
             return
+        reconciliation_tasks = self.store.peek_pending_reconciliation_reply_tasks(
+            page_size,
+            now=now,
+            channel="dingtalk",
+            max_id=max_id,
+        )
+        reconciliation_task_ids = {task.id for task in reconciliation_tasks}
+        yield from reconciliation_tasks
         after_id: int | None = None
         while True:
             page = self.store.peek_reply_tasks(
@@ -1780,7 +1788,9 @@ class DingTalkAutoReplyWorker:
             )
             if not page:
                 return
-            yield from page
+            yield from (
+                task for task in page if task.id not in reconciliation_task_ids
+            )
             after_id = page[-1].id
 
     def _reply_task_retry_available_at(self, attempts: int) -> str:
