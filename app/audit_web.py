@@ -8175,6 +8175,7 @@ def _attempt_detail_body(
             f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         ),
         extra_cards=(
+            f"{_agent_failure_reason_card(attempt, agent_runs)}"
             f"{_quality_warning_card(attempt)}"
             f"{_context_only_info_card(attempt)}"
             f"{_oa_metadata_card(attempt)}"
@@ -8184,6 +8185,40 @@ def _attempt_detail_body(
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
         ),
     )
+
+
+def _agent_failure_reason_card(
+    attempt: ReplyAttempt,
+    agent_runs: list[AgentRun],
+) -> str:
+    if attempt.send_status != "failed":
+        return ""
+    failures = [run for run in agent_runs if run.status == "failed"]
+    lines: list[str] = []
+    for run in failures:
+        try:
+            error = json.loads(run.structured_error_json or "{}")
+        except json.JSONDecodeError:
+            error = {}
+        code = str(error.get("code") or "unknown") if isinstance(error, dict) else "unknown"
+        detail = str(error.get("detail") or "") if isinstance(error, dict) else ""
+        effect = "未执行外部操作" if run.side_effect_state == "none" else "外部操作状态需要核对"
+        lines.append(f"{run.role.value}: {detail or _failure_code_explanation(code)}；{effect}。")
+    if not lines:
+        lines.append(_failure_code_explanation(attempt.send_error or attempt.codex_reason))
+        lines.append("该旧记录未保留字段级错误；后续失败会保存安全的校验字段和阶段。")
+    return _text_card("失败原因", "\n".join(lines))
+
+
+def _failure_code_explanation(code: str) -> str:
+    if code in {"consumer_retry_exhausted", "audit_retry_exhausted"}:
+        role = "生成回复" if code.startswith("consumer") else "执行审计"
+        return f"{role}阶段连续重试后仍未得到可验证结果，已达到本轮重试上限。"
+    if code == "codex_result_invalid":
+        return "Agent 返回了结果，但结果不符合当前严格 JSON 契约。"
+    if code == "codex_result_missing":
+        return "Agent 运行没有输出可验证的结果 JSON。"
+    return f"处理未完成，失败代码：{code or 'unknown'}。"
 
 
 def _orchestration_session_links(attempt_id: int, agent_runs: list[AgentRun]) -> str:

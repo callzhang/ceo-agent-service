@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar, cast
 
+from pydantic import ValidationError
+
 from app.agent_contracts import (
     AuditAgentResult,
     AuditExternalResult,
@@ -90,6 +92,24 @@ def _agent_process_error_code(exc: Exception) -> str:
             return "codex_result_missing"
         return "codex_result_invalid"
     return "codex_process_failed"
+
+
+def _result_parse_error_detail(exc: ResultParseError) -> str:
+    """Keep validation locations, never the model output that failed validation."""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ValidationError):
+            fields = []
+            for error in current.errors():
+                location = ".".join(str(part) for part in error.get("loc", ())) or "result"
+                kind = str(error.get("type") or "validation_error")
+                fields.append(f"{location}: {kind}")
+            if fields:
+                return "; ".join(fields[:8])
+        current = current.__cause__ or current.__context__
+    return str(exc)[:240]
 
 
 def _requires_authorization(code: str) -> bool:
@@ -324,7 +344,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 if recover_unknown:
                     self._defer_unknown(run, parse_error_code)
                 else:
-                    self._fail_running(run, parse_error_code)
+                    self._fail_running(
+                        run,
+                        parse_error_code,
+                        detail=_result_parse_error_detail(exc),
+                    )
                 raise
             result = cast(ResultT, fallback)
         except AgentReadOnlyViolationError:
@@ -838,7 +862,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 raise ResultParseError("no valid typed result JSON found in Codex JSONL")
             raise RuntimeError(failure_code)
 
-    def _fail_running(self, run: AgentRun, code: str) -> None:
+    def _fail_running(self, run: AgentRun, code: str, *, detail: str = "") -> None:
         persisted = self.store.get_agent_run(run.id)
         if persisted is not None and persisted.status == "running":
             if persisted.side_effect_state == SideEffectState.NONE.value:
@@ -848,6 +872,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         "code": code,
                         "retryable": True,
                         "authorization_required": _requires_authorization(code),
+                        **({"detail": detail} if detail else {}),
                     },
                     owner=self.owner,
                 )
