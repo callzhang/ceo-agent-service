@@ -105,6 +105,8 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
     assert "object wrapper in reconciliation_json" in instructions
     assert "exactly these string fields:\nrule, observation, and requested_revision" in instructions
     assert "failed_rule, evidence, or required_change" in instructions
+    assert "reconciled requires\nside_effect_state=unknown" in instructions
+    assert "action_index, disposition (present,\nabsent, or ambiguous), and read_result_digest" in instructions
     assert "Never execute a DWS write command without --yes" in instructions
 
 
