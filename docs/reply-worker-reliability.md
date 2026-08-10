@@ -285,6 +285,11 @@ the live readback, and `live_result_reference` contains the external identifiers
 needed to locate that readback. Richer free-form execution summaries do not replace
 these fields; this keeps successful writes machine-verifiable and recoverable.
 
+For WeChat, a rotated generation may replace a delivery only while it is unsent.
+`ready_to_send`, `superseded`, and a sender-confirmed `action_not_performed`
+outcome are replaceable; `sending` and `send_unknown` remain immutable until
+read-only reconciliation resolves whether the message was sent.
+
 Audit recovery encodes `reconciliation_json` as a JSON array string. Each entry
 contains only `action_index`, `disposition`, and `read_result_digest`; operation
 identity remains in the persisted run and must not be repeated as an outer JSON

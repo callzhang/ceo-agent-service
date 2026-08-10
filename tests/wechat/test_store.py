@@ -226,6 +226,58 @@ def test_new_generation_replaces_superseded_delivery_with_corrected_reply(tmp_pa
     assert delivery.error == ""
 
 
+def test_new_generation_replaces_confirmed_unperformed_delivery(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    task = store.claim_reply_tasks(1, channel="wechat")[0]
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=task.id, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="old reply",
+    )
+    store.mark_wechat_delivery_sending(delivery_id)
+    store.set_wechat_delivery_status(
+        delivery_id,
+        "failed",
+        error="action_not_performed",
+    )
+    new_generation = store.rotate_reply_task_execution_generation(task.id)
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+
+    store.finalize_wechat_reply_task(
+        task_id=task.id,
+        expected_execution_generation=new_generation,
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="fresh decision",
+        draft_reply_text="new reply",
+        audit_summary="fresh reply queued",
+        send_status="pending",
+        account_id="acct-1",
+        target_type="direct",
+        target_id="u1",
+        conversation_id="u1",
+        reply_text="new reply",
+    )
+
+    delivery = store.get_wechat_delivery_for_task(task.id)
+    assert delivery is not None
+    assert delivery.status == "ready_to_send"
+    assert delivery.execution_generation == new_generation
+    assert delivery.reply_text == "new reply"
+    with store._connect() as db:
+        row = db.execute(
+            "select action_started_at from wechat_deliveries where id=?",
+            (delivery_id,),
+        ).fetchone()
+    assert row["action_started_at"] == ""
+
+
 def test_new_generation_does_not_replace_started_or_uncertain_delivery(tmp_path):
     for status in ("sending", "send_unknown"):
         store = AutoReplyStore(tmp_path / f"{status}.sqlite3")
