@@ -28,6 +28,16 @@ supervisor 同时管理 worker 和 audit-web。任一子进程异常退出时，
 子进程并退出，由同一个 launchd job 拉起完整服务。不要安装第二个 audit-web plist，也不要
 恢复双 launchd 模型。
 
+### Codex 执行串行化
+
+worker 内部有多个发现和恢复线程，audit-web 也支持人工重跑。它们都可能启动 Codex，但
+Codex 使用同一安装用户的本地运行目录，不能假定并发启动安全。因此服务在
+`app.process_runner` 对可执行文件名为 `codex` 的进程使用同一个进程内互斥锁和一个
+跨子进程文件锁；其他 DWS 或系统命令不受影响。
+
+锁覆盖 worker 与同一 supervisor 托管的 audit-web，保持单一 launchd job。等待锁的时间
+不计入单次 Codex 的模型运行超时；任务仍由持久队列恢复，避免把启动竞争误记为业务失败。
+
 ## 权威处理流
 
 ```text

@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import time
 
 import pytest
@@ -193,3 +194,44 @@ def test_process_runner_without_callback_preserves_existing_result_shape():
     assert result.returncode == 0
     assert result.stdout == "unchanged"
     assert result.stderr == ""
+
+
+def test_process_runner_serializes_codex_processes(tmp_path):
+    events = tmp_path / "events.log"
+    codex = tmp_path / "codex"
+    codex.write_text(
+        "#!/bin/sh\n"
+        "printf 'start\\n' >> \"$EVENTS\"\n"
+        "sleep 0.15\n"
+        "printf 'end\\n' >> \"$EVENTS\"\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o755)
+    barrier = threading.Barrier(2)
+    results = []
+
+    def run_codex() -> None:
+        barrier.wait()
+        results.append(
+            run_process_with_idle_timeout(
+                [str(codex)],
+                prompt="",
+                env={"EVENTS": str(events), "PATH": "/bin:/usr/bin"},
+                total_timeout_seconds=5,
+                idle_timeout_seconds=5,
+            )
+        )
+
+    threads = [threading.Thread(target=run_codex) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert [result.returncode for result in results] == [0, 0]
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "start",
+        "end",
+        "start",
+        "end",
+    ]
