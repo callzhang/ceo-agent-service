@@ -21,6 +21,7 @@ from app.audit_agent import (
     _recovery_authorizations,
     _recovery_prompt,
 )
+from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
@@ -94,6 +95,14 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
     assert "reconciliation_json must be a JSON-encoded array" in prompt
     assert "Do not wrap the array in an operation_id/entries object" in prompt
     assert "read_result_digest" in prompt
+
+
+def test_audit_developer_instructions_define_wire_json_field_shapes():
+    instructions = audit_developer_instructions("Audit role test")
+
+    assert "reconciliation_json is\nalways a JSON-encoded array" in instructions
+    assert "use [] unless outcome is reconciled" in instructions
+    assert "object wrapper in reconciliation_json" in instructions
 
 
 def _wire_result(result: dict[str, object]) -> dict[str, object]:

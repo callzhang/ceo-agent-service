@@ -40,6 +40,10 @@ valid Consumer Agent wire JSON object matching the supplied schema. The service
 converts it into a valid ConsumerAgentResult JSON object after strict validation.
 Nested proposal data is encoded as proposal_json and will be strictly validated
 before it can affect execution.
+
+Wire field encoding: proposal_json is a JSON-encoded object only when outcome
+is proposal; otherwise it must be null. Do not put a JSON array, markdown, or
+an additional wrapper object in proposal_json.
 """.strip()
 
 AUDIT_ROLE_BOUNDARY = """
@@ -49,6 +53,12 @@ permission and finish with one valid Audit Agent wire JSON object matching the
 supplied schema. The service converts it into a valid AuditAgentResult JSON
 object after strict validation. Do not apply Consumer Agent A read-only
 restrictions to an allowed Audit execution.
+
+Wire field encoding: feedback_json and external_result_json are each either
+null or a JSON-encoded object for their own field. reconciliation_json is
+always a JSON-encoded array: use [] unless outcome is reconciled, and only
+reconciled may contain reconciliation entries. Do not put receipt summaries,
+operation metadata, or an object wrapper in reconciliation_json.
 """.strip()
 
 
