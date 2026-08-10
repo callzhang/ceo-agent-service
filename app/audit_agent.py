@@ -101,8 +101,6 @@ class AuditAgentRunner:
             or run.operation_id != context.operation_id
         ):
             raise ValueError("audit recovery identity mismatch")
-        if not run.codex_session_id:
-            raise ValueError("audit recovery requires the original Codex session")
         rendered_rules = render_audit_rules(AgentRole.AUDIT)
         claim = self.store.claim_unknown_agent_run(
             run.id,
@@ -287,19 +285,24 @@ class AuditAgentRunner:
                 if recovery_phase == "execute"
                 else context.render()
             ),
-            session_id=run.codex_session_id or None,
+            # A recovery has complete persisted task, proposal, and operation
+            # context. Do not resume an interrupted execution thread: a terminal
+            # Codex session cannot produce the independent read-only evidence that
+            # reconciliation requires. Keep the original session on the run for
+            # audit history and start a fresh, isolated recovery turn instead.
+            session_id=None if recovery_phase else run.codex_session_id or None,
             schema_path=SCHEMA_PATH,
             expected_schema=AuditAgentWireResult.model_json_schema(),
             developer_instructions=audit_developer_instructions(
                 "Audit Agent B independently reviews and executes accepted candidates.\n\n"
                 + (
-                    "This is recovery of an unknown external outcome in the same Audit "
-                    "session. This phase is strictly read-only: reconcile live state for "
+                    "This is recovery of an unknown external outcome in a fresh, isolated "
+                    "Audit session. This phase is strictly read-only: reconcile live state for "
                     "each exact operation and return outcome reconciled with structured "
                     "per-action dispositions. Never execute or replay a write in this "
                     "phase; a later turn will consume persisted absent dispositions.\n\n"
                     if recovery_phase == "reconcile"
-                    else "This is recovery execution in the same Audit session. Execute "
+                    else "This is recovery execution in a fresh, isolated Audit session. Execute "
                     "only the action indexes that the persisted reconciliation proved "
                     "absent. Do not repeat present or ambiguous actions.\n\n"
                     if recovery_phase == "execute"

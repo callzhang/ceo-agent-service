@@ -918,7 +918,7 @@ def _seed_crashed_audit_write(setup):
     return store, task, audit_context, run
 
 
-def test_crash_after_write_resumes_same_audit_session_and_confirms_without_replay(
+def test_crash_after_write_uses_fresh_read_only_recovery_and_confirms_without_replay(
     setup,
 ):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
@@ -942,10 +942,10 @@ def test_crash_after_write_resumes_same_audit_session_and_confirms_without_repla
     assert result.result.outcome.value == "reconciled"
     assert persisted is not None and persisted.status == "unknown"
     assert persisted.side_effect_state == "confirmed"
-    assert "resume" in executor.commands[0]
-    assert run.codex_session_id in executor.commands[0]
-    assert "--sandbox" not in executor.commands[0]
-    assert 'sandbox_mode="read-only"' in executor.commands[0]
+    assert "resume" not in executor.commands[0]
+    assert run.codex_session_id not in executor.commands[0]
+    assert "--sandbox" in executor.commands[0]
+    assert "read-only" in executor.commands[0]
     assert sum(
         event["type"] == "item.started"
         and event["item"]["metadata"]["effect"] == "effectful"
@@ -2091,7 +2091,8 @@ def test_definitely_absent_recovery_reads_before_executing_same_revision_once(se
     assert result.result.external_result.operation_id == run.operation_id
     assert persisted is not None and persisted.status == "completed"
     assert len(executor.commands) == 2
-    assert all(run.codex_session_id in command for command in executor.commands)
+    assert all(run.codex_session_id not in command for command in executor.commands)
+    assert all("resume" not in command for command in executor.commands)
     assert (
         'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill"]'
         in executor.commands[0]

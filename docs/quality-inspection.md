@@ -114,6 +114,12 @@ Lark。任一 gate 不是 `ready` 都作为 `channel:<name>/not_ready` violation
 进入只读 reconciliation，再领取普通待办。这个排序不增加并发，也不允许重放外部写入；
 它只保证已经发生但尚未落回执的动作不会被普通重试长期饿死。
 
+每次 `unknown` 恢复都使用新的、隔离的 Codex 会话，而不是续接原执行会话。原会话 ID
+和事件仍保留在 `agent_runs` 作为不可变审计证据；恢复会话只接收持久化的任务、proposal、
+operation 和回执上下文，并被限制为只读。这样原会话即使已经中断或终止，也不会让对账
+无限重试或诱发写入重放。只有只读结果明确为 `absent`，后续受限的执行阶段才可新建会话
+并执行已授权的单个动作。
+
 ```text
 Scheduler / hourly heartbeat
             |

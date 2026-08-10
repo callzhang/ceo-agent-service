@@ -228,8 +228,11 @@ class AgentTurnProcess(Generic[ResultT]):
             new_session = _session_id(payload)
             if new_session:
                 if recover_unknown:
-                    if new_session != run.codex_session_id:
-                        raise RuntimeError("audit_recovery_session_mismatch")
+                    # Reconciliation and the narrowly authorized follow-up write
+                    # run as fresh sessions. Preserve the original session on the
+                    # AgentRun as immutable execution history rather than replacing
+                    # it with a recovery session identifier.
+                    pass
                 else:
                     self.store.set_agent_run_session(
                         run.id,
