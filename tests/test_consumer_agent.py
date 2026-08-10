@@ -759,6 +759,59 @@ def test_consumer_allows_reviewed_direct_native_read(store, task, context):
     ]
 
 
+def test_consumer_persists_reviewed_local_read_receipt(store, task, context):
+    argv = ["sed", "-n", "1p", "/tmp/public-material"]
+    descriptor = NativeCliMetadataClassifier(reviewed_effects={}).classify(
+        {"type": "command_execution", "argv": argv}
+    )
+    assert descriptor is not None
+    receipt = {
+        "cli": descriptor.cli,
+        "operation": descriptor.command_path,
+        "operation_digest": descriptor.command_digest,
+        "target_identifiers": descriptor.target_identifiers,
+        "result_digest": "local-read-digest",
+        "stdout": "verified material\n",
+    }
+    item = {
+        "type": "mcp_tool_call",
+        "id": "local-read-1",
+        "server": "agent_cli",
+        "tool": "execute_reviewed_read",
+        "arguments": {"argv": argv},
+    }
+    stream = "\n".join(
+        (
+            json.dumps({"type": "item.started", "item": item}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        **item,
+                        "status": "completed",
+                        "result": {"structuredContent": receipt},
+                    },
+                }
+            ),
+            _result_jsonl(),
+        )
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream),
+        native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run(result.run_id)
+    assert run is not None
+    assert [event["item"]["metadata"]["capability"] for event in run.tool_events] == [
+        "agent_cli.local-shell",
+        "agent_cli.local-shell",
+    ]
+
+
 def test_consumer_rejects_direct_native_write(store, task, context):
     shell = json.dumps(
         {

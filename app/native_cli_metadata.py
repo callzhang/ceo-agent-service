@@ -614,6 +614,9 @@ def _classify_cli_help(argv: tuple[str, ...]) -> NativeCliCommand | None:
 
 
 def describe_native_command(item: dict[str, object]) -> NativeCliCommand | None:
+    local_read = _classify_local_read_only_command(item)
+    if local_read is not None:
+        return local_read
     argv = native_command_argv(item)
     if argv is None or "--dry-run" in argv:
         return None

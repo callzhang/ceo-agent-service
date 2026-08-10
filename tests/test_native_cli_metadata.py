@@ -11,6 +11,7 @@ from app.agent_cli import (
 )
 from app.agent_result import EffectKind
 from app.native_cli_metadata import AgentReadOnlyViolationError, NativeCliMetadataClassifier
+from app.native_cli_metadata import describe_native_command
 
 
 def test_classifier_accepts_pptx_stdout_extraction_pipeline_as_local_read():
@@ -26,6 +27,17 @@ def test_classifier_accepts_pptx_stdout_extraction_pipeline_as_local_read():
     assert descriptor is not None
     assert descriptor.effect is EffectKind.READ_ONLY
     assert descriptor.cli == "local-shell"
+
+
+def test_describe_native_command_accepts_reviewed_local_read():
+    descriptor = describe_native_command(
+        {"type": "command_execution", "argv": ["sed", "-n", "1p", "/tmp/file"]}
+    )
+
+    assert descriptor is not None
+    assert descriptor.cli == "local-shell"
+    assert descriptor.command_path == "sed"
+    assert descriptor.effect is EffectKind.READ_ONLY
 
 
 @pytest.mark.parametrize(

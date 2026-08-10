@@ -199,7 +199,7 @@ def _execute_reviewed(
     reviewed = classifier or NativeCliMetadataClassifier()
     item = {"type": "command_execution", "argv": list(argv)}
     descriptor = describe_native_command(item)
-    if descriptor is None:
+    if descriptor is None or descriptor.cli == "local-shell":
         command = reviewed.classify(item)
     else:
         try:
