@@ -947,10 +947,12 @@ def test_direct_chat_unknown_without_delivery_record_replays_through_recovery(
     ).recover(task, direct_context, run=run)
 
     persisted = store.get_agent_run(run.id)
-    assert result.result.outcome.value == "reconciled"
-    assert result.result.reconciliation[0].disposition.value == "absent"
-    assert persisted is not None and persisted.status == "unknown"
-    assert persisted.final_result_json
+    requeued = store.get_reply_task(task.id)
+    assert result.result.outcome.value == "failed"
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.side_effect_state == "none"
+    assert requeued is not None and requeued.status == "pending"
+    assert requeued.execution_generation != task.execution_generation
     assert executor.commands == []
 
 

@@ -10,8 +10,6 @@ from app.agent_context import AuditTurnContext
 from app.agent_contracts import (
     AuditAgentResult,
     AuditOutcome,
-    AuditReconciliation,
-    ReconciliationDisposition,
 )
 from app.agent_result import AgentError, SideEffectState, parse_typed_agent_result
 from app.agent_cli import RECOVERY_WRITE_ALLOWLIST_ENV
@@ -114,30 +112,34 @@ class AuditAgentRunner:
             claim.run,
         )
         if database_absence:
-            result = AuditAgentResult(
-                outcome=AuditOutcome.RECONCILED,
-                summary=(
-                    "No persisted delivery record exists for the exact trigger; "
-                    "the direct chat action is treated as absent."
-                ),
-                proposal_revision=run.proposal_revision,
-                side_effect_state=SideEffectState.UNKNOWN,
-                feedback=None,
-                external_result=None,
-                reconciliation=database_absence,
-                error=AgentError(),
-            )
-            persisted = self.store.persist_unknown_agent_run_result(
+            self.store.resolve_unknown_agent_run_absent(
                 run.id,
-                result.model_dump(mode="json"),
+                task.id,
+                code="persisted_delivery_absent",
                 owner=self.owner,
                 transcript_end_line=claim.run.transcript_end_line,
             )
+            result = AuditAgentResult(
+                outcome=AuditOutcome.FAILED,
+                summary=(
+                    "No persisted delivery record exists for the exact trigger; "
+                    "the direct chat action was requeued in a new generation."
+                ),
+                proposal_revision=run.proposal_revision,
+                side_effect_state=SideEffectState.NONE,
+                feedback=None,
+                external_result=None,
+                reconciliation=(),
+                error=AgentError(
+                    code="persisted_delivery_absent",
+                    retryable=True,
+                ),
+            )
             return AgentTurnRunResult(
-                run_id=persisted.id,
+                run_id=run.id,
                 result=result,
-                transcript_start_line=persisted.transcript_start_line,
-                transcript_end_line=persisted.transcript_end_line,
+                transcript_start_line=claim.run.transcript_start_line,
+                transcript_end_line=claim.run.transcript_end_line,
             )
         try:
             return self._execute_claimed(
@@ -396,33 +398,14 @@ def _database_delivery_absence_reconciliation(
     task: ReplyTask,
     context: AuditTurnContext,
     run: AgentRun,
-) -> tuple[AuditReconciliation, ...]:
+) -> bool:
     """Use the service delivery ledger for an all-direct-chat unknown outcome."""
     if store.has_sent_reply_for_trigger(task.conversation_id, task.trigger_message_id):
-        return ()
+        return False
     actions = context.proposal.actions
     if not actions or not all(_is_direct_chat_send(action) for action in actions):
-        return ()
-    digest = hashlib.sha256(
-        json.dumps(
-            {
-                "kind": "persisted_delivery_absent",
-                "task_id": task.id,
-                "agent_run_id": run.id,
-                "operation_id": run.operation_id,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    return tuple(
-        AuditReconciliation(
-            action_index=index,
-            disposition=ReconciliationDisposition.ABSENT,
-            read_result_digest=digest,
-        )
-        for index in range(len(actions))
-    )
+        return False
+    return True
 
 
 def _is_direct_chat_send(action: object) -> bool:
