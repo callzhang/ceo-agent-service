@@ -432,10 +432,16 @@ def _is_direct_chat_send(action: object) -> bool:
     # send operation. Resolve the stored command and trust its typed target
     # metadata instead of assuming a particular argv spelling.
     descriptor = describe_native_command({"type": "command_execution", **payload})
-    return (
-        descriptor is not None
-        and descriptor.cli == "dws"
-        and "open-dingtalk-id" in descriptor.target_identifiers
+    if descriptor is None or descriptor.cli != "dws":
+        return False
+    # The controlled +send-to-group command is ledger-backed like a direct
+    # chat send. Other group write spellings retain their normal readback path.
+    target = getattr(action, "target", None)
+    target_keys = set(descriptor.target_identifiers)
+    if isinstance(target, dict):
+        target_keys.update(str(key).replace("_", "-") for key in target)
+    return "open-dingtalk-id" in target_keys or (
+        descriptor.command_path == "chat +send-to-group" and "group" in target_keys
     )
 
 

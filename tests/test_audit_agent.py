@@ -1060,6 +1060,53 @@ def test_historical_direct_chat_alias_without_delivery_record_rotates_generation
     assert requeued is not None and requeued.execution_generation != task.execution_generation
 
 
+def test_controlled_group_chat_without_delivery_record_rotates_generation(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    group_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send group result",
+            "actions": [
+                {
+                    "description": "Send group message",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"group": "group-1"},
+                    "payload": {
+                        "argv": [
+                            "dws",
+                            "chat",
+                            "+send-to-group",
+                            "--group",
+                            "group-1",
+                            "--text",
+                            "done",
+                        ]
+                    },
+                    "expected_verification": "Message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Requested by Derek",
+        }
+    )
+
+    executor = CapturingExecutor("")
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
+
+    persisted = store.get_agent_run(run.id)
+    requeued = store.get_reply_task(task.id)
+    assert result.result.error is not None
+    assert result.result.error.code == "persisted_delivery_absent"
+    assert persisted is not None and persisted.status == "failed"
+    assert requeued is not None and requeued.status == "pending"
+    assert requeued.execution_generation != task.execution_generation
+    assert executor.commands == []
+
+
 def test_persisted_direct_chat_recovery_without_delivery_record_rotates_generation(
     setup, monkeypatch,
 ):
