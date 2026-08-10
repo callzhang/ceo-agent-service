@@ -309,6 +309,9 @@ Direct-message commands retain `user` and `uuid` as stable target identifiers.
 Unknown-result recovery must use a target-scoped read with the same conversation,
 recipient, approval, or idempotency identity; a global keyword search cannot
 confirm an action performed for one recipient.
+The reconciliation result must cite the digest of the latest completed matching
+read in that turn. Repeating the same scoped read is allowed; the service does
+not rewrite the Agent's cited digest and rejects a missing or stale digest.
 
 Unknown DingTalk message delivery uses the reviewed command descriptor and the
 service delivery ledger as its identity. The Agent's free-form operation label

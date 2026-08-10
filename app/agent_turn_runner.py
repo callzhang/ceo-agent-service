@@ -1191,11 +1191,9 @@ def _validated_reconciliation(
         ]
         if not matching_digests:
             raise RuntimeError("audit_reconciliation_evidence_mismatch")
-        if len(matching_digests) != 1:
-            raise RuntimeError("audit_reconciliation_evidence_ambiguous")
-        validated[action_index] = entry.model_copy(
-            update={"read_result_digest": matching_digests[0]}
-        )
+        if entry.read_result_digest != matching_digests[-1]:
+            raise RuntimeError("audit_reconciliation_evidence_mismatch")
+        validated[action_index] = entry
     return validated
 
 
