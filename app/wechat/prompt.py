@@ -13,13 +13,23 @@ WECHAT_TURN_INSTRUCTIONS = """- This is a selected personal WeChat conversation.
 - Return only the existing AgentEnvelope.
 - Allowed user modes: send_reply, ask_clarifying_question, handoff_to_human, no_reply.
 - Do not request DingTalk-only system actions, reactions, documents, OA, calendar, or DING.
-- Group context that did not mention the principal is background only."""
+- Group context that did not mention the principal is background only.
+- 比较当前处理时间与消息时间；如果延迟回复已经失去沟通目的，或会让对方误以为动作仍会及时发生，返回 no_reply。"""
 
 
 def build_wechat_turn_prompt(
-    trigger: WechatMessage, context: list[WechatMessage]
+    trigger: WechatMessage,
+    context: list[WechatMessage],
+    *,
+    current_time: str = "",
 ) -> str:
-    lines = [WECHAT_TURN_INSTRUCTIONS, "", "同一对话最近上下文（最多 20 条）:"]
+    lines = [
+        WECHAT_TURN_INSTRUCTIONS,
+        "",
+        f"当前处理时间: {current_time}",
+        "",
+        "同一对话最近上下文（最多 20 条）:",
+    ]
     for message in context[-20:]:
         lines.append(f"[{message.sent_at}] {message.sender_display_name}: {message.text}")
     lines += [

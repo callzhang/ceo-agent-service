@@ -191,6 +191,33 @@ def test_consumer_marks_read_only_decision_phase_before_calling_codex(
     assert observed_phases == ["wechat_read_only_decision_running"]
 
 
+def test_consumer_passes_current_processing_time_to_prompt(
+    fake_codex, store, account
+):
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u9", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-17T10:00:00+08:00", trigger_sender="Alex",
+        trigger_text="早点来公司",
+    )
+    now = datetime(2026, 7, 18, 9, 0, tzinfo=timezone(timedelta(hours=8)))
+    consumer = WechatReplyConsumer(
+        store,
+        fake_codex,
+        reader=None,
+        account=account,
+        now_provider=lambda: now,
+    )
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.NO_REPLY,
+        audit_summary="消息已过时，无需补发。",
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    assert "2026-07-18T09:00:00+08:00" in fake_codex.prompts[0]
+
+
 def test_corrected_generation_replaces_unsent_wechat_delivery(
     fake_codex, consumer, store
 ):

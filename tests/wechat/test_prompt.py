@@ -25,3 +25,17 @@ def test_prompt_caps_context_at_20():
     prompt = build_wechat_turn_prompt(trigger, ctx)
     assert "line29" in prompt
     assert "line0" not in prompt
+
+
+def test_prompt_exposes_processing_time_and_requires_freshness_check():
+    trigger = _msg("t", "早点来公司")
+
+    prompt = build_wechat_turn_prompt(
+        trigger,
+        [],
+        current_time="2026-07-18T09:00:00+08:00",
+    )
+
+    assert "2026-07-18T09:00:00+08:00" in prompt
+    assert "比较当前处理时间与消息时间" in prompt
+    assert "已经失去沟通目的" in prompt

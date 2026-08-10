@@ -290,6 +290,11 @@ For WeChat, a rotated generation may replace a delivery only while it is unsent.
 outcome are replaceable; `sending` and `send_unknown` remain immutable until
 read-only reconciliation resolves whether the message was sent.
 
+Every WeChat decision prompt includes the current processing time alongside the
+message timestamps. The Agent must return `no_reply` when a delayed reply has
+lost its communication purpose or would falsely imply that a time-sensitive
+action can still happen on time.
+
 Audit recovery encodes `reconciliation_json` as a JSON array string. Each entry
 contains only `action_index`, `disposition`, and `read_result_digest`; operation
 identity remains in the persisted run and must not be repeated as an outer JSON

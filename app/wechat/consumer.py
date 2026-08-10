@@ -96,7 +96,11 @@ class WechatReplyConsumer:
             context = enrich_context(context)
         except Exception:
             pass
-        prompt = build_wechat_turn_prompt(trigger, context)
+        prompt = build_wechat_turn_prompt(
+            trigger,
+            context,
+            current_time=self.now_provider().isoformat(),
+        )
         self.store.mark_wechat_read_only_decision_started(
             task.id,
             expected_execution_generation=task.execution_generation,
