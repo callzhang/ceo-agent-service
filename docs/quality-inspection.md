@@ -75,6 +75,23 @@ violation 或必需数据源不可检查。
 因此 `blocked` 不是“等管理决策”的同义词。它描述当前依赖、材料、权限或安全条件
 不满足；是否需要人做选择由 `needs_human` 的业务结果和对应 UI/通知承载。
 
+## 每小时处理顺序
+
+每小时修复从审计页 `/workers` 的 **Attention** 开始，而不是从图表总数或历史
+attempt 开始。Attention 中同一 reply trigger 只保留一条 `Reply task` 主记录；没有
+关联任务的 `needs_human`、`blocked` 或 `failed` attempt 才单独显示。
+
+处理每一条主记录时依次核对：
+
+1. `sent_replies` 是否已有同一 trigger 的送达凭据。
+2. `agent_runs` 的副作用是否 `completed`、`failed` 或 `unknown`，以及有无执行回执。
+3. 后续同一 trigger / 审批实例是否已有成功、跳过或明确终态。
+4. 只有确认没有送达且没有未知副作用时，才新建 generation 重试。
+
+因此 Attention 的红色记录是小时修复的输入清单，不是展示性计数。任何未完成的
+`Reply task`、`work item`、`meeting` 或外部投递失败都必须在报告中逐类说明其恢复、
+对账或不可执行原因。
+
 ## 外部依赖边界
 
 `quality-check` 默认附加当前 `default_channel_gates()` 的实时检查，即 DingTalk 和

@@ -4666,6 +4666,49 @@ def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' not in html
 
 
+def test_worker_attention_collapses_reply_attempt_into_matching_reply_task(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-attention",
+        conversation_title="Attention",
+        single_chat=False,
+        trigger_message_id="msg-attention",
+        trigger_create_time="2026-08-10 08:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please handle this.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    store.fail_reply_task(
+        task.id,
+        "codex_result_invalid",
+        expected_execution_generation=task.execution_generation,
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-attention",
+        conversation_title="Attention",
+        trigger_message_id="msg-attention",
+        trigger_sender="Mina",
+        trigger_text="Please handle this.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.update_reply_attempt(attempt_id, send_error="codex_result_invalid")
+
+    payload = build_worker_status_payload(store)
+    matching_rows = [
+        row
+        for row in payload["attention_rows"]
+        if row["context"] == "Attention" and row["summary"] == "Please handle this."
+    ]
+
+    assert [(row["category"], row["id"]) for row in matching_rows] == [
+        ("Reply task", str(task.id))
+    ]
+
+
 def test_worker_status_uses_wechat_delivery_outcome_not_raw_failed_status(
     tmp_path: Path,
 ):

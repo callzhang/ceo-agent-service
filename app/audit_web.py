@@ -2178,26 +2178,53 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
     }
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dict[str, str]]:
     specs = [
-        ("Reply task", "reply_tasks", "status", "conversation_title", "trigger_text", "updated_at", "error"),
         ("Work item", "work_summary_inputs", "status", "source_type", "source_ref", "updated_at", "error"),
         ("Follow-up", "follow_up_drafts", "status", "owner_name", "question_text", "updated_at", "suppressed_reason"),
         ("Meeting", "meeting_alignment_jobs", "status", "title", "target_title", "updated_at", "error"),
         ("OKR", "okr_review_requests", "status", "conversation_title", "trigger_text", "updated_at", "error"),
     ]
     rows: list[dict[str, str]] = []
-    for attempt in store.list_current_unresolved_problem_attempts(limit=limit):
-        rows.append(
-            {
-                "category": "Reply",
-                "id": str(attempt.id),
-                "status": attempt.send_status,
-                "context": attempt.conversation_title,
-                "summary": attempt.trigger_text,
-                "updated_at": attempt.updated_at,
-                "error": attempt.send_error,
-            }
-        )
+    active_reply_task_triggers: set[tuple[str, str, str]] = set()
     with store._connect() as db:
+        if _sqlite_table_exists(db, "reply_tasks"):
+            reply_task_rows = db.execute(
+                """
+                select id, channel, conversation_id, trigger_message_id,
+                       status, conversation_title as context, trigger_text as summary,
+                       updated_at, error
+                from reply_tasks
+                where lower(status) in ('pending','processing','failed')
+                order by
+                    case lower(status)
+                        when 'failed' then 0
+                        when 'processing' then 1
+                        else 2
+                    end,
+                    updated_at desc,
+                    id desc
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            for row in reply_task_rows:
+                active_reply_task_triggers.add(
+                    (
+                        str(row["channel"] or "dingtalk"),
+                        str(row["conversation_id"] or ""),
+                        str(row["trigger_message_id"] or ""),
+                    )
+                )
+                rows.append(
+                    {
+                        "category": "Reply task",
+                        "id": str(row["id"]),
+                        "status": str(row["status"] or ""),
+                        "context": str(row["context"] or ""),
+                        "summary": str(row["summary"] or ""),
+                        "updated_at": str(row["updated_at"] or ""),
+                        "error": str(row["error"] or ""),
+                    }
+                )
         for category, table, status_column, context_column, summary_column, updated_column, error_column in specs:
             if not _sqlite_table_exists(db, table):
                 continue
@@ -2229,6 +2256,25 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                         "error": str(row["error"] or ""),
                     }
                 )
+    for attempt in store.list_current_unresolved_problem_attempts(limit=limit):
+        trigger_key = (
+            attempt.channel,
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+        )
+        if trigger_key in active_reply_task_triggers:
+            continue
+        rows.append(
+            {
+                "category": "Reply",
+                "id": str(attempt.id),
+                "status": attempt.send_status,
+                "context": attempt.conversation_title,
+                "summary": attempt.trigger_text,
+                "updated_at": attempt.updated_at,
+                "error": attempt.send_error,
+            }
+        )
     rows.sort(key=lambda row: (_attention_status_rank(row["status"]), row["updated_at"]), reverse=False)
     return rows[:limit]
 
