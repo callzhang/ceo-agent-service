@@ -5,15 +5,22 @@ import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, cast
 
 from app.agent_contracts import (
+    AuditAgentResult,
+    AuditExternalResult,
     AuditReconciliation,
     AuditOutcome,
     ConsumerOutcome,
     ReconciliationDisposition,
 )
-from app.agent_result import EffectKind, ResultParseError, SideEffectState
+from app.agent_result import (
+    AgentError,
+    EffectKind,
+    ResultParseError,
+    SideEffectState,
+)
 from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
     LEASE_SECONDS,
@@ -301,6 +308,24 @@ class AgentTurnProcess(Generic[ResultT]):
             result = parse_result(process.stdout)
             if _contains_sensitive_value(result.model_dump(mode="json")):
                 raise ValueError("agent_result_contains_sensitive_value")
+        except ResultParseError:
+            fallback = _recovery_execution_result_from_receipts(
+                run=run,
+                recovery_phase=recovery_phase,
+                persisted=self.store.get_agent_run(run.id),
+                expected_effect_actions=expected_effect_actions,
+                recovery_started_actions=recovery_started_actions,
+                authorized_recovery_actions=authorized_recovery_actions,
+                registry=self.effects,
+                store=self.store,
+            )
+            if fallback is None:
+                if recover_unknown:
+                    self._defer_unknown(run, "codex_result_invalid")
+                else:
+                    self._fail_running(run, "codex_result_invalid")
+                raise
+            result = cast(ResultT, fallback)
         except AgentReadOnlyViolationError:
             if recover_unknown:
                 self._defer_unknown(run, "agent_read_only_violation")
@@ -954,19 +979,70 @@ def _metadata_matches_action(
     metadata: dict[str, object],
     action: dict[str, object],
 ) -> bool:
+    if action.get("operation_contract_valid") is False:
+        return False
     identity_matches = all(
         metadata.get(key) == action.get(key)
         for key in (
             "capability",
-            "operation",
             "arguments_digest",
             "target_identifiers",
         )
     )
     expected_command_digest = action.get("operation_digest")
-    return identity_matches and (
-        expected_command_digest is None
-        or metadata.get("operation_digest") == expected_command_digest
+    if expected_command_digest is not None:
+        return (
+            identity_matches
+            and metadata.get("operation_digest") == expected_command_digest
+        )
+    return identity_matches and metadata.get("operation") == action.get("operation")
+
+
+def _recovery_execution_result_from_receipts(
+    *,
+    run: AgentRun,
+    recovery_phase: str,
+    persisted: AgentRun | None,
+    expected_effect_actions: tuple[dict[str, object], ...],
+    recovery_started_actions: set[int],
+    authorized_recovery_actions: frozenset[int],
+    registry: McpToolEffectRegistry,
+    store: AutoReplyStore,
+) -> AuditAgentResult | None:
+    """Finish a recovery only when the controlled write receipts are complete."""
+    if (
+        recovery_phase != "execute"
+        or run.role is not AgentRole.AUDIT
+        or persisted is None
+        or not authorized_recovery_actions
+        or recovery_started_actions != set(authorized_recovery_actions)
+    ):
+        return None
+    completed, all_effects_closed = _action_completion_accounting(
+        persisted.tool_events,
+        store.list_agent_execution_receipts(run.id),
+        expected_effect_actions,
+        operation_id=run.operation_id,
+        registry=registry,
+    )
+    if completed != set(authorized_recovery_actions) or not all_effects_closed:
+        return None
+    return AuditAgentResult(
+        outcome=AuditOutcome.EXECUTED,
+        summary="Authorized recovery actions completed with controlled receipts.",
+        proposal_revision=run.proposal_revision,
+        side_effect_state=SideEffectState.CONFIRMED,
+        feedback=None,
+        external_result=AuditExternalResult(
+            operation_id=run.operation_id,
+            verification_summary="Controlled recovery receipts completed.",
+            live_result_reference={
+                "recovery_action_indexes": sorted(authorized_recovery_actions),
+                "evidence": "controlled_receipts",
+            },
+        ),
+        reconciliation=(),
+        error=AgentError(),
     )
 
 

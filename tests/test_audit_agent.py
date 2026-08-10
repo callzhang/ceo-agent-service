@@ -12,6 +12,7 @@ from app.agent_effects import McpToolEffectRegistry
 from app.agent_turn_runner import (
     _action_receipt_operation_id,
     _json_digest,
+    _metadata_matches_action,
     _read_matches_action,
 )
 from app.audit_agent import (
@@ -951,6 +952,72 @@ def test_direct_chat_unknown_without_delivery_record_replays_through_recovery(
     assert persisted is not None and persisted.status == "unknown"
     assert persisted.final_result_json
     assert executor.commands == []
+
+
+def test_controlled_receipt_uses_command_digest_not_display_operation_name():
+    action = {
+        "capability": "agent_cli.dws",
+        "operation": "chat message send",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {"open-dingtalk-id": "user-1"},
+        "operation_digest": "command-digest",
+    }
+    receipt = {
+        **action,
+        "operation": "chat +messages-send",
+    }
+
+    assert _metadata_matches_action(receipt, action)
+
+
+def test_recovery_execution_completes_from_controlled_receipts_without_agent_json(
+    setup,
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    reconcile = _audit_result_jsonl(
+        "reconciled",
+        operation_id=run.operation_id,
+        session=run.codex_session_id,
+        include_read=True,
+        include_write=False,
+        reconciliation=[
+            {
+                "action_index": 0,
+                "disposition": "absent",
+                "read_result_digest": "recovery-read-digest",
+            }
+        ],
+    )
+    runner = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(reconcile),
+    )
+    runner.recover(task, audit_context, run=run)
+    authorization = _recovery_authorizations(
+        run,
+        audit_context,
+        frozenset({0}),
+        McpToolEffectRegistry.default(),
+    )[0]
+    execution_without_agent_message = "\n".join(
+        _audit_jsonl(
+            run.operation_id,
+            session=run.codex_session_id,
+            authorization_id=authorization["authorization_id"],
+        ).splitlines()[:-1]
+    )
+    runner.executor = CapturingExecutor(execution_without_agent_message)
+
+    result = runner.execute_recovery(
+        task,
+        audit_context,
+        run=store.get_agent_run(run.id),
+    )
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "executed"
+    assert persisted is not None and persisted.status == "completed"
 
 
 def test_recovery_accepts_verified_controlled_read_receipt_with_large_stdout(setup):

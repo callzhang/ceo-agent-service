@@ -363,6 +363,9 @@ def _expected_effect_action(
             {"type": "command_execution", "argv": legacy_argv}
         )
     if descriptor is not None:
+        expected["operation_contract_valid"] = (
+            legacy_argv is not None or action.operation == descriptor.command_path
+        )
         if legacy_argv is not None:
             expected["capability"] = f"agent_cli.{descriptor.cli}"
             expected["operation"] = descriptor.command_path
