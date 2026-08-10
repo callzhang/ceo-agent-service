@@ -1473,6 +1473,7 @@ class DingTalkAutoReplyWorker:
         self._pass_channel_results = {}
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
+        self._recover_due_unknown_agent_reply_tasks(limit=limit)
         self._recover_stale_agent_reply_tasks()
         claimed_tasks = 0
         scan_now = self._sqlite_timestamp(self._now())
@@ -1618,6 +1619,23 @@ class DingTalkAutoReplyWorker:
             if completed:
                 processed_tasks += 1
         return processed_tasks
+
+    def _recover_due_unknown_agent_reply_tasks(self, *, limit: int) -> int:
+        recovered = 0
+        for run in self.store.list_unknown_agent_runs(limit=limit):
+            task = self.store.get_reply_task(run.reply_task_id)
+            if task is None:
+                continue
+            try:
+                self.store.requeue_reply_task(
+                    task.id,
+                    "unknown_agent_run_reconciliation",
+                    expected_execution_generation=run.execution_generation,
+                )
+            except AgentRunLeaseLostError:
+                continue
+            recovered += 1
+        return recovered
 
     def _recover_stale_agent_reply_tasks(self) -> None:
         stale_tasks = self.store.list_stale_processing_reply_tasks(

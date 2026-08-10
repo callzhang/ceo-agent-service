@@ -4444,6 +4444,51 @@ def test_consume_once_prioritizes_pending_reconciliation(
     assert claimed_task_ids == [priority.id]
 
 
+def test_due_unknown_audit_run_is_requeued_without_waiting_for_stale_timeout(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-reconcile",
+        conversation_title="Reconcile",
+        single_chat=False,
+        trigger_message_id="msg-reconcile",
+        trigger_create_time="2026-08-10 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Check external result",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="crashed-audit",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="crashed-audit",
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([], {}),
+        codex=FakeCodex(
+            CodexDecision(action=CodexAction.NO_REPLY, audit_summary="unused")
+        ),
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
+    )
+
+    recovered = worker._recover_due_unknown_agent_reply_tasks(limit=10)
+
+    persisted = store.get_reply_task(task.id)
+    assert recovered == 1
+    assert persisted is not None
+    assert persisted.status == "pending"
+    assert persisted.execution_generation == task.execution_generation
+    assert persisted.error == "unknown_agent_run_reconciliation"
+
+
 def test_consumer_does_not_claim_task_when_required_gate_is_not_ready(
     tmp_path, monkeypatch
 ):

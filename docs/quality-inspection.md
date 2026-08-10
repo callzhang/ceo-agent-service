@@ -114,6 +114,10 @@ Lark。任一 gate 不是 `ready` 都作为 `channel:<name>/not_ready` violation
 进入只读 reconciliation，再领取普通待办。这个排序不增加并发，也不允许重放外部写入；
 它只保证已经发生但尚未落回执的动作不会被普通重试长期饿死。
 
+如果这类 task 仍是 `processing`，但 unknown run 已到核对时间且没有有效租约，消费者会
+先把同一 generation 重新排为 `pending`，无需等待普通任务的 30 分钟 stale 阈值。未来
+退避、暂停或仍有有效租约的 run 不会被提前领取。
+
 每次 `unknown` 恢复都使用新的、隔离的 Codex 会话，而不是续接原执行会话。原会话 ID
 和事件仍保留在 `agent_runs` 作为不可变审计证据；恢复会话只接收持久化的任务、proposal、
 operation 和回执上下文，并被限制为只读。这样原会话即使已经中断或终止，也不会让对账
