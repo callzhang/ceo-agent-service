@@ -4,6 +4,7 @@ import json
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Generic, TypeVar, cast
 
@@ -49,6 +50,22 @@ ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
 CODEX_PROVIDER_AUTH_FAILED = "codex_provider_auth_failed"
+UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS = 60
+UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS = 15 * 60
+
+
+def unknown_reconciliation_retry_at(
+    attempts: int, *, now: datetime | None = None
+) -> str:
+    delay_seconds = min(
+        UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS
+        * (2 ** max(attempts - 1, 0)),
+        UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS,
+    )
+    current = now or datetime.now(timezone.utc)
+    return (current.astimezone(timezone.utc) + timedelta(seconds=delay_seconds)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
 
 @dataclass(frozen=True)
@@ -896,7 +913,9 @@ class AgentTurnProcess(Generic[ResultT]):
             {"code": code, "retryable": True},
             owner=self.owner,
             expected_execution_generation=run.execution_generation,
-            next_attempt_at="",
+            next_attempt_at=unknown_reconciliation_retry_at(
+                persisted.reconciliation_attempts
+            ),
         )
 
 

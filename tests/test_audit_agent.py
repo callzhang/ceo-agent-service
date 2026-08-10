@@ -1397,6 +1397,11 @@ def test_ambiguous_recovery_requires_matching_live_read(setup):
             executor=executor,
         ).recover(task, audit_context, run=run)
 
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.status == "unknown"
+    assert persisted.reconciliation_next_attempt_at > persisted.updated_at
+
 
 def test_matching_live_read_without_structured_disposition_does_not_confirm(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)

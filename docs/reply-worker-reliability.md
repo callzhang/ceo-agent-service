@@ -291,6 +291,11 @@ renders it as a read-only verification state. The detail page states why the
 result is unknown, that no duplicate approval or message will be attempted, and
 that the user has no decision to make until reconciliation returns evidence.
 
+Failed read-only reconciliation attempts keep the external result unknown and
+use persisted exponential retry delays from one minute up to fifteen minutes.
+They are never immediately reclaimed in a hot loop, and the delay does not
+authorize replaying an approval, message, or other external action.
+
 An `agent_cli` command that returns a structured error receipt is recorded as a
 failed effect with its retryability and channel state. It is not treated as an
 unreviewed tool call or an unknown successful write. Native DWS/Lark commands may

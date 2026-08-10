@@ -16,7 +16,12 @@ from app.agent_wire_contracts import AuditAgentWireResult, parse_audit_agent_wir
 from app.agent_cli import RECOVERY_WRITE_ALLOWLIST_ENV
 from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
-from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
+from app.agent_turn_runner import (
+    AgentTurnProcess,
+    AgentTurnRunResult,
+    ProcessExecutor,
+    unknown_reconciliation_retry_at,
+)
 from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import describe_native_command
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
@@ -134,7 +139,9 @@ class AuditAgentRunner:
                     {"code": "audit_recovery_failed", "retryable": True},
                     owner=self.owner,
                     expected_execution_generation=run.execution_generation,
-                    next_attempt_at="",
+                    next_attempt_at=unknown_reconciliation_retry_at(
+                        persisted.reconciliation_attempts
+                    ),
                 )
             raise
 
