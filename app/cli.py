@@ -2389,6 +2389,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
 
     from app import config as _cfg
     from app.wechat import service as _wx
+    from app.wechat.consumer import WechatTaskProcessingError
     from app.wechat.reader_ipc import ReaderIpcError
 
     store = AutoReplyStore(settings.db_path)
@@ -2449,6 +2450,13 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     "",
                     "wechat_reader_unavailable",
                     f"WeChat reader unavailable; {role} retrying automatically: {exc}",
+                )
+            elif isinstance(exc, WechatTaskProcessingError):
+                store.record_error(
+                    exc.conversation_id,
+                    exc.trigger_message_id,
+                    f"wechat_{role}_loop_error",
+                    str(exc),
                 )
             else:
                 store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))

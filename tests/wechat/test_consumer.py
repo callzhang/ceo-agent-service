@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from app.store import AutoReplyStore
 from app.dingtalk_models import CodexAction, CodexDecision
 from app.wechat.models import WechatAccount
-from app.wechat.consumer import WechatReplyConsumer
+from app.wechat.consumer import WechatReplyConsumer, WechatTaskProcessingError
 from app.store import AgentRunLeaseLostError
 
 
@@ -275,3 +275,18 @@ def test_stale_wechat_worker_cannot_persist_attempt_or_delivery(
 
     assert store.get_wechat_delivery_for_task(claimed.id) is None
     assert store.get_latest_reply_attempt_for_trigger("u9", "m1") is None
+
+
+def test_consumer_error_keeps_trigger_identity(fake_codex, consumer):
+    class FailingRunner:
+        def decide(self, *_args, **_kwargs):
+            raise RuntimeError("decision failed")
+
+    consumer.runner = FailingRunner()
+
+    with pytest.raises(WechatTaskProcessingError) as caught:
+        consumer.run_once(limit=1)
+
+    assert caught.value.conversation_id == "u9"
+    assert caught.value.trigger_message_id == "m1"
+    assert str(caught.value) == "decision failed"

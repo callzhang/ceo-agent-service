@@ -19,6 +19,18 @@ from app.wechat.models import WechatAccount, WechatMessage
 from app.wechat.prompt import build_wechat_turn_prompt
 
 
+class WechatTaskProcessingError(RuntimeError):
+    def __init__(
+        self,
+        conversation_id: str,
+        trigger_message_id: str,
+        detail: str,
+    ) -> None:
+        super().__init__(detail)
+        self.conversation_id = conversation_id
+        self.trigger_message_id = trigger_message_id
+
+
 def _is_reply_transport_action(action: object) -> bool:
     """Whether an action only materializes the already-decided chat response."""
     try:
@@ -55,7 +67,16 @@ class WechatReplyConsumer:
     def run_once(self, limit: int = 50) -> int:
         processed = 0
         for task in self.store.claim_reply_tasks(limit, channel="wechat"):
-            self.process(task)
+            try:
+                self.process(task)
+            except OSError:
+                raise
+            except Exception as exc:
+                raise WechatTaskProcessingError(
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    str(exc),
+                ) from exc
             processed += 1
         return processed
 

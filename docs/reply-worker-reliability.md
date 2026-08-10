@@ -295,6 +295,11 @@ message timestamps. The Agent must return `no_reply` when a delayed reply has
 lost its communication purpose or would falsely imply that a time-sensitive
 action can still happen on time.
 
+When a WeChat decision fails, the consumer loop records the exact conversation
+and trigger message identity with the service error. A later terminal attempt
+for that trigger can therefore prove recovery to the quality gate; unrelated
+generic channel errors remain unsuppressed.
+
 An audit detail page keeps its original attempt immutable, but when a later
 terminal attempt resolves the same trigger its primary status fields show the
 effective terminal result and identify the later attempt. The superseded error
