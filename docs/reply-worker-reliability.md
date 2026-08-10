@@ -295,6 +295,11 @@ message timestamps. The Agent must return `no_reply` when a delayed reply has
 lost its communication purpose or would falsely imply that a time-sensitive
 action can still happen on time.
 
+An audit detail page keeps its original attempt immutable, but when a later
+terminal attempt resolves the same trigger its primary status fields show the
+effective terminal result and identify the later attempt. The superseded error
+is labeled as historical instead of appearing as an active pending failure.
+
 Audit recovery encodes `reconciliation_json` as a JSON array string. Each entry
 contains only `action_index`, `disposition`, and `read_result_digest`; operation
 identity remains in the persisted run and must not be repeated as an outer JSON

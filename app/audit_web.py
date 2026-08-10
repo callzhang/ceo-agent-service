@@ -8131,13 +8131,26 @@ def _attempt_detail_body(
     agent_runs: list[AgentRun] | None = None,
 ) -> str:
     agent_runs = agent_runs or []
+    resolved_by_later = later_attempt is not None and _attempt_is_terminal(
+        later_attempt
+    )
+    send_status = (
+        f"已完成（后续记录 #{later_attempt.id}）"
+        if resolved_by_later
+        else attempt.send_status
+    )
+    send_error = (
+        "历史错误已由后续处理解决"
+        if resolved_by_later and attempt.send_error.strip()
+        else attempt.send_error
+    )
     fields = [
         ("trigger message id", attempt.trigger_message_id),
         ("action", attempt.action),
         ("sensitivity", attempt.sensitivity_kind),
         ("permission", _permission_display(attempt)),
-        ("send status", attempt.send_status),
-        ("send error", attempt.send_error),
+        ("send status", send_status),
+        ("send error", send_error),
         ("retry count", str(attempt.retry_count)),
         ("created", _format_local_time(attempt.created_at)),
         ("updated", _format_local_time(attempt.updated_at)),

@@ -4587,6 +4587,38 @@ def test_nonterminal_later_attempt_is_not_reported_as_completed(tmp_path: Path):
     assert "后续处理，无需你操作" not in html
 
 
+def test_terminal_later_attempt_replaces_stale_pending_detail_fields(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="pending_reconciliation",
+    )
+    store.update_reply_attempt(old_id, send_error="audit_recovery_failed")
+    later_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="completed",
+    )
+
+    status, html = render_attempt_detail(store, old_id)
+
+    assert status == 200
+    assert f"已完成（后续记录 #{later_id}）" in html
+    assert "历史错误已由后续处理解决" in html
+    assert "audit_recovery_failed" not in html
+
+
 def test_render_attempt_detail_suppresses_quality_warnings_for_skipped_attempts(
     tmp_path: Path,
 ):
