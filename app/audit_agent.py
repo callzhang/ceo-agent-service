@@ -410,14 +410,20 @@ def _database_delivery_absence_reconciliation(
 
 def _is_direct_chat_send(action: object) -> bool:
     capability = getattr(action, "capability", "")
-    operation = getattr(action, "operation", "")
     payload = getattr(action, "payload", None)
-    if capability != "agent_cli.dws" or operation != "chat message send":
+    if capability != "agent_cli.dws":
         return False
     if not isinstance(payload, dict):
         return False
     argv = payload.get("argv")
-    return isinstance(argv, list) and "--open-dingtalk-id" in argv
+    # Persisted candidates before the operation-contract migration used a
+    # different display label. The reviewed native command is the stable
+    # identity, so use it rather than the historical label here.
+    return (
+        isinstance(argv, list)
+        and argv[:4] == ["dws", "chat", "message", "send"]
+        and "--open-dingtalk-id" in argv
+    )
 
 
 def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:

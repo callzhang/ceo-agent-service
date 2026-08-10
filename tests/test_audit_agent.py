@@ -956,6 +956,48 @@ def test_direct_chat_unknown_without_delivery_record_replays_through_recovery(
     assert executor.commands == []
 
 
+def test_legacy_direct_chat_unknown_without_delivery_record_rotates_generation(
+    setup,
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    legacy_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send direct result",
+            "actions": [
+                {
+                    "description": "Send direct message",
+                    "capability": "agent_cli.dws",
+                    "operation": "dws chat message send",
+                    "target": {"open_dingtalk_id": "direct-user"},
+                    "payload": {
+                        "argv": [
+                            "dws", "chat", "message", "send",
+                            "--open-dingtalk-id", "direct-user",
+                            "--text", "done", "--yes",
+                        ]
+                    },
+                    "expected_verification": "Message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Requested by Derek",
+        }
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(""),
+    ).recover(task, replace(audit_context, proposal=legacy_proposal), run=run)
+
+    persisted = store.get_agent_run(run.id)
+    requeued = store.get_reply_task(task.id)
+    assert result.result.error is not None
+    assert result.result.error.code == "persisted_delivery_absent"
+    assert persisted is not None and persisted.status == "failed"
+    assert requeued is not None and requeued.execution_generation != task.execution_generation
+
+
 def test_controlled_receipt_uses_command_digest_not_display_operation_name():
     action = {
         "capability": "agent_cli.dws",
