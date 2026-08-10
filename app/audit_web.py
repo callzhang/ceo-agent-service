@@ -1818,7 +1818,6 @@ def _top_nav(
         ("workers", "Workers", "/workers"),
         ("user-feedback", "用户反馈", "/user-feedback"),
         ("service-bugfix", "服务修复", "/service-bugfix-candidates"),
-        ("codex", "Codex Sessions", "/codex"),
         ("config", "Config", "/config"),
         ("logs", "Logs", "/logs"),
     ]
@@ -6290,6 +6289,8 @@ def render_codex_session_detail(
     session_id: str,
     codex_home: Path | None = None,
     store: AutoReplyStore | None = None,
+    *,
+    expose_session_metadata: bool = True,
 ) -> tuple[int, str]:
     rendered = render_local_codex_session(session_id, codex_home=codex_home)
     related_reply_attempts = (
@@ -6302,18 +6303,34 @@ def render_codex_session_detail(
     )
     if rendered.missing:
         if related_reply_attempts or related_meeting_runs:
-            body = (
-                "<section class=\"card\"><h2>Codex session unavailable</h2>"
-                "<p class=\"muted\">The local Codex transcript file for this session "
-                "is no longer available on this machine.</p>"
-                f"<p class=\"muted\">{escape(session_id)}</p></section>"
-                f"{_related_history_card(related_reply_attempts, session_id=session_id, store=store) if related_reply_attempts else ''}"
-                f"{_meeting_related_history_card(related_meeting_runs, store) if store else ''}"
-            )
+            if expose_session_metadata:
+                body = (
+                    "<section class=\"card\"><h2>Codex session unavailable</h2>"
+                    "<p class=\"muted\">The local Codex transcript file for this session "
+                    "is no longer available on this machine.</p>"
+                    f"<p class=\"muted\">{escape(session_id)}</p></section>"
+                    f"{_related_history_card(related_reply_attempts, session_id=session_id, store=store) if related_reply_attempts else ''}"
+                    f"{_meeting_related_history_card(related_meeting_runs, store) if store else ''}"
+                )
+            else:
+                body = (
+                    "<section class=\"card\"><h2>执行记录不可用</h2>"
+                    "<p class=\"muted\">本机执行记录已不可用。</p></section>"
+                    f"{_related_history_card(related_reply_attempts, session_id='', store=store) if related_reply_attempts else ''}"
+                )
             return 200, render_page(
-                "Codex session unavailable",
+                "Codex session unavailable" if expose_session_metadata else "执行记录不可用",
                 body,
-                active_nav="codex",
+                active_nav="codex" if expose_session_metadata else "history",
+                user_feedback_pending_count=(
+                    store.count_pending_user_feedback_items() if store else None
+                ),
+            )
+        if not expose_session_metadata:
+            return 404, render_page(
+                "执行记录不可用",
+                "<p>执行记录不可用。</p>",
+                active_nav="history",
                 user_feedback_pending_count=(
                     store.count_pending_user_feedback_items() if store else None
                 ),
@@ -6326,31 +6343,36 @@ def render_codex_session_detail(
                 store.count_pending_user_feedback_items() if store else None
             ),
         )
-    events = "".join(_codex_event_card(event) for event in rendered.events)
+    visible_events = (
+        rendered.events
+        if expose_session_metadata
+        else [event for event in rendered.events if event.kind != "session"]
+    )
+    events = "".join(_codex_event_card(event) for event in visible_events)
     related_history = _related_history_card(
         related_reply_attempts,
-        session_id=session_id,
+        session_id=session_id if expose_session_metadata else "",
         store=store,
     )
     related_meeting_history = (
         _meeting_related_history_card(related_meeting_runs, store)
-        if store and related_meeting_runs
+        if expose_session_metadata and store and related_meeting_runs
         else ""
     )
-    body = (
+    metadata = (
         "<section class=\"card\"><div class=\"grid\">"
         f"<div class=\"muted\">session id</div><div>{escape(rendered.session_id)}</div>"
         f"<div class=\"muted\">local file</div><div>{escape(str(rendered.path or ''))}</div>"
         f"<div class=\"muted\">rendered events</div><div>{len(rendered.events)}</div>"
         "</div></section>"
-        f"{related_history}"
-        f"{related_meeting_history}"
-        f"{events}"
+        if expose_session_metadata
+        else f"<section class=\"card\"><div class=\"muted\">已加载 {len(visible_events)} 条执行记录。</div></section>"
     )
+    body = f"{metadata}{related_history}{related_meeting_history}{events}"
     return 200, render_page(
-        f"Codex Session {session_id}",
+        f"Codex Session {session_id}" if expose_session_metadata else "执行记录",
         body,
-        active_nav="codex",
+        active_nav="codex" if expose_session_metadata else "history",
         user_feedback_pending_count=(
             store.count_pending_user_feedback_items() if store else None
         ),
@@ -7613,6 +7635,35 @@ def create_audit_app(
         )
         return HTMLResponse(html, status_code=status)
 
+    @app.get("/attempts/{attempt_id}/execution/{role}", response_class=HTMLResponse)
+    def attempt_execution_detail(attempt_id: int, role: str) -> HTMLResponse:
+        if role not in {"consumer", "audit"}:
+            return HTMLResponse("Not found", status_code=404)
+        store = AutoReplyStore(db_path)
+        attempt = store.get_reply_attempt(attempt_id)
+        if attempt is None or not attempt.agent_run_id:
+            return HTMLResponse("Attempt execution not found", status_code=404)
+        terminal_run = store.get_agent_run(attempt.agent_run_id)
+        if terminal_run is None:
+            return HTMLResponse("Attempt execution not found", status_code=404)
+        expected_role = AgentRole.CONSUMER if role == "consumer" else AgentRole.AUDIT
+        runs = store.list_agent_runs_for_task_generation(
+            terminal_run.reply_task_id,
+            terminal_run.execution_generation,
+        )
+        run = next(
+            (item for item in reversed(runs) if item.role is expected_role and item.codex_session_id),
+            None,
+        )
+        if run is None:
+            return HTMLResponse("Attempt execution not found", status_code=404)
+        status, html = render_codex_session_detail(
+            run.codex_session_id,
+            store=store,
+            expose_session_metadata=False,
+        )
+        return HTMLResponse(html, status_code=status)
+
     @app.get("/developer-prompt", response_class=HTMLResponse)
     def developer_prompt_editor(request: Request) -> str:
         tab = request.query_params.get("tab", "developer")
@@ -7958,7 +8009,7 @@ def _attempt_detail_body(
     )
     if revision_count:
         fields.append(("revisions", f"{revision_count} revisions"))
-    orchestration_links = _orchestration_session_links(agent_runs)
+    orchestration_links = _orchestration_session_links(attempt.id, agent_runs)
     return _agent_detail_body(
         title_label="群名",
         title=attempt.conversation_title,
@@ -7997,7 +8048,7 @@ def _attempt_detail_body(
     )
 
 
-def _orchestration_session_links(agent_runs: list[AgentRun]) -> str:
+def _orchestration_session_links(attempt_id: int, agent_runs: list[AgentRun]) -> str:
     consumer = next(
         (
             run
@@ -8017,13 +8068,13 @@ def _orchestration_session_links(agent_runs: list[AgentRun]) -> str:
     links = []
     if consumer is not None:
         links.append(
-            f'<a class="agent-log-button" href="/codex/{escape(consumer.codex_session_id)}">'
-            "View Consumer conversation</a>"
+            f'<a class="agent-log-button" href="/attempts/{attempt_id}/execution/consumer">'
+            "查看 Consumer 记录</a>"
         )
     if audit is not None:
         links.append(
-            f'<a class="agent-log-button" href="/codex/{escape(audit.codex_session_id)}">'
-            "View execution audit</a>"
+            f'<a class="agent-log-button" href="/attempts/{attempt_id}/execution/audit">'
+            "查看执行审计</a>"
         )
     return "".join(links)
 

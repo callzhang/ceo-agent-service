@@ -237,7 +237,7 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 | 页面 | 用途 |
 | --- | --- |
 | `/` | History、状态筛选、最近任务 |
-| `/attempts/{id}` | 单次 trigger、回复、证据、工具事件和回执 |
+| `/attempts/{id}` | 单次 trigger、回复、证据、工具事件和回执；从此处打开 Consumer/Audit 执行记录，不显示内部会话标识 |
 | `/oa-approvals/{process_instance_id}` | OA 详情、评论和历史处理结果 |
 | `/tasks` | 项目、TODO 和 follow-up |
 | `/config` | 系统参数、路由和 Channel gate |

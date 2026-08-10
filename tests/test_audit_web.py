@@ -82,6 +82,7 @@ def loopback_test_client(app) -> TestClient:
 
 def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
     tmp_path: Path,
+    monkeypatch,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     assert store.enqueue_reply_task(
@@ -174,13 +175,50 @@ def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
     assert attempt is not None and attempt.agent_run_id == terminal_run.id
     assert status == 200
     assert "2 revisions" in detail
-    assert "View Consumer conversation" in detail
-    assert "/codex/consumer-session-1" in detail
-    assert "View execution audit" in detail
-    assert "/codex/audit-session-1" in detail
+    assert "查看 Consumer 记录" in detail
+    assert f"/attempts/{attempt_id}/execution/consumer" in detail
+    assert "查看执行审计" in detail
+    assert f"/attempts/{attempt_id}/execution/audit" in detail
+    assert "consumer-session-1" not in detail
+    assert "audit-session-1" not in detail
     assert "Consumer Agent A" not in history
     assert "Audit Agent B" not in history
     assert "mcp_tool_call" not in history
+
+    codex_home = tmp_path / ".codex"
+    session_path = (
+        codex_home
+        / "sessions"
+        / "2026"
+        / "08"
+        / "10"
+        / "consumer-session-1.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"id": "consumer-session-1"}}),
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "已完成执行。"}]},
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("app.codex_history.DEFAULT_CODEX_HOME", codex_home)
+    response = TestClient(create_audit_app(store.path)).get(
+        f"/attempts/{attempt_id}/execution/consumer"
+    )
+
+    assert response.status_code == 200
+    assert "执行记录" in response.text
+    assert "已完成执行。" in response.text
+    assert "consumer-session-1" not in response.text
+    assert str(session_path) not in response.text
 
 
 def seed_attempt(store: AutoReplyStore) -> int:
@@ -1885,10 +1923,9 @@ def test_top_nav_highlights_current_page_and_disables_current_link(
     seed_attempt(store)
 
     history_html = render_attempt_list(store)
-    tutorial_html = render_tutorial_page()
+    tutorial_html = render_tutorial_page(store=store)
     user_feedback_html = render_user_feedback_list(store)
     config_html = render_config_page()
-    codex_html = render_codex_session_list(store)
     errors_html = render_error_list(store)
     tasks_html = render_tasks_page(store)
     workers_html = render_workers_page(store)
@@ -1908,8 +1945,8 @@ def test_top_nav_highlights_current_page_and_disables_current_link(
     assert '<span class="nav-item active" aria-current="page">Config</span>' in config_html
     assert '<a class="nav-item" href="/config">Config</a>' not in config_html
 
-    assert '<span class="nav-item active" aria-current="page">Codex Sessions</span>' in codex_html
-    assert '<a class="nav-item" href="/codex">Codex Sessions</a>' not in codex_html
+    assert 'href="/codex"' not in history_html
+    assert "Codex Sessions" not in history_html
 
     assert '<span class="nav-item active" aria-current="page">Logs</span>' in errors_html
     assert '<a class="nav-item" href="/logs">Logs</a>' not in errors_html
@@ -5458,12 +5495,35 @@ def test_render_codex_session_detail_uses_local_rendered_history(
     assert '<details class="event event-session">' in html
     assert '<time>2026-05-14T12:00:01Z</time>' in html
 
+    status, attempt_execution_html = render_codex_session_detail(
+        "session-1",
+        codex_home=codex_home,
+        store=store,
+        expose_session_metadata=False,
+    )
+
+    assert status == 200
+    assert "执行记录" in attempt_execution_html
+    assert "session-1" not in attempt_execution_html
+    assert str(session_path) not in attempt_execution_html
+    assert "已加载 1 条执行记录。" in attempt_execution_html
+
 
 def test_render_codex_session_detail_returns_404_when_missing(tmp_path: Path):
     status, html = render_codex_session_detail("missing", codex_home=tmp_path)
 
     assert status == 404
     assert "Codex session not found" in html
+
+    status, html = render_codex_session_detail(
+        "missing",
+        codex_home=tmp_path,
+        expose_session_metadata=False,
+    )
+
+    assert status == 404
+    assert "执行记录不可用" in html
+    assert "missing" not in html
 
 
 def test_render_codex_session_detail_shows_related_history_when_file_missing(
@@ -5496,6 +5556,18 @@ def test_render_codex_session_detail_shows_related_history_when_file_missing(
     assert "Related history" in html
     assert f"/attempts/{attempt_id}" in html
     assert "明哥，这个怎么处理？" in html
+
+    status, html = render_codex_session_detail(
+        "missing-session",
+        codex_home=tmp_path,
+        store=store,
+        expose_session_metadata=False,
+    )
+
+    assert status == 200
+    assert "执行记录不可用" in html
+    assert "missing-session" not in html
+    assert "Related history" in html
 
 
 def test_render_attempt_detail_does_not_show_recall_action_card(
