@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import AgentTaskContext
-from app.agent_contracts import AuditFeedback, ConsumerAgentResult
+from app.agent_contracts import AuditFeedback, ConsumerAgentResult, ConsumerProposal
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
@@ -235,10 +236,20 @@ class ConsumerAgentRunner:
 
 
 def consumer_developer_instructions(role_instruction: str) -> str:
-    return _role_developer_instructions(
+    instructions = _role_developer_instructions(
         role_instruction,
         capability_instructions=REVIEWED_DWS_READ_INSTRUCTIONS,
         role_boundary=CONSUMER_ROLE_BOUNDARY,
+    )
+    proposal_schema = json.dumps(
+        ConsumerProposal.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        f"{instructions}\n\n"
+        "For proposal outcome, proposal_json must decode to this JSON Schema exactly:\n"
+        f"{proposal_schema}"
     )
 
 

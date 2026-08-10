@@ -196,6 +196,12 @@ task 和指定 Consumer run 必须是同代最新 run 且仍为 `failed`，并�
 ID 和 transcript 行范围读取这些记录。SQLite 保存 task/run 关系、proposal revision、operation
 ID、租约、终态、外部结果状态和精确去重键，不复制完整 transcript。
 
+Consumer A 的 wire result 只负责传输；其中 `proposal_json` 必须解码为当前运行时
+`ConsumerProposal` 模型的完整对象。模型要求目标、动作说明、能力、操作、目标参数、载荷、
+预期验证、带引用的事实和 Agent 判断。旧的简化对象（例如只有 `actions` 和 `verification`）
+会被严格拒绝，不做兼容补齐；运行时把该模型生成的 JSON Schema 直接交给 Agent，避免提示
+文案与实际校验漂移。
+
 这使诊断可以回答：A 看到了什么、B 为什么要求修改、哪个 B session 执行了什么、外部结果
 是否已确认，同时避免维护另一套会漂移的详细审计格式。
 

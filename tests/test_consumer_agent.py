@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import AgentTaskContext
-from app.consumer_agent import ConsumerAgentRunner
+from app.consumer_agent import ConsumerAgentRunner, consumer_developer_instructions
 from app.agent_result import EffectKind, ResultParseError
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -99,6 +99,16 @@ def _proposal_jsonl(payload: dict[str, object]) -> str:
             ),
         )
     )
+
+
+def test_consumer_instructions_include_the_runtime_proposal_schema():
+    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+
+    assert "proposal_json must decode to this JSON Schema exactly" in instructions
+    assert '"objective"' in instructions
+    assert '"sourced_facts"' in instructions
+    assert '"authored_judgment"' in instructions
+    assert '"expected_verification"' in instructions
 
 
 def _failed_reviewed_read_jsonl() -> str:
