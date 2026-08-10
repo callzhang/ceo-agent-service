@@ -9095,7 +9095,8 @@ def _pending_reconciliation_message(agent_runs: list[AgentRun]) -> str:
         business_context += f"事项：{escape(objective)}。"
     if action_descriptions:
         business_context += "正在核对：" + "；".join(
-            escape(description) for description in action_descriptions
+            escape(description.rstrip(" \t\r\n。；;"))
+            for description in action_descriptions
         ) + "。"
     return (
         business_context

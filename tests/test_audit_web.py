@@ -4515,7 +4515,7 @@ def test_pending_reconciliation_names_objective_and_actions():
                     "objective": "处理招聘需求审批",
                     "actions": [
                         {
-                            "description": "同意招聘需求申请",
+                            "description": "同意招聘需求申请。",
                             "capability": "agent_cli.dws",
                             "operation": "oa approval approve",
                             "target": {"instance_id": "process-1"},
@@ -4523,7 +4523,7 @@ def test_pending_reconciliation_names_objective_and_actions():
                             "expected_verification": "读回审批结果",
                         },
                         {
-                            "description": "通知申请人审批结果",
+                            "description": "通知申请人审批结果。",
                             "capability": "agent_cli.dws",
                             "operation": "chat message send",
                             "target": {"user": "user-1"},
@@ -4552,6 +4552,8 @@ def test_pending_reconciliation_names_objective_and_actions():
     assert "同意招聘需求申请" in html
     assert "通知申请人审批结果" in html
     assert "你当前无需操作" in html
+    assert "。；" not in html
+    assert "。。" not in html
 
 
 def test_nonterminal_later_attempt_is_not_reported_as_completed(tmp_path: Path):
