@@ -1896,11 +1896,16 @@ class DingTalkAutoReplyWorker:
     ) -> bool:
         provider_recovery = result.error.code == "codex_provider_unavailable"
         authorization_wait = result.error.authorization_required
+        active_recovery_wait = result.error.code in {
+            "agent_run_unavailable",
+            "codex_session_locked",
+        }
         if result.status == "failed_retryable" and result.final_run_id == 0:
             error = result.error.code or "agent_orchestration_deferred"
             if (
                 provider_recovery
                 or authorization_wait
+                or active_recovery_wait
                 or task.attempts < self.max_task_attempts
             ):
                 available_at = (
@@ -1949,6 +1954,7 @@ class DingTalkAutoReplyWorker:
             and task.attempts >= self.max_task_attempts
             and not provider_recovery
             and not authorization_wait
+            and not active_recovery_wait
         ):
             task_status = "failed"
         send_error = result.error.code
@@ -1995,7 +2001,9 @@ class DingTalkAutoReplyWorker:
             send_status=send_status,
             send_error=send_error,
             channel=task.channel,
-            preserve_attempt_budget=(provider_recovery or authorization_wait)
+            preserve_attempt_budget=(
+                provider_recovery or authorization_wait or active_recovery_wait
+            )
             and task_status == "pending",
             **self._orchestration_oa_metadata(task, result),
         )
