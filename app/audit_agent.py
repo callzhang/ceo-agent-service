@@ -579,5 +579,9 @@ def _recovery_prompt(
         "array in an operation_id/entries object. Before any DWS read, load the "
         "operation-specific installed skill with agent_cli.read_skill; an unknown "
         "readback command is an evidence task, not a reason to fail or escalate. "
+        "Use a target-scoped read with the same stable target identifier as the "
+        "original action, such as group/conversation, user/open-dingtalk-id, "
+        "instance-id/task-id, or uuid. Do not replace a target-scoped read with a "
+        "global search; global results cannot prove the outcome for one recipient. "
         "Do not write."
     )

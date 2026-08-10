@@ -305,6 +305,10 @@ equivalent DingTalk flags. `group`, `conversation`, `conversation-id`, and
 `open-conversation-id` identify the same conversation namespace; unrelated
 person, task, approval, and document identifiers remain distinct and cannot
 confirm one another merely because their values happen to match.
+Direct-message commands retain `user` and `uuid` as stable target identifiers.
+Unknown-result recovery must use a target-scoped read with the same conversation,
+recipient, approval, or idempotency identity; a global keyword search cannot
+confirm an action performed for one recipient.
 
 Unknown DingTalk message delivery uses the reviewed command descriptor and the
 service delivery ledger as its identity. The Agent's free-form operation label

@@ -567,7 +567,14 @@ def _argv_target_identifiers(argv: tuple[str, ...]) -> dict[str, str]:
         flag, separator, inline_value = token[2:].partition("=")
         normalized = flag.replace("_", "-").casefold()
         is_target = normalized.endswith("-id") or normalized in {
-            "id", "conversation", "group", "email", "node", "url"
+            "id",
+            "conversation",
+            "group",
+            "email",
+            "node",
+            "url",
+            "user",
+            "uuid",
         }
         if separator:
             value = inline_value

@@ -40,6 +40,56 @@ def test_describe_native_command_accepts_reviewed_local_read():
     assert descriptor.effect is EffectKind.READ_ONLY
 
 
+def test_dws_direct_message_targets_preserve_user_and_idempotency_identity():
+    write_descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--user",
+                "user-1",
+                "--text",
+                "done",
+                "--uuid",
+                "operation-1",
+                "--yes",
+            ],
+        }
+    )
+    user_read_descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": ["dws", "chat", "+chat-messages", "--user", "user-1"],
+        }
+    )
+    status_read_descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                "dws",
+                "chat",
+                "message",
+                "query-send-status",
+                "--uuid",
+                "operation-1",
+            ],
+        }
+    )
+
+    assert write_descriptor is not None
+    assert write_descriptor.target_identifiers == {
+        "user": "user-1",
+        "uuid": "operation-1",
+    }
+    assert user_read_descriptor is not None
+    assert user_read_descriptor.target_identifiers == {"user": "user-1"}
+    assert status_read_descriptor is not None
+    assert status_read_descriptor.target_identifiers == {"uuid": "operation-1"}
+
+
 @pytest.mark.parametrize(
     "command",
     (
