@@ -546,5 +546,8 @@ def _recovery_prompt(
         "read completed in this recovery turn. Use present only when the read proves "
         "the old action happened, absent only when it proves the action did not "
         "happen, and ambiguous when human judgment is required. Return outcome "
-        "reconciled with side_effect_state unknown and no external_result. Do not write."
+        "reconciled with side_effect_state unknown and no external_result. "
+        "reconciliation_json must be a JSON-encoded array whose entries contain "
+        "exactly action_index, disposition, and read_result_digest. Do not wrap the "
+        "array in an operation_id/entries object. Do not write."
     )

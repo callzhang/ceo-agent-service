@@ -19,6 +19,7 @@ from app.audit_agent import (
     AuditAgentRunner,
     _expected_effect_action,
     _recovery_authorizations,
+    _recovery_prompt,
 )
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
@@ -78,6 +79,21 @@ class ExactReceiptExecutor(CapturingExecutor):
             expected_status="unknown",
         )
         return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+
+
+def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
+    store, _task, audit_context, run = _seed_crashed_audit_write(setup)
+
+    prompt = _recovery_prompt(
+        run,
+        audit_context,
+        tuple(a.model_dump(mode="json") for a in audit_context.proposal.actions),
+        McpToolEffectRegistry.default(),
+    )
+
+    assert "reconciliation_json must be a JSON-encoded array" in prompt
+    assert "Do not wrap the array in an operation_id/entries object" in prompt
+    assert "read_result_digest" in prompt
 
 
 def _wire_result(result: dict[str, object]) -> dict[str, object]:

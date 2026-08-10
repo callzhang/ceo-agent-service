@@ -259,6 +259,12 @@ those values against the full Pydantic business contracts before any action can 
 accepted. The service does not fall back to the former result shape when the wire
 schema is violated.
 
+Audit recovery encodes `reconciliation_json` as a JSON array string. Each entry
+contains only `action_index`, `disposition`, and `read_result_digest`; operation
+identity remains in the persisted run and must not be repeated as an outer JSON
+envelope. This keeps the transport shape unambiguous while the full contract binds
+each disposition to the completed read event stored for that run.
+
 An `agent_cli` command that returns a structured error receipt is recorded as a
 failed effect with its retryability and channel state. It is not treated as an
 unreviewed tool call or an unknown successful write. Native DWS/Lark commands may
