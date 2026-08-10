@@ -9534,16 +9534,10 @@ class AutoReplyStore:
         reviewer_feedback: str = "",
         channel: str = "dingtalk",
         oa_url: str = "",
-        requires_external_action: bool = False,
     ) -> tuple[int, ReplyTask]:
         """Atomically persist one reviewed instruction and queue its generation."""
         feedback = reviewer_feedback.strip()
         suggestion = suggested_reply_text.strip()
-        rerun_reason = (
-            "human_decision_reply"
-            if requires_external_action
-            else "reviewed_message_reply"
-        )
         task: ReplyTask | None = None
         attempt_id = 0
         with self._connect() as db:
@@ -9558,7 +9552,7 @@ class AutoReplyStore:
                   and tasks.conversation_id=?
                   and tasks.trigger_message_id=?
                   and tasks.status in ('pending', 'processing')
-                  and attempts.codex_reason=?
+                  and attempts.codex_reason='reviewed_message_reply'
                   and attempts.reviewer_feedback=?
                   and attempts.corrected_reply_text=?
                 limit 1
@@ -9567,7 +9561,6 @@ class AutoReplyStore:
                     channel,
                     conversation_id,
                     trigger_message_id,
-                    rerun_reason,
                     feedback,
                     suggestion,
                 ),
@@ -9612,7 +9605,7 @@ class AutoReplyStore:
                         audit_summary, reviewer_feedback, corrected_reply_text,
                         reviewed_at, send_status, channel
                     ) values (?, ?, ?, ?, ?, 'send_reply', 'general',
-                              ?, ?, ?, ?, ?, ?,
+                              'reviewed_message_reply', ?, ?, ?, ?, ?,
                               current_timestamp, 'pending', ?)
                     """,
                     (
@@ -9621,7 +9614,6 @@ class AutoReplyStore:
                         trigger_message_id,
                         trigger_sender,
                         trigger_text,
-                        rerun_reason,
                         suggestion,
                         json.dumps(
                             [{"tool": "audit_review", "result": "queued"}],

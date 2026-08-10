@@ -2533,7 +2533,6 @@ def test_manual_review_reaches_agent_without_unrelated_attempt_fields(tmp_path: 
     assert context.manual_rerun.source_attempt_id == attempt_id
     assert context.manual_rerun.reviewer_feedback == "先核对材料，再执行。"
     assert context.manual_rerun.suggested_reply_text == "按最新材料回复。"
-    assert context.manual_rerun.requires_external_action is False
     rendered = context.render()
     assert "unrelated-direct-user" not in rendered
     assert "unrelated-open-id" not in rendered

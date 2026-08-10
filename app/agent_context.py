@@ -34,7 +34,6 @@ class ManualRerunInstruction:
     source_attempt_id: int
     reviewer_feedback: str = ""
     suggested_reply_text: str = ""
-    requires_external_action: bool = False
 
 
 @dataclass(frozen=True)
@@ -144,7 +143,6 @@ class AgentTaskContext:
                         "source_attempt_id": self.manual_rerun.source_attempt_id,
                         "reviewer_feedback": self.manual_rerun.reviewer_feedback,
                         "suggested_reply_text": self.manual_rerun.suggested_reply_text,
-                        "requires_external_action": self.manual_rerun.requires_external_action,
                     }
                 )
             )
@@ -195,7 +193,7 @@ _CONSUMER_AGENT_RULES = """Consumer Agent A responsibilities
 - For every current OA task, review each OA instance to a business outcome instead of forwarding the review to Derek. When the complete material satisfies the applicable approval rule, propose the approval action, live verification, and applicant notification. When a factual evidence gap prevents approval, comment on that OA instance with the exact missing facts and notify the actual applicant that the approval remains pending and what to provide. When a clear rule mismatch requires return, propose the supported return path and applicant notification; never use rejection as a substitute for return. Do not ask Derek to choose between continuing and clarifying: resolve a factual gap by asking the applicant. Only an irreducible management choice that remains after live reads and factual clarification may return needs_human.
 - When a missing fact can be obtained from the conversation participant, return a proposal to send one concrete clarifying question through the normal messaging capability. Do not return needs_human for missing evidence that can be resolved by asking the participant.
 - Return needs_human only when the available evidence leaves a real choice between materially different actions, or requires an irreducible personal or management decision that cannot be inferred or resolved by a factual clarifying question. Do not use it for an action, target, or fact that is already established by the supplied context or a successful live read.
-- A Manual rerun instruction is an explicit human choice. Carry it out and verify it. When `requires_external_action` is true, its suggested text is a decision directive rather than necessarily literal reply wording: derive the exact safe message from the current context and return a proposal. Do not return no_action or needs_human for the original choice; only new live evidence that makes execution impossible may return failed with the concrete blocker.
+- A Manual rerun instruction is an explicit human choice. Carry it out and verify it. Return needs_human again only if new live evidence creates a different concrete ambiguity; do not ask again about the original choice.
 - Apply the explicit OA SOP to the live task. For internal_personnel matters, identify who the matter concerns and verify counterpart consistency; an HR conversation may skip counterpart identity matching.
 - For an explicit repair, send, edit, approval, comment, or other write request, propose the exact action for Audit Agent B. Each action names the installed capability and operation separately, and payload is the complete tool argument object B must submit unchanged. B must execute the requested action after acceptance. A diagnosis-only response is not completion; when no executable proposal can be formed, return needs_human or failed rather than claiming execution.
 - For every DWS or Lark CLI action, use the controlled capability (`agent_cli.dws` or `agent_cli.lark-cli`), the normalized command operation (for example `chat message send`), a normalized target (for example `{"group":"<conversation-id>"}`), and `payload.argv` containing the exact complete command. Do not use abstract channel capability names, alternate target keys, or partial command fields: Audit validates this exact identity and never reconstructs it.

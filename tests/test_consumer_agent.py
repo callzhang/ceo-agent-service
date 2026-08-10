@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_context import AgentTaskContext, ManualRerunInstruction
+from app.agent_context import AgentTaskContext
 from app.consumer_agent import ConsumerAgentRunner
 from app.agent_result import EffectKind, ResultParseError
 from app.native_cli_metadata import (
@@ -215,31 +215,6 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         and "valid ConsumerAgentResult JSON" in option
         for option in command
     )
-
-
-def test_consumer_starts_fresh_session_for_selected_human_decision(store, task, context):
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-a")
-    context = replace(
-        context,
-        manual_rerun=ManualRerunInstruction(
-            source_attempt_id=42,
-            reviewer_feedback="执行已选择的方案。",
-            suggested_reply_text="采用方案二并说明交付边界",
-            requires_external_action=True,
-        ),
-    )
-    executor = CapturingExecutor(_result_jsonl(session="session-new"))
-
-    ConsumerAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-        codex_session_exists=lambda _: True,
-    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
-    command = executor.commands[0]
-    assert "resume" not in command
-    assert "session-a" not in command
 
 
 def test_consumer_rotates_damaged_session_after_missing_final_result(

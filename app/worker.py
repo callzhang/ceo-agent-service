@@ -2090,9 +2090,6 @@ class DingTalkAutoReplyWorker:
                         or source_attempt.draft_reply_text.strip()
                         or source_attempt.final_reply_text.strip()
                     ),
-                    requires_external_action=(
-                        source_attempt.codex_reason == "human_decision_reply"
-                    ),
                 )
         return AgentTaskContext(
             task_id=task.id,
