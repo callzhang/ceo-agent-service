@@ -427,3 +427,30 @@ def test_audit_wire_result_decodes_nested_result_fields():
 
     assert result.outcome is AuditOutcome.NEEDS_HUMAN
     assert result.error.code == "decision_required"
+
+
+def test_audit_wire_result_decodes_revision_feedback_fields():
+    result = AuditAgentWireResult.model_validate(
+        {
+            "outcome": "revision_required",
+            "summary": "The command needs confirmation.",
+            "proposal_revision": 0,
+            "side_effect_state": "none",
+            "feedback_json": json.dumps(
+                {
+                    "rule": "DWS writes require --yes.",
+                    "observation": "The proposed argv omitted --yes.",
+                    "requested_revision": "Add --yes without changing the action.",
+                }
+            ),
+            "external_result_json": None,
+            "reconciliation_json": "[]",
+            "error_code": "dws_write_missing_yes",
+            "error_retryable": True,
+            "error_authorization_required": False,
+        }
+    ).to_result()
+
+    assert result.outcome is AuditOutcome.REVISION_REQUIRED
+    assert result.feedback is not None
+    assert result.feedback.requested_revision == "Add --yes without changing the action."

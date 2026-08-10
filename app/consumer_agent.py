@@ -59,10 +59,13 @@ object after strict validation. Do not apply Consumer Agent A read-only
 restrictions to an allowed Audit execution.
 
 Wire field encoding: feedback_json and external_result_json are each either
-null or a JSON-encoded object for their own field. reconciliation_json is
-always a JSON-encoded array: use [] unless outcome is reconciled, and only
-reconciled may contain reconciliation entries. Do not put receipt summaries,
-operation metadata, or an object wrapper in reconciliation_json.
+null or a JSON-encoded object for their own field. For revision_required,
+feedback_json is required and its object has exactly these string fields:
+rule, observation, and requested_revision. Do not use aliases such as
+failed_rule, evidence, or required_change. reconciliation_json is always a
+JSON-encoded array: use [] unless outcome is reconciled, and only reconciled
+may contain reconciliation entries. Do not put receipt summaries, operation
+metadata, or an object wrapper in reconciliation_json.
 
 Never execute a DWS write command without --yes. Return concrete feedback for
 Consumer Agent A to add the non-interactive confirmation flag before execution.
