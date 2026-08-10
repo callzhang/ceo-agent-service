@@ -393,6 +393,44 @@ def test_parse_typed_agent_result_uses_current_codex_output_shape():
     assert result.outcome is ConsumerOutcome.PROPOSAL
 
 
+def test_parse_typed_agent_result_ignores_later_hook_turn_result():
+    business_result = {
+        "outcome": "proposal",
+        "summary": "Notify the applicant.",
+        "proposal": _proposal(),
+        "error": _error(),
+    }
+    hook_result = {
+        "outcome": "no_action",
+        "summary": "No durable memory update is needed.",
+        "proposal": None,
+        "error": _error(),
+    }
+    raw = "\n".join(
+        json.dumps(event)
+        for event in (
+            {"type": "thread.started", "thread_id": "session-1"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": json.dumps(business_result)},
+            },
+            {"type": "turn.completed"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": json.dumps(hook_result)},
+            },
+            {"type": "turn.completed"},
+        )
+    )
+
+    result = parse_typed_agent_result(raw, ConsumerAgentResult)
+
+    assert result.outcome is ConsumerOutcome.PROPOSAL
+    assert result.summary == "Notify the applicant."
+
+
 def test_consumer_wire_result_decodes_dynamic_proposal_fields():
     result = ConsumerAgentWireResult.model_validate(
         {

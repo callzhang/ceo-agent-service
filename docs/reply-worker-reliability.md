@@ -308,6 +308,11 @@ being attempted. If an older persisted candidate reaches unknown-outcome recover
 with that invalid command, the service rotates to a new Consumer generation; it
 does not ask the user to choose and does not replay the old command.
 
+Only the first Codex turn started for a Consumer or Audit invocation is part of
+that business run. Plugin stop hooks may open later turns for tasks such as
+durable-memory maintenance; their messages and tool events are not parsed as the
+business result and cannot change its side-effect state.
+
 Controlled CLI readback compares stable target identity rather than spelling of
 equivalent DingTalk flags. `group`, `conversation`, `conversation-id`, and
 `open-conversation-id` identify the same conversation namespace; unrelated

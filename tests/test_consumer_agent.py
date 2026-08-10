@@ -711,6 +711,44 @@ def test_consumer_rejects_effectful_stream_event(store, task, context):
         )
 
 
+def test_consumer_ignores_effectful_event_from_later_hook_turn(store, task, context):
+    business_result = json.loads(_result_jsonl().splitlines()[-1])
+    hook_write = {
+        "type": "item.started",
+        "item": {
+            "type": "mcp_tool_call",
+            "id": "hook-write-1",
+            "server": "memory_connector",
+            "tool": "memory_write",
+            "arguments": {},
+        },
+    }
+    stream = "\n".join(
+        json.dumps(event)
+        for event in (
+            {"type": "thread.started", "thread_id": "session-a"},
+            {"type": "turn.started"},
+            business_result,
+            {"type": "turn.completed"},
+            {"type": "turn.started"},
+            hook_write,
+            {"type": "turn.completed"},
+        )
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.outcome.value == "no_action"
+    persisted = store.get_agent_run(result.run_id)
+    assert persisted is not None
+    assert persisted.status == "completed"
+    assert persisted.tool_events == []
+
+
 def test_consumer_allows_reviewed_direct_native_read(store, task, context):
     command = "dws oa approval detail --instance-id process-1 --format json"
     stream = "\n".join(

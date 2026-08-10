@@ -84,7 +84,7 @@ def parse_typed_agent_result(
     raw: str,
     model_type: type[ResultModelT],
 ) -> ResultModelT:
-    payloads = _parse_jsonl_payloads(raw)
+    payloads = _primary_turn_payloads(_parse_jsonl_payloads(raw))
     for payload in reversed(payloads):
         candidate = _agent_message_candidate(payload)
         if candidate is None:
@@ -97,6 +97,28 @@ def parse_typed_agent_result(
                 "latest agent result candidate is malformed or does not match the strict schema"
             ) from exc
     raise ResultParseError("no valid typed result JSON found in Codex JSONL")
+
+
+def _primary_turn_payloads(payloads: list[dict]) -> list[dict]:
+    start = next(
+        (
+            index
+            for index, payload in enumerate(payloads)
+            if payload.get("type") == "turn.started"
+        ),
+        None,
+    )
+    if start is None:
+        return payloads
+    end = next(
+        (
+            index + 1
+            for index, payload in enumerate(payloads[start:], start=start)
+            if payload.get("type") in {"turn.completed", "turn.failed"}
+        ),
+        len(payloads),
+    )
+    return payloads[start:end]
 
 
 def _parse_jsonl_payloads(raw: str) -> list[dict]:

@@ -179,6 +179,8 @@ class AgentTurnProcess(Generic[ResultT]):
         recovery_authorizations = recovery_authorizations or {}
         line_count = 0
         saw_json = False
+        primary_turn_started = False
+        primary_turn_closed = False
         recovery_started_actions: set[int] = set()
         effect_action_counts = [0] * len(expected_effect_actions)
         effect_action_by_call_id: dict[str, int] = {}
@@ -200,6 +202,7 @@ class AgentTurnProcess(Generic[ResultT]):
 
         def persist_line(line: str) -> None:
             nonlocal line_count, saw_json
+            nonlocal primary_turn_started, primary_turn_closed
             if not line.strip():
                 return
             try:
@@ -211,6 +214,11 @@ class AgentTurnProcess(Generic[ResultT]):
             saw_json = True
             if not isinstance(payload, dict):
                 raise RuntimeError("codex_stream_invalid")
+            payload_type = payload.get("type")
+            if primary_turn_closed:
+                return
+            if payload_type == "turn.started":
+                primary_turn_started = True
             line_count += 1
             if recover_unknown:
                 self.store.renew_agent_run_lease(
@@ -314,6 +322,11 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
                 else:
                     self.store.append_agent_run_event(run.id, event, owner=self.owner)
+            if primary_turn_started and payload_type in {
+                "turn.completed",
+                "turn.failed",
+            }:
+                primary_turn_closed = True
 
         try:
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
