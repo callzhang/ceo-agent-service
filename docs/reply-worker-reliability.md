@@ -296,6 +296,12 @@ use persisted exponential retry delays from one minute up to fifteen minutes.
 They are never immediately reclaimed in a hot loop, and the delay does not
 authorize replaying an approval, message, or other external action.
 
+Controlled CLI readback compares stable target identity rather than spelling of
+equivalent DingTalk flags. `group`, `conversation`, `conversation-id`, and
+`open-conversation-id` identify the same conversation namespace; unrelated
+person, task, approval, and document identifiers remain distinct and cannot
+confirm one another merely because their values happen to match.
+
 Unknown DingTalk message delivery uses the reviewed command descriptor and the
 service delivery ledger as its identity. The Agent's free-form operation label
 does not decide whether an action is a message send. When the exact trigger has

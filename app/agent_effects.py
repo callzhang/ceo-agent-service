@@ -235,10 +235,34 @@ class McpToolEffectRegistry:
         )
         if mode == "exact":
             return bool(read_targets) and read_targets == write_targets
-        shared_keys = read_targets.keys() & write_targets.keys()
+        normalized_read_targets = _normalized_shared_targets(read_targets)
+        normalized_write_targets = _normalized_shared_targets(write_targets)
+        if normalized_read_targets is None or normalized_write_targets is None:
+            return False
+        shared_keys = normalized_read_targets.keys() & normalized_write_targets.keys()
         return bool(shared_keys) and all(
-            read_targets[key] == write_targets[key] for key in shared_keys
+            normalized_read_targets[key] == normalized_write_targets[key]
+            for key in shared_keys
         )
+
+
+def _normalized_shared_targets(
+    targets: dict[str, object],
+) -> dict[str, object] | None:
+    normalized: dict[str, object] = {}
+    conversation_keys = {
+        "conversation",
+        "conversation-id",
+        "group",
+        "open-conversation-id",
+    }
+    for key, value in targets.items():
+        normalized_key = key.replace("_", "-").casefold()
+        namespace = "conversation" if normalized_key in conversation_keys else normalized_key
+        if namespace in normalized and normalized[namespace] != value:
+            return None
+        normalized[namespace] = value
+    return normalized
 
 
 def _controlled_cli_receipt(value: object) -> dict[str, object] | None:

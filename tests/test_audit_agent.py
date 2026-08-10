@@ -1872,6 +1872,45 @@ def test_controlled_cli_readback_rejects_conflicting_shared_target():
     )
 
 
+@pytest.mark.parametrize("write_target_key", ["conversation-id", "open-conversation-id"])
+def test_controlled_cli_readback_matches_conversation_target_aliases(
+    write_target_key,
+):
+    registry = McpToolEffectRegistry.default()
+
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "target_identifiers": {"group": "conversation-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "target_identifiers": {write_target_key: "conversation-1"},
+        },
+        registry,
+    )
+
+
+def test_controlled_cli_readback_does_not_alias_unrelated_target_names():
+    registry = McpToolEffectRegistry.default()
+
+    assert not _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "target_identifiers": {"group": "same-value"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "target_identifiers": {"open-dingtalk-id": "same-value"},
+        },
+        registry,
+    )
+
+
 def test_action_receipt_identity_separates_same_payload_across_actions(setup):
     store, task, _context, parent = setup
     run = store.claim_agent_run(
