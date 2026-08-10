@@ -49,6 +49,11 @@ an additional wrapper object in proposal_json.
 For every DWS write command in proposal_json, include the non-interactive
 confirmation flag --yes. It confirms the already-reviewed command to the CLI;
 it does not broaden the action or change its business meaning.
+
+Write commands belong only as data inside proposal_json for Audit Agent B. Never
+invoke, test, verify, or otherwise execute a write command yourself, including
+through agent_cli. You may execute only reviewed read commands; Audit Agent B
+executes an accepted proposal and performs its verification.
 """.strip()
 
 AUDIT_ROLE_BOUNDARY = """
@@ -198,9 +203,13 @@ class ConsumerAgentRunner:
         try:
             return process.execute(
                 run=claim.run,
-                prompt=context.render(
-                    proposal_revision=proposal_revision,
-                    feedback=feedback,
+                prompt=(
+                    context.render(
+                        proposal_revision=proposal_revision,
+                        feedback=feedback,
+                    )
+                    + "\n\n"
+                    + _consumer_proposal_contract()
                 ),
                 session_id=session_id,
                 schema_path=SCHEMA_PATH,
@@ -241,14 +250,18 @@ def consumer_developer_instructions(role_instruction: str) -> str:
         capability_instructions=REVIEWED_DWS_READ_INSTRUCTIONS,
         role_boundary=CONSUMER_ROLE_BOUNDARY,
     )
+    return f"{instructions}\n\n{_consumer_proposal_contract()}"
+
+
+def _consumer_proposal_contract() -> str:
     proposal_schema = json.dumps(
         ConsumerProposal.model_json_schema(),
         ensure_ascii=False,
         separators=(",", ":"),
     )
     return (
-        f"{instructions}\n\n"
-        "For proposal outcome, proposal_json must decode to this JSON Schema exactly:\n"
+        "For proposal outcome, proposal_json must decode to this JSON Schema exactly. "
+        "Use this current contract instead of proposal shapes from earlier turns:\n"
         f"{proposal_schema}"
     )
 

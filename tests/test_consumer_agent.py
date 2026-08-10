@@ -19,9 +19,10 @@ class CapturingExecutor:
     def __init__(self, stdout: str) -> None:
         self.stdout = stdout
         self.commands: list[list[str]] = []
+        self.prompts: list[str] = []
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
-        del kwargs
+        self.prompts.append(str(kwargs["prompt"]))
         self.commands.append(command)
         for line in self.stdout.splitlines():
             on_stdout_line(line)
@@ -109,6 +110,13 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert '"sourced_facts"' in instructions
     assert '"authored_judgment"' in instructions
     assert '"expected_verification"' in instructions
+
+
+def test_consumer_instructions_keep_writes_as_proposal_data():
+    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+
+    assert "Write commands belong only as data inside proposal_json" in instructions
+    assert "Never\ninvoke, test, verify, or otherwise execute a write command yourself" in instructions
 
 
 def _failed_reviewed_read_jsonl() -> str:
@@ -239,6 +247,8 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         and "valid ConsumerAgentResult JSON" in option
         for option in command
     )
+    assert "proposal_json must decode to this JSON Schema exactly" in executor.prompts[0]
+    assert '"expected_verification"' in executor.prompts[0]
 
 
 def test_consumer_rotates_damaged_session_after_missing_final_result(
