@@ -286,6 +286,11 @@ normal Audit review, live evidence that the proposed action already happened is
 revision feedback, not recovery: B returns `revision_required`, A revises the
 proposal to `no_action`, and neither Agent repeats the external action.
 
+The audit UI keeps `pending_reconciliation` as the persisted lifecycle value but
+renders it as a read-only verification state. The detail page states why the
+result is unknown, that no duplicate approval or message will be attempted, and
+that the user has no decision to make until reconciliation returns evidence.
+
 An `agent_cli` command that returns a structured error receipt is recorded as a
 failed effect with its retryability and channel state. It is not treated as an
 unreviewed tool call or an unknown successful write. Native DWS/Lark commands may

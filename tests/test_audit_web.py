@@ -4445,6 +4445,35 @@ def test_render_attempt_detail_shows_quality_warnings(tmp_path: Path):
     )
 
 
+def test_pending_reconciliation_explains_context_and_requires_no_user_decision(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="工作通知:北京星尘纪元智能科技有限公司",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="张静在招聘需求申请里提到了你，并说明以流程评论为准。",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="pending_reconciliation",
+        audit_summary="审批动作结果未知，等待只读核对当前审批状态。",
+    )
+    store.update_reply_attempt(attempt_id, send_error="audit_recovery_failed")
+
+    status, detail = render_attempt_detail(store, attempt_id)
+    history = render_attempt_list(store, include_chart=False)
+
+    assert status == 200
+    assert "正在核对执行结果" in detail
+    assert "系统只会读取外部状态，不会重复审批或发送通知" in detail
+    assert "你当前无需操作" in detail
+    assert "等待你的决策" not in detail
+    assert "🔎 正在核对执行结果" in history
+    assert "Pending Reconciliation" not in history
+
+
 def test_render_attempt_detail_suppresses_quality_warnings_for_skipped_attempts(
     tmp_path: Path,
 ):

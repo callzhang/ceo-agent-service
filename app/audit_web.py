@@ -8843,6 +8843,8 @@ def _display_action_state(value: str) -> str:
 
 def _send_status_action(attempt: ReplyAttempt) -> tuple[str, str]:
     send_status = attempt.send_status
+    if send_status.strip().lower() == "pending_reconciliation":
+        return "🔎 正在核对执行结果", "processing"
     if send_status.strip().lower() == "reacted":
         return "🙂 Reacted", send_status
     return f"💬 {_display_action_state(send_status)}", send_status
@@ -9065,6 +9067,12 @@ def _attempt_status_card(
         message = "这条事项已判定无需回复，无需你操作。"
     elif attempt.send_status == "needs_human":
         message = "这条事项等待你的决策。请阅读下方已核验的事实，再提交具体处理指令。"
+    elif attempt.send_status == "pending_reconciliation":
+        message = (
+            "正在核对执行结果。此前外部动作是否成功尚未形成可验证回执；"
+            "系统只会读取外部状态，不会重复审批或发送通知。"
+            "你当前无需操作；核对完成后会自动更新为已完成、可安全重试或明确失败。"
+        )
     elif attempt.send_status == "failed":
         message = "这次处理没有完成。可使用“重新处理”重新读取材料并执行当前规则。"
     else:
