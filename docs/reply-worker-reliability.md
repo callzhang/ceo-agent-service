@@ -281,6 +281,11 @@ identity remains in the persisted run and must not be repeated as an outer JSON
 envelope. This keeps the transport shape unambiguous while the full contract binds
 each disposition to the completed read event stored for that run.
 
+`reconciled` is limited to an explicit unknown-outcome recovery turn. During a
+normal Audit review, live evidence that the proposed action already happened is
+revision feedback, not recovery: B returns `revision_required`, A revises the
+proposal to `no_action`, and neither Agent repeats the external action.
+
 An `agent_cli` command that returns a structured error receipt is recorded as a
 failed effect with its retryability and channel state. It is not treated as an
 unreviewed tool call or an unknown successful write. Native DWS/Lark commands may

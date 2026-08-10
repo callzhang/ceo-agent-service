@@ -107,6 +107,8 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
     assert "failed_rule, evidence, or required_change" in instructions
     assert "reconciled requires\nside_effect_state=unknown" in instructions
     assert "action_index, disposition (present,\nabsent, or ambiguous), and read_result_digest" in instructions
+    assert "reconciled outcome is reserved for unknown-outcome recovery" in instructions
+    assert "return revision_required and ask\nConsumer Agent A to return no_action" in instructions
     assert "Never execute a DWS write command without --yes" in instructions
 
 
