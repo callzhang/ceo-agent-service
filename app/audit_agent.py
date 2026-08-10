@@ -7,7 +7,12 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
-from app.agent_contracts import AuditAgentResult, AuditOutcome
+from app.agent_contracts import (
+    AuditAgentResult,
+    AuditOutcome,
+    AuditReconciliation,
+    ReconciliationDisposition,
+)
 from app.agent_result import AgentError, SideEffectState, parse_typed_agent_result
 from app.agent_cli import RECOVERY_WRITE_ALLOWLIST_ENV
 from app.audit_rules import render_audit_rules
@@ -102,6 +107,38 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
+        database_absence = _database_delivery_absence_reconciliation(
+            self.store,
+            task,
+            context,
+            claim.run,
+        )
+        if database_absence:
+            result = AuditAgentResult(
+                outcome=AuditOutcome.RECONCILED,
+                summary=(
+                    "No persisted delivery record exists for the exact trigger; "
+                    "the direct chat action is treated as absent."
+                ),
+                proposal_revision=run.proposal_revision,
+                side_effect_state=SideEffectState.UNKNOWN,
+                feedback=None,
+                external_result=None,
+                reconciliation=database_absence,
+                error=AgentError(),
+            )
+            persisted = self.store.persist_unknown_agent_run_result(
+                run.id,
+                result.model_dump(mode="json"),
+                owner=self.owner,
+                transcript_end_line=claim.run.transcript_end_line,
+            )
+            return AgentTurnRunResult(
+                run_id=persisted.id,
+                result=result,
+                transcript_start_line=persisted.transcript_start_line,
+                transcript_end_line=persisted.transcript_end_line,
+            )
         try:
             return self._execute_claimed(
                 task,
@@ -349,6 +386,52 @@ def _expected_effect_action(
             expected["reviewed_server"] = call.server
             expected["reviewed_tool"] = call.tool
     return expected
+
+
+def _database_delivery_absence_reconciliation(
+    store: AutoReplyStore,
+    task: ReplyTask,
+    context: AuditTurnContext,
+    run: AgentRun,
+) -> tuple[AuditReconciliation, ...]:
+    """Use the service delivery ledger for an all-direct-chat unknown outcome."""
+    if store.has_sent_reply_for_trigger(task.conversation_id, task.trigger_message_id):
+        return ()
+    actions = context.proposal.actions
+    if not actions or not all(_is_direct_chat_send(action) for action in actions):
+        return ()
+    digest = hashlib.sha256(
+        json.dumps(
+            {
+                "kind": "persisted_delivery_absent",
+                "task_id": task.id,
+                "agent_run_id": run.id,
+                "operation_id": run.operation_id,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return tuple(
+        AuditReconciliation(
+            action_index=index,
+            disposition=ReconciliationDisposition.ABSENT,
+            read_result_digest=digest,
+        )
+        for index in range(len(actions))
+    )
+
+
+def _is_direct_chat_send(action: object) -> bool:
+    capability = getattr(action, "capability", "")
+    operation = getattr(action, "operation", "")
+    payload = getattr(action, "payload", None)
+    if capability != "agent_cli.dws" or operation != "chat message send":
+        return False
+    if not isinstance(payload, dict):
+        return False
+    argv = payload.get("argv")
+    return isinstance(argv, list) and "--open-dingtalk-id" in argv
 
 
 def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:

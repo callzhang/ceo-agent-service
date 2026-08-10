@@ -853,6 +853,7 @@ def test_crash_after_write_resumes_same_audit_session_and_confirms_without_repla
     setup,
 ):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "done")
     executor = CapturingExecutor(
         _audit_result_jsonl(
             "reconciled",
@@ -900,6 +901,56 @@ def test_crash_after_write_resumes_same_audit_session_and_confirms_without_repla
         "reconciliation:"
         f"{receipts[0].operation_id}:recovery-read-digest"
     )
+
+
+def test_direct_chat_unknown_without_delivery_record_replays_through_recovery(
+    setup,
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor("")
+    direct_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send direct result",
+            "actions": [
+                {
+                    "description": "Send direct message",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"open_dingtalk_id": "direct-user"},
+                    "payload": {
+                        "argv": [
+                            "dws",
+                            "chat",
+                            "message",
+                            "send",
+                            "--open-dingtalk-id",
+                            "direct-user",
+                            "--text",
+                            "done",
+                            "--yes",
+                        ]
+                    },
+                    "expected_verification": "Message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Requested by Derek",
+        }
+    )
+    direct_context = replace(audit_context, proposal=direct_proposal)
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, direct_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "reconciled"
+    assert result.result.reconciliation[0].disposition.value == "absent"
+    assert persisted is not None and persisted.status == "unknown"
+    assert persisted.final_result_json
+    assert executor.commands == []
 
 
 def test_recovery_accepts_verified_controlled_read_receipt_with_large_stdout(setup):
