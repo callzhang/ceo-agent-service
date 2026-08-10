@@ -96,6 +96,15 @@ def _json_digest(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _has_noninteractive_confirmation(argv: Sequence[str]) -> bool:
+    return any(
+        argument == "-y"
+        or argument == "--yes"
+        or argument.startswith("--yes=")
+        for argument in argv
+    )
+
+
 def _recovery_write_authorization(
     command,
     argv: Sequence[str],
@@ -205,6 +214,12 @@ def _execute_reviewed(
         raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
     if command.effect is not expected_effect:
         raise AgentReadOnlyViolationError("reviewed_cli_effect_mismatch")
+    if (
+        expected_effect is EffectKind.EFFECTFUL
+        and command.cli == "dws"
+        and not _has_noninteractive_confirmation(argv)
+    ):
+        raise AgentReadOnlyViolationError("agent_cli_confirmation_required")
     authorization = None
     if expected_effect is EffectKind.EFFECTFUL:
         authorization = _recovery_write_authorization(

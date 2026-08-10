@@ -44,6 +44,10 @@ before it can affect execution.
 Wire field encoding: proposal_json is a JSON-encoded object only when outcome
 is proposal; otherwise it must be null. Do not put a JSON array, markdown, or
 an additional wrapper object in proposal_json.
+
+For every DWS write command in proposal_json, include the non-interactive
+confirmation flag --yes. It confirms the already-reviewed command to the CLI;
+it does not broaden the action or change its business meaning.
 """.strip()
 
 AUDIT_ROLE_BOUNDARY = """
@@ -59,6 +63,9 @@ null or a JSON-encoded object for their own field. reconciliation_json is
 always a JSON-encoded array: use [] unless outcome is reconciled, and only
 reconciled may contain reconciliation entries. Do not put receipt summaries,
 operation metadata, or an object wrapper in reconciliation_json.
+
+Never execute a DWS write command without --yes. Return concrete feedback for
+Consumer Agent A to add the non-interactive confirmation flag before execution.
 """.strip()
 
 

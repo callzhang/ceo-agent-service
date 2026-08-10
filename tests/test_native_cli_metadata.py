@@ -95,6 +95,29 @@ def test_agent_cli_rejects_sensitive_argv_before_process_launch():
     assert launched is False
 
 
+def test_agent_cli_rejects_interactive_dws_write_before_process_launch(monkeypatch):
+    monkeypatch.setattr("app.agent_cli.shutil.which", lambda _: "/bin/dws")
+    launched = False
+
+    def process_runner(*args, **kwargs):
+        nonlocal launched
+        launched = True
+        raise AssertionError("process must not launch")
+
+    with pytest.raises(AgentReadOnlyViolationError, match="agent_cli_confirmation_required"):
+        execute_reviewed_write(
+            ["dws", "chat", "+send-to-group", "--group", "group-1", "--text", "done"],
+            classifier=NativeCliMetadataClassifier(
+                reviewed_effects={
+                    ("dws", "chat +send-to-group"): EffectKind.EFFECTFUL
+                }
+            ),
+            process_runner=process_runner,
+        )
+
+    assert launched is False
+
+
 def _recovery_allowlist(argv, *, authorization_id="auth-action-1"):
     from app.native_cli_metadata import describe_native_command
 

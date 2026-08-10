@@ -103,6 +103,7 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
     assert "reconciliation_json is\nalways a JSON-encoded array" in instructions
     assert "use [] unless outcome is reconciled" in instructions
     assert "object wrapper in reconciliation_json" in instructions
+    assert "Never execute a DWS write command without --yes" in instructions
 
 
 def _wire_result(result: dict[str, object]) -> dict[str, object]:
