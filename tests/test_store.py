@@ -2217,6 +2217,44 @@ def test_retry_failed_reply_task_rejects_unsafe_runs(
     assert store.get_reply_task(task_id).status == "failed"
 
 
+def test_requeue_failed_unknown_audit_reconciliation_preserves_generation(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task_id,
+        task.execution_generation,
+        owner="worker-1",
+    ).run
+    unknown = store.mark_agent_run_unknown(
+        run.id,
+        {"code": "codex_result_invalid", "retryable": True},
+        owner="worker-1",
+    )
+    store.fail_reply_task(
+        task_id,
+        "codex_result_invalid",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    resumed = store.requeue_failed_unknown_audit_reconciliation(
+        task_id,
+        unknown.id,
+        reason="manual_unknown_audit_reconciliation",
+    )
+
+    assert resumed.status == "pending"
+    assert resumed.execution_generation == task.execution_generation
+    assert resumed.attempts == task.attempts
+    claimed = store.claim_reply_task(task_id)
+    assert claimed is not None
+    assert store.claim_unknown_agent_run(unknown.id, owner="reconciler").claimed
+
+
 def test_retry_failed_reply_task_rejects_older_and_audit_runs(
     tmp_path: Path,
 ):

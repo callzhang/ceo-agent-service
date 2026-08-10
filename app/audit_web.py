@@ -6950,6 +6950,24 @@ def handle_rerun_attempt_post(
         attempt.trigger_message_id,
         channel=channel,
     )
+    if existing_task is not None and existing_task.status == "failed":
+        current_runs = store.list_agent_runs_for_task_generation(
+            existing_task.id,
+            existing_task.execution_generation,
+        )
+        if current_runs:
+            latest_run = max(current_runs, key=lambda run: run.id)
+            if (
+                latest_run.role.value == "audit"
+                and latest_run.status == "unknown"
+                and latest_run.side_effect_state == "unknown"
+            ):
+                store.requeue_failed_unknown_audit_reconciliation(
+                    existing_task.id,
+                    latest_run.id,
+                    reason="manual_unknown_audit_reconciliation",
+                )
+                return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
     conversation_record = store.get_conversation(attempt.conversation_id)
     if conversation_record is None and existing_task is None:
         return (

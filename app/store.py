@@ -5335,6 +5335,58 @@ class AutoReplyStore:
                 raise RuntimeError("recovered reply task was not persisted")
             return self._reply_task_from_row(updated)
 
+    def requeue_failed_unknown_audit_reconciliation(
+        self,
+        task_id: int,
+        run_id: int,
+        *,
+        reason: str,
+    ) -> ReplyTask:
+        """Resume only the current unknown Audit effect; never rotate its generation."""
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("reconciliation resume reason must be non-empty")
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select tasks.execution_generation
+                from reply_tasks as tasks
+                join agent_runs as runs on runs.reply_task_id=tasks.id
+                where tasks.id=? and tasks.status='failed'
+                  and runs.id=? and runs.execution_generation=tasks.execution_generation
+                  and runs.role='audit' and runs.status='unknown'
+                  and runs.side_effect_state='unknown'
+                  and runs.reconciliation_suspended=0
+                  and (runs.lease_owner='' or runs.lease_expires_at<=?)
+                  and runs.id=(
+                      select max(latest.id)
+                      from agent_runs as latest
+                      where latest.reply_task_id=tasks.id
+                        and latest.execution_generation=tasks.execution_generation
+                  )
+                """,
+                (task_id, run_id, now_text),
+            ).fetchone()
+            if row is None:
+                raise ValueError("failed task has no resumable unknown Audit run")
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending', locked_at=null, available_at='', error=?,
+                    updated_at=?
+                where id=? and status='failed' and execution_generation=?
+                """,
+                (reason, now_text, task_id, row["execution_generation"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            updated = db.execute(
+                "select * from reply_tasks where id=?", (task_id,)
+            ).fetchone()
+            if updated is None:
+                raise RuntimeError("reconciliation resume was not persisted")
+            return self._reply_task_from_row(updated)
+
     def rotate_reply_task_execution_generation(self, task_id: int) -> str:
         execution_generation = uuid4().hex
         blocked = False
