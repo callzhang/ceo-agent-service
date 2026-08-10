@@ -26,7 +26,7 @@ OA 任务”以及“哪些资料当前身份有权读取”。
 | 普通同事 | 否 | 钉钉群聊或私聊 | 明确提出问题、提供材料、确认结果 |
 | HR / 招聘人员 | 否 | 招聘群、候选人材料、面试系统 | 提供岗位和候选人证据，要求具体业务动作 |
 | OA 审批使用者 | 否 | OA 卡片、审批详情页 | 审阅材料、评论、在授权明确时执行审批动作 |
-| 运维 / 审计人员 | 是 | History、Errors、Config、Logs | 检查状态、修复依赖、审慎重跑 |
+| 运维 / 审计人员 | 是 | History、Errors、Settings | 检查状态、修复依赖、审慎重跑 |
 
 ## 1. 安装者：为一位管理者部署
 
@@ -72,7 +72,7 @@ http://127.0.0.1:8765/tutorial
 
 完成初始化向导后，至少验证：
 
-1. `Config → Channels` 中 DingTalk 和 Lark 显示 `ready`。
+1. `Settings → Config → Channels` 中 DingTalk 和 Lark 显示 `ready`。
 2. 用一个受控群聊或私聊发一条明确测试消息。
 3. History 中能看到 trigger、Agent 结论、工具事件和未发送状态。
 4. 没有意外外部动作，也没有持续停留的 `processing` 或 `failed`。
@@ -240,10 +240,9 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 | `/attempts/{id}` | 单次 trigger、回复、证据、工具事件和回执；从此处打开 Consumer/Audit 执行记录，不显示内部会话标识 |
 | `/oa-approvals/{process_instance_id}` | OA 详情、评论和历史处理结果 |
 | `/tasks` | 项目、TODO 和 follow-up |
-| `/config` | 系统参数、路由和 Channel gate |
+| `/settings` | `Config`、`Workers`、`Logs` 标签页；系统参数、路由、Channel gate、队列和运行记录 |
 | `/errors` | 需要处理的系统错误 |
-| `/logs` | 服务运行记录 |
-| `/tutorial` | 首次安装与环境检查 |
+| `/tutorial` | 初始化未完成时的默认首页；全部完成后自动隐藏并回到 History |
 
 ### 状态怎么理解
 

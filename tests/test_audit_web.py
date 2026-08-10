@@ -50,6 +50,7 @@ from app.developer_prompt import read_developer_prompt_template
 from app.config import load_env_file
 from app.dingtalk_models import DingTalkMessage
 from app.setup_wizard_models import SetupWizardEvent
+from app.setup_wizard import SETUP_WIZARD_STEPS
 from app.store import AgentRole, AutoReplyStore
 from app.wechat.models import WechatMessage
 
@@ -78,6 +79,15 @@ def loopback_test_client(app) -> TestClient:
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
     )
+
+
+def complete_setup_wizard(store: AutoReplyStore) -> None:
+    for step in SETUP_WIZARD_STEPS:
+        store.upsert_setup_wizard_step(
+            step_id=step.id,
+            status="done",
+            summary="complete",
+        )
 
 
 def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
@@ -1925,37 +1935,37 @@ def test_top_nav_highlights_current_page_and_disables_current_link(
     history_html = render_attempt_list(store)
     tutorial_html = render_tutorial_page(store=store)
     user_feedback_html = render_user_feedback_list(store)
-    config_html = render_config_page()
+    config_html = render_config_page(db_path=store.path)
     errors_html = render_error_list(store)
     tasks_html = render_tasks_page(store)
     workers_html = render_workers_page(store)
 
     assert '<span class="nav-item active" aria-current="page">History</span>' in history_html
     assert '<a class="nav-item" href="/">History</a>' not in history_html
-    assert '<a class="nav-item" href="/tutorial">Tutorial</a>' in history_html
     assert '<a class="nav-item" href="/user-feedback">用户反馈</a>' in history_html
-    assert '<a class="nav-item" href="/config">Config</a>' in history_html
+    assert '<a class="nav-item" href="/settings">Settings</a>' in history_html
+    assert "Tutorial" not in history_html
+    assert 'href="/workers"' not in history_html
+    assert 'href="/config"' not in history_html
+    assert 'href="/logs"' not in history_html
 
-    assert '<span class="nav-item active" aria-current="page">Tutorial</span>' in tutorial_html
-    assert '<a class="nav-item" href="/tutorial">Tutorial</a>' not in tutorial_html
+    assert 'href="/tutorial"' not in tutorial_html
 
     assert '<span class="nav-item active" aria-current="page">用户反馈</span>' in user_feedback_html
     assert '<a class="nav-item" href="/user-feedback">用户反馈</a>' not in user_feedback_html
 
-    assert '<span class="nav-item active" aria-current="page">Config</span>' in config_html
-    assert '<a class="nav-item" href="/config">Config</a>' not in config_html
+    assert '<span class="nav-item active" aria-current="page">Settings</span>' in config_html
+    assert '<a class="nav-item" href="/settings">Settings</a>' not in config_html
 
     assert 'href="/codex"' not in history_html
     assert "Codex Sessions" not in history_html
 
-    assert '<span class="nav-item active" aria-current="page">Logs</span>' in errors_html
-    assert '<a class="nav-item" href="/logs">Logs</a>' not in errors_html
+    assert '<span class="nav-item active" aria-current="page">Settings</span>' in errors_html
 
     assert '<span class="nav-item active" aria-current="page">Tasks</span>' in tasks_html
     assert '<a class="nav-item" href="/tasks">Tasks</a>' not in tasks_html
 
-    assert '<span class="nav-item active" aria-current="page">Workers</span>' in workers_html
-    assert '<a class="nav-item" href="/workers">Workers</a>' not in workers_html
+    assert '<span class="nav-item active" aria-current="page">Settings</span>' in workers_html
 
 
 def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
@@ -1973,8 +1983,8 @@ def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
     assert 'class="setup-step-status setup-status-done"' in html
     assert 'data-action-id="check_cli_components"' in html
     assert "安装检查流程" not in html
-    assert "/config?tab=system" in html
-    assert "/logs" in html
+    assert "/settings?tab=config&amp;config_tab=system" in html
+    assert "/settings?tab=logs" in html
     assert "/tasks" in html
     assert "Tutorial" in html
     assert "Landing page" not in html
@@ -2106,11 +2116,22 @@ def test_create_default_audit_app_expands_tilde_worker_db(
 def test_tutorial_route_renders_first_time_setup(tmp_path: Path):
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
 
-    response = client.get("/tutorial")
+    response = client.get("/")
 
     assert response.status_code == 200
     assert "Initialization Wizard" in response.text
-    assert '<span class="nav-item active" aria-current="page">Tutorial</span>' in response.text
+    assert 'href="/tutorial"' not in response.text
+
+
+def test_tutorial_is_hidden_after_setup_completes(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    complete_setup_wizard(store)
+    client = TestClient(create_audit_app(store.path))
+
+    response = client.get("/tutorial", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
 
 
 def test_tutorial_status_route_returns_json(tmp_path: Path):
@@ -2138,8 +2159,10 @@ def test_history_route_returns_busy_page_when_database_is_locked(
         rendered.set()
         raise sqlite3.OperationalError("database is locked")
 
+    db_path = tmp_path / "worker.sqlite3"
+    complete_setup_wizard(AutoReplyStore(db_path))
     monkeypatch.setattr(audit_web_module, "render_attempt_list", locked_attempt_list)
-    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+    with TestClient(create_audit_app(db_path)) as client:
         assert rendered.wait(timeout=1)
         response = client.get("/")
 
@@ -2150,7 +2173,9 @@ def test_history_route_returns_busy_page_when_database_is_locked(
 
 
 def test_history_route_renders_chart_on_default_page(tmp_path: Path):
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    db_path = tmp_path / "worker.sqlite3"
+    complete_setup_wizard(AutoReplyStore(db_path))
+    client = TestClient(create_audit_app(db_path))
 
     response = client.get("/")
 
@@ -2168,8 +2193,10 @@ def test_history_route_reuses_recent_default_render(monkeypatch, tmp_path: Path)
         calls += 1
         return f"render-{calls}"
 
+    db_path = tmp_path / "worker.sqlite3"
+    complete_setup_wizard(AutoReplyStore(db_path))
     monkeypatch.setattr(audit_web_module, "render_attempt_list", render_once)
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = TestClient(create_audit_app(db_path))
 
     first = client.get("/")
     second = client.get("/")
@@ -2212,7 +2239,9 @@ def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp
     monkeypatch.setattr(audit_web_module, "render_attempt_list", render_slowly)
     started_at = time.monotonic()
     try:
-        with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        db_path = tmp_path / "worker.sqlite3"
+        complete_setup_wizard(AutoReplyStore(db_path))
+        with TestClient(create_audit_app(db_path)) as client:
             assert time.monotonic() - started_at < 0.2
             assert render_started.wait(timeout=1)
             response = client.get("/")
@@ -4003,11 +4032,14 @@ def test_config_route_is_available(tmp_path: Path):
     app = create_audit_app(tmp_path / "worker.sqlite3")
     client = loopback_test_client(app)
 
-    response = client.get("/config")
+    response = client.get("/settings?tab=config")
+    legacy_response = client.get("/config")
 
     assert response.status_code == 200
     assert "Producer 路由配置" in response.text
-    assert "/config?tab=developer" in response.text
+    assert "/settings?tab=config&amp;config_tab=developer" in response.text
+    assert '<a class="prompt-tab active" href="/settings?tab=config">Config</a>' in response.text
+    assert "Producer 路由配置" in legacy_response.text
 
 
 def test_render_page_brand_links_to_history():
@@ -4959,6 +4991,7 @@ def test_render_attempt_list_shows_missing_codex_session_info_icon_instead_of_wa
 def test_fastapi_app_serves_history_routes(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
+    complete_setup_wizard(store)
     app = create_audit_app(store.path)
     client = TestClient(app)
 
@@ -6432,7 +6465,7 @@ def test_render_workers_page_shows_service_and_queue_status(
     assert "Work items" in html
     assert "Follow-ups" in html
     assert "send failed" in html
-    assert '<span class="nav-item active" aria-current="page">Workers</span>' in html
+    assert '<span class="nav-item active" aria-current="page">Settings</span>' in html
 
 
 def test_workers_routes_render_page_and_json(tmp_path: Path, monkeypatch):
@@ -6545,7 +6578,7 @@ def test_logs_route_renders_logs_and_errors_route_remains_compatible(tmp_path: P
     assert logs_response.status_code == 200
     assert "Logs" in logs_response.text
     assert "authorization required" in logs_response.text
-    assert '<span class="nav-item active" aria-current="page">Logs</span>' in logs_response.text
+    assert '<span class="nav-item active" aria-current="page">Settings</span>' in logs_response.text
     assert errors_response.status_code == 200
     assert "Logs" in errors_response.text
     assert "authorization required" in errors_response.text

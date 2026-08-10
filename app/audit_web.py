@@ -814,15 +814,20 @@ def render_tutorial_page(*, store: AutoReplyStore | None = None) -> str:
         "<div class=\"card-head\">"
         "<h2>Setup steps</h2>"
         "<div class=\"tutorial-links\">"
-        "<a class=\"tutorial-link\" href=\"/config?tab=system\">系统参数</a>"
+        "<a class=\"tutorial-link\" href=\"/settings?tab=config&amp;config_tab=system\">系统参数</a>"
         "<a class=\"tutorial-link\" href=\"/tasks\">Tasks</a>"
-        "<a class=\"tutorial-link\" href=\"/logs\">Logs</a>"
+        "<a class=\"tutorial-link\" href=\"/settings?tab=logs\">Logs</a>"
         "</div>"
         "</div>"
         f"<ol class=\"tutorial-steps setup-wizard-steps\">{steps_html}</ol>"
         "</section>"
     )
-    return render_page("Tutorial", body, active_nav="tutorial")
+    return render_page("Tutorial", body)
+
+
+def _tutorial_is_complete(store: AutoReplyStore) -> bool:
+    steps = build_wizard_status(store).steps
+    return bool(steps) and all(step.status == "done" for step in steps)
 
 
 def _setup_wizard_step_html(step: SetupStepStatus) -> str:
@@ -1813,13 +1818,10 @@ def _top_nav(
 ) -> str:
     items = [
         ("history", "History", "/"),
-        ("tutorial", "Tutorial", "/tutorial"),
         ("tasks", "Tasks", "/tasks"),
-        ("workers", "Workers", "/workers"),
         ("user-feedback", "用户反馈", "/user-feedback"),
         ("service-bugfix", "服务修复", "/service-bugfix-candidates"),
-        ("config", "Config", "/config"),
-        ("logs", "Logs", "/logs"),
+        ("settings", "Settings", "/settings"),
     ]
     item_html = "".join(
         _top_nav_item(
@@ -1876,7 +1878,7 @@ def build_worker_status_payload(
     }
 
 
-def render_workers_page(store: AutoReplyStore) -> str:
+def _render_workers_content(store: AutoReplyStore) -> str:
     payload = build_worker_status_payload(store)
     service = payload["service"]
     summary = payload["summary"]
@@ -1905,11 +1907,15 @@ def render_workers_page(store: AutoReplyStore) -> str:
         f"{_worker_attention_table(payload['attention_rows'])}"
         "</section>"
     )
+    return body
+
+
+def render_workers_page(store: AutoReplyStore) -> str:
     return render_page(
         "Workers",
-        body,
+        _render_workers_content(store),
         auto_refresh=True,
-        active_nav="workers",
+        active_nav="settings",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
 
@@ -2456,6 +2462,35 @@ def render_config_page(
     audit_rules_error: str = "",
     audit_rules_draft: str | None = None,
 ) -> str:
+    _, body = _render_config_body(
+        active_tab=active_tab,
+        saved=saved,
+        db_path=db_path,
+        audit_rules_error=audit_rules_error,
+        audit_rules_draft=audit_rules_draft,
+    )
+    pending_count = (
+        AutoReplyStore(db_path).count_pending_user_feedback_items()
+        if db_path is not None
+        else None
+    )
+    return render_page(
+        "Settings",
+        body,
+        active_nav="settings",
+        user_feedback_pending_count=pending_count,
+    )
+
+
+def _render_config_body(
+    *,
+    active_tab: str,
+    saved: bool,
+    db_path: Path | None,
+    audit_rules_error: str = "",
+    audit_rules_draft: str | None = None,
+    tab_href_prefix: str = "/config?tab=",
+) -> tuple[str, str]:
     if active_tab == "developer":
         content = _render_developer_prompt_editor_content(saved=saved)
     elif active_tab == "user":
@@ -2482,18 +2517,58 @@ def render_config_page(
         if active_tab in {"wechat", "audit-rules"}
         else _prompt_config_card(active_tab)
     )
-    body = f"{prompt_card}{_config_tabs(active_tab)}{content}"
-    pending_count = (
-        AutoReplyStore(db_path).count_pending_user_feedback_items()
-        if db_path is not None
-        else None
-    )
+    tabs = _config_tabs(active_tab, tab_href_prefix=tab_href_prefix)
+    return active_tab, f"{prompt_card}{tabs}{content}"
+
+
+def render_settings_page(
+    store: AutoReplyStore,
+    *,
+    active_tab: str = "config",
+    config_tab: str = "info",
+    log_limit: int | None = DEFAULT_ERROR_LIST_LIMIT,
+    log_page: int = 1,
+    log_query: str = "",
+    log_type: str = "",
+) -> str:
+    if active_tab == "workers":
+        content = _render_workers_content(store)
+    elif active_tab == "logs":
+        content = _render_log_content(
+            store,
+            limit=log_limit,
+            page=log_page,
+            query=log_query,
+            log_type=log_type,
+            base_path="/settings",
+            fixed_params={"tab": "logs"},
+        )
+    else:
+        active_tab = "config"
+        _, content = _render_config_body(
+            active_tab=config_tab,
+            saved=False,
+            db_path=store.path,
+            tab_href_prefix="/settings?tab=config&config_tab=",
+        )
+    body = f"{_settings_tabs(active_tab)}{content}"
     return render_page(
-        "Config",
+        "Settings",
         body,
-        active_nav="config",
-        user_feedback_pending_count=pending_count,
+        auto_refresh=active_tab == "workers",
+        active_nav="settings",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
+
+
+def _settings_tabs(active_tab: str) -> str:
+    tabs = (("config", "Config"), ("workers", "Workers"), ("logs", "Logs"))
+    links = "".join(
+        f'<a class="{"prompt-tab active" if key == active_tab else "prompt-tab"}" '
+        f'href="/settings?tab={key}">{label}</a>'
+        for key, label in tabs
+    )
+    return f'<nav class="prompt-tabs" aria-label="Settings sections">{links}</nav>'
 
 
 def _prompt_config_card(active_tab: str) -> str:
@@ -6394,6 +6469,31 @@ def render_log_list(
     query: str = "",
     log_type: str = "",
 ) -> str:
+    body = _render_log_content(
+        store,
+        limit=limit,
+        page=page,
+        query=query,
+        log_type=log_type,
+    )
+    return render_page(
+        "Logs",
+        body,
+        active_nav="settings",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def _render_log_content(
+    store: AutoReplyStore,
+    *,
+    limit: int | None,
+    page: int,
+    query: str,
+    log_type: str,
+    base_path: str = "/logs",
+    fixed_params: Mapping[str, str] | None = None,
+) -> str:
     query = query.strip()
     log_type = log_type.strip()
     total_count = store.count_operation_logs(query=query, log_type=log_type)
@@ -6416,6 +6516,8 @@ def render_log_list(
         page=page,
         limit=limit,
         total_count=total_count,
+        base_path=base_path,
+        fixed_params=fixed_params,
     )
     body = (
         f"{toolbar}"
@@ -6423,12 +6525,7 @@ def render_log_list(
         f"<section class=\"log-feed\">{''.join(items)}</section>"
         "</div>"
     )
-    return render_page(
-        "Logs",
-        body,
-        active_nav="logs",
-        user_feedback_pending_count=store.count_pending_user_feedback_items(),
-    )
+    return body
 
 
 def _log_toolbar(
@@ -6439,6 +6536,8 @@ def _log_toolbar(
     page: int,
     limit: int | None,
     total_count: int,
+    base_path: str = "/logs",
+    fixed_params: Mapping[str, str] | None = None,
 ) -> str:
     page_count = _page_count(total_count, limit)
     page_links = _table_page_links(
@@ -6449,11 +6548,13 @@ def _log_toolbar(
             limit=limit,
             query=query,
             log_type=log_type,
+            base_path=base_path,
+            fixed_params=fixed_params,
         ),
     )
     return _table_toolbar(
         name="logs",
-        action="/logs",
+        action=_log_base_href(base_path, fixed_params),
         search_label="Search logs",
         search_name="q",
         query=query,
@@ -6464,8 +6565,22 @@ def _log_toolbar(
     )
 
 
-def _log_page_href(*, page: int, limit: int | None, query: str, log_type: str) -> str:
-    params: dict[str, str] = {}
+def _log_base_href(base_path: str, fixed_params: Mapping[str, str] | None) -> str:
+    if not fixed_params:
+        return base_path
+    return f"{base_path}?{urlencode(fixed_params)}"
+
+
+def _log_page_href(
+    *,
+    page: int,
+    limit: int | None,
+    query: str,
+    log_type: str,
+    base_path: str = "/logs",
+    fixed_params: Mapping[str, str] | None = None,
+) -> str:
+    params: dict[str, str] = dict(fixed_params or {})
     if page > 1:
         params["page"] = str(page)
     if limit is not None and limit != DEFAULT_ERROR_LIST_LIMIT:
@@ -6475,8 +6590,8 @@ def _log_page_href(*, page: int, limit: int | None, query: str, log_type: str) -
     if log_type:
         params["type"] = log_type
     if not params:
-        return "/logs"
-    return f"/logs?{urlencode(params)}"
+        return base_path
+    return f"{base_path}?{urlencode(params)}"
 
 
 def _log_type_select(*, log_type: str, log_types: list[str]) -> str:
@@ -6576,7 +6691,10 @@ def _operation_status_class(status: str) -> str:
     return "status-active"
 
 
-def _config_tabs(active_tab: str) -> str:
+def _config_tabs(active_tab: str, *, tab_href_prefix: str = "/config?tab=") -> str:
+    def href(tab: str) -> str:
+        return escape(f"{tab_href_prefix}{tab}", quote=True)
+
     info_class = "prompt-tab active" if active_tab == "info" else "prompt-tab"
     system_class = "prompt-tab active" if active_tab == "system" else "prompt-tab"
     channels_class = (
@@ -6592,16 +6710,16 @@ def _config_tabs(active_tab: str) -> str:
     )
     return (
         "<nav class=\"prompt-tabs\" aria-label=\"Config sections\">"
-        f"<a class=\"{info_class}\" href=\"/config?tab=info\">Info</a>"
-        f"<a class=\"{system_class}\" href=\"/config?tab=system\">"
+        f"<a class=\"{info_class}\" href=\"{href('info')}\">Info</a>"
+        f"<a class=\"{system_class}\" href=\"{href('system')}\">"
         "System Config</a>"
-        f"<a class=\"{channels_class}\" href=\"/config?tab=channels\">Channels</a>"
-        f"<a class=\"{wechat_class}\" href=\"/config?tab=wechat\">WeChat</a>"
-        f"<a class=\"{developer_class}\" href=\"/config?tab=developer\">"
+        f"<a class=\"{channels_class}\" href=\"{href('channels')}\">Channels</a>"
+        f"<a class=\"{wechat_class}\" href=\"{href('wechat')}\">WeChat</a>"
+        f"<a class=\"{developer_class}\" href=\"{href('developer')}\">"
         "Developer Prompt</a>"
-        f"<a class=\"{user_class}\" href=\"/config?tab=user\">"
+        f"<a class=\"{user_class}\" href=\"{href('user')}\">"
         "User Prompt</a>"
-        f"<a class=\"{audit_rules_class}\" href=\"/config?tab=audit-rules\">"
+        f"<a class=\"{audit_rules_class}\" href=\"{href('audit-rules')}\">"
         "Audit Rules</a>"
         "</nav>"
     )
@@ -7434,7 +7552,9 @@ def create_audit_app(
     )
 
     @app.get("/", response_class=HTMLResponse)
-    def attempt_list(request: Request) -> str:
+    def attempt_list(request: Request) -> Response:
+        if not request.query_params and not _tutorial_is_complete(_audit_store(db_path)):
+            return RedirectResponse("/tutorial", status_code=303)
         query = str(request.query_params.get("q", ""))
 
         def render() -> str:
@@ -7478,8 +7598,11 @@ def create_audit_app(
         return render_service_bugfix_candidates(_audit_store(db_path))
 
     @app.get("/tutorial", response_class=HTMLResponse)
-    def tutorial_page() -> str:
-        return render_tutorial_page(store=AutoReplyStore(db_path))
+    def tutorial_page() -> Response:
+        store = AutoReplyStore(db_path)
+        if _tutorial_is_complete(store):
+            return RedirectResponse("/", status_code=303)
+        return HTMLResponse(render_tutorial_page(store=store))
 
     @app.get("/tutorial/status")
     def tutorial_status() -> JSONResponse:
@@ -7601,7 +7724,7 @@ def create_audit_app(
 
     @app.get("/workers", response_class=HTMLResponse)
     def workers_page() -> str:
-        return render_workers_page(AutoReplyStore(db_path))
+        return render_settings_page(AutoReplyStore(db_path), active_tab="workers")
 
     @app.get("/api/workers/status", response_class=JSONResponse)
     def workers_status() -> JSONResponse:
@@ -7609,19 +7732,34 @@ def create_audit_app(
 
     @app.get("/logs", response_class=HTMLResponse)
     def log_list(request: Request) -> str:
-        return render_log_list(
+        return render_settings_page(
             AutoReplyStore(db_path),
-            limit=_bounded_log_page_size(
+            active_tab="logs",
+            log_limit=_bounded_log_page_size(
                 _positive_int_query(request, "limit", default=DEFAULT_ERROR_LIST_LIMIT)
             ),
-            page=_positive_int_query(request, "page", default=1),
-            query=str(request.query_params.get("q", "")),
+            log_page=_positive_int_query(request, "page", default=1),
+            log_query=str(request.query_params.get("q", "")),
             log_type=str(request.query_params.get("type", "")),
         )
 
     @app.get("/errors", response_class=HTMLResponse)
     def error_list(request: Request) -> str:
         return log_list(request)
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings_page(request: Request) -> str:
+        return render_settings_page(
+            AutoReplyStore(db_path),
+            active_tab=str(request.query_params.get("tab", "config")),
+            config_tab=str(request.query_params.get("config_tab", "info")),
+            log_limit=_bounded_log_page_size(
+                _positive_int_query(request, "limit", default=DEFAULT_ERROR_LIST_LIMIT)
+            ),
+            log_page=_positive_int_query(request, "page", default=1),
+            log_query=str(request.query_params.get("q", "")),
+            log_type=str(request.query_params.get("type", "")),
+        )
 
     @app.get("/codex", response_class=HTMLResponse)
     def codex_session_list() -> str:
@@ -7672,10 +7810,10 @@ def create_audit_app(
 
     @app.get("/config", response_class=HTMLResponse)
     def config_page(request: Request) -> str:
-        return render_config_page(
-            active_tab=request.query_params.get("tab", "info"),
-            saved=request.query_params.get("saved") == "1",
-            db_path=db_path,
+        return render_settings_page(
+            AutoReplyStore(db_path),
+            active_tab="config",
+            config_tab=str(request.query_params.get("tab", "info")),
         )
 
     @app.get("/notifications", response_class=HTMLResponse)
