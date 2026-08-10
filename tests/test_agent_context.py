@@ -155,6 +155,7 @@ def test_context_renders_only_minimal_manual_review_instruction():
                 source_attempt_id=42,
                 reviewer_feedback="需要先核对材料，再执行。",
                 suggested_reply_text="请按材料中的最新数字回复。",
+                requires_external_action=True,
             ),
         }
     )
@@ -165,6 +166,7 @@ def test_context_renders_only_minimal_manual_review_instruction():
     assert '"source_attempt_id": 42' in manual_section
     assert "需要先核对材料，再执行。" in manual_section
     assert "请按材料中的最新数字回复。" in manual_section
+    assert '"requires_external_action": true' in manual_section
     assert "trigger_sender_user_id" not in manual_section
 
 

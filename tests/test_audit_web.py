@@ -6137,6 +6137,13 @@ def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
     assert selected_attempt is not None
     assert selected_attempt.reviewer_feedback == source.reviewer_feedback
     assert "采用方案二并说明交付边界" in selected_attempt.reviewer_feedback
+    assert selected_attempt.corrected_reply_text == "采用方案二并说明交付边界"
+    assert selected_attempt.codex_reason == "human_decision_reply"
+
+    selected_status, selected_html = render_attempt_detail(store, selected_attempt.id)
+    assert selected_status == 200
+    assert "反馈处理进度" in selected_html
+    assert "正在等待执行" in selected_html
 
     wechat_attempt_id = store.record_reply_attempt(
         conversation_id="wechat-cid-1",

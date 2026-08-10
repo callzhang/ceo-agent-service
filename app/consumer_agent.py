@@ -108,8 +108,15 @@ class ConsumerAgentRunner:
         rendered_rules: str,
         feedback: AuditFeedback | None,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
+        # A selected human decision must not inherit an unrelated/stale Codex
+        # conversation. Its complete current context is supplied in the prompt.
+        manual_decision = bool(
+            context.manual_rerun and context.manual_rerun.requires_external_action
+        )
         conversation_session_id = (
-            self.store.get_codex_session_id(task.conversation_id) or None
+            None
+            if manual_decision
+            else self.store.get_codex_session_id(task.conversation_id) or None
         )
         if (
             conversation_session_id

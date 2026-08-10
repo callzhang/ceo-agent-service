@@ -5958,6 +5958,11 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         attempt.conversation_id
     )
     later_attempt = _later_attempt_for_display(store, attempt)
+    reply_task = store.get_reply_task_for_message(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+        channel=attempt.channel,
+    )
     agent_runs = []
     if attempt.agent_run_id:
         terminal_run = store.get_agent_run(attempt.agent_run_id)
@@ -5975,6 +5980,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             feedback_events,
             later_attempt,
             agent_runs,
+            reply_task,
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
@@ -7064,8 +7070,9 @@ def handle_needs_human_decision_post(
         result = handle_reviewed_message_reply(
             store,
             attempt_id=source.id,
-            reply_text="",
+            reply_text=instruction,
             reviewer_feedback=reviewer_feedback,
+            requires_external_action=True,
         )
     except ValueError as exc:
         return 409, {}, render_page("Decision unavailable", f"<p>{escape(str(exc))}</p>")
@@ -7131,6 +7138,7 @@ def handle_reviewed_message_reply(
     attempt_id: int,
     reply_text: str,
     reviewer_feedback: str = "",
+    requires_external_action: bool = False,
 ) -> dict[str, object]:
     source = store.get_reply_attempt(attempt_id)
     if source is None:
@@ -7175,6 +7183,7 @@ def handle_reviewed_message_reply(
         trigger_message_json=trigger_message_json,
         suggested_reply_text=reply_text,
         reviewer_feedback=reviewer_feedback,
+        requires_external_action=requires_external_action,
         oa_url=source.oa_url,
         channel=source.channel or "dingtalk",
     )
@@ -7893,6 +7902,7 @@ def _attempt_detail_body(
     feedback_events: list[FeedbackEvent],
     later_attempt: ReplyAttempt | None = None,
     agent_runs: list[AgentRun] | None = None,
+    reply_task: ReplyTask | None = None,
 ) -> str:
     agent_runs = agent_runs or []
     fields = [
@@ -7940,6 +7950,7 @@ def _attempt_detail_body(
             f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         ),
         extra_cards=(
+            f"{_manual_rerun_progress_card(attempt, reply_task, later_attempt)}"
             f"{_quality_warning_card(attempt)}"
             f"{_context_only_info_card(attempt)}"
             f"{_oa_metadata_card(attempt)}"
@@ -7948,6 +7959,41 @@ def _attempt_detail_body(
             f"{'' if agent_runs else _audit_tool_uses_card(attempt)}"
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
         ),
+    )
+
+
+def _manual_rerun_progress_card(
+    attempt: ReplyAttempt,
+    reply_task: ReplyTask | None,
+    later_attempt: ReplyAttempt | None,
+) -> str:
+    if attempt.codex_reason not in {
+        "reviewed_message_reply",
+        "human_decision_reply",
+    }:
+        return ""
+    if later_attempt is not None:
+        state = _display_action_state(later_attempt.send_status)
+        message = (
+            f'该反馈已由 <a href="/attempts/{later_attempt.id}">'
+            f'Attempt #{later_attempt.id}</a> 接续处理，当前结果：{escape(state)}。'
+        )
+    elif reply_task is None or reply_task.manual_rerun_attempt_id != attempt.id:
+        message = "反馈处理记录正在同步，请刷新页面查看后续结果。"
+    elif reply_task.status == "pending":
+        message = "已创建重新处理任务，正在等待执行。"
+    elif reply_task.status == "processing":
+        message = "正在读取当前上下文并生成处理结果。"
+    elif reply_task.status == "done":
+        message = "处理任务已完成，正在同步最终结果。"
+    else:
+        detail = safe_observability_error(reply_task.error, limit=180)
+        message = "处理任务失败" + (f"：{escape(detail)}" if detail else "。")
+    return (
+        '<section class="card compact-card">'
+        "<h2>反馈处理进度</h2>"
+        f"<p>{message}</p>"
+        "</section>"
     )
 
 
