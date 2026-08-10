@@ -200,16 +200,17 @@ def _execute_reviewed(
     item = {"type": "command_execution", "argv": list(argv)}
     descriptor = describe_native_command(item)
     if descriptor is None:
-        raise AgentReadOnlyViolationError("agent_cli_command_invalid")
-    try:
-        reviewed.prewarm()
         command = reviewed.classify(item)
-    except NativeCliMetadataUnavailableError as exc:
-        return _process_failure_receipt(
-            descriptor,
-            code=exc.code,
-            retryable=exc.retryable,
-        )
+    else:
+        try:
+            reviewed.prewarm()
+            command = reviewed.classify(item)
+        except NativeCliMetadataUnavailableError as exc:
+            return _process_failure_receipt(
+                descriptor,
+                code=exc.code,
+                retryable=exc.retryable,
+            )
     if command is None:
         raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
     if command.effect is not expected_effect:
@@ -227,7 +228,8 @@ def _execute_reviewed(
             argv,
             authorization_id=authorization_id,
         )
-    executable = shutil.which(command.cli)
+    executable_name = argv[0] if command.cli == "local-shell" else command.cli
+    executable = shutil.which(executable_name)
     if executable is None:
         return _process_failure_receipt(
             command,
@@ -309,8 +311,8 @@ def _execute_reviewed(
 server = FastMCP(
     "agent_cli",
     instructions=(
-        "Read installed Agent skills and run DWS or Lark commands only after "
-        "reviewing installed effect metadata."
+        "Read installed Agent skills and run DWS, Lark, or local read-only "
+        "commands only after reviewing installed effect metadata."
     ),
 )
 

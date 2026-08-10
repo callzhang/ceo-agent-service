@@ -75,6 +75,31 @@ def test_agent_cli_allows_native_command_to_run_for_fifteen_minutes(monkeypatch)
     assert observed_timeout == CLI_TIMEOUT_SECONDS
 
 
+def test_agent_cli_executes_reviewed_local_read_with_original_binary(monkeypatch):
+    argv = ["sed", "-n", "1p", "/tmp/public-key.pub"]
+    monkeypatch.setattr(
+        "app.agent_cli.shutil.which",
+        lambda executable: "/usr/bin/sed" if executable == "sed" else None,
+    )
+    launched = []
+
+    def process_runner(*args, **kwargs):
+        launched.append(args[0])
+        return subprocess.CompletedProcess(args[0], 0, "verified material\n", "")
+
+    receipt = execute_reviewed_read(
+        argv,
+        classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+        process_runner=process_runner,
+    )
+
+    assert launched == [["/usr/bin/sed", *argv[1:]]]
+    assert receipt["cli"] == "local-shell"
+    assert receipt["operation"] == "sed"
+    assert receipt["stdout"] == "verified material\n"
+    assert "error" not in receipt
+
+
 def test_agent_cli_allows_incomplete_dws_help_as_read_only(monkeypatch):
     argv = ["dws", "chat", "message", "--help"]
     monkeypatch.setattr("app.agent_cli.shutil.which", lambda _: "/bin/dws")

@@ -26,11 +26,11 @@ SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "consumer_agent_wire
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 REVIEWED_DWS_READ_INSTRUCTIONS = """
-When DingTalk evidence is required, call `agent_cli.execute_reviewed_read` with
-the exact read-only `dws` command. This lets the Agent use the principal's
-local DWS credential store without exposing it inside the read-only sandbox.
-Unknown shell commands and every write command remain forbidden for Consumer
-Agent A.
+For live DingTalk, Lark, or local file evidence, call `agent_cli.execute_reviewed_read`
+with the exact reviewed read command. This
+lets the Agent use the principal's local CLI credential store and makes a
+reviewed local read command independently repeatable by Audit B. Unknown shell
+commands and every write command remain forbidden for Consumer Agent A.
 
 Before proposing a DingTalk message send, read
 `/Users/derek/.agents/skills/dws/multi/dingtalk-chat/SKILL.md` with
@@ -291,6 +291,8 @@ def audit_developer_instructions(role_instruction: str) -> str:
         capability_instructions=(
             "Use agent_cli.execute_reviewed_read for every live read and "
             "agent_cli.execute_reviewed_write for every allowed external write. "
+            "When exact candidate content comes from a local file, independently "
+            "verify it with the same reviewed local read command before execution. "
             "Before using a DWS command, read the operation-specific installed "
             "skill with agent_cli.read_skill. In a reconciliation turn, missing "
             "command syntax is a read-only evidence task: load the skill, run the "

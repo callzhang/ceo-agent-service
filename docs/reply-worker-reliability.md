@@ -301,6 +301,12 @@ the bridge's external-action boundary. The click may then focus an existing audi
 window and navigate it to the exact attempt detail; it does not issue a `GET`
 that fails with 405 or opens a duplicate browser window.
 
+Consumer and Audit Agents use the same `agent_cli.execute_reviewed_read` path
+for classified local read-only commands such as `sed`, `find`, and `rg`. The
+classifier continues to reject writes, redirection, and unknown shell commands;
+Audit can repeat a local evidence read before publishing exact file-derived
+content instead of trusting a value copied only into Consumer's proposal.
+
 An `agent_cli` command that returns a structured error receipt is recorded as a
 failed effect with its retryability and channel state. It is not treated as an
 unreviewed tool call or an unknown successful write. Native DWS/Lark commands may

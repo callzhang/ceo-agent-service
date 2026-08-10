@@ -112,6 +112,7 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
     assert "return revision_required and ask\nConsumer Agent A to return no_action" in instructions
     assert "Never execute a DWS write command without --yes" in instructions
     assert "missing command syntax is a read-only evidence task" in instructions
+    assert "reviewed local read command" in instructions
 
 
 def _wire_result(result: dict[str, object]) -> dict[str, object]:
