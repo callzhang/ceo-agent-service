@@ -473,7 +473,7 @@ meeting producer 首次启用时会持久化激活时间。服务启动恢复队
 
 实际时长小于 5 分钟的听记在日历匹配和建队列前跳过；实际候选人面试由 agent 根据标题、摘要、参会人和完整转写识别并终止为 `no_action`。招聘站会、招聘计划、人才讨论和招聘需求对齐仍按普通业务会议处理。
 
-会后队列状态为 `waiting → pending → processing → no_action | ready_to_send → sent`；可重试错误进入 `retry` 并带 `available_at`，Codex 结构化输出或历史来源协议偶发不合格也会先按可重试错误处理，达到上限后才隔离。发送结果不确定但有 `openTaskId` 时只核验状态，不重复发送；notification 只在最终确认 `sent` 时弹出一次。普通 reply task 的当前 `failed`、`blocked` 和未审阅 `needs_human` 状态汇总到 `/notifications`；浏览器通知按业务 trigger 固定，而不是按单次 attempt 编号固定。后续结果进入 sent、skipped 或其他终态时会主动关闭同一 trigger 的旧问题通知。关闭通知使用独立的浏览器事件类型，旧版页面会忽略它，不会把关闭操作渲染成空白弹窗。点击详情页会先显示当前可执行结论：已发送、已跳过或已有后续处理的历史记录明确显示“无需操作”且不提供重跑；只有当前失败记录可重新处理；真实 `needs_human` 会显示经审计的待决摘要。dry-run 不发布。meeting run 和 reply attempt 共用 History 时间线、搜索、状态过滤、24 小时事件图和 Codex session 详情。
+会后队列状态为 `waiting → pending → processing → no_action | ready_to_send → sent`；可重试错误进入 `retry` 并带 `available_at`，Codex 结构化输出或历史来源协议偶发不合格也会先按可重试错误处理，达到上限后才隔离。发送结果不确定但有 `openTaskId` 时只核验状态，不重复发送；notification 只在最终确认 `sent` 时弹出一次。普通 reply task 的当前 `failed`、`blocked` 和未审阅 `needs_human` 状态汇总到 `/notifications`；浏览器通知按业务 trigger 固定，而不是按单次 attempt 编号固定。后续结果进入 sent、skipped 或其他终态时会主动关闭同一 trigger 的旧问题通知。关闭通知使用独立的浏览器事件类型，旧版页面会忽略它，不会把关闭操作渲染成空白弹窗。点击详情页会先显示当前可执行结论：已发送、已跳过或已有后续处理的历史记录明确显示“无需操作”且不提供重跑；只有当前失败记录可重新处理；真实 `needs_human` 会显示经审计的待决摘要。用户提交的人工选择会生成独立的、必须执行的重处理任务；该任务不复用旧 Codex 会话，详情页会显示排队、处理中、完成或失败的处理进度与后续结果。dry-run 不发布。meeting run 和 reply attempt 共用 History 时间线、搜索、状态过滤、24 小时事件图和 Codex session 详情。
 
 本地 dry-run 验证：
 
