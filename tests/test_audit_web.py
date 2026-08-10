@@ -3754,6 +3754,8 @@ def test_notification_service_worker_fetches_bridge_without_opening_window(
     assert "skipWaiting" in response.text
     assert "clients.claim" in response.text
     assert 'await fetch(data.url, {' in response.text
+    assert 'method: "POST"' in response.text
+    assert 'method: "GET"' not in response.text
     assert "clients.matchAll" in response.text
     assert "client.focus" in response.text
     assert "client.postMessage" in response.text

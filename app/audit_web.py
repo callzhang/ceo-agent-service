@@ -1498,7 +1498,7 @@ async function handleNotificationClick(data) {
   if (data.url) {
     try {
       await fetch(data.url, {
-        method: "GET",
+        method: "POST",
         headers: { "Accept": "application/json" },
       });
     } catch (error) {

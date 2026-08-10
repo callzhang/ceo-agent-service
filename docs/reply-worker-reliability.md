@@ -296,6 +296,11 @@ use persisted exponential retry delays from one minute up to fifteen minutes.
 They are never immediately reclaimed in a hot loop, and the delay does not
 authorize replaying an approval, message, or other external action.
 
+Browser notification clicks call the local DingTalk bridge with `POST`, matching
+the bridge's external-action boundary. The click may then focus an existing audit
+window and navigate it to the exact attempt detail; it does not issue a `GET`
+that fails with 405 or opens a duplicate browser window.
+
 An `agent_cli` command that returns a structured error receipt is recorded as a
 failed effect with its retryability and channel state. It is not treated as an
 unreviewed tool call or an unknown successful write. Native DWS/Lark commands may
