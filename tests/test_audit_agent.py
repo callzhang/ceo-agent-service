@@ -80,6 +80,31 @@ class ExactReceiptExecutor(CapturingExecutor):
         return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
 
 
+def _wire_result(result: dict[str, object]) -> dict[str, object]:
+    error = result["error"]
+    assert isinstance(error, dict)
+    return {
+        "outcome": result["outcome"],
+        "summary": result["summary"],
+        "proposal_revision": result["proposal_revision"],
+        "side_effect_state": result["side_effect_state"],
+        "feedback_json": (
+            json.dumps(result["feedback"])
+            if result["feedback"] is not None
+            else None
+        ),
+        "external_result_json": (
+            json.dumps(result["external_result"])
+            if result["external_result"] is not None
+            else None
+        ),
+        "reconciliation_json": json.dumps(result["reconciliation"]),
+        "error_code": error["code"],
+        "error_retryable": error["retryable"],
+        "error_authorization_required": error["authorization_required"],
+    }
+
+
 def test_recovery_mcp_env_override_is_a_toml_inline_table():
     command = [
         "codex", "exec", "prompt",
@@ -246,7 +271,7 @@ def _audit_result_jsonl(
         json.dumps(
             {
                 "type": "item.completed",
-                "item": {"type": "agent_message", "text": json.dumps(result)},
+                "item": {"type": "agent_message", "text": json.dumps(_wire_result(result))},
             }
         )
     )
@@ -390,7 +415,7 @@ def _audit_jsonl(
         json.dumps(
             {
                 "type": "item.completed",
-                "item": {"type": "agent_message", "text": json.dumps(result)},
+                "item": {"type": "agent_message", "text": json.dumps(_wire_result(result))},
             }
         )
     )
@@ -415,7 +440,7 @@ def _dry_run_suppressed_jsonl(*, proposal_revision: int = 0) -> str:
     return json.dumps(
         {
             "type": "item.completed",
-            "item": {"type": "agent_message", "text": json.dumps(result)},
+            "item": {"type": "agent_message", "text": json.dumps(_wire_result(result))},
         }
     )
 
@@ -461,7 +486,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     command = executor.commands[0]
     assert command[:2] == ["codex", "exec"]
     assert "resume" not in command
-    assert "--output-schema" not in command
+    assert "--output-schema" in command
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command
     assert "tools.enabled_tools=[]" in command
@@ -746,13 +771,13 @@ def test_audit_rejects_direct_shell_event(setup):
         ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
 
 
-def test_audit_does_not_confirm_agent_cli_error_receipt(setup):
+def test_audit_preserves_agent_cli_error_receipt_without_confirming_effect(setup):
     store, task, audit_context, parent = setup
     executor = CapturingExecutor(
         _audit_jsonl("operation-1", session="session-b", write_error=True)
     )
 
-    with pytest.raises(AgentReadOnlyViolationError, match="agent_cli_receipt_invalid"):
+    with pytest.raises(RuntimeError, match="audit_execution_evidence_missing"):
         AuditAgentRunner(
             store=store,
             workspace=Path("/workspace"),
@@ -767,8 +792,17 @@ def test_audit_does_not_confirm_agent_cli_error_receipt(setup):
         turn_attempt=0,
     )
     assert run is not None
-    assert run.status == "unknown"
-    assert run.side_effect_state == "unknown"
+    assert run.status == "failed"
+    assert run.side_effect_state == "none"
+    failed_events = [
+        event for event in run.tool_events
+        if event.get("type") == "item.failed"
+    ]
+    assert len(failed_events) == 1
+    metadata = failed_events[0]["item"]["metadata"]
+    assert metadata["failure_code"] == "dws_transient_failure"
+    assert metadata["failure_retryable"] is True
+    assert metadata["failure_gate_state"] == "unavailable"
 
 
 @pytest.mark.parametrize(

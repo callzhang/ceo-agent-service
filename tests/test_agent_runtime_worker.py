@@ -730,9 +730,45 @@ def _prompt_json_section(prompt: str, heading: str):
 
 
 def _agent_result_event(result) -> dict[str, object]:
+    if isinstance(result, ConsumerAgentResult):
+        error = result.error
+        payload = {
+            "outcome": result.outcome.value,
+            "summary": result.summary,
+            "proposal_json": (
+                result.proposal.model_dump_json() if result.proposal is not None else None
+            ),
+            "error_code": error.code,
+            "error_retryable": error.retryable,
+            "error_authorization_required": error.authorization_required,
+        }
+    elif isinstance(result, AuditAgentResult):
+        error = result.error
+        payload = {
+            "outcome": result.outcome.value,
+            "summary": result.summary,
+            "proposal_revision": result.proposal_revision,
+            "side_effect_state": result.side_effect_state.value,
+            "feedback_json": (
+                result.feedback.model_dump_json() if result.feedback is not None else None
+            ),
+            "external_result_json": (
+                result.external_result.model_dump_json()
+                if result.external_result is not None
+                else None
+            ),
+            "reconciliation_json": json.dumps(
+                [item.model_dump(mode="json") for item in result.reconciliation]
+            ),
+            "error_code": error.code,
+            "error_retryable": error.retryable,
+            "error_authorization_required": error.authorization_required,
+        }
+    else:
+        raise TypeError(f"unsupported result type: {type(result)!r}")
     return {
         "type": "item.completed",
-        "item": {"type": "agent_message", "text": result.model_dump_json()},
+        "item": {"type": "agent_message", "text": json.dumps(payload)},
     }
 
 

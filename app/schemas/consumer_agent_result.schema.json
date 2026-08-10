@@ -157,7 +157,8 @@
         "proposal": {
           "type": "object"
         }
-      }
+      },
+      "type": "object"
     },
     {
       "properties": {
@@ -171,7 +172,8 @@
         "proposal": {
           "type": "null"
         }
-      }
+      },
+      "type": "object"
     }
   ],
   "properties": {

@@ -7,7 +7,11 @@ from uuid import uuid4
 
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import AuditFeedback, ConsumerAgentResult
-from app.agent_result import ResultParseError, parse_typed_agent_result
+from app.agent_result import ResultParseError
+from app.agent_wire_contracts import (
+    ConsumerAgentWireResult,
+    parse_consumer_agent_wire_result,
+)
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
@@ -17,7 +21,7 @@ from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
 
 
-SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "consumer_agent_result.schema.json"
+SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "consumer_agent_wire.schema.json"
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 REVIEWED_DWS_READ_INSTRUCTIONS = """
@@ -32,15 +36,19 @@ CONSUMER_ROLE_BOUNDARY = """
 Authoritative Consumer role boundary: configurable Audit Rules are review
 criteria, not instructions for you to execute, approve, publish, or return a
 candidate to another Agent. You are Consumer Agent A and must finish with one
-valid ConsumerAgentResult JSON object matching the supplied schema.
+valid Consumer Agent wire JSON object matching the supplied schema. The service
+converts it into a valid ConsumerAgentResult JSON object after strict validation.
+Nested proposal data is encoded as proposal_json and will be strictly validated
+before it can affect execution.
 """.strip()
 
 AUDIT_ROLE_BOUNDARY = """
 Authoritative Audit role boundary: configurable Audit Rules are review
 criteria. You are Audit Agent B; follow the supplied turn-specific execution
-permission and finish with one valid AuditAgentResult JSON object matching the
-supplied schema. Do not apply Consumer Agent A read-only restrictions to an
-allowed Audit execution.
+permission and finish with one valid Audit Agent wire JSON object matching the
+supplied schema. The service converts it into a valid AuditAgentResult JSON
+object after strict validation. Do not apply Consumer Agent A read-only
+restrictions to an allowed Audit execution.
 """.strip()
 
 
@@ -166,7 +174,7 @@ class ConsumerAgentRunner:
                 ),
                 session_id=session_id,
                 schema_path=SCHEMA_PATH,
-                expected_schema=ConsumerAgentResult.model_json_schema(),
+                expected_schema=ConsumerAgentWireResult.model_json_schema(),
                 developer_instructions=consumer_developer_instructions(
                     "Consumer Agent A is read-only.\n\n" + rendered_rules
                 ),
@@ -178,10 +186,7 @@ class ConsumerAgentRunner:
                         cwd=str(SERVICE_ROOT),
                     ),
                 ),
-                parse_result=lambda raw: parse_typed_agent_result(
-                    raw,
-                    ConsumerAgentResult,
-                ),
+                parse_result=parse_consumer_agent_wire_result,
                 persist_conversation_session=persist_conversation_session,
                 on_progress=renew_session_lock,
             )

@@ -15,12 +15,14 @@ from app.agent_result import AgentError, SideEffectState
 def _consumer_result_json_schema(schema: dict[str, object]) -> None:
     schema["anyOf"] = [
         {
+            "type": "object",
             "properties": {
                 "outcome": {"const": "proposal"},
                 "proposal": {"type": "object"},
             }
         },
         {
+            "type": "object",
             "properties": {
                 "outcome": {
                     "enum": ["no_action", "needs_human", "failed"],
@@ -35,6 +37,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
     null_value = {"type": "null"}
     schema["anyOf"] = [
         {
+            "type": "object",
             "properties": {
                 "outcome": {"const": "executed"},
                 "side_effect_state": {"const": "confirmed"},
@@ -43,6 +46,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
             }
         },
         {
+            "type": "object",
             "properties": {
                 "outcome": {"const": "revision_required"},
                 "side_effect_state": {"const": "none"},
@@ -51,6 +55,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
             }
         },
         {
+            "type": "object",
             "properties": {
                 "outcome": {"const": "unknown"},
                 "side_effect_state": {"const": "unknown"},
@@ -59,6 +64,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
             }
         },
         {
+            "type": "object",
             "properties": {
                 "outcome": {"const": "reconciled"},
                 "side_effect_state": {"const": "unknown"},
@@ -67,6 +73,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
             }
         },
         {
+            "type": "object",
             "properties": {
                 "outcome": {"enum": ["needs_human", "failed"]},
                 "side_effect_state": {"const": "none"},

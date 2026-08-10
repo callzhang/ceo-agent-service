@@ -290,7 +290,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 prompt=prompt,
                 session_id=session_id,
                 output_schema_path=schema_path,
-                use_output_schema=False,
+                use_output_schema=True,
                 approval_policy="untrusted" if allow_effectful_tools else "never",
                 developer_instructions=contract_instructions,
                 use_approval_bypass=allow_effectful_tools,
@@ -308,7 +308,7 @@ class AgentTurnProcess(Generic[ResultT]):
             result = parse_result(process.stdout)
             if _contains_sensitive_value(result.model_dump(mode="json")):
                 raise ValueError("agent_result_contains_sensitive_value")
-        except ResultParseError:
+        except ResultParseError as exc:
             fallback = _recovery_execution_result_from_receipts(
                 run=run,
                 recovery_phase=recovery_phase,
@@ -320,10 +320,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 store=self.store,
             )
             if fallback is None:
+                parse_error_code = _agent_process_error_code(exc)
                 if recover_unknown:
-                    self._defer_unknown(run, "codex_result_invalid")
+                    self._defer_unknown(run, parse_error_code)
                 else:
-                    self._fail_running(run, "codex_result_invalid")
+                    self._fail_running(run, parse_error_code)
                 raise
             result = cast(ResultT, fallback)
         except AgentReadOnlyViolationError:
@@ -521,7 +522,7 @@ class AgentTurnProcess(Generic[ResultT]):
             if payload.get("type") == "item.completed":
                 receipt = _agent_cli_receipt(
                     item.get("result"),
-                    allow_error=call.effect is EffectKind.READ_ONLY,
+                    allow_error=True,
                 )
                 if (
                     receipt is None
@@ -568,6 +569,18 @@ class AgentTurnProcess(Generic[ResultT]):
         }
         if call.effect is EffectKind.EFFECTFUL:
             metadata["operation_id"] = operation_id
+        if controlled_receipt_failed and validated_receipt is not None:
+            receipt_error = validated_receipt.get("error")
+            if isinstance(receipt_error, dict):
+                failure_code = receipt_error.get("code")
+                if isinstance(failure_code, str) and failure_code:
+                    metadata["failure_code"] = failure_code
+                failure_retryable = receipt_error.get("retryable")
+                if isinstance(failure_retryable, bool):
+                    metadata["failure_retryable"] = failure_retryable
+                failure_gate_state = receipt_error.get("gate_state")
+                if isinstance(failure_gate_state, str) and failure_gate_state:
+                    metadata["failure_gate_state"] = failure_gate_state
         if event_type == "item.completed":
             result_digest = (
                 validated_receipt.get("result_digest")

@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "ConsumerOutcome": {
+      "enum": [
+        "proposal",
+        "no_action",
+        "needs_human",
+        "failed"
+      ],
+      "title": "ConsumerOutcome",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict-output transport form; nested dynamic objects remain JSON strings.",
+  "properties": {
+    "outcome": {
+      "$ref": "#/$defs/ConsumerOutcome"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "proposal_json": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Proposal Json"
+    },
+    "error_code": {
+      "title": "Error Code",
+      "type": "string"
+    },
+    "error_retryable": {
+      "title": "Error Retryable",
+      "type": "boolean"
+    },
+    "error_authorization_required": {
+      "title": "Error Authorization Required",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "outcome",
+    "summary",
+    "proposal_json",
+    "error_code",
+    "error_retryable",
+    "error_authorization_required"
+  ],
+  "title": "ConsumerAgentWireResult",
+  "type": "object"
+}

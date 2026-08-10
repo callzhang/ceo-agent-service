@@ -11,7 +11,8 @@ from app.agent_contracts import (
     AuditAgentResult,
     AuditOutcome,
 )
-from app.agent_result import AgentError, SideEffectState, parse_typed_agent_result
+from app.agent_result import AgentError, SideEffectState
+from app.agent_wire_contracts import AuditAgentWireResult, parse_audit_agent_wire_result
 from app.agent_cli import RECOVERY_WRITE_ALLOWLIST_ENV
 from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
@@ -22,7 +23,7 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
 
-SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "audit_agent_result.schema.json"
+SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "audit_agent_wire.schema.json"
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -281,7 +282,7 @@ class AuditAgentRunner:
             ),
             session_id=run.codex_session_id or None,
             schema_path=SCHEMA_PATH,
-            expected_schema=AuditAgentResult.model_json_schema(),
+            expected_schema=AuditAgentWireResult.model_json_schema(),
             developer_instructions=audit_developer_instructions(
                 "Audit Agent B independently reviews and executes accepted candidates.\n\n"
                 + (
@@ -329,7 +330,7 @@ class AuditAgentRunner:
                 ),
                 allow_write=not self.dry_run and recovery_phase != "reconcile",
             ),
-            parse_result=lambda raw: parse_typed_agent_result(raw, AuditAgentResult),
+            parse_result=parse_audit_agent_wire_result,
             persist_conversation_session=False,
             expected_effect_actions=expected_effect_actions,
             recovery_phase=recovery_phase,

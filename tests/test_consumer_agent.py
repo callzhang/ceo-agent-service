@@ -38,6 +38,20 @@ class FailingExecutor(CapturingExecutor):
         return ProcessRunResult(1, self.stdout, self.stderr)
 
 
+def _wire_result(result: dict[str, object]) -> dict[str, object]:
+    error = result["error"]
+    assert isinstance(error, dict)
+    proposal = result["proposal"]
+    return {
+        "outcome": result["outcome"],
+        "summary": result["summary"],
+        "proposal_json": json.dumps(proposal) if proposal is not None else None,
+        "error_code": error["code"],
+        "error_retryable": error["retryable"],
+        "error_authorization_required": error["authorization_required"],
+    }
+
+
 def _result_jsonl(*, session: str = "session-a") -> str:
     result = {
         "outcome": "no_action",
@@ -48,7 +62,7 @@ def _result_jsonl(*, session: str = "session-a") -> str:
     return "\n".join(
         (
             json.dumps({"type": "thread.started", "thread_id": session}),
-            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(result)}}),
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(_wire_result(result))}}),
         )
     )
 
@@ -80,7 +94,7 @@ def _proposal_jsonl(payload: dict[str, object]) -> str:
             json.dumps(
                 {
                     "type": "item.completed",
-                    "item": {"type": "agent_message", "text": json.dumps(result)},
+                    "item": {"type": "agent_message", "text": json.dumps(_wire_result(result))},
                 }
             ),
         )
@@ -146,7 +160,7 @@ def _failed_reviewed_read_jsonl() -> str:
             json.dumps(
                 {
                     "type": "item.completed",
-                    "item": {"type": "agent_message", "text": json.dumps(result)},
+                    "item": {"type": "agent_message", "text": json.dumps(_wire_result(result))},
                 }
             ),
         )
@@ -195,7 +209,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     assert 'sandbox_mode="read-only"' not in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert "tools.enabled_tools=[]" in command
-    assert "--output-schema" not in command
+    assert "--output-schema" in command
     assert 'approval_policy="never"' in command
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command

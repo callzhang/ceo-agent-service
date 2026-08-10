@@ -1,0 +1,97 @@
+{
+  "$defs": {
+    "AuditOutcome": {
+      "enum": [
+        "executed",
+        "revision_required",
+        "needs_human",
+        "failed",
+        "unknown",
+        "reconciled"
+      ],
+      "title": "AuditOutcome",
+      "type": "string"
+    },
+    "SideEffectState": {
+      "enum": [
+        "none",
+        "confirmed",
+        "unknown"
+      ],
+      "title": "SideEffectState",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict-output transport form for Audit B dynamic result fields.",
+  "properties": {
+    "outcome": {
+      "$ref": "#/$defs/AuditOutcome"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "proposal_revision": {
+      "minimum": 0,
+      "title": "Proposal Revision",
+      "type": "integer"
+    },
+    "side_effect_state": {
+      "$ref": "#/$defs/SideEffectState"
+    },
+    "feedback_json": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Feedback Json"
+    },
+    "external_result_json": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "External Result Json"
+    },
+    "reconciliation_json": {
+      "title": "Reconciliation Json",
+      "type": "string"
+    },
+    "error_code": {
+      "title": "Error Code",
+      "type": "string"
+    },
+    "error_retryable": {
+      "title": "Error Retryable",
+      "type": "boolean"
+    },
+    "error_authorization_required": {
+      "title": "Error Authorization Required",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "outcome",
+    "summary",
+    "proposal_revision",
+    "side_effect_state",
+    "feedback_json",
+    "external_result_json",
+    "reconciliation_json",
+    "error_code",
+    "error_retryable",
+    "error_authorization_required"
+  ],
+  "title": "AuditAgentWireResult",
+  "type": "object"
+}

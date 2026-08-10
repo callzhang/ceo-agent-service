@@ -250,3 +250,17 @@ The hourly quality check treats an error as open only until a later durable
 attempt for the same conversation and trigger records a completed delivery or
 operation. This keeps the audit evidence while preventing a recovered retry
 from remaining a red service failure for the rest of the repair window.
+
+### Consumer/Audit structured output
+
+Consumer A and Audit B use Codex native `--output-schema`. Their wire schemas keep
+dynamic nested proposal and receipt data in JSON strings, then decode and validate
+those values against the full Pydantic business contracts before any action can be
+accepted. The service does not fall back to the former result shape when the wire
+schema is violated.
+
+An `agent_cli` command that returns a structured error receipt is recorded as a
+failed effect with its retryability and channel state. It is not treated as an
+unreviewed tool call or an unknown successful write. Native DWS/Lark commands may
+run for up to 15 minutes, matching the documented CLI timeout and remaining below
+the enclosing Agent turn limit.

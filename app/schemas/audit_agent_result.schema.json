@@ -153,7 +153,8 @@
         "external_result": {
           "type": "object"
         }
-      }
+      },
+      "type": "object"
     },
     {
       "properties": {
@@ -169,7 +170,8 @@
         "external_result": {
           "type": "null"
         }
-      }
+      },
+      "type": "object"
     },
     {
       "properties": {
@@ -185,7 +187,8 @@
         "external_result": {
           "type": "null"
         }
-      }
+      },
+      "type": "object"
     },
     {
       "properties": {
@@ -201,7 +204,8 @@
         "external_result": {
           "type": "null"
         }
-      }
+      },
+      "type": "object"
     },
     {
       "properties": {
@@ -220,7 +224,8 @@
         "external_result": {
           "type": "null"
         }
-      }
+      },
+      "type": "object"
     }
   ],
   "properties": {

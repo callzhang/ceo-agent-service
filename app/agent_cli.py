@@ -30,6 +30,7 @@ from app.native_cli_metadata import (
 
 MAX_CLI_OUTPUT_BYTES = MAX_PROCESS_OUTPUT_BYTES
 MAX_SKILL_BYTES = 256 * 1024
+CLI_TIMEOUT_SECONDS = 15 * 60
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 CliOutputLimitError = ProcessOutputLimitError
 AGENT_SKILL_ROOTS = (
@@ -221,13 +222,13 @@ def _execute_reviewed(
     reviewed_argv = [executable, *argv[1:]]
     try:
         process = (
-            run_bounded_process(reviewed_argv, timeout=120)
+            run_bounded_process(reviewed_argv, timeout=CLI_TIMEOUT_SECONDS)
             if process_runner is None
             else process_runner(
                 reviewed_argv,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=CLI_TIMEOUT_SECONDS,
                 check=False,
             )
         )

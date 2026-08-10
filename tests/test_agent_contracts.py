@@ -14,6 +14,10 @@ from app.agent_contracts import (
     ProposedAction,
 )
 from app.agent_result import parse_typed_agent_result
+from app.agent_wire_contracts import (
+    AuditAgentWireResult,
+    ConsumerAgentWireResult,
+)
 
 
 SCHEMA_DIR = Path(__file__).parents[1] / "app" / "schemas"
@@ -276,6 +280,8 @@ def test_contract_schemas_match_models_and_do_not_enumerate_business_actions():
     for filename, schema in expected.items():
         committed = json.loads((SCHEMA_DIR / filename).read_text(encoding="utf-8"))
         assert committed == schema
+        assert schema["type"] == "object"
+        assert all(branch["type"] == "object" for branch in schema["anyOf"])
         serialized = json.dumps(schema, ensure_ascii=False)
         for business_action in (
             "send_dingtalk_reply",
@@ -385,3 +391,39 @@ def test_parse_typed_agent_result_uses_current_codex_output_shape():
     result = parse_typed_agent_result(raw, ConsumerAgentResult)
 
     assert result.outcome is ConsumerOutcome.PROPOSAL
+
+
+def test_consumer_wire_result_decodes_dynamic_proposal_fields():
+    result = ConsumerAgentWireResult.model_validate(
+        {
+            "outcome": "proposal",
+            "summary": "Prepare the notice.",
+            "proposal_json": json.dumps(_proposal()),
+            "error_code": "",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        }
+    ).to_result()
+
+    assert result.proposal is not None
+    assert result.proposal.actions[0].target == {"conversation_reference": "cid-1"}
+
+
+def test_audit_wire_result_decodes_nested_result_fields():
+    result = AuditAgentWireResult.model_validate(
+        {
+            "outcome": "needs_human",
+            "summary": "A decision is required.",
+            "proposal_revision": 0,
+            "side_effect_state": "none",
+            "feedback_json": None,
+            "external_result_json": None,
+            "reconciliation_json": "[]",
+            "error_code": "decision_required",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        }
+    ).to_result()
+
+    assert result.outcome is AuditOutcome.NEEDS_HUMAN
+    assert result.error.code == "decision_required"

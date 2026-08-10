@@ -4,7 +4,11 @@ import subprocess
 
 import pytest
 
-from app.agent_cli import execute_reviewed_read, execute_reviewed_write
+from app.agent_cli import (
+    CLI_TIMEOUT_SECONDS,
+    execute_reviewed_read,
+    execute_reviewed_write,
+)
 from app.agent_result import EffectKind
 from app.native_cli_metadata import AgentReadOnlyViolationError, NativeCliMetadataClassifier
 
@@ -17,6 +21,28 @@ def test_agent_cli_uses_agent_cli_error_codes(monkeypatch):
         process_runner=lambda *args, **kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired(args[0], 120)),
     )
     assert receipt["error"]["code"] == "agent_cli_timeout"
+
+
+def test_agent_cli_allows_native_command_to_run_for_fifteen_minutes(monkeypatch):
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={("dws", "chat message get"): EffectKind.READ_ONLY}
+    )
+    monkeypatch.setattr("app.agent_cli.shutil.which", lambda _: "/bin/dws")
+    observed_timeout = None
+
+    def process_runner(*args, **kwargs):
+        nonlocal observed_timeout
+        observed_timeout = kwargs["timeout"]
+        return subprocess.CompletedProcess(args[0], 0, "{}", "")
+
+    execute_reviewed_read(
+        ["dws", "chat", "message", "get"],
+        classifier=classifier,
+        process_runner=process_runner,
+    )
+
+    assert CLI_TIMEOUT_SECONDS == 15 * 60
+    assert observed_timeout == CLI_TIMEOUT_SECONDS
 
 
 def test_agent_cli_allows_incomplete_dws_help_as_read_only(monkeypatch):
