@@ -13,6 +13,36 @@ from app.agent_result import EffectKind
 from app.native_cli_metadata import AgentReadOnlyViolationError, NativeCliMetadataClassifier
 
 
+def test_classifier_accepts_pptx_stdout_extraction_pipeline_as_local_read():
+    command = (
+        "unzip -p /tmp/deck.pptx 'ppt/slides/slide*.xml' "
+        "| sed -E 's/<[^>]+>/ /g' | tr -s '[:space:]' ' ' | head -c 3000"
+    )
+
+    descriptor = NativeCliMetadataClassifier(reviewed_effects={}).classify(
+        {"type": "command_execution", "command": command}
+    )
+
+    assert descriptor is not None
+    assert descriptor.effect is EffectKind.READ_ONLY
+    assert descriptor.cli == "local-shell"
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "unzip /tmp/deck.pptx",
+        "unzip -d /tmp/extracted /tmp/deck.pptx",
+    ),
+)
+def test_classifier_rejects_pptx_commands_that_extract_files(command):
+    descriptor = NativeCliMetadataClassifier(reviewed_effects={}).classify(
+        {"type": "command_execution", "command": command}
+    )
+
+    assert descriptor is None
+
+
 def test_agent_cli_uses_agent_cli_error_codes(monkeypatch):
     classifier = NativeCliMetadataClassifier(reviewed_effects={("dws", "chat message get"): EffectKind.READ_ONLY})
     monkeypatch.setattr("app.agent_cli.shutil.which", lambda _: "/bin/dws")

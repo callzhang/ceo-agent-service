@@ -36,6 +36,7 @@ _LOCAL_READ_ONLY_COMMANDS = frozenset(
         "tail",
         "tr",
         "uniq",
+        "unzip",
         "wc",
     }
 )
@@ -459,6 +460,12 @@ def _is_local_read_only_segment(argv: tuple[str, ...]) -> bool:
     if executable not in _LOCAL_READ_ONLY_COMMANDS:
         return False
     options = argv[1:]
+    if executable == "unzip":
+        return (
+            len(options) >= 2
+            and options[0] == "-p"
+            and all(not option.startswith("-") for option in options[1:])
+        )
     if executable == "sed" and any(
         option == "-i"
         or option.startswith("-i.")

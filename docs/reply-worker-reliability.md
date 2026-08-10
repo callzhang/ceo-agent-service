@@ -65,6 +65,8 @@ turn 复用，因为原 session 含有精确操作身份、工具参数和返回
 
 A 的 Codex 命令只注入已审核的读取工具。A 可以读取 DWS、Lark、本地 workspace、Memory、
 Exa 和 Xiaoqing 中当前任务允许访问的材料，但不能调用发送、评论、审批或文档修改工具。
+下载到临时目录的 Office 压缩包可以用严格只读的 `unzip -p` 管道展开到 stdout；不带 `-p`
+的解压、指定输出目录或重定向写文件仍会被拒绝。
 
 B 的命令注入相同读取能力和固定写能力。B 只能执行 A 候选中明确列出的 capability、operation、
 target 和 payload；若实时读取发现业务参数需要变化，必须返回 `revision_required`，不能自行
