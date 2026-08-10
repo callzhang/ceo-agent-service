@@ -1649,7 +1649,7 @@ def test_worker_finalizes_unknown_audit_without_session_as_needs_human(
     assert attempt.send_error == "audit_recovery_session_missing"
 
 
-def test_worker_finalizes_absent_direct_mcp_recovery_without_write(tmp_path: Path):
+def test_worker_requeues_absent_direct_mcp_recovery_without_write(tmp_path: Path):
     trigger = _message("Submit the reviewed interview result.")
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
     task_id = _enqueue(store, trigger)
@@ -1783,12 +1783,15 @@ def test_worker_finalizes_absent_direct_mcp_recovery_without_write(tmp_path: Pat
         now_provider=lambda: NOW,
     )
 
-    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.consume_once(max_tasks=1) == 0
     persisted = store.get_agent_run(audit.id)
+    requeued = store.get_reply_task(task.id)
     attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert persisted is not None and persisted.status == "completed"
-    assert attempt is not None and attempt.send_status == "needs_human"
-    assert attempt.send_error == "audit_recovery_direct_mcp_replay_forbidden"
+    assert persisted is not None and persisted.status == "failed"
+    assert requeued is not None and requeued.status == "pending"
+    assert requeued.execution_generation != task.execution_generation
+    assert attempt is not None and attempt.send_status == "failed"
+    assert attempt.send_error == "audit_recovery_candidate_invalid"
 
 
 def _worker(

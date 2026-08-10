@@ -373,6 +373,15 @@ def native_command_argv(item: dict[str, object]) -> tuple[str, ...] | None:
     return argv if executable in {"dws", "lark-cli"} else None
 
 
+def has_noninteractive_confirmation(argv: tuple[str, ...]) -> bool:
+    return any(
+        argument == "-y"
+        or argument == "--yes"
+        or argument.startswith("--yes=")
+        for argument in argv
+    )
+
+
 def _classify_local_read_only_command(
     item: dict[str, object],
 ) -> NativeCliCommand | None:

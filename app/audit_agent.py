@@ -9,6 +9,7 @@ from uuid import uuid4
 from app.agent_context import AuditTurnContext
 from app.agent_contracts import (
     AuditAgentResult,
+    AuditFeedback,
     AuditOutcome,
 )
 from app.agent_result import AgentError, SideEffectState
@@ -24,7 +25,11 @@ from app.agent_turn_runner import (
     unknown_reconciliation_retry_at,
 )
 from app.consumer_agent import audit_developer_instructions
-from app.native_cli_metadata import describe_native_command
+from app.native_cli_metadata import (
+    describe_native_command,
+    has_noninteractive_confirmation,
+    native_command_argv,
+)
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
@@ -77,6 +82,12 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
+        invalid_actions = _invalid_operation_contracts(context, self.effects)
+        if invalid_actions:
+            return self._return_invalid_candidate(
+                claim.run,
+                invalid_actions=invalid_actions,
+            )
         return self._execute_claimed(
             task,
             context,
@@ -182,31 +193,14 @@ class AuditAgentRunner:
             run, context, absent, self.effects
         )
         if len(authorizations) != len(absent):
-            result = AuditAgentResult(
-                outcome=AuditOutcome.NEEDS_HUMAN,
-                summary="An absent direct MCP effect cannot be replayed safely.",
-                proposal_revision=run.proposal_revision,
-                side_effect_state=SideEffectState.NONE,
-                feedback=None,
-                external_result=None,
-                reconciliation=(),
-                error=AgentError(
-                    code="audit_recovery_direct_mcp_replay_forbidden",
-                    retryable=False,
+            return self._requeue_for_consumer(
+                task,
+                claim.run,
+                code="audit_recovery_candidate_invalid",
+                summary=(
+                    "The absent action cannot execute under the current command "
+                    "contract; Consumer Agent A must produce a valid replacement."
                 ),
-            )
-            completed = self.store.complete_agent_run(
-                run.id,
-                result.model_dump(mode="json"),
-                owner=self.owner,
-                side_effect_state=SideEffectState.UNKNOWN.value,
-                expected_status="unknown",
-            )
-            return AgentTurnRunResult(
-                run_id=run.id,
-                result=result,
-                transcript_start_line=completed.transcript_end_line,
-                transcript_end_line=completed.transcript_end_line,
             )
         return self._execute_claimed(
             task,
@@ -223,31 +217,90 @@ class AuditAgentRunner:
         task: ReplyTask,
         run: AgentRun,
     ) -> AgentTurnRunResult[AuditAgentResult]:
+        return self._requeue_for_consumer(
+            task,
+            run,
+            code="persisted_delivery_absent",
+            summary=(
+                "No persisted delivery record exists for the exact trigger; "
+                "the direct chat action was requeued in a new generation."
+            ),
+        )
+
+    def _requeue_for_consumer(
+        self,
+        task: ReplyTask,
+        run: AgentRun,
+        *,
+        code: str,
+        summary: str,
+    ) -> AgentTurnRunResult[AuditAgentResult]:
         self.store.resolve_unknown_agent_run_absent(
             run.id,
             task.id,
-            code="persisted_delivery_absent",
+            code=code,
             owner=self.owner,
             transcript_end_line=run.transcript_end_line,
         )
         result = AuditAgentResult(
             outcome=AuditOutcome.FAILED,
-            summary=(
-                "No persisted delivery record exists for the exact trigger; "
-                "the direct chat action was requeued in a new generation."
-            ),
+            summary=summary,
             proposal_revision=run.proposal_revision,
             side_effect_state=SideEffectState.NONE,
             feedback=None,
             external_result=None,
             reconciliation=(),
-            error=AgentError(code="persisted_delivery_absent", retryable=True),
+            error=AgentError(code=code, retryable=True),
         )
         return AgentTurnRunResult(
             run_id=run.id,
             result=result,
             transcript_start_line=run.transcript_start_line,
             transcript_end_line=run.transcript_end_line,
+        )
+
+    def _return_invalid_candidate(
+        self,
+        run: AgentRun,
+        *,
+        invalid_actions: tuple[int, ...],
+    ) -> AgentTurnRunResult[AuditAgentResult]:
+        listed = ", ".join(str(index) for index in invalid_actions)
+        result = AuditAgentResult(
+            outcome=AuditOutcome.REVISION_REQUIRED,
+            summary="The candidate contains an invalid reviewed command contract.",
+            proposal_revision=run.proposal_revision,
+            side_effect_state=SideEffectState.NONE,
+            feedback=AuditFeedback(
+                rule=(
+                    "The operation must match the reviewed command, and DWS writes "
+                    "require non-interactive confirmation."
+                ),
+                observation=(
+                    f"Candidate action indexes {listed} do not satisfy that "
+                    "mechanical command contract."
+                ),
+                requested_revision=(
+                    "Return the same intended operation with an operation label that "
+                    "matches the exact argv and with --yes on every DWS write; do not "
+                    "change its target or business payload."
+                ),
+            ),
+            external_result=None,
+            reconciliation=(),
+            error=AgentError(),
+        )
+        completed = self.store.complete_agent_run(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=self.owner,
+            side_effect_state=SideEffectState.NONE.value,
+        )
+        return AgentTurnRunResult(
+            run_id=run.id,
+            result=result,
+            transcript_start_line=completed.transcript_end_line,
+            transcript_end_line=completed.transcript_end_line,
         )
 
     def _execute_claimed(
@@ -399,8 +452,22 @@ def _expected_effect_action(
             {"type": "command_execution", "argv": legacy_argv}
         )
     if descriptor is not None:
+        argv = native_command_argv(
+            {
+                "type": "command_execution",
+                **(
+                    {"argv": legacy_argv}
+                    if legacy_argv is not None
+                    else action.payload
+                ),
+            }
+        )
         expected["operation_contract_valid"] = (
-            legacy_argv is not None or action.operation == descriptor.command_path
+            (legacy_argv is not None or action.operation == descriptor.command_path)
+            and (
+                descriptor.cli != "dws"
+                or (argv is not None and has_noninteractive_confirmation(argv))
+            )
         )
         if legacy_argv is not None:
             expected["capability"] = f"agent_cli.{descriptor.cli}"
@@ -425,6 +492,21 @@ def _expected_effect_action(
             expected["reviewed_server"] = call.server
             expected["reviewed_tool"] = call.tool
     return expected
+
+
+def _invalid_operation_contracts(
+    context: AuditTurnContext,
+    registry: McpToolEffectRegistry,
+) -> tuple[int, ...]:
+    return tuple(
+        index
+        for index, action in enumerate(context.proposal.actions)
+        if _expected_effect_action(
+            action,
+            registry,
+            action_index=index,
+        ).get("operation_contract_valid") is False
+    )
 
 
 def _database_delivery_absence_reconciliation(
@@ -517,6 +599,7 @@ def _recovery_authorizations(
         if (
             action.get("reviewed_server") != "agent_cli"
             or action.get("reviewed_tool") != "execute_reviewed_write"
+            or action.get("operation_contract_valid") is False
         ):
             continue
         identity = {

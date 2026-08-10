@@ -302,6 +302,12 @@ use persisted exponential retry delays from one minute up to fifteen minutes.
 They are never immediately reclaimed in a hot loop, and the delay does not
 authorize replaying an approval, message, or other external action.
 
+Audit validates the mechanical command contract before starting an execution.
+A DWS write without `--yes` is returned to Consumer A as a revision instead of
+being attempted. If an older persisted candidate reaches unknown-outcome recovery
+with that invalid command, the service rotates to a new Consumer generation; it
+does not ask the user to choose and does not replay the old command.
+
 Controlled CLI readback compares stable target identity rather than spelling of
 equivalent DingTalk flags. `group`, `conversation`, `conversation-id`, and
 `open-conversation-id` identify the same conversation namespace; unrelated
@@ -311,9 +317,9 @@ Direct-message commands retain `user` and `uuid` as stable target identifiers.
 Unknown-result recovery must use a target-scoped read with the same conversation,
 recipient, approval, or idempotency identity; a global keyword search cannot
 confirm an action performed for one recipient.
-The reconciliation result must cite the digest of the latest completed matching
-read in that turn. Repeating the same scoped read is allowed; the service does
-not rewrite the Agent's cited digest and rejects a missing or stale digest.
+The reconciliation result must cite the digest of a completed matching read in
+that turn. Repeating the same scoped read is allowed; the service does not rewrite
+the Agent's cited digest and rejects an unrelated or historical digest.
 
 Unknown DingTalk message delivery uses the reviewed command descriptor and the
 service delivery ledger as its identity. The Agent's free-form operation label

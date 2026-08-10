@@ -511,6 +511,52 @@ def setup(tmp_path):
     return store, task, audit_context, parent
 
 
+def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):
+    store, task, audit_context, parent = setup
+    invalid_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Approve request",
+            "actions": [
+                {
+                    "description": "Approve the exact OA task",
+                    "capability": "agent_cli.dws",
+                    "operation": "oa approval approve",
+                    "target": {"instance_id": "instance-1", "task_id": "task-1"},
+                    "payload": {
+                        "argv": [
+                            "dws", "oa", "approval", "approve",
+                            "--instance-id", "instance-1",
+                            "--task-id", "task-1",
+                            "--remark", "同意",
+                            "--format", "json",
+                        ]
+                    },
+                    "expected_verification": "OA task is completed",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Materials satisfy the rule",
+        }
+    )
+    executor = CapturingExecutor("")
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(
+        task,
+        replace(audit_context, proposal=invalid_proposal),
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+    )
+
+    assert result.result.outcome.value == "revision_required"
+    assert result.result.feedback is not None
+    assert "--yes" in result.result.feedback.requested_revision
+    assert executor.commands == []
+
+
 def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     store, task, audit_context, parent = setup
     store.upsert_conversation(task.conversation_id, "Group", False, "session-a")
@@ -1771,7 +1817,7 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
     ) == 1
 
 
-def test_direct_mcp_absent_recovery_requires_human_without_write(setup):
+def test_direct_mcp_absent_recovery_rotates_generation_without_write(setup):
     store, task, context, run, registry = _seed_crashed_xiaoqing_write(setup)
     readback = _xiaoqing_recovery_jsonl(
         run, include_read=True, disposition="absent"
@@ -1798,8 +1844,12 @@ def test_direct_mcp_absent_recovery_requires_human_without_write(setup):
     ).execute_recovery(task, context, run=persisted)
 
     persisted = store.get_agent_run(run.id)
-    assert result.result.outcome.value == "needs_human"
-    assert persisted is not None and persisted.status == "completed"
+    requeued = store.get_reply_task(task.id)
+    assert result.result.outcome.value == "failed"
+    assert result.result.error.code == "audit_recovery_candidate_invalid"
+    assert persisted is not None and persisted.status == "failed"
+    assert requeued is not None and requeued.status == "pending"
+    assert requeued.execution_generation != task.execution_generation
     assert sum(
         event["type"] == "item.started"
         and event["item"]["metadata"]["effect"] == "effectful"
@@ -2252,6 +2302,85 @@ def test_definitely_absent_recovery_reads_before_executing_same_revision_once(se
     assert "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST" in " ".join(executor.commands[1])
 
 
+def test_invalid_absent_recovery_candidate_rotates_consumer_generation(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    owner = "reconciliation-owner"
+    claimed = store.claim_unknown_agent_run(run.id, owner=owner)
+    assert claimed.claimed
+    reconciliation = AuditAgentResult.model_validate(
+        {
+            "outcome": "reconciled",
+            "summary": "The exact action is absent.",
+            "proposal_revision": run.proposal_revision,
+            "side_effect_state": "unknown",
+            "feedback": None,
+            "external_result": None,
+            "reconciliation": [
+                {
+                    "action_index": 0,
+                    "disposition": "absent",
+                    "read_result_digest": "current-turn-read",
+                }
+            ],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    )
+    persisted = store.persist_unknown_agent_run_result(
+        run.id,
+        reconciliation.model_dump(mode="json"),
+        owner=owner,
+        transcript_end_line=run.transcript_end_line,
+    )
+    invalid_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Approve request",
+            "actions": [
+                {
+                    "description": "Approve the exact OA task",
+                    "capability": "agent_cli.dws",
+                    "operation": "oa approval approve",
+                    "target": {"instance_id": "instance-1", "task_id": "task-1"},
+                    "payload": {
+                        "argv": [
+                            "dws", "oa", "approval", "approve",
+                            "--instance-id", "instance-1",
+                            "--task-id", "task-1",
+                            "--remark", "同意",
+                            "--format", "json",
+                        ]
+                    },
+                    "expected_verification": "OA task is completed",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Materials satisfy the rule",
+        }
+    )
+    executor = CapturingExecutor("")
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).execute_recovery(
+        task,
+        replace(audit_context, proposal=invalid_proposal),
+        run=persisted,
+    )
+
+    recovered_run = store.get_agent_run(run.id)
+    requeued = store.get_reply_task(task.id)
+    assert result.result.error.code == "audit_recovery_candidate_invalid"
+    assert recovered_run is not None and recovered_run.status == "failed"
+    assert requeued is not None and requeued.status == "pending"
+    assert requeued.execution_generation != task.execution_generation
+    assert executor.commands == []
+
+
 def test_persisted_absence_resumes_execute_phase_without_reconciling_again(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     runner = AuditAgentRunner(
@@ -2574,19 +2703,22 @@ def test_audit_rejects_different_operation_for_same_target_and_payload(setup):
     )
     proposal = audit_context.proposal.model_copy(update={"actions": (action,)})
 
-    with pytest.raises(RuntimeError, match="audit_execution_evidence_mismatch"):
-        AuditAgentRunner(
-            store=store,
-            workspace=Path("/workspace"),
-            executor=CapturingExecutor(
-                _audit_jsonl("operation-1", session="session-b")
-            ),
-        ).run(
-            task,
-            replace(audit_context, proposal=proposal),
-            turn_attempt=0,
-            parent_agent_run_id=parent.id,
-        )
+    executor = CapturingExecutor(_audit_jsonl("operation-1", session="session-b"))
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(
+        task,
+        replace(audit_context, proposal=proposal),
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+    )
+
+    assert result.result.outcome.value == "revision_required"
+    assert result.result.feedback is not None
+    assert "operation label" in result.result.feedback.requested_revision
+    assert executor.commands == []
 
 
 def test_audit_rejects_partial_writes(setup):

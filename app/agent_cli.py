@@ -26,6 +26,7 @@ from app.native_cli_metadata import (
     NativeCliMetadataClassifier,
     NativeCliMetadataUnavailableError,
     describe_native_command,
+    has_noninteractive_confirmation,
 )
 
 MAX_CLI_OUTPUT_BYTES = MAX_PROCESS_OUTPUT_BYTES
@@ -94,15 +95,6 @@ def _json_digest(value: object) -> str:
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _has_noninteractive_confirmation(argv: Sequence[str]) -> bool:
-    return any(
-        argument == "-y"
-        or argument == "--yes"
-        or argument.startswith("--yes=")
-        for argument in argv
-    )
 
 
 def _recovery_write_authorization(
@@ -218,7 +210,7 @@ def _execute_reviewed(
     if (
         expected_effect is EffectKind.EFFECTFUL
         and command.cli == "dws"
-        and not _has_noninteractive_confirmation(argv)
+        and not has_noninteractive_confirmation(tuple(argv))
     ):
         raise AgentReadOnlyViolationError("agent_cli_confirmation_required")
     authorization = None
