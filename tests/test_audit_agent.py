@@ -973,6 +973,25 @@ def test_crash_after_write_uses_fresh_read_only_recovery_and_confirms_without_re
     )
 
 
+def test_recovery_keeps_a_specific_audit_failure_code(setup, monkeypatch):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    runner = AuditAgentRunner(store=store, workspace=Path("/workspace"))
+
+    def fail_reconciliation(*args, **kwargs):
+        raise RuntimeError("audit_reconciliation_result_invalid")
+
+    monkeypatch.setattr(runner, "_execute_claimed", fail_reconciliation)
+
+    with pytest.raises(RuntimeError, match="audit_reconciliation_result_invalid"):
+        runner.recover(task, audit_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert json.loads(persisted.structured_error_json)["code"] == (
+        "audit_reconciliation_result_invalid"
+    )
+
+
 def test_direct_chat_unknown_without_delivery_record_replays_through_recovery(
     setup,
 ):

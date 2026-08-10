@@ -20,6 +20,7 @@ from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
     ProcessExecutor,
+    _agent_process_error_code,
     unknown_reconciliation_retry_at,
 )
 from app.consumer_agent import audit_developer_instructions
@@ -125,7 +126,8 @@ class AuditAgentRunner:
                 rendered_rules=rendered_rules,
                 recovery_phase="reconcile",
             )
-        except Exception:
+        except Exception as exc:
+            recovery_error = _audit_recovery_error_code(exc)
             persisted = self.store.get_agent_run(run.id)
             if (
                 persisted is not None
@@ -134,7 +136,7 @@ class AuditAgentRunner:
             ):
                 self.store.defer_unknown_agent_run_reconciliation(
                     run.id,
-                    {"code": "audit_recovery_failed", "retryable": True},
+                    {"code": recovery_error, "retryable": True},
                     owner=self.owner,
                     expected_execution_generation=run.execution_generation,
                     next_attempt_at=unknown_reconciliation_retry_at(
@@ -353,6 +355,16 @@ class AuditAgentRunner:
                 not self.dry_run and recovery_phase != "reconcile"
             ),
         )
+
+
+def _audit_recovery_error_code(exc: Exception) -> str:
+    code = _agent_process_error_code(exc)
+    if code != "codex_process_failed":
+        return code
+    detail = str(exc).strip()
+    if detail.startswith("audit_"):
+        return detail
+    return "audit_recovery_result_invalid"
 
 
 def _json_digest(value: object) -> str:
