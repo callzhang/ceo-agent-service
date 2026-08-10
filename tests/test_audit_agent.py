@@ -98,6 +98,8 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
     assert "unknown readback command is an evidence task" in prompt
     assert "same stable target identifier" in prompt
     assert "Do not replace a target-scoped read with a global search" in prompt
+    assert "Do not start with an unbounded or --page-all read" in prompt
+    assert "an incomplete window cannot prove absence" in prompt
 
 
 def test_audit_developer_instructions_define_wire_json_field_shapes():

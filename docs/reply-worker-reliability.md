@@ -317,6 +317,11 @@ Direct-message commands retain `user` and `uuid` as stable target identifiers.
 Unknown-result recovery must use a target-scoped read with the same conversation,
 recipient, approval, or idempotency identity; a global keyword search cannot
 confirm an action performed for one recipient.
+Recovery starts with the smallest recent target-scoped window that can decide the
+exact outcome. It does not start with an unbounded or `--page-all` history read;
+older pages are fetched only when the recent window cannot decide. A partial
+window may prove presence when it contains the exact action, but it cannot prove
+absence.
 The reconciliation result must cite the digest of a completed matching read in
 that turn. Repeating the same scoped read is allowed; the service does not rewrite
 the Agent's cited digest and rejects an unrelated or historical digest.

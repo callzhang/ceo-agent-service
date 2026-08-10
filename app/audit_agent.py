@@ -666,5 +666,10 @@ def _recovery_prompt(
         "original action, such as group/conversation, user/open-dingtalk-id, "
         "instance-id/task-id, or uuid. Do not replace a target-scoped read with a "
         "global search; global results cannot prove the outcome for one recipient. "
+        "Start with the smallest recent target-scoped window that can verify the "
+        "exact action. Do not start with an unbounded or --page-all read. Fetch "
+        "older pages only when the recent window cannot decide, and treat every "
+        "partial result according to its completeness: an incomplete window cannot "
+        "prove absence. "
         "Do not write."
     )
