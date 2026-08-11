@@ -1,3 +1,4 @@
+import errno
 from datetime import datetime
 from datetime import timedelta
 from dataclasses import dataclass
@@ -5070,6 +5071,38 @@ def test_consume_once_retries_execution_generation_mismatch(
     assert task.force_new_decision is False
     assert task.execution_generation == "initial"
     assert "reply_task_retry" in [
+        error.kind for error in worker.store.list_errors(limit=10)
+    ]
+
+
+def test_consume_once_defers_pre_agent_resource_deadlock_without_terminal_failure(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    worker.produce_once()
+
+    def fail_before_agent_run(*_args, **_kwargs):
+        raise OSError(errno.EDEADLK, "Resource deadlock avoided")
+
+    monkeypatch.setattr(worker, "_process_queued_task", fail_before_agent_run)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+    assert task.error == worker_module.RESOURCE_DEADLOCK_WAIT_ERROR
+    assert task.available_at == "2026-05-13 17:01:00"
+    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
+    assert "reply_task_resource_deadlock_wait" in [
         error.kind for error in worker.store.list_errors(limit=10)
     ]
 

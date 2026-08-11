@@ -1,5 +1,7 @@
+import errno
 import json
 import importlib.util
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from multiprocessing import get_context
 from pathlib import Path
@@ -277,6 +279,27 @@ def test_codex_session_lock_is_exclusive(tmp_path):
 
     store.release_codex_session_lock("cid-1", "okr:1")
     assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is True
+
+
+def test_codex_session_lock_retries_resource_deadlock(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    original_connect = store._connect
+    attempts = 0
+
+    @contextmanager
+    def flaky_connect():
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise OSError(errno.EDEADLK, "Resource deadlock avoided")
+        with original_connect() as db:
+            yield db
+
+    monkeypatch.setattr(store, "_connect", flaky_connect)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _seconds: None)
+
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is True
+    assert attempts == 3
 
 
 def test_codex_session_lock_replaces_stale_lock(tmp_path):

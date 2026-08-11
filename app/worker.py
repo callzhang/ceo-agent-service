@@ -1,3 +1,4 @@
+import errno
 import hashlib
 import json
 import logging
@@ -89,6 +90,7 @@ ORCHESTRATION_ATTEMPT_STATUS = {
     "failed_terminal": ("failed", "failed"),
     "unknown": ("pending_reconciliation", "pending"),
 }
+RESOURCE_DEADLOCK_WAIT_ERROR = "os_resource_deadlock_wait"
 logger = logging.getLogger(__name__)
 
 HANDOFF_ACK = handoff_ack()
@@ -1511,6 +1513,26 @@ class DingTalkAutoReplyWorker:
                 continue
             except Exception as exc:
                 error = str(exc)
+                if self._is_pre_agent_resource_deadlock(
+                    task,
+                    prior_run_snapshot=run_snapshot,
+                    exc=exc,
+                ):
+                    self.store.defer_reply_task(
+                        task.id,
+                        RESOURCE_DEADLOCK_WAIT_ERROR,
+                        expected_execution_generation=task.execution_generation,
+                        available_at=self._reply_task_retry_available_at(
+                            max(task.attempts, 1)
+                        ),
+                    )
+                    self.store.record_error(
+                        task.conversation_id,
+                        task.trigger_message_id,
+                        "reply_task_resource_deadlock_wait",
+                        error,
+                    )
+                    continue
                 authorization_wait_error = _normalize_codex_stop_error_reason(error)
                 terminal_codex_auth_failure = _is_terminal_codex_auth_failure(
                     authorization_wait_error
@@ -1787,6 +1809,29 @@ class DingTalkAutoReplyWorker:
                 != self._agent_run_fingerprint(item)
             ),
             None,
+        )
+
+    def _is_pre_agent_resource_deadlock(
+        self,
+        task: ReplyTask,
+        *,
+        prior_run_snapshot: dict[int, tuple[object, ...]],
+        exc: Exception,
+    ) -> bool:
+        """Retry only locks that occurred before this task made agent progress."""
+        is_deadlock = (
+            isinstance(exc, OSError)
+            and exc.errno == errno.EDEADLK
+        ) or "resource deadlock avoided" in str(exc).casefold()
+        if not is_deadlock:
+            return False
+        current_runs = self.store.list_agent_runs_for_task_generation(
+            task.id,
+            task.execution_generation,
+        )
+        return all(
+            prior_run_snapshot.get(run.id) == self._agent_run_fingerprint(run)
+            for run in current_runs
         )
 
     def _pending_reply_task_candidates(
