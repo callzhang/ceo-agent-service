@@ -8185,6 +8185,7 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     assert "退回" in agent_prompt(worker)
     assert "read-oa-approval-detail --instance-id proc-1" in agent_prompt(worker)
     assert "dws oa approval tasks --instance-id proc-1" in agent_prompt(worker)
+    assert "Do not substitute a similar command" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
     assert worker.store.count_reply_attempts() == 2

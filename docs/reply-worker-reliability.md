@@ -387,6 +387,12 @@ Reviewed DWS and Lark reads use the principal's existing local CLI credential
 store. Agents never start a separate login flow or copy credentials into prompts,
 receipts, or service configuration.
 
+Each material reference also carries an exact reviewed read command. That
+command is the authoritative read path for the current source and may account
+for a source-specific response shape. Consumer Agent A executes it unchanged
+before declaring the material unavailable; a similar command found in a skill
+is not a substitute.
+
 An `agent_cli` command that returns a structured error receipt is recorded as a
 failed effect with its retryability and channel state. It is not treated as an
 unreviewed tool call or an unknown successful write. Native DWS/Lark commands may
