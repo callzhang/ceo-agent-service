@@ -589,6 +589,69 @@ def test_follow_up_attempt_lease_ownership_uses_cas(tmp_path):
     )
 
 
+def test_expired_reconciliation_attempt_is_claimed_by_only_one_worker(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        status="draft",
+        scheduled_at="2026-07-01 01:00:00",
+    )
+    assert store.claim_follow_up_draft_revision(
+        draft_id,
+        expected_revision=1,
+        claim_token="send-token",
+        idempotency_uuid="send-uuid",
+        lease_owner="sender",
+        claimed_at="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    assert store.transition_follow_up_attempt_to_sending(
+        draft_id,
+        claimed_revision=1,
+        claim_token="send-token",
+        lease_owner="sender",
+        now="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+
+    first = store.claim_expired_follow_up_reconciliation_attempts(
+        now="2026-06-08 02:06:00",
+        lease_owner="reconciler-a",
+        lease_until="2026-06-08 02:11:00",
+        limit=10,
+    )
+    second = store.claim_expired_follow_up_reconciliation_attempts(
+        now="2026-06-08 02:06:00",
+        lease_owner="reconciler-b",
+        lease_until="2026-06-08 02:11:00",
+        limit=10,
+    )
+
+    assert len(first) == 1
+    assert first[0]["draft_id"] == draft_id
+    assert first[0]["draft_revision"] == 1
+    assert first[0]["state"] == "unknown"
+    assert first[0]["lease_owner"] == "reconciler-a"
+    assert second == []
+    assert not store.defer_unknown_follow_up_attempt(
+        draft_id,
+        draft_revision=1,
+        claim_token="send-token",
+        lease_owner="reconciler-b",
+        now="2026-06-08 02:06:00",
+        lease_until="2026-06-08 02:21:00",
+        result_json=json.dumps({"reconciliation": {"state": "ambiguous"}}),
+    )
+    still_claimed = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert still_claimed is not None
+    assert still_claimed["state"] == "unknown"
+    assert still_claimed["lease_owner"] == "reconciler-a"
+
+
 def test_due_follow_up_defers_outside_local_working_hours(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
@@ -1940,6 +2003,89 @@ def test_correction_holds_new_revision_while_old_send_outcome_is_unknown(tmp_pat
         draft_id=draft_id,
         draft_revision=2,
     ) is None
+
+
+def test_future_scheduled_correction_does_not_delay_expired_old_readback(
+    tmp_path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="旧问题",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+
+    original_finalize = store.update_claimed_follow_up_draft
+    monkeypatch.setattr(
+        store,
+        "update_claimed_follow_up_draft",
+        lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    class ReadbackDws(FakeDws):
+        def __init__(self):
+            super().__init__()
+            self.verify_calls = []
+
+        def send_message(self, *args, **kwargs):
+            super().send_message(*args, **kwargs)
+            return {"success": True, "result": {"openTaskId": "future-fix"}}
+
+        def verify_message_send_result(self, send_result):
+            self.verify_calls.append(send_result)
+            return {"state": "sent", "status_result": {"sendStatus": "SUCCESS"}}
+
+    dws = ReadbackDws()
+    with pytest.raises(KeyboardInterrupt):
+        process_due_follow_ups(
+            store,
+            dws,
+            now="2026-06-08 02:00:00",
+            auto_send=True,
+        )
+    store.update_follow_up_draft(
+        draft_id,
+        question_text="修正后的问题",
+        scheduled_at="2026-07-01 01:00:00",
+    )
+    monkeypatch.setattr(store, "update_claimed_follow_up_draft", original_finalize)
+    corrected = store.get_follow_up_draft(draft_id)
+    assert corrected is not None
+    assert corrected.scheduled_at == "2026-07-01 01:00:00"
+    assert dws.verify_calls == []
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:16:00",
+        auto_send=True,
+    ) == 0
+
+    assert len(dws.verify_calls) == 1
+    assert dws.verify_calls[0]["result"]["openTaskId"] == "future-fix"
+    assert len(dws.sent) == 1
+    old_attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert old_attempt is not None
+    assert old_attempt["state"] == "sent_review_enqueued"
+    held = store.get_follow_up_draft(draft_id)
+    assert held is not None
+    assert held.question_text == "修正后的问题"
+    assert held.suppressed_reason == (
+        "prior_revision_delivered_requires_agent_review"
+    )
+    assert len(store.claim_work_summary_inputs(limit=2)) == 1
 
 
 def test_late_send_result_is_persisted_only_on_old_revision_and_queues_review(

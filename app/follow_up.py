@@ -16,6 +16,7 @@ from app.todo_sync import (
 MAX_FOLLOW_UP_AGE_SECONDS = 7 * 24 * 60 * 60
 RECOVERABLE_AUTH_RETRY_DELAY = timedelta(minutes=15)
 FOLLOW_UP_SEND_LEASE = timedelta(minutes=5)
+FOLLOW_UP_RECONCILIATION_LEASE = timedelta(minutes=5)
 FOLLOW_UP_RECONCILIATION_DELAY = timedelta(minutes=15)
 PRIOR_DELIVERY_REVIEW_REASON = "prior_revision_delivered_requires_agent_review"
 LOCAL_WORK_TZ = ZoneInfo("Asia/Shanghai")
@@ -356,6 +357,7 @@ def _reconcile_unknown_follow_up_attempt(
     attempt: dict[str, object],
     *,
     now: str,
+    reconciliation_owner: str,
 ) -> str:
     attempt_revision = int(attempt.get("draft_revision") or 0)
     payload = _json_dict(str(attempt.get("result_json") or "{}"))
@@ -379,6 +381,9 @@ def _reconcile_unknown_follow_up_attempt(
         **payload,
         "claimed_revision": attempt_revision,
         "idempotency_uuid": str(attempt.get("idempotency_uuid") or ""),
+        "reconciliation_from_state": str(
+            attempt.get("reconciliation_from_state") or "unknown"
+        ),
         "reconciliation": verification,
         "reconciled_at": now,
     }
@@ -390,6 +395,8 @@ def _reconcile_unknown_follow_up_attempt(
             draft.id,
             draft_revision=attempt_revision,
             claim_token=claim_token,
+            lease_owner=reconciliation_owner,
+            now=now,
             sent_at=now,
             result_json=result_json,
         )
@@ -399,6 +406,8 @@ def _reconcile_unknown_follow_up_attempt(
             draft.id,
             draft_revision=attempt_revision,
             claim_token=claim_token,
+            lease_owner=reconciliation_owner,
+            now=now,
             result_json=result_json,
         )
         return "not_sent" if resolved else "stale"
@@ -406,6 +415,8 @@ def _reconcile_unknown_follow_up_attempt(
         draft.id,
         draft_revision=attempt_revision,
         claim_token=claim_token,
+        lease_owner=reconciliation_owner,
+        now=now,
         lease_until=_lease_until(now, FOLLOW_UP_RECONCILIATION_DELAY),
         result_json=result_json,
     )
@@ -414,7 +425,6 @@ def _reconcile_unknown_follow_up_attempt(
 
 def _recover_follow_up_send_attempt(
     store: AutoReplyStore,
-    dws,
     draft,
     *,
     now: str,
@@ -428,36 +438,6 @@ def _recover_follow_up_send_attempt(
     state = str(attempt.get("state") or "")
     if state == "claimed":
         return _attempt_lease_is_active(attempt, now=now)
-    if state == "sending":
-        if _attempt_lease_is_active(attempt, now=now):
-            return True
-        payload = _json_dict(str(attempt.get("result_json") or "{}"))
-        payload.update(
-            {
-                "reason": "sending lease expired; outcome requires read-only reconciliation",
-                "claimed_revision": draft.revision,
-                "idempotency_uuid": str(attempt.get("idempotency_uuid") or ""),
-            }
-        )
-        store.mark_expired_follow_up_sending_unknown(
-            draft.id,
-            draft_revision=draft.revision,
-            now=now,
-            lease_until=now,
-            result_json=json.dumps(payload, ensure_ascii=False),
-        )
-        attempt = store.get_follow_up_send_attempt(
-            draft_id=draft.id,
-            draft_revision=draft.revision,
-        )
-        if attempt is None or str(attempt.get("state") or "") != "unknown":
-            return True
-        state = "unknown"
-    if state == "unknown":
-        if _attempt_lease_is_active(attempt, now=now):
-            return True
-        _reconcile_unknown_follow_up_attempt(store, dws, draft, attempt, now=now)
-        return True
     return True
 
 
@@ -667,7 +647,6 @@ def _enqueue_prior_delivery_agent_review(
 
 def _recover_prior_follow_up_send_attempt(
     store: AutoReplyStore,
-    dws,
     draft,
     *,
     now: str,
@@ -678,63 +657,84 @@ def _recover_prior_follow_up_send_attempt(
     )
     if attempt is None:
         return False
-    attempt_revision = int(attempt.get("draft_revision") or 0)
     state = str(attempt.get("state") or "")
-    if state == "sending":
-        if _attempt_lease_is_active(attempt, now=now):
-            return True
-        payload = _json_dict(str(attempt.get("result_json") or "{}"))
-        payload.update(
-            {
-                "reason": (
-                    "prior revision sending lease expired; outcome requires "
-                    "read-only reconciliation"
-                ),
-                "claimed_revision": attempt_revision,
-                "idempotency_uuid": str(attempt.get("idempotency_uuid") or ""),
+    if state == "sent":
+        _enqueue_prior_delivery_agent_review(store, draft, attempt, now=now)
+        return True
+    return True
+
+
+def _process_expired_follow_up_reconciliations(
+    store: AutoReplyStore,
+    dws,
+    *,
+    now: str,
+    limit: int,
+) -> set[int]:
+    lease_owner = f"follow-up-reconciliation:{uuid4()}"
+    attempts = store.claim_expired_follow_up_reconciliation_attempts(
+        now=now,
+        lease_owner=lease_owner,
+        lease_until=_lease_until(now, FOLLOW_UP_RECONCILIATION_LEASE),
+        limit=limit,
+    )
+    handled_draft_ids: set[int] = set()
+    for attempt in attempts:
+        draft_id = int(attempt.get("draft_id") or 0)
+        draft = store.get_follow_up_draft(draft_id)
+        if draft is None:
+            payload = _json_dict(str(attempt.get("result_json") or "{}"))
+            payload["reconciliation"] = {
+                "state": "ambiguous",
+                "reason": "follow-up draft is unavailable",
             }
-        )
-        store.mark_expired_follow_up_sending_unknown(
-            draft.id,
-            draft_revision=attempt_revision,
-            now=now,
-            lease_until=now,
-            result_json=json.dumps(payload, ensure_ascii=False),
-        )
-        attempt = store.get_follow_up_send_attempt(
-            draft_id=draft.id,
-            draft_revision=attempt_revision,
-        )
-        if attempt is None or str(attempt.get("state") or "") != "unknown":
-            return True
-        state = "unknown"
-    if state == "unknown":
-        if _attempt_lease_is_active(attempt, now=now):
-            return True
+            store.defer_unknown_follow_up_attempt(
+                draft_id,
+                draft_revision=int(attempt.get("draft_revision") or 0),
+                claim_token=str(attempt.get("claim_token") or ""),
+                lease_owner=lease_owner,
+                now=now,
+                lease_until=_lease_until(now, FOLLOW_UP_RECONCILIATION_DELAY),
+                result_json=json.dumps(payload, ensure_ascii=False),
+            )
+            continue
+        handled_draft_ids.add(draft.id)
         outcome = _reconcile_unknown_follow_up_attempt(
             store,
             dws,
             draft,
             attempt,
             now=now,
+            reconciliation_owner=lease_owner,
         )
+        attempt_revision = int(attempt.get("draft_revision") or 0)
         if outcome == "sent":
             delivered = store.get_follow_up_send_attempt(
                 draft_id=draft.id,
                 draft_revision=attempt_revision,
             )
-            if delivered is not None:
+            current = store.get_follow_up_draft(draft.id)
+            current_result = (
+                _json_dict(current.send_result_json) if current is not None else {}
+            )
+            exact_revision_finalized = (
+                current is not None
+                and current.status == "sent"
+                and str(current_result.get("idempotency_uuid") or "")
+                == str(attempt.get("idempotency_uuid") or "")
+            )
+            if (
+                delivered is not None
+                and current is not None
+                and not exact_revision_finalized
+            ):
                 _enqueue_prior_delivery_agent_review(
                     store,
-                    draft,
+                    current,
                     delivered,
                     now=now,
                 )
-        return True
-    if state == "sent":
-        _enqueue_prior_delivery_agent_review(store, draft, attempt, now=now)
-        return True
-    return True
+    return handled_draft_ids
 
 
 def _owner_dingtalk_target(
@@ -770,6 +770,16 @@ def process_due_follow_ups(
     draft_ids: tuple[int, ...] | None = None,
 ) -> int:
     sent = 0
+    reconciled_draft_ids = (
+        _process_expired_follow_up_reconciliations(
+            store,
+            dws,
+            now=now,
+            limit=limit,
+        )
+        if auto_send
+        else set()
+    )
     if draft_ids is None:
         drafts = store.list_follow_up_drafts(
             statuses=("draft", "approved"),
@@ -795,11 +805,13 @@ def process_due_follow_ups(
     for draft in drafts:
         if not auto_send:
             continue
-        if _recover_prior_follow_up_send_attempt(store, dws, draft, now=now):
+        if draft.id in reconciled_draft_ids:
+            continue
+        if _recover_prior_follow_up_send_attempt(store, draft, now=now):
             continue
         if draft.suppressed_reason == PRIOR_DELIVERY_REVIEW_REASON:
             continue
-        if _recover_follow_up_send_attempt(store, dws, draft, now=now):
+        if _recover_follow_up_send_attempt(store, draft, now=now):
             continue
         if not _is_local_working_time(now):
             _defer_policy_follow_up(

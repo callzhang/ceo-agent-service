@@ -1364,6 +1364,8 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_follow_up_send_attempts_draft_revision
                     on follow_up_send_attempts(draft_id, draft_revision, id);
+                create index if not exists idx_follow_up_send_attempts_reconciliation
+                    on follow_up_send_attempts(state, lease_until, id);
                 create table if not exists daily_scan_state (
                     scanner_name text primary key,
                     last_success_at text not null default '',
@@ -1714,6 +1716,12 @@ class AutoReplyStore:
                 """
                 create index if not exists idx_follow_up_drafts_conversation_sent
                     on follow_up_drafts(target_conversation_id, sent_at, id)
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_follow_up_send_attempts_reconciliation
+                    on follow_up_send_attempts(state, lease_until, id)
                 """
             )
             db.execute(
@@ -12206,32 +12214,64 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
-    def mark_expired_follow_up_sending_unknown(
+    def claim_expired_follow_up_reconciliation_attempts(
         self,
-        draft_id: int,
         *,
-        draft_revision: int,
         now: str,
+        lease_owner: str,
         lease_until: str,
-        result_json: str,
-    ) -> bool:
+        limit: int,
+    ) -> list[dict[str, object]]:
+        if limit <= 0:
+            return []
+        if not lease_owner.strip():
+            raise ValueError("reconciliation lease owner must be non-empty")
         with self._connect() as db:
-            cursor = db.execute(
+            db.execute("begin immediate")
+            rows = db.execute(
                 """
-                update follow_up_send_attempts
-                set state='unknown',
-                    lease_owner='',
-                    lease_until=?,
-                    result_json=?,
-                    updated_at=current_timestamp
-                where draft_id=?
-                  and draft_revision=?
-                  and state='sending'
+                select *
+                from follow_up_send_attempts
+                where state in ('sending', 'unknown')
+                  and lease_until != ''
                   and datetime(lease_until) <= datetime(?)
+                order by datetime(lease_until), id
+                limit ?
                 """,
-                (lease_until, result_json, draft_id, draft_revision, now),
-            )
-            return cursor.rowcount == 1
+                (now, limit),
+            ).fetchall()
+            claimed: list[dict[str, object]] = []
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update follow_up_send_attempts
+                    set state='unknown',
+                        lease_owner=?,
+                        lease_until=?,
+                        updated_at=current_timestamp
+                    where id=?
+                      and state=?
+                      and claim_token=?
+                      and datetime(lease_until) <= datetime(?)
+                    """,
+                    (
+                        lease_owner,
+                        lease_until,
+                        row["id"],
+                        row["state"],
+                        row["claim_token"],
+                        now,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                current = dict(row)
+                current["state"] = "unknown"
+                current["lease_owner"] = lease_owner
+                current["lease_until"] = lease_until
+                current["reconciliation_from_state"] = str(row["state"])
+                claimed.append(current)
+            return claimed
 
     def defer_unknown_follow_up_attempt(
         self,
@@ -12239,6 +12279,8 @@ class AutoReplyStore:
         *,
         draft_revision: int,
         claim_token: str,
+        lease_owner: str,
+        now: str,
         lease_until: str,
         result_json: str,
     ) -> bool:
@@ -12255,6 +12297,8 @@ class AutoReplyStore:
                   and draft_revision=?
                   and claim_token=?
                   and state='unknown'
+                  and lease_owner=?
+                  and datetime(lease_until) > datetime(?)
                 """,
                 (
                     lease_until,
@@ -12262,6 +12306,8 @@ class AutoReplyStore:
                     draft_id,
                     draft_revision,
                     claim_token,
+                    lease_owner,
+                    now,
                 ),
             )
             return cursor.rowcount == 1
@@ -12272,6 +12318,8 @@ class AutoReplyStore:
         *,
         draft_revision: int,
         claim_token: str,
+        lease_owner: str,
+        now: str,
         sent_at: str,
         result_json: str,
     ) -> bool:
@@ -12289,8 +12337,17 @@ class AutoReplyStore:
                   and draft_revision=?
                   and claim_token=?
                   and state='unknown'
+                  and lease_owner=?
+                  and datetime(lease_until) > datetime(?)
                 """,
-                (result_json, draft_id, draft_revision, claim_token),
+                (
+                    result_json,
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                    lease_owner,
+                    now,
+                ),
             )
             if attempt.rowcount != 1:
                 return False
@@ -12319,6 +12376,8 @@ class AutoReplyStore:
         *,
         draft_revision: int,
         claim_token: str,
+        lease_owner: str,
+        now: str,
         result_json: str,
     ) -> bool:
         with self._connect() as db:
@@ -12331,12 +12390,16 @@ class AutoReplyStore:
                   and draft_revision=?
                   and claim_token=?
                   and state='unknown'
+                  and lease_owner=?
+                  and datetime(lease_until) > datetime(?)
                 """,
                 (
                     result_json,
                     draft_id,
                     draft_revision,
                     claim_token,
+                    lease_owner,
+                    now,
                 ),
             )
             if attempt.rowcount != 1:
