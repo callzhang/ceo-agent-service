@@ -47,6 +47,7 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
         "outcome": result["outcome"],
         "summary": result["summary"],
         "proposal_json": json.dumps(proposal) if proposal is not None else None,
+        "decision_options_json": json.dumps(result.get("decision_options", [])),
         "error_code": error["code"],
         "error_retryable": error["retryable"],
         "error_authorization_required": error["authorization_required"],

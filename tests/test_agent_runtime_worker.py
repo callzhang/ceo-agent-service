@@ -590,6 +590,24 @@ class ScriptedTaskOrchestrator:
                 "outcome": consumer_outcome,
                 "summary": direct_result.summary,
                 "proposal": proposal,
+                "decision_options": (
+                    [
+                        {
+                            "key": "A",
+                            "label": "采用保守处理",
+                            "instruction": "采用已核验的保守处理并发布。",
+                            "consequence": "不会扩大当前外部影响。",
+                        },
+                        {
+                            "key": "B",
+                            "label": "采用推进处理",
+                            "instruction": "按已核验事实推进处理并发布。",
+                            "consequence": "会执行对应的已审计动作。",
+                        },
+                    ]
+                    if consumer_outcome == "needs_human"
+                    else []
+                ),
                 "error": {
                     "code": direct_result.error.code,
                     "retryable": direct_result.error.retryable,
@@ -738,6 +756,9 @@ def _agent_result_event(result) -> dict[str, object]:
             "proposal_json": (
                 result.proposal.model_dump_json() if result.proposal is not None else None
             ),
+            "decision_options_json": json.dumps(
+                [option.model_dump() for option in result.decision_options]
+            ),
             "error_code": error.code,
             "error_retryable": error.retryable,
             "error_authorization_required": error.authorization_required,
@@ -785,6 +806,24 @@ def _consumer_protocol_result(
             "outcome": outcome,
             "summary": summary,
             "proposal": proposal,
+            "decision_options": (
+                [
+                    {
+                        "key": "A",
+                        "label": "采用保守处理",
+                        "instruction": "采用已核验的保守处理并发布。",
+                        "consequence": "不会扩大当前外部影响。",
+                    },
+                    {
+                        "key": "B",
+                        "label": "采用推进处理",
+                        "instruction": "按已核验事实推进处理并发布。",
+                        "consequence": "会执行对应的已审计动作。",
+                    },
+                ]
+                if outcome == "needs_human"
+                else []
+            ),
             "error": {
                 "code": code,
                 "retryable": retryable,

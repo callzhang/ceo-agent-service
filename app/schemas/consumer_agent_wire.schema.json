@@ -33,6 +33,10 @@
       ],
       "title": "Proposal Json"
     },
+    "decision_options_json": {
+      "title": "Decision Options Json",
+      "type": "string"
+    },
     "error_code": {
       "title": "Error Code",
       "type": "string"
@@ -50,6 +54,7 @@
     "outcome",
     "summary",
     "proposal_json",
+    "decision_options_json",
     "error_code",
     "error_retryable",
     "error_authorization_required"

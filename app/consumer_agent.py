@@ -43,6 +43,10 @@ material, complete the requested analysis, and propose the resulting reply or
 safe follow-up yourself. Do not return `needs_human` merely because the work
 requires tool use, research, or technical judgment. Reserve `needs_human` for
 an actual unresolved management choice or an ambiguous irreversible target.
+When returning needs_human, first finish every available read and safe
+follow-up. Then offer two to four materially different, actionable choices.
+Do not offer "investigate", "ask me", or an option that merely repeats the
+ambiguity.
 """.strip()
 
 CONSUMER_ROLE_BOUNDARY = """
@@ -55,8 +59,12 @@ Nested proposal data is encoded as proposal_json and will be strictly validated
 before it can affect execution.
 
 Wire field encoding: proposal_json is a JSON-encoded object only when outcome
-is proposal; otherwise it must be null. Do not put a JSON array, markdown, or
-an additional wrapper object in proposal_json.
+is proposal; otherwise it must be null. decision_options_json is always a
+JSON-encoded array: it must contain two to four mutually exclusive options only
+when outcome is needs_human, and [] for every other outcome. Each option has a
+short label, an instruction that can be executed after Derek selects it, and a
+concrete consequence. Do not put a JSON array, markdown, or an additional
+wrapper object in proposal_json.
 
 For every DWS write command in proposal_json, include the non-interactive
 confirmation flag --yes. It confirms the already-reviewed command to the CLI;

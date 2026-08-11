@@ -26,7 +26,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from app.agent_contracts import ConsumerAgentResult
+from app.agent_contracts import ConsumerAgentResult, ConsumerOutcome, DecisionOption
 from app.audit_rules import (
     audit_rules_template_path,
     read_audit_rules_template,
@@ -521,6 +521,8 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .needs-human-card{border-color:rgba(195,125,13,.34);background:#fffaf0}
 .needs-human-card form{margin:10px 0}
 .needs-human-card button{width:100%;justify-content:flex-start;text-align:left}
+.needs-human-card .needs-human-option{display:grid;gap:4px}
+.needs-human-card .needs-human-option span{font-weight:400;color:var(--steel)}
 .needs-human-custom{display:grid;gap:8px}
 .review-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(340px,.75fr);gap:16px;align-items:start;margin:16px 0}
 .review-grid .card{margin:0}
@@ -8184,7 +8186,7 @@ def _attempt_detail_body(
         reply_title="生成回复",
         reply_text=_attempt_detail_reply_text(attempt),
         side_html=(
-            f"{_needs_human_decision_card(attempt)}"
+            f"{_needs_human_decision_card(attempt, agent_runs)}"
             f"{_feedback_form(attempt)}"
             f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         ),
@@ -8582,21 +8584,62 @@ def _rerun_card(attempt: ReplyAttempt) -> str:
     )
 
 
-def _needs_human_decision_card(attempt: ReplyAttempt) -> str:
+def _needs_human_decision_card(
+    attempt: ReplyAttempt,
+    agent_runs: list[AgentRun],
+) -> str:
     if attempt.send_status != "needs_human" or attempt.channel != "dingtalk":
         return ""
     action = f"/attempts/{attempt.id}/human-decision"
+    options = _needs_human_decision_options(attempt, agent_runs)
+    option_forms = "".join(
+        "<form method=\"post\" action=\"%s\">"
+        "<input type=\"hidden\" name=\"instruction\" value=\"%s\">"
+        "<button class=\"needs-human-option\" type=\"submit\">"
+        "<strong>%s. %s</strong><span>%s</span></button></form>"
+        % (
+            action,
+            escape(option.instruction, quote=True),
+            escape(option.key),
+            escape(option.label),
+            escape(option.consequence),
+        )
+        for option in options
+    )
+    choice_section = (
+        "<p class=\"muted\">选择后会创建可恢复任务，由 Agent 审核、执行、回读并自动发布。</p>"
+        + option_forms
+        if options
+        else ""
+    )
     return (
         '<section class="card needs-human-card"><h2>需要你的判断</h2>'
         '<p class="muted">已核验的事实和待决定原因：</p>'
         f'<pre class="reply-pre">{escape(attempt.audit_summary or attempt.codex_reason)}</pre>'
-        '<p class="muted">提交后会创建可恢复任务，由 Agent 执行、验证并自动发布。</p>'
+        f"{choice_section}"
         f'<form method="post" action="{action}" class="needs-human-custom">'
-        '<label>填写判断或处理指令</label>'
+        '<label>其他处理指令</label>'
         '<textarea name="instruction" required placeholder="例如：采用方案二，并说明交付边界"></textarea>'
         '<button type="submit">执行并发布</button></form>'
         '</section>'
     )
+
+
+def _needs_human_decision_options(
+    attempt: ReplyAttempt,
+    agent_runs: list[AgentRun],
+) -> tuple[DecisionOption, ...]:
+    matching_runs = [run for run in agent_runs if run.id == attempt.agent_run_id]
+    for run in matching_runs or list(reversed(agent_runs)):
+        if run.role is not AgentRole.CONSUMER or not run.final_result_json.strip():
+            continue
+        try:
+            result = ConsumerAgentResult.model_validate_json(run.final_result_json)
+        except ValueError:
+            continue
+        if result.outcome is ConsumerOutcome.NEEDS_HUMAN:
+            return result.decision_options
+    return ()
 
 
 def _feedback_event_html(event: FeedbackEvent) -> str:

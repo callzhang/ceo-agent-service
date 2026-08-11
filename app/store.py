@@ -9740,24 +9740,34 @@ class AutoReplyStore:
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and (
-                      attempts.send_status != 'needs_human'
-                      or attempts.reviewed_at is null
-                  )
-                  and (
-                      attempts.send_status = 'needs_human'
-                      or not exists (
-                          select 1
-                          from reply_tasks as tasks
-                          where tasks.channel=attempts.channel
-                            and tasks.conversation_id=attempts.conversation_id
-                            and tasks.trigger_message_id=attempts.trigger_message_id
-                            and (
-                                tasks.status in ('done', 'processing')
-                                or (
-                                    tasks.status='pending'
-                                    and tasks.error='codex_provider_unavailable'
+                      (
+                          attempts.send_status = 'needs_human'
+                          and attempts.reviewed_at is null
+                          and not exists (
+                              select 1
+                              from reply_tasks as tasks
+                              where tasks.channel=attempts.channel
+                                and tasks.conversation_id=attempts.conversation_id
+                                and tasks.trigger_message_id=attempts.trigger_message_id
+                                and tasks.status in ('pending', 'processing')
+                          )
+                      )
+                      or (
+                          attempts.send_status != 'needs_human'
+                          and not exists (
+                              select 1
+                              from reply_tasks as tasks
+                              where tasks.channel=attempts.channel
+                                and tasks.conversation_id=attempts.conversation_id
+                                and tasks.trigger_message_id=attempts.trigger_message_id
+                                and (
+                                    tasks.status in ('done', 'processing')
+                                    or (
+                                        tasks.status='pending'
+                                        and tasks.error='codex_provider_unavailable'
+                                    )
                                 )
-                            )
+                          )
                       )
                   )
                   and attempts.id=(
@@ -9781,24 +9791,34 @@ class AutoReplyStore:
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and (
-                      attempts.send_status != 'needs_human'
-                      or attempts.reviewed_at is null
-                  )
-                  and (
-                      attempts.send_status = 'needs_human'
-                      or not exists (
-                          select 1
-                          from reply_tasks as tasks
-                          where tasks.channel=attempts.channel
-                            and tasks.conversation_id=attempts.conversation_id
-                            and tasks.trigger_message_id=attempts.trigger_message_id
-                            and (
-                                tasks.status in ('done', 'processing')
-                                or (
-                                    tasks.status='pending'
-                                    and tasks.error='codex_provider_unavailable'
+                      (
+                          attempts.send_status = 'needs_human'
+                          and attempts.reviewed_at is null
+                          and not exists (
+                              select 1
+                              from reply_tasks as tasks
+                              where tasks.channel=attempts.channel
+                                and tasks.conversation_id=attempts.conversation_id
+                                and tasks.trigger_message_id=attempts.trigger_message_id
+                                and tasks.status in ('pending', 'processing')
+                          )
+                      )
+                      or (
+                          attempts.send_status != 'needs_human'
+                          and not exists (
+                              select 1
+                              from reply_tasks as tasks
+                              where tasks.channel=attempts.channel
+                                and tasks.conversation_id=attempts.conversation_id
+                                and tasks.trigger_message_id=attempts.trigger_message_id
+                                and (
+                                    tasks.status in ('done', 'processing')
+                                    or (
+                                        tasks.status='pending'
+                                        and tasks.error='codex_provider_unavailable'
+                                    )
                                 )
-                            )
+                          )
                       )
                   )
                   and attempts.id=(

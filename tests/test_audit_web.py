@@ -3873,6 +3873,16 @@ def test_browser_notifications_exclude_active_and_provider_recovery_tasks(
         sensitivity_kind="general",
         send_status="failed",
     )
+    active_decision = store.record_reply_attempt(
+        conversation_id=active_task.conversation_id,
+        conversation_title=active_task.conversation_title,
+        trigger_message_id=active_task.trigger_message_id,
+        trigger_sender=active_task.trigger_sender,
+        trigger_text=active_task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+    )
 
     store.enqueue_reply_task(
         conversation_id="cid-provider",
@@ -3929,6 +3939,7 @@ def test_browser_notifications_exclude_active_and_provider_recovery_tasks(
     html = audit_web_module.render_browser_notifications_page(store)
 
     assert f"Attempt #{active_attempt}" not in html
+    assert f"Attempt #{active_decision}" not in html
     assert f"Attempt #{provider_attempt}" not in html
     assert f"Attempt #{completed_attempt}" not in html
     assert store.count_current_unresolved_problem_attempts() == 0
@@ -6436,7 +6447,7 @@ def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
     assert "需要你的判断" in html
     assert "按当前事实继续处理并发布" not in html
     assert "先追问一个具体澄清问题并发布" not in html
-    assert "填写判断或处理指令" in html
+    assert "其他处理指令" in html
 
     status, headers, body = handle_needs_human_decision_post(
         store,
@@ -6476,6 +6487,71 @@ def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
     status, html = render_attempt_detail(store, wechat_attempt_id)
     assert status == 200
     assert "需要你选择" not in html
+
+
+def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-choice",
+        conversation_title="管理群",
+        trigger_message_id="msg-choice",
+        trigger_sender="Mina",
+        trigger_text="这个事项请确认。",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="两个管理决策都会改变外部状态。",
+        send_status="needs_human",
+    )
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    run = AgentRun.model_validate(
+        {
+            "id": 1,
+            "reply_task_id": 1,
+            "execution_generation": "initial",
+            "role": "consumer",
+            "proposal_revision": 0,
+            "turn_attempt": 0,
+            "parent_agent_run_id": None,
+            "operation_id": "",
+            "status": "completed",
+            "final_result_json": json.dumps(
+                {
+                    "outcome": "needs_human",
+                    "summary": "需要管理判断。",
+                    "proposal": None,
+                    "decision_options": [
+                        {
+                            "key": "A",
+                            "label": "同意当前方案",
+                            "instruction": "同意已核验方案并发布。",
+                            "consequence": "会执行已审计的外部动作。",
+                        },
+                        {
+                            "key": "B",
+                            "label": "要求补充材料",
+                            "instruction": "要求补充材料并发布。",
+                            "consequence": "当前外部动作不会执行。",
+                        },
+                    ],
+                    "error": {
+                        "code": "decision_required",
+                        "retryable": False,
+                        "authorization_required": False,
+                    },
+                }
+            ),
+            "created_at": "2026-08-11 10:00:00",
+            "updated_at": "2026-08-11 10:00:00",
+        }
+    )
+
+    html = audit_web_module._needs_human_decision_card(attempt, [run])
+
+    assert "A. 同意当前方案" in html
+    assert "B. 要求补充材料" in html
+    assert "会执行已审计的外部动作。" in html
+    assert 'name="instruction" value="同意已核验方案并发布。"' in html
 
 
 def test_reviewed_reply_api_rejects_mutable_text_lookup_payload(tmp_path: Path):

@@ -31,6 +31,7 @@ class ConsumerAgentWireResult(BaseModel):
     outcome: ConsumerOutcome
     summary: str = Field(min_length=1)
     proposal_json: str | None
+    decision_options_json: str
     error_code: str
     error_retryable: bool
     error_authorization_required: bool
@@ -53,6 +54,9 @@ class ConsumerAgentWireResult(BaseModel):
                 "outcome": self.outcome,
                 "summary": self.summary,
                 "proposal": proposal,
+                "decision_options": _json_array(
+                    self.decision_options_json, "decision_options_json"
+                ),
                 "error": _error_payload(self),
             }
         )

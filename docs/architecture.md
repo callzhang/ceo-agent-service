@@ -174,7 +174,7 @@ session 指针读取 JSONL，并只向普通用户展示业务结果；内部角
 | `executed` | B 已执行并从外部系统确认结果。 |
 | `no_action` | A 确认当前触发无需外部动作。 |
 | `revision_required` | B 给出结构化反馈，等待 A 生成下一 revision。 |
-| `needs_human` | 只能由 Derek 作出的不可约管理判断；不是普通材料不足。 |
+| `needs_human` | 只能由 Derek 作出的不可约管理判断；不是普通材料不足。结果必须提供 2 至 4 个互斥、可执行的选项，每项说明执行指令和后果。 |
 | `failed` | 当前 run 失败；错误说明是否可重试。 |
 | `unknown` | 写操作可能发生但尚未确认，必须在原 B session 中先读回。 |
 | `quarantined` | 没有可验证回执的旧投递；保留证据、停止重发，并单独展示为提醒。 |

@@ -154,6 +154,46 @@ def test_consumer_contract_rejects_incomplete_or_mismatched_proposals(payload):
         ConsumerAgentResult.model_validate(payload)
 
 
+def test_needs_human_requires_actionable_options_and_wire_preserves_them():
+    options = [
+        {
+            "key": "A",
+            "label": "同意当前方案",
+            "instruction": "同意已核验的当前方案并发布。",
+            "consequence": "会执行经过审计的外部动作。",
+        },
+        {
+            "key": "B",
+            "label": "要求补充材料",
+            "instruction": "要求申请人补充缺失材料并发布。",
+            "consequence": "当前外部动作不会执行。",
+        },
+    ]
+    with pytest.raises(ValidationError, match="decision options"):
+        ConsumerAgentResult.model_validate(
+            {
+                "outcome": "needs_human",
+                "summary": "A management decision is required.",
+                "proposal": None,
+                "error": _error(),
+            }
+        )
+
+    result = ConsumerAgentWireResult.model_validate(
+        {
+            "outcome": "needs_human",
+            "summary": "A management decision is required.",
+            "proposal_json": None,
+            "decision_options_json": json.dumps(options),
+            "error_code": "decision_required",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        }
+    ).to_result()
+
+    assert result.decision_options[0].instruction == options[0]["instruction"]
+
+
 def test_audit_revision_feedback_is_concrete_and_non_effectful():
     result = AuditAgentResult.model_validate(_audit_payload())
 
@@ -437,6 +477,7 @@ def test_consumer_wire_result_decodes_dynamic_proposal_fields():
             "outcome": "proposal",
             "summary": "Prepare the notice.",
             "proposal_json": json.dumps(_proposal()),
+            "decision_options_json": "[]",
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,

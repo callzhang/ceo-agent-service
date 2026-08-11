@@ -129,6 +129,17 @@ class ConsumerProposal(BaseModel):
         return tuple(value) if isinstance(value, list) else value
 
 
+class DecisionOption(BaseModel):
+    """One actionable, mutually exclusive instruction for a real management choice."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    key: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    instruction: str = Field(min_length=1)
+    consequence: str = Field(min_length=1)
+
+
 class ConsumerAgentResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -139,6 +150,7 @@ class ConsumerAgentResult(BaseModel):
     outcome: ConsumerOutcome
     summary: str = Field(min_length=1)
     proposal: ConsumerProposal | None
+    decision_options: tuple[DecisionOption, ...] = ()
     error: AgentError
 
     @field_validator("outcome", mode="before")
@@ -146,10 +158,23 @@ class ConsumerAgentResult(BaseModel):
     def accept_json_outcome(cls, value: object) -> object:
         return ConsumerOutcome(value) if isinstance(value, str) else value
 
+    @field_validator("decision_options", mode="before")
+    @classmethod
+    def accept_json_decision_options(cls, value: object) -> object:
+        return tuple(value) if isinstance(value, list) else value
+
     @model_validator(mode="after")
     def validate_payload(self) -> "ConsumerAgentResult":
         if (self.outcome is ConsumerOutcome.PROPOSAL) != (self.proposal is not None):
             raise ValueError("proposal is required only for proposal outcome")
+        if self.outcome is ConsumerOutcome.NEEDS_HUMAN:
+            if not 2 <= len(self.decision_options) <= 4:
+                raise ValueError("needs_human requires two to four decision options")
+            keys = [option.key for option in self.decision_options]
+            if len(keys) != len(set(keys)):
+                raise ValueError("decision option keys must be unique")
+        elif self.decision_options:
+            raise ValueError("decision options are only valid for needs_human")
         return self
 
 

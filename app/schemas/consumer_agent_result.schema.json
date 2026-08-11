@@ -71,6 +71,40 @@
       "title": "ConsumerProposal",
       "type": "object"
     },
+    "DecisionOption": {
+      "additionalProperties": false,
+      "description": "One actionable, mutually exclusive instruction for a real management choice.",
+      "properties": {
+        "key": {
+          "minLength": 1,
+          "title": "Key",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "instruction": {
+          "minLength": 1,
+          "title": "Instruction",
+          "type": "string"
+        },
+        "consequence": {
+          "minLength": 1,
+          "title": "Consequence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "instruction",
+        "consequence"
+      ],
+      "title": "DecisionOption",
+      "type": "object"
+    },
     "JsonValue": {},
     "ProposalFact": {
       "additionalProperties": false,
@@ -194,6 +228,14 @@
           "type": "null"
         }
       ]
+    },
+    "decision_options": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/DecisionOption"
+      },
+      "title": "Decision Options",
+      "type": "array"
     },
     "error": {
       "$ref": "#/$defs/AgentError"
