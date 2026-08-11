@@ -664,6 +664,18 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             if isinstance(result_digest, str) and result_digest:
                 metadata["result_digest"] = result_digest
+            result_identifiers = self.effects.result_identifiers(
+                server=call.server,
+                tool=call.tool,
+                operation=operation,
+                result=(
+                    validated_receipt
+                    if validated_receipt is not None
+                    else item.get("result")
+                ),
+            )
+            if result_identifiers:
+                metadata["result_identifiers"] = result_identifiers
         if native_cli:
             metadata["native_cli"] = native_cli
         if authorization_id:
@@ -1184,13 +1196,35 @@ def _read_matches_action(
     action_target = action.get("target_identifiers")
     if not isinstance(read_target, dict) or not isinstance(action_target, dict):
         return False
-    return registry.readback_targets_match(
+    if not registry.readback_targets_match(
         read_server=read_server,
         read_tool=read_tool,
         write_server=write_server,
         write_tool=write_tool,
         read_targets=read_target,
         write_targets=action_target,
+    ):
+        return False
+    read_result_identifiers = read.get("result_identifiers")
+    write_result_identifiers = action.get("result_identifiers")
+    return registry.readback_identities_match(
+        read_server=read_server,
+        read_tool=read_tool,
+        write_server=write_server,
+        write_tool=write_tool,
+        read_operation=str(read.get("operation") or ""),
+        write_operation=str(action.get("operation") or ""),
+        read_targets=read_target,
+        read_result_identifiers=(
+            read_result_identifiers
+            if isinstance(read_result_identifiers, dict)
+            else {}
+        ),
+        write_result_identifiers=(
+            write_result_identifiers
+            if isinstance(write_result_identifiers, dict)
+            else {}
+        ),
     )
 
 
@@ -1233,8 +1267,8 @@ def _actions_have_required_readbacks(
     for action_index, action in enumerate(actions):
         if not _action_has_readback(action, registry):
             continue
-        write_indexes = [
-            index
+        writes = [
+            (index, metadata)
             for index, event in enumerate(events)
             if event.get("type") == "item.completed"
             and (metadata := _event_metadata(event)) is not None
@@ -1242,16 +1276,16 @@ def _actions_have_required_readbacks(
             and metadata.get("action_index") in {None, action_index}
             and _metadata_matches_action(metadata, action)
         ]
-        if not write_indexes:
-            write_indexes = [-1]
+        if not writes:
+            writes = [(-1, action)]
         if any(
             not _matching_read_digest(
                 events,
-                action,
+                write_metadata,
                 after_index=write_index,
                 registry=registry,
             )
-            for write_index in write_indexes
+            for write_index, write_metadata in writes
         ):
             return False
     return True
@@ -1270,22 +1304,54 @@ def _validated_reconciliation(
         action_index = entry.action_index
         if action_index >= len(actions):
             raise RuntimeError("audit_reconciliation_action_mismatch")
-        matching_digests = [
-            str(metadata["result_digest"])
-            for index, event in enumerate(events)
-            if index >= event_start
-            and event.get("type") == "item.completed"
-            and (metadata := _event_metadata(event)) is not None
-            and metadata.get("effect") == EffectKind.READ_ONLY.value
-            and isinstance(metadata.get("result_digest"), str)
-            and _read_matches_action(metadata, actions[action_index], registry)
-        ]
+        matching_digests: list[str] = []
+        for index, event in enumerate(events):
+            if index < event_start or event.get("type") != "item.completed":
+                continue
+            metadata = _event_metadata(event)
+            if (
+                metadata is None
+                or metadata.get("effect") != EffectKind.READ_ONLY.value
+                or not isinstance(metadata.get("result_digest"), str)
+            ):
+                continue
+            write_metadata = _latest_matching_write_metadata(
+                events,
+                actions[action_index],
+                before_index=index,
+            )
+            if _read_matches_action(
+                metadata,
+                write_metadata or actions[action_index],
+                registry,
+            ):
+                matching_digests.append(str(metadata["result_digest"]))
         if not matching_digests:
             raise RuntimeError("audit_reconciliation_evidence_mismatch")
         if entry.read_result_digest not in matching_digests:
             raise RuntimeError("audit_reconciliation_evidence_mismatch")
         validated[action_index] = entry
     return validated
+
+
+def _latest_matching_write_metadata(
+    events: list[dict[str, object]],
+    action: dict[str, object],
+    *,
+    before_index: int,
+) -> dict[str, object] | None:
+    for index in range(before_index - 1, -1, -1):
+        event = events[index]
+        if event.get("type") != "item.completed":
+            continue
+        metadata = _event_metadata(event)
+        if (
+            metadata is not None
+            and metadata.get("effect") == EffectKind.EFFECTFUL.value
+            and _metadata_matches_action(metadata, action)
+        ):
+            return metadata
+    return None
 
 
 def _action_receipt_operation_id(

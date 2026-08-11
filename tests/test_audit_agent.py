@@ -2378,6 +2378,7 @@ def test_controlled_cli_mail_verify_reads_back_reply_for_same_mailbox():
             "from": "principal@example.test",
             "id": "mail-1",
         },
+        "result_identifiers": {"stdout.internetMessageId": "internet-1"},
     }
     read = {
         "reviewed_server": "agent_cli",
@@ -2387,6 +2388,7 @@ def test_controlled_cli_mail_verify_reads_back_reply_for_same_mailbox():
             "email": "principal@example.test",
             "internet-message-id": "internet-1",
         },
+        "result_identifiers": {"stdout.internetMessageId": "internet-1"},
     }
 
     assert registry.readback_operations_match(
@@ -2398,6 +2400,16 @@ def test_controlled_cli_mail_verify_reads_back_reply_for_same_mailbox():
         write_operation="mail message reply",
     )
     assert _read_matches_action(read, write, registry)
+
+    mismatched_read = {
+        **read,
+        "target_identifiers": {
+            "email": "principal@example.test",
+            "internet-message-id": "internet-2",
+        },
+        "result_identifiers": {"stdout.internetMessageId": "internet-2"},
+    }
+    assert not _read_matches_action(mismatched_read, write, registry)
 
 
 def test_unregistered_controlled_write_cannot_confirm_without_readback(setup):

@@ -4948,6 +4948,182 @@ and verify the returned `internetMessageId` with `message verify`.
     return paths
 
 
+def _meeting_receipt_skill_paths(tmp_path: Path, monkeypatch) -> dict[str, Path]:
+    skills_root = tmp_path / "installed-skills"
+    fixtures = {
+        "ceo-meeting-work": Path("skills/ceo-meeting-work/SKILL.md").read_text(
+            encoding="utf-8"
+        ),
+        "dingtalk-minutes": """---
+name: dingtalk-minutes
+description: Representative installed Minutes operation contract.
+metadata:
+  requires: dingtalk-shared
+---
+# DingTalk Minutes Operations
+
+Read a meeting summary with `dws minutes get summary --id <id> --format json`.
+""",
+        "dingtalk-shared": _triage_operation_skill_fixture("dingtalk-shared"),
+        "dingtalk-chat": _triage_operation_skill_fixture("dingtalk-chat"),
+    }
+    paths: dict[str, Path] = {}
+    for name, content in fixtures.items():
+        path = skills_root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(content, encoding="utf-8")
+        paths[name] = path.resolve()
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (skills_root,))
+    return paths
+
+
+class MeetingReceiptLifecycleExecutor(ConsumerAuditLifecycleExecutor):
+    message_text = "@Alex owns the reviewed launch checklist."
+
+    def _evidence_records(
+        self,
+        prompt: str,
+        *,
+        prefix: str,
+    ) -> list[dict[str, object]]:
+        return []
+
+    def _consumer_result_records(self) -> list[dict[str, object]]:
+        return [
+            _agent_result_event(
+                _consumer_protocol_result(
+                    "proposal",
+                    "Protocol fixture prepared one representative meeting action.",
+                    proposal={
+                        "objective": "Deliver the representative reviewed meeting action.",
+                        "actions": [
+                            {
+                                "description": "Post the representative meeting action.",
+                                "capability": "agent_cli.dws",
+                                "operation": "chat message send",
+                                "target": {"group": "cid-1"},
+                                "payload": {
+                                    "argv": [
+                                        "dws",
+                                        "chat",
+                                        "message",
+                                        "send",
+                                        "--group",
+                                        "cid-1",
+                                        "--text",
+                                        self.message_text,
+                                        "--yes",
+                                    ]
+                                },
+                                "expected_verification": "Read back the source group.",
+                            }
+                        ],
+                        "sourced_facts": [],
+                        "authored_judgment": self.message_text,
+                    },
+                )
+            )
+        ]
+
+    def _audit_execution_records(self, prompt: str) -> list[dict[str, object]]:
+        candidate = _prompt_json_section(prompt, "Candidate revision\n")
+        write_command = shlex.join(
+            candidate["proposal"]["actions"][0]["payload"]["argv"]
+        )
+        verify_command = "dws chat message list --group cid-1 --time 2026-07-29"
+        return [
+            _reviewed_cli_event(
+                "item.started", "meeting-write", write_command, effectful=True
+            ),
+            _reviewed_cli_event(
+                "item.completed",
+                "meeting-write",
+                write_command,
+                output=json.dumps({"message_id": "meeting-action-1"}),
+                effectful=True,
+            ),
+            _reviewed_cli_event("item.started", "meeting-verify", verify_command),
+            _reviewed_cli_event(
+                "item.completed",
+                "meeting-verify",
+                verify_command,
+                output=json.dumps(
+                    {
+                        "messages": [
+                            {
+                                "message_id": "meeting-action-1",
+                                "text": self.message_text,
+                            }
+                        ]
+                    }
+                ),
+            ),
+            _agent_result_event(
+                _audit_protocol_result(
+                    "executed",
+                    int(candidate["proposal_revision"]),
+                    "Representative meeting action was read back.",
+                    operation_id=str(candidate["operation_id"]),
+                    live_reference={"message_id": "meeting-action-1"},
+                )
+            ),
+        ]
+
+
+def test_meeting_protocol_hands_exact_consumer_skill_receipts_to_audit_before_effect(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _meeting_receipt_skill_paths(tmp_path, monkeypatch)
+    trigger = _message("Representative meeting receipt lifecycle fixture.")
+    executor = MeetingReceiptLifecycleExecutor(skill_paths)
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    assert executor.consumer_loaded_skills == list(skill_paths)
+    assert executor.audit_loaded_skills == list(skill_paths)
+    for required in ("ceo-meeting-work", "dingtalk-minutes"):
+        path = skill_paths[required]
+        expected = (str(path.resolve()), sha256(path.read_bytes()).hexdigest())
+        for run in runs:
+            receipts = {
+                metadata["skill_name"]: (
+                    metadata["skill_path"],
+                    metadata["skill_sha256"],
+                )
+                for event in run.tool_events
+                if isinstance(event.get("item"), dict)
+                and isinstance((metadata := event["item"].get("metadata")), dict)
+                and "skill_name" in metadata
+            }
+            assert receipts[required] == expected
+    audit_operations = [
+        event["item"]["metadata"]["operation"]
+        for event in runs[1].tool_events
+        if event.get("type") == "item.completed"
+        and isinstance(event.get("item"), dict)
+        and isinstance(event["item"].get("metadata"), dict)
+    ]
+    first_effect = next(
+        index
+        for index, event in enumerate(runs[1].tool_events)
+        if isinstance(event.get("item"), dict)
+        and isinstance(event["item"].get("metadata"), dict)
+        and event["item"]["metadata"].get("effect") == "effectful"
+    )
+    skills_before_effect = {
+        event["item"]["metadata"].get("skill_name")
+        for event in runs[1].tool_events[:first_effect]
+        if isinstance(event.get("item"), dict)
+        and isinstance(event["item"].get("metadata"), dict)
+    }
+    assert {"ceo-meeting-work", "dingtalk-minutes"} <= skills_before_effect
+    assert audit_operations[-2:] == ["chat message send", "chat message list"]
+
+
 class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
     mailbox = "principal@example.test"
     original_message_id = "mail-1"
@@ -4956,8 +5132,16 @@ class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
     reply_content = "Approved with the documented conditions."
     document_url = "https://alidocs.dingtalk.com/i/nodes/contract-1"
 
-    def __init__(self, skill_paths: dict[str, Path]) -> None:
+    def __init__(
+        self,
+        skill_paths: dict[str, Path],
+        *,
+        verify_internet_message_id: str | None = None,
+    ) -> None:
         super().__init__(skill_paths)
+        self.verify_internet_message_id = (
+            verify_internet_message_id or self.internet_message_id
+        )
         self.read_commands: list[str] = []
         self.write_commands: list[str] = []
         self.verify_commands: list[str] = []
@@ -5078,7 +5262,7 @@ class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
         write_command = shlex.join(action["payload"]["argv"])
         verify_command = (
             "dws mail message verify --email principal@example.test "
-            "--internet-message-id internet-1 --format json"
+            f"--internet-message-id {self.verify_internet_message_id} --format json"
         )
         self.write_commands.append(write_command)
         self.verify_commands.append(verify_command)
@@ -5107,7 +5291,7 @@ class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
                 verify_command,
                 output=json.dumps(
                     {
-                        "internetMessageId": self.internet_message_id,
+                        "internetMessageId": self.verify_internet_message_id,
                         "sendStatus": "success",
                     }
                 ),
@@ -5173,10 +5357,62 @@ def test_authorized_mail_reply_protocol_executes_and_verifies_internet_message_i
         "dws mail message verify --email principal@example.test "
         "--internet-message-id internet-1 --format json"
     ]
+    completed_metadata = {
+        metadata["operation"]: metadata
+        for event in runs[1].tool_events
+        if event.get("type") == "item.completed"
+        and isinstance(event.get("item"), dict)
+        and isinstance((metadata := event["item"].get("metadata")), dict)
+        and metadata.get("operation")
+    }
+    assert completed_metadata["mail message reply"]["result_identifiers"] == {
+        "stdout.internetMessageId": executor.internet_message_id
+    }
+    assert completed_metadata["mail message verify"]["result_identifiers"] == {
+        "stdout.internetMessageId": executor.internet_message_id
+    }
     audit_result = json.loads(runs[1].final_result_json)
     reference = audit_result["external_result"]["live_result_reference"]
     assert reference["internetMessageId"] == executor.internet_message_id
     assert reference["sendStatus"] == "success"
+
+
+def test_mail_reply_verify_with_different_write_receipt_id_is_not_confirmed(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _authorized_mail_skill_paths(tmp_path, monkeypatch)
+    trigger = _message("Reply to the complete reviewed mail once.")
+    executor = AuthorizedMailReplyProtocolExecutor(
+        skill_paths,
+        verify_internet_message_id="internet-2",
+    )
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    runs = _task4_agent_runs(worker)
+    assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
+    assert runs[1].status == "unknown"
+    assert runs[1].side_effect_state == "unknown"
+    completed_metadata = {
+        metadata["operation"]: metadata
+        for event in runs[1].tool_events
+        if event.get("type") == "item.completed"
+        and isinstance(event.get("item"), dict)
+        and isinstance((metadata := event["item"].get("metadata")), dict)
+        and metadata.get("operation")
+    }
+    assert completed_metadata["mail message reply"]["result_identifiers"] == {
+        "stdout.internetMessageId": "internet-1"
+    }
+    assert completed_metadata["mail message verify"]["target_identifiers"][
+        "internet-message-id"
+    ] == "internet-2"
+    assert completed_metadata["mail message verify"]["result_identifiers"] == {
+        "stdout.internetMessageId": "internet-2"
+    }
 
 
 @pytest.mark.parametrize(

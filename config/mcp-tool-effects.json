@@ -15,7 +15,17 @@
             {"read": "calendar event get", "write": "calendar event respond"},
             {"read": "chat message list", "write": "chat message send"},
             {"read": "chat message reaction list", "write": "chat message reaction add"},
-            {"read": "mail message verify", "write": "mail message reply"},
+            {
+              "read": "mail message verify",
+              "write": "mail message reply",
+              "identity_matches": [
+                {
+                  "write_result": "stdout.internetMessageId",
+                  "read_target": "internet-message-id",
+                  "read_result": "stdout.internetMessageId"
+                }
+              ]
+            },
             {"read": "oa approval detail", "write": "oa approval approve"},
             {"read": "oa approval detail", "write": "oa approval comment"},
             {"read": "oa approval tasks", "write": "oa approval approve"},

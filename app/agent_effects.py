@@ -68,6 +68,10 @@ class McpToolEffectRegistry:
             tuple[str, str, str, str], set[tuple[str, str]]
         ]
         | None = None,
+        readback_identity_matches: dict[
+            tuple[str, str, str, str, str, str], tuple[dict[str, str], ...]
+        ]
+        | None = None,
     ) -> None:
         self._effects = dict(effects)
         self._dry_run_arguments = dict(dry_run_arguments or {})
@@ -80,6 +84,7 @@ class McpToolEffectRegistry:
             key: frozenset(values)
             for key, values in (readback_operation_relations or {}).items()
         }
+        self._readback_identity_matches = dict(readback_identity_matches or {})
 
     @classmethod
     def from_path(cls, path: Path) -> "McpToolEffectRegistry":
@@ -96,6 +101,9 @@ class McpToolEffectRegistry:
         readback_operation_modes: dict[tuple[str, str, str, str], str] = {}
         readback_operation_relations: dict[
             tuple[str, str, str, str], set[tuple[str, str]]
+        ] = {}
+        readback_identity_matches: dict[
+            tuple[str, str, str, str, str, str], tuple[dict[str, str], ...]
         ] = {}
         for item in tools:
             if not isinstance(item, dict):
@@ -164,6 +172,45 @@ class McpToolEffectRegistry:
                     readback_operation_relations.setdefault(relation_key, set()).add(
                         (relation["read"].strip(), relation["write"].strip())
                     )
+                    identity_matches = relation.get("identity_matches", [])
+                    if not isinstance(identity_matches, list):
+                        raise ValueError("MCP readback identity matches must be a list")
+                    normalized_matches: list[dict[str, str]] = []
+                    for identity in identity_matches:
+                        if not isinstance(identity, dict):
+                            raise ValueError("MCP readback identity match is invalid")
+                        write_result = identity.get("write_result")
+                        read_target = identity.get("read_target")
+                        read_result = identity.get("read_result")
+                        if (
+                            not isinstance(write_result, str)
+                            or not write_result.strip()
+                            or not any(
+                                isinstance(value, str) and value.strip()
+                                for value in (read_target, read_result)
+                            )
+                            or any(
+                                value is not None
+                                and (not isinstance(value, str) or not value.strip())
+                                for value in (read_target, read_result)
+                            )
+                        ):
+                            raise ValueError("MCP readback identity match is invalid")
+                        normalized = {"write_result": write_result.strip()}
+                        if isinstance(read_target, str):
+                            normalized["read_target"] = read_target.strip()
+                        if isinstance(read_result, str):
+                            normalized["read_result"] = read_result.strip()
+                        normalized_matches.append(normalized)
+                    if normalized_matches:
+                        identity_key = (
+                            *relation_key,
+                            relation["read"].strip(),
+                            relation["write"].strip(),
+                        )
+                        readback_identity_matches[identity_key] = tuple(
+                            normalized_matches
+                        )
                 if operation_match == "registered" and not operation_relations:
                     raise ValueError("registered MCP readback requires operation relations")
         for read_key, write_keys in readbacks.items():
@@ -181,6 +228,7 @@ class McpToolEffectRegistry:
             readback_target_modes=readback_target_modes,
             readback_operation_modes=readback_operation_modes,
             readback_operation_relations=readback_operation_relations,
+            readback_identity_matches=readback_identity_matches,
         )
 
     @classmethod
@@ -310,6 +358,92 @@ class McpToolEffectRegistry:
             relation_key,
             (),
         )
+
+    def result_identifiers(
+        self,
+        *,
+        server: str,
+        tool: str,
+        operation: str,
+        result: object,
+    ) -> dict[str, str]:
+        paths: set[str] = set()
+        for key, matches in self._readback_identity_matches.items():
+            read_server, read_tool, write_server, write_tool, read_operation, write_operation = key
+            if (server, tool, operation) == (read_server, read_tool, read_operation):
+                paths.update(
+                    match["read_result"]
+                    for match in matches
+                    if "read_result" in match
+                )
+            if (server, tool, operation) == (write_server, write_tool, write_operation):
+                paths.update(match["write_result"] for match in matches)
+        return {
+            path: value
+            for path in paths
+            if isinstance((value := _json_path_string(result, path)), str)
+        }
+
+    def readback_identities_match(
+        self,
+        *,
+        read_server: str,
+        read_tool: str,
+        write_server: str,
+        write_tool: str,
+        read_operation: str,
+        write_operation: str,
+        read_targets: dict[str, object],
+        read_result_identifiers: dict[str, object],
+        write_result_identifiers: dict[str, object],
+    ) -> bool:
+        matches = self._readback_identity_matches.get(
+            (
+                read_server,
+                read_tool,
+                write_server,
+                write_tool,
+                read_operation,
+                write_operation,
+            ),
+            (),
+        )
+        for match in matches:
+            write_value = write_result_identifiers.get(match["write_result"])
+            if not isinstance(write_value, str) or not write_value:
+                return False
+            read_target = match.get("read_target")
+            if read_target is not None and _target_value(read_targets, read_target) != write_value:
+                return False
+            read_result = match.get("read_result")
+            if (
+                read_result is not None
+                and read_result_identifiers.get(read_result) != write_value
+            ):
+                return False
+        return True
+
+
+def _json_path_string(value: object, path: str) -> str | None:
+    current = value
+    for part in path.split("."):
+        if isinstance(current, str):
+            try:
+                current = json.loads(current)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                return None
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current if isinstance(current, str) and current else None
+
+
+def _target_value(targets: dict[str, object], expected_key: str) -> object:
+    normalized_expected = expected_key.replace("_", "-").casefold()
+    for key, value in targets.items():
+        if key.replace("_", "-").casefold() == normalized_expected:
+            return value
+    return None
 
 
 def _normalized_shared_targets(
