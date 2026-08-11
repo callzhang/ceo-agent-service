@@ -108,7 +108,7 @@ def test_bootstrap_business_skills_rejects_missing_or_invalid_checkout_python(
     checkout, script = _isolated_checkout(tmp_path)
     if interpreter_content is not None:
         _write_executable(checkout / ".venv" / "bin" / "python", interpreter_content)
-    env = _controlled_env(tmp_path / "home", tmp_path / "bin")
+    env = _shell_only_env(tmp_path / "home", tmp_path / "bin")
 
     completed = subprocess.run(
         [str(script), "--component", "ceo-business-skills"],
@@ -121,6 +121,45 @@ def test_bootstrap_business_skills_rejects_missing_or_invalid_checkout_python(
 
     assert completed.returncode == 1
     assert expected_detail in completed.stdout
+
+
+@pytest.mark.parametrize(
+    ("interpreter_content", "detail_prefix"),
+    [
+        (None, "missing checkout Python interpreter"),
+        ("#!/bin/sh\nexit 42\n", "invalid checkout Python interpreter"),
+    ],
+)
+def test_bootstrap_json_reports_unavailable_checkout_python(
+    tmp_path: Path,
+    interpreter_content: str | None,
+    detail_prefix: str,
+):
+    checkout, script = _isolated_checkout(tmp_path)
+    interpreter = checkout / ".venv" / "bin" / "python"
+    if interpreter_content is not None:
+        _write_executable(interpreter, interpreter_content)
+    env = _shell_only_env(tmp_path / "home", tmp_path / "bin")
+
+    completed = subprocess.run(
+        [str(script), "--component", "ceo-business-skills", "--format", "json"],
+        cwd=checkout,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    payload = json.loads(completed.stdout)
+    assert payload["status"] == "failed"
+    assert payload["components"] == [
+        {
+            "name": "ceo-business-skills",
+            "status": "failed",
+            "detail": f"{detail_prefix}: {interpreter}",
+        }
+    ]
 
 
 def test_bootstrap_business_skills_invokes_exact_checkout_python(tmp_path: Path):
@@ -167,7 +206,7 @@ if [ "${1:-}" = "-c" ]; then
   exec "$CHECKOUT_TEST_REAL_PYTHON" "$@"
 fi
 cat >/dev/null
-printf 'first diagnostic\nsecond diagnostic\n' >&2
+printf 'first diagnostic\nquote " backslash \\\\ tab\tcarriage\rbackspace\bformfeed\fcontrol:\001\nsecond diagnostic\n' >&2
 exit 1
 """,
     )
@@ -186,21 +225,15 @@ exit 1
     assert completed.returncode == 1
     payload = json.loads(completed.stdout)
     assert payload["components"][0]["detail"] == (
-        "first diagnostic\nsecond diagnostic"
+        'first diagnostic\nquote " backslash \\ tab\tcarriage\r'
+        "backspace\bformfeed\fcontrol:\x01\nsecond diagnostic"
     )
 
 
 def test_bootstrap_json_uses_checkout_python_without_python3_on_path(
     tmp_path: Path,
 ):
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "bash").symlink_to("/bin/bash")
-    (bin_dir / "dirname").symlink_to("/usr/bin/dirname")
-    assert shutil.which("python3", path=str(bin_dir)) is None
-    env = os.environ.copy()
-    env["HOME"] = str(tmp_path / "home")
-    env["PATH"] = str(bin_dir)
+    env = _shell_only_env(tmp_path / "home", tmp_path / "bin")
 
     completed = subprocess.run(
         [str(SCRIPT), "--component", "ceo-business-skills", "--format", "json"],
@@ -228,6 +261,18 @@ def _controlled_env(home: Path, bin_dir: Path) -> dict[str, str]:
     env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
     env.pop("CODEX_INSTALL_COMMAND", None)
     env.pop("NVWA_SKILL_SOURCE", None)
+    return env
+
+
+def _shell_only_env(home: Path, bin_dir: Path) -> dict[str, str]:
+    home.mkdir(parents=True, exist_ok=True)
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (bin_dir / "bash").symlink_to("/bin/bash")
+    (bin_dir / "dirname").symlink_to("/usr/bin/dirname")
+    assert shutil.which("python3", path=str(bin_dir)) is None
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = str(bin_dir)
     return env
 
 

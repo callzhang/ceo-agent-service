@@ -61,7 +61,32 @@ record() {
 }
 
 json_string() {
-  "${CHECKOUT_PYTHON}" -c 'import json,sys; print(json.dumps(sys.stdin.read()), end="")'
+  local value="${1-}"
+  local character code
+  local LC_ALL=C
+  printf '"'
+  while [[ -n "${value}" ]]; do
+    character="${value:0:1}"
+    value="${value:1}"
+    case "${character}" in
+      '"') printf '\\"' ;;
+      \\) printf '\\\\' ;;
+      $'\n') printf '\\n' ;;
+      $'\r') printf '\\r' ;;
+      $'\t') printf '\\t' ;;
+      $'\b') printf '\\b' ;;
+      $'\f') printf '\\f' ;;
+      *)
+        printf -v code '%d' "'${character}"
+        if ((code < 32 || code == 127)); then
+          printf '\\u%04x' "${code}"
+        else
+          printf '%s' "${character}"
+        fi
+        ;;
+    esac
+  done
+  printf '"'
 }
 
 emit_json() {
@@ -79,7 +104,7 @@ emit_json() {
     printf '"failed"'
   fi
   printf ',"summary":'
-  printf '%s' "${summary}" | json_string
+  json_string "${summary}"
   printf ',"components":['
   local first=1
   local index component status detail
@@ -92,11 +117,11 @@ emit_json() {
     fi
     first=0
     printf '{"name":'
-    printf '%s' "${component}" | json_string
+    json_string "${component}"
     printf ',"status":'
-    printf '%s' "${status}" | json_string
+    json_string "${status}"
     printf ',"detail":'
-    printf '%s' "${detail}" | json_string
+    json_string "${detail}"
     printf '}'
   done
   printf ']}\n'
