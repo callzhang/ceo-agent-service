@@ -1,14 +1,16 @@
+import errno
 import json
 import hashlib
 import sqlite3
 import threading
+import time
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -37,6 +39,8 @@ FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
+CODEX_SESSION_LOCK_RETRY_ATTEMPTS = 3
+CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
 _INITIALIZED_STORE_PATHS: set[Path] = set()
@@ -8127,41 +8131,59 @@ class AutoReplyStore:
             raise ValueError("missing conversation_id")
         if not owner.strip():
             raise ValueError("missing lock owner")
-        with self._connect() as db:
-            db.execute(
-                """
-                delete from codex_session_locks
-                where conversation_id=?
-                  and datetime(locked_at) <= datetime('now', ?)
-                """,
-                (
-                    conversation_id,
-                    f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",
-                ),
-            )
-            cursor = db.execute(
-                """
-                insert or ignore into codex_session_locks (conversation_id, owner)
-                values (?, ?)
-                """,
-                (conversation_id, owner),
-            )
-            return cursor.rowcount == 1
+        def acquire() -> bool:
+            with self._connect() as db:
+                db.execute(
+                    """
+                    delete from codex_session_locks
+                    where conversation_id=?
+                      and datetime(locked_at) <= datetime('now', ?)
+                    """,
+                    (
+                        conversation_id,
+                        f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",
+                    ),
+                )
+                cursor = db.execute(
+                    """
+                    insert or ignore into codex_session_locks (conversation_id, owner)
+                    values (?, ?)
+                    """,
+                    (conversation_id, owner),
+                )
+                if cursor.rowcount == 1:
+                    return True
+                row = db.execute(
+                    "select owner from codex_session_locks where conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                return row is not None and str(row["owner"]) == owner
+
+        return self._retry_codex_session_lock_operation(acquire)
 
     def release_codex_session_lock(self, conversation_id: str, owner: str) -> bool:
         if not conversation_id.strip():
             raise ValueError("missing conversation_id")
         if not owner.strip():
             raise ValueError("missing lock owner")
-        with self._connect() as db:
-            cursor = db.execute(
-                """
-                delete from codex_session_locks
-                where conversation_id=? and owner=?
-                """,
-                (conversation_id, owner),
-            )
-            return cursor.rowcount == 1
+        def release() -> bool:
+            with self._connect() as db:
+                cursor = db.execute(
+                    """
+                    delete from codex_session_locks
+                    where conversation_id=? and owner=?
+                    """,
+                    (conversation_id, owner),
+                )
+                if cursor.rowcount == 1:
+                    return True
+                row = db.execute(
+                    "select 1 from codex_session_locks where conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                return row is None
+
+        return self._retry_codex_session_lock_operation(release)
 
     def renew_codex_session_lock(
         self,
@@ -8178,16 +8200,30 @@ class AutoReplyStore:
         stale_before = (
             now_value - timedelta(seconds=CODEX_SESSION_LOCK_STALE_SECONDS)
         ).strftime("%Y-%m-%d %H:%M:%S")
-        with self._connect() as db:
-            cursor = db.execute(
-                """
-                update codex_session_locks
-                set locked_at=?
-                where conversation_id=? and owner=? and locked_at>?
-                """,
-                (now_text, conversation_id, owner, stale_before),
-            )
-            return cursor.rowcount == 1
+        def renew() -> bool:
+            with self._connect() as db:
+                cursor = db.execute(
+                    """
+                    update codex_session_locks
+                    set locked_at=?
+                    where conversation_id=? and owner=? and locked_at>?
+                    """,
+                    (now_text, conversation_id, owner, stale_before),
+                )
+                return cursor.rowcount == 1
+
+        return self._retry_codex_session_lock_operation(renew)
+
+    @staticmethod
+    def _retry_codex_session_lock_operation(operation: Callable[[], bool]) -> bool:
+        for attempt in range(CODEX_SESSION_LOCK_RETRY_ATTEMPTS):
+            try:
+                return operation()
+            except OSError as exc:
+                if exc.errno != errno.EDEADLK or attempt + 1 == CODEX_SESSION_LOCK_RETRY_ATTEMPTS:
+                    raise
+                time.sleep(CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+        raise AssertionError("unreachable codex session lock retry state")
 
     def codex_session_lock(self, conversation_id: str, owner: str) -> CodexSessionLock:
         return CodexSessionLock(self, conversation_id, owner)
