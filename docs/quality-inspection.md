@@ -47,11 +47,15 @@ violation 或必需数据源不可检查。
 | 外部投递队列 | `work_todo_dingtalk_links`、`wechat_deliveries`、`memory_write_events` 的失败或未知发送 | 这些队列的活动状态 |
 | `feedback_events` | 未记录 `resolved_at` 的反馈 | 无 |
 | `daily_scan_state` / `wechat_read_state` | scanner 仍有 `last_error`；微信 reader 不可用且存在待处理微信回复 | 无待处理微信工作时的 reader 未就绪 |
-| `errors` | 最近 4 小时新建的服务错误 | 无 |
+| `errors` | 最近 4 小时新建且未解决的服务错误 | 无 |
 
 当前时间窗口是有意区分的：`errors` 为最近 4 小时，最新 `dry_run` 为最近 24 小时，
 其余队列按当前所有未终态记录扫描。超时值来自 `app/quality_gate.py`，不要在 heartbeat
 或审计页面重新硬编码另一套值。
+
+服务错误保留原始时间和详情。只有完成了可读回验证的恢复动作，才可以写入明确的
+解决说明和时间；质量巡检随后不再将该错误计为未解决。没有关联业务 trigger 的通道错误
+不能仅因时间过去或新任务成功而自动关闭。
 
 ## Trigger 收敛规则
 

@@ -11,6 +11,7 @@ import time
 import pytest
 
 import app.store as store_module
+from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.store import AgentRole, AgentRunLeaseLostError, AutoReplyStore
 
 
@@ -6252,7 +6253,7 @@ def test_requeue_recent_failed_wechat_tasks_only_recovers_codex_auth_failures(
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
-    def failed_task(message_id: str, error: str):
+    def failed_task(message_id: str, error: str, *, recovery_code: str = ""):
         assert store.enqueue_reply_task(
             channel="wechat",
             conversation_id=f"wechat-{message_id}",
@@ -6274,6 +6275,7 @@ def test_requeue_recent_failed_wechat_tasks_only_recovers_codex_auth_failures(
             audit_summary="",
             send_status="failed",
             send_error=error,
+            recovery_code=recovery_code,
             task_status="failed",
         )
         persisted = store.get_reply_task(task.id)
@@ -6284,7 +6286,11 @@ def test_requeue_recent_failed_wechat_tasks_only_recovers_codex_auth_failures(
         "unexpected status 401 Unauthorized: Missing bearer or basic "
         "authentication in header"
     )
-    auth_task = failed_task("auth-failure", auth_error)
+    auth_task = failed_task(
+        "auth-failure",
+        auth_error,
+        recovery_code=CODEX_PROVIDER_AUTH_FAILED,
+    )
     unrelated_task = failed_task("unrelated-failure", "model output was invalid")
 
     recovered = store.requeue_recent_failed_wechat_read_only_tasks(

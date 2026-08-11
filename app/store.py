@@ -143,6 +143,8 @@ class ReplyError(BaseModel):
     kind: str
     detail: str
     created_at: str
+    resolved_at: str = ""
+    resolution: str = ""
 
 
 class OperationLog(BaseModel):
@@ -762,7 +764,9 @@ class AutoReplyStore:
                     message_id text,
                     kind text not null,
                     detail text not null,
-                    created_at text not null default current_timestamp
+                    created_at text not null default current_timestamp,
+                    resolved_at text not null default '',
+                    resolution text not null default ''
                 );
                 create table if not exists reply_attempts (
                     id integer primary key autoincrement,
@@ -1764,6 +1768,17 @@ class AutoReplyStore:
                 db.execute(
                     "alter table wechat_deliveries add column "
                     "pre_action_failure integer not null default 0"
+                )
+            error_columns = {
+                row["name"] for row in db.execute("pragma table_info(errors)").fetchall()
+            }
+            if "resolved_at" not in error_columns:
+                db.execute(
+                    "alter table errors add column resolved_at text not null default ''"
+                )
+            if "resolution" not in error_columns:
+                db.execute(
+                    "alter table errors add column resolution text not null default ''"
                 )
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
@@ -12487,6 +12502,31 @@ class AutoReplyStore:
                 (conversation_id, message_id, kind, detail),
             )
 
+    def resolve_errors(
+        self,
+        error_ids: list[int] | tuple[int, ...],
+        *,
+        resolution: str,
+    ) -> int:
+        normalized_ids = tuple(dict.fromkeys(int(error_id) for error_id in error_ids))
+        if not normalized_ids:
+            return 0
+        if any(error_id <= 0 for error_id in normalized_ids):
+            raise ValueError("error ids must be positive")
+        if not resolution.strip():
+            raise ValueError("error resolution must be non-empty")
+        placeholders = ",".join("?" for _ in normalized_ids)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"""
+                update errors
+                set resolved_at=current_timestamp, resolution=?
+                where id in ({placeholders}) and resolved_at=''
+                """,
+                (resolution, *normalized_ids),
+            )
+        return cursor.rowcount
+
     def list_errors(
         self, limit: int | None = None, offset: int = 0
     ) -> list[ReplyError]:
@@ -12608,10 +12648,11 @@ class AutoReplyStore:
                     created_at as occurred_at,
                     'Error' as category,
                     kind as action,
-                    'active' as status,
+                    case when coalesce(resolved_at, '')='' then 'active' else 'resolved' end as status,
                     coalesce(conversation_id, '') as context,
                     detail as summary,
-                    detail as detail,
+                    case when coalesce(resolved_at, '')='' then detail
+                         else detail || char(10) || 'Resolved: ' || resolution end as detail,
                     coalesce(conversation_id, '') as conversation_id,
                     coalesce(message_id, '') as message_id
                 from errors

@@ -94,6 +94,25 @@ def test_quality_gate_excludes_recent_error_recovered_by_later_attempt(tmp_path)
     ]
 
 
+def test_quality_gate_excludes_explicitly_resolved_global_error(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.record_error(None, None, "task_agent", "temporary provider failure")
+    error_id = store.list_errors(limit=1)[0].id
+
+    assert store.resolve_errors(
+        [error_id],
+        resolution="Codex channel is healthy after readback.",
+    ) == 1
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not [
+        issue
+        for issue in report.violations
+        if issue.source == "errors" and issue.code == "recent_error"
+    ]
+
+
 def test_quality_gate_keeps_future_follow_up_as_attention_not_failure(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     future = (NOW + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")

@@ -546,6 +546,7 @@ def _check_recent_errors(
         """select count(*)
            from errors error_event
            where datetime(error_event.created_at) >= datetime(?)
+             and coalesce(error_event.resolved_at, '')=''
              and not exists (
                 select 1
                 from reply_attempts recovery
