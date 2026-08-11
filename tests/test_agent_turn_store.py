@@ -183,9 +183,20 @@ def _normalize_read_skill_event(store, task, payload):
 
 
 def _read_skill_payload(
-    path: Path, content: str, sha256: str, *, wrapper: str = "both"
+    path: Path,
+    content: str,
+    sha256: str,
+    *,
+    wrapper: str = "both",
+    result_path: str | None = None,
+    result_name: str = "business-review",
 ):
-    receipt = {"content": content, "sha256": sha256}
+    receipt = {
+        "content": content,
+        "sha256": sha256,
+        "path": result_path or str(path.resolve()),
+        "name": result_name,
+    }
     result = {"isError": False}
     if wrapper in {"both", "content"}:
         result["content"] = [{"type": "text", "text": json.dumps(receipt)}]
@@ -240,6 +251,92 @@ def test_completed_read_skill_persists_verified_metadata_without_content(
     assert "arguments" not in event["item"]
 
 
+def test_completed_read_skill_normalizes_alias_to_trusted_result_path(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "skills"
+    skill_path = root / "business-review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    content = "# Business review\n"
+    skill_path.write_text(content, encoding="utf-8")
+    alias = tmp_path / "skill-alias.md"
+    alias.symlink_to(skill_path)
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (root,))
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+
+    event = _normalize_read_skill_event(
+        store,
+        _task(store),
+        _read_skill_payload(
+            alias,
+            content,
+            hashlib.sha256(content.encode()).hexdigest(),
+            result_path=str(skill_path.resolve()),
+        ),
+    )
+
+    assert event is not None
+    assert event["type"] == "item.completed"
+    assert event["item"]["metadata"]["skill_path"] == str(skill_path.resolve())
+
+
+def test_malformed_unicode_skill_content_becomes_failed_controlled_event(
+    tmp_path, monkeypatch
+):
+    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text("valid", encoding="utf-8")
+    monkeypatch.setattr(
+        "app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",)
+    )
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+
+    event = _normalize_read_skill_event(
+        store,
+        _task(store),
+        _read_skill_payload(skill_path, "\ud800", "0" * 64),
+    )
+
+    assert event is not None
+    assert event["type"] == "item.failed"
+    assert event["item"]["metadata"]["failure_code"] == (
+        "agent_cli_skill_receipt_invalid"
+    )
+
+
+def test_skill_receipt_hash_resource_error_becomes_failed_controlled_event(
+    tmp_path, monkeypatch
+):
+    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    content = "# Business review\n"
+    skill_path.write_text(content, encoding="utf-8")
+    digest = hashlib.sha256(content.encode()).hexdigest()
+    monkeypatch.setattr(
+        "app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",)
+    )
+
+    class FailingHashlib:
+        @staticmethod
+        def sha256(_content):
+            raise MemoryError("hash allocation failed")
+
+    monkeypatch.setattr("app.agent_skill_usage.hashlib", FailingHashlib())
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+
+    event = _normalize_read_skill_event(
+        store,
+        _task(store),
+        _read_skill_payload(skill_path, content, digest),
+    )
+
+    assert event is not None
+    assert event["type"] == "item.failed"
+    assert event["item"]["metadata"]["failure_code"] == (
+        "agent_cli_skill_receipt_invalid"
+    )
+
+
 @pytest.mark.parametrize("wrapper", ("structured", "content"))
 def test_completed_read_skill_accepts_current_mcp_result_wrappers(
     tmp_path, monkeypatch, wrapper
@@ -282,9 +379,9 @@ def test_malformed_read_skill_receipt_is_normalized_as_failed(
         "app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",)
     )
     requested_path = skill_path
+    result_path = str(skill_path.resolve())
     if case == "path_mismatch":
-        requested_path = skill_path.parent / "." / "SKILL.md"
-        requested_path = Path(str(requested_path).replace("/SKILL.md", "/../business-review/SKILL.md"))
+        result_path = str(skill_path.parent / "different.md")
     digest = hashlib.sha256(content.encode()).hexdigest()
     if case == "digest_mismatch":
         digest = "0" * 64
@@ -294,7 +391,12 @@ def test_malformed_read_skill_receipt_is_normalized_as_failed(
     event = _normalize_read_skill_event(
         store,
         task,
-        _read_skill_payload(requested_path, content, digest),
+        _read_skill_payload(
+            requested_path,
+            content,
+            digest,
+            result_path=result_path,
+        ),
     )
 
     assert event is not None

@@ -6,6 +6,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.native_cli_metadata import AgentReadOnlyViolationError
+
+
 @dataclass(frozen=True)
 class LoadedSkillReceipt:
     name: str
@@ -18,6 +21,37 @@ AGENT_SKILL_ROOTS = (
     Path.home() / ".codex" / "skills",
     Path.home() / ".codex" / "plugins",
 )
+AUDIT_REQUIRED_SKILL_RECEIPTS_ENV = "CEO_AGENT_REQUIRED_SKILL_RECEIPTS"
+
+
+@dataclass(frozen=True)
+class AuthorizedSkillPath:
+    name: str
+    path: Path
+
+
+def resolve_authorized_skill_path(path: str) -> AuthorizedSkillPath:
+    try:
+        resolved = Path(path).expanduser().resolve(strict=True)
+        roots: list[Path] = []
+        for root in AGENT_SKILL_ROOTS:
+            try:
+                roots.append(root.expanduser().resolve(strict=True))
+            except (OSError, RuntimeError, UnicodeError):
+                continue
+        if resolved.suffix.casefold() != ".md":
+            raise AgentReadOnlyViolationError("skill_path_forbidden")
+        for root in roots:
+            if not resolved.is_relative_to(root):
+                continue
+            parent = resolved.parent
+            while parent != root:
+                if (parent / "SKILL.md").is_file():
+                    return AuthorizedSkillPath(name=parent.name, path=resolved)
+                parent = parent.parent
+    except (OSError, RuntimeError, UnicodeError) as exc:
+        raise AgentReadOnlyViolationError("skill_path_forbidden") from exc
+    raise AgentReadOnlyViolationError("skill_path_forbidden")
 
 
 def loaded_skill_receipts(
@@ -47,6 +81,31 @@ def loaded_skill_receipts(
     return tuple(receipts[path] for path in sorted(receipts))
 
 
+def parse_required_skill_receipts(value: object) -> tuple[LoadedSkillReceipt, ...]:
+    if not isinstance(value, list):
+        raise ValueError("required Skill receipts must be a list")
+    receipts: dict[str, LoadedSkillReceipt] = {}
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != {"name", "path", "sha256"}:
+            raise ValueError("required Skill receipt is malformed")
+        path = _validated_persisted_path(entry.get("path"))
+        name = _validated_skill_name(entry.get("name"))
+        digest = _validated_digest(entry.get("sha256"))
+        if (
+            path is None
+            or path != entry.get("path")
+            or name is None
+            or digest is None
+        ):
+            raise ValueError("required Skill receipt is malformed")
+        receipt = LoadedSkillReceipt(name=name, path=path, sha256=digest)
+        existing = receipts.get(path)
+        if existing is not None and existing != receipt:
+            raise ValueError("required Skill receipts conflict")
+        receipts[path] = receipt
+    return tuple(receipts[path] for path in sorted(receipts))
+
+
 def normalized_read_skill_metadata(
     arguments: object,
     result: object,
@@ -56,47 +115,35 @@ def normalized_read_skill_metadata(
     requested = arguments.get("path")
     if not isinstance(requested, str) or not requested:
         return None
-    skill = _authorized_skill(requested)
-    if skill is None:
+    try:
+        skill = resolve_authorized_skill_path(requested)
+        receipt = _read_skill_result(result)
+        if receipt is None:
+            return None
+        content, digest, result_path, result_name = receipt
+        encoded_content = content.encode("utf-8")
+        content_digest = hashlib.sha256(encoded_content).hexdigest()
+    except (
+        AgentReadOnlyViolationError,
+        MemoryError,
+        OSError,
+        RecursionError,
+        UnicodeError,
+        ValueError,
+    ):
         return None
-    path, name = skill
-    receipt = _read_skill_result(result)
-    if receipt is None:
+    if result_path != str(skill.path) or result_name != skill.name:
         return None
-    content, digest = receipt
-    if hashlib.sha256(content.encode("utf-8")).hexdigest() != digest:
+    if content_digest != digest:
         return None
     return {
-        "skill_path": path,
-        "skill_name": name,
+        "skill_path": str(skill.path),
+        "skill_name": skill.name,
         "skill_sha256": digest,
     }
 
 
-def _authorized_skill(requested: str) -> tuple[str, str] | None:
-    try:
-        path = Path(requested)
-        resolved = path.expanduser().resolve(strict=True)
-    except (OSError, RuntimeError):
-        return None
-    if requested != str(resolved) or resolved.suffix.casefold() != ".md":
-        return None
-    for configured_root in AGENT_SKILL_ROOTS:
-        try:
-            root = configured_root.expanduser().resolve(strict=True)
-        except (OSError, RuntimeError):
-            continue
-        if not resolved.is_relative_to(root):
-            continue
-        parent = resolved.parent
-        while parent != root:
-            if (parent / "SKILL.md").is_file():
-                return str(resolved), parent.name
-            parent = parent.parent
-    return None
-
-
-def _read_skill_result(value: object) -> tuple[str, str] | None:
+def _read_skill_result(value: object) -> tuple[str, str, str, str] | None:
     if (
         not isinstance(value, dict)
         or ("isError" in value and value.get("isError") is not False)
@@ -122,17 +169,24 @@ def _read_skill_result(value: object) -> tuple[str, str] | None:
             if isinstance(candidate, dict):
                 candidates.append(candidate)
     receipts = {
-        (candidate.get("content"), candidate.get("sha256"))
+        (
+            candidate.get("content"),
+            candidate.get("sha256"),
+            candidate.get("path"),
+            candidate.get("name"),
+        )
         for candidate in candidates
-        if set(candidate) == {"content", "sha256"}
+        if set(candidate) == {"content", "sha256", "path", "name"}
         and isinstance(candidate.get("content"), str)
         and _validated_digest(candidate.get("sha256")) is not None
+        and isinstance(candidate.get("path"), str)
+        and _validated_skill_name(candidate.get("name")) is not None
     }
     if len(receipts) != 1:
         return None
-    content, digest = receipts.pop()
-    assert isinstance(content, str) and isinstance(digest, str)
-    return content, digest
+    content, digest, path, name = receipts.pop()
+    assert all(isinstance(value, str) for value in (content, digest, path, name))
+    return content, digest, path, name
 
 
 def _validated_persisted_path(value: object) -> str | None:

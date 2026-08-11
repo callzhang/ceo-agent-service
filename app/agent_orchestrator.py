@@ -305,6 +305,7 @@ class AgentOrchestrator:
             except (RuntimeError, ResultParseError) as exc:
                 if str(exc) in {
                     "agent_run_unavailable",
+                    "audit_consumer_parent_invalid",
                     "codex_session_locked",
                 }:
                     return self._deferred_result(
@@ -335,10 +336,10 @@ class AgentOrchestrator:
         self, parent_run_id: int | None
     ) -> tuple[LoadedSkillReceipt, ...]:
         if parent_run_id is None:
-            return ()
+            raise RuntimeError("audit_consumer_parent_invalid")
         parent = self.store.get_agent_run(parent_run_id)
         if parent is None or parent.role is not AgentRole.CONSUMER:
-            return ()
+            raise RuntimeError("audit_consumer_parent_invalid")
         return loaded_skill_receipts(parent.tool_events)
 
     def _derive_state(

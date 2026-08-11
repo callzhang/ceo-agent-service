@@ -13,6 +13,10 @@ from app.agent_contracts import (
     AuditOutcome,
 )
 from app.agent_result import AgentError, SideEffectState
+from app.agent_skill_usage import (
+    AUDIT_REQUIRED_SKILL_RECEIPTS_ENV,
+    parse_required_skill_receipts,
+)
 from app.agent_wire_contracts import AuditAgentWireResult, parse_audit_agent_wire_result
 from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
@@ -320,6 +324,47 @@ class AuditAgentRunner:
         authorized_recovery_actions: frozenset[int] = frozenset(),
         recovery_authorizations: tuple[dict[str, object], ...] = (),
     ) -> AgentTurnRunResult[AuditAgentResult]:
+        allow_write = not self.dry_run and recovery_phase != "reconcile"
+        controlled_cli_env: list[tuple[str, str]] = []
+        if allow_write:
+            required = parse_required_skill_receipts(
+                [
+                    {
+                        "name": receipt.name,
+                        "path": receipt.path,
+                        "sha256": receipt.sha256,
+                    }
+                    for receipt in context.consumer_skills
+                ]
+            )
+            controlled_cli_env.append(
+                (
+                    AUDIT_REQUIRED_SKILL_RECEIPTS_ENV,
+                    json.dumps(
+                        [
+                            {
+                                "name": receipt.name,
+                                "path": receipt.path,
+                                "sha256": receipt.sha256,
+                            }
+                            for receipt in required
+                        ],
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+            )
+        if recovery_phase == "execute":
+            controlled_cli_env.append(
+                (
+                    RECOVERY_WRITE_ALLOWLIST_ENV,
+                    json.dumps(
+                        recovery_authorizations,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+            )
         expected_effect_actions = tuple(
             _expected_effect_action(action, self.effects, action_index=index)
             for index, action in enumerate(context.proposal.actions)
@@ -388,20 +433,9 @@ class AuditAgentRunner:
                     command=sys.executable,
                     args=("-m", "app.agent_cli"),
                     cwd=str(SERVICE_ROOT),
-                    env=(
-                        (
-                            RECOVERY_WRITE_ALLOWLIST_ENV,
-                            json.dumps(
-                                recovery_authorizations,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ),
-                        ),
-                    )
-                    if recovery_phase == "execute"
-                    else (),
+                    env=tuple(controlled_cli_env),
                 ),
-                allow_write=not self.dry_run and recovery_phase != "reconcile",
+                allow_write=allow_write,
             ),
             parse_result=parse_audit_agent_wire_result,
             persist_conversation_session=False,
@@ -413,7 +447,7 @@ class AuditAgentRunner:
                 for entry in recovery_authorizations
             },
             allow_effectful_tools=(
-                not self.dry_run and recovery_phase != "reconcile"
+                allow_write
             ),
         )
 

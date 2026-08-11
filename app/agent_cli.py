@@ -17,6 +17,11 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from app.agent_result import EffectKind
+from app.agent_skill_usage import (
+    AUDIT_REQUIRED_SKILL_RECEIPTS_ENV,
+    parse_required_skill_receipts,
+    resolve_authorized_skill_path,
+)
 from app.bounded_process import (
     MAX_PROCESS_OUTPUT_BYTES,
     ProcessOutputLimitError,
@@ -40,12 +45,8 @@ MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 CLI_TIMEOUT_SECONDS = 15 * 60
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
+_READ_SKILL_RECEIPTS: dict[str, str] = {}
 CliOutputLimitError = ProcessOutputLimitError
-AGENT_SKILL_ROOTS = (
-    Path.home() / ".agents" / "skills",
-    Path.home() / ".codex" / "skills",
-    Path.home() / ".codex" / "plugins",
-)
 SPREADSHEET_MATERIAL_ROOTS = (
     Path("/tmp").resolve(),
     Path(tempfile.gettempdir()).resolve(),
@@ -92,6 +93,7 @@ def execute_reviewed_write(
     classifier: NativeCliMetadataClassifier | None = None,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, object]:
+    _enforce_required_skill_rereads()
     return _execute_reviewed(
         argv,
         expected_effect=EffectKind.EFFECTFUL,
@@ -99,6 +101,23 @@ def execute_reviewed_write(
         classifier=classifier,
         process_runner=process_runner,
     )
+
+
+def _enforce_required_skill_rereads() -> None:
+    raw = os.environ.get(AUDIT_REQUIRED_SKILL_RECEIPTS_ENV, "")
+    if not raw:
+        raise AgentReadOnlyViolationError("audit_skill_receipts_required")
+    try:
+        required = parse_required_skill_receipts(json.loads(raw))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise AgentReadOnlyViolationError("audit_skill_receipts_invalid") from exc
+    if not required:
+        raise AgentReadOnlyViolationError("audit_skill_receipts_required")
+    if any(
+        _READ_SKILL_RECEIPTS.get(receipt.path) != receipt.sha256
+        for receipt in required
+    ):
+        raise AgentReadOnlyViolationError("audit_skill_reread_required")
 
 
 def _json_digest(value: object) -> str:
@@ -147,10 +166,8 @@ def _recovery_write_authorization(
 
 
 def read_skill(path: str) -> dict[str, str]:
-    skill_path = Path(path).expanduser().resolve(strict=True)
-    roots = tuple(root.expanduser().resolve() for root in AGENT_SKILL_ROOTS)
-    if not _is_authorized_skill_markdown(skill_path, roots):
-        raise AgentReadOnlyViolationError("skill_path_forbidden")
+    authorized = resolve_authorized_skill_path(path)
+    skill_path = authorized.path
     flags = os.O_RDONLY | os.O_NONBLOCK
     flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     with os.fdopen(os.open(skill_path, flags), "rb") as skill_file:
@@ -162,11 +179,19 @@ def read_skill(path: str) -> dict[str, str]:
         content_bytes = skill_file.read(MAX_SKILL_BYTES + 1)
         if len(content_bytes) > MAX_SKILL_BYTES:
             raise AgentReadOnlyViolationError("skill_content_too_large")
-    content = content_bytes.decode("utf-8")
-    return {
+    try:
+        content = content_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AgentReadOnlyViolationError("skill_content_invalid_utf8") from exc
+    digest = hashlib.sha256(content_bytes).hexdigest()
+    result = {
         "content": content,
-        "sha256": hashlib.sha256(content_bytes).hexdigest(),
+        "sha256": digest,
+        "path": str(skill_path),
+        "name": authorized.name,
     }
+    _READ_SKILL_RECEIPTS[str(skill_path)] = digest
+    return result
 
 
 def read_spreadsheet(
@@ -334,20 +359,6 @@ def _xlsx_cell_value(cell: ElementTree.Element, shared_strings: list[str]) -> st
         index = int(raw_value)
         return shared_strings[index] if index < len(shared_strings) else ""
     return raw_value
-
-
-def _is_authorized_skill_markdown(skill_path: Path, roots: Sequence[Path]) -> bool:
-    if skill_path.suffix.casefold() != ".md":
-        return False
-    for root in roots:
-        if not skill_path.is_relative_to(root):
-            continue
-        parent = skill_path.parent
-        while parent != root:
-            if (parent / "SKILL.md").is_file():
-                return True
-            parent = parent.parent
-    return False
 
 
 def _execute_reviewed(

@@ -13,7 +13,7 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     ConsumerOutcome,
 )
-from app.agent_orchestrator import AgentOrchestrator
+from app.agent_orchestrator import AgentOrchestrator, _NextAudit
 from app.agent_result import ResultParseError, SideEffectState
 from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import AgentTurnRunResult
@@ -634,6 +634,47 @@ def test_audit_receives_exact_parent_consumer_skill_on_initial_and_normal_retry(
     ]
 
 
+@pytest.mark.parametrize("parent_kind", ("null", "missing", "wrong_role"))
+def test_normal_audit_state_with_invalid_parent_defers_without_invoking_audit(
+    store, monkeypatch, parent_kind
+):
+    task = _task(store)
+    if parent_kind == "null":
+        parent_id = None
+    elif parent_kind == "missing":
+        parent_id = 999_999
+    else:
+        parent_id = store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=7,
+            turn_attempt=0,
+            parent_agent_run_id=None,
+            operation_id="wrong-parent",
+            owner="wrong-parent",
+        ).run.id
+    state = _NextAudit(
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_run_id=parent_id,
+        proposal=_consumer_result("proposal", "candidate").proposal,
+    )
+    audit = ScriptedAudit(store)
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ScriptedConsumer(store),
+        audit=audit,
+    )
+    monkeypatch.setattr(orchestrator, "_derive_state", lambda _task: state)
+
+    result = _process(orchestrator, task)
+
+    assert result.status == "failed_retryable"
+    assert result.error.code == "audit_consumer_parent_invalid"
+    assert audit.calls == []
+
+
 def test_unknown_audit_recovery_receives_exact_parent_consumer_skill(store):
     pending = _task(store)
     task = store.claim_reply_task(pending.id)
@@ -686,6 +727,71 @@ def test_unknown_audit_recovery_receives_exact_parent_consumer_skill(store):
     )
 
     assert audit.recovery_contexts[0].consumer_skills == (receipt,)
+
+
+@pytest.mark.parametrize("parent_kind", ("null", "missing", "wrong_role"))
+def test_unknown_recovery_with_invalid_parent_defers_without_invoking_audit(
+    store, parent_kind
+):
+    pending = _task(store)
+    task = store.claim_reply_task(pending.id)
+    assert task is not None
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate"))
+    consumer.run(
+        task,
+        _context(task),
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+    parent = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert parent is not None
+    audit_run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
+        owner="crashed-audit",
+    ).run
+    store.set_agent_run_session(audit_run.id, "audit-session", owner="crashed-audit")
+    store.mark_agent_run_unknown(
+        audit_run.id,
+        {"code": "write_outcome_unknown", "retryable": False},
+        owner="crashed-audit",
+    )
+    invalid_parent_id = {
+        "null": None,
+        "missing": 999_999,
+        "wrong_role": audit_run.id,
+    }[parent_kind]
+    with __import__("sqlite3").connect(store.path) as db:
+        db.execute(
+            "update agent_runs set parent_agent_run_id=? where id=?",
+            (invalid_parent_id, audit_run.id),
+        )
+    audit = RecoveringScriptedAudit(store, _audit_result("needs_human", 0))
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=ScriptedConsumer(store),
+            audit=audit,
+        ),
+        task,
+    )
+
+    assert result.status == "failed_retryable"
+    assert result.error.code == "audit_consumer_parent_invalid"
+    assert audit.calls == []
+    assert audit.recovery_calls == []
 
 
 def test_two_feedback_cycles_resume_same_consumer_and_create_fresh_auditors(store):
