@@ -8183,7 +8183,7 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     assert len(agent_runner(worker).calls) == 1
     assert "Safe prior execution receipts" in agent_prompt(worker)
     assert "退回" in agent_prompt(worker)
-    assert "dws oa approval detail --instance-id proc-1" in agent_prompt(worker)
+    assert "read-oa-approval-detail --instance-id proc-1" in agent_prompt(worker)
     assert "dws oa approval tasks --instance-id proc-1" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
@@ -8745,7 +8745,7 @@ def test_oa_approval_detail_always_includes_openapi_comments(
     script_no_action(worker)
     worker.run_once()
     prompt = agent_prompt(worker)
-    assert "dws oa approval detail --instance-id proc-1 --format json" in prompt
+    assert "read-oa-approval-detail --instance-id proc-1" in prompt
     assert "dws oa approval tasks --instance-id proc-1 --format json" in prompt
     assert "证据不严谨，需要补充模型对比结论。" not in prompt
 
@@ -8793,7 +8793,7 @@ def test_oa_approval_detail_param_error_is_recovered_by_openapi(
     script_no_action(worker)
     worker.run_once()
     prompt = agent_prompt(worker)
-    assert "dws oa approval detail --instance-id proc-1 --format json" in prompt
+    assert "read-oa-approval-detail --instance-id proc-1" in prompt
     assert "dws oa approval tasks --instance-id proc-1 --format json" in prompt
     assert "recovered_by_openapi" not in prompt
     assert "奥迪第三曲线项目" not in prompt
@@ -11536,7 +11536,7 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
     assert '"process_instance_id": "proc-1"' in material.reference
     assert '"task_id": "task-1"' in material.reference
     assert material.read_commands == (
-        "dws oa approval detail --instance-id proc-1 --format json",
+        "PYTHONPATH=. .venv/bin/python -m app.cli read-oa-approval-detail --instance-id proc-1",
         "dws oa approval tasks --instance-id proc-1 --format json",
     )
 

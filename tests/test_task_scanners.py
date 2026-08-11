@@ -448,6 +448,9 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
             self.pages = []
             self.task_reads = []
 
+        def read_oa_approval_detail(self, process_instance_id):
+            raise AssertionError("the broken DWS detail adapter must not be used")
+
         def list_pending_oa_approvals(self, *, page, size, start, end):
             self.pages.append((page, size, start, end))
             return [
@@ -472,7 +475,7 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
                 }
             }
 
-        def read_oa_approval_detail(self, process_instance_id):
+        def read_oa_process_instance_openapi(self, process_instance_id):
             return {
                 "result": {
                     "tasks": [
@@ -538,7 +541,7 @@ def test_scan_pending_oa_approvals_covers_an_old_process_that_reaches_me_now(tmp
         def read_oa_approval_tasks(self, process_instance_id):
             return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
 
-        def read_oa_approval_detail(self, process_instance_id):
+        def read_oa_process_instance_openapi(self, process_instance_id):
             return {
                 "result": {
                     "tasks": [
@@ -579,7 +582,7 @@ def test_scan_pending_oa_approvals_requeues_when_a_new_remark_arrives(tmp_path):
         def read_oa_approval_tasks(self, process_instance_id):
             return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
 
-        def read_oa_approval_detail(self, process_instance_id):
+        def read_oa_process_instance_openapi(self, process_instance_id):
             return {
                 "result": {
                     "tasks": [
@@ -628,7 +631,7 @@ def test_scan_pending_oa_approvals_does_not_requeue_for_own_remark(tmp_path):
         def read_oa_approval_tasks(self, process_instance_id):
             return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
 
-        def read_oa_approval_detail(self, process_instance_id):
+        def read_oa_process_instance_openapi(self, process_instance_id):
             return {
                 "result": {
                     "tasks": [
@@ -684,7 +687,7 @@ def test_scan_pending_oa_approvals_skips_when_current_task_id_is_missing(tmp_pat
         def read_oa_approval_tasks(self, process_instance_id):
             return {"result": {"tasks": []}}
 
-        def read_oa_approval_detail(self, process_instance_id):
+        def read_oa_process_instance_openapi(self, process_instance_id):
             return {"result": {"tasks": []}}
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
@@ -723,7 +726,7 @@ def test_scan_pending_oa_approvals_does_not_guess_unowned_task_ids(tmp_path):
                 }
             }
 
-        def read_oa_approval_detail(self, process_instance_id):
+        def read_oa_process_instance_openapi(self, process_instance_id):
             return {"result": {"tasks": []}}
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
@@ -756,10 +759,10 @@ def test_scan_pending_oa_approvals_records_task_read_failures(tmp_path):
             ]
 
         def read_oa_approval_tasks(self, process_instance_id):
-            raise RuntimeError("DWS unavailable")
+            return {"result": {"tasks": [{"taskId": "task-1"}]}}
 
-        def read_oa_approval_detail(self, process_instance_id):
-            return {"result": {"tasks": []}}
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            raise RuntimeError("DingTalk OA detail unavailable")
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 

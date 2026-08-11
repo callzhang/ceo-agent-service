@@ -647,6 +647,71 @@ def test_run_json_retries_unclassified_idempotent_message_send_failure(monkeypat
     assert error_info.value.retryable_external_dependency is True
 
 
+def test_send_message_treats_dws_idempotency_duplicate_as_confirmed_delivery(monkeypatch):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=json.dumps(
+                {
+                    "error": {
+                        "category": "business",
+                        "code": 1,
+                        "message": "Request is repeated with uuid 'stable-id'.",
+                        "reason": "business_error",
+                        "server_error_code": "1001",
+                    }
+                }
+            ),
+        )
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    result = DwsClient().send_message(
+        None,
+        "follow up",
+        open_dingtalk_id="open-owner-1",
+        idempotency_uuid="stable-id",
+    )
+
+    assert result == {
+        "success": True,
+        "idempotency": {
+            "state": "duplicate_confirmed",
+            "uuid": "stable-id",
+        },
+    }
+
+
+def test_send_message_keeps_other_business_error_terminal(monkeypatch):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=json.dumps(
+                {
+                    "error": {
+                        "category": "business",
+                        "code": 1,
+                        "message": "recipient is invalid",
+                        "reason": "business_error",
+                        "server_error_code": "1001",
+                    }
+                }
+            ),
+        )
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    with pytest.raises(DwsError, match="recipient is invalid"):
+        DwsClient().send_message(
+            None,
+            "follow up",
+            open_dingtalk_id="open-owner-1",
+            idempotency_uuid="stable-id",
+        )
+
+
 def test_run_json_does_not_pass_app_oauth_env_to_dws_cli(monkeypatch):
     monkeypatch.setenv("DWS_CLIENT_ID", "app-client-id")
     monkeypatch.setenv("DWS_CLIENT_SECRET", "app-client-secret")

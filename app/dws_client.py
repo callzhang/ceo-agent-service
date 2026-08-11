@@ -120,9 +120,11 @@ class DwsError(RuntimeError):
         *,
         required_scopes: list[str] | tuple[str, ...] = (),
         retryable_external_dependency: bool = False,
+        idempotency_duplicate: bool = False,
     ):
         super().__init__(message)
         self.code = code
+        self.idempotency_duplicate = idempotency_duplicate
         self.required_scopes = tuple(
             scope.strip()
             for scope in required_scopes
@@ -241,6 +243,7 @@ class DwsOaApprovalCandidate(BaseModel):
 
 
 class DwsClient:
+    IDEMPOTENCY_DUPLICATE_MARKER = "request is repeated with uuid"
     # DWS returns generic code 6 for transient discovery/network failures such as
     # TLS handshake timeouts before the request reaches a business API.
     RETRYABLE_ERROR_CODES = {"TIMEOUT_ERROR", "NETWORK_ERROR", "6"}
@@ -2738,19 +2741,30 @@ class DwsClient:
         title: str | None = None,
         idempotency_uuid: str | None = None,
     ) -> dict[str, Any]:
-        return self.run_json(
-            self.build_send_message_command(
-                conversation_id,
-                text,
-                at_users,
-                at_open_dingtalk_ids=at_open_dingtalk_ids,
-                at_open_dingtalk_names=at_open_dingtalk_names,
-                user_id=user_id,
-                open_dingtalk_id=open_dingtalk_id,
-                title=title,
-                idempotency_uuid=idempotency_uuid,
+        try:
+            return self.run_json(
+                self.build_send_message_command(
+                    conversation_id,
+                    text,
+                    at_users,
+                    at_open_dingtalk_ids=at_open_dingtalk_ids,
+                    at_open_dingtalk_names=at_open_dingtalk_names,
+                    user_id=user_id,
+                    open_dingtalk_id=open_dingtalk_id,
+                    title=title,
+                    idempotency_uuid=idempotency_uuid,
+                )
             )
-        )
+        except DwsError as exc:
+            if not exc.idempotency_duplicate:
+                raise
+            return {
+                "success": True,
+                "idempotency": {
+                    "state": "duplicate_confirmed",
+                    "uuid": idempotency_uuid or "",
+                },
+            }
 
     def reply_message(
         self,
@@ -3340,8 +3354,44 @@ class DwsClient:
                     result.stderr, result.stdout
                 ),
                 retryable_external_dependency=retryable_error,
+                idempotency_duplicate=self._is_idempotency_duplicate_send_error(
+                    command,
+                    result,
+                ),
             )
             raise error
+
+    @classmethod
+    def _is_idempotency_duplicate_send_error(
+        cls,
+        command: list[str],
+        result: subprocess.CompletedProcess[str],
+    ) -> bool:
+        if len(command) < 4 or command[1:4] != ["chat", "message", "send"]:
+            return False
+        if not any(
+            argument in {"--idempotency-key", "--uuid"}
+            or argument.startswith(("--idempotency-key=", "--uuid="))
+            for argument in command[4:]
+        ):
+            return False
+        for raw_output in (result.stderr, result.stdout):
+            try:
+                payload = json.loads(raw_output)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            error = payload.get("error")
+            if not isinstance(error, dict):
+                continue
+            message = error.get("message")
+            if (
+                isinstance(message, str)
+                and cls.IDEMPOTENCY_DUPLICATE_MARKER in message.casefold()
+            ):
+                return True
+        return False
 
     @staticmethod
     def _is_structured_error_payload(payload: object) -> bool:

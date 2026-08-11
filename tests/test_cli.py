@@ -32,6 +32,7 @@ from app.cli import (
     run_service,
     process_okr_reviews_command,
     process_work_items_command,
+    read_oa_approval_detail_command,
     send_attempt_command,
     settings_from_args,
     test_ding_command as run_test_ding_command,
@@ -318,6 +319,40 @@ def test_parser_supports_scan_oa_approvals():
     assert args.oa_pending_scan_enabled is False
     assert args.oa_pending_scan_interval_seconds == 7200
     assert args.oa_pending_scan_lookback_days == 3
+
+
+def test_parser_supports_read_oa_approval_detail():
+    args = build_parser().parse_args(
+        ["read-oa-approval-detail", "--instance-id", "proc-1"]
+    )
+
+    assert args.command == "read-oa-approval-detail"
+    assert args.instance_id == "proc-1"
+
+
+def test_read_oa_approval_detail_command_uses_service_owned_reader(
+    tmp_path, monkeypatch, capsys
+):
+    calls = []
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            assert process_instance_id == "proc-1"
+            return {"process_instance": {"title": "审批材料"}}
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+
+    result = read_oa_approval_detail_command(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        process_instance_id=" proc-1 ",
+    )
+
+    assert result == {"process_instance": {"title": "审批材料"}}
+    assert calls == [{"ding_robot_code": None, "ding_robot_name": None, "ding_receiver_user_id": None}]
+    assert json.loads(capsys.readouterr().out) == result
 
 
 def test_parser_supports_process_follow_ups():

@@ -297,7 +297,10 @@ def scan_pending_oa_approvals(
 ) -> int:
     list_pending = getattr(dws, "list_pending_oa_approvals", None)
     read_tasks = getattr(dws, "read_oa_approval_tasks", None)
-    read_detail = getattr(dws, "read_oa_approval_detail", None)
+    # The DWS OA detail adapter can receive a valid DingTalk response and then
+    # fail while decoding it.  The service-owned OA reader returns the original
+    # typed process instance and is the single detail source for this workflow.
+    read_detail = getattr(dws, "read_oa_process_instance_openapi", None)
     read_records = getattr(dws, "read_oa_approval_records", None)
     if list_pending is None:
         store.set_daily_scan_state(
@@ -320,7 +323,7 @@ def scan_pending_oa_approvals(
             OA_PENDING_SCANNER,
             last_success_at="",
             cursor_json="{}",
-            last_error="dws read_oa_approval_detail unavailable",
+            last_error="DingTalk OA detail reader unavailable",
         )
         return 0
 
@@ -557,7 +560,7 @@ def _oa_operation_records(value: Any) -> list[dict[str, Any]]:
         nested = value.get("operationRecords")
         if isinstance(nested, list):
             records.extend(item for item in nested if isinstance(item, dict))
-        for key in ("result", "data"):
+        for key in ("result", "data", "process_instance"):
             records.extend(_oa_operation_records(value.get(key)))
         return records
     if isinstance(value, list):
@@ -576,7 +579,7 @@ def _oa_task_records(value: Any) -> list[dict[str, Any]]:
             nested = value.get(key)
             if isinstance(nested, list):
                 records.extend(item for item in nested if isinstance(item, dict))
-        for key in ("result", "data"):
+        for key in ("result", "data", "process_instance"):
             records.extend(_oa_task_records(value.get(key)))
         return records
     if isinstance(value, list):

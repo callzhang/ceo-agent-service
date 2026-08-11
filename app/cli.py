@@ -264,6 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-okr-archive",
         "scan-task-sources",
         "scan-oa-approvals",
+        "read-oa-approval-detail",
         "process-follow-ups",
         "check-follow-up-completions",
         "daily-task-maintenance",
@@ -413,6 +414,8 @@ def build_parser() -> argparse.ArgumentParser:
         )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
+        if command == "read-oa-approval-detail":
+            subparser.add_argument("--instance-id", required=True)
         if command == "replay-recent-meetings":
             subparser.add_argument("--limit", type=_positive_int, required=True)
             subparser.add_argument(
@@ -1341,6 +1344,25 @@ def scan_oa_approvals_command(
     )
     print(f"scan-oa-approvals queued={queued}", flush=True)
     return queued
+
+
+def read_oa_approval_detail_command(
+    settings: WorkerSettings,
+    *,
+    process_instance_id: str,
+) -> dict[str, object]:
+    """Read one OA process instance through the service-owned DingTalk adapter."""
+    process_id = process_instance_id.strip()
+    if not process_id:
+        raise ValueError("OA process instance id is required")
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+    )
+    payload = dws.read_oa_process_instance_openapi(process_id)
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+    return payload
 
 
 def process_follow_ups_command(
@@ -2912,6 +2934,8 @@ def main() -> None:
         scan_task_sources_command(settings)
     elif args.command == "scan-oa-approvals":
         scan_oa_approvals_command(settings)
+    elif args.command == "read-oa-approval-detail":
+        read_oa_approval_detail_command(settings, process_instance_id=args.instance_id)
     elif args.command == "process-follow-ups":
         ensure_live_send_allowed(settings)
         process_follow_ups_command(settings)
