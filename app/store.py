@@ -9802,11 +9802,7 @@ class AutoReplyStore:
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
                                 and (
-                                    tasks.status in ('done', 'processing')
-                                    or (
-                                        tasks.status='pending'
-                                        and tasks.error='codex_provider_unavailable'
-                                    )
+                                    tasks.status in ('done', 'pending', 'processing')
                                 )
                           )
                       )
@@ -9853,11 +9849,7 @@ class AutoReplyStore:
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
                                 and (
-                                    tasks.status in ('done', 'processing')
-                                    or (
-                                        tasks.status='pending'
-                                        and tasks.error='codex_provider_unavailable'
-                                    )
+                                    tasks.status in ('done', 'pending', 'processing')
                                 )
                           )
                       )

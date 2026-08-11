@@ -3912,6 +3912,26 @@ def test_browser_notifications_exclude_active_and_provider_recovery_tasks(
     )
 
     store.enqueue_reply_task(
+        conversation_id="cid-rerun",
+        conversation_title="Rerun in progress",
+        single_chat=False,
+        trigger_message_id="msg-rerun",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Rerun task.",
+    )
+    rerun_attempt = store.record_reply_attempt(
+        conversation_id="cid-rerun",
+        conversation_title="Rerun in progress",
+        trigger_message_id="msg-rerun",
+        trigger_sender="System",
+        trigger_text="Rerun task.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+
+    store.enqueue_reply_task(
         conversation_id="cid-completed",
         conversation_title="Completed task",
         single_chat=False,
@@ -3941,6 +3961,7 @@ def test_browser_notifications_exclude_active_and_provider_recovery_tasks(
     assert f"Attempt #{active_attempt}" not in html
     assert f"Attempt #{active_decision}" not in html
     assert f"Attempt #{provider_attempt}" not in html
+    assert f"Attempt #{rerun_attempt}" not in html
     assert f"Attempt #{completed_attempt}" not in html
     assert store.count_current_unresolved_problem_attempts() == 0
 
