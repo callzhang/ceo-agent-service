@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -95,16 +96,16 @@ def test_read_prompt_templates_seed_missing_configured_files(tmp_path, monkeypat
     assert developer_path.exists()
     assert user_path.exists()
     assert "<var: principal>" in developer_template
-    assert "<code: app.prompt:work_profile_instruction()>" in developer_template
+    assert "agent_cli.read_skill" in developer_template
     assert "<code: app.user_prompt_blocks:current_message_block()>" in user_template
     assert "CEO Agent Prompt" not in user_template
 
 
-def test_default_developer_prompt_assigns_tool_execution_to_current_agent_role():
+def test_default_developer_prompt_assigns_execution_to_audit_role():
     prompt = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
-    assert "你必须自行读取材料并通过当前角色获准的 CLI/MCP 工具完成任务" in prompt
-    assert "AI 只负责生成结构化计划" not in prompt
+    assert "Audit Agent B is the only executor" in prompt
+    assert "A cannot write" in prompt
 
 
 def test_calendar_rules_path_is_not_an_effective_prompt_variable(monkeypatch):
@@ -170,21 +171,45 @@ def test_default_developer_prompt_template_is_a_separate_file():
     assert "handoff_name = Alex" not in template
     assert "<vars>" not in template
     assert "<var: principal>" in template
-    assert "<code: app.prompt:work_profile_instruction()>" in template
+    assert "<code: app.prompt:work_profile_instruction()>" not in template
     assert "work_profile_path" not in template
     assert "Alex 工作人格 Profile:" not in template
 
 
-def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
+def test_canonical_default_prompt_keeps_only_runtime_invariants_and_skill_loading():
     template = read_developer_prompt_template()
 
-    assert "memory_connector MCP 可用" in template
-    assert "检索优先级是：memory_recall、本地文件、dws aisearch、dws 知识库" in template
-    assert "优先调用 memory_recall 获取可复用上下文" in template
-    assert "业务判断、人员判断、项目背景、客户口径、审批/日历处理" in template
-    assert "调用 memory_write 记录一条业务 episode" in template
-    assert "不要传 user_id" in template
-    assert "memory_write 失败不应改变最终 JSON" in template
+    assert "Consumer Agent A" in template
+    assert "Audit Agent B" in template
+    assert "Pydantic output contract" in template
+    assert "unsupported facts or targets" in template
+    assert "corrected revision" in template
+    assert "read-only reconciliation" in template
+    assert template.count("agent_cli.read_skill") == 1
+    for migrated_term in (
+        "日历",
+        "审批",
+        "OKR",
+        "候选人",
+        "会议",
+        "邮件",
+        "memory_write",
+        "memory_recall",
+        "personnel_subject_user_id",
+    ):
+        assert migrated_term.casefold() not in template.casefold()
+    assert re.search(r"\bOA\b", template, re.IGNORECASE) is None
+    assert len(template) < 3_000
+
+
+def test_developer_prompt_delegates_memory_operations_to_installed_skills():
+    template = read_developer_prompt_template()
+
+    assert "memory_connector" not in template
+    assert "memory_recall" not in template
+    assert "memory_write" not in template
+    assert "unavailable Memory dependency is a dependency result" in template
+    assert "never a trigger for login" in template
 
 
 def test_personnel_skill_keeps_business_facts_out_of_personnel_sensitivity():
@@ -194,8 +219,8 @@ def test_personnel_skill_keeps_business_facts_out_of_personnel_sensitivity():
     assert "A person's name alone does not make a business fact personnel information" in skill
     assert "Ownership, delivery, revenue, customer progress, project risk" in skill
     assert "A person's name alone does not make a business fact personnel information" not in template
-    assert "没有列出的字段不要编造职位或上下级关系" in template
-    assert "刷新凭证或弹出授权页" in template
+    assert "没有列出的字段不要编造职位或上下级关系" not in template
+    assert "login, reset, or logout" in template
 
 
 def test_developer_prompt_delegates_latest_material_review_to_business_skill():
@@ -203,46 +228,34 @@ def test_developer_prompt_delegates_latest_material_review_to_business_skill():
 
     assert "前一次依据的材料已经被修改、补充、评论确认或按要求更新" not in template
     assert "处理文档时，如果是钉钉文档可以用评论功能" not in template
-    assert "涉及专业业务流程时" in template
+    assert "most specific applicable business Skill" in template
     assert "agent_cli.read_skill" in template
 
 
-def test_developer_prompt_defines_non_executable_action_boundary():
+def test_developer_prompt_defines_role_execution_boundary():
     template = read_developer_prompt_template()
 
-    assert "只有特定真人、群主、管理员、审批人、系统 owner 或外部系统权限才能完成的现实动作" in template
-    assert "不能只回复“可以、方向对、应该做”" in template
-    assert "必须明确说明当前不能代为执行该动作" in template
-    assert "handoff_to_human" in template
+    assert "Consumer Agent A" in template
+    assert "read-only representative" in template
+    assert "Audit Agent B is the only executor" in template
+    assert "A cannot write" in template
 
 
-def test_developer_prompt_requires_executable_advice_for_solution_requests():
+def test_developer_prompt_leaves_solution_workflow_to_business_skills():
     template = read_developer_prompt_template()
 
-    assert "不要只讲方向、原则或抽象道理" in template
-    assert "回复必须给可执行建议" in template
-    assert "下一步动作、执行 owner 或需要谁配合" in template
-    assert "关键约束/平台边界、验收口径" in template
-    assert "给出可落地的替代路径或需要补齐的材料" in template
+    assert "不要只讲方向、原则或抽象道理" not in template
+    assert "回复必须给可执行建议" not in template
+    assert "most specific applicable business Skill" in template
 
 
-def test_developer_prompt_documents_agent_envelope_output_protocol():
+def test_developer_prompt_delegates_output_shape_to_pydantic_contract():
     template = read_developer_prompt_template()
 
-    assert "kind 必须是 reply、okr_review、no_action 或 error" in template
-    assert '{"type":"queue_okr_review"}' in template
-    assert "发信人本人的 OKR/KR 进度" in template
-    assert "直接下属、岗位管理者、团队成员或其他第三方" in template
-    assert "OKR 审核流程只会读取发信人本人的 OKR" in template
-    assert "目标确认" in template
-    assert "不要输出 queue_okr_review" in template
-    assert "服务会把退回意见单独发消息给审批申请人" in template
-    assert "user_response.mode 必须是 send_reply、ask_clarifying_question、handoff_to_human 或 no_reply" in template
-    assert "domain_payload 默认使用空对象" in template
-    assert "domain_payload.calendar_response_status" in template
-    assert "domain_payload.candidate_context_known" in template
-    assert "action 必须是 send_reply" not in template
-    assert "reply_text 必须非空" not in template
+    assert "Pydantic output contract" in template
+    assert "field combinations are authoritative" in template
+    assert "queue_okr_review" not in template
+    assert "domain_payload" not in template
 
 
 def test_work_profile_path_default_is_not_user_specific(monkeypatch):
@@ -607,23 +620,23 @@ def test_personnel_skill_explains_first_person_single_chat_subject():
     assert "When the recipient asks about their own personnel information" in skill
     assert "the subject and recipient are the same person" in skill
     assert "单聊里可以回答发信人关于他自己的请假、调休" not in prompt
-    assert "没有列出的字段不要编造职位或上下级关系" in prompt
+    assert "没有列出的字段不要编造职位或上下级关系" not in prompt
 
 
 def test_thread_prompt_delegates_direct_message_triage_to_business_skill():
     prompt = ceo_agent_thread_prompt()
 
     assert "明确要求 明哥 处理、确认、决策或对某个结论表态" not in prompt
-    assert "涉及专业业务流程时" in prompt
+    assert "most specific applicable business Skill" in prompt
     assert "agent_cli.read_skill" in prompt
 
 
-def test_thread_prompt_requires_direct_structured_output_for_analysis_requests():
+def test_thread_prompt_leaves_structured_analysis_policy_to_business_skills():
     prompt = ceo_agent_thread_prompt()
 
-    assert "写出列表" in prompt
-    assert "直接给出可用的结构化初版" in prompt
-    assert "不要只回复“可以、我会整理、先出一版”" in prompt
+    assert "写出列表" not in prompt
+    assert "直接给出可用的结构化初版" not in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
 def test_build_turn_prompt_keeps_user_message_separate_from_thread_prompt():
@@ -729,44 +742,36 @@ def test_thread_prompt_delegates_document_commands_to_operation_skills():
     assert "extension=able" not in prompt
     assert "普通钉钉文件不同于钉钉在线文档" not in prompt
     assert "agent_cli.read_skill" in prompt
-    assert "DWS 登录/工具问题" in prompt
-    assert "不要说成对方没有提供材料" in prompt
+    assert "DWS 登录/工具问题" not in prompt
+    assert "不要说成对方没有提供材料" not in prompt
 
 
-def test_thread_prompt_preserves_context_anchor_for_followup_documents():
+def test_thread_prompt_does_not_embed_followup_document_policy():
     prompt = ceo_agent_thread_prompt()
 
-    assert "文档、复盘或补充材料" in prompt
-    assert "先用当前消息、引用、合并前序消息和上下文判断它的角色" in prompt
-    assert "不要仅因为文档正文包含 OKR、分数或证据链" in prompt
-    assert "把它当作 OKR 打分依据" in prompt
-    assert "叮当 OKR 或系统数据" in prompt
-    assert "不能替代 OKR 审核流程" in prompt
+    assert "文档、复盘或补充材料" not in prompt
+    assert "先用当前消息、引用、合并前序消息和上下文判断它的角色" not in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
-def test_thread_prompt_defaults_to_business_context_retrieval():
+def test_thread_prompt_delegates_business_context_retrieval():
     prompt = ceo_agent_thread_prompt()
 
-    assert "默认不了解当前业务背景" in prompt
-    assert "本地文件" in prompt
-    assert "dws aisearch" in prompt
-    assert "dws 知识库" in prompt
-    assert "审批、日程、文档、链接、图片" in prompt
-    assert "若这些材料已经足以判断是否回复和回复内容，不要再做本地 workspace 或 graphify 检索" not in prompt
+    assert "默认不了解当前业务背景" not in prompt
+    assert "dws aisearch" not in prompt
+    assert "memory_recall" not in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
-def test_thread_prompt_requires_sender_org_context_when_available():
+def test_thread_prompt_does_not_embed_sender_org_policy():
     prompt = ceo_agent_thread_prompt()
 
-    assert "发信人组织信息" in prompt
-    assert "JSON" in prompt
-    assert "title" in prompt
-    assert "manager" in prompt
-    assert "不要编造职位" in prompt
-    assert "本 thread 必须主动使用 graphify" not in prompt
+    assert "发信人组织信息" not in prompt
+    assert "不要编造职位" not in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
-def test_thread_prompt_injects_work_profile_without_exposing_path(
+def test_thread_prompt_does_not_always_load_work_profile(
     monkeypatch,
     tmp_path,
 ):
@@ -785,36 +790,25 @@ def test_thread_prompt_injects_work_profile_without_exposing_path(
 
     prompt = ceo_agent_thread_prompt()
 
-    assert "明哥 工作人格 Profile" in prompt
-    assert (
-        "/Users/principal/Documents/Projects/ceo-agent-service/data/work-profile/work_profile.md"
-        not in prompt
-    )
-    assert "不要再尝试读取 profile 文件路径" in prompt
-    assert "Profile 内容:" in prompt
-    assert "# Work Profile" in prompt
-    assert "This profile is a runtime work-judgment profile" in prompt
-    assert "Core Operating Loop" in prompt
+    assert "明哥 工作人格 Profile" not in prompt
+    assert "Profile 内容:" not in prompt
+    assert "# Work Profile" not in prompt
+    assert "Core Operating Loop" not in prompt
 
 
-def test_thread_prompt_requires_oa_review_principles_for_approval_messages():
+def test_thread_prompt_does_not_embed_approval_workflow():
     prompt = ceo_agent_thread_prompt()
 
-    assert "management/OA/钉钉审批审阅原则.md" in prompt
-    assert "材料完整且符合审批原则" in prompt
-    assert "直接执行通过" in prompt
-    assert "以评论的形式回复审批人" in prompt
-    assert "明确不匹配规则或 SOP" in prompt
-    assert "退回" in prompt
-    assert "不能用拒绝冒充退回" in prompt
-    assert "缺任何实质材料时不能给批准、退回或拒绝结论" not in prompt
+    assert "management/OA/钉钉审批审阅原则.md" not in prompt
+    assert "材料完整且符合审批原则" not in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
-def test_thread_prompt_does_not_default_oa_calendar_to_no_reply():
+def test_thread_prompt_does_not_embed_notification_workflow():
     prompt = ceo_agent_thread_prompt()
 
     assert "审批/OA/日程/文件状态/自动同步等通知性消息，只记录 no_reply" not in prompt
-    assert "不能因为通知格式默认 no_reply" in prompt
+    assert "不能因为通知格式默认 no_reply" not in prompt
 
 
 def test_seed_prompt_delegates_calendar_rules_to_business_skills():
@@ -822,16 +816,15 @@ def test_seed_prompt_delegates_calendar_rules_to_business_skills():
 
     assert "<var: calendar_rules_path>" not in prompt
     assert "agent_cli.read_skill" in prompt
-    assert "最具体适用的业务 Skill" in prompt
+    assert "most specific applicable business Skill" in prompt
 
 
 def test_thread_prompt_delegates_minutes_handling_to_business_skill():
     prompt = ceo_agent_thread_prompt()
 
     assert "如果新消息或引用涉及“静默会”、AI 听记、会议纪要链接或会议材料" not in prompt
-    assert "涉及专业业务流程时" in prompt
     assert "agent_cli.read_skill" in prompt
-    assert "最具体适用的业务 Skill" in prompt
+    assert "most specific applicable business Skill" in prompt
 
 
 def test_personnel_skill_delegates_candidate_evidence_to_specialist():
@@ -863,28 +856,30 @@ def test_thread_prompt_prevents_interjecting_on_group_broadcasts():
     assert "agent_cli.read_skill" in prompt
 
 
-def test_thread_prompt_prefers_reaction_for_low_information_group_mentions():
+def test_thread_prompt_delegates_reaction_policy_to_business_skill():
     prompt = ceo_agent_thread_prompt()
 
     assert "不要为了显得参与而发送低信息增益文字" not in prompt
     assert "不要为了“礼貌收口”发送“收到”“好的”这类低信息增益文字" not in prompt
-    assert "no_reply 通常用空数组" in prompt
-    assert "dws_message_reaction" in prompt
+    assert "no_reply 通常用空数组" not in prompt
+    assert "dws_message_reaction" not in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
-def test_thread_prompt_allows_markdown_document_reply():
+def test_thread_prompt_delegates_document_reply_shape_to_skills_and_schema():
     prompt = ceo_agent_thread_prompt()
 
-    assert "dws_markdown_document_reply" in prompt
-    assert "正文仍完整写在 user_response.text" in prompt
-    assert "服务会创建 Markdown 文档并在聊天里回复文档链接" in prompt
+    assert "dws_markdown_document_reply" not in prompt
+    assert "正文仍完整写在 user_response.text" not in prompt
+    assert "Pydantic output contract" in prompt
 
 
 def test_thread_prompt_keeps_generic_reaction_output_contract():
     prompt = ceo_agent_thread_prompt()
 
     assert "我让明哥本人看一下" not in prompt
-    assert "dws_message_reaction" in prompt
+    assert "dws_message_reaction" not in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
 def test_thread_prompt_treats_existing_principal_reaction_as_handled():
@@ -892,7 +887,8 @@ def test_thread_prompt_treats_existing_principal_reaction_as_handled():
 
     assert "已有 reaction" not in prompt
     assert "通常说明真人已经用轻量方式处理过" not in prompt
-    assert "dws_message_reaction" in prompt
+    assert "dws_message_reaction" not in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
 def test_build_turn_prompt_includes_prefetched_dingtalk_document():

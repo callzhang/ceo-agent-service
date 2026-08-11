@@ -64,9 +64,9 @@ def test_canonical_prompt_delegates_mail_policy_to_skill():
 
     assert "如果已读完原邮件和依赖材料、当前消息明确授权回复邮件" not in text
     assert "决策 agent 不得直接发送邮件" not in text
-    assert "涉及专业业务流程时" in text
+    assert "most specific applicable business Skill" in text
     assert "agent_cli.read_skill" in text
-    assert "只输出合法 JSON" in text
+    assert "return only matching JSON" in text
 
 
 def test_mail_review_skill_has_no_command_catalog_or_output_schema():

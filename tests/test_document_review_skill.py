@@ -74,9 +74,9 @@ def test_canonical_prompt_delegates_document_review_judgment_to_skill():
     assert "如果新消息明确表示前一次依据的材料已经被修改" not in text
     assert "处理文档时，如果是钉钉文档可以用评论功能" not in text
     assert "普通钉钉文件不同于钉钉在线文档" not in text
-    assert "涉及专业业务流程时" in text
+    assert "most specific applicable business Skill" in text
     assert "agent_cli.read_skill" in text
-    assert "只输出合法 JSON" in text
+    assert "return only matching JSON" in text
 
 
 def test_document_review_skill_has_no_command_catalog_or_python_router():

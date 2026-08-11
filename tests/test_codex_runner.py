@@ -308,20 +308,36 @@ def test_codex_developer_instructions_leave_read_options_to_operation_skills():
     assert "Operation discovery and syntax belong to the loaded operation Skill" in instructions
 
 
-def test_codex_developer_instructions_require_xiaoqing_for_interview_links():
+def test_codex_composed_prompt_keeps_runtime_invariants_not_domain_workflows():
     instructions = codex_developer_instructions()
 
-    assert "Xiaoqing interview material reading" in instructions
-    assert "https://interview.hr.startask.net/candidates/" in instructions
-    assert "candidate name" in instructions
-    assert "search_candidates" in instructions
-    assert "get_interview_context" in instructions
-    assert "xiaoqing_interview" in instructions
-    assert "final_decision/current decision" in instructions
-    assert "current stage" in instructions
-    assert "close or suppress the follow-up" in instructions
-    assert "critical_info_unavailable:xiaoqing_interview" in instructions
-    assert "do not tell HR the sender failed to provide the interview text" in instructions
+    assert "Pydantic output contract" in instructions
+    assert "unsupported facts or targets" in instructions
+    assert "corrected revision" in instructions
+    assert "read-only reconciliation" in instructions
+    assert instructions.count("agent_cli.read_skill") == 1
+    for migrated_term in (
+        "Xiaoqing interview",
+        "calendar_response_status",
+        "queue_okr_review",
+        "OA approval",
+        "memory_write",
+        "memory_recall",
+        "meeting",
+        "mail handling",
+    ):
+        assert migrated_term.casefold() not in instructions.casefold()
+    assert len(instructions) < 5_000
+
+
+def test_codex_developer_instructions_leave_interview_workflow_to_skills():
+    instructions = codex_developer_instructions()
+
+    assert "Xiaoqing interview material reading" not in instructions
+    assert "https://interview.hr.startask.net/candidates/" not in instructions
+    assert "search_candidates" not in instructions
+    assert "xiaoqing_interview" not in instructions
+    assert "most specific applicable business Skill" in instructions
 
 
 def test_codex_command_does_not_use_agent_envelope_schema_by_default(tmp_path: Path):
@@ -499,8 +515,8 @@ def test_codex_command_treats_native_memory_oauth_as_runtime_owned(
 
     assert not any("mcp_servers.memory_connector" in item for item in command)
     assert memory_connector_config_issue() == ""
-    assert "inherits the principal's configured Codex MCP servers" in developer_arg
-    assert "do not start an interactive login flow" in developer_arg
+    assert "Memory dependency is a dependency result" in developer_arg
+    assert "never a trigger for login" in developer_arg
 
 
 def test_codex_command_does_not_auto_fallback_to_configured_profile(
@@ -632,10 +648,10 @@ def test_codex_runner_does_not_forward_dws_oauth_override_env(
     assert "DINGTALK_APP_SECRET" not in env
 
 
-def test_codex_developer_instructions_include_dws_material_reading_guidance():
+def test_codex_developer_instructions_include_runtime_dependency_guidance():
     instructions = codex_developer_instructions()
 
-    assert "DingTalk material access" in instructions
+    assert "Runtime dependency handling" in instructions
 
 
 def test_codex_developer_instructions_delegate_operation_syntax_to_skills():
@@ -661,12 +677,12 @@ def test_builds_new_thread_command(tmp_path: Path):
     command = runner.build_command(prompt="hello", session_id=None)
 
     developer_arg = _developer_instructions_arg(command)
-    assert "你是 明哥 的钉钉自动回复分身" in developer_arg
-    assert "默认不了解当前业务背景" in developer_arg
+    assert "Consumer Agent A is 明哥's read-only representative" in developer_arg
+    assert "Pydantic output contract" in developer_arg
     assert "当前待处理消息" not in developer_arg
     assert "\\n" in developer_arg
-    assert "memory_connector MCP 可用" in developer_arg
-    assert "memory_write 记录一条业务 episode" in developer_arg
+    assert "memory_write" not in developer_arg
+    assert "memory_recall" not in developer_arg
 
     assert _without_developer_instructions(command) == [
         "codex",
@@ -698,8 +714,8 @@ def test_builds_resume_command(tmp_path: Path):
     command = runner.build_command(prompt="next", session_id="abc")
 
     developer_arg = _developer_instructions_arg(command)
-    assert "你是 明哥 的钉钉自动回复分身" in developer_arg
-    assert "默认不了解当前业务背景" in developer_arg
+    assert "Consumer Agent A is 明哥's read-only representative" in developer_arg
+    assert "Pydantic output contract" in developer_arg
     assert "当前待处理消息" not in developer_arg
 
     assert _without_developer_instructions(command) == [
@@ -771,23 +787,14 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message(monkey
     )
     instructions = codex_developer_instructions()
 
-    assert instructions.startswith("You are the local CEO DingTalk reply worker.")
-    assert "你是 明哥 的钉钉自动回复分身" in instructions
-    assert "默认不了解当前业务背景" in instructions
-    assert "本地文件" in instructions
-    assert "dws aisearch" in instructions
-    assert "graphify query" in instructions
-    assert "星尘数据的CEO，负责算法部、售前部、市场部、HR部的工作。" in instructions
-    assert "只回答“新消息”提出的问题" in instructions
-    assert "audit.documents 用于声明直接依据的材料" in instructions
-    assert "user_response.text 不要引用来源" in instructions
-    assert "不要加脚注编号" in instructions
-    assert "`workspace`" in instructions
-    assert "`source=`" in instructions
+    assert instructions.startswith("You are the local CEO agent worker.")
+    assert "Consumer Agent A is 明哥's read-only representative" in instructions
+    assert "agent_cli.read_skill" in instructions
+    assert "星尘数据的CEO，负责算法部、售前部、市场部、HR部的工作。" not in instructions
     assert "当前待处理消息" not in instructions
 
 
-def test_codex_developer_instructions_inject_work_profile_content_without_path(
+def test_codex_developer_instructions_do_not_always_load_work_profile(
     monkeypatch,
     tmp_path,
 ):
@@ -806,23 +813,17 @@ def test_codex_developer_instructions_inject_work_profile_content_without_path(
 
     instructions = codex_developer_instructions()
 
-    assert "明哥 工作人格 Profile" in instructions
-    assert (
-        "/Users/principal/Documents/Projects/ceo-agent-service/data/work-profile/work_profile.md"
-        not in instructions
-    )
-    assert "# Work Profile" in instructions
-    assert "Core Operating Loop" in instructions
-    assert "不要再尝试读取 profile 文件路径" in instructions
-    assert "心智模型、决策启发式、表达DNA" in instructions
-    assert "不能覆盖既有硬规则" in instructions
+    assert "明哥 工作人格 Profile" not in instructions
+    assert "# Work Profile" not in instructions
+    assert "Core Operating Loop" not in instructions
+    assert "心智模型、决策启发式、表达DNA" not in instructions
 
 
 def test_codex_developer_instructions_uses_template_variable_values():
     instructions = codex_developer_instructions()
 
-    assert "你是 明哥 的钉钉自动回复分身" in instructions
-    assert "让 明哥 本人接管" in instructions
+    assert "Consumer Agent A is 明哥's read-only representative" in instructions
+    assert "Audit Agent B is the only executor" in instructions
 
 
 def test_codex_decision_schema_file_exists():

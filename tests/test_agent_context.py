@@ -5,9 +5,44 @@ from app.agent_context import (
     ManualRerunInstruction,
     MaterialReference,
     PriorReceipt,
+    _AUDIT_AGENT_RULES,
+    _CONSUMER_AGENT_RULES,
 )
 from app.agent_contracts import ConsumerProposal
 from app.agent_skill_usage import LoadedSkillReceipt
+
+
+MIGRATED_DOMAIN_PROMPT_TERMS = (
+    "calendar",
+    "OA work",
+    "internal_personnel",
+    "candidate interview",
+    "meeting minutes",
+    "mail handling",
+    "work tracking",
+)
+
+
+def _assert_core_prompt_boundary(text: str) -> None:
+    assert "Consumer Agent A" in text
+    assert "Audit Agent B" in text
+    assert "Pydantic" in text
+    assert "unsupported facts or targets" in text
+    assert "corrected revision" in text
+    assert "read-only reconciliation" in text
+    assert "credentials and runtime internals" in text.casefold()
+    assert "login, reset, or logout" in text
+    assert "Memory dependency" in text
+    assert all(term.casefold() not in text.casefold() for term in MIGRATED_DOMAIN_PROMPT_TERMS)
+    assert len(text) < 2_500
+
+
+def test_consumer_core_prompt_contains_only_runtime_invariants():
+    _assert_core_prompt_boundary(_CONSUMER_AGENT_RULES)
+
+
+def test_audit_core_prompt_contains_only_runtime_invariants():
+    _assert_core_prompt_boundary(_AUDIT_AGENT_RULES)
 
 
 def _context(
@@ -68,17 +103,17 @@ def test_context_renders_reference_and_command_without_resolved_body():
     assert "评论已提交" in rendered
 
 
-def test_context_contains_only_the_agreed_business_rules():
+def test_context_contains_runtime_invariants_without_business_rules():
     rendered = _context().render()
 
-    assert "Execute the provided read commands" in rendered
+    assert "Pydantic output contracts" in rendered
     assert "do not invent a `--task-id` argument" not in rendered
     assert "internal_personnel" not in rendered
     assert "HR conversation may skip counterpart identity matching" not in rendered
     assert "For every current OA task" not in rendered
     assert "When a factual evidence gap prevents approval" not in rendered
     assert "same OA process as idempotency evidence" not in rendered
-    assert "Never expose credentials" in rendered
+    assert "Credentials and runtime internals never enter external messages" in rendered
     assert "confidence" not in rendered
     assert "trusted target" not in rendered.casefold()
 
@@ -86,7 +121,7 @@ def test_context_contains_only_the_agreed_business_rules():
 def test_context_reuses_confirmed_facts_without_reasking():
     rendered = _context().render()
 
-    assert "do not ask the user to provide confirmed facts again" in rendered
+    assert "do not ask for confirmed facts again" in rendered
     assert "预算已经确认" in rendered
 
 
@@ -189,14 +224,14 @@ def test_audit_context_renders_verified_consumer_skill_receipts_as_json():
     assert '"path": "/Users/derek/.agents/skills/business-review/SKILL.md"' in rendered
 
 
-def test_agent_rules_require_elapsed_time_review_for_time_sensitive_actions():
+def test_agent_rules_leave_time_sensitive_policy_to_business_skills():
     rendered = _context(trigger_text="现在出发吗？").render(
         current_time="2026-07-28 14:15:00 +0800"
     )
 
-    assert "elapsed time" in rendered
-    assert "time-sensitive" in rendered
-    assert "return no_action" in rendered
+    assert "elapsed time" not in rendered
+    assert "time-sensitive" not in rendered
+    assert "Current turn execution time" in rendered
 
 
 def test_context_renders_only_minimal_manual_review_instruction():
@@ -268,7 +303,7 @@ def test_oa_complete_form_fields_still_require_live_detail_read():
     assert "task_id=tid-1" in rendered
     assert "dws oa approval detail" in rendered
     assert "dws oa approval tasks --instance-id pid-1 --format json" in rendered
-    assert "Execute the provided read commands" in rendered
+    assert "Raw material references and exact read commands" in rendered
     assert "do not select by applicant or title similarity" not in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
@@ -282,10 +317,10 @@ def test_oa_instance_id_only_still_requires_agent_live_detail_read():
 
     assert "process_instance_id=pid-only" in rendered
     assert command in rendered
-    assert "Execute the provided read commands" in rendered
-    assert "agent_cli.execute_reviewed_read" in rendered
-    assert "local CLI credential store" in rendered
-    assert "never emit `proposed_actions`" in rendered
+    assert "Raw material references and exact read commands" in rendered
+    assert "agent_cli.execute_reviewed_read" not in rendered
+    assert "local CLI credential store" not in rendered
+    assert "proposed_actions" not in rendered
     assert "execute the provided live DWS commands" not in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
@@ -328,35 +363,34 @@ def test_oa_lets_live_api_enforce_task_ownership():
     _assert_no_service_oa_resolution_fields(rendered)
 
 
-def test_context_forbids_diagnosis_only_completion_for_execution_requests():
+def test_context_does_not_embed_execution_request_workflow():
     rendered = _context().render()
 
-    assert "execute the requested action" in rendered
-    assert "diagnosis-only" in rendered
-    assert "needs_human or failed" in rendered
+    assert "execute the requested action" not in rendered
+    assert "diagnosis-only" not in rendered
+    assert "needs_human or failed" not in rendered
 
 
-def test_context_requires_three_independent_cases_for_shared_infrastructure_change():
+def test_context_does_not_embed_shared_infrastructure_policy():
     rendered = _context(trigger_text="一个用户反馈线上地址打不开，请修复").render()
 
-    assert "Do not change shared deployment entry points" in rendered
-    assert "at least three independently confirmed affected cases" in rendered
-    assert "Repeated probes from one machine or network are one case" in rendered
-    assert "leave shared configuration unchanged and return needs_human" in rendered
+    assert "Do not change shared deployment entry points" not in rendered
+    assert "at least three independently confirmed affected cases" not in rendered
+    assert "Repeated probes from one machine or network are one case" not in rendered
 
 
-def test_context_allows_exactly_authorized_shared_infrastructure_change():
+def test_context_does_not_embed_shared_infrastructure_authorization_policy():
     rendered = _context(trigger_text="请把生产域名切换到已确认的新域名").render()
 
-    assert "explicit current authorization for that exact change" in rendered
+    assert "explicit current authorization for that exact change" not in rendered
 
 
 def test_context_forbids_agent_auth_commands():
     rendered = _context().render()
 
-    assert "dws auth login" in rendered
-    assert "lark auth login" in rendered
-    assert "Never run authentication login, reset, or logout commands" in rendered
+    assert "dws auth login" not in rendered
+    assert "lark auth login" not in rendered
+    assert "never run login, reset, or logout" in rendered
 
 
 def test_consumer_context_is_read_only_and_reuses_supplied_facts():
@@ -364,19 +398,19 @@ def test_consumer_context_is_read_only_and_reuses_supplied_facts():
 
     assert "Consumer Agent A" in rendered
     assert "read-only" in rendered
-    assert "no external write" in rendered
-    assert "already available" in rendered
+    assert "A cannot write" in rendered
+    assert "Reuse supplied facts" in rendered
     assert "Raw material references and exact read commands" in rendered
-    assert "authoritative read path" in rendered
-    assert "Do not substitute a similar command" in rendered
+    assert "authoritative read path" not in rendered
+    assert "Do not substitute a similar command" not in rendered
 
 
-def test_consumer_context_turns_recoverable_evidence_gap_into_clarifying_proposal():
+def test_consumer_context_leaves_evidence_gap_policy_to_business_skills():
     rendered = _context(trigger_text="这个候选人怎么样？").render()
 
-    assert "send one concrete clarifying question" in rendered
-    assert "Do not return needs_human for missing evidence" in rendered
-    assert "irreducible personal or management decision" in rendered
+    assert "send one concrete clarifying question" not in rendered
+    assert "Do not return needs_human for missing evidence" not in rendered
+    assert "irreducible personal or management decision" not in rendered
 
 
 def test_oa_business_workflow_is_not_duplicated_in_agent_context():
@@ -395,15 +429,15 @@ def test_oa_business_workflow_is_not_duplicated_in_agent_context():
     assert "notify the actual applicant" not in rendered
 
 
-def test_single_chat_context_requires_direct_message_target():
+def test_single_chat_context_carries_type_without_embedding_target_policy():
     group_context = _context()
     rendered = AgentTaskContext(
         **{**group_context.__dict__, "single_chat": True}
     ).render()
 
-    assert "For a single chat, address the verified participant directly" in rendered
-    assert "never pass a single-chat conversation ID to a group-send command" in rendered
-    assert "For a group chat, use the supplied group conversation ID" in rendered
+    assert '"single_chat": true' in rendered
+    assert "For a single chat, address the verified participant directly" not in rendered
+    assert "single-chat conversation ID" not in rendered
 
 
 def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
@@ -449,10 +483,10 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert '"operation_id": "op-2"' in rendered
     assert "请补充材料。" in rendered
     assert "dws oa approval detail --instance-id pid-1 --format json" in rendered
-    assert "Execute the named operation" in rendered
-    assert "payload unchanged" in rendered
-    assert "return revision_required" in rendered
-    assert "Reject a group-send candidate for a single-chat task" in rendered
+    assert "only executor" in rendered
+    assert "cannot change A's business meaning" in rendered
+    assert "corrected revision remains executable" in rendered
+    assert "group-send candidate" not in rendered
     assert "OA factual gap" not in rendered
     assert "exact OA comment and applicant notification" not in rendered
     assert "Effective Audit Rules" not in rendered

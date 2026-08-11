@@ -38,12 +38,9 @@ from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_comman
 
 
 AUDIT_SKILL_HANDOFF_INSTRUCTION = (
-    "Verified Consumer Skill receipts are mandatory review evidence. Reread every "
-    "supplied path and compare its sha256 before accepting or executing the proposal. "
-    "For OA approval work, candidate interview or evaluation, and OKR review or "
-    "scoring, require and reread the verified Consumer receipt for "
-    "`dingtalk-oa-approval`, `stardust-interview`, or `dingtang-okr-review` "
-    "respectively before review or execution."
+    "Verified Consumer Skill receipts are mandatory review evidence. Reread each "
+    "supplied path, verify its sha256, and load every operation Skill it requires "
+    "before accepting or executing the proposal."
 )
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 

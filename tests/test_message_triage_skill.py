@@ -80,9 +80,9 @@ def test_canonical_prompt_delegates_message_triage_judgment_to_skill():
     assert "单聊里如果对方只是表示感谢、确认收到、认可或客气收口" not in text
     assert "群聊里的 @所有人、全员通知、流程提醒" not in text
     assert "有些消息不需要正式文字回复，但适合轻量表达态度" not in text
-    assert "涉及专业业务流程时" in text
+    assert "most specific applicable business Skill" in text
     assert "agent_cli.read_skill" in text
-    assert "只输出合法 JSON" in text
+    assert "return only matching JSON" in text
 
 
 def test_message_triage_skill_has_no_command_catalog_or_python_router():

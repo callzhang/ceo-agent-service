@@ -64,9 +64,9 @@ def test_canonical_prompt_delegates_meeting_policy_to_skill():
     text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
 
     assert "如果新消息或引用涉及“静默会”、AI 听记、会议纪要链接或会议材料" not in text
-    assert "涉及专业业务流程时" in text
+    assert "most specific applicable business Skill" in text
     assert "agent_cli.read_skill" in text
-    assert "只输出合法 JSON" in text
+    assert "return only matching JSON" in text
 
 
 def test_meeting_work_skill_has_no_command_catalog_or_output_schema():

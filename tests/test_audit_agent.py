@@ -17,6 +17,7 @@ from app.agent_turn_runner import (
     _read_matches_action,
 )
 from app.agent_skill_usage import LoadedSkillReceipt
+from app.agent_wire_contracts import AuditAgentWireResult
 from app.audit_agent import (
     AUDIT_SKILL_HANDOFF_INSTRUCTION,
     AuditAgentRunner,
@@ -85,6 +86,27 @@ class ExactReceiptExecutor(CapturingExecutor):
         return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
 
 
+def test_audit_composed_instructions_are_skill_first_and_schema_authoritative():
+    audit_rules = "AUDIT-RULE-SENTINEL: preserve the candidate meaning."
+
+    instructions = audit_developer_instructions(
+        "Audit Agent B executes accepted candidates.\n\n" + audit_rules
+    )
+
+    wire_schema = json.dumps(
+        AuditAgentWireResult.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    assert audit_rules in instructions
+    assert wire_schema in instructions
+    assert instructions.count("agent_cli.read_skill") == 1
+    assert "OA approval work" not in instructions
+    assert "candidate interview" not in instructions
+    assert "memory_write" not in instructions
+    assert len(instructions) < 12_000
+
+
 def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
     store, _task, audit_context, run = _seed_crashed_audit_write(setup)
 
@@ -108,37 +130,21 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
 def test_audit_developer_instructions_define_wire_json_field_shapes():
     instructions = audit_developer_instructions("Audit role test")
 
-    assert "external_result_json\nmust contain exactly" in instructions
-    assert (
-        "operation_id, verification_summary, and\nlive_result_reference"
-        in instructions
-    )
-    assert (
-        "operation_id must equal the candidate proposal\noperation_id"
-        in instructions
-    )
-    assert "reconciliation_json is always a\nJSON-encoded array" in instructions
-    assert "use [] unless outcome is reconciled" in instructions
-    assert "object wrapper in reconciliation_json" in instructions
-    assert "exactly these string fields:\nrule, observation, and requested_revision" in instructions
-    assert "failed_rule, evidence, or required_change" in instructions
-    assert "reconciled requires\nside_effect_state=unknown" in instructions
-    assert "action_index, disposition (present,\nabsent, or ambiguous), and read_result_digest" in instructions
-    assert "reconciled outcome is reserved for unknown-outcome recovery" in instructions
-    assert "return revision_required and ask\nConsumer Agent A to return no_action" in instructions
-    assert "Never execute a DWS write command without --yes" in instructions
-    assert "missing command syntax is a read-only evidence task" in instructions
-    assert "reviewed local read command" in instructions
+    assert "current Pydantic wire output contract is authoritative" in instructions
+    assert '"external_result_json"' in instructions
+    assert '"reconciliation_json"' in instructions
+    assert '"side_effect_state"' in instructions
+    assert '"read_result_digest"' in instructions
+    assert '"title":"AuditAgentWireResult"' in instructions
 
 
 def test_audit_instructions_require_receipt_sha_comparison_and_fail_closed_review():
     instructions = audit_developer_instructions("Audit role test")
 
-    assert "Reread every verified Skill path" in instructions
-    assert "compare the returned sha256 with the supplied receipt" in instructions
-    assert "read the operation Skill" in instructions
-    assert "missing, unreadable, or changed" in instructions
-    assert "no applicable business Skill" in instructions
+    assert "Reread every verified Consumer Skill receipt" in instructions
+    assert "verify its digest" in instructions
+    assert "load every required operation Skill" in instructions
+    assert "missing or changed" in instructions
     assert "return revision_required" in instructions
 
 
@@ -687,17 +693,15 @@ def test_scripted_audit_voluntarily_requires_revision_without_applicable_skill(s
     assert store.get_agent_run(result.run_id).tool_events == []
 
 
-def test_audit_instructions_require_specialist_skill_reread_before_execution():
+def test_audit_instructions_require_dynamic_skill_reread_before_execution():
     instructions = AUDIT_SKILL_HANDOFF_INSTRUCTION
 
-    assert "OA approval work" in instructions
-    assert "candidate interview or evaluation" in instructions
-    assert "OKR review or scoring" in instructions
-    assert "`dingtalk-oa-approval`" in instructions
-    assert "`stardust-interview`" in instructions
-    assert "`dingtang-okr-review`" in instructions
-    assert "verified Consumer receipt" in instructions
-    assert "before review or execution" in instructions
+    assert "Verified Consumer Skill receipts" in instructions
+    assert "verify its sha256" in instructions
+    assert "every operation Skill it requires" in instructions
+    assert "before accepting or executing" in instructions
+    assert "OA approval work" not in instructions
+    assert "candidate interview" not in instructions
 
 
 def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):
@@ -768,15 +772,11 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill", "read_spreadsheet"]' in command
     assert 'web_search="disabled"' not in command
     assert any(
-        "Authoritative Audit role boundary" in option
-        and "valid AuditAgentResult JSON" in option
+        "current Pydantic wire output contract is authoritative" in option
         for option in command
     )
-    assert any(
-        "agent_cli.execute_reviewed_write" in option
-        and "Do not use exec_command" in option
-        for option in command
-    )
+    assert any("AuditAgentWireResult" in option for option in command)
+    assert any("agent_cli.read_skill" in option for option in command)
     assert "every write command remain forbidden for Consumer" not in " ".join(command)
     assert store.get_codex_session_id(task.conversation_id) == "session-a"
     run = store.get_agent_run(result.run_id)

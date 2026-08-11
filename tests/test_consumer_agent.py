@@ -5,11 +5,13 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import AgentTaskContext
+from app.agent_contracts import ConsumerProposal
 from app.consumer_agent import (
     ConsumerAgentRunner,
     consumer_developer_instructions,
     consumer_wire_contract_hash,
 )
+from app.agent_wire_contracts import ConsumerAgentWireResult
 from app.agent_result import EffectKind, ResultParseError
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -56,6 +58,34 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
         "error_retryable": error["retryable"],
         "error_authorization_required": error["authorization_required"],
     }
+
+
+def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative():
+    audit_rules = "AUDIT-RULE-SENTINEL: verify supported facts."
+
+    instructions = consumer_developer_instructions(
+        "Consumer Agent A is read-only.\n\n" + audit_rules
+    )
+
+    wire_schema = json.dumps(
+        ConsumerAgentWireResult.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    proposal_schema = json.dumps(
+        ConsumerProposal.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    assert audit_rules in instructions
+    assert wire_schema in instructions
+    assert proposal_schema in instructions
+    assert instructions.count("agent_cli.read_skill") == 1
+    assert "OA approval work" not in instructions
+    assert "candidate interview" not in instructions
+    assert "Before proposing a DingTalk message send" not in instructions
+    assert "memory_write" not in instructions
+    assert len(instructions) < 12_000
 
 
 def _result_jsonl(*, session: str = "session-a") -> str:
@@ -120,30 +150,25 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
 def test_consumer_instructions_keep_writes_as_proposal_data():
     instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
 
-    assert "Write commands belong only as data inside proposal_json" in instructions
-    assert "Never\ninvoke, test, verify, or otherwise execute a write command yourself" in instructions
+    assert "Consumer Agent A is read-only" in instructions
+    assert '"proposal_json"' in instructions
 
 
 def test_consumer_instructions_require_dynamic_business_and_operation_skill_reads():
     instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
 
-    assert "inspect the installed Skill catalog" in instructions
     assert "most specific applicable business Skill" in instructions
-    assert "load the operation Skill named by that business Skill" in instructions
-    assert "Do not ask the service to classify the domain" in instructions
+    assert "load every operation Skill it requires" in instructions
+    assert instructions.count("agent_cli.read_skill") == 1
 
 
-def test_consumer_instructions_require_dynamic_specialist_skill_composition():
+def test_consumer_instructions_do_not_enumerate_specialist_workflows():
     instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
 
-    assert "OA approval work" in instructions
-    assert "candidate interview or evaluation" in instructions
-    assert "OKR review or scoring" in instructions
-    assert "`dingtalk-oa-approval`" in instructions
-    assert "`stardust-interview`" in instructions
-    assert "`dingtang-okr-review`" in instructions
-    assert "in addition to the applicable business Skill" in instructions
-    assert "Ordinary\nOKR discussion" in instructions
+    assert "OA approval work" not in instructions
+    assert "candidate interview or evaluation" not in instructions
+    assert "OKR review or scoring" not in instructions
+    assert "most specific applicable business Skill" in instructions
 
 
 def _failed_reviewed_read_jsonl() -> str:
@@ -268,24 +293,14 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         "Output JSON Schema (validated locally):" in option
         for option in command
     )
-    assert any(
-        "call `agent_cli.execute_reviewed_read`" in option
-        for option in command
-    )
-    assert any("agent_cli.read_spreadsheet" in option for option in command)
-    assert any(
-        "dingtalk-chat/SKILL.md" in option
-        and "not a reason to return `needs_human`" in option
-        for option in command
-    )
+    assert any("agent_cli.read_skill" in option for option in command)
     instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
-    assert "referenced skill, document,\nconfiguration" in instructions
-    assert "normal Agent work" in instructions
+    assert "most specific applicable business Skill" in instructions
     assert any(
-        "Authoritative Consumer role boundary" in option
-        and "valid ConsumerAgentResult JSON" in option
+        "current Pydantic wire output contract is authoritative" in option
         for option in command
     )
+    assert any("ConsumerAgentWireResult" in option for option in command)
     assert "proposal_json must decode to this JSON Schema exactly" in executor.prompts[0]
     assert '"expected_verification"' in executor.prompts[0]
 

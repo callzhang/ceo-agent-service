@@ -62,11 +62,12 @@ def test_developer_prompts_delegate_calendar_policy_to_business_skills():
     text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
 
     assert "<var: calendar_rules_path>" not in text
-    assert "涉及专业业务流程时" in text
+    assert "most specific applicable business Skill" in text
     assert "agent_cli.read_skill" in text
-    assert "最具体适用的业务 Skill" in text
-    assert "只输出合法 JSON" in text
-    assert "user_response.mode 必须是" in text
+    assert "最具体适用的业务 Skill" not in text
+    assert "Pydantic output contract" in text
+    assert "return only matching JSON" in text
+    assert "user_response.mode 必须是" not in text
 
 
 def test_runtime_developer_prompt_is_ignored_deployment_state():

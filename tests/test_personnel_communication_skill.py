@@ -101,8 +101,9 @@ def test_canonical_prompt_delegates_personnel_and_candidate_policy_to_skill():
         "回答外部候选人是否匹配、是否推进、是否降级评估前",
     ):
         assert removed not in text
-    assert "涉及专业业务流程时" in text
+    assert "most specific applicable business Skill" in text
     assert "agent_cli.read_skill" in text
-    assert "没有列出的字段不要编造" in text
-    assert "凭证" in text
+    assert "没有列出的字段不要编造" not in text
+    assert "invent unsupported facts or targets" in text
+    assert "Credentials and runtime internals" in text
     assert "只有明确需要 <var: principal> 处理时才回复" not in text

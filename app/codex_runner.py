@@ -12,12 +12,8 @@ CODEX_DECISION_SCHEMA_PATH = (
 AGENT_ENVELOPE_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "agent_envelope.schema.json"
 )
-CODEX_DEVELOPER_INSTRUCTIONS_PREFIX = (
-    "You are the local CEO DingTalk reply worker. Inspect the workspace before "
-    "answering. Return only the requested JSON."
-)
-DWS_MATERIAL_READING_INSTRUCTIONS = """
-DingTalk material access
+CODEX_DEVELOPER_INSTRUCTIONS_PREFIX = "You are the local CEO agent worker."
+RUNTIME_DEPENDENCY_INSTRUCTIONS = """Runtime dependency handling
 
 - Use the exact read command supplied in the task context without rewriting or substituting it.
 - Operation discovery and syntax belong to the loaded operation Skill.
@@ -25,18 +21,6 @@ DingTalk material access
 - If DWS reports not_authenticated, not authenticated, exit code 2, or a login/session problem, classify it as a DWS login/tool issue, not as missing material from the sender.
 - If DWS reports AGENT_CODE_NOT_EXISTS, openBrowser, personalAuthorization, PAT permission failure, or a CLI authorization page, stop that tool path and classify it as DWS authorization/configuration unavailable; do not retry the command and do not start a login flow.
 - Do not expose tokens, cookies, OAuth codes, signed URLs, local credential paths, or raw secret-bearing commands.
-""".strip()
-XIAOQING_INTERVIEW_READING_INSTRUCTIONS = """
-Xiaoqing interview material reading
-
-- Candidate links under `https://interview.hr.startask.net/candidates/` are Xiaoqing interview-system records, not ordinary DingTalk docs or webpages.
-- When a candidate or hiring judgment depends on a Xiaoqing link, candidate name, interview record, resume, offer, hiring approval, or candidate comparison, use the `xiaoqing_interview` MCP tools before deciding.
-- If a Xiaoqing candidate URL is absent but a candidate name is present, call `search_candidates` with that name, pick the matching candidate, then call `get_interview_context` before making the hiring judgment.
-- For task/project/follow-up decisions about a candidate's process status, treat Xiaoqing's current stage, final_decision/current decision, decision time, and decision note as the current source of truth before asking HR to confirm status.
-- If Xiaoqing already shows a terminal final decision such as rejected/eliminated/pass/talent-pool or a clear closed stage, close or suppress the follow-up instead of asking HR whether to continue or close.
-- Do not use curl, browser scraping, DWS doc commands, or local search as substitutes for the Xiaoqing candidate record.
-- If `xiaoqing_interview` is unavailable, unauthorized, or cannot return the review package, classify it as a blocking tool/auth issue with `critical_info_unavailable:xiaoqing_interview ...`; do not tell HR the sender failed to provide the interview text when the link itself was provided.
-- Only ask HR to paste interview text after the Xiaoqing tool confirms the record lacks that content or the current user truly lacks access.
 """.strip()
 # The CEO worker owns DWS readiness and authorization gating. Codex exec resume
 # does not support `-s`, so use the explicit bypass flag for both new and resumed
@@ -55,24 +39,11 @@ DEFAULT_CODEX_MODEL = "gpt-5.5"
 DEFAULT_CODEX_MODEL_REASONING_EFFORT = "medium"
 
 
-def _memory_connector_runtime_instructions() -> str:
-    return (
-        "Memory connector runtime\n\n"
-        "- This invocation inherits the principal's configured Codex MCP servers, "
-        "plugins, and skills, including memory_connector when it is installed.\n"
-        "- Use memory_connector when durable context is relevant. If the tool itself "
-        "reports unavailable or unauthorized, classify that as a tool dependency "
-        "issue; do not start an interactive login flow or infer missing user facts."
-    )
-
-
 def codex_developer_instructions() -> str:
     return (
         f"{CODEX_DEVELOPER_INSTRUCTIONS_PREFIX}\n\n"
-        f"{DWS_MATERIAL_READING_INSTRUCTIONS}\n\n"
-        f"{XIAOQING_INTERVIEW_READING_INSTRUCTIONS}\n\n"
-        f"{ceo_agent_thread_prompt()}\n\n"
-        f"{_memory_connector_runtime_instructions()}"
+        f"{RUNTIME_DEPENDENCY_INSTRUCTIONS}\n\n"
+        f"{ceo_agent_thread_prompt()}"
     )
 
 
