@@ -8249,7 +8249,7 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     assert "退回" in agent_prompt(worker)
     assert "read-oa-approval-detail --instance-id proc-1" in agent_prompt(worker)
     assert "dws oa approval tasks --instance-id proc-1" in agent_prompt(worker)
-    assert "Do not substitute a similar command" in agent_prompt(worker)
+    assert "2. [output_contracts] Output Contracts:" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
     assert worker.store.count_reply_attempts() == 2
@@ -8302,7 +8302,7 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert "Safe prior execution receipts" in agent_prompt(worker)
+    assert "## Context Facts" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     attempts = worker.store.list_reply_attempts(limit=2)
     assert attempts[0].trigger_message_id == "msg-1"
@@ -10945,7 +10945,7 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     prompt = agent_prompt(worker)
     assert agent_runner(worker).calls[0][3] == ""
     assert codex.calls == []
-    assert "Consumer Agent A responsibilities" in prompt
+    assert "1. [role_boundary] Role Boundary:" in prompt
     assert "CEO Agent Prompt" not in prompt
     assert "你是 Alex 的钉钉自动回复分身" not in prompt
     assert "回答任何问题前，先检索本地 workspace" not in prompt
@@ -11287,7 +11287,7 @@ def test_sent_reply_prevents_retry_when_latest_attempt_failed(
     assert latest is not None
     assert latest.action == "agent_run"
     assert latest.send_status == "skipped"
-    assert "Before proposing a repeated external action" in agent_prompt(worker)
+    assert "5. [duplicate_effects] Duplicate Effects:" in agent_prompt(worker)
 
 
 def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
@@ -11570,7 +11570,7 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
     )
     assert run is not None
     assert run.codex_session_id != "old-session"
-    assert "Consumer Agent A responsibilities" in agent_prompt(worker)
+    assert "1. [role_boundary] Role Boundary:" in agent_prompt(worker)
     assert "你是 Alex 的钉钉自动回复分身" not in agent_prompt(worker)
 
 
@@ -11783,7 +11783,7 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
     assert "先看岗位匹配" not in prompt
     assert "cid-style-1" not in prompt
     assert '"conversation_title": "Friday"' in prompt
-    assert "Consumer Agent A responsibilities" in prompt
+    assert "1. [role_boundary] Role Boundary:" in prompt
 
 
 def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeypatch):

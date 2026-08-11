@@ -12,6 +12,10 @@ from app.agent_context import (
 )
 from app.agent_contracts import ConsumerProposal
 from app.agent_skill_usage import LoadedSkillReceipt
+from app.consumer_agent import (
+    AUDIT_DYNAMIC_SKILL_BODY,
+    CONSUMER_DYNAMIC_SKILL_BODY,
+)
 from app.developer_prompt import SEED_DEVELOPER_PROMPT_TEMPLATE
 from tests.prompt_structure import validate_prompt_structure
 
@@ -36,42 +40,103 @@ def test_consumer_core_prompt_contains_only_runtime_invariants():
     validate_prompt_structure(
         text,
         contract_models=(),
-        require_audit_rules=False,
-        require_context_facts=False,
+        dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
+        audit_rules=None,
+        context_facts=None,
         size_limit=2_500,
     )
 
 
 def test_audit_core_prompt_contains_only_runtime_invariants():
-    text = _core_prompt(_AUDIT_AGENT_RULES)
+    text = _core_prompt(_AUDIT_AGENT_RULES, AUDIT_DYNAMIC_SKILL_BODY)
     validate_prompt_structure(
         text,
         contract_models=(),
-        require_audit_rules=False,
-        require_context_facts=False,
+        dynamic_skill_body=AUDIT_DYNAMIC_SKILL_BODY,
+        audit_rules=None,
+        context_facts=None,
         size_limit=2_500,
     )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda text: "injected preamble\n" + text,
+        lambda text: text + "\ninjected trailing prose",
+        lambda text: text.replace(
+            CONSUMER_DYNAMIC_SKILL_BODY,
+            CONSUMER_DYNAMIC_SKILL_BODY + "\ninjected Skill policy",
+        ),
+    ),
+)
+def test_prompt_structure_rejects_content_outside_exact_sections(mutate):
+    with pytest.raises(AssertionError):
+        validate_prompt_structure(
+            mutate(_core_prompt(_CONSUMER_AGENT_RULES)),
+            contract_models=(),
+            dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
+            audit_rules=None,
+            context_facts=None,
+            size_limit=2_500,
+        )
+
+
+def test_prompt_structure_binds_audit_rules_and_context_facts_to_exact_inputs():
+    audit_rules = "Arbitrary configured rule.\n- Preserve this supplied rule only."
+    context_facts = _context().render_business_context(
+        current_time="2026-07-28 14:15:00 +0800"
+    ).removeprefix("## Context Facts\n")
+    text = (
+        _CONSUMER_AGENT_RULES
+        + f"\n\n## Audit Rules\n{audit_rules}"
+        + f"\n\n## Dynamic Skill\n{CONSUMER_DYNAMIC_SKILL_BODY}"
+        + f"\n\n## Context Facts\n{context_facts}"
+    )
+
+    validate_prompt_structure(
+        text,
+        contract_models=(),
+        dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
+        audit_rules=audit_rules,
+        context_facts=context_facts,
+        size_limit=10_000,
+    )
+    for injected in (
+        text.replace(audit_rules, audit_rules + "\ninjected rule"),
+        text + "\ninjected context prose",
+    ):
+        with pytest.raises(AssertionError):
+            validate_prompt_structure(
+                injected,
+                contract_models=(),
+                dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
+                audit_rules=audit_rules,
+                context_facts=context_facts,
+                size_limit=10_000,
+            )
 
 
 def test_prompt_structure_rejects_synthetic_ninth_policy():
     text = _CONSUMER_AGENT_RULES + (
         "\n9. [extra_policy] Extra Policy: must not load globally."
-        "\n\n## Dynamic Skill\n[dynamic-skill] test"
+        f"\n\n## Dynamic Skill\n{CONSUMER_DYNAMIC_SKILL_BODY}"
     )
 
     with pytest.raises(AssertionError):
         validate_prompt_structure(
             text,
             contract_models=(),
-            require_audit_rules=False,
-            require_context_facts=False,
+            dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
+            audit_rules=None,
+            context_facts=None,
             size_limit=2_500,
         )
 
 
 def test_prompt_structure_rejects_unpermitted_policy_section():
     text = _CONSUMER_AGENT_RULES + (
-        "\n\n## Dynamic Skill\n[dynamic-skill] test"
+        f"\n\n## Dynamic Skill\n{CONSUMER_DYNAMIC_SKILL_BODY}"
         "\n\n## Dependency Policy\nextra global policy"
     )
 
@@ -79,8 +144,9 @@ def test_prompt_structure_rejects_unpermitted_policy_section():
         validate_prompt_structure(
             text,
             contract_models=(),
-            require_audit_rules=False,
-            require_context_facts=False,
+            dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
+            audit_rules=None,
+            context_facts=None,
             size_limit=2_500,
         )
 
@@ -97,14 +163,15 @@ def test_prompt_structure_rejects_unnumbered_invariant_content(extra_line: str):
     text = _CONSUMER_AGENT_RULES.replace(
         "\n8. [dependency_auth]",
         f"\n{extra_line}\n8. [dependency_auth]",
-    ) + "\n\n## Dynamic Skill\n[dynamic-skill] test"
+    ) + f"\n\n## Dynamic Skill\n{CONSUMER_DYNAMIC_SKILL_BODY}"
 
     with pytest.raises(AssertionError):
         validate_prompt_structure(
             text,
             contract_models=(),
-            require_audit_rules=False,
-            require_context_facts=False,
+            dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
+            audit_rules=None,
+            context_facts=None,
             size_limit=2_500,
         )
 
@@ -113,14 +180,15 @@ def test_prompt_structure_rejects_blank_line_inside_invariants():
     text = _CONSUMER_AGENT_RULES.replace(
         "\n8. [dependency_auth]",
         "\n\n8. [dependency_auth]",
-    ) + "\n\n## Dynamic Skill\n[dynamic-skill] test"
+    ) + f"\n\n## Dynamic Skill\n{CONSUMER_DYNAMIC_SKILL_BODY}"
 
     with pytest.raises(AssertionError):
         validate_prompt_structure(
             text,
             contract_models=(),
-            require_audit_rules=False,
-            require_context_facts=False,
+            dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
+            audit_rules=None,
+            context_facts=None,
             size_limit=2_500,
         )
 
@@ -137,14 +205,18 @@ def test_prompt_structure_rejects_boundary_blank_line_in_invariants(boundary: st
         validate_prompt_structure(
             text,
             contract_models=(),
-            require_audit_rules=False,
-            require_context_facts=False,
+            dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
+            audit_rules=None,
+            context_facts=None,
             size_limit=2_500,
         )
 
 
-def _core_prompt(invariants: str) -> str:
-    return invariants + "\n\n## Dynamic Skill\n[dynamic-skill] test"
+def _core_prompt(
+    invariants: str,
+    dynamic_skill_body: str = CONSUMER_DYNAMIC_SKILL_BODY,
+) -> str:
+    return invariants + f"\n\n## Dynamic Skill\n{dynamic_skill_body}"
 
 
 def _context(

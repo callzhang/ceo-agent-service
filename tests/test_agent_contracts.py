@@ -54,6 +54,73 @@ def _proposal() -> dict[str, object]:
     }
 
 
+def _decision_options() -> list[dict[str, str]]:
+    return [
+        {
+            "key": "A",
+            "label": "Proceed",
+            "instruction": "Proceed with the verified candidate.",
+            "consequence": "The accepted candidate can move to Audit.",
+        },
+        {
+            "key": "B",
+            "label": "Revise",
+            "instruction": "Request a corrected candidate.",
+            "consequence": "No candidate executes yet.",
+        },
+    ]
+
+
+def _consumer_wire_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "outcome": "no_action",
+        "summary": "Nothing to do.",
+        "proposal_json": None,
+        "decision_options_json": "[]",
+        "error_code": "",
+        "error_retryable": False,
+        "error_authorization_required": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _audit_wire_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "outcome": "failed",
+        "summary": "The dependency failed.",
+        "proposal_revision": 0,
+        "side_effect_state": "none",
+        "feedback_json": None,
+        "external_result_json": None,
+        "reconciliation_json": "[]",
+        "error_code": "dependency_failed",
+        "error_retryable": True,
+        "error_authorization_required": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _validate_wire_content_schema(
+    model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
+    payload: dict[str, object],
+) -> None:
+    schema = model.model_json_schema()
+    Draft202012Validator(schema).validate(payload)
+    matching = [
+        branch
+        for branch in schema["anyOf"]
+        if Draft202012Validator(branch).is_valid(payload)
+    ]
+    assert len(matching) == 1
+    for field, field_schema in matching[0]["properties"].items():
+        if "contentSchema" not in field_schema or not isinstance(payload.get(field), str):
+            continue
+        decoded = json.loads(payload[field])
+        Draft202012Validator(field_schema["contentSchema"]).validate(decoded)
+
+
 def _audit_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "outcome": "revision_required",
@@ -71,6 +138,164 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
     }
     payload.update(overrides)
     return payload
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    (
+        (
+            ConsumerAgentWireResult,
+            _consumer_wire_payload(
+                outcome="proposal",
+                proposal_json=json.dumps(_proposal()),
+            ),
+        ),
+        (ConsumerAgentWireResult, _consumer_wire_payload(outcome="no_action")),
+        (
+            ConsumerAgentWireResult,
+            _consumer_wire_payload(
+                outcome="needs_human",
+                decision_options_json=json.dumps(_decision_options()),
+            ),
+        ),
+        (ConsumerAgentWireResult, _consumer_wire_payload(outcome="failed")),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(
+                outcome="executed",
+                side_effect_state="confirmed",
+                external_result_json=json.dumps(
+                    {
+                        "operation_id": "op-1",
+                        "verification_summary": "The effect was read back.",
+                        "live_result_reference": {"receipt_id": "receipt-1"},
+                    }
+                ),
+            ),
+        ),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(
+                outcome="revision_required",
+                feedback_json=json.dumps(
+                    {
+                        "rule": "Use verified Skill receipts.",
+                        "observation": "A receipt is missing.",
+                        "requested_revision": "Read the Skill and replace the candidate.",
+                    }
+                ),
+            ),
+        ),
+        (AuditAgentWireResult, _audit_wire_payload(outcome="needs_human")),
+        (AuditAgentWireResult, _audit_wire_payload(outcome="failed")),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(outcome="unknown", side_effect_state="unknown"),
+        ),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(
+                outcome="reconciled",
+                side_effect_state="unknown",
+                reconciliation_json=json.dumps(
+                    [
+                        {
+                            "action_index": 0,
+                            "disposition": "present",
+                            "read_result_digest": "digest-1",
+                        }
+                    ]
+                ),
+            ),
+        ),
+    ),
+)
+def test_generated_wire_schema_acceptance_always_converts(model, payload):
+    _validate_wire_content_schema(model, payload)
+    assert model.model_validate(payload).to_result() is not None
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    (
+        (
+            ConsumerAgentWireResult,
+            _consumer_wire_payload(outcome="proposal", proposal_json=None),
+        ),
+        (
+            ConsumerAgentWireResult,
+            _consumer_wire_payload(
+                outcome="proposal",
+                proposal_json=json.dumps(_proposal()),
+                decision_options_json=json.dumps(_decision_options()),
+            ),
+        ),
+        (
+            ConsumerAgentWireResult,
+            _consumer_wire_payload(outcome="needs_human"),
+        ),
+        (
+            ConsumerAgentWireResult,
+            _consumer_wire_payload(
+                outcome="needs_human",
+                decision_options_json=json.dumps([{"key": "A"}]),
+            ),
+        ),
+        (
+            ConsumerAgentWireResult,
+            _consumer_wire_payload(outcome="no_action", proposal_json="{}"),
+        ),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(
+                outcome="executed",
+                side_effect_state="none",
+                external_result_json="{}",
+            ),
+        ),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(
+                outcome="executed",
+                side_effect_state="confirmed",
+                external_result_json=None,
+            ),
+        ),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(outcome="revision_required", feedback_json=None),
+        ),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(
+                outcome="unknown",
+                side_effect_state="none",
+            ),
+        ),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(
+                outcome="failed",
+                side_effect_state="confirmed",
+            ),
+        ),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(
+                outcome="needs_human",
+                reconciliation_json='[{"action_index": 0}]',
+            ),
+        ),
+    ),
+)
+def test_invalid_wire_combinations_fail_generated_schema_and_local_model(
+    model,
+    payload,
+):
+    with pytest.raises((JsonSchemaValidationError, json.JSONDecodeError, AssertionError)):
+        _validate_wire_content_schema(model, payload)
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
 
 
 def test_consumer_proposal_keeps_facts_and_judgment_separate():

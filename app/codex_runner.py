@@ -36,7 +36,8 @@ def codex_developer_instructions() -> str:
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    return f"{ceo_agent_thread_prompt()}\n\n## Pydantic Wire/Result Contract\n{schema}"
+    prompt = ceo_agent_thread_prompt().rstrip("\n")
+    return f"{prompt}\n\n## Pydantic Wire/Result Contract\n{schema}"
 
 
 def _config_string(key: str, value: object) -> str:

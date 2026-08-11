@@ -7,6 +7,7 @@ import pytest
 from app.agent_context import AgentTaskContext, _CONSUMER_AGENT_RULES
 from app.agent_contracts import ConsumerAgentResult
 from app.consumer_agent import (
+    CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
     consumer_developer_instructions,
     consumer_wire_contract_hash,
@@ -61,13 +62,18 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
     }
 
 
-def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative():
+def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative(
+    context,
+):
     audit_rules = "AUDIT-RULE-SENTINEL: verify supported facts."
+    context_facts = context.render_business_context(
+        current_time="2026-08-11 23:00:00 +0800"
+    ).removeprefix("## Context Facts\n")
     instructions = (
         consumer_developer_instructions(audit_rules)
         + "\n\n"
         + _CONSUMER_AGENT_RULES
-        + "\n\n## Context Facts\nsynthetic context"
+        + f"\n\n## Context Facts\n{context_facts}"
     )
 
     validate_prompt_structure(
@@ -76,12 +82,13 @@ def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative
             ("Pydantic Wire Contract", ConsumerAgentWireResult),
             ("Pydantic Result Contract", ConsumerAgentResult),
         ),
-        require_audit_rules=True,
-        require_context_facts=True,
+        dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
+        audit_rules=audit_rules,
+        context_facts=context_facts,
         size_limit=12_000,
     )
     assert audit_rules in instructions
-    assert "Select and read" in instructions
+    assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
 
 
 def _result_jsonl(*, session: str = "session-a") -> str:
@@ -156,8 +163,11 @@ def test_consumer_instructions_keep_writes_as_proposal_data():
 def test_consumer_instructions_require_dynamic_business_and_operation_skill_reads():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
-    assert "most specific applicable business Skill" in instructions
-    assert "read every operation Skill it requires" in instructions
+    assert (
+        "[dynamic-skill] Consumer Agent A independently selects and reads every "
+        "applicable business and operation Skill with `agent_cli.read_skill` before "
+        "forming the candidate."
+    ) in instructions
     assert instructions.count("agent_cli.read_skill") == 1
 
 
@@ -167,7 +177,7 @@ def test_consumer_instructions_do_not_enumerate_specialist_workflows():
     assert "OA approval work" not in instructions
     assert "candidate interview or evaluation" not in instructions
     assert "OKR review or scoring" not in instructions
-    assert "most specific applicable business Skill" in instructions
+    assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
 
 
 def _failed_reviewed_read_jsonl() -> str:
@@ -294,7 +304,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     )
     assert any("agent_cli.read_skill" in option for option in command)
     instructions = consumer_developer_instructions("Verify every supported fact.")
-    assert "most specific applicable business Skill" in instructions
+    assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
     assert any("## Pydantic Wire Contract" in option for option in command)
     assert any("ConsumerAgentWireResult" in option for option in command)
     assert "## Runtime Invariants" in executor.prompts[0]

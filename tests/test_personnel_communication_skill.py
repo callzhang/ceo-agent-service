@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
+
 import pytest
 
 
@@ -101,7 +103,7 @@ def test_canonical_prompt_delegates_personnel_and_candidate_policy_to_skill():
         "回答外部候选人是否匹配、是否推进、是否降级评估前",
     ):
         assert removed not in text
-    assert "most specific applicable business Skill" in text
+    assert CORE_DYNAMIC_SKILL_BODY in text
     assert "agent_cli.read_skill" in text
     assert "没有列出的字段不要编造" not in text
     assert "invent unsupported facts or targets" in text

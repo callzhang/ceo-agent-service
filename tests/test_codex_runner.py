@@ -11,6 +11,7 @@ from app.codex_runner import (
     memory_connector_config_issue,
 )
 from app.codex_decision import CodexDecisionRunner
+from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
 from app.dingtalk_models import CodexAction, CodexDecision
 from app.dws_client import DWS_AGENT_CODE_ENV
 from tests.prompt_structure import validate_prompt_structure
@@ -306,7 +307,7 @@ def test_codex_developer_instructions_leave_read_options_to_operation_skills():
     instructions = codex_developer_instructions()
 
     assert "--timeout 900" not in instructions
-    assert "read every operation Skill it requires" in instructions
+    assert CORE_DYNAMIC_SKILL_BODY in instructions
     assert instructions.count("[dynamic-skill]") == 1
 
 
@@ -316,8 +317,9 @@ def test_codex_composed_prompt_keeps_runtime_invariants_not_domain_workflows():
     validate_prompt_structure(
         instructions,
         contract_models=(("Pydantic Wire/Result Contract", CodexDecision),),
-        require_audit_rules=False,
-        require_context_facts=False,
+        dynamic_skill_body=CORE_DYNAMIC_SKILL_BODY,
+        audit_rules=None,
+        context_facts=None,
         size_limit=5_000,
     )
 
@@ -329,7 +331,7 @@ def test_codex_developer_instructions_leave_interview_workflow_to_skills():
     assert "https://interview.hr.startask.net/candidates/" not in instructions
     assert "search_candidates" not in instructions
     assert "xiaoqing_interview" not in instructions
-    assert "most specific applicable business Skill" in instructions
+    assert CORE_DYNAMIC_SKILL_BODY in instructions
 
 
 def test_codex_command_does_not_use_agent_envelope_schema_by_default(tmp_path: Path):
@@ -657,7 +659,7 @@ def test_codex_developer_instructions_delegate_operation_syntax_to_skills():
     assert "dws doc read --node" not in instructions
     assert "dws minutes get info --id" not in instructions
     assert "Use the exact read command supplied in the task context" not in instructions
-    assert "read every operation Skill it requires" in instructions
+    assert CORE_DYNAMIC_SKILL_BODY in instructions
     assert "as a DWS login/tool issue" in instructions
     assert "as DWS authorization/configuration unavailable" in instructions
     assert "External Secrecy" in instructions

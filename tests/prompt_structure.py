@@ -26,7 +26,12 @@ PERMITTED_CORE_SECTIONS = {
     "Context Facts",
 }
 SKILL_INSTRUCTION_MARKER = "[dynamic-skill]"
-_SECTION_RE = re.compile(r"^## (?P<title>[^\n]+)$", re.MULTILINE)
+_SECTION_RE = re.compile(
+    r"^## (?P<title>"
+    + "|".join(re.escape(title) for title in sorted(PERMITTED_CORE_SECTIONS))
+    + r")$",
+    re.MULTILINE,
+)
 _INVARIANT_RE = re.compile(
     r"(?P<number>\d+)\. \[(?P<identifier>[a-z_]+)] "
     r"(?P<title>[^:]+): (?P<body>.+)",
@@ -41,25 +46,32 @@ def validate_prompt_structure(
     text: str,
     *,
     contract_models: Sequence[tuple[str, type[Any]]],
-    require_audit_rules: bool,
-    require_context_facts: bool,
+    dynamic_skill_body: str,
+    audit_rules: str | None,
+    context_facts: str | None,
     size_limit: int,
 ) -> None:
-    sections = [match.group("title") for match in _SECTION_RE.finditer(text)]
-    unknown_sections = set(sections) - PERMITTED_CORE_SECTIONS
-    assert not unknown_sections, f"unexpected core sections: {sorted(unknown_sections)}"
+    section_matches = list(_SECTION_RE.finditer(text))
+    assert section_matches and section_matches[0].start() == 0
+    sections = [match.group("title") for match in section_matches]
     expected_sections = {
         "Runtime Invariants",
         "Dynamic Skill",
         *(section_title for section_title, _model in contract_models),
     }
-    if require_audit_rules:
+    if audit_rules is not None:
         expected_sections.add("Audit Rules")
-    if require_context_facts:
+    if context_facts is not None:
         expected_sections.add("Context Facts")
     assert set(sections) == expected_sections
     assert all(sections.count(section) == 1 for section in expected_sections)
     assert text.count(SKILL_INSTRUCTION_MARKER) == 1
+    assert _exact_section_body(text, "Dynamic Skill") == dynamic_skill_body
+    if audit_rules is not None:
+        assert _exact_section_body(text, "Audit Rules") == audit_rules
+    if context_facts is not None:
+        assert _exact_section_body(text, "Context Facts") == context_facts
+        _validate_context_facts_shape(context_facts)
 
     invariant_body = _exact_section_body(text, "Runtime Invariants")
     invariant_lines = invariant_body.splitlines()
@@ -92,17 +104,9 @@ def validate_prompt_structure(
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        assert _section_body(text, section_title).strip() == expected_schema
+        assert _exact_section_body(text, section_title) == expected_schema
 
     assert len(text) < size_limit
-
-
-def _section_body(text: str, title: str) -> str:
-    match = re.search(rf"^## {re.escape(title)}\n", text, re.MULTILINE)
-    assert match is not None, f"missing section: {title}"
-    next_section = _SECTION_RE.search(text, match.end())
-    end = next_section.start() if next_section is not None else len(text)
-    return text[match.end() : end].strip()
 
 
 def _exact_section_body(text: str, title: str) -> str:
@@ -111,9 +115,100 @@ def _exact_section_body(text: str, title: str) -> str:
     next_section = _SECTION_RE.search(text, match.end())
     if next_section is None:
         body = text[match.end() :]
+        if body.endswith("\n"):
+            body = body[:-1]
     else:
         raw_body = text[match.end() : next_section.start()]
         assert raw_body.endswith("\n\n")
         body = raw_body[:-2]
-    assert body == body.strip("\n")
+    assert body and body == body.strip("\n")
     return body
+
+
+def _validate_context_facts_shape(body: str) -> None:
+    blocks = body.split("\n\n")
+    labels: list[str] = []
+    values: dict[str, object] = {}
+    for block in blocks:
+        label, separator, payload = block.partition("\n")
+        assert separator and payload
+        labels.append(label)
+        values[label] = (
+            payload
+            if label == "Current turn execution time"
+            else json.loads(payload)
+        )
+
+    assert labels[:4] == [
+        "Current turn execution time",
+        "Original trigger",
+        "Recent conversation context",
+        "Raw material references and exact read commands",
+    ]
+    allowed_optional = [
+        "Actual Codex image inputs",
+        "Safe prior execution receipts",
+        "Manual rerun instruction",
+        "Verified Skills read by Consumer A",
+        "Candidate revision",
+    ]
+    assert labels[4:] == [label for label in allowed_optional if label in labels]
+
+    _assert_object_keys(
+        values["Original trigger"],
+        {
+            "task_id",
+            "channel",
+            "conversation_id",
+            "conversation_title",
+            "single_chat",
+            "message_id",
+            "sender",
+            "sender_user_id",
+            "sender_open_dingtalk_id",
+            "mentioned_user_ids",
+            "text",
+            "create_time",
+            "raw_payload",
+        },
+    )
+    _assert_array_item_keys(
+        values["Recent conversation context"],
+        {"message_id", "sender", "text", "create_time"},
+    )
+    _assert_array_item_keys(
+        values["Raw material references and exact read commands"],
+        {"kind", "reference", "source_message_id", "read_commands"},
+    )
+    optional_shapes = {
+        "Actual Codex image inputs": {"path", "sha256"},
+        "Safe prior execution receipts": {
+            "receipt_id",
+            "operation",
+            "summary",
+            "completed",
+        },
+        "Verified Skills read by Consumer A": {"name", "path", "sha256"},
+    }
+    for label, keys in optional_shapes.items():
+        if label in values:
+            _assert_array_item_keys(values[label], keys)
+    if "Manual rerun instruction" in values:
+        _assert_object_keys(
+            values["Manual rerun instruction"],
+            {"source_attempt_id", "reviewer_feedback", "suggested_reply_text"},
+        )
+    if "Candidate revision" in values:
+        _assert_object_keys(
+            values["Candidate revision"],
+            {"proposal_revision", "operation_id", "proposal"},
+        )
+
+
+def _assert_object_keys(value: object, keys: set[str]) -> None:
+    assert isinstance(value, dict) and set(value) == keys
+
+
+def _assert_array_item_keys(value: object, keys: set[str]) -> None:
+    assert isinstance(value, list)
+    assert all(isinstance(item, dict) and set(item) == keys for item in value)

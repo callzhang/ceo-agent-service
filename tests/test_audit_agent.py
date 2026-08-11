@@ -29,7 +29,7 @@ from app.audit_agent import (
     _recovery_authorizations,
     _recovery_prompt,
 )
-from app.consumer_agent import audit_developer_instructions
+from app.consumer_agent import AUDIT_DYNAMIC_SKILL_BODY, audit_developer_instructions
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
@@ -91,13 +91,17 @@ class ExactReceiptExecutor(CapturingExecutor):
         return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
 
 
-def test_audit_composed_instructions_are_skill_first_and_schema_authoritative():
+def test_audit_composed_instructions_are_skill_first_and_schema_authoritative(setup):
     audit_rules = "AUDIT-RULE-SENTINEL: preserve the candidate meaning."
+    _store, _task, audit_context, _parent = setup
+    context_facts = audit_context.render(
+        current_time="2026-08-11 23:00:00 +0800"
+    ).partition("## Context Facts\n")[2]
     instructions = (
         audit_developer_instructions(audit_rules)
         + "\n\n"
         + _AUDIT_AGENT_RULES
-        + "\n\n## Context Facts\nsynthetic context"
+        + f"\n\n## Context Facts\n{context_facts}"
     )
 
     validate_prompt_structure(
@@ -106,12 +110,13 @@ def test_audit_composed_instructions_are_skill_first_and_schema_authoritative():
             ("Pydantic Wire Contract", AuditAgentWireResult),
             ("Pydantic Result Contract", AuditAgentResult),
         ),
-        require_audit_rules=True,
-        require_context_facts=True,
-        size_limit=12_000,
+        dynamic_skill_body=AUDIT_DYNAMIC_SKILL_BODY,
+        audit_rules=audit_rules,
+        context_facts=context_facts,
+        size_limit=16_000,
     )
     assert audit_rules in instructions
-    assert "Reread the exact verified Consumer Skill receipts" in instructions
+    assert AUDIT_DYNAMIC_SKILL_BODY in instructions
 
 
 def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
@@ -149,9 +154,7 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
 def test_audit_instructions_require_receipt_sha_comparison_and_fail_closed_review():
     instructions = audit_developer_instructions("Verify every supported fact.")
 
-    assert "Reread the exact verified Consumer Skill receipts" in instructions
-    assert "verify each sha256" in instructions
-    assert "required operation Skills" in instructions
+    assert AUDIT_DYNAMIC_SKILL_BODY in instructions
     assert instructions.count("[dynamic-skill]") == 1
 
 
@@ -613,7 +616,20 @@ def setup(tmp_path):
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
         operation_id="", owner="parent",
     ).run
-    audit_context = AuditTurnContext(task=context, proposal_revision=0, operation_id="operation-1", proposal=proposal, audit_rules="Check authority.")
+    audit_context = AuditTurnContext(
+        task=context,
+        proposal_revision=0,
+        operation_id="operation-1",
+        proposal=proposal,
+        audit_rules="Check authority.",
+        consumer_skills=(
+            LoadedSkillReceipt(
+                "business-review",
+                "/installed/business-review/SKILL.md",
+                "a" * 64,
+            ),
+        ),
+    )
     return store, task, audit_context, parent
 
 
@@ -682,11 +698,12 @@ def test_scripted_audit_voluntarily_requires_revision_for_changed_skill_sha(
     assert store.get_agent_run(result.run_id).side_effect_state == "none"
 
 
-def test_scripted_audit_voluntarily_requires_revision_without_applicable_skill(setup):
+def test_audit_protocol_rejects_applicable_candidate_without_consumer_skill_receipt(
+    setup,
+):
     store, task, audit_context, parent = setup
-    executor = CapturingExecutor(
-        _revision_required_jsonl("No applicable business Skill was verified.")
-    )
+    audit_context = replace(audit_context, consumer_skills=())
+    executor = CapturingExecutor(_audit_jsonl("operation-1", session="would-execute"))
 
     result = AuditAgentRunner(
         store=store,
@@ -696,16 +713,22 @@ def test_scripted_audit_voluntarily_requires_revision_without_applicable_skill(s
 
     assert result.result.outcome.value == "revision_required"
     assert result.result.feedback is not None
-    assert "No applicable business Skill" in result.result.feedback.observation
+    assert "verified Consumer Skill receipt" in result.result.feedback.observation
+    assert executor.commands == []
     assert store.get_agent_run(result.run_id).tool_events == []
 
 
 def test_audit_instructions_require_dynamic_skill_reread_before_execution():
     instructions = audit_developer_instructions("test rules")
 
-    assert "Reread the exact verified Consumer Skill receipts" in instructions
-    assert "verify each sha256" in instructions
-    assert "required operation Skills" in instructions
+    assert (
+        "[dynamic-skill] Audit Agent B independently determines every business and "
+        "operation Skill applicable to the candidate, requires the corresponding "
+        "verified Consumer A receipt for each applicable Skill, rereads each exact "
+        "receipt path with `agent_cli.read_skill`, verifies its sha256, and returns "
+        "revision_required if any applicable receipt is absent, unreadable, changed, "
+        "or mismatched."
+    ) in instructions
     assert instructions.count("[dynamic-skill]") == 1
 
 

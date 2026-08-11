@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, Field
 
+import app.agent_skill_usage as agent_skill_usage
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
@@ -984,6 +985,7 @@ class ProtocolCodexExecutor:
         self.prompts: list[str] = []
         self.commands: list[list[str]] = []
         self.session_count = 0
+        self.consumer_skill_path: Path | None = None
 
     def __call__(self, command, *, prompt: str, **kwargs) -> ProcessRunResult:
         self.prompts.append(prompt)
@@ -994,7 +996,7 @@ class ProtocolCodexExecutor:
                 "type": "thread.started",
                 "thread_id": f"protocol-session-{self.session_count}",
             },
-            *self.records(prompt),
+            *self._records_with_consumer_skill_receipt(prompt),
         ]
         output = "\n".join(json.dumps(record) for record in records)
         callback = kwargs["on_stdout_line"]
@@ -1004,6 +1006,24 @@ class ProtocolCodexExecutor:
 
     def records(self, prompt: str) -> list[dict[str, object]]:
         raise NotImplementedError
+
+    def _records_with_consumer_skill_receipt(
+        self,
+        prompt: str,
+    ) -> list[dict[str, object]]:
+        records = self.records(prompt)
+        if "Candidate revision\n" in prompt or self.consumer_skill_path is None:
+            return records
+        if any(
+            isinstance(record.get("item"), dict)
+            and record["item"].get("tool") == "read_skill"
+            for record in records
+        ):
+            return records
+        return [
+            *_skill_read_events("protocol-consumer-skill", self.consumer_skill_path),
+            *records,
+        ]
 
 
 class ConfirmedFactProtocolExecutor(ProtocolCodexExecutor):
@@ -2369,7 +2389,7 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
             thread_id = "authorization-consumer-session"
         records = [
             {"type": "thread.started", "thread_id": thread_id},
-            *self.records(prompt),
+            *self._records_with_consumer_skill_receipt(prompt),
         ]
         output = "\n".join(json.dumps(record) for record in records)
         callback = kwargs["on_stdout_line"]
@@ -2938,6 +2958,7 @@ def _worker_with_protocol_executor(
     *,
     max_task_attempts: int = 3,
 ) -> tuple[DingTalkAutoReplyWorker, ContextOnlyDws]:
+    _install_protocol_skill(tmp_path, executor)
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
     dws = ContextOnlyDws(messages)
     orchestrator = AgentOrchestrator(
@@ -2971,6 +2992,22 @@ def _worker_with_protocol_executor(
     return worker, dws
 
 
+def _install_protocol_skill(
+    tmp_path: Path,
+    executor: ProtocolCodexExecutor,
+) -> None:
+    skill_root = tmp_path / "protocol-skills"
+    skill_path = skill_root / "protocol-business" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text("# Protocol business Skill\n", encoding="utf-8")
+    if skill_root not in agent_skill_usage.AGENT_SKILL_ROOTS:
+        agent_skill_usage.AGENT_SKILL_ROOTS = (
+            *agent_skill_usage.AGENT_SKILL_ROOTS,
+            skill_root,
+        )
+    executor.consumer_skill_path = skill_path
+
+
 def test_worker_refreshes_conversation_after_consumer_before_audit(tmp_path: Path):
     trigger = _message("Send the current target.")
     new_message = _message(
@@ -2980,6 +3017,7 @@ def test_worker_refreshes_conversation_after_consumer_before_audit(tmp_path: Pat
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
     dws = ContextOnlyDws([trigger])
     executor = ContextRefreshingProtocolExecutor(dws, new_message)
+    _install_protocol_skill(tmp_path, executor)
     orchestrator = AgentOrchestrator(
         store=store,
         consumer=ConsumerAgentRunner(
@@ -3027,6 +3065,7 @@ def test_oa_pending_scan_refresh_reuses_synthetic_trigger_without_chat_lookup(
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
     dws = ContextOnlyDws([trigger])
     executor = ContextRefreshingProtocolExecutor(dws, new_message)
+    _install_protocol_skill(tmp_path, executor)
     worker = DingTalkAutoReplyWorker(
         store=store,
         dws=dws,
@@ -3066,6 +3105,7 @@ def test_worker_defers_without_audit_when_context_refresh_fails(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
     dws = FailingRefreshDws([trigger])
     executor = ContextRefreshingProtocolExecutor(dws, new_message)
+    _install_protocol_skill(tmp_path, executor)
     worker = DingTalkAutoReplyWorker(
         store=store,
         dws=dws,

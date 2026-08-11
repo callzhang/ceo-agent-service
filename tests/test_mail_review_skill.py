@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
+
 import pytest
 
 
@@ -64,7 +66,7 @@ def test_canonical_prompt_delegates_mail_policy_to_skill():
 
     assert "如果已读完原邮件和依赖材料、当前消息明确授权回复邮件" not in text
     assert "决策 agent 不得直接发送邮件" not in text
-    assert "most specific applicable business Skill" in text
+    assert CORE_DYNAMIC_SKILL_BODY in text
     assert "agent_cli.read_skill" in text
     assert "2. [output_contracts] Output Contracts:" in text
 

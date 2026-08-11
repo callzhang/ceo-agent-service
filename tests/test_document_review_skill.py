@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
+
 import pytest
 
 
@@ -74,7 +76,7 @@ def test_canonical_prompt_delegates_document_review_judgment_to_skill():
     assert "如果新消息明确表示前一次依据的材料已经被修改" not in text
     assert "处理文档时，如果是钉钉文档可以用评论功能" not in text
     assert "普通钉钉文件不同于钉钉在线文档" not in text
-    assert "most specific applicable business Skill" in text
+    assert CORE_DYNAMIC_SKILL_BODY in text
     assert "agent_cli.read_skill" in text
     assert "2. [output_contracts] Output Contracts:" in text
 

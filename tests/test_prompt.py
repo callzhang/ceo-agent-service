@@ -30,6 +30,7 @@ from app.prompt import (
     sanitize_dingtalk_prompt_text,
     work_profile_instruction,
 )
+from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS
 from tests.prompt_structure import validate_prompt_structure
 
@@ -186,8 +187,9 @@ def test_canonical_default_prompt_keeps_only_runtime_invariants_and_skill_loadin
     validate_prompt_structure(
         template,
         contract_models=(),
-        require_audit_rules=False,
-        require_context_facts=False,
+        dynamic_skill_body=CORE_DYNAMIC_SKILL_BODY,
+        audit_rules=None,
+        context_facts=None,
         size_limit=3_000,
     )
 
@@ -217,7 +219,7 @@ def test_developer_prompt_delegates_latest_material_review_to_business_skill():
 
     assert "前一次依据的材料已经被修改、补充、评论确认或按要求更新" not in template
     assert "处理文档时，如果是钉钉文档可以用评论功能" not in template
-    assert "most specific applicable business Skill" in template
+    assert CORE_DYNAMIC_SKILL_BODY in template
     assert "agent_cli.read_skill" in template
 
 
@@ -237,7 +239,7 @@ def test_developer_prompt_leaves_solution_workflow_to_business_skills():
 
     assert "不要只讲方向、原则或抽象道理" not in template
     assert "回复必须给可执行建议" not in template
-    assert "most specific applicable business Skill" in template
+    assert CORE_DYNAMIC_SKILL_BODY in template
 
 
 def test_developer_prompt_delegates_output_shape_to_pydantic_contract():
@@ -618,7 +620,7 @@ def test_thread_prompt_delegates_direct_message_triage_to_business_skill():
     prompt = ceo_agent_thread_prompt()
 
     assert "明确要求 明哥 处理、确认、决策或对某个结论表态" not in prompt
-    assert "most specific applicable business Skill" in prompt
+    assert CORE_DYNAMIC_SKILL_BODY in prompt
     assert "agent_cli.read_skill" in prompt
 
 
@@ -807,7 +809,7 @@ def test_seed_prompt_delegates_calendar_rules_to_business_skills():
 
     assert "<var: calendar_rules_path>" not in prompt
     assert "agent_cli.read_skill" in prompt
-    assert "most specific applicable business Skill" in prompt
+    assert CORE_DYNAMIC_SKILL_BODY in prompt
 
 
 def test_thread_prompt_delegates_minutes_handling_to_business_skill():
@@ -815,7 +817,7 @@ def test_thread_prompt_delegates_minutes_handling_to_business_skill():
 
     assert "如果新消息或引用涉及“静默会”、AI 听记、会议纪要链接或会议材料" not in prompt
     assert "agent_cli.read_skill" in prompt
-    assert "most specific applicable business Skill" in prompt
+    assert CORE_DYNAMIC_SKILL_BODY in prompt
 
 
 def test_personnel_skill_delegates_candidate_evidence_to_specialist():

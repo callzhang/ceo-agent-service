@@ -35,6 +35,26 @@ from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_com
 SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "consumer_agent_wire.schema.json"
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
+CONSUMER_DYNAMIC_SKILL_SENTENCE = (
+    "Consumer Agent A independently selects and reads every applicable business and "
+    "operation Skill with `agent_cli.read_skill` before forming the candidate."
+)
+AUDIT_DYNAMIC_SKILL_SENTENCE = (
+    "Audit Agent B independently determines every business and operation Skill "
+    "applicable to the candidate, requires the corresponding verified Consumer A "
+    "receipt for each applicable Skill, rereads each exact receipt path with "
+    "`agent_cli.read_skill`, verifies its sha256, and returns revision_required if "
+    "any applicable receipt is absent, unreadable, changed, or mismatched."
+)
+CONSUMER_DYNAMIC_SKILL_BODY = (
+    f"{DYNAMIC_SKILL_MARKER} {CONSUMER_DYNAMIC_SKILL_SENTENCE}"
+)
+AUDIT_DYNAMIC_SKILL_BODY = (
+    f"{DYNAMIC_SKILL_MARKER} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
+)
+CORE_DYNAMIC_SKILL_BODY = (
+    f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
+)
 
 
 def consumer_wire_contract_hash() -> str:
@@ -271,10 +291,7 @@ class ConsumerAgentRunner:
 def consumer_developer_instructions(audit_rules: str) -> str:
     return _developer_instructions(
         audit_rules=audit_rules,
-        skill_instruction=(
-            "Select and read the most specific applicable business Skill with "
-            "`agent_cli.read_skill`, then read every operation Skill it requires."
-        ),
+        skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
         wire_model=ConsumerAgentWireResult,
         result_model=ConsumerAgentResult,
     )
@@ -283,11 +300,7 @@ def consumer_developer_instructions(audit_rules: str) -> str:
 def audit_developer_instructions(audit_rules: str) -> str:
     return _developer_instructions(
         audit_rules=audit_rules,
-        skill_instruction=(
-            "Reread the exact verified Consumer Skill receipts supplied in Context "
-            "Facts with `agent_cli.read_skill`, verify each sha256, and read all "
-            "required operation Skills before review or execution."
-        ),
+        skill_instruction=AUDIT_DYNAMIC_SKILL_BODY,
         wire_model=AuditAgentWireResult,
         result_model=AuditAgentResult,
     )
@@ -303,7 +316,7 @@ def _developer_instructions(
     return "\n\n".join(
         (
             f"## Audit Rules\n{audit_rules}",
-            f"## Dynamic Skill\n{DYNAMIC_SKILL_MARKER} {skill_instruction}",
+            f"## Dynamic Skill\n{skill_instruction}",
             f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
             f"## Pydantic Result Contract\n{_schema_json(result_model)}",
         )

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
+
 import pytest
 
 
@@ -62,7 +64,7 @@ def test_developer_prompts_delegate_calendar_policy_to_business_skills():
     text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
 
     assert "<var: calendar_rules_path>" not in text
-    assert "most specific applicable business Skill" in text
+    assert CORE_DYNAMIC_SKILL_BODY in text
     assert "agent_cli.read_skill" in text
     assert "最具体适用的业务 Skill" not in text
     assert "Pydantic output contract" in text

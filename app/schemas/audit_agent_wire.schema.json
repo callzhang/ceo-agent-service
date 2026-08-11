@@ -23,6 +23,231 @@
     }
   },
   "additionalProperties": false,
+  "anyOf": [
+    {
+      "properties": {
+        "outcome": {
+          "const": "executed"
+        },
+        "side_effect_state": {
+          "const": "confirmed"
+        },
+        "feedback_json": {
+          "type": "null"
+        },
+        "external_result_json": {
+          "contentMediaType": "application/json",
+          "contentSchema": {
+            "$id": "urn:ceo-agent:audit-external-result",
+            "additionalProperties": false,
+            "properties": {
+              "operation_id": {
+                "minLength": 1,
+                "title": "Operation Id",
+                "type": "string"
+              },
+              "verification_summary": {
+                "minLength": 1,
+                "title": "Verification Summary",
+                "type": "string"
+              },
+              "live_result_reference": {
+                "additionalProperties": {},
+                "title": "Live Result Reference",
+                "type": "object"
+              }
+            },
+            "required": [
+              "operation_id",
+              "verification_summary",
+              "live_result_reference"
+            ],
+            "title": "AuditExternalResult",
+            "type": "object"
+          },
+          "minLength": 1,
+          "type": "string"
+        },
+        "reconciliation_json": {
+          "contentMediaType": "application/json",
+          "contentSchema": {
+            "$id": "urn:ceo-agent:empty-array",
+            "maxItems": 0,
+            "type": "array"
+          },
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "const": "revision_required"
+        },
+        "side_effect_state": {
+          "const": "none"
+        },
+        "feedback_json": {
+          "contentMediaType": "application/json",
+          "contentSchema": {
+            "$id": "urn:ceo-agent:audit-feedback",
+            "additionalProperties": false,
+            "properties": {
+              "rule": {
+                "minLength": 1,
+                "title": "Rule",
+                "type": "string"
+              },
+              "observation": {
+                "minLength": 1,
+                "title": "Observation",
+                "type": "string"
+              },
+              "requested_revision": {
+                "minLength": 1,
+                "title": "Requested Revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule",
+              "observation",
+              "requested_revision"
+            ],
+            "title": "AuditFeedback",
+            "type": "object"
+          },
+          "minLength": 1,
+          "type": "string"
+        },
+        "external_result_json": {
+          "type": "null"
+        },
+        "reconciliation_json": {
+          "contentMediaType": "application/json",
+          "contentSchema": {
+            "$id": "urn:ceo-agent:empty-array",
+            "maxItems": 0,
+            "type": "array"
+          },
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "const": "unknown"
+        },
+        "side_effect_state": {
+          "const": "unknown"
+        },
+        "feedback_json": {
+          "type": "null"
+        },
+        "external_result_json": {
+          "type": "null"
+        },
+        "reconciliation_json": {
+          "contentMediaType": "application/json",
+          "contentSchema": {
+            "$id": "urn:ceo-agent:empty-array",
+            "maxItems": 0,
+            "type": "array"
+          },
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "const": "reconciled"
+        },
+        "side_effect_state": {
+          "const": "unknown"
+        },
+        "feedback_json": {
+          "type": "null"
+        },
+        "external_result_json": {
+          "type": "null"
+        },
+        "reconciliation_json": {
+          "contentMediaType": "application/json",
+          "contentSchema": {
+            "$id": "urn:ceo-agent:audit-reconciliation",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "action_index": {
+                  "minimum": 0,
+                  "title": "Action Index",
+                  "type": "integer"
+                },
+                "disposition": {
+                  "enum": [
+                    "present",
+                    "absent",
+                    "ambiguous"
+                  ],
+                  "title": "ReconciliationDisposition",
+                  "type": "string"
+                },
+                "read_result_digest": {
+                  "minLength": 1,
+                  "title": "Read Result Digest",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action_index",
+                "disposition",
+                "read_result_digest"
+              ],
+              "title": "AuditReconciliation",
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "enum": [
+            "needs_human",
+            "failed"
+          ]
+        },
+        "side_effect_state": {
+          "const": "none"
+        },
+        "feedback_json": {
+          "type": "null"
+        },
+        "external_result_json": {
+          "type": "null"
+        },
+        "reconciliation_json": {
+          "contentMediaType": "application/json",
+          "contentSchema": {
+            "$id": "urn:ceo-agent:empty-array",
+            "maxItems": 0,
+            "type": "array"
+          },
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    }
+  ],
   "description": "Strict-output transport form for Audit B dynamic result fields.",
   "properties": {
     "outcome": {
@@ -44,26 +269,126 @@
     "feedback_json": {
       "anyOf": [
         {
+          "minLength": 1,
           "type": "string"
         },
         {
           "type": "null"
         }
       ],
+      "contentMediaType": "application/json",
+      "contentSchema": {
+        "$id": "urn:ceo-agent:audit-feedback",
+        "additionalProperties": false,
+        "properties": {
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          },
+          "observation": {
+            "minLength": 1,
+            "title": "Observation",
+            "type": "string"
+          },
+          "requested_revision": {
+            "minLength": 1,
+            "title": "Requested Revision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "observation",
+          "requested_revision"
+        ],
+        "title": "AuditFeedback",
+        "type": "object"
+      },
+      "description": "JSON-encoded AuditFeedback, or null outside revision_required.",
       "title": "Feedback Json"
     },
     "external_result_json": {
       "anyOf": [
         {
+          "minLength": 1,
           "type": "string"
         },
         {
           "type": "null"
         }
       ],
+      "contentMediaType": "application/json",
+      "contentSchema": {
+        "$id": "urn:ceo-agent:audit-external-result",
+        "additionalProperties": false,
+        "properties": {
+          "operation_id": {
+            "minLength": 1,
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "verification_summary": {
+            "minLength": 1,
+            "title": "Verification Summary",
+            "type": "string"
+          },
+          "live_result_reference": {
+            "additionalProperties": {},
+            "title": "Live Result Reference",
+            "type": "object"
+          }
+        },
+        "required": [
+          "operation_id",
+          "verification_summary",
+          "live_result_reference"
+        ],
+        "title": "AuditExternalResult",
+        "type": "object"
+      },
+      "description": "JSON-encoded AuditExternalResult, or null outside executed.",
       "title": "External Result Json"
     },
     "reconciliation_json": {
+      "contentMediaType": "application/json",
+      "contentSchema": {
+        "$id": "urn:ceo-agent:audit-reconciliation",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "action_index": {
+              "minimum": 0,
+              "title": "Action Index",
+              "type": "integer"
+            },
+            "disposition": {
+              "enum": [
+                "present",
+                "absent",
+                "ambiguous"
+              ],
+              "title": "ReconciliationDisposition",
+              "type": "string"
+            },
+            "read_result_digest": {
+              "minLength": 1,
+              "title": "Read Result Digest",
+              "type": "string"
+            }
+          },
+          "required": [
+            "action_index",
+            "disposition",
+            "read_result_digest"
+          ],
+          "title": "AuditReconciliation",
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "description": "JSON-encoded array of AuditReconciliation entries.",
+      "minLength": 1,
       "title": "Reconciliation Json",
       "type": "string"
     },

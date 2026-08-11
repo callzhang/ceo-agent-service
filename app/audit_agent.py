@@ -90,6 +90,8 @@ class AuditAgentRunner:
             raise RuntimeError("agent_run_unavailable")
         if image_failure := self._image_dependency_failure(claim.run, context):
             return image_failure
+        if not context.consumer_skills:
+            return self._return_missing_skill_receipts(claim.run)
         invalid_actions = _invalid_operation_contracts(context, self.effects)
         if invalid_actions:
             return self._return_invalid_candidate(
@@ -283,6 +285,46 @@ class AuditAgentRunner:
                     "Return the same intended operation with an operation label that "
                     "matches the exact argv and with --yes on every DWS write; do not "
                     "change its target or business payload."
+                ),
+            ),
+            external_result=None,
+            reconciliation=(),
+            error=AgentError(),
+        )
+        completed = self.store.complete_agent_run(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=self.owner,
+            side_effect_state=SideEffectState.NONE.value,
+        )
+        return AgentTurnRunResult(
+            run_id=run.id,
+            result=result,
+            transcript_start_line=completed.transcript_end_line,
+            transcript_end_line=completed.transcript_end_line,
+        )
+
+    def _return_missing_skill_receipts(
+        self,
+        run: AgentRun,
+    ) -> AgentTurnRunResult[AuditAgentResult]:
+        result = AuditAgentResult(
+            outcome=AuditOutcome.REVISION_REQUIRED,
+            summary="The candidate has no verified Consumer Skill receipt.",
+            proposal_revision=run.proposal_revision,
+            side_effect_state=SideEffectState.NONE,
+            feedback=AuditFeedback(
+                rule=(
+                    "Every applicable business and operation Skill requires a "
+                    "verified Consumer A receipt before Audit can execute."
+                ),
+                observation=(
+                    "The applicable candidate contains actions but no verified "
+                    "Consumer Skill receipt was supplied."
+                ),
+                requested_revision=(
+                    "Consumer Agent A must independently read all applicable Skills "
+                    "and return a replacement candidate with verified receipts."
                 ),
             ),
             external_result=None,
