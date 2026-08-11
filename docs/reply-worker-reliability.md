@@ -384,6 +384,9 @@ service delivery ledger as its identity. The Agent's free-form operation label
 does not decide whether an action is a message send. When the exact trigger has
 no delivery record, the unknown run is closed as absent and the task rotates to
 a fresh generation; the old write is never replayed.
+The same rule applies when a proposal also contains other actions. The fresh
+Consumer generation must read their live state and propose only work that remains
+necessary, so a missing notification cannot cause an approval to be replayed.
 On service startup, unfinished unknown Audit reconciliation leases are released
 immediately. The next worker pass continues the read-only reconciliation; it
 does not mark the old external action as absent or replay it because of restart.

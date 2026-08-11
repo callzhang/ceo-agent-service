@@ -515,13 +515,11 @@ def _database_delivery_absence_reconciliation(
     context: AuditTurnContext,
     run: AgentRun,
 ) -> bool:
-    """Use the service delivery ledger for an all-direct-chat unknown outcome."""
+    """Replan unknown work when any direct delivery lacks its ledger record."""
     if store.has_sent_reply_for_trigger(task.conversation_id, task.trigger_message_id):
         return False
     actions = context.proposal.actions
-    if not actions or not all(_is_direct_chat_send(action) for action in actions):
-        return False
-    return True
+    return any(_is_direct_chat_send(action) for action in actions)
 
 
 def _is_direct_chat_send(action: object) -> bool:

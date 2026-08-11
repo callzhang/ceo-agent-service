@@ -1057,61 +1057,39 @@ def test_recovery_keeps_a_specific_audit_failure_code(setup, monkeypatch):
     )
 
 
-def test_direct_chat_unknown_without_delivery_record_replays_through_recovery(
-    setup,
-):
+def test_missing_delivery_ledger_does_not_prove_unknown_chat_was_not_sent(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
-    executor = CapturingExecutor("")
-    direct_proposal = ConsumerProposal.model_validate(
-        {
-            "objective": "Send direct result",
-            "actions": [
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "reconciled",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            reconciliation=[
                 {
-                    "description": "Send direct message",
-                    "capability": "agent_cli.dws",
-                    "operation": "chat message send",
-                    "target": {"open_dingtalk_id": "direct-user"},
-                    "payload": {
-                        "argv": [
-                            "dws",
-                            "chat",
-                            "message",
-                            "send",
-                            "--open-dingtalk-id",
-                            "direct-user",
-                            "--text",
-                            "done",
-                            "--yes",
-                        ]
-                    },
-                    "expected_verification": "Message exists",
+                    "action_index": 0,
+                    "disposition": "ambiguous",
+                    "read_result_digest": "recovery-read-digest",
                 }
             ],
-            "sourced_facts": [],
-            "authored_judgment": "Requested by Derek",
-        }
+        )
     )
-    direct_context = replace(audit_context, proposal=direct_proposal)
 
     result = AuditAgentRunner(
         store=store,
         workspace=Path("/workspace"),
         executor=executor,
-    ).recover(task, direct_context, run=run)
+    ).recover(task, audit_context, run=run)
 
     persisted = store.get_agent_run(run.id)
-    requeued = store.get_reply_task(task.id)
-    assert result.result.outcome.value == "failed"
-    assert persisted is not None and persisted.status == "failed"
-    assert persisted.side_effect_state == "none"
-    assert requeued is not None and requeued.status == "pending"
-    assert requeued.execution_generation != task.execution_generation
-    assert executor.commands == []
+    assert result.result.outcome.value == "reconciled"
+    assert result.result.reconciliation[0].disposition.value == "ambiguous"
+    assert persisted is not None and persisted.status == "unknown"
+    assert store.get_reply_task(task.id).execution_generation == task.execution_generation
+    assert executor.commands
 
 
-def test_mixed_unknown_does_not_treat_missing_sent_reply_as_delivery_absence(setup):
+def test_mixed_unknown_replans_when_direct_delivery_lacks_ledger_record(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
-    executor = CapturingExecutor("", returncode=1)
     mixed_proposal = ConsumerProposal.model_validate(
         {
             "objective": "Approve and notify",
@@ -1138,17 +1116,18 @@ def test_mixed_unknown_does_not_treat_missing_sent_reply_as_delivery_absence(set
     )
     mixed_context = replace(audit_context, proposal=mixed_proposal)
 
-    with pytest.raises(RuntimeError, match="codex_process_failed"):
-        AuditAgentRunner(
-            store=store,
-            workspace=Path("/workspace"),
-            executor=executor,
-        ).recover(task, mixed_context, run=run)
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor("", returncode=1),
+    ).recover(task, mixed_context, run=run)
 
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
-    assert executor.commands
-    assert "Unknown outcome recovery" in executor.prompts[0]
+    requeued = store.get_reply_task(task.id)
+    assert result.result.outcome.value == "failed"
+    assert persisted is not None and persisted.status == "failed"
+    assert requeued is not None and requeued.status == "pending"
+    assert requeued.execution_generation != task.execution_generation
 
 
 def test_historical_direct_chat_alias_without_delivery_record_rotates_generation(
@@ -1286,9 +1265,7 @@ def test_controlled_group_chat_uses_reviewed_command_identity_for_delivery_recov
     assert executor.commands == []
 
 
-def test_persisted_direct_chat_recovery_without_delivery_record_rotates_generation(
-    setup, monkeypatch,
-):
+def test_completed_recovery_action_overrides_older_absent_reconciliation(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     runner = AuditAgentRunner(
         store=store,
@@ -1312,52 +1289,59 @@ def test_persisted_direct_chat_recovery_without_delivery_record_rotates_generati
     runner.recover(task, audit_context, run=run)
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.status == "unknown"
-
-    direct_proposal = ConsumerProposal.model_validate(
-        {
-            "objective": "Send direct result",
-            "actions": [
-                {
-                    "description": "Send direct message",
-                    "capability": "agent_cli.dws",
-                    "operation": "chat message send",
-                    "target": {"open_dingtalk_id": "direct-user"},
-                    "payload": {
-                        "argv": [
-                            "dws", "chat", "+messages-send", "--as", "user",
-                            "--open-dingtalk-id", "direct-user",
-                            "--text", "done", "--yes",
-                        ]
-                    },
-                    "expected_verification": "Message exists",
-                }
-            ],
-            "sourced_facts": [],
-            "authored_judgment": "Requested by Derek",
-        }
+    claim = store.claim_unknown_agent_run(run.id, owner="completed-recovery")
+    assert claim.claimed
+    expected = _expected_effect_action(
+        audit_context.proposal.actions[0],
+        McpToolEffectRegistry.default(),
+        action_index=0,
     )
+    metadata = {
+        **expected,
+        "effect": "effectful",
+        "operation_id": run.operation_id,
+        "action_index": 0,
+        "native_cli": "dws",
+        "result_digest": "completed-write-digest",
+    }
+    for event_type in ("item.started", "item.completed"):
+        store.append_unknown_agent_run_event(
+            run.id,
+            {
+                "type": event_type,
+                "item": {
+                    "type": "mcp_tool_call",
+                    "id": "recovery-write",
+                    "server": "agent_cli",
+                    "tool": "execute_reviewed_write",
+                    "status": "completed" if event_type == "item.completed" else "in_progress",
+                    "metadata": metadata,
+                },
+            },
+            owner="completed-recovery",
+        )
+    store.persist_unknown_agent_run_result(
+        run.id,
+        json.loads(persisted.final_result_json),
+        owner="completed-recovery",
+        transcript_end_line=persisted.transcript_end_line,
+    )
+
+    executor = CapturingExecutor("")
     execute = AuditAgentRunner(
         store=store,
         workspace=Path("/workspace"),
-        executor=CapturingExecutor(""),
-    )
-    monkeypatch.setattr(
-        "app.audit_agent._recovery_authorizations",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("authorization must not be built for an absent delivery")
-        ),
+        executor=executor,
     )
 
     result = execute.execute_recovery(
-        task, replace(audit_context, proposal=direct_proposal), run=persisted
+        task, audit_context, run=store.get_agent_run(run.id)
     )
 
-    requeued = store.get_reply_task(task.id)
-    assert result.result.error is not None
-    assert result.result.error.code == "persisted_delivery_absent"
-    assert store.get_agent_run(run.id).status == "failed"
-    assert requeued is not None and requeued.execution_generation != task.execution_generation
-    assert execute.executor.commands == []
+    assert result.result.outcome.value == "executed"
+    assert result.result.side_effect_state.value == "confirmed"
+    assert store.get_agent_run(run.id).status == "completed"
+    assert executor.commands == []
 
 
 def test_controlled_receipt_uses_command_digest_not_display_operation_name():
