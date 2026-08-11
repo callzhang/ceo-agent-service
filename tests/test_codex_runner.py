@@ -779,7 +779,7 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message(monkey
     )
     instructions = codex_developer_instructions()
 
-    assert instructions.startswith("## Role\n")
+    assert instructions.startswith("## Runtime Invariants\n")
     assert "Consumer Agent A is 明哥's read-only representative" in instructions
     assert "agent_cli.read_skill" in instructions
     assert "星尘数据的CEO，负责算法部、售前部、市场部、HR部的工作。" not in instructions

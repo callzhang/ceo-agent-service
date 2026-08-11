@@ -269,8 +269,7 @@ class ConsumerAgentRunner:
 
 
 def consumer_developer_instructions(audit_rules: str) -> str:
-    return _role_developer_instructions(
-        role="Consumer Agent A is Derek's read-only representative.",
+    return _developer_instructions(
         audit_rules=audit_rules,
         skill_instruction=(
             "Select and read the most specific applicable business Skill with "
@@ -282,8 +281,7 @@ def consumer_developer_instructions(audit_rules: str) -> str:
 
 
 def audit_developer_instructions(audit_rules: str) -> str:
-    return _role_developer_instructions(
-        role="Audit Agent B independently reviews and executes accepted candidates.",
+    return _developer_instructions(
         audit_rules=audit_rules,
         skill_instruction=(
             "Reread the exact verified Consumer Skill receipts supplied in Context "
@@ -295,9 +293,8 @@ def audit_developer_instructions(audit_rules: str) -> str:
     )
 
 
-def _role_developer_instructions(
+def _developer_instructions(
     *,
-    role: str,
     audit_rules: str,
     skill_instruction: str,
     wire_model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
@@ -305,7 +302,6 @@ def _role_developer_instructions(
 ) -> str:
     return "\n\n".join(
         (
-            f"## Role\n{role}",
             f"## Audit Rules\n{audit_rules}",
             f"## Dynamic Skill\n{DYNAMIC_SKILL_MARKER} {skill_instruction}",
             f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
