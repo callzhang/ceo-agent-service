@@ -5936,6 +5936,88 @@ def test_wechat_consumer_waits_for_codex_authentication(
     assert state["reason_code"] == "status_auth_required"
 
 
+def test_wechat_consumer_recovers_unsent_auth_failures_when_codex_recovers(
+    monkeypatch,
+    tmp_path,
+):
+    import time
+
+    from app.channel_gate import ChannelGateResult, ChannelGateState
+
+    class StopLoop(Exception):
+        pass
+
+    class ReadyCodexGate:
+        def check(self):
+            return ChannelGateResult(
+                channel="codex",
+                state=ChannelGateState.READY,
+                reason_code="ready",
+            )
+
+    db = tmp_path / "w.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a1",
+        account_dir="/a1",
+        db_dir="/a1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+    )
+    store.set_service_state(
+        "channel_gate:codex",
+        json.dumps({"status": "needs_login", "reason_code": "status_auth_required"}),
+    )
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="u1",
+        conversation_title="Alex",
+        single_chat=True,
+        trigger_message_id="m1",
+        trigger_create_time="2026-08-10 10:00:00",
+        trigger_sender="Alex",
+        trigger_text="please reply",
+    )
+    task = store.claim_reply_tasks(1, channel="wechat")[0]
+    store.finalize_wechat_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        action="stop_with_error",
+        sensitivity_kind="general",
+        codex_reason="provider authentication unavailable",
+        draft_reply_text="",
+        audit_summary="decision not started",
+        send_status="failed",
+        send_error="codex_provider_auth_failed: status_auth_required",
+        task_status="failed",
+    )
+    settings = SimpleNamespace(
+        db_path=db,
+        workspace=tmp_path,
+        codex_timeout_seconds=30,
+        codex_idle_timeout_seconds=30,
+    )
+    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
+    monkeypatch.setattr("app.channel_gate.CodexChannelGate", ReadyCodexGate)
+    consumed = []
+    monkeypatch.setattr(
+        "app.wechat.service.run_consume_once",
+        lambda *a, **k: consumed.append(True),
+    )
+    monkeypatch.setattr(time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopLoop))
+
+    with pytest.raises(StopLoop):
+        cli._run_wechat_loop(settings, "consumer")
+
+    recovered = store.get_reply_task(task.id)
+    assert recovered is not None
+    assert recovered.status == "pending"
+    assert recovered.force_new_decision is True
+    assert recovered.execution_generation != task.execution_generation
+    assert consumed == [True]
+
+
 def test_wechat_loop_pauses_after_reader_reports_app_data_denial(
     monkeypatch,
     tmp_path,
