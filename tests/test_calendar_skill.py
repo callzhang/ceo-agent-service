@@ -6,7 +6,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = ROOT / "skills" / "ceo-calendar-invite" / "SKILL.md"
 DEFAULT_PROMPT_PATH = ROOT / "app" / "defaults" / "developer_prompt.md"
-RUNTIME_PROMPT_PATH = ROOT / "data" / "prompts" / "developer_prompt.md"
 
 
 def _skill_text() -> str:
@@ -60,17 +59,19 @@ def test_calendar_skill_defines_complete_read_and_decision_workflow():
 
 
 def test_developer_prompts_delegate_calendar_policy_to_business_skills():
-    default_text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
-    prompt_texts = [default_text]
-    if RUNTIME_PROMPT_PATH.is_file():
-        runtime_text = RUNTIME_PROMPT_PATH.read_text(encoding="utf-8")
-        assert runtime_text == default_text
-        prompt_texts.append(runtime_text)
+    text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
 
-    for text in prompt_texts:
-        assert "<var: calendar_rules_path>" not in text
-        assert "涉及专业业务流程时" in text
-        assert "agent_cli.read_skill" in text
-        assert "最具体适用的业务 Skill" in text
-        assert "只输出合法 JSON" in text
-        assert "user_response.mode 必须是" in text
+    assert "<var: calendar_rules_path>" not in text
+    assert "涉及专业业务流程时" in text
+    assert "agent_cli.read_skill" in text
+    assert "最具体适用的业务 Skill" in text
+    assert "只输出合法 JSON" in text
+    assert "user_response.mode 必须是" in text
+
+
+def test_runtime_developer_prompt_is_ignored_deployment_state():
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+    # Task 10 deploys and reads back this installation-local copy explicitly.
+    # Code tests cover only the canonical seed and never assume prompt equality.
+    assert "data/prompts/" in gitignore

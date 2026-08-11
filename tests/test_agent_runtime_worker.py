@@ -1006,12 +1006,15 @@ class ConfirmedFactProtocolExecutor(ProtocolCodexExecutor):
 
 class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
     question = "What specific decision or input do you need from Derek in this meeting?"
+    message_text = f"<@inviter-1> {question}"
 
     def __init__(self, skill_paths: dict[str, Path]) -> None:
         super().__init__()
         self.skill_paths = skill_paths
         self.event_reads = 0
         self.sent_questions = 0
+        self.question_write_command = ""
+        self.question_verify_command = ""
         self.consumer_loaded_skills: list[str] = []
         self.audit_loaded_skills: list[str] = []
 
@@ -1042,7 +1045,10 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
                 "event_id": "event-1",
                 "title": "Portfolio review",
                 "time": "2026-07-30 10:00",
-                "organizer": {"name": "Inviter", "user_id": "inviter-1"},
+                "organizer": {
+                    "name": "Inviter",
+                    "open_dingtalk_id": "inviter-1",
+                },
                 "attendees": ["Derek", "Inviter"],
                 "description": "Review the portfolio.",
                 "comments": [],
@@ -1075,28 +1081,32 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
                         "description": "Ask the verified inviter one factual question.",
                         "capability": "agent_cli.dws",
                         "operation": "chat message send",
-                        "target": {"user": "inviter-1"},
+                        "target": {"group": "cid-1"},
                         "payload": {
                             "argv": [
                                 "dws",
                                 "chat",
                                 "message",
                                 "send",
-                                "--user",
+                                "--group",
+                                "cid-1",
+                                "--at-open-dingtalk-ids",
                                 "inviter-1",
                                 "--text",
-                                self.question,
+                                self.message_text,
                                 "--yes",
                             ]
                         },
                         "expected_verification": (
-                            "Read the inviter chat and find the exact question."
+                            "Read the source group and find the exact addressed question."
                         ),
                     }
                 ],
                 "sourced_facts": [
                     {
-                        "assertion": "The verified inviter is inviter-1.",
+                        "assertion": (
+                            "The verified inviter openDingTalk ID is inviter-1."
+                        ),
                         "references": ["calendar event event-1"],
                     }
                 ],
@@ -1122,13 +1132,16 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
         assert {item["name"] for item in verified_skills} == set(self.skill_paths)
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
-        assert action["target"] == {"user": "inviter-1"}
-        assert action["payload"]["argv"][-2] == self.question
+        assert action["target"] == {"group": "cid-1"}
+        assert action["payload"]["argv"][-2] == self.message_text
+        assert "--user" not in action["payload"]["argv"]
 
         write_command = shlex.join(action["payload"]["argv"])
         verify_command = (
-            "dws chat message list --user inviter-1 --time 2026-07-29"
+            "dws chat message list --group cid-1 --time 2026-07-29"
         )
+        self.question_write_command = write_command
+        self.question_verify_command = verify_command
         self.sent_questions += 1
         records.extend(
             (
@@ -1152,7 +1165,12 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
                     output=json.dumps(
                         {
                             "messages": [
-                                {"message_id": "question-1", "text": self.question}
+                                {
+                                    "message_id": "question-1",
+                                    "conversation_id": "cid-1",
+                                    "mentioned_open_dingtalk_ids": ["inviter-1"],
+                                    "text": self.message_text,
+                                }
                             ]
                         }
                     ),
@@ -1165,7 +1183,8 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
                         operation_id=str(candidate["operation_id"]),
                         live_reference={
                             "event_id": "event-1",
-                            "inviter_user_id": "inviter-1",
+                            "conversation_id": "cid-1",
+                            "inviter_open_dingtalk_id": "inviter-1",
                             "message_id": "question-1",
                         },
                     )
@@ -3346,6 +3365,20 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
     assert executor.sent_questions == 1
     assert "dws calendar event get --id event-1 --format json" in executor.prompts[0]
     assert CalendarClarificationProtocolExecutor.question in executor.prompts[1]
+    candidate = _prompt_json_section(executor.prompts[1], "Candidate revision\n")
+    action = candidate["proposal"]["actions"][0]
+    argv = action["payload"]["argv"]
+    assert action["target"] == {"group": "cid-1"}
+    assert argv[argv.index("--group") + 1] == "cid-1"
+    assert argv[argv.index("--at-open-dingtalk-ids") + 1] == "inviter-1"
+    assert "<@inviter-1>" in argv[argv.index("--text") + 1]
+    assert "--user" not in argv
+    assert "--group cid-1" in executor.question_write_command
+    assert "--user" not in executor.question_write_command
+    assert executor.question_verify_command == (
+        "dws chat message list --group cid-1 --time 2026-07-29"
+    )
+    assert "--user" not in executor.question_verify_command
 
 
 @pytest.mark.parametrize(

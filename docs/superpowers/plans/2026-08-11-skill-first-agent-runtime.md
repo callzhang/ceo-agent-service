@@ -34,7 +34,7 @@ Modify these runtime units:
 - `app/audit_agent.py`: require B to reread every verified business Skill used by A.
 - `app/agent_orchestrator.py`: transport receipts from the completed Consumer run to Audit context.
 - `app/task_agent.py`: replace the long work-item policy prompt with `ceo-work-tracking` Skill content plus the strict output contract.
-- `data/prompts/developer_prompt.md` and `app/defaults/developer_prompt.md`: remove migrated domain rules from the superseded generic prompt while keeping one Skill-loading instruction for any remaining legacy invocation.
+- `app/defaults/developer_prompt.md`: remove migrated domain rules from the canonical seed while keeping one Skill-loading instruction for any remaining legacy invocation. The ignored `data/prompts/developer_prompt.md` is installation-local deployment state and is never silently overwritten by code.
 - `docs/architecture.md`, `docs/product-logic.md`, and `docs/message-routing-rules.md`: document the Skill-first source of business behavior.
 
 Core rules that remain always loaded and must not move into a Skill:
@@ -345,7 +345,6 @@ git commit -m "feat: verify business skills across consumer and audit"
 
 **Files:**
 - Modify: `skills/ceo-calendar-invite/SKILL.md`
-- Modify: `data/prompts/developer_prompt.md`
 - Modify: `app/defaults/developer_prompt.md`
 - Test: `tests/test_calendar_skill.py`
 - Test: `tests/test_agent_runtime_worker.py`
@@ -367,7 +366,7 @@ CALENDAR_CASES = (
 )
 ```
 
-The E2E fixture for `missing_attendance_value` must assert that A reads the calendar Skill and exact calendar event command, proposes one concrete question to the verified inviter, B rereads the Skill, sends the question, and verifies the sent message. It must not end as `needs_human`.
+The E2E fixture for `missing_attendance_value` must assert that A reads the calendar Skill and exact calendar event command, proposes one concrete question addressing the verified inviter in the source group chat, B rereads the Skill, sends the question without opening a direct chat, and verifies the sent group message. It must not end as `needs_human`.
 
 - [ ] **Step 2: Run calendar tests and verify the current A/B gap**
 
@@ -391,9 +390,9 @@ The Skill body must contain these rules verbatim in meaning:
 10. If the silent-meeting task lacks its referenced material, ask for that exact material.
 11. B rereads live event state before execution and suppresses only an already-applied exact response or already-sent exact clarification.
 
-- [ ] **Step 4: Remove the calendar paragraph from both generic prompt copies**
+- [ ] **Step 4: Remove the calendar paragraph from the canonical prompt seed**
 
-Delete the domain paragraph beginning `如果新消息涉及日程、日历邀请或会议安排` from both prompt files. Keep only the generic instruction to load the applicable business Skill.
+Delete the domain paragraph beginning `如果新消息涉及日程、日历邀请或会议安排` from `app/defaults/developer_prompt.md`. Keep only the generic instruction to load the applicable business Skill. Do not overwrite or commit the ignored installation-local `data/prompts/developer_prompt.md`; Task 10 synchronizes and reads it back explicitly during deployment after preserving user customization.
 
 - [ ] **Step 5: Run calendar unit and live-contract E2E tests**
 
@@ -404,7 +403,7 @@ Expected: PASS, including the clarification-delivery case.
 - [ ] **Step 6: Commit the calendar pilot**
 
 ```bash
-git add skills/ceo-calendar-invite data/prompts/developer_prompt.md app/defaults/developer_prompt.md tests/test_calendar_skill.py tests/test_agent_runtime_worker.py tests/e2e/test_consumer_audit_live.py
+git add skills/ceo-calendar-invite app/defaults/developer_prompt.md tests/test_calendar_skill.py tests/test_agent_runtime_worker.py tests/e2e/test_consumer_audit_live.py
 git commit -m "feat: move calendar decisions into a business skill"
 ```
 
@@ -766,6 +765,8 @@ git commit -m "test: add skill-first agent runtime evaluations"
 ```
 
 ### Task 10: Document, Verify, Deploy, And Read Back Production
+
+Deployment must explicitly synchronize the current installation's ignored `data/prompts/developer_prompt.md` after preserving or confirming any user customization, then read the installed file back. Code and upgrades modify only the canonical `app/defaults/developer_prompt.md` seed and must never silently overwrite the installation-local prompt.
 
 **Files:**
 - Modify: `docs/architecture.md`

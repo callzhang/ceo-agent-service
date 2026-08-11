@@ -16,6 +16,7 @@ from tests.test_agent_runtime_worker import (
     CalendarClarificationProtocolExecutor,
     _enqueue,
     _message,
+    _prompt_json_section,
     _worker_with_protocol_executor,
 )
 
@@ -96,6 +97,20 @@ def test_scripted_calendar_clarification_is_executed_without_human_handoff(
     assert executor.event_reads == 2
     assert executor.sent_questions == 1
     assert CalendarClarificationProtocolExecutor.question in executor.prompts[1]
+    candidate = _prompt_json_section(executor.prompts[1], "Candidate revision\n")
+    action = candidate["proposal"]["actions"][0]
+    argv = action["payload"]["argv"]
+    assert action["target"] == {"group": "cid-1"}
+    assert argv[argv.index("--group") + 1] == "cid-1"
+    assert argv[argv.index("--at-open-dingtalk-ids") + 1] == "inviter-1"
+    assert "<@inviter-1>" in argv[argv.index("--text") + 1]
+    assert "--user" not in argv
+    assert "--group cid-1" in executor.question_write_command
+    assert "--user" not in executor.question_write_command
+    assert executor.question_verify_command == (
+        "dws chat message list --group cid-1 --time 2026-07-29"
+    )
+    assert "--user" not in executor.question_verify_command
 
 
 @pytest.mark.live
