@@ -23,8 +23,6 @@ from app.agent_turn_runner import (
 )
 from app.audit_agent import (
     AuditAgentRunner,
-    _delivery_ledger_absence_event,
-    _direct_delivery_ledger_absences,
     _expected_effect_action,
     _recovery_authorizations,
     _recovery_prompt,
@@ -1111,26 +1109,14 @@ def test_direct_chat_unknown_without_delivery_record_replays_through_recovery(
     assert executor.commands == []
 
 
-def test_mixed_recovery_marks_only_missing_direct_delivery_absent(setup):
-    store, task, audit_context, _parent = setup
+def test_mixed_unknown_does_not_treat_missing_sent_reply_as_delivery_absence(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor("", returncode=1)
     mixed_proposal = ConsumerProposal.model_validate(
         {
             "objective": "Approve and notify",
             "actions": [
-                {
-                    "description": "Approve the OA task",
-                    "capability": "agent_cli.dws",
-                    "operation": "oa approval approve",
-                    "target": {"instance_id": "process-1", "task_id": "task-1"},
-                    "payload": {
-                        "argv": [
-                            "dws", "oa", "approval", "approve",
-                            "--instance-id", "process-1", "--task-id", "task-1",
-                            "--yes",
-                        ]
-                    },
-                    "expected_verification": "OA task is completed",
-                },
+                audit_context.proposal.actions[0].model_dump(mode="json"),
                 {
                     "description": "Notify the applicant",
                     "capability": "agent_cli.dws",
@@ -1152,21 +1138,17 @@ def test_mixed_recovery_marks_only_missing_direct_delivery_absent(setup):
     )
     mixed_context = replace(audit_context, proposal=mixed_proposal)
 
-    evidence = _direct_delivery_ledger_absences(store, task, mixed_context)
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).recover(task, mixed_context, run=run)
 
-    assert [action_index for action_index, _digest in evidence] == [1]
-    event = _delivery_ledger_absence_event(mixed_context, *evidence[0])
-    assert _read_matches_action(
-        event["item"]["metadata"],
-        {
-            "reviewed_server": "agent_cli",
-            "reviewed_tool": "execute_reviewed_write",
-            "target_identifiers": {"open_dingtalk_id": "applicant-1"},
-        },
-        McpToolEffectRegistry.default(),
-    )
-    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "done")
-    assert _direct_delivery_ledger_absences(store, task, mixed_context) == ()
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.status == "unknown"
+    assert executor.commands
+    assert "Unknown outcome recovery" in executor.prompts[0]
 
 
 def test_historical_direct_chat_alias_without_delivery_record_rotates_generation(
