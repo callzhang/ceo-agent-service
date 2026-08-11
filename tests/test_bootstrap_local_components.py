@@ -164,7 +164,7 @@ def test_bootstrap_json_retains_complete_multiline_failure(tmp_path: Path):
         interpreter,
         """#!/bin/sh
 if [ "${1:-}" = "-c" ]; then
-  exit 0
+  exec "$CHECKOUT_TEST_REAL_PYTHON" "$@"
 fi
 cat >/dev/null
 printf 'first diagnostic\nsecond diagnostic\n' >&2
@@ -172,6 +172,7 @@ exit 1
 """,
     )
     env = _controlled_env(tmp_path / "home", tmp_path / "bin")
+    env["CHECKOUT_TEST_REAL_PYTHON"] = sys.executable
 
     completed = subprocess.run(
         [str(script), "--component", "ceo-business-skills", "--format", "json"],
@@ -187,6 +188,33 @@ exit 1
     assert payload["components"][0]["detail"] == (
         "first diagnostic\nsecond diagnostic"
     )
+
+
+def test_bootstrap_json_uses_checkout_python_without_python3_on_path(
+    tmp_path: Path,
+):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "bash").symlink_to("/bin/bash")
+    (bin_dir / "dirname").symlink_to("/usr/bin/dirname")
+    assert shutil.which("python3", path=str(bin_dir)) is None
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path / "home")
+    env["PATH"] = str(bin_dir)
+
+    completed = subprocess.run(
+        [str(SCRIPT), "--component", "ceo-business-skills", "--format", "json"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["status"] == "done"
+    assert payload["components"][0]["status"] == "done"
 
 
 def _controlled_env(home: Path, bin_dir: Path) -> dict[str, str]:

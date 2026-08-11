@@ -36,6 +36,27 @@ class BusinessSkillInstallTargetError(BusinessSkillError):
     """Raised when the requested installation root is prohibited."""
 
 
+class BusinessSkillInstallRollbackError(BusinessSkillError):
+    """Raised when installation and at least one rollback operation fail."""
+
+    def __init__(
+        self,
+        install_error: BaseException,
+        rollback_errors: tuple[tuple[Path, BaseException], ...],
+        recovery_path: Path,
+    ) -> None:
+        self.install_error = install_error
+        self.rollback_errors = rollback_errors
+        self.recovery_path = recovery_path
+        rollback_detail = "; ".join(
+            f"{target}: {error}" for target, error in rollback_errors
+        )
+        super().__init__(
+            f"business Skill install failed: {install_error}; rollback failed: "
+            f"{rollback_detail}; recovery data preserved at {recovery_path}"
+        )
+
+
 @dataclass(frozen=True)
 class BundledBusinessSkill:
     name: str
@@ -49,6 +70,16 @@ class BundledBusinessSkill:
 class InstalledBusinessSkill:
     name: str
     install_path: Path
+
+
+@dataclass
+class _SwapState:
+    staged_dir: Path
+    target_dir: Path
+    backup_dir: Path
+    had_existing: bool
+    backup_moved: bool = False
+    installed: bool = False
 
 
 def bundled_business_skills_root() -> Path:
@@ -122,7 +153,8 @@ def install_bundled_business_skills(
     )
     staged_root = transaction_root / "staged"
     backup_root = transaction_root / "backups"
-    completed: list[tuple[Path, Path, Path, bool]] = []
+    swaps: list[_SwapState] = []
+    cleanup_transaction = True
     try:
         staged_root.mkdir()
         backup_root.mkdir()
@@ -140,46 +172,55 @@ def install_bundled_business_skills(
 
         # Each old directory remains in backups until every staged directory is live.
         for skill in skills:
-            staged_dir = staged_root / skill.name
-            target_dir = target_root / skill.name
-            backup_dir = backup_root / skill.name
-            had_existing = target_dir.exists()
-            if had_existing:
-                os.replace(target_dir, backup_dir)
+            swap = _SwapState(
+                staged_dir=staged_root / skill.name,
+                target_dir=target_root / skill.name,
+                backup_dir=backup_root / skill.name,
+                had_existing=(target_root / skill.name).exists(),
+            )
+            swaps.append(swap)
+            if swap.had_existing:
+                os.replace(swap.target_dir, swap.backup_dir)
+                swap.backup_moved = True
+            _validate_swap_destination(
+                target_root,
+                expected_resolved_root,
+                swap.target_dir,
+            )
+            os.replace(swap.staged_dir, swap.target_dir)
+            swap.installed = True
+    except BaseException as install_error:
+        rollback_errors: list[tuple[Path, BaseException]] = []
+        # Continue restoring other directories if one restore fails. Their backups
+        # remain together until every directory reports a successful rollback.
+        for swap in reversed(swaps):
             try:
-                _validate_swap_destination(
-                    target_root,
-                    expected_resolved_root,
-                    target_dir,
-                )
-                os.replace(staged_dir, target_dir)
-            except BaseException:
-                if had_existing:
+                if swap.installed:
+                    os.replace(swap.target_dir, swap.staged_dir)
+                    swap.installed = False
+                if swap.backup_moved:
                     _validate_swap_destination(
                         target_root,
-                        expected_resolved_root,
-                        target_dir,
+                        resolved_target_root,
+                        swap.target_dir,
                     )
-                    os.replace(backup_dir, target_dir)
-                raise
-            completed.append(
-                (staged_dir, target_dir, backup_dir, had_existing)
-            )
-    except BaseException:
-        for staged_dir, target_dir, backup_dir, had_existing in reversed(completed):
-            os.replace(target_dir, staged_dir)
-            if had_existing:
-                _validate_swap_destination(
-                    target_root,
-                    resolved_target_root,
-                    target_dir,
-                )
-                os.replace(backup_dir, target_dir)
+                    os.replace(swap.backup_dir, swap.target_dir)
+                    swap.backup_moved = False
+            except BaseException as rollback_error:
+                rollback_errors.append((swap.target_dir, rollback_error))
+        if rollback_errors:
+            cleanup_transaction = False
+            raise BusinessSkillInstallRollbackError(
+                install_error,
+                tuple(rollback_errors),
+                transaction_root,
+            ) from install_error
         if not target_root_existed and target_root.exists():
             target_root.rmdir()
         raise
     finally:
-        shutil.rmtree(transaction_root)
+        if cleanup_transaction:
+            shutil.rmtree(transaction_root)
 
     return tuple(
         InstalledBusinessSkill(name=skill.name, install_path=target_root / skill.name)

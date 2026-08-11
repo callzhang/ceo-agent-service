@@ -61,7 +61,7 @@ record() {
 }
 
 json_string() {
-  python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()), end="")'
+  "${CHECKOUT_PYTHON}" -c 'import json,sys; print(json.dumps(sys.stdin.read()), end="")'
 }
 
 emit_json() {

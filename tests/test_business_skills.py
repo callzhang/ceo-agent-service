@@ -6,6 +6,7 @@ import pytest
 from app.business_skills import (
     BUNDLED_BUSINESS_SKILL_NAMES,
     BusinessSkillInstallConflict,
+    BusinessSkillInstallRollbackError,
     BusinessSkillInstallTargetError,
     BusinessSkillValidationError,
     install_bundled_business_skills,
@@ -249,6 +250,71 @@ def test_skill_install_rolls_back_every_directory_after_mid_swap_failure(
             encoding="utf-8"
         ) == content
     assert not list(target_root.parent.glob(".ceo-business-skills-*"))
+
+
+def test_skill_install_preserves_recovery_directory_when_restore_fails(
+    monkeypatch,
+    tmp_path: Path,
+):
+    target_root = tmp_path / ".agents" / "skills"
+    original_content: dict[str, str] = {}
+    for name in EXPECTED_NAMES:
+        target_dir = target_root / name
+        target_dir.mkdir(parents=True)
+        content = (
+            "---\nmetadata:\n  managed_by: ceo-agent-service\n---\n"
+            f"original {name}\n"
+        )
+        (target_dir / "SKILL.md").write_text(content, encoding="utf-8")
+        original_content[name] = content
+
+    real_replace = os.replace
+    live_swap_failed = False
+    restore_failed = False
+
+    def fail_live_swap_and_restore(source, destination):
+        nonlocal live_swap_failed, restore_failed
+        source_path = Path(source)
+        destination_path = Path(destination)
+        third_target = target_root / EXPECTED_NAMES[2]
+        if (
+            destination_path == third_target
+            and source_path.parent.name == "staged"
+            and not live_swap_failed
+        ):
+            live_swap_failed = True
+            raise OSError("injected live swap failure")
+        if (
+            destination_path == third_target
+            and source_path.parent.name == "backups"
+            and not restore_failed
+        ):
+            restore_failed = True
+            raise OSError("injected restore failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(
+        "app.business_skills.os.replace",
+        fail_live_swap_and_restore,
+    )
+
+    with pytest.raises(
+        BusinessSkillInstallRollbackError,
+        match="rollback",
+    ) as exc_info:
+        install_bundled_business_skills(target_root)
+
+    recovery_path = exc_info.value.recovery_path
+    assert str(recovery_path) in str(exc_info.value)
+    assert recovery_path.is_dir()
+    assert (recovery_path / "backups" / EXPECTED_NAMES[2] / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == original_content[EXPECTED_NAMES[2]]
+    assert (recovery_path / "staged" / EXPECTED_NAMES[2] / "SKILL.md").is_file()
+    for name in EXPECTED_NAMES[:2] + EXPECTED_NAMES[3:]:
+        assert (target_root / name / "SKILL.md").read_text(
+            encoding="utf-8"
+        ) == original_content[name]
 
 
 def test_skill_install_refuses_user_owned_conflict_without_any_writes(
