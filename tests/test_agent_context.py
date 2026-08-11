@@ -316,6 +316,8 @@ def test_consumer_context_is_read_only_and_reuses_supplied_facts():
     assert "no external write" in rendered
     assert "already available" in rendered
     assert "Raw material references and exact read commands" in rendered
+    assert "authoritative read path" in rendered
+    assert "Do not substitute a similar command" in rendered
 
 
 def test_consumer_context_turns_recoverable_evidence_gap_into_clarifying_proposal():

@@ -9119,9 +9119,16 @@ def _attempt_status_card(
         later_attempt
     )
     if later_is_terminal:
+        result_summary = later_attempt.audit_summary.strip()
+        result_html = (
+            f"<br><strong>处理结果：</strong>{escape(result_summary)}"
+            if result_summary
+            else ""
+        )
         message = (
             f'该历史记录已由 <a href="/attempts/{later_attempt.id}">'
             f'Attempt #{later_attempt.id}</a> 后续处理，无需你操作。'
+            f"{result_html}"
         )
     elif active_attempt.send_status == "sent":
         message = "这条回复已发送，无需你操作。"

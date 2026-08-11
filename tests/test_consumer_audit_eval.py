@@ -43,6 +43,7 @@ def _operation_name(case: EvalCase) -> str:
 
 def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
     proposal = None
+    decision_options: list[dict[str, str]] = []
     if case.consumer_outcome == "proposal":
         proposal = {
             "objective": case.trigger,
@@ -61,11 +62,27 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
             ],
             "authored_judgment": case.reason,
         }
+    elif case.consumer_outcome == "needs_human":
+        decision_options = [
+            {
+                "key": "A",
+                "label": "Proceed with the first supported management choice",
+                "instruction": "Execute the first evidence-supported management choice.",
+                "consequence": "The agent will execute and verify that choice.",
+            },
+            {
+                "key": "B",
+                "label": "Proceed with the second supported management choice",
+                "instruction": "Execute the second evidence-supported management choice.",
+                "consequence": "The agent will execute and verify the alternative.",
+            },
+        ]
     return ConsumerAgentResult.model_validate(
         {
             "outcome": case.consumer_outcome,
             "summary": case.reason,
             "proposal": proposal,
+            "decision_options": decision_options,
             "error": {"code": "", "retryable": False, "authorization_required": False},
         }
     )

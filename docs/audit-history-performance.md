@@ -34,3 +34,7 @@ completion evidence nor active recovery.
 WeChat delivery rejection is a completed user decision and is shown as skipped.
 An unconfirmed send remains failed until read-only reconciliation can prove the
 delivery outcome.
+
+When a historical failed or reconciliation attempt has a later terminal result,
+the detail page shows the later result summary inline. Users do not need to open
+an internal attempt chain to learn whether the business action completed.

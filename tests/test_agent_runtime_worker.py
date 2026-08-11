@@ -975,6 +975,7 @@ class NativeCommandStub:
     def __call__(self, command: str) -> str:
         self.calls.append(command)
         if command.startswith((
+            ".venv/bin/python -m app.cli read-oa-approval-detail ",
             "dws oa approval detail ",
             "dws oa approval tasks ",
         )):
@@ -3173,10 +3174,12 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
 
     assert "proc-1" in " ".join(codex_executor.read_commands)
     assert any(
-        "dws oa approval detail" in command for command in codex_executor.read_commands
+        "read-oa-approval-detail --instance-id proc-1" in command
+        for command in codex_executor.read_commands
     )
     assert any(
-        "dws oa approval tasks" in command for command in codex_executor.read_commands
+        "dws oa approval tasks --instance-id proc-1" in command
+        for command in codex_executor.read_commands
     )
     assert native_executor.calls[: len(codex_executor.read_commands)] == (
         codex_executor.read_commands

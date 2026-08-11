@@ -4641,6 +4641,9 @@ def test_terminal_later_attempt_replaces_stale_pending_detail_fields(tmp_path: P
         action="agent_run",
         sensitivity_kind="internal_personnel",
         send_status="completed",
+        audit_summary=(
+            "审批已同意；已向实际申请人发送审批结果，外部读回确认消息存在。"
+        ),
     )
 
     status, html = render_attempt_detail(store, old_id)
@@ -4648,6 +4651,7 @@ def test_terminal_later_attempt_replaces_stale_pending_detail_fields(tmp_path: P
     assert status == 200
     assert f"已完成（后续记录 #{later_id}）" in html
     assert "历史错误已由后续处理解决" in html
+    assert "审批已同意；已向实际申请人发送审批结果" in html
     assert "audit_recovery_failed" not in html
 
 
