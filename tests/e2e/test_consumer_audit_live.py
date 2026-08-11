@@ -12,6 +12,12 @@ import pytest
 from app.codex_runner import CodexRunner, _config_string
 from app.process_runner import run_process_with_idle_timeout
 from tests.support.audit_sink_mcp import AuditSink
+from tests.test_agent_runtime_worker import (
+    CalendarClarificationProtocolExecutor,
+    _enqueue,
+    _message,
+    _worker_with_protocol_executor,
+)
 
 
 def _enabled() -> bool:
@@ -42,6 +48,54 @@ def _allow_isolated_test_workspace(command: list[str]) -> list[str]:
     allowed = list(command)
     allowed.insert(allowed.index("--cd"), "--skip-git-repo-check")
     return allowed
+
+
+def test_scripted_calendar_clarification_is_executed_without_human_handoff(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skills_root = tmp_path / "installed-skills"
+    skill_paths: dict[str, Path] = {}
+    repository_root = Path(__file__).resolve().parents[2]
+    for name in ("ceo-calendar-invite", "dingtalk-calendar", "dingtalk-chat"):
+        path = skills_root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        content = (
+            (repository_root / "skills" / name / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+            if name == "ceo-calendar-invite"
+            else f"---\nname: {name}\n---\n# {name}\n"
+        )
+        path.write_text(content, encoding="utf-8")
+        skill_paths[name] = path
+    monkeypatch.setattr(
+        "app.agent_skill_usage.AGENT_SKILL_ROOTS",
+        (skills_root,),
+    )
+
+    trigger = _message(
+        "dingtalk://dingtalkclient/action/open_mini_app?page=detail%3FuniqueId%3Devent-1",
+        raw_payload={"eventId": "event-1"},
+    )
+    executor = CalendarClarificationProtocolExecutor(skill_paths)
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        executor,
+    )
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "completed"
+    assert attempt.send_status != "needs_human"
+    assert executor.consumer_loaded_skills[0] == "ceo-calendar-invite"
+    assert executor.audit_loaded_skills == executor.consumer_loaded_skills
+    assert executor.event_reads == 2
+    assert executor.sent_questions == 1
+    assert CalendarClarificationProtocolExecutor.question in executor.prompts[1]
 
 
 @pytest.mark.live

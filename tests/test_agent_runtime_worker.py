@@ -3,6 +3,7 @@ import shlex
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -913,6 +914,43 @@ def _reviewed_cli_event(
     return {"type": event_type, "item": item}
 
 
+def _skill_read_events(
+    call_id: str,
+    path: Path,
+) -> tuple[dict[str, object], dict[str, object]]:
+    content = path.read_text(encoding="utf-8")
+    receipt = {
+        "content": content,
+        "sha256": sha256(content.encode("utf-8")).hexdigest(),
+        "path": str(path.resolve()),
+        "name": path.parent.name,
+    }
+    started = {
+        "type": "item.started",
+        "item": {
+            "id": call_id,
+            "type": "mcp_tool_call",
+            "server": "agent_cli",
+            "tool": "read_skill",
+            "arguments": {"path": str(path)},
+            "status": "in_progress",
+        },
+    }
+    completed = {
+        "type": "item.completed",
+        "item": {
+            **started["item"],
+            "status": "completed",
+            "result": {
+                "content": [{"type": "text", "text": json.dumps(receipt)}],
+                "structuredContent": receipt,
+                "isError": False,
+            },
+        },
+    }
+    return started, completed
+
+
 class ProtocolCodexExecutor:
     def __init__(self) -> None:
         self.prompts: list[str] = []
@@ -964,6 +1002,177 @@ class ConfirmedFactProtocolExecutor(ProtocolCodexExecutor):
             )
         )
         return [_agent_result_event(result)]
+
+
+class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
+    question = "What specific decision or input do you need from Derek in this meeting?"
+
+    def __init__(self, skill_paths: dict[str, Path]) -> None:
+        super().__init__()
+        self.skill_paths = skill_paths
+        self.event_reads = 0
+        self.sent_questions = 0
+        self.consumer_loaded_skills: list[str] = []
+        self.audit_loaded_skills: list[str] = []
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        audit_turn = "Candidate revision\n" in prompt
+        prefix = "audit" if audit_turn else "consumer"
+        loaded = self.audit_loaded_skills if audit_turn else self.consumer_loaded_skills
+        records: list[dict[str, object]] = []
+        for name in ("ceo-calendar-invite", "dingtalk-calendar", "dingtalk-chat"):
+            loaded.append(name)
+            records.extend(
+                _skill_read_events(f"{prefix}-skill-{name}", self.skill_paths[name])
+            )
+
+        materials = _prompt_json_section(
+            prompt,
+            "Raw material references and exact read commands\n",
+        )
+        calendar = next(
+            material
+            for material in materials
+            if isinstance(material, dict)
+            and material.get("kind") == "dingtalk_calendar"
+        )
+        event_command = calendar["read_commands"][0]
+        event_output = json.dumps(
+            {
+                "event_id": "event-1",
+                "title": "Portfolio review",
+                "time": "2026-07-30 10:00",
+                "organizer": {"name": "Inviter", "user_id": "inviter-1"},
+                "attendees": ["Derek", "Inviter"],
+                "description": "Review the portfolio.",
+                "comments": [],
+                "linked_materials": [],
+                "self_response": "needs_action",
+                "conflicting_accepted_events": [],
+                "requested_principal_input": None,
+            }
+        )
+        self.event_reads += 1
+        records.extend(
+            (
+                _reviewed_cli_event(
+                    "item.started", f"{prefix}-event-read", event_command
+                ),
+                _reviewed_cli_event(
+                    "item.completed",
+                    f"{prefix}-event-read",
+                    event_command,
+                    output=event_output,
+                ),
+            )
+        )
+
+        if not audit_turn:
+            proposal = {
+                "objective": "Clarify the principal's requested meeting input.",
+                "actions": [
+                    {
+                        "description": "Ask the verified inviter one factual question.",
+                        "capability": "agent_cli.dws",
+                        "operation": "chat message send",
+                        "target": {"user": "inviter-1"},
+                        "payload": {
+                            "argv": [
+                                "dws",
+                                "chat",
+                                "message",
+                                "send",
+                                "--user",
+                                "inviter-1",
+                                "--text",
+                                self.question,
+                                "--yes",
+                            ]
+                        },
+                        "expected_verification": (
+                            "Read the inviter chat and find the exact question."
+                        ),
+                    }
+                ],
+                "sourced_facts": [
+                    {
+                        "assertion": "The verified inviter is inviter-1.",
+                        "references": ["calendar event event-1"],
+                    }
+                ],
+                "authored_judgment": (
+                    "Attendance value remains unclear after reading the event."
+                ),
+            }
+            records.append(
+                _agent_result_event(
+                    _consumer_protocol_result(
+                        "proposal",
+                        "Prepared one factual question for the verified inviter.",
+                        proposal=proposal,
+                    )
+                )
+            )
+            return records
+
+        verified_skills = _prompt_json_section(
+            prompt,
+            "Verified Skills read by Consumer A\n",
+        )
+        assert {item["name"] for item in verified_skills} == set(self.skill_paths)
+        candidate = _prompt_json_section(prompt, "Candidate revision\n")
+        action = candidate["proposal"]["actions"][0]
+        assert action["target"] == {"user": "inviter-1"}
+        assert action["payload"]["argv"][-2] == self.question
+
+        write_command = shlex.join(action["payload"]["argv"])
+        verify_command = (
+            "dws chat message list --user inviter-1 --time 2026-07-29"
+        )
+        self.sent_questions += 1
+        records.extend(
+            (
+                _reviewed_cli_event(
+                    "item.started", "calendar-question-write", write_command, effectful=True
+                ),
+                _reviewed_cli_event(
+                    "item.completed",
+                    "calendar-question-write",
+                    write_command,
+                    output=json.dumps({"success": True, "message_id": "question-1"}),
+                    effectful=True,
+                ),
+                _reviewed_cli_event(
+                    "item.started", "calendar-question-verify", verify_command
+                ),
+                _reviewed_cli_event(
+                    "item.completed",
+                    "calendar-question-verify",
+                    verify_command,
+                    output=json.dumps(
+                        {
+                            "messages": [
+                                {"message_id": "question-1", "text": self.question}
+                            ]
+                        }
+                    ),
+                ),
+                _agent_result_event(
+                    _audit_protocol_result(
+                        "executed",
+                        int(candidate["proposal_revision"]),
+                        "The exact clarification was sent and verified.",
+                        operation_id=str(candidate["operation_id"]),
+                        live_reference={
+                            "event_id": "event-1",
+                            "inviter_user_id": "inviter-1",
+                            "message_id": "question-1",
+                        },
+                    )
+                ),
+            )
+        )
+        return records
 
 
 class NativeCommandStub:
@@ -3086,6 +3295,57 @@ def test_calendar_context_passes_raw_event_id_and_exact_live_read_command(
         "dws calendar event get --id event-1 --format json",
     )
     assert dws.forbidden_material_reads == []
+
+
+def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skills_root = tmp_path / "installed-skills"
+    skill_paths: dict[str, Path] = {}
+    for name in ("ceo-calendar-invite", "dingtalk-calendar", "dingtalk-chat"):
+        path = skills_root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        content = (
+            (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
+            if name == "ceo-calendar-invite"
+            else f"---\nname: {name}\n---\n# {name}\n"
+        )
+        path.write_text(content, encoding="utf-8")
+        skill_paths[name] = path
+    monkeypatch.setattr(
+        "app.agent_skill_usage.AGENT_SKILL_ROOTS",
+        (skills_root,),
+    )
+
+    trigger = _message(
+        "dingtalk://dingtalkclient/action/open_mini_app?page=detail%3FuniqueId%3Devent-1",
+        raw_payload={"eventId": "event-1"},
+    )
+    executor = CalendarClarificationProtocolExecutor(skill_paths)
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        executor,
+    )
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "completed"
+    assert attempt.send_status != "needs_human"
+    assert executor.consumer_loaded_skills == [
+        "ceo-calendar-invite",
+        "dingtalk-calendar",
+        "dingtalk-chat",
+    ]
+    assert executor.audit_loaded_skills == executor.consumer_loaded_skills
+    assert executor.event_reads == 2
+    assert executor.sent_questions == 1
+    assert "dws calendar event get --id event-1 --format json" in executor.prompts[0]
+    assert CalendarClarificationProtocolExecutor.question in executor.prompts[1]
 
 
 @pytest.mark.parametrize(
