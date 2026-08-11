@@ -3,9 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from uuid import uuid4
-
-from app.config import repo_root
+import shutil
+import tempfile
 
 
 BUNDLED_BUSINESS_SKILL_NAMES = (
@@ -53,7 +52,7 @@ class InstalledBusinessSkill:
 
 
 def bundled_business_skills_root() -> Path:
-    return repo_root() / "skills"
+    return Path(__file__).resolve().parents[1] / "skills"
 
 
 def load_bundled_business_skills() -> tuple[BundledBusinessSkill, ...]:
@@ -97,33 +96,95 @@ def install_bundled_business_skills(
     target_root = Path(target_root).expanduser()
     _validate_install_target(target_root)
     skills = load_bundled_business_skills()
+    target_root_existed = target_root.exists()
 
-    # Preflight every destination so one ownership conflict cannot cause a partial upgrade.
+    # Ownership and symlink checks happen before staging creates anything.
     for skill in skills:
         target_dir = target_root / skill.name
         target = target_dir / "SKILL.md"
-        if target_dir.exists() or target_dir.is_symlink():
+        if target_dir.is_symlink():
+            raise BusinessSkillInstallTargetError(
+                f"refusing symlinked business Skill directory: {target_dir}"
+            )
+        if target_dir.exists():
             if not target.is_file() or not _is_service_managed(target):
                 raise BusinessSkillInstallConflict(
                     f"refusing to overwrite user-owned Skill: {target_dir}"
                 )
 
-    installed: list[InstalledBusinessSkill] = []
-    for skill in skills:
-        target_dir = target_root / skill.name
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / "SKILL.md"
-        temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
-        try:
-            temporary.write_text(skill.content, encoding="utf-8")
-            os.replace(temporary, target)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
-        installed.append(
-            InstalledBusinessSkill(name=skill.name, install_path=target_dir)
+    resolved_target_root = target_root.resolve(strict=False)
+    resolved_target_root.parent.mkdir(parents=True, exist_ok=True)
+    transaction_root = Path(
+        tempfile.mkdtemp(
+            prefix=".ceo-business-skills-",
+            dir=resolved_target_root.parent,
         )
-    return tuple(installed)
+    )
+    staged_root = transaction_root / "staged"
+    backup_root = transaction_root / "backups"
+    completed: list[tuple[Path, Path, Path, bool]] = []
+    try:
+        staged_root.mkdir()
+        backup_root.mkdir()
+        for skill in skills:
+            staged_dir = staged_root / skill.name
+            staged_dir.mkdir()
+            (staged_dir / "SKILL.md").write_text(skill.content, encoding="utf-8")
+
+        target_root.mkdir(parents=True, exist_ok=True)
+        expected_resolved_root = target_root.resolve(strict=True)
+        if expected_resolved_root != resolved_target_root:
+            raise BusinessSkillInstallTargetError(
+                f"business Skill target changed during installation: {target_root}"
+            )
+
+        # Each old directory remains in backups until every staged directory is live.
+        for skill in skills:
+            staged_dir = staged_root / skill.name
+            target_dir = target_root / skill.name
+            backup_dir = backup_root / skill.name
+            had_existing = target_dir.exists()
+            if had_existing:
+                os.replace(target_dir, backup_dir)
+            try:
+                _validate_swap_destination(
+                    target_root,
+                    expected_resolved_root,
+                    target_dir,
+                )
+                os.replace(staged_dir, target_dir)
+            except BaseException:
+                if had_existing:
+                    _validate_swap_destination(
+                        target_root,
+                        expected_resolved_root,
+                        target_dir,
+                    )
+                    os.replace(backup_dir, target_dir)
+                raise
+            completed.append(
+                (staged_dir, target_dir, backup_dir, had_existing)
+            )
+    except BaseException:
+        for staged_dir, target_dir, backup_dir, had_existing in reversed(completed):
+            os.replace(target_dir, staged_dir)
+            if had_existing:
+                _validate_swap_destination(
+                    target_root,
+                    resolved_target_root,
+                    target_dir,
+                )
+                os.replace(backup_dir, target_dir)
+        if not target_root_existed and target_root.exists():
+            target_root.rmdir()
+        raise
+    finally:
+        shutil.rmtree(transaction_root)
+
+    return tuple(
+        InstalledBusinessSkill(name=skill.name, install_path=target_root / skill.name)
+        for skill in skills
+    )
 
 
 def _validate_install_target(target_root: Path) -> None:
@@ -137,6 +198,31 @@ def _validate_install_target(target_root: Path) -> None:
     if resolved_target == forbidden_target or forbidden_target in resolved_target.parents:
         raise BusinessSkillInstallTargetError(
             f"refusing to install business Skills into prohibited target: {forbidden_target}"
+        )
+
+
+def _validate_swap_destination(
+    target_root: Path,
+    expected_resolved_root: Path,
+    target_dir: Path,
+) -> None:
+    if target_dir.is_symlink():
+        raise BusinessSkillInstallTargetError(
+            f"refusing symlinked business Skill directory: {target_dir}"
+        )
+    try:
+        current_resolved_root = target_root.resolve(strict=True)
+        resolved_destination = target_dir.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise BusinessSkillInstallTargetError(
+            f"unable to validate business Skill destination: {target_dir}"
+        ) from exc
+    if (
+        current_resolved_root != expected_resolved_root
+        or resolved_destination.parent != expected_resolved_root
+    ):
+        raise BusinessSkillInstallTargetError(
+            f"business Skill destination escaped target root: {target_dir}"
         )
 
 

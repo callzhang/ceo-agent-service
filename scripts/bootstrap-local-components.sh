@@ -5,6 +5,7 @@ FORMAT_TEXT=1
 COMPONENT="all"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CHECKOUT_PYTHON="${REPO_ROOT}/.venv/bin/python"
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -39,14 +40,18 @@ case "${COMPONENT}" in
     ;;
 esac
 
-RESULTS=()
+RESULT_COMPONENTS=()
+RESULT_STATUSES=()
+RESULT_DETAILS=()
 FAILED=0
 
 record() {
   local component="$1"
   local status="$2"
   local detail="$3"
-  RESULTS+=("${component}"$'\t'"${status}"$'\t'"${detail}")
+  RESULT_COMPONENTS+=("${component}")
+  RESULT_STATUSES+=("${status}")
+  RESULT_DETAILS+=("${detail}")
   if [[ "${status}" == "failed" ]]; then
     FAILED=1
   fi
@@ -77,9 +82,11 @@ emit_json() {
   printf '%s' "${summary}" | json_string
   printf ',"components":['
   local first=1
-  local row component status detail
-  for row in "${RESULTS[@]}"; do
-    IFS=$'\t' read -r component status detail <<< "${row}"
+  local index component status detail
+  for ((index = 0; index < ${#RESULT_COMPONENTS[@]}; index++)); do
+    component="${RESULT_COMPONENTS[${index}]}"
+    status="${RESULT_STATUSES[${index}]}"
+    detail="${RESULT_DETAILS[${index}]}"
     if [[ "${first}" == "0" ]]; then
       printf ','
     fi
@@ -198,8 +205,16 @@ ensure_nvwa() {
 
 ensure_ceo_business_skills() {
   local detail
+  if [[ ! -x "${CHECKOUT_PYTHON}" ]]; then
+    record "ceo-business-skills" "failed" "missing checkout Python interpreter: ${CHECKOUT_PYTHON}"
+    return
+  fi
+  if ! "${CHECKOUT_PYTHON}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+    record "ceo-business-skills" "failed" "invalid checkout Python interpreter: ${CHECKOUT_PYTHON}"
+    return
+  fi
   if detail="$(
-    PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" python3 - "${HOME}/.agents/skills" 2>&1 <<'PY'
+    PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" "${CHECKOUT_PYTHON}" - "${HOME}/.agents/skills" 2>&1 <<'PY'
 from pathlib import Path
 import sys
 

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -147,6 +148,27 @@ def test_skill_install_rejects_symlink_alias_to_codex_skills_without_writes(
     assert list(forbidden_root.iterdir()) == [sentinel]
 
 
+def test_skill_install_rejects_symlinked_skill_directory_without_external_writes(
+    tmp_path: Path,
+):
+    target_root = tmp_path / ".agents" / "skills"
+    target_root.mkdir(parents=True)
+    external = tmp_path / "external-skill"
+    external.mkdir()
+    external_skill = external / "SKILL.md"
+    external_content = (
+        "---\nmetadata:\n  managed_by: ceo-agent-service\n---\nexternal\n"
+    )
+    external_skill.write_text(external_content, encoding="utf-8")
+    (target_root / EXPECTED_NAMES[0]).symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(BusinessSkillInstallTargetError, match="symlink"):
+        install_bundled_business_skills(target_root)
+
+    assert external_skill.read_text(encoding="utf-8") == external_content
+    assert list(target_root.iterdir()) == [target_root / EXPECTED_NAMES[0]]
+
+
 def test_skill_install_upgrades_service_managed_skill_deterministically(
     tmp_path: Path,
 ):
@@ -166,6 +188,67 @@ def test_skill_install_upgrades_service_managed_skill_deterministically(
     assert first_content == (
         Path("skills") / EXPECTED_NAMES[0] / "SKILL.md"
     ).read_bytes()
+
+
+def test_skill_install_replaces_complete_managed_directory(tmp_path: Path):
+    target_root = tmp_path / ".agents" / "skills"
+    target_dir = target_root / EXPECTED_NAMES[0]
+    target_dir.mkdir(parents=True)
+    (target_dir / "SKILL.md").write_text(
+        "---\nmetadata:\n  managed_by: ceo-agent-service\n---\nold\n",
+        encoding="utf-8",
+    )
+    obsolete = target_dir / "obsolete.txt"
+    obsolete.write_text("remove me\n", encoding="utf-8")
+
+    install_bundled_business_skills(target_root)
+
+    assert not obsolete.exists()
+    assert list(target_dir.iterdir()) == [target_dir / "SKILL.md"]
+
+
+def test_skill_install_rolls_back_every_directory_after_mid_swap_failure(
+    monkeypatch,
+    tmp_path: Path,
+):
+    target_root = tmp_path / ".agents" / "skills"
+    original_content: dict[str, str] = {}
+    for name in EXPECTED_NAMES:
+        target_dir = target_root / name
+        target_dir.mkdir(parents=True)
+        content = (
+            "---\nmetadata:\n  managed_by: ceo-agent-service\n---\n"
+            f"original {name}\n"
+        )
+        (target_dir / "SKILL.md").write_text(content, encoding="utf-8")
+        original_content[name] = content
+
+    real_replace = os.replace
+    failed = False
+
+    def fail_third_skill_swap(source, destination):
+        nonlocal failed
+        destination_path = Path(destination)
+        third_target = target_root / EXPECTED_NAMES[2]
+        is_third_target = destination_path in {
+            third_target,
+            third_target / "SKILL.md",
+        }
+        if is_third_target and not failed:
+            failed = True
+            raise OSError("injected mid-swap failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr("app.business_skills.os.replace", fail_third_skill_swap)
+
+    with pytest.raises(OSError, match="injected mid-swap failure"):
+        install_bundled_business_skills(target_root)
+
+    for name, content in original_content.items():
+        assert (target_root / name / "SKILL.md").read_text(
+            encoding="utf-8"
+        ) == content
+    assert not list(target_root.parent.glob(".ceo-business-skills-*"))
 
 
 def test_skill_install_refuses_user_owned_conflict_without_any_writes(
