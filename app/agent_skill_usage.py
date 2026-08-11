@@ -21,9 +21,6 @@ AGENT_SKILL_ROOTS = (
     Path.home() / ".codex" / "skills",
     Path.home() / ".codex" / "plugins",
 )
-AUDIT_REQUIRED_SKILL_RECEIPTS_ENV = "CEO_AGENT_REQUIRED_SKILL_RECEIPTS"
-
-
 @dataclass(frozen=True)
 class AuthorizedSkillPath:
     name: str
@@ -57,6 +54,11 @@ def resolve_authorized_skill_path(path: str) -> AuthorizedSkillPath:
 def loaded_skill_receipts(
     events: Iterable[dict[str, object]],
 ) -> tuple[LoadedSkillReceipt, ...]:
+    """Build trusted context evidence for Audit B from its exact Consumer parent.
+
+    Audit B remains the configured execution authority and must reread these paths;
+    the service does not use receipts as a global proxy or write gate for MCP tools.
+    """
     receipts: dict[str, LoadedSkillReceipt] = {}
     for event in events:
         item = event.get("item")
@@ -79,32 +81,6 @@ def loaded_skill_receipts(
             continue
         receipts[path] = LoadedSkillReceipt(name=name, path=path, sha256=digest)
     return tuple(receipts[path] for path in sorted(receipts))
-
-
-def parse_required_skill_receipts(value: object) -> tuple[LoadedSkillReceipt, ...]:
-    if not isinstance(value, list):
-        raise ValueError("required Skill receipts must be a list")
-    receipts: dict[str, LoadedSkillReceipt] = {}
-    for entry in value:
-        if not isinstance(entry, dict) or set(entry) != {"name", "path", "sha256"}:
-            raise ValueError("required Skill receipt is malformed")
-        path = _validated_persisted_path(entry.get("path"))
-        name = _validated_skill_name(entry.get("name"))
-        digest = _validated_digest(entry.get("sha256"))
-        if (
-            path is None
-            or path != entry.get("path")
-            or name is None
-            or digest is None
-        ):
-            raise ValueError("required Skill receipt is malformed")
-        receipt = LoadedSkillReceipt(name=name, path=path, sha256=digest)
-        existing = receipts.get(path)
-        if existing is not None and existing != receipt:
-            raise ValueError("required Skill receipts conflict")
-        receipts[path] = receipt
-    return tuple(receipts[path] for path in sorted(receipts))
-
 
 def normalized_read_skill_metadata(
     arguments: object,

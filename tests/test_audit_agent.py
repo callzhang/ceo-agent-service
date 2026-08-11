@@ -17,7 +17,6 @@ from app.agent_turn_runner import (
     _read_matches_action,
 )
 from app.agent_skill_usage import LoadedSkillReceipt
-from app.agent_skill_usage import AUDIT_REQUIRED_SKILL_RECEIPTS_ENV
 from app.audit_agent import (
     AuditAgentRunner,
     _expected_effect_action,
@@ -191,21 +190,6 @@ def test_recovery_mcp_env_override_is_a_toml_inline_table():
     parsed = tomllib.loads("value=" + override.partition("=")[2])
 
     assert parsed["value"] == {"ALLOWLIST": '[{"text":"quoted \\\" value"}]'}
-
-
-def _agent_cli_command_env(command: list[str]) -> dict[str, str]:
-    override = next(
-        (
-            command[index + 1]
-            for index, value in enumerate(command[:-1])
-            if value == "-c"
-            and command[index + 1].startswith("mcp_servers.agent_cli.env=")
-        ),
-        "",
-    )
-    if not override:
-        return {}
-    return tomllib.loads("value=" + override.partition("=")[2])["value"]
 
 
 def _audit_result_jsonl(
@@ -785,42 +769,6 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert run.tool_events[1]["item"]["metadata"]["target_identifiers"] == {
         "group": "cid-agent"
     }
-
-
-def test_write_capable_audit_command_receives_exact_consumer_skill_requirements(setup):
-    store, task, audit_context, parent = setup
-    receipts = (
-        LoadedSkillReceipt(
-            name="business-review",
-            path="/Users/derek/.agents/skills/business-review/SKILL.md",
-            sha256="a" * 64,
-        ),
-        LoadedSkillReceipt(
-            name="operation-skill",
-            path="/Users/derek/.agents/skills/operation-skill/SKILL.md",
-            sha256="b" * 64,
-        ),
-    )
-    executor = CapturingExecutor(
-        _revision_required_jsonl("No write is needed for this command-env test.")
-    )
-
-    AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-    ).run(
-        task,
-        replace(audit_context, consumer_skills=receipts),
-        turn_attempt=0,
-        parent_agent_run_id=parent.id,
-    )
-
-    command_env = _agent_cli_command_env(executor.commands[0])
-    assert json.loads(command_env[AUDIT_REQUIRED_SKILL_RECEIPTS_ENV]) == [
-        {"name": receipt.name, "path": receipt.path, "sha256": receipt.sha256}
-        for receipt in receipts
-    ]
 
 
 def test_audit_does_not_renew_conversation_session_lock(setup, monkeypatch):
@@ -2451,12 +2399,6 @@ def test_pre_903_no_readback_start_binds_before_exact_receipt(setup):
 
 def test_definitely_absent_recovery_reads_before_executing_same_revision_once(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
-    receipt = LoadedSkillReceipt(
-        name="business-review",
-        path="/Users/derek/.agents/skills/business-review/SKILL.md",
-        sha256="c" * 64,
-    )
-    audit_context = replace(audit_context, consumer_skills=(receipt,))
     reconcile = _audit_result_jsonl(
         "reconciled",
         operation_id=run.operation_id,
@@ -2519,12 +2461,6 @@ def test_definitely_absent_recovery_reads_before_executing_same_revision_once(se
         in executor.commands[1]
     )
     assert "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST" in " ".join(executor.commands[1])
-    assert _agent_cli_command_env(executor.commands[0]) == {}
-    execute_env = _agent_cli_command_env(executor.commands[1])
-    assert json.loads(execute_env[AUDIT_REQUIRED_SKILL_RECEIPTS_ENV]) == [
-        {"name": receipt.name, "path": receipt.path, "sha256": receipt.sha256}
-    ]
-    assert "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST" in execute_env
 
 
 def test_invalid_absent_recovery_candidate_rotates_consumer_generation(setup):

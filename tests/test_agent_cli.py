@@ -1,22 +1,11 @@
 import asyncio
-import hashlib
-import json
 from pathlib import Path
-import subprocess
 import zipfile
 
 import pytest
 
 import app.agent_cli as agent_cli
-from app.agent_result import EffectKind
 from app.native_cli_metadata import AgentReadOnlyViolationError
-from app.native_cli_metadata import NativeCliMetadataClassifier
-
-
-@pytest.fixture(autouse=True)
-def _reset_skill_rereads(monkeypatch: pytest.MonkeyPatch):
-    agent_cli._READ_SKILL_RECEIPTS.clear()
-    monkeypatch.delenv(agent_cli.AUDIT_REQUIRED_SKILL_RECEIPTS_ENV, raising=False)
 
 
 def test_agent_cli_mcp_tools_publish_searchable_descriptions():
@@ -115,151 +104,6 @@ def test_read_skill_rejects_symlink_escape_from_authorized_root(
 
     with pytest.raises(AgentReadOnlyViolationError, match="skill_path_forbidden"):
         agent_cli.read_skill(str(escaped))
-
-
-def _write_classifier() -> NativeCliMetadataClassifier:
-    return NativeCliMetadataClassifier(
-        reviewed_effects={
-            ("dws", "chat message send"): EffectKind.EFFECTFUL,
-        }
-    )
-
-
-def _write_argv() -> list[str]:
-    return [
-        "dws",
-        "chat",
-        "message",
-        "send",
-        "--group",
-        "cid-agent",
-        "--text",
-        "done",
-        "--yes",
-    ]
-
-
-def _required_receipt(path: Path, content: str) -> dict[str, str]:
-    return {
-        "path": str(path.resolve()),
-        "name": path.parent.name,
-        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-    }
-
-
-@pytest.mark.parametrize(
-    ("raw_requirements", "error_code"),
-    (
-        (None, "audit_skill_receipts_required"),
-        ("[]", "audit_skill_receipts_required"),
-        ("not-json", "audit_skill_receipts_invalid"),
-        ('[{"path":"relative","name":"x","sha256":"bad"}]', "audit_skill_receipts_invalid"),
-    ),
-)
-def test_execute_reviewed_write_rejects_missing_or_malformed_skill_requirements_before_subprocess(
-    monkeypatch: pytest.MonkeyPatch,
-    raw_requirements: str | None,
-    error_code: str,
-):
-    calls: list[list[str]] = []
-    if raw_requirements is not None:
-        monkeypatch.setenv(
-            agent_cli.AUDIT_REQUIRED_SKILL_RECEIPTS_ENV,
-            raw_requirements,
-        )
-    monkeypatch.setattr(agent_cli.shutil, "which", lambda _name: "/usr/bin/dws")
-
-    with pytest.raises(AgentReadOnlyViolationError, match=error_code):
-        agent_cli.execute_reviewed_write(
-            _write_argv(),
-            classifier=_write_classifier(),
-            process_runner=lambda argv, **_kwargs: calls.append(argv),
-        )
-
-    assert calls == []
-
-
-def test_execute_reviewed_write_rejects_skipped_skill_reread_before_subprocess(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    content = "# Business review"
-    skill_path.write_text(content, encoding="utf-8")
-    monkeypatch.setenv(
-        agent_cli.AUDIT_REQUIRED_SKILL_RECEIPTS_ENV,
-        json.dumps([_required_receipt(skill_path, content)]),
-    )
-    monkeypatch.setattr(agent_cli.shutil, "which", lambda _name: "/usr/bin/dws")
-    calls: list[list[str]] = []
-
-    with pytest.raises(AgentReadOnlyViolationError, match="audit_skill_reread_required"):
-        agent_cli.execute_reviewed_write(
-            _write_argv(),
-            classifier=_write_classifier(),
-            process_runner=lambda argv, **_kwargs: calls.append(argv),
-        )
-
-    assert calls == []
-
-
-def test_execute_reviewed_write_rejects_changed_skill_after_reread_before_subprocess(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    root = tmp_path / "skills"
-    skill_path = root / "business-review" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    original = "# Original"
-    changed = "# Changed"
-    skill_path.write_text(changed, encoding="utf-8")
-    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (root,))
-    monkeypatch.setenv(
-        agent_cli.AUDIT_REQUIRED_SKILL_RECEIPTS_ENV,
-        json.dumps([_required_receipt(skill_path, original)]),
-    )
-    monkeypatch.setattr(agent_cli.shutil, "which", lambda _name: "/usr/bin/dws")
-    calls: list[list[str]] = []
-    agent_cli.read_skill(str(skill_path))
-
-    with pytest.raises(AgentReadOnlyViolationError, match="audit_skill_reread_required"):
-        agent_cli.execute_reviewed_write(
-            _write_argv(),
-            classifier=_write_classifier(),
-            process_runner=lambda argv, **_kwargs: calls.append(argv),
-        )
-
-    assert calls == []
-
-
-def test_execute_reviewed_write_runs_after_exact_skill_reread_in_same_process(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    root = tmp_path / "skills"
-    skill_path = root / "business-review" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True)
-    content = "# Business review"
-    skill_path.write_text(content, encoding="utf-8")
-    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (root,))
-    monkeypatch.setenv(
-        agent_cli.AUDIT_REQUIRED_SKILL_RECEIPTS_ENV,
-        json.dumps([_required_receipt(skill_path, content)]),
-    )
-    monkeypatch.setattr(agent_cli.shutil, "which", lambda _name: "/usr/bin/dws")
-    calls: list[list[str]] = []
-
-    read_result = agent_cli.read_skill(str(skill_path))
-    result = agent_cli.execute_reviewed_write(
-        _write_argv(),
-        classifier=_write_classifier(),
-        process_runner=lambda argv, **_kwargs: (
-            calls.append(argv)
-            or subprocess.CompletedProcess(argv, 0, stdout="{}", stderr="")
-        ),
-    )
-
-    assert read_result["sha256"] == _required_receipt(skill_path, content)["sha256"]
-    assert calls == [["/usr/bin/dws", *_write_argv()[1:]]]
-    assert "error" not in result
 
 
 @pytest.mark.parametrize("filename", ("notes.md", "references/oa.txt"))

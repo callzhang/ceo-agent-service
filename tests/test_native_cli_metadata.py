@@ -1,11 +1,9 @@
 import hashlib
 import json
-from pathlib import Path
 import subprocess
 
 import pytest
 
-import app.agent_cli as agent_cli
 from app.agent_cli import (
     CLI_TIMEOUT_SECONDS,
     execute_reviewed_read,
@@ -14,19 +12,6 @@ from app.agent_cli import (
 from app.agent_result import EffectKind
 from app.native_cli_metadata import AgentReadOnlyViolationError, NativeCliMetadataClassifier
 from app.native_cli_metadata import describe_native_command
-
-
-@pytest.fixture(autouse=True)
-def _satisfy_required_skill_reread_prerequisite(monkeypatch: pytest.MonkeyPatch):
-    path = str(Path("/tmp/verified-business/SKILL.md").resolve())
-    digest = "a" * 64
-    monkeypatch.setenv(
-        agent_cli.AUDIT_REQUIRED_SKILL_RECEIPTS_ENV,
-        json.dumps(
-            [{"name": "verified-business", "path": path, "sha256": digest}]
-        ),
-    )
-    monkeypatch.setitem(agent_cli._READ_SKILL_RECEIPTS, path, digest)
 
 
 def test_classifier_accepts_pptx_stdout_extraction_pipeline_as_local_read():

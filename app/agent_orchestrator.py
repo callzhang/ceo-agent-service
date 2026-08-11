@@ -257,7 +257,9 @@ class AgentOrchestrator:
                         )
                     if isinstance(state, _ExecuteAuditRecovery):
                         consumer_skills = self._consumer_skills(
-                            state.run.parent_agent_run_id
+                            task,
+                            state.run.parent_agent_run_id,
+                            state.run.proposal_revision,
                         )
                         self.audit.execute_recovery(
                             task,
@@ -273,7 +275,9 @@ class AgentOrchestrator:
                         )
                     elif isinstance(state, _RecoverAudit):
                         consumer_skills = self._consumer_skills(
-                            state.run.parent_agent_run_id
+                            task,
+                            state.run.parent_agent_run_id,
+                            state.run.proposal_revision,
                         )
                         self.audit.recover(
                             task,
@@ -288,7 +292,11 @@ class AgentOrchestrator:
                             run=state.run,
                         )
                     else:
-                        consumer_skills = self._consumer_skills(state.parent_run_id)
+                        consumer_skills = self._consumer_skills(
+                            task,
+                            state.parent_run_id,
+                            state.proposal_revision,
+                        )
                         self.audit.run(
                             task,
                             AuditTurnContext(
@@ -333,12 +341,21 @@ class AgentOrchestrator:
         )
 
     def _consumer_skills(
-        self, parent_run_id: int | None
+        self,
+        task: ReplyTask,
+        parent_run_id: int | None,
+        proposal_revision: int,
     ) -> tuple[LoadedSkillReceipt, ...]:
         if parent_run_id is None:
             raise RuntimeError("audit_consumer_parent_invalid")
-        parent = self.store.get_agent_run(parent_run_id)
-        if parent is None or parent.role is not AgentRole.CONSUMER:
+        parent = self.store.get_agent_run_for_turn(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=proposal_revision,
+            turn_attempt=0,
+        )
+        if parent is None or parent.id != parent_run_id:
             raise RuntimeError("audit_consumer_parent_invalid")
         return loaded_skill_receipts(parent.tool_events)
 

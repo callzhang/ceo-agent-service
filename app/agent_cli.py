@@ -17,11 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from app.agent_result import EffectKind
-from app.agent_skill_usage import (
-    AUDIT_REQUIRED_SKILL_RECEIPTS_ENV,
-    parse_required_skill_receipts,
-    resolve_authorized_skill_path,
-)
+from app.agent_skill_usage import resolve_authorized_skill_path
 from app.bounded_process import (
     MAX_PROCESS_OUTPUT_BYTES,
     ProcessOutputLimitError,
@@ -45,7 +41,6 @@ MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 CLI_TIMEOUT_SECONDS = 15 * 60
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
-_READ_SKILL_RECEIPTS: dict[str, str] = {}
 CliOutputLimitError = ProcessOutputLimitError
 SPREADSHEET_MATERIAL_ROOTS = (
     Path("/tmp").resolve(),
@@ -93,7 +88,6 @@ def execute_reviewed_write(
     classifier: NativeCliMetadataClassifier | None = None,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, object]:
-    _enforce_required_skill_rereads()
     return _execute_reviewed(
         argv,
         expected_effect=EffectKind.EFFECTFUL,
@@ -101,24 +95,6 @@ def execute_reviewed_write(
         classifier=classifier,
         process_runner=process_runner,
     )
-
-
-def _enforce_required_skill_rereads() -> None:
-    raw = os.environ.get(AUDIT_REQUIRED_SKILL_RECEIPTS_ENV, "")
-    if not raw:
-        raise AgentReadOnlyViolationError("audit_skill_receipts_required")
-    try:
-        required = parse_required_skill_receipts(json.loads(raw))
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise AgentReadOnlyViolationError("audit_skill_receipts_invalid") from exc
-    if not required:
-        raise AgentReadOnlyViolationError("audit_skill_receipts_required")
-    if any(
-        _READ_SKILL_RECEIPTS.get(receipt.path) != receipt.sha256
-        for receipt in required
-    ):
-        raise AgentReadOnlyViolationError("audit_skill_reread_required")
-
 
 def _json_digest(value: object) -> str:
     encoded = json.dumps(
@@ -184,14 +160,12 @@ def read_skill(path: str) -> dict[str, str]:
     except UnicodeDecodeError as exc:
         raise AgentReadOnlyViolationError("skill_content_invalid_utf8") from exc
     digest = hashlib.sha256(content_bytes).hexdigest()
-    result = {
+    return {
         "content": content,
         "sha256": digest,
         "path": str(skill_path),
         "name": authorized.name,
     }
-    _READ_SKILL_RECEIPTS[str(skill_path)] = digest
-    return result
 
 
 def read_spreadsheet(

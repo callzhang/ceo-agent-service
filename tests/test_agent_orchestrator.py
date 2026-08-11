@@ -1,3 +1,4 @@
+import sqlite3
 import threading
 import time
 from collections import deque
@@ -427,6 +428,53 @@ def _task(store: AutoReplyStore, *, message_id="msg-1", conversation_id="cid-age
     return task
 
 
+def _wrong_consumer_parent(
+    store: AutoReplyStore, task, parent_kind: str
+) -> int:
+    other_task = _task(
+        store,
+        message_id=f"msg-{parent_kind}",
+        conversation_id=f"cid-{parent_kind}",
+    )
+    run = store.claim_agent_run(
+        other_task.id,
+        other_task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner=f"wrong-{parent_kind}",
+    ).run
+    if parent_kind == "other_task":
+        return run.id
+    updates = {
+        "other_generation": (task.id, "wrong-generation", 0),
+        "other_revision": (task.id, task.execution_generation, 1),
+    }
+    if parent_kind == "other_turn":
+        reply_task_id, generation, revision = (
+            task.id,
+            task.execution_generation,
+            0,
+        )
+        turn_attempt = 1
+    else:
+        reply_task_id, generation, revision = updates[parent_kind]
+        turn_attempt = 0
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """
+            update agent_runs
+            set reply_task_id=?, execution_generation=?, proposal_revision=?,
+                turn_attempt=?
+            where id=?
+            """,
+            (reply_task_id, generation, revision, turn_attempt, run.id),
+        )
+    return run.id
+
+
 def _context(task) -> AgentTaskContext:
     return AgentTaskContext(
         task_id=task.id,
@@ -634,7 +682,18 @@ def test_audit_receives_exact_parent_consumer_skill_on_initial_and_normal_retry(
     ]
 
 
-@pytest.mark.parametrize("parent_kind", ("null", "missing", "wrong_role"))
+@pytest.mark.parametrize(
+    "parent_kind",
+    (
+        "null",
+        "missing",
+        "wrong_role",
+        "other_task",
+        "other_generation",
+        "other_revision",
+        "other_turn",
+    ),
+)
 def test_normal_audit_state_with_invalid_parent_defers_without_invoking_audit(
     store, monkeypatch, parent_kind
 ):
@@ -643,7 +702,7 @@ def test_normal_audit_state_with_invalid_parent_defers_without_invoking_audit(
         parent_id = None
     elif parent_kind == "missing":
         parent_id = 999_999
-    else:
+    elif parent_kind == "wrong_role":
         parent_id = store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -654,6 +713,8 @@ def test_normal_audit_state_with_invalid_parent_defers_without_invoking_audit(
             operation_id="wrong-parent",
             owner="wrong-parent",
         ).run.id
+    else:
+        parent_id = _wrong_consumer_parent(store, task, parent_kind)
     state = _NextAudit(
         proposal_revision=0,
         turn_attempt=0,
@@ -729,7 +790,18 @@ def test_unknown_audit_recovery_receives_exact_parent_consumer_skill(store):
     assert audit.recovery_contexts[0].consumer_skills == (receipt,)
 
 
-@pytest.mark.parametrize("parent_kind", ("null", "missing", "wrong_role"))
+@pytest.mark.parametrize(
+    "parent_kind",
+    (
+        "null",
+        "missing",
+        "wrong_role",
+        "other_task",
+        "other_generation",
+        "other_revision",
+        "other_turn",
+    ),
+)
 def test_unknown_recovery_with_invalid_parent_defers_without_invoking_audit(
     store, parent_kind
 ):
@@ -767,12 +839,16 @@ def test_unknown_recovery_with_invalid_parent_defers_without_invoking_audit(
         {"code": "write_outcome_unknown", "retryable": False},
         owner="crashed-audit",
     )
-    invalid_parent_id = {
-        "null": None,
-        "missing": 999_999,
-        "wrong_role": audit_run.id,
-    }[parent_kind]
-    with __import__("sqlite3").connect(store.path) as db:
+    invalid_parent_id = (
+        {
+            "null": None,
+            "missing": 999_999,
+            "wrong_role": audit_run.id,
+        }[parent_kind]
+        if parent_kind in {"null", "missing", "wrong_role"}
+        else _wrong_consumer_parent(store, task, parent_kind)
+    )
+    with sqlite3.connect(store.path) as db:
         db.execute(
             "update agent_runs set parent_agent_run_id=? where id=?",
             (invalid_parent_id, audit_run.id),
