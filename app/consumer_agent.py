@@ -7,14 +7,17 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
-from app.agent_context import AgentTaskContext
+from app.agent_context import AgentTaskContext, CONSUMER_AGENT_RULES
 from app.agent_contracts import AuditFeedback, ConsumerAgentResult, ConsumerProposal
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
     parse_consumer_agent_wire_result,
 )
-from app.native_cli_metadata import NativeCliMetadataClassifier
+from app.native_cli_metadata import (
+    NativeCliMetadataClassifier,
+    service_read_command_contract,
+)
 from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
@@ -52,9 +55,13 @@ ambiguity.
 
 
 def consumer_wire_contract_hash() -> str:
-    """Fingerprint the strict wire schema used to decide session compatibility."""
-    schema = ConsumerAgentWireResult.model_json_schema()
-    encoded = json.dumps(schema, sort_keys=True, separators=(",", ":"))
+    """Fingerprint stable Consumer output, instructions, and read-tool policy."""
+    contract = {
+        "consumer_rules": CONSUMER_AGENT_RULES,
+        "service_read_commands": service_read_command_contract(),
+        "wire_schema": ConsumerAgentWireResult.model_json_schema(),
+    }
+    encoded = json.dumps(contract, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()
 
 CONSUMER_ROLE_BOUNDARY = """

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import app.consumer_agent as consumer_agent
 from app.agent_context import AgentTaskContext
 from app.consumer_agent import (
     ConsumerAgentRunner,
@@ -285,6 +286,39 @@ def test_consumer_rotates_session_when_wire_contract_changes(store, task, contex
     assert (
         store.get_codex_session_contract_hash(task.conversation_id)
         == consumer_wire_contract_hash()
+    )
+
+
+def test_consumer_rotates_session_when_service_read_contract_changes(
+    store, task, context, monkeypatch
+):
+    monkeypatch.setattr(
+        consumer_agent,
+        "service_read_command_contract",
+        lambda: ("previous-read-command",),
+    )
+    old_contract = consumer_agent.consumer_wire_contract_hash()
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(task.conversation_id, old_contract)
+    monkeypatch.setattr(
+        consumer_agent,
+        "service_read_command_contract",
+        lambda: ("current-read-command",),
+    )
+    executor = CapturingExecutor(_result_jsonl(session="session-fresh"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert executor.commands[0][2] != "resume"
+    assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
+    assert store.get_codex_session_contract_hash(task.conversation_id) == (
+        consumer_agent.consumer_wire_contract_hash()
     )
 
 

@@ -34,9 +34,10 @@ Agent 超时、进程重启和外部写入结果未知时，仍能恢复而不�
 ### Consumer Agent A
 
 每个 `conversation_id` 绑定一个 A Codex session。新消息通过 `codex exec resume` 追加到该
-session，使 A 能复用参与者、历史事实、已做决定和此前澄清结果。服务同时保存严格 Consumer
-wire schema 的指纹；session 文件缺失、损坏或该指纹变化时，必须新建会话。新会话仍从 SQLite
-任务上下文读取事实，不能用旧 session 的输出形状绕过当前校验。
+session，使 A 能复用参与者、历史事实、已做决定和此前澄清结果。服务同时保存 Consumer
+会话合同的指纹：严格 wire schema、基础职责指令和注册的 service-owned 只读命令都包含在内；
+session 文件缺失、损坏或任一合同项变化时，必须新建会话。新会话仍从 SQLite 任务上下文读取
+事实，不能用旧 session 的输出形状、旧提示或旧工具策略绕过当前校验。
 
 同一时刻只允许一个 A turn 更新该 session。服务使用短期可续租的 transcript 锁保证 JSONL
 顺序；后续消息仍保留在 SQLite 队列，不因锁存在而丢失。

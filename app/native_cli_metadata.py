@@ -61,6 +61,11 @@ _SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset(
 )
 
 
+def service_read_command_contract() -> tuple[str, ...]:
+    """Return the registered service-owned read commands for session versioning."""
+    return tuple(sorted(_SERVICE_READ_ONLY_PYTHON_COMMANDS))
+
+
 class AgentReadOnlyViolationError(RuntimeError):
     pass
 
