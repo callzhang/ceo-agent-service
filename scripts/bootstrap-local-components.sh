@@ -78,7 +78,7 @@ json_string() {
       $'\f') printf '\\f' ;;
       *)
         printf -v code '%d' "'${character}"
-        if ((code < 32 || code == 127)); then
+        if (( (code >= 0 && code < 32) || code == 127 )); then
           printf '\\u%04x' "${code}"
         else
           printf '%s' "${character}"

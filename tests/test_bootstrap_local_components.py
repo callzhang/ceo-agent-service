@@ -206,7 +206,7 @@ if [ "${1:-}" = "-c" ]; then
   exec "$CHECKOUT_TEST_REAL_PYTHON" "$@"
 fi
 cat >/dev/null
-printf 'first diagnostic\nquote " backslash \\\\ tab\tcarriage\rbackspace\bformfeed\fcontrol:\001\nsecond diagnostic\n' >&2
+printf 'first diagnostic 中文 😀\nquote " backslash \\\\ tab\tcarriage\rbackspace\bformfeed\fcontrol:\001\nsecond diagnostic\n' >&2
 exit 1
 """,
     )
@@ -225,7 +225,7 @@ exit 1
     assert completed.returncode == 1
     payload = json.loads(completed.stdout)
     assert payload["components"][0]["detail"] == (
-        'first diagnostic\nquote " backslash \\ tab\tcarriage\r'
+        'first diagnostic 中文 😀\nquote " backslash \\ tab\tcarriage\r'
         "backspace\bformfeed\fcontrol:\x01\nsecond diagnostic"
     )
 
