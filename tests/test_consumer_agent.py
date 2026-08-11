@@ -289,6 +289,30 @@ def test_consumer_rotates_session_when_wire_contract_changes(store, task, contex
     )
 
 
+def test_consumer_forced_rerun_starts_a_fresh_session(store, task, context):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(
+        task.conversation_id, consumer_wire_contract_hash()
+    )
+    executor = CapturingExecutor(_result_jsonl(session="session-fresh"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+    ).run(
+        task.model_copy(update={"force_new_decision": True}),
+        context,
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+
+    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert executor.commands[0][2] != "resume"
+    assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
+
+
 def test_consumer_rotates_damaged_session_after_missing_final_result(
     store, task, context
 ):
