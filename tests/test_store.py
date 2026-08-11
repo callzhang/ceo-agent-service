@@ -214,6 +214,37 @@ def test_discard_unstarted_service_tasks_rejects_started_effect(tmp_path: Path):
         )
 
 
+def test_discard_unstarted_service_tasks_requires_exact_legacy_source(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-service",
+        conversation_title="Service",
+        single_chat=True,
+        trigger_message_id="legacy-service",
+        trigger_create_time="2026-08-11 10:00:00",
+        trigger_sender="Service",
+        trigger_text="synthetic recovery",
+        trigger_message_json=json.dumps(
+            {"raw_payload": {"source": "oa_pending_scan"}}
+        ),
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+
+    with pytest.raises(ValueError, match="not an explicit service task"):
+        store.discard_unstarted_service_tasks(
+            [task.id],
+            reason="The synthetic recovery source was invalid.",
+            expected_source="wrong_source",
+        )
+
+    discarded = store.discard_unstarted_service_tasks(
+        [task.id],
+        reason="The synthetic recovery source was invalid.",
+        expected_source="oa_pending_scan",
+    )
+    assert discarded[0].status == "done"
+
+
 def test_store_connections_can_use_short_busy_timeout(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3", busy_timeout_seconds=2)
 

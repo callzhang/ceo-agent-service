@@ -5338,6 +5338,7 @@ class AutoReplyStore:
         task_ids: list[int] | tuple[int, ...],
         *,
         reason: str,
+        expected_source: str = "",
         now: str | datetime | None = None,
     ) -> list[ReplyTask]:
         """Finalize explicitly selected synthetic tasks that never started a write."""
@@ -5363,8 +5364,17 @@ class AutoReplyStore:
                 except json.JSONDecodeError as exc:
                     raise ValueError("service task payload is invalid") from exc
                 raw_payload = payload.get("raw_payload")
-                if not isinstance(raw_payload, dict) or not raw_payload.get(
-                    "service_task"
+                source = (
+                    str(raw_payload.get("source") or "").strip()
+                    if isinstance(raw_payload, dict)
+                    else ""
+                )
+                explicitly_selected_legacy_source = (
+                    bool(expected_source.strip()) and source == expected_source.strip()
+                )
+                if not isinstance(raw_payload, dict) or not (
+                    raw_payload.get("service_task")
+                    or explicitly_selected_legacy_source
                 ):
                     raise ValueError("reply task is not an explicit service task")
                 if row["status"] not in {"pending", "processing", "failed"}:
