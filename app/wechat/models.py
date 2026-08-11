@@ -95,3 +95,4 @@ class WechatDelivery(BaseModel):
     ] = "ready_to_send"
     evidence: dict[str, str] = Field(default_factory=dict)
     error: str = ""
+    pre_action_failure: bool = False

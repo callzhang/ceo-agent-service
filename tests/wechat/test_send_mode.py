@@ -343,7 +343,12 @@ def test_unknown_delivery_status_fails_history_attempt(tmp_path):
 def test_auto_mode_retries_delivery_when_no_wechat_action_was_performed(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3"); d, attempt_id = _seed_with_attempt(store)
     store.mark_wechat_delivery_sending(d.id)
-    store.set_wechat_delivery_status(d.id, "failed", error="action_not_performed")
+    store.set_wechat_delivery_status(
+        d.id,
+        "failed",
+        error="action_not_performed",
+        pre_action_failure=True,
+    )
 
     class RetryingSender(FakeSender):
         def send(self, delivery, scope):
@@ -362,20 +367,60 @@ def test_auto_mode_retries_delivery_when_no_wechat_action_was_performed(tmp_path
     assert store.get_reply_attempt(attempt_id).send_status == "sent"
 
 
-def test_unperformed_wechat_delivery_is_requeued_only_once(tmp_path):
+def test_unperformed_wechat_delivery_is_requeued_at_most_twice(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3"); d, attempt_id = _seed_with_attempt(store)
     store.mark_wechat_delivery_sending(d.id)
-    store.set_wechat_delivery_status(d.id, "failed", error="action_not_performed")
+    store.set_wechat_delivery_status(
+        d.id,
+        "failed",
+        error="action_not_performed",
+        pre_action_failure=True,
+    )
 
     assert store.requeue_unperformed_wechat_deliveries() == 1
     assert store.get_reply_attempt(attempt_id).retry_count == 1
 
     store.mark_wechat_delivery_sending(d.id)
-    store.set_wechat_delivery_status(d.id, "failed", error="action_not_performed")
+    store.set_wechat_delivery_status(
+        d.id,
+        "failed",
+        error="action_not_performed",
+        pre_action_failure=True,
+    )
+
+    assert store.requeue_unperformed_wechat_deliveries() == 1
+    assert store.get_reply_attempt(attempt_id).retry_count == 2
+
+    store.mark_wechat_delivery_sending(d.id)
+    store.set_wechat_delivery_status(
+        d.id,
+        "failed",
+        error="action_not_performed",
+        pre_action_failure=True,
+    )
 
     assert store.requeue_unperformed_wechat_deliveries() == 0
     assert store.get_wechat_delivery_for_task(1).status == "failed"
-    assert store.get_reply_attempt(attempt_id).retry_count == 1
+    assert store.get_reply_attempt(attempt_id).retry_count == 2
+
+
+def test_pre_action_failure_requeues_using_persisted_state_not_error_text(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery, _attempt_id = _seed_with_attempt(store)
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "failed",
+        error="composer_input_unconfirmed",
+        pre_action_failure=True,
+    )
+
+    assert store.requeue_unperformed_wechat_deliveries() == 1
+    refreshed = store.get_wechat_delivery_for_task(1)
+    assert refreshed is not None
+    assert refreshed.status == "ready_to_send"
+    assert refreshed.pre_action_failure is False
+    assert refreshed.error == ""
 
 
 def test_recovery_keeps_missing_persisted_send_receipt_unknown(tmp_path):
@@ -398,12 +443,15 @@ def test_recovery_keeps_missing_persisted_send_receipt_unknown(tmp_path):
     assert attempt.retry_count == 0
 
 
-def test_unperformed_legacy_delivery_without_attempt_is_requeued_once(tmp_path):
+def test_unperformed_delivery_without_attempt_is_requeued_at_most_twice(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery = _seed(store)
     store.mark_wechat_delivery_sending(delivery.id)
     store.set_wechat_delivery_status(
-        delivery.id, "failed", error="action_not_performed"
+        delivery.id,
+        "failed",
+        error="action_not_performed",
+        pre_action_failure=True,
     )
 
     assert store.requeue_unperformed_wechat_deliveries() == 1
@@ -415,7 +463,19 @@ def test_unperformed_legacy_delivery_without_attempt_is_requeued_once(tmp_path):
 
     store.mark_wechat_delivery_sending(delivery.id)
     store.set_wechat_delivery_status(
-        delivery.id, "failed", error="action_not_performed"
+        delivery.id,
+        "failed",
+        error="action_not_performed",
+        pre_action_failure=True,
+    )
+    assert store.requeue_unperformed_wechat_deliveries() == 1
+
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "failed",
+        error="action_not_performed",
+        pre_action_failure=True,
     )
     assert store.requeue_unperformed_wechat_deliveries() == 0
 

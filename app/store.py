@@ -987,6 +987,7 @@ class AutoReplyStore:
                     execution_generation text not null default 'initial',
                     status text not null default 'ready_to_send',
                     action_started_at text not null default '',
+                    pre_action_failure integer not null default 0,
                     evidence_json text not null default '{}',
                     error text not null default '',
                     created_at text not null default current_timestamp,
@@ -1758,6 +1759,11 @@ class AutoReplyStore:
                 db.execute(
                     "alter table wechat_deliveries add column "
                     "execution_generation text not null default 'initial'"
+                )
+            if "pre_action_failure" not in wechat_delivery_columns:
+                db.execute(
+                    "alter table wechat_deliveries add column "
+                    "pre_action_failure integer not null default 0"
                 )
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
@@ -6304,7 +6310,7 @@ class AutoReplyStore:
                         existing["status"] in {"ready_to_send", "superseded"}
                         or (
                             existing["status"] == "failed"
-                            and existing["error"] == "action_not_performed"
+                            and bool(existing["pre_action_failure"])
                         )
                     )
                 ):
@@ -6314,11 +6320,12 @@ class AutoReplyStore:
                         set account_id=?, target_type=?, target_id=?,
                             conversation_id=?, reply_text=?,
                             execution_generation=?, status='ready_to_send',
-                            action_started_at='', evidence_json=?, error='',
+                            action_started_at='', pre_action_failure=0,
+                            evidence_json=?, error='',
                             updated_at=current_timestamp
                         where id=? and (
                             status in ('ready_to_send', 'superseded')
-                            or (status='failed' and error='action_not_performed')
+                            or (status='failed' and pre_action_failure=1)
                         )
                         """,
                         (
@@ -6559,15 +6566,12 @@ class AutoReplyStore:
                     reply_text=excluded.reply_text,
                     execution_generation=excluded.execution_generation,
                     status='ready_to_send',
+                    pre_action_failure=0,
                     evidence_json=excluded.evidence_json,
                     error='',
                     updated_at=current_timestamp
                 where wechat_deliveries.status='failed'
-                  and wechat_deliveries.action_started_at=''
-                  and wechat_deliveries.error in (
-                    'target_binding_unverified',
-                    'action_not_performed'
-                  )
+                  and wechat_deliveries.pre_action_failure=1
                 """,
                 (
                     reply_task_id, account_id, target_type, target_id,
@@ -6597,6 +6601,7 @@ class AutoReplyStore:
             execution_generation=row["execution_generation"],
             status=row["status"], evidence=json.loads(row["evidence_json"]),
             error=row["error"],
+            pre_action_failure=bool(row["pre_action_failure"]),
         )
 
     def list_wechat_deliveries_by_status(self, status: str) -> list:
@@ -6621,6 +6626,7 @@ class AutoReplyStore:
                 execution_generation=row["execution_generation"],
                 status=row["status"], evidence=json.loads(row["evidence_json"]),
                 error=row["error"],
+                pre_action_failure=bool(row["pre_action_failure"]),
             )
             for row in rows
         ]
@@ -6657,7 +6663,7 @@ class AutoReplyStore:
             for row in rows
         }
 
-    def requeue_unperformed_wechat_deliveries(self, *, max_retries: int = 1) -> int:
+    def requeue_unperformed_wechat_deliveries(self, *, max_retries: int = 2) -> int:
         """Return pre-action failures to the send queue for a bounded retry."""
         if max_retries < 1:
             return 0
@@ -6677,7 +6683,8 @@ class AutoReplyStore:
                 from wechat_deliveries as deliveries
                 join reply_tasks as tasks on tasks.id=deliveries.reply_task_id
                 where deliveries.status='failed'
-                  and deliveries.error='action_not_performed'
+                  and deliveries.pre_action_failure=1
+                  and deliveries.action_started_at<>''
                   and deliveries.execution_generation=tasks.execution_generation
                   and coalesce((
                       select attempts.retry_count
@@ -6697,10 +6704,11 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """
                     update wechat_deliveries
-                    set status='ready_to_send', error='', updated_at=current_timestamp
+                    set status='ready_to_send', error='', pre_action_failure=0,
+                        updated_at=current_timestamp
                     where id=?
                       and status='failed'
-                      and error='action_not_performed'
+                      and pre_action_failure=1
                       and exists (
                       select 1 from reply_tasks
                       where reply_tasks.id=wechat_deliveries.reply_task_id
@@ -6779,6 +6787,7 @@ class AutoReplyStore:
                 set status='sending',
                     action_started_at=case
                         when ?='' then current_timestamp else ? end,
+                    pre_action_failure=0,
                     error='',
                     updated_at=current_timestamp
                 where id=? and status='ready_to_send'
@@ -6816,6 +6825,7 @@ class AutoReplyStore:
             execution_generation=row["execution_generation"],
             status=row["status"], evidence=json.loads(row["evidence_json"]),
             error=row["error"],
+            pre_action_failure=bool(row["pre_action_failure"]),
         )
 
     def mark_wechat_delivery_sending(self, delivery_id: int, *, now: str = "") -> None:
@@ -6843,11 +6853,13 @@ class AutoReplyStore:
             execution_generation=row["execution_generation"],
             status=row["status"], evidence=json.loads(row["evidence_json"]),
             error=row["error"],
+            pre_action_failure=bool(row["pre_action_failure"]),
         )
 
     def set_wechat_delivery_status(
         self, delivery_id: int, status: str, *, error: str = "",
         action_started_at: str | None = None,
+        pre_action_failure: bool = False,
     ) -> None:
         expected_statuses = self._wechat_delivery_source_statuses(status, error)
         placeholders = ",".join("?" for _ in expected_statuses)
@@ -6861,16 +6873,30 @@ class AutoReplyStore:
             if action_started_at is not None:
                 cursor = db.execute(
                     "update wechat_deliveries set status=?, error=?, "
-                    "action_started_at=?, updated_at=current_timestamp where id=? "
+                    "action_started_at=?, pre_action_failure=?, "
+                    "updated_at=current_timestamp where id=? "
                     f"and status in ({placeholders}) {generation_guard}",
-                    (status, error, action_started_at, delivery_id, *expected_statuses),
+                    (
+                        status,
+                        error,
+                        action_started_at,
+                        int(pre_action_failure),
+                        delivery_id,
+                        *expected_statuses,
+                    ),
                 )
             else:
                 cursor = db.execute(
                     "update wechat_deliveries set status=?, error=?, "
-                    "updated_at=current_timestamp where id=? "
+                    "pre_action_failure=?, updated_at=current_timestamp where id=? "
                     f"and status in ({placeholders}) {generation_guard}",
-                    (status, error, delivery_id, *expected_statuses),
+                    (
+                        status,
+                        error,
+                        int(pre_action_failure),
+                        delivery_id,
+                        *expected_statuses,
+                    ),
                 )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(
@@ -6974,7 +7000,7 @@ class AutoReplyStore:
               and conversation_id=?
               and reply_task_id < ?
               and status='failed'
-              and error='action_not_performed'
+              and pre_action_failure=1
             """,
             (
                 sent["account_id"],
@@ -6990,8 +7016,9 @@ class AutoReplyStore:
             db.execute(
                 """
                 update wechat_deliveries
-                set status='superseded', error=?, updated_at=current_timestamp
-                where id=? and status='failed' and error='action_not_performed'
+                set status='superseded', error=?, pre_action_failure=0,
+                    updated_at=current_timestamp
+                where id=? and status='failed' and pre_action_failure=1
                 """,
                 (error, delivery_id),
             )

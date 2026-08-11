@@ -253,7 +253,10 @@ def test_recreating_pre_action_failed_delivery_makes_it_retryable(tmp_path):
         reply_text="first",
     )
     store.set_wechat_delivery_status(
-        delivery_id, "failed", error="target_binding_unverified"
+        delivery_id,
+        "failed",
+        error="target_binding_unverified",
+        pre_action_failure=True,
     )
 
     store.create_wechat_delivery(
@@ -353,6 +356,7 @@ def test_new_generation_replaces_confirmed_unperformed_delivery(tmp_path):
         delivery_id,
         "failed",
         error="action_not_performed",
+        pre_action_failure=True,
     )
     new_generation = store.rotate_reply_task_execution_generation(task.id)
     claimed = store.claim_reply_task(task.id)
@@ -507,11 +511,11 @@ def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
 
     old = store.get_wechat_delivery_for_task(1)
     newer = store.get_wechat_delivery_for_task(2)
-    # Simulate a legacy pre-action failure that existed before a later delivery
+    # Simulate an explicit pre-action failure that existed before a later delivery
     # was recorded; normal creation now supersedes this case immediately.
     with store._connect() as db:
         db.execute(
-            "update wechat_deliveries set status='failed', error='action_not_performed' where id=?",
+            "update wechat_deliveries set status='failed', error='composer_input_unconfirmed', pre_action_failure=1 where id=?",
             (old.id,),
         )
     store.mark_wechat_delivery_sending(newer.id)

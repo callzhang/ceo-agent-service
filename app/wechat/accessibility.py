@@ -24,6 +24,7 @@ class AccessibilityResult:
     action_performed: bool
     visible_confirmation: bool
     target_fingerprint: str = ""
+    failure_reason: str = ""
 
 
 @dataclass
@@ -230,7 +231,10 @@ class WechatSender:
         # Fail-closed: never send to an unverified/conflicting target.
         if getattr(scope, "binding_status", "unverified") != "verified":
             self.store.set_wechat_delivery_status(
-                delivery.id, "failed", error="target_binding_unverified"
+                delivery.id,
+                "failed",
+                error="target_binding_unverified",
+                pre_action_failure=True,
             )
             return SendOutcome("failed", "target_binding_unverified")
 
@@ -255,11 +259,12 @@ class WechatSender:
             )
         except SenderExecutionError as exc:
             if not exc.action_may_have_started:
-                error = "action_not_performed"
+                error = "sender_unavailable_before_dispatch"
                 self.store.set_wechat_delivery_status(
                     delivery.id,
                     "failed",
                     error=error,
+                    pre_action_failure=True,
                 )
                 return SendOutcome("failed", error)
             error = "sender_execution_interrupted"
@@ -283,8 +288,13 @@ class WechatSender:
         elif result.action_performed:
             status, error = "send_unknown", "no_visible_confirmation"
         else:
-            status, error = "failed", "action_not_performed"
-        self.store.set_wechat_delivery_status(delivery.id, status, error=error)
+            status, error = "failed", result.failure_reason or "action_not_performed"
+        self.store.set_wechat_delivery_status(
+            delivery.id,
+            status,
+            error=error,
+            pre_action_failure=not result.action_performed,
+        )
         return SendOutcome(status, error)
 
 
@@ -484,10 +494,18 @@ class MacWechatAccessibility:
         """
         (time, AXIsProcessTrusted, mk_app, get_attr, set_attr, perform, Quartz) = self._ax()
         if not AXIsProcessTrusted():
-            return AccessibilityResult(False, False)
+            return AccessibilityResult(
+                False,
+                False,
+                failure_reason="accessibility_not_trusted",
+            )
         pid = self._wechat_pid()
         if not pid:
-            return AccessibilityResult(False, False)
+            return AccessibilityResult(
+                False,
+                False,
+                failure_reason="wechat_not_running",
+            )
         app = mk_app(pid)
 
         def g(el, attr):
@@ -576,7 +594,17 @@ class MacWechatAccessibility:
         try:
             # --- navigation (needs a real click; briefly foreground WeChat) ---
             self._wait_until_idle()   # don't interrupt the user mid-typing
-            _activate_wait(pid, first=first, sleep=time.sleep, reactivate=self._reactivate)
+            if not _activate_wait(
+                pid,
+                first=first,
+                sleep=time.sleep,
+                reactivate=self._reactivate,
+            ):
+                return AccessibilityResult(
+                    False,
+                    False,
+                    failure_reason="wechat_ui_not_ready",
+                )
             composer = _open_target(
                 target_label, first=first, click=click,
                 type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep,
@@ -586,9 +614,17 @@ class MacWechatAccessibility:
                 expected_recent_text=expected_recent_text,
             )
             if composer is None:
-                return AccessibilityResult(False, False)
+                return AccessibilityResult(
+                    False,
+                    False,
+                    failure_reason="target_open_failed",
+                )
             if not composer or g(composer, "AXTitle") != target_label:
-                return AccessibilityResult(False, False)  # binding mismatch -> do not send
+                return AccessibilityResult(
+                    False,
+                    False,
+                    failure_reason="target_binding_mismatch",
+                )
 
             # --- compose (PURE AX) + send (key to pid, no focus steal) ---
             set_attr(composer, "AXFocused", True)
@@ -599,9 +635,17 @@ class MacWechatAccessibility:
                 type_to_wechat(reply_text)
                 time.sleep(0.4)
                 if reply_text not in (g(composer, "AXValue") or ""):
-                    return AccessibilityResult(False, False)
+                    return AccessibilityResult(
+                        False,
+                        False,
+                        failure_reason="composer_input_unconfirmed",
+                    )
             if g(first(id_eq="chat_input_field"), "AXTitle") != target_label:
-                return AccessibilityResult(False, False)  # binding changed before send
+                return AccessibilityResult(
+                    False,
+                    False,
+                    failure_reason="target_changed_before_send",
+                )
             key_to_wechat(36)                # Return -> WeChat pid
             time.sleep(1.0)
             cleared = (g(first(id_eq="chat_input_field"), "AXValue") or "").strip() == ""
