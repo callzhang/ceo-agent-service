@@ -379,14 +379,12 @@ The reconciliation result must cite the digest of a completed matching read in
 that turn. Repeating the same scoped read is allowed; the service does not rewrite
 the Agent's cited digest and rejects an unrelated or historical digest.
 
-Unknown DingTalk message delivery uses the reviewed command descriptor and the
-service delivery ledger as its identity. The Agent's free-form operation label
-does not decide whether an action is a message send. When the exact trigger has
-no delivery record, the unknown run is closed as absent and the task rotates to
-a fresh generation; the old write is never replayed.
-The same rule applies when a proposal also contains other actions. The fresh
-Consumer generation must read their live state and propose only work that remains
-necessary, so a missing notification cannot cause an approval to be replayed.
+The service delivery ledger is not evidence that an Agent-executed DingTalk
+message is absent: controlled DWS writes may complete before the final service
+delivery row is recorded. Unknown delivery therefore remains read-only until a
+target-scoped read proves presence or absence. A completed controlled tool event
+or persisted receipt for the exact action overrides any older absent readback and
+prevents recovery from authorizing the same write again.
 On service startup, unfinished unknown Audit reconciliation leases are released
 immediately. The next worker pass continues the read-only reconciliation; it
 does not mark the old external action as absent or replay it because of restart.

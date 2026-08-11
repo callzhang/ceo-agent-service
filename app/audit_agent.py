@@ -21,6 +21,7 @@ from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
     ProcessExecutor,
+    _action_completion_accounting,
     _agent_process_error_code,
     unknown_reconciliation_retry_at,
 )
@@ -121,14 +122,6 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        database_absence = _database_delivery_absence_reconciliation(
-            self.store,
-            task,
-            context,
-            claim.run,
-        )
-        if database_absence:
-            return self._requeue_absent_direct_delivery(task, claim.run)
         try:
             return self._execute_claimed(
                 task,
@@ -182,17 +175,61 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        if _database_delivery_absence_reconciliation(
-            self.store,
-            task,
-            context,
-            claim.run,
-        ):
-            return self._requeue_absent_direct_delivery(task, claim.run)
-        authorizations = _recovery_authorizations(
-            run, context, absent, self.effects
+        expected_effect_actions = tuple(
+            _expected_effect_action(action, self.effects, action_index=index)
+            for index, action in enumerate(context.proposal.actions)
         )
-        if len(authorizations) != len(absent):
+        completed, all_effects_closed = _action_completion_accounting(
+            claim.run.tool_events,
+            self.store.list_agent_execution_receipts(claim.run.id),
+            expected_effect_actions,
+            operation_id=claim.run.operation_id,
+            registry=self.effects,
+        )
+        unresolved_absent = absent - completed
+        if not unresolved_absent:
+            if (
+                completed != set(range(len(expected_effect_actions)))
+                or not all_effects_closed
+            ):
+                raise RuntimeError("audit_recovery_effect_unresolved")
+            result = AuditAgentResult(
+                outcome=AuditOutcome.EXECUTED,
+                summary="All recovery actions already have completed tool evidence.",
+                proposal_revision=claim.run.proposal_revision,
+                side_effect_state=SideEffectState.CONFIRMED,
+                feedback=None,
+                external_result={
+                    "operation_id": claim.run.operation_id,
+                    "verification_summary": (
+                        "Completed tool events and persisted receipts cover every action."
+                    ),
+                    "live_result_reference": {
+                        "recovery_action_indexes": sorted(completed),
+                        "evidence": "completed_tool_events_and_receipts",
+                    },
+                },
+                reconciliation=(),
+                error=AgentError(),
+            )
+            completed_run = self.store.complete_agent_run(
+                claim.run.id,
+                result.model_dump(mode="json"),
+                owner=self.owner,
+                side_effect_state=SideEffectState.CONFIRMED.value,
+                transcript_end_line=claim.run.transcript_end_line,
+                expected_status="unknown",
+            )
+            return AgentTurnRunResult(
+                run_id=completed_run.id,
+                result=result,
+                transcript_start_line=claim.run.transcript_end_line,
+                transcript_end_line=completed_run.transcript_end_line,
+            )
+        authorizations = _recovery_authorizations(
+            run, context, unresolved_absent, self.effects
+        )
+        if len(authorizations) != len(unresolved_absent):
             return self._requeue_for_consumer(
                 task,
                 claim.run,
@@ -208,23 +245,8 @@ class AuditAgentRunner:
             run=claim.run,
             rendered_rules=render_audit_rules(AgentRole.AUDIT),
             recovery_phase="execute",
-            authorized_recovery_actions=absent,
+            authorized_recovery_actions=unresolved_absent,
             recovery_authorizations=authorizations,
-        )
-
-    def _requeue_absent_direct_delivery(
-        self,
-        task: ReplyTask,
-        run: AgentRun,
-    ) -> AgentTurnRunResult[AuditAgentResult]:
-        return self._requeue_for_consumer(
-            task,
-            run,
-            code="persisted_delivery_absent",
-            summary=(
-                "No persisted delivery record exists for the exact trigger; "
-                "the direct chat action was requeued in a new generation."
-            ),
         )
 
     def _requeue_for_consumer(
@@ -506,43 +528,6 @@ def _invalid_operation_contracts(
             registry,
             action_index=index,
         ).get("operation_contract_valid") is False
-    )
-
-
-def _database_delivery_absence_reconciliation(
-    store: AutoReplyStore,
-    task: ReplyTask,
-    context: AuditTurnContext,
-    run: AgentRun,
-) -> bool:
-    """Replan unknown work when any direct delivery lacks its ledger record."""
-    if store.has_sent_reply_for_trigger(task.conversation_id, task.trigger_message_id):
-        return False
-    actions = context.proposal.actions
-    return any(_is_direct_chat_send(action) for action in actions)
-
-
-def _is_direct_chat_send(action: object) -> bool:
-    capability = getattr(action, "capability", "")
-    payload = getattr(action, "payload", None)
-    if capability != "agent_cli.dws":
-        return False
-    if not isinstance(payload, dict):
-        return False
-    # DWS has used more than one reviewed CLI spelling for the same message
-    # send operation. Resolve the stored command and trust its typed target
-    # metadata instead of assuming a particular argv spelling.
-    descriptor = describe_native_command({"type": "command_execution", **payload})
-    if descriptor is None or descriptor.cli != "dws":
-        return False
-    # The controlled +send-to-group command is ledger-backed like a direct
-    # chat send. Other group write spellings retain their normal readback path.
-    target = getattr(action, "target", None)
-    target_keys = set(descriptor.target_identifiers)
-    if isinstance(target, dict):
-        target_keys.update(str(key).replace("_", "-") for key in target)
-    return "open-dingtalk-id" in target_keys or (
-        descriptor.command_path == "chat +send-to-group" and "group" in target_keys
     )
 
 

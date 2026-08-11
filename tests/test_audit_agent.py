@@ -1084,12 +1084,16 @@ def test_missing_delivery_ledger_does_not_prove_unknown_chat_was_not_sent(setup)
     assert result.result.outcome.value == "reconciled"
     assert result.result.reconciliation[0].disposition.value == "ambiguous"
     assert persisted is not None and persisted.status == "unknown"
-    assert store.get_reply_task(task.id).execution_generation == task.execution_generation
+    assert (
+        store.get_reply_task(task.id).execution_generation
+        == task.execution_generation
+    )
     assert executor.commands
 
 
-def test_mixed_unknown_replans_when_direct_delivery_lacks_ledger_record(setup):
+def test_mixed_unknown_does_not_treat_missing_sent_reply_as_delivery_absence(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor("", returncode=1)
     mixed_proposal = ConsumerProposal.model_validate(
         {
             "objective": "Approve and notify",
@@ -1114,155 +1118,21 @@ def test_mixed_unknown_replans_when_direct_delivery_lacks_ledger_record(setup):
             "authored_judgment": "The approval needs a separate applicant notice.",
         }
     )
-    mixed_context = replace(audit_context, proposal=mixed_proposal)
 
-    result = AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=CapturingExecutor("", returncode=1),
-    ).recover(task, mixed_context, run=run)
-
-    persisted = store.get_agent_run(run.id)
-    requeued = store.get_reply_task(task.id)
-    assert result.result.outcome.value == "failed"
-    assert persisted is not None and persisted.status == "failed"
-    assert requeued is not None and requeued.status == "pending"
-    assert requeued.execution_generation != task.execution_generation
-
-
-def test_historical_direct_chat_alias_without_delivery_record_rotates_generation(
-    setup,
-):
-    store, task, audit_context, run = _seed_crashed_audit_write(setup)
-    historical_proposal = ConsumerProposal.model_validate(
-        {
-            "objective": "Send direct result",
-            "actions": [
-                {
-                    "description": "Send direct message",
-                    "capability": "agent_cli.dws",
-                    "operation": "chat message send",
-                    "target": {"open_dingtalk_id": "direct-user"},
-                    "payload": {
-                        "argv": [
-                            "dws", "chat", "+messages-send", "--as", "user",
-                            "--open-dingtalk-id", "direct-user",
-                            "--text", "done", "--yes",
-                        ]
-                    },
-                    "expected_verification": "Message exists",
-                }
-            ],
-            "sourced_facts": [],
-            "authored_judgment": "Requested by Derek",
-        }
-    )
-
-    result = AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=CapturingExecutor(""),
-    ).recover(task, replace(audit_context, proposal=historical_proposal), run=run)
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).recover(task, replace(audit_context, proposal=mixed_proposal), run=run)
 
     persisted = store.get_agent_run(run.id)
-    requeued = store.get_reply_task(task.id)
-    assert result.result.error is not None
-    assert result.result.error.code == "persisted_delivery_absent"
-    assert persisted is not None and persisted.status == "failed"
-    assert requeued is not None and requeued.execution_generation != task.execution_generation
-
-
-def test_controlled_group_chat_without_delivery_record_rotates_generation(setup):
-    store, task, audit_context, run = _seed_crashed_audit_write(setup)
-    group_proposal = ConsumerProposal.model_validate(
-        {
-            "objective": "Send group result",
-            "actions": [
-                {
-                    "description": "Send group message",
-                    "capability": "agent_cli.dws",
-                    "operation": "chat message send",
-                    "target": {"group": "group-1"},
-                    "payload": {
-                        "argv": [
-                            "dws",
-                            "chat",
-                            "+send-to-group",
-                            "--group",
-                            "group-1",
-                            "--text",
-                            "done",
-                        ]
-                    },
-                    "expected_verification": "Message exists",
-                }
-            ],
-            "sourced_facts": [],
-            "authored_judgment": "Requested by Derek",
-        }
+    assert persisted is not None and persisted.status == "unknown"
+    assert (
+        store.get_reply_task(task.id).execution_generation
+        == task.execution_generation
     )
-
-    executor = CapturingExecutor("")
-    result = AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-    ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
-
-    persisted = store.get_agent_run(run.id)
-    requeued = store.get_reply_task(task.id)
-    assert result.result.error is not None
-    assert result.result.error.code == "persisted_delivery_absent"
-    assert persisted is not None and persisted.status == "failed"
-    assert requeued is not None and requeued.status == "pending"
-    assert requeued.execution_generation != task.execution_generation
-    assert executor.commands == []
-
-
-def test_controlled_group_chat_uses_reviewed_command_identity_for_delivery_recovery(
-    setup,
-):
-    store, task, audit_context, run = _seed_crashed_audit_write(setup)
-    group_proposal = ConsumerProposal.model_validate(
-        {
-            "objective": "Send group result",
-            "actions": [
-                {
-                    "description": "Send group message",
-                    "capability": "agent_cli.dws",
-                    "operation": "chat +send-to-group",
-                    "target": {"group": "group-1"},
-                    "payload": {
-                        "argv": [
-                            "dws",
-                            "chat",
-                            "+send-to-group",
-                            "--group",
-                            "group-1",
-                            "--text",
-                            "done",
-                        ]
-                    },
-                    "expected_verification": "Message exists",
-                }
-            ],
-            "sourced_facts": [],
-            "authored_judgment": "Requested by Derek",
-        }
-    )
-
-    executor = CapturingExecutor("")
-    result = AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-    ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
-
-    assert result.result.error is not None
-    assert result.result.error.code == "persisted_delivery_absent"
-    assert store.get_agent_run(run.id).status == "failed"
-    assert store.get_reply_task(task.id).execution_generation != task.execution_generation
-    assert executor.commands == []
+    assert executor.commands
 
 
 def test_completed_recovery_action_overrides_older_absent_reconciliation(setup):
