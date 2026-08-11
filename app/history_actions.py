@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 
 from app.agent_contracts import DecisionOption
+from app.history import HistoryItem
+from app.meeting_alignment import DEFAULT_MEETING_MAX_ATTEMPTS
+from app.meeting_alignment_models import MeetingAlignmentJob, MeetingAlignmentRun
 from app.store import ReplyAttempt, ReplyTask
 from app.worker import MAX_REPLY_TASK_ATTEMPTS
 
@@ -126,3 +129,50 @@ def _management_tail(
         )
     )
     return tuple(actions)
+
+
+def meeting_history_attention(
+    run: MeetingAlignmentRun,
+    job: MeetingAlignmentJob,
+) -> HistoryAttention | None:
+    reason = (
+        run.audit_summary
+        or run.error
+        or job.error
+        or "会议任务未完成"
+    ).strip()
+    if job.status == "retry":
+        return HistoryAttention(
+            kind="automatic_recovery",
+            reason=reason,
+            external_effect="未确认发送会议对齐消息",
+            retry_attempt=job.attempts,
+            retry_limit=DEFAULT_MEETING_MAX_ATTEMPTS,
+            retry_at=job.available_at,
+            actions=(HistoryAction("details", "技术详情"),),
+        )
+    if job.status in {"failed", "quarantined"}:
+        return HistoryAttention(
+            kind="needs_manager",
+            reason=reason,
+            external_effect="未确认发送会议对齐消息",
+            actions=(
+                HistoryAction("manual", "人工处理"),
+                HistoryAction("details", "技术详情"),
+            ),
+        )
+    return None
+
+
+def task_history_attention(item: HistoryItem) -> HistoryAttention | None:
+    if item.status.strip().lower() != "failed":
+        return None
+    return HistoryAttention(
+        kind="needs_manager",
+        reason=item.output_text.strip() or "任务动作未完成",
+        external_effect="任务记录未确认完成",
+        actions=(
+            HistoryAction("manual", "人工处理"),
+            HistoryAction("details", "技术详情"),
+        ),
+    )

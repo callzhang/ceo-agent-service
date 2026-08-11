@@ -83,7 +83,9 @@ from app.embedding import EmbeddingClient
 from app.history import safe_observability_error
 from app.history_actions import (
     HistoryAttention,
+    meeting_history_attention,
     reply_history_attention,
+    task_history_attention,
 )
 from app.developer_prompt import (
     configurable_prompt_variable_pairs,
@@ -4194,7 +4196,7 @@ def _render_attempt_list(
             items.append(_task_history_card(history_item))
             continue
         if history_item.kind == "meeting":
-            items.append(_meeting_history_card(history_item))
+            items.append(_meeting_history_card(history_item, store))
             continue
         attempt = attempts_by_id.get(history_item.source_id)
         if attempt is None:
@@ -4485,9 +4487,18 @@ def _wechat_send_actions(delivery_id: int | None) -> str:
     )
 
 
-def _meeting_history_card(item) -> str:
+def _meeting_history_card(item, store: AutoReplyStore) -> str:
     status = item.status.strip().lower() or "processing"
     detail_url = f"/meeting-attempts/{item.source_id}"
+    run = store.get_meeting_alignment_run(item.source_id)
+    attention = None
+    if run is not None:
+        job = store.get_meeting_alignment_job(run.job_id)
+        attention = meeting_history_attention(run, job)
+    attention_html = _history_attention_html(
+        attention,
+        actions_html=_history_link_attention_actions(attention, detail_url),
+    )
     return (
         '<article class="attempt-item history-kind-meeting" role="link" tabindex="0" '
         f'data-history-detail-href="{escape(detail_url, quote=True)}">'
@@ -4509,7 +4520,7 @@ def _meeting_history_card(item) -> str:
         '<div class="attempt-lines">'
         f'{_attempt_text_line(item.input_label, item.input_text, 260)}'
         f'{_attempt_text_line(item.output_label, item.output_text, 320)}'
-        '</div></article>'
+        f'</div>{attention_html}</article>'
     )
 
 
@@ -4541,6 +4552,11 @@ def _task_history_card(item) -> str:
     detail_url = _task_history_detail_url(item)
     output_text = _task_history_output_text(item, status)
     status_label = _task_history_status_label(item, status)
+    attention = task_history_attention(item)
+    attention_html = _history_attention_html(
+        attention,
+        actions_html=_history_link_attention_actions(attention, detail_url),
+    )
     return (
         '<article class="attempt-item history-kind-task" role="link" tabindex="0" '
         f'data-history-detail-href="{escape(detail_url, quote=True)}">'
@@ -4562,8 +4578,23 @@ def _task_history_card(item) -> str:
         '<div class="attempt-lines">'
         f'{_attempt_text_line(item.input_label, item.input_text, 260)}'
         f'{_attempt_text_line(item.output_label, output_text, 320)}'
-        '</div></article>'
+        f'</div>{attention_html}</article>'
     )
+
+
+def _history_link_attention_actions(
+    attention: HistoryAttention | None,
+    detail_url: str,
+) -> str:
+    if attention is None:
+        return ""
+    links = "".join(
+        f'<a class="compact-button" href="{escape(detail_url, quote=True)}">'
+        f'{escape(action.label)}</a>'
+        for action in attention.actions
+        if action.key in {"manual", "details"}
+    )
+    return f'<div class="history-attention-actions">{links}</div>' if links else ""
 
 
 def _task_history_output_text(item, status: str) -> str:

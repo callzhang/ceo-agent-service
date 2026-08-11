@@ -5078,6 +5078,102 @@ def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
     assert "外部副作用：</strong>未执行任何外部动作" in html
 
 
+def test_retrying_meeting_shows_persisted_plan_without_manager_actions(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-retry-history",
+        title="Weekly sync",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-08-11T04:00:00+00:00",
+        eligible_at="2026-08-11T04:10:00+00:00",
+        status="pending",
+    )
+    [claimed_job] = store.claim_meeting_alignment_jobs(
+        limit=1,
+        now="2026-08-11T05:00:00+00:00",
+    )
+    retry_at = "2026-08-11T05:14:00+00:00"
+    store.schedule_meeting_alignment_job_retry(
+        job_id,
+        "Meeting provider unavailable",
+        available_at=retry_at,
+    )
+    run_id = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="meeting-retry-session",
+        decision_json="{}",
+        audit_summary="Meeting provider unavailable",
+        status="retry",
+        error="Meeting provider unavailable",
+    )
+
+    html = render_attempt_list(store, include_chart=False)
+
+    assert f"#meeting-{run_id}" in html
+    assert "状态：</strong>系统失败，正在自动恢复" in html
+    assert f"第 {claimed_job.attempts}/3 次" in html
+    assert audit_web_module._format_local_time(retry_at) in html
+    assert f'href="/meeting-attempts/{run_id}">技术详情</a>' in html
+    assert ">重试当前任务</button>" not in html
+
+
+def test_failed_meeting_and_follow_up_expose_reason_and_safe_choices(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-failed-history",
+        title="Hiring sync",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-08-11T04:00:00+00:00",
+        eligible_at="2026-08-11T04:10:00+00:00",
+        status="pending",
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="failed",
+        error="Meeting delivery failed",
+    )
+    meeting_run_id = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="meeting-failed-session",
+        decision_json="{}",
+        audit_summary="Meeting delivery failed",
+        status="failed",
+        error="Meeting delivery failed",
+    )
+    project_id = store.create_work_project(
+        title="Hiring",
+        category="people",
+        priority="P1",
+        risk_level="medium",
+        owner_name="Mina",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_name="Mina",
+        target_kind="direct",
+        question_text="Please provide the update.",
+        scheduled_at="2026-08-11 05:00:00",
+        status="failed",
+        send_result_json='{"error":"Follow-up delivery failed"}',
+    )
+
+    html = render_attempt_list(store, include_chart=False)
+
+    assert "Meeting delivery failed" in html
+    assert f'href="/meeting-attempts/{meeting_run_id}">人工处理</a>' in html
+    assert "Follow-up delivery failed" in html
+    assert (
+        f'href="/tasks/{project_id}#follow-up-{follow_up_id}">人工处理</a>'
+        in html
+    )
+
+
 def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     tmp_path: Path,
 ):

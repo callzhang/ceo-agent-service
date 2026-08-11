@@ -1,5 +1,11 @@
 from app.agent_contracts import DecisionOption
-from app.history_actions import reply_history_attention
+from app.history import HistoryItem
+from app.history_actions import (
+    meeting_history_attention,
+    reply_history_attention,
+    task_history_attention,
+)
+from app.meeting_alignment_models import MeetingAlignmentJob, MeetingAlignmentRun
 from app.store import ReplyAttempt, ReplyTask
 
 
@@ -171,3 +177,50 @@ def test_confirmed_external_effect_only_keeps_agent_choices_and_read_only_action
     assert state is not None
     assert state.external_effect == "已确认产生外部动作"
     assert [action.key for action in state.actions] == ["A", "B", "manual", "details"]
+
+
+def test_retrying_meeting_uses_persisted_retry_plan():
+    job = MeetingAlignmentJob.model_construct(
+        status="retry",
+        attempts=2,
+        available_at="2026-08-11T05:14:00+00:00",
+        error="Meeting provider unavailable",
+    )
+    run = MeetingAlignmentRun.model_construct(
+        audit_summary="Meeting provider unavailable",
+        error="Meeting provider unavailable",
+    )
+
+    state = meeting_history_attention(run, job)
+
+    assert state is not None
+    assert state.kind == "automatic_recovery"
+    assert state.retry_attempt == 2
+    assert state.retry_limit == 3
+    assert [action.key for action in state.actions] == ["details"]
+
+
+def test_failed_follow_up_requires_manager_without_synthetic_retry():
+    item = HistoryItem(
+        kind="task",
+        object_type="task",
+        source_id=3,
+        source_title="Hiring",
+        source_actor="Follow-up",
+        input_label="跟进",
+        input_text="Please provide the update.",
+        output_label="结果",
+        output_text="Follow-up delivery failed",
+        action="follow_up_failed",
+        status="failed",
+        project_id=1,
+        follow_up_id=3,
+        created_at="2026-08-11 05:00:00",
+    )
+
+    state = task_history_attention(item)
+
+    assert state is not None
+    assert state.kind == "needs_manager"
+    assert state.reason == "Follow-up delivery failed"
+    assert [action.key for action in state.actions] == ["manual", "details"]
