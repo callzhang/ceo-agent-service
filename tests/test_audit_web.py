@@ -4651,7 +4651,10 @@ def test_terminal_later_attempt_replaces_stale_pending_detail_fields(tmp_path: P
     assert status == 200
     assert f"已完成（后续记录 #{later_id}）" in html
     assert "历史错误已由后续处理解决" in html
-    assert "审批已同意；已向实际申请人发送审批结果" in html
+    assert "事项：</strong>请处理招聘需求审批" in html
+    assert "需要你决策：</strong>否" in html
+    assert "处理结果：</strong>后续任务已完成" in html
+    assert "审批已同意；已向实际申请人发送审批结果" not in html
     assert "audit_recovery_failed" not in html
 
 
@@ -6470,6 +6473,9 @@ def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
     status, html = render_attempt_detail(store, attempt_id)
     assert status == 200
     assert "需要你的判断" in html
+    assert "事项：</strong>这个应该怎么处理？" in html
+    assert "需要你决策：</strong>是" in html
+    assert "待决策问题：</strong>目标和范围存在实际歧义" in html
     assert "按当前事实继续处理并发布" not in html
     assert "先追问一个具体澄清问题并发布" not in html
     assert "其他处理指令" in html

@@ -36,5 +36,7 @@ An unconfirmed send remains failed until read-only reconciliation can prove the
 delivery outcome.
 
 When a historical failed or reconciliation attempt has a later terminal result,
-the detail page shows the later result summary inline. Users do not need to open
-an internal attempt chain to learn whether the business action completed.
+the detail page names the business item, states that the later task completed,
+and explicitly says whether a user decision is still required. Raw technical
+summaries and internal target identifiers remain in the linked audit record
+instead of being presented as the user-facing result.
