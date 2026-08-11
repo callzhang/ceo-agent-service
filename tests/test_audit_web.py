@@ -4972,6 +4972,46 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
     assert ">暂不处理</button>" in html
     assert ">人工处理</a>" in html
     assert ">技术详情</a>" in html
+    assert "你需要做什么：</strong>请选择一种处理方式" in html
+    assert "重试会沿用同一任务，不会创建新的业务事项" in html
+    assert '<span class="attempt-label">答</span>' not in html
+    assert '<span class="attempt-label">结果</span>' not in html
+
+
+def test_history_only_latest_failed_attempt_for_trigger_offers_actions(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_id = store.record_reply_attempt(
+        conversation_id="cid-duplicate-failure",
+        conversation_title="HR",
+        trigger_message_id="msg-duplicate-failure",
+        trigger_sender="Mina",
+        trigger_text="Please review this once.",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="First execution failed",
+        send_status="failed",
+    )
+    latest_id = store.record_reply_attempt(
+        conversation_id="cid-duplicate-failure",
+        conversation_title="HR",
+        trigger_message_id="msg-duplicate-failure",
+        trigger_sender="Mina",
+        trigger_text="Please review this once.",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="Latest execution failed",
+        send_status="failed",
+    )
+
+    html = render_attempt_list(store, include_chart=False)
+
+    assert html.count(">重试当前任务</button>") == 1
+    assert html.count(">暂不处理</button>") == 1
+    assert f"#{old_id}" in html
+    assert (
+        f'已由 <a href="/attempts/{latest_id}">#{latest_id}</a> 接管，无需操作。'
+        in html
+    )
 
 
 def test_history_retrying_item_shows_persisted_plan_without_human_choices(
