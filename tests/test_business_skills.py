@@ -5,6 +5,7 @@ import pytest
 from app.business_skills import (
     BUNDLED_BUSINESS_SKILL_NAMES,
     BusinessSkillInstallConflict,
+    BusinessSkillInstallTargetError,
     BusinessSkillValidationError,
     install_bundled_business_skills,
     load_bundled_business_skills,
@@ -94,6 +95,56 @@ def test_skill_install_writes_all_bundled_skills(tmp_path: Path):
         content = (item.install_path / "SKILL.md").read_text(encoding="utf-8")
         assert f"name: {item.name}" in content
         assert "managed_by: ceo-agent-service" in content
+
+
+def test_skill_install_rejects_codex_skills_root_before_creating_files(
+    monkeypatch,
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    target_root = home / ".codex" / "skills"
+
+    with pytest.raises(BusinessSkillInstallTargetError, match=r"\.codex/skills"):
+        install_bundled_business_skills(target_root)
+
+    assert not target_root.exists()
+
+
+def test_skill_install_rejects_target_below_codex_skills_root(
+    monkeypatch,
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    target_root = home / ".codex" / "skills" / "nested-root"
+
+    with pytest.raises(BusinessSkillInstallTargetError, match=r"\.codex/skills"):
+        install_bundled_business_skills(target_root)
+
+    assert not target_root.exists()
+
+
+def test_skill_install_rejects_symlink_alias_to_codex_skills_without_writes(
+    monkeypatch,
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    forbidden_root = home / ".codex" / "skills"
+    forbidden_root.mkdir(parents=True)
+    sentinel = forbidden_root / "user-owned.txt"
+    sentinel.write_text("keep\n", encoding="utf-8")
+    alias = tmp_path / "skills-alias"
+    alias.symlink_to(forbidden_root, target_is_directory=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    with pytest.raises(BusinessSkillInstallTargetError, match=r"\.codex/skills"):
+        install_bundled_business_skills(alias)
+
+    assert sentinel.read_text(encoding="utf-8") == "keep\n"
+    assert list(forbidden_root.iterdir()) == [sentinel]
 
 
 def test_skill_install_upgrades_service_managed_skill_deterministically(

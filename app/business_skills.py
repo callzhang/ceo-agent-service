@@ -33,6 +33,10 @@ class BusinessSkillInstallConflict(BusinessSkillError):
     """Raised when installation would replace a user-owned Skill."""
 
 
+class BusinessSkillInstallTargetError(BusinessSkillError):
+    """Raised when the requested installation root is prohibited."""
+
+
 @dataclass(frozen=True)
 class BundledBusinessSkill:
     name: str
@@ -90,8 +94,9 @@ def load_bundled_business_skills() -> tuple[BundledBusinessSkill, ...]:
 def install_bundled_business_skills(
     target_root: Path,
 ) -> tuple[InstalledBusinessSkill, ...]:
+    target_root = Path(target_root).expanduser()
+    _validate_install_target(target_root)
     skills = load_bundled_business_skills()
-    target_root = Path(target_root)
 
     # Preflight every destination so one ownership conflict cannot cause a partial upgrade.
     for skill in skills:
@@ -119,6 +124,20 @@ def install_bundled_business_skills(
             InstalledBusinessSkill(name=skill.name, install_path=target_dir)
         )
     return tuple(installed)
+
+
+def _validate_install_target(target_root: Path) -> None:
+    try:
+        resolved_target = target_root.resolve(strict=False)
+        forbidden_target = (Path.home() / ".codex" / "skills").resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise BusinessSkillInstallTargetError(
+            f"unable to validate business Skill install target: {target_root}"
+        ) from exc
+    if resolved_target == forbidden_target or forbidden_target in resolved_target.parents:
+        raise BusinessSkillInstallTargetError(
+            f"refusing to install business Skills into prohibited target: {forbidden_target}"
+        )
 
 
 def _is_service_managed(path: Path) -> bool:
