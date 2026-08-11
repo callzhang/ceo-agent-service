@@ -41,6 +41,7 @@ from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
     describe_native_command,
+    native_command_argv,
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
@@ -325,6 +326,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
                 else:
                     self.store.append_agent_run_event(run.id, event, owner=self.owner)
+                self._record_direct_send_receipt(event, payload, run=run)
             if primary_turn_started and payload_type in {
                 "turn.completed",
                 "turn.failed",
@@ -669,6 +671,75 @@ class AgentTurnProcess(Generic[ResultT]):
             },
         }
 
+    def _record_direct_send_receipt(
+        self,
+        event: dict[str, object],
+        payload: dict[str, object],
+        *,
+        run: AgentRun,
+    ) -> None:
+        """Persist the service delivery fact for a completed reviewed chat send."""
+        if event.get("type") != "item.completed":
+            return
+        event_item = event.get("item")
+        metadata = (
+            event_item.get("metadata") if isinstance(event_item, dict) else None
+        )
+        raw_item = payload.get("item")
+        arguments = raw_item.get("arguments") if isinstance(raw_item, dict) else None
+        argv = native_command_argv(
+            {"type": "command_execution", "argv": arguments.get("argv")}
+            if isinstance(arguments, dict)
+            else {}
+        )
+        if (
+            not isinstance(metadata, dict)
+            or not _is_dingtalk_chat_send_argv(metadata, argv)
+        ):
+            return
+        reply_text = _command_option_value(argv, "--text")
+        if not reply_text or self.store.has_sent_reply_for_trigger(
+            self.task.conversation_id, self.task.trigger_message_id
+        ):
+            return
+        self.store.record_sent_reply(
+            self.task.conversation_id,
+            self.task.trigger_message_id,
+            reply_text,
+            send_result_json=json.dumps(
+                {
+                    "agent_run_id": run.id,
+                    "operation_id": run.operation_id,
+                    "operation_digest": metadata.get("operation_digest", ""),
+                    "result_digest": metadata.get("result_digest", ""),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+
+    def _require_direct_send_receipt(
+        self,
+        run: AgentRun,
+        expected_effect_actions: tuple[dict[str, object], ...],
+    ) -> None:
+        if not any(
+            _is_expected_dingtalk_chat_send(action)
+            for action in expected_effect_actions
+        ):
+            return
+        if self.store.has_sent_reply_for_trigger(
+            self.task.conversation_id, self.task.trigger_message_id
+        ):
+            return
+        self.store.mark_agent_run_unknown(
+            run.id,
+            {"code": "audit_delivery_ledger_missing", "retryable": True},
+            owner=self.owner,
+        )
+        raise RuntimeError("audit_delivery_ledger_missing")
+
     def _validate_audit_result(
         self,
         run: AgentRun,
@@ -697,6 +768,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 registry=self.effects,
             )
             if completed == set(range(len(expected_effect_actions))) and all_effects_closed:
+                self._require_direct_send_receipt(run, expected_effect_actions)
                 return
             code = (
                 "audit_execution_evidence_missing"
@@ -883,6 +955,7 @@ class AgentTurnProcess(Generic[ResultT]):
             or not all_effects_closed
         ):
             raise RuntimeError("audit_execution_evidence_missing")
+        self._require_direct_send_receipt(run, expected_effect_actions)
 
     def _raise_for_process_failure(
         self, process: ProcessRunResult, *, run: AgentRun
@@ -971,6 +1044,59 @@ def _stream_has_no_agent_result(raw: str) -> bool:
         ):
             return False
     return saw_json
+
+
+def _is_dingtalk_chat_send(metadata: dict[str, object]) -> bool:
+    target = metadata.get("target_identifiers")
+    return (
+        metadata.get("effect") == EffectKind.EFFECTFUL.value
+        and metadata.get("capability") == "agent_cli.dws"
+        and isinstance(target, dict)
+        and any(
+            isinstance(target.get(key), str) and target[key]
+            for key in ("group", "user", "open-dingtalk-id")
+        )
+    )
+
+
+def _is_dingtalk_chat_send_argv(
+    metadata: dict[str, object],
+    argv: tuple[str, ...] | None,
+) -> bool:
+    return (
+        _is_dingtalk_chat_send(metadata)
+        and argv is not None
+        and len(argv) >= 4
+        and argv[1:4] == ("chat", "message", "send")
+    )
+
+
+def _is_expected_dingtalk_chat_send(action: dict[str, object]) -> bool:
+    target = action.get("target_identifiers")
+    return (
+        action.get("capability") == "agent_cli.dws"
+        and isinstance(target, dict)
+        and any(
+            isinstance(target.get(key), str) and target[key]
+            for key in ("group", "user", "open-dingtalk-id")
+        )
+    )
+
+
+def _command_option_value(
+    argv: tuple[str, ...] | None,
+    option: str,
+) -> str:
+    if argv is None:
+        return ""
+    try:
+        index = argv.index(option)
+    except ValueError:
+        return ""
+    if index + 1 >= len(argv):
+        return ""
+    value = argv[index + 1]
+    return value if value and not value.startswith("--") else ""
 
 
 def _session_id(payload: dict[str, object]) -> str:

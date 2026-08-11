@@ -803,6 +803,11 @@ def test_audit_accepts_matching_persisted_execution_receipt_with_live_read(setup
                 exit_code=0,
                 owner="audit-owner",
             )
+            store.record_sent_reply(
+                task.conversation_id,
+                task.trigger_message_id,
+                "done",
+            )
             return super().__call__(
                 command,
                 on_stdout_line=on_stdout_line,
@@ -846,6 +851,13 @@ def test_audit_accepts_exact_completed_effect_without_extra_live_read(setup):
     persisted = store.get_agent_run(result.run_id)
     assert persisted is not None and persisted.status == "completed"
     assert persisted.side_effect_state == "confirmed"
+    sent_reply = store.get_sent_reply(
+        task.conversation_id,
+        task.trigger_message_id,
+    )
+    assert sent_reply is not None
+    assert sent_reply.reply_text == "done"
+    assert "result_digest" in sent_reply.send_result_json
 
 
 def test_audit_rejects_direct_shell_event(setup):
