@@ -7,13 +7,19 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import AgentTaskContext, AuditTurnContext
-from app.agent_contracts import AuditAgentResult, ConsumerProposal, ProposedAction
+from app.agent_contracts import (
+    AuditAgentResult,
+    AuditReconciliation,
+    ConsumerProposal,
+    ProposedAction,
+)
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_turn_runner import (
     _action_receipt_operation_id,
     _json_digest,
     _metadata_matches_action,
     _read_matches_action,
+    _validated_reconciliation,
 )
 from app.audit_agent import (
     AuditAgentRunner,
@@ -1103,6 +1109,48 @@ def test_direct_chat_unknown_without_delivery_record_replays_through_recovery(
     assert executor.commands == []
 
 
+def test_mixed_unknown_does_not_treat_missing_sent_reply_as_delivery_absence(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor("", returncode=1)
+    mixed_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Approve and notify",
+            "actions": [
+                audit_context.proposal.actions[0].model_dump(mode="json"),
+                {
+                    "description": "Notify the applicant",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"open_dingtalk_id": "applicant-1"},
+                    "payload": {
+                        "argv": [
+                            "dws", "chat", "message", "send",
+                            "--open-dingtalk-id", "applicant-1",
+                            "--text", "done", "--yes",
+                        ]
+                    },
+                    "expected_verification": "Applicant receives the result",
+                },
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "The approval needs a separate applicant notice.",
+        }
+    )
+    mixed_context = replace(audit_context, proposal=mixed_proposal)
+
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).recover(task, mixed_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.status == "unknown"
+    assert executor.commands
+    assert "Unknown outcome recovery" in executor.prompts[0]
+
+
 def test_historical_direct_chat_alias_without_delivery_record_rotates_generation(
     setup,
 ):
@@ -1572,6 +1620,55 @@ def test_reconciliation_rejects_unrecorded_read_event_digest(setup):
         ).recover(task, audit_context, run=run)
 
 
+def test_target_scoped_failed_read_can_only_prove_ambiguous_reconciliation():
+    action = {
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "target_identifiers": {"user": "applicant-1"},
+    }
+    failed_read = {
+        "type": "item.failed",
+        "item": {
+            "metadata": {
+                "effect": "read_only",
+                "reviewed_server": "agent_cli",
+                "reviewed_tool": "execute_reviewed_read",
+                "target_identifiers": {"user": "applicant-1"},
+                "result_digest": "failed-read-digest",
+            }
+        },
+    }
+    ambiguous = AuditReconciliation(
+        action_index=0,
+        disposition="ambiguous",
+        read_result_digest="failed-read-digest",
+    )
+
+    validated = _validated_reconciliation(
+        (ambiguous,),
+        [failed_read],
+        (action,),
+        event_start=0,
+        registry=McpToolEffectRegistry.default(),
+    )
+
+    assert validated == {0: ambiguous}
+    with pytest.raises(RuntimeError, match="audit_reconciliation_evidence_mismatch"):
+        _validated_reconciliation(
+            (
+                AuditReconciliation(
+                    action_index=0,
+                    disposition="absent",
+                    read_result_digest="failed-read-digest",
+                ),
+            ),
+            [failed_read],
+            (action,),
+            event_start=0,
+            registry=McpToolEffectRegistry.default(),
+        )
+
+
 def test_reconciliation_accepts_repeated_matching_readbacks(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     first = _audit_result_jsonl(
@@ -1887,6 +1984,8 @@ def test_readback_capable_receipt_without_live_read_stays_unknown(setup):
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.status == "unknown"
     assert persisted.side_effect_state == "unknown"
+    assert persisted.lease_owner == ""
+    assert persisted.lease_expires_at == ""
 
 
 def test_readback_capable_receipt_with_matching_live_read_confirms(setup):

@@ -649,6 +649,10 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             if isinstance(result_digest, str) and result_digest:
                 metadata["result_digest"] = result_digest
+        elif controlled_receipt_failed and validated_receipt is not None:
+            result_digest = validated_receipt.get("result_digest")
+            if isinstance(result_digest, str) and result_digest:
+                metadata["result_digest"] = result_digest
         if native_cli:
             metadata["native_cli"] = native_cli
         if authorization_id:
@@ -1199,7 +1203,13 @@ def _validated_reconciliation(
             str(metadata["result_digest"])
             for index, event in enumerate(events)
             if index >= event_start
-            and event.get("type") == "item.completed"
+            and (
+                event.get("type") == "item.completed"
+                or (
+                    event.get("type") == "item.failed"
+                    and entry.disposition is ReconciliationDisposition.AMBIGUOUS
+                )
+            )
             and (metadata := _event_metadata(event)) is not None
             and metadata.get("effect") == EffectKind.READ_ONLY.value
             and isinstance(metadata.get("result_digest"), str)
