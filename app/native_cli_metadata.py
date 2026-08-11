@@ -54,6 +54,11 @@ _FIND_EFFECTFUL_ACTIONS = frozenset(
         "-okdir",
     }
 )
+_SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset(
+    {
+        "read-oa-approval-detail",
+    }
+)
 
 
 class AgentReadOnlyViolationError(RuntimeError):
@@ -465,6 +470,8 @@ def _local_read_only_segments(
 def _is_local_read_only_segment(argv: tuple[str, ...]) -> bool:
     if not argv:
         return False
+    if _is_service_read_only_python_command(argv):
+        return True
     executable = Path(argv[0]).name
     if executable not in _LOCAL_READ_ONLY_COMMANDS:
         return False
@@ -511,6 +518,27 @@ def _is_local_read_only_segment(argv: tuple[str, ...]) -> bool:
     ):
         return False
     return True
+
+
+def _is_service_read_only_python_command(argv: tuple[str, ...]) -> bool:
+    """Allow only explicitly registered service-owned read subcommands.
+
+    Python itself is never a general read-only executable.  This narrow form is
+    used when an Agent must read an OA process through the service-owned adapter
+    rather than the DWS adapter whose response schema is currently unreliable.
+    """
+    if len(argv) != 6:
+        return False
+    executable, module_flag, module, command, instance_flag, process_id = argv
+    return (
+        executable == ".venv/bin/python"
+        and module_flag == "-m"
+        and module == "app.cli"
+        and command in _SERVICE_READ_ONLY_PYTHON_COMMANDS
+        and instance_flag == "--instance-id"
+        and bool(process_id)
+        and not process_id.startswith("-")
+    )
 
 
 def structured_target_identifiers(value: object) -> dict[str, str]:

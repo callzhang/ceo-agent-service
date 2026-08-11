@@ -2272,7 +2272,7 @@ class DingTalkAutoReplyWorker:
             task_id = task_id or raw_task_id
             if process_instance_id:
                 detail_command = (
-                    "PYTHONPATH=. .venv/bin/python -m app.cli "
+                    ".venv/bin/python -m app.cli "
                     "read-oa-approval-detail --instance-id "
                     + shlex.quote(process_instance_id)
                 )

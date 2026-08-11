@@ -40,6 +40,44 @@ def test_describe_native_command_accepts_reviewed_local_read():
     assert descriptor.effect is EffectKind.READ_ONLY
 
 
+def test_describe_native_command_accepts_service_owned_oa_detail_read():
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                ".venv/bin/python",
+                "-m",
+                "app.cli",
+                "read-oa-approval-detail",
+                "--instance-id",
+                "proc-1",
+            ],
+        }
+    )
+
+    assert descriptor is not None
+    assert descriptor.cli == "local-shell"
+    assert descriptor.effect is EffectKind.READ_ONLY
+
+
+def test_describe_native_command_rejects_other_service_python_commands():
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                ".venv/bin/python",
+                "-m",
+                "app.cli",
+                "send-attempt",
+                "--instance-id",
+                "proc-1",
+            ],
+        }
+    )
+
+    assert descriptor is None
+
+
 def test_dws_direct_message_targets_preserve_user_and_idempotency_identity():
     write_descriptor = describe_native_command(
         {

@@ -11536,7 +11536,7 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
     assert '"process_instance_id": "proc-1"' in material.reference
     assert '"task_id": "task-1"' in material.reference
     assert material.read_commands == (
-        "PYTHONPATH=. .venv/bin/python -m app.cli read-oa-approval-detail --instance-id proc-1",
+        ".venv/bin/python -m app.cli read-oa-approval-detail --instance-id proc-1",
         "dws oa approval tasks --instance-id proc-1 --format json",
     )
 
