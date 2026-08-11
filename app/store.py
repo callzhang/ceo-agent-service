@@ -9701,6 +9701,7 @@ class AutoReplyStore:
         reviewer_feedback: str = "",
         channel: str = "dingtalk",
         oa_url: str = "",
+        source_attempt_id: int = 0,
     ) -> tuple[int, ReplyTask]:
         """Atomically persist one reviewed instruction and queue its generation."""
         feedback = reviewer_feedback.strip()
@@ -9709,6 +9710,20 @@ class AutoReplyStore:
         attempt_id = 0
         with self._connect() as db:
             db.execute("begin immediate")
+            source_row = None
+            if source_attempt_id > 0:
+                source_row = db.execute(
+                    "select * from reply_attempts where id=?",
+                    (source_attempt_id,),
+                ).fetchone()
+                if source_row is None:
+                    raise ValueError("actionable attempt does not exist")
+                source_status = str(source_row["send_status"] or "")
+                if source_status == "decision_selected":
+                    if str(source_row["reviewer_feedback"] or "") != feedback:
+                        raise ValueError("attempt decision was already selected")
+                elif source_status not in {"failed", "needs_human"}:
+                    raise ValueError("attempt no longer requires a decision")
             existing = db.execute(
                 """
                 select attempts.id as attempt_id, tasks.*
@@ -9733,6 +9748,12 @@ class AutoReplyStore:
                 ),
             ).fetchone()
             if existing is not None:
+                if source_attempt_id > 0:
+                    self._resolve_actionable_attempt_in_connection(
+                        db,
+                        source_attempt_id,
+                        reviewer_feedback=feedback,
+                    )
                 return int(existing["attempt_id"]), self._reply_task_from_row(existing)
 
             current_task = db.execute(
@@ -9809,9 +9830,80 @@ class AutoReplyStore:
                     revision_key=revision_key,
                     channel=channel,
                 )
+                if task is not None and source_attempt_id > 0:
+                    self._resolve_actionable_attempt_in_connection(
+                        db,
+                        source_attempt_id,
+                        reviewer_feedback=feedback,
+                    )
         if task is None:
             raise ValueError("agent side effect reconciliation required before rotation")
         return attempt_id, task
+
+    @staticmethod
+    def _resolve_actionable_attempt_in_connection(
+        db: sqlite3.Connection,
+        attempt_id: int,
+        *,
+        reviewer_feedback: str,
+    ) -> None:
+        cursor = db.execute(
+            """
+            update reply_attempts
+            set send_status='decision_selected',
+                send_error='',
+                reviewer_feedback=?,
+                reviewed_at=current_timestamp,
+                updated_at=current_timestamp
+            where id=? and send_status in ('failed', 'needs_human')
+            """,
+            (reviewer_feedback, attempt_id),
+        )
+        if cursor.rowcount == 1:
+            return
+        row = db.execute(
+            "select send_status, reviewer_feedback from reply_attempts where id=?",
+            (attempt_id,),
+        ).fetchone()
+        if (
+            row is not None
+            and row["send_status"] == "decision_selected"
+            and str(row["reviewer_feedback"] or "") == reviewer_feedback
+        ):
+            return
+        raise ValueError("attempt no longer requires a decision")
+
+    def record_actionable_attempt_decision(
+        self,
+        source_attempt_id: int,
+        *,
+        reviewer_feedback: str,
+        conversation_title: str,
+        single_chat: bool,
+        trigger_create_time: str,
+        trigger_message_json: str,
+    ) -> tuple[int, ReplyTask]:
+        feedback = reviewer_feedback.strip()
+        if not feedback:
+            raise ValueError("reviewer feedback must be non-empty")
+        source = self.get_reply_attempt(source_attempt_id)
+        if source is None:
+            raise ValueError("actionable attempt does not exist")
+        return self.record_reviewed_reply_rerun(
+            conversation_id=source.conversation_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            trigger_message_id=source.trigger_message_id,
+            trigger_create_time=trigger_create_time,
+            trigger_sender=source.trigger_sender,
+            trigger_text=source.trigger_text,
+            trigger_message_json=trigger_message_json,
+            suggested_reply_text="",
+            reviewer_feedback=feedback,
+            channel=source.channel or "dingtalk",
+            oa_url=source.oa_url,
+            source_attempt_id=source_attempt_id,
+        )
 
     def get_reply_attempt(self, attempt_id: int) -> ReplyAttempt | None:
         with self._connect() as db:

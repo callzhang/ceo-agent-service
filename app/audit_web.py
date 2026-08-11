@@ -7319,16 +7319,12 @@ def handle_needs_human_decision_post(
     store: AutoReplyStore,
     attempt_id: int,
     body: bytes,
+    *,
+    return_to: str = "",
 ) -> tuple[int, dict[str, str], str]:
     source = store.get_reply_attempt(attempt_id)
     if source is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
-    if source.send_status != "needs_human":
-        return (
-            409,
-            {},
-            render_page("Decision unavailable", "<p>该 attempt 不再等待人工选择。</p>"),
-        )
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
     instruction = parsed.get("instruction", [""])[0].strip()
     if not instruction:
@@ -7341,20 +7337,32 @@ def handle_needs_human_decision_post(
         f"Human decision for source attempt #{source.id}: {instruction}\n\n"
         f"Original ambiguity summary:\n{source.audit_summary or source.codex_reason}"
     )
+    if source.send_status not in {"failed", "needs_human", "decision_selected"}:
+        return (
+            409,
+            {},
+            render_page("Decision unavailable", "<p>该 attempt 不再等待人工选择。</p>"),
+        )
+    if (
+        source.send_status == "decision_selected"
+        and source.reviewer_feedback != reviewer_feedback
+    ):
+        return (
+            409,
+            {},
+            render_page("Decision unavailable", "<p>该 attempt 已选择其他处理方式。</p>"),
+        )
     try:
         result = handle_reviewed_message_reply(
             store,
             attempt_id=source.id,
             reply_text="",
             reviewer_feedback=reviewer_feedback,
+            actionable_source_attempt_id=source.id,
         )
     except ValueError as exc:
         return 409, {}, render_page("Decision unavailable", f"<p>{escape(str(exc))}</p>")
-    store.resolve_needs_human_attempt(
-        source.id,
-        reviewer_feedback=reviewer_feedback,
-    )
-    return 303, {"Location": f"/attempts/{result['attempt_id']}"}, ""
+    return 303, {"Location": _safe_action_return_to(return_to, source.id)}, ""
 
 
 def handle_agent_run_resolution_post(
@@ -7401,7 +7409,11 @@ def _is_valid_rerun_trigger_json(
 
 def _safe_action_return_to(return_to: str, attempt_id: int) -> str:
     cleaned = return_to.strip()
-    if cleaned.startswith("/codex/") or cleaned == f"/attempts/{attempt_id}":
+    if (
+        cleaned == "/"
+        or cleaned.startswith("/codex/")
+        or cleaned == f"/attempts/{attempt_id}"
+    ):
         return cleaned
     return f"/attempts/{attempt_id}"
 
@@ -7412,6 +7424,7 @@ def handle_reviewed_message_reply(
     attempt_id: int,
     reply_text: str,
     reviewer_feedback: str = "",
+    actionable_source_attempt_id: int = 0,
 ) -> dict[str, object]:
     source = store.get_reply_attempt(attempt_id)
     if source is None:
@@ -7445,20 +7458,30 @@ def handle_reviewed_message_reply(
         )
         trigger_message_json = trigger.model_dump_json()
         trigger_create_time = trigger.create_time
-    reviewed_attempt_id, _task = store.record_reviewed_reply_rerun(
-        conversation_id=source.conversation_id,
-        conversation_title=conversation_title,
-        single_chat=single_chat,
-        trigger_message_id=source.trigger_message_id,
-        trigger_create_time=trigger_create_time,
-        trigger_sender=source.trigger_sender,
-        trigger_text=source.trigger_text,
-        trigger_message_json=trigger_message_json,
-        suggested_reply_text=reply_text,
-        reviewer_feedback=reviewer_feedback,
-        oa_url=source.oa_url,
-        channel=source.channel or "dingtalk",
-    )
+    if actionable_source_attempt_id > 0:
+        reviewed_attempt_id, _task = store.record_actionable_attempt_decision(
+            actionable_source_attempt_id,
+            reviewer_feedback=reviewer_feedback,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            trigger_create_time=trigger_create_time,
+            trigger_message_json=trigger_message_json,
+        )
+    else:
+        reviewed_attempt_id, _task = store.record_reviewed_reply_rerun(
+            conversation_id=source.conversation_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            trigger_message_id=source.trigger_message_id,
+            trigger_create_time=trigger_create_time,
+            trigger_sender=source.trigger_sender,
+            trigger_text=source.trigger_text,
+            trigger_message_json=trigger_message_json,
+            suggested_reply_text=reply_text,
+            reviewer_feedback=reviewer_feedback,
+            oa_url=source.oa_url,
+            channel=source.channel or "dingtalk",
+        )
     attempt = store.get_reply_attempt(reviewed_attempt_id)
     if attempt is None:
         raise ValueError(f"reply attempt disappeared: {reviewed_attempt_id}")
@@ -8110,6 +8133,7 @@ def create_audit_app(
             AutoReplyStore(db_path),
             attempt_id,
             await request.body(),
+            return_to=request.query_params.get("return_to", ""),
         )
         return _fastapi_post_response(status, headers, html)
 

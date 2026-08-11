@@ -6224,6 +6224,130 @@ def test_handle_rerun_attempt_post_requeues_task_and_redirects(tmp_path: Path):
     assert trigger.content == "@Alex Chen 这个怎么处理？"
 
 
+def test_history_human_decision_accepts_failed_attempt_and_redirects_to_history(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation(
+        "cid-history-decision",
+        title="HR",
+        single_chat=False,
+        codex_session_id="",
+    )
+    store.enqueue_reply_task(
+        conversation_id="cid-history-decision",
+        conversation_title="HR",
+        single_chat=False,
+        trigger_message_id="msg-history-decision",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please decide.",
+        trigger_message_json="{}",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    store.fail_reply_task(
+        task.id,
+        "decision required",
+        expected_execution_generation=task.execution_generation,
+    )
+    source_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="A manager decision is required.",
+        send_status="failed",
+    )
+
+    status, headers, body = handle_needs_human_decision_post(
+        store,
+        source_id,
+        "instruction=暂不处理".encode(),
+        return_to="/",
+    )
+
+    source = store.get_reply_attempt(source_id)
+    requeued = store.get_reply_task(task.id)
+    assert status == 303
+    assert headers["Location"] == "/"
+    assert body == ""
+    assert source is not None and source.send_status == "decision_selected"
+    assert requeued is not None and requeued.id == task.id
+    assert requeued.status == "pending"
+
+    attempt_count = store.count_reply_attempts()
+    generation = requeued.execution_generation
+    repeated_status, repeated_headers, _ = handle_needs_human_decision_post(
+        store,
+        source_id,
+        "instruction=暂不处理".encode(),
+        return_to="/",
+    )
+    repeated_task = store.get_reply_task(task.id)
+
+    assert repeated_status == 303
+    assert repeated_headers["Location"] == "/"
+    assert store.count_reply_attempts() == attempt_count
+    assert repeated_task is not None
+    assert repeated_task.execution_generation == generation
+
+
+def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-unknown-decision",
+        conversation_title="Operations",
+        single_chat=False,
+        trigger_message_id="msg-unknown-decision",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please decide.",
+        trigger_message_json="{}",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    run = _claim_audit_run(store, task).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker",
+    )
+    source_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=run.id,
+        task_status="failed",
+        task_error="effect completion unknown",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="effect completion unknown",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="effect completion unknown",
+        send_status="failed",
+        send_error="effect completion unknown",
+        channel="dingtalk",
+    )
+
+    status, _, _ = handle_needs_human_decision_post(
+        store,
+        source_id,
+        "instruction=暂不处理".encode(),
+        return_to="/",
+    )
+
+    assert status == 409
+    assert store.get_reply_attempt(source_id).send_status == "failed"
+
+
 def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
