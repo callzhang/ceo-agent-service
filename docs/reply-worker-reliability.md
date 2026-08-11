@@ -43,6 +43,9 @@ Consumer turn 全程只读；如果 Codex 在同一 Consumer turn 中报告新�
 持久化执行 receipt，服务把会话指向包含最终结果的最新 session。Audit turn 不适用此规则：一旦
 启动，Audit session 始终不可替换，避免外部动作审计链断裂。
 
+服务自带的 OA 详情读取命令会把审批实例标识写入审计元数据。这样审批评论或审批动作发生
+不确定时，恢复回合可用同一实例的详情读回逐项确认已发生与未发生的动作，避免把已写评论重复执行。
+
 同一时刻只允许一个 A turn 更新该 session。服务使用短期可续租的 transcript 锁保证 JSONL
 顺序；后续消息仍保留在 SQLite 队列，不因锁存在而丢失。
 

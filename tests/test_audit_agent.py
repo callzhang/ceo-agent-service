@@ -1955,6 +1955,37 @@ def test_controlled_cli_readback_matches_shared_oa_instance_target():
     )
 
 
+def test_service_owned_oa_detail_readback_matches_approval_comment_target():
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                ".venv/bin/python",
+                "-m",
+                "app.cli",
+                "read-oa-approval-detail",
+                "--instance-id",
+                "process-1",
+            ],
+        }
+    )
+
+    assert descriptor is not None
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "target_identifiers": descriptor.target_identifiers,
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "target_identifiers": {"instance-id": "process-1"},
+        },
+        McpToolEffectRegistry.default(),
+    )
+
+
 def test_controlled_cli_readback_rejects_conflicting_shared_target():
     registry = McpToolEffectRegistry.default()
 
