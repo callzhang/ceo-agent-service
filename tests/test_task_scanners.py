@@ -339,12 +339,24 @@ def test_scan_ai_minutes_walks_paginated_adapter(tmp_path):
             self.tokens.append((limit, cursor))
             if not cursor:
                 return {
-                    "items": [{"taskUuid": "minutes-1", "title": "第一页"}],
+                    "items": [
+                        {
+                            "taskUuid": "minutes-1",
+                            "title": "第一页",
+                            "createdAt": "2026-08-10T12:00:00+00:00",
+                        }
+                    ],
                     "has_more": True,
                     "next_token": "token-2",
                 }
             return {
-                "items": [{"taskUuid": "minutes-2", "title": "第二页"}],
+                "items": [
+                    {
+                        "taskUuid": "minutes-2",
+                        "title": "第二页",
+                        "createdAt": "2026-08-10T10:00:00+00:00",
+                    }
+                ],
                 "has_more": False,
                 "next_token": "",
             }
@@ -358,7 +370,12 @@ def test_scan_ai_minutes_walks_paginated_adapter(tmp_path):
     store.set_daily_scan_state(
         "ai_minutes",
         last_success_at="2026-08-10T00:00:00+00:00",
-        cursor_json=json.dumps({"seen_ids": ["minutes-2"]}),
+        cursor_json=json.dumps(
+            {
+                "seen_ids": ["minutes-2"],
+                "oldest_seen_at": "2026-08-10T10:00:00+00:00",
+            }
+        ),
     )
     count = scan_ai_minutes(store, dws, enqueue_existing_on_first_scan=True)
 
@@ -366,6 +383,50 @@ def test_scan_ai_minutes_walks_paginated_adapter(tmp_path):
     assert dws.tokens == [(50, ""), (50, "token-2")]
     claimed = store.claim_work_summary_inputs(limit=10)
     assert {row.source_ref for row in claimed} == {"minutes-1"}
+
+
+def test_scan_ai_minutes_migrates_id_only_boundary_without_stale_pagination(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.tokens = []
+
+        def list_minutes(self):
+            raise AssertionError("paginated adapter should be used")
+
+        def list_minutes_page(self, *, limit, cursor):
+            self.tokens.append((limit, cursor))
+            return {
+                "items": [
+                    {
+                        "taskUuid": "minutes-new",
+                        "title": "恢复窗口的新纪要",
+                        "createdAt": "2026-08-10T12:00:00+00:00",
+                    },
+                    {
+                        "taskUuid": "minutes-known",
+                        "title": "已记录纪要",
+                        "createdAt": "2026-08-10T11:00:00+00:00",
+                    },
+                ],
+                "has_more": True,
+                "next_token": "stale-cursor",
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    store.set_daily_scan_state(
+        "ai_minutes",
+        last_success_at="2026-08-10T00:00:00+00:00",
+        cursor_json=json.dumps({"seen_ids": ["minutes-known"]}),
+    )
+
+    assert scan_ai_minutes(store, dws, enqueue_existing_on_first_scan=True) == 1
+    assert dws.tokens == [(50, "")]
+    assert [row.source_ref for row in store.claim_work_summary_inputs(limit=10)] == [
+        "minutes-new"
+    ]
+    state = json.loads(store.get_daily_scan_state("ai_minutes")["cursor_json"])
+    assert state["oldest_seen_at"] == "2026-08-10T11:00:00+00:00"
 
 
 def test_scan_ai_minutes_baselines_only_latest_page_on_first_scan(tmp_path):
@@ -379,7 +440,13 @@ def test_scan_ai_minutes_baselines_only_latest_page_on_first_scan(tmp_path):
         def list_minutes_page(self, *, limit, cursor):
             self.tokens.append((limit, cursor))
             return {
-                "items": [{"taskUuid": "minutes-1", "title": "最新会议"}],
+                "items": [
+                    {
+                        "taskUuid": "minutes-1",
+                        "title": "最新会议",
+                        "createdAt": "2026-08-10T12:00:00+00:00",
+                    }
+                ],
                 "has_more": True,
                 "next_token": "older-page",
             }
@@ -390,6 +457,7 @@ def test_scan_ai_minutes_baselines_only_latest_page_on_first_scan(tmp_path):
     assert scan_ai_minutes(store, dws) == 0
     assert dws.tokens == [(50, "")]
     assert json.loads(store.get_daily_scan_state("ai_minutes")["cursor_json"]) == {
+        "oldest_seen_at": "2026-08-10T12:00:00+00:00",
         "seen_ids": ["minutes-1"],
     }
 

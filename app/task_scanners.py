@@ -207,16 +207,18 @@ def scan_ai_minutes(
         cursor = {}
         raw_cursor = "{}"
     previous_seen_ids = set(str(value) for value in (cursor.get("seen_ids") or []))
+    previous_oldest_at = str(cursor.get("oldest_seen_at") or "").strip()
 
     list_minutes_page = getattr(dws, "list_minutes_page", None)
     try:
         if list_minutes_page is not None:
-            minutes_items = _list_incremental_ai_minutes(
+            minutes_items, oldest_seen_at = _list_incremental_ai_minutes(
                 list_minutes_page,
-                previous_seen_ids,
+                oldest_seen_at=previous_oldest_at,
             )
         else:
             minutes_items = list_minutes()
+            oldest_seen_at = _oldest_minutes_item_time(minutes_items)
     except Exception as exc:
         store.set_daily_scan_state(
             AI_MINUTES_SCANNER,
@@ -283,7 +285,10 @@ def scan_ai_minutes(
         AI_MINUTES_SCANNER,
         last_success_at=_utc_now(),
         cursor_json=json.dumps(
-            {"seen_ids": sorted(seen_ids)},
+            {
+                "seen_ids": sorted(seen_ids),
+                "oldest_seen_at": oldest_seen_at,
+            },
             sort_keys=True,
         ),
         last_error="",
@@ -619,50 +624,62 @@ def _minutes_item_time(item: dict) -> str:
     ).strip()
 
 
-def _page_is_newest_first(items: list[dict], previous_oldest: str) -> bool:
-    times = [_minutes_item_time(item) for item in items]
-    if not times or any(not value for value in times):
-        return False
-    if any(earlier < later for earlier, later in zip(times, times[1:])):
-        return False
-    return not previous_oldest or times[0] <= previous_oldest
+def _parse_minutes_item_time(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _oldest_minutes_item_time(items: list[dict]) -> str:
+    dated_items = [
+        (_parse_minutes_item_time(_minutes_item_time(item)), _minutes_item_time(item))
+        for item in items
+    ]
+    dated_items = [item for item in dated_items if item[0] is not None]
+    if not dated_items:
+        return ""
+    return min(dated_items, key=lambda item: item[0])[1]
 
 
 def _list_incremental_ai_minutes(
     list_minutes_page,
-    seen_ids: set[str],
-) -> list[dict]:
-    """Read from newest until the durable seen boundary, without full rescans."""
+    *,
+    oldest_seen_at: str,
+) -> tuple[list[dict], str]:
+    """Read from newest until the durable time boundary, without full rescans."""
     items: list[dict] = []
     cursor = ""
     seen_tokens: set[str] = set()
-    previous_oldest = ""
+    boundary = _parse_minutes_item_time(oldest_seen_at)
     for _ in range(100):
         page = list_minutes_page(limit=50, cursor=cursor)
         page_items = [item for item in (page.get("items") or []) if isinstance(item, dict)]
-        items.extend(item for item in page_items if isinstance(item, dict))
-        item_ids = {
-            str(
-                item.get("taskUuid")
-                or item.get("minutesId")
-                or item.get("id")
-                or item.get("task_uuid")
-                or item.get("uuid")
-                or ""
-            )
+        if boundary is None:
+            # Older state had IDs but no time boundary. Process this one recovery
+            # page, then establish the boundary without walking stale cursors.
+            items.extend(page_items)
+            return items, _oldest_minutes_item_time(page_items)
+        newer_items = [
+            item
             for item in page_items
-        }
-        item_ids.discard("")
-        newest_first = _page_is_newest_first(page_items, previous_oldest)
-        if not seen_ids:
-            break
-        if item_ids and item_ids.issubset(seen_ids) and newest_first:
-            break
-        if newest_first:
-            previous_oldest = _minutes_item_time(page_items[-1])
+            if (
+                (item_time := _parse_minutes_item_time(_minutes_item_time(item)))
+                is not None
+                and item_time > boundary
+            )
+        ]
+        items.extend(newer_items)
+        if len(newer_items) != len(page_items):
+            return items, oldest_seen_at
         cursor = str(page.get("next_token") or "")
         has_more = bool(page.get("has_more"))
         if not has_more or not cursor or cursor in seen_tokens:
             break
         seen_tokens.add(cursor)
-    return items
+    return items, oldest_seen_at or _oldest_minutes_item_time(items)
