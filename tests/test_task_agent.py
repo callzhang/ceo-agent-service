@@ -368,7 +368,7 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
     assert "张丽丽恢复海外数据合规项目当前状态与未完成清单" in prompt
 
 
-def test_task_agent_prompt_requires_xiaoqing_before_candidate_status_follow_up():
+def test_task_agent_prompt_does_not_embed_candidate_specific_workflow():
     item = WorkItem.model_validate(
         {
             "source": {
@@ -397,12 +397,9 @@ def test_task_agent_prompt_requires_xiaoqing_before_candidate_status_follow_up()
 
     prompt = build_task_agent_prompt(item, "候选项目:\n[]\n\n近期 follow-up 候选:\n[]")
 
-    assert "xiaoqing_interview" in prompt
-    assert "当前阶段、最终决策、决策时间和决策说明" in prompt
-    assert "不要再问 HR" in prompt
-    assert "最终决策=淘汰/已淘汰" in prompt
-    assert "todo_changes.close" in prompt
-    assert "follow_up_changes.suppress" in prompt
+    assert "xiaoqing_interview" not in prompt
+    assert "当前阶段、最终决策、决策时间和决策说明" not in prompt
+    assert "刘芸婷一面记录显示需要判断后续推进状态" in prompt
 
 
 def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
@@ -624,9 +621,13 @@ def test_process_work_item_accepts_clear_follow_up_completion_reply(tmp_path):
     todo = store.get_work_todo(todo_id)
     assert todo is not None
     assert todo.status == "done"
+    assert len(store.list_work_todos(project_id=project_id)) == 1
     completion_evidence = json.loads(todo.completion_evidence_json)
     assert completion_evidence["source"] == "reply_attempt:2001"
     assert "已同步完成" in completion_evidence["summary"]
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    assert follow_up is not None
+    assert follow_up.status == "completed"
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         input_row = db.execute(
             "select status, error from work_summary_inputs where id=?",
@@ -2001,7 +2002,7 @@ def test_terminal_todo_does_not_create_follow_up_draft(tmp_path):
     assert store.list_follow_up_drafts(statuses=("draft",)) == []
 
 
-def test_low_confidence_minutes_speaker_labels_suppress_direct_follow_up(tmp_path):
+def test_service_does_not_rejudge_agent_owner_evidence_from_message_text(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     decision = TaskAgentDecision.model_validate(
         {
@@ -2075,7 +2076,9 @@ def test_low_confidence_minutes_speaker_labels_suppress_direct_follow_up(tmp_pat
 
     assert project_id is not None
     assert len(store.list_work_todos(project_id=project_id)) == 1
-    assert store.list_follow_up_drafts(statuses=("draft",)) == []
+    drafts = store.list_follow_up_drafts(statuses=("draft",))
+    assert len(drafts) == 1
+    assert drafts[0].owner_user_id == "owner-1"
 
 
 def test_follow_up_draft_requires_owner_evidence(tmp_path):
@@ -2555,7 +2558,7 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
     assert input_row == ("done", "")
     assert run_count == 1
     assert json.loads(memory_context_json) == memory_unavailable_context
-    assert "Memory connector 状态:\n不可用：memory connector token is expired" in codex.prompts[0]
+    assert "Memory connector status facts:\n不可用：memory connector token is expired" in codex.prompts[0]
     assert "不要因为 memory_recall 不可用而失败" in codex.prompts[0]
 
 
@@ -2588,22 +2591,20 @@ def test_task_agent_codex_runner_reuses_user_config_for_memory_recall(tmp_path):
     assert "--disable" not in command
 
 
-def test_task_agent_prompt_names_required_memory_recall_tool():
+def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
     prompt = build_task_agent_prompt(
         _work_item(),
         "无候选项目",
         memory_issue="",
     )
 
-    assert "直接调用 memory_recall MCP 工具" in prompt
-    assert "list_mcp_resources" in prompt
-    assert "不能替代 memory_recall" in prompt
-    assert "只有实际调用 memory_recall 并获得可用记忆结果后" in prompt
-    assert 'source="memory_connector_runtime_unavailable"' in prompt
-    assert 'source="memory_recall_runtime_failure"' in prompt
+    assert "# CEO Work Tracking" in prompt
+    assert '"title": "TaskAgentDecision"' in prompt
+    assert "Memory connector status facts" in prompt
+    assert '"summary":' in prompt
 
 
-def test_task_agent_prompt_defines_important_vs_routine_process_boundary():
+def test_task_agent_prompt_uses_skill_for_important_vs_routine_process_boundary():
     work_item = _work_item()
     work_item.summary = "Mina: 这种事情没必要创建待办，我不办这人也没法发 offer。"
     prompt = build_task_agent_prompt(
@@ -2611,20 +2612,12 @@ def test_task_agent_prompt_defines_important_vs_routine_process_boundary():
         candidate_prompt="候选上下文为空。",
     )
 
-    assert "只跟踪重要事项" in prompt
-    assert "流程性内容默认忽略" in prompt
-    assert "和公司目标、OKR/KR、关键项目或管理风险无关的事项不要进入 task" in prompt
-    assert "OKR档案/latest_company_okr_index.md" in prompt
-    assert "只用于判断 task-worthy 和项目归属，不是 TODO 完成证据" in prompt
-    assert "非 discard 决策必须能解释和公司目标、OKR/KR、关键项目或管理风险的关系" in prompt
-    assert "不要创建 project、TODO、follow_up_draft 或 DingTalk Todo" in prompt
-    assert "如果 Work Item 是对误建 TODO 或过细 follow-up 的反馈" in prompt
-    assert "cancel" in prompt
-    assert "suppress" in prompt
-    assert "不要用关键词或固定业务词表做决定" in prompt
+    assert "`routine_process_is_discarded`" in prompt
+    assert "Decide whether the input deserves durable tracking" in prompt
+    assert "Do not use keyword routers" in prompt
 
 
-def test_task_agent_prompt_retrieves_product_prototype_owner_example():
+def test_task_agent_prompt_does_not_inject_retrieved_business_examples():
     work_item = _work_item(project_name="宝马项目客户 Demo 推进")
     work_item.summary = (
         "宝马项目周末攻坚要准备客户 Demo 原型，原型应该产品同学负责，"
@@ -2636,9 +2629,9 @@ def test_task_agent_prompt_retrieves_product_prototype_owner_example():
         candidate_prompt="候选上下文为空。",
     )
 
-    assert "可召回样例" in prompt
-    assert "不要把“做原型”拆给测试" in prompt
-    assert "生成面向产品 owner 的 TODO" in prompt
+    assert "可召回样例" not in prompt
+    assert "不要把“做原型”拆给测试" not in prompt
+    assert "候选上下文为空。" in prompt
 
 
 def test_update_project_without_id_raises_value_error(tmp_path):

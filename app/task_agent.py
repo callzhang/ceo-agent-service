@@ -1,14 +1,15 @@
 import json
-import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
 from pydantic import ValidationError
 
-from app.store import AutoReplyStore, RecentFollowUpCandidate
 from app.codex_runner import memory_connector_config_issue
+from app.config import repo_root
 from app.external_retry import ExternalDependencyError
+from app.store import AutoReplyStore, RecentFollowUpCandidate
+from app.structured_agent import load_skill_text
 from app.task_models import (
     FollowUpDraftChange,
     FollowUpDraftDecision,
@@ -16,13 +17,11 @@ from app.task_models import (
     TodoChange,
     TodoStatus,
     WorkItem,
-    WorkItemSourceType,
     WorkSummaryInput,
 )
 from app.task_retrieval import (
     render_candidate_prompt,
     retrieve_project_candidates,
-    tokenize,
 )
 from app.todo_sync import maybe_create_dingtalk_todo, sync_completed_todo_to_dingtalk
 from app.todo_completion import complete_follow_ups_for_todo
@@ -35,55 +34,7 @@ TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
 FOLLOW_UP_WORK_START_HOUR = 9
 FOLLOW_UP_WORK_END_HOUR = 18
-
-TASK_AGENT_RETRIEVED_EXAMPLES = (
-    {
-        "name": "prototype_owner_boundary",
-        "text": (
-            "样例：当输入要求拆分用户旅程、产品原型、交互方案或 Demo 话术时，"
-            "先判断交付物性质。原型、交互、产品方案由产品或设计 owner 承担；"
-            "测试 owner 只承担测试计划、用例、验收验证。不要把“做原型”拆给测试，"
-            "可以只更新项目背景，或生成面向产品 owner 的 TODO。"
-        ),
-    },
-    {
-        "name": "external_todo_readability",
-        "text": (
-            "样例：如果要创建会同步到 DingTalk Todo 的 TODO，title 要让执行人"
-            "单独看到也知道动作和对象；description 写来源事项、交付内容、完成标准"
-            "和用途。若当前上下文只能得到模糊标题，先生成 follow_up_draft 问清，"
-            "不要创建只有标题、缺少事项说明的外部待办。"
-        ),
-    },
-)
-
-
-def render_task_agent_examples(work_item: WorkItem, *, limit: int = 2) -> str:
-    query_terms = set(
-        tokenize(
-            "\n".join(
-                [
-                    work_item.summary,
-                    work_item.project_name,
-                    work_item.source.title,
-                    work_item.context.source_conversation_title,
-                ]
-            )
-        )
-    )
-    if not query_terms:
-        return ""
-
-    ranked = []
-    for example in TASK_AGENT_RETRIEVED_EXAMPLES:
-        terms = set(tokenize(example["text"]))
-        score = len(query_terms & terms)
-        if score > 1:
-            ranked.append((score, example["name"], example["text"]))
-    if not ranked:
-        return ""
-    ranked.sort(key=lambda item: (-item[0], item[1]))
-    return "\n".join(text for _, _, text in ranked[:limit])
+WORK_TRACKING_SKILL_PATH = repo_root() / "skills" / "ceo-work-tracking" / "SKILL.md"
 
 
 class TaskCodex(Protocol):
@@ -226,93 +177,35 @@ def build_task_agent_prompt(
     *,
     memory_issue: str = "",
 ) -> str:
+    skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
     work_item_json = json.dumps(
         work_item.model_dump(mode="json"),
         ensure_ascii=False,
         indent=2,
     )
     memory_status = _memory_connector_prompt_status(memory_issue)
-    retrieved_examples = render_task_agent_examples(work_item)
-    example_prompt = (
-        f"\n可召回样例（只迁移判断方式，不要照抄字段）:\n{retrieved_examples}\n"
-        if retrieved_examples
-        else ""
+    decision_schema = json.dumps(
+        TaskAgentDecision.model_json_schema(),
+        ensure_ascii=False,
+        indent=2,
     )
-    return f"""你是 CEO Agent task agent。
+    return f"""You are the CEO Agent task agent. Update tracked work only; do not
+reply to the current message. Follow the loaded Skill and return exactly one
+TaskAgentDecision JSON object that satisfies the supplied Pydantic schema.
 
-职责边界：
-- 你只更新工作项目和 TODO，不回复当前消息。
-- Work Item 是一个输入片段，不是已经抽取好的事实；必须判断其是否足够支撑稳定项目、TODO 或完成证据。
-- Task 只记录需要持续管理的公司重要事项；只跟踪重要事项，不跟踪普通流程步骤。
-- 重要事项是指失败会实质影响公司目标、OKR/KR、关键项目、收入、客户承诺、组织决策、关键招聘、合规、财务风险或 Derek 级决策的事项。
-- 和公司目标、OKR/KR、关键项目或管理风险无关的事项不要进入 task；即使对话里出现“待办、跟进、确认”，如果只是个人协作、流程流转或一次性工具账号事项，action 应为 discard。
-- 流程性内容默认忽略：招聘、offer、面试、审批、报销、日程、行政等已知流程里的常规步骤，如果只是流程本来必须做的动作，不要创建 project、TODO、follow_up_draft 或 DingTalk Todo。
-- 流程性内容只有在暴露真实风险、系统故障、跨 owner 阻塞、明确 deadline 风险、关键岗位决策或 Derek 需要拍板时，才把其中的风险或决策抽成 task；不要跟踪流程步骤本身。
-- 如果 Work Item 是对误建 TODO 或过细 follow-up 的反馈，例如“没必要创建待办”“不要催这种流程动作”“这类事情不办流程也走不下去”，不要简单 discard；应在能匹配已有 TODO/follow_up 时使用 todo_changes.cancel 和 follow_up_changes.suppress 清理噪声，并在 update_summary 写明原因。
-- 不要用关键词或固定业务词表做决定；结合 Work Item、候选项目、已有 TODO/follow-up、上下文和 failure_risk 判断是否重要。
-- 一次性工具、账号、权限、订阅或行政操作默认不创建 task，也不生成 follow-up，除非它明确影响已有项目、关键交付、成本风险或管理决策。
-- 每次必须评估 failure_risk 和 failure_risk_score：failure_risk 说明如果不跟进会发生什么；failure_risk_score 是 0 到 1 的失败风险，0 表示几乎无业务影响，1 表示会直接影响关键交付、收入、合规或管理决策。
-- BM25 候选项目只是初始线索，不是权威匹配结果。
-- 判断事项是否关联公司目标、OKR/KR 或关键项目时，如果工作区存在 `OKR档案/latest_company_okr_index.md`，先读取它作为公司目标参照；这份索引只用于判断 task-worthy 和项目归属，不是 TODO 完成证据。
-- 如果 OKR 索引不存在或无法读取，继续使用 Work Item、候选项目、DWS 和 memory_recall 判断，不要因此停止。
-- 如果候选项目为空或你判断不匹配，可以使用 dws 或 memory_connector 恢复更多上下文；这是提示，不是硬性要求。
-- 近期 follow-up 候选只是上下文线索。你必须自己判断当前 Work Item 是否真的回应了某条 follow-up；不能因为候选存在就关闭 TODO 或 suppress follow-up。
-- 如果 Work Item 明确说明追错 owner、重复追问或不应继续跟进，可以通过 follow_up_changes 更新已有 follow_up_draft；不要生成新的 follow_up_draft 来继续追同一个错误 owner。
-- 只有当前消息和候选上下文共同明确证明 TODO 完成时，才把 todo_changes 写成 close 并提供 completion_evidence。
-- 已完成、已取消、已删除或用户明确表示不应继续跟进的 TODO 是负向证据；不要为了同一事项新建 TODO 或 follow_up_draft，优先关闭/取消/抑制已有项或仅更新项目背景。
-- 同一事项从不同会议听记、文档或消息重复出现时，只能合并到既有 TODO；不要换标题重新创建。
-- memory_connector 是外部辅助服务，不能成为 task agent 的运行依赖。
-- 如果 memory_connector 状态为可用，create_project 或 update_project 前必须直接调用 memory_recall MCP 工具查历史背景；不要传入或编造 user_id。
-- list_mcp_resources、list_mcp_resource_templates、memory_get、timeline_get 或本地搜索都不能替代 memory_recall；只有实际调用 memory_recall 并获得可用记忆结果后，memory_recall_used 才能为 true。
-- 如果当前运行时确实没有暴露可直接调用的 memory_recall 工具，先用工具发现结果证明不可用，再继续处理；此时 memory_recall_used=false，并在 project.memory_context.memories 写入一条 source="memory_connector_runtime_unavailable" 的证据说明。
-- 如果实际调用了 memory_recall 但该工具超时或传输失败，继续处理；此时 memory_recall_used=false，并在 project.memory_context.memories 写入一条 source="memory_recall_runtime_failure" 的证据说明。
-- 如果 memory_connector 状态为不可用，不要因此停止任务、不要输出 critical_info_unavailable、不要把任务转人工；改用 Work Item、候选项目、DWS 或本地上下文判断。此时 memory_recall_used=false，project.memory_context 写明原本会查询什么、memory_connector 不可用的原因，以及你实际采用的替代证据。
-- project.memory_context 必须写入本次记忆查询或替代依据：memory_recall 有命中时写查询、摘要和关键记忆证据；没有命中时写查询和无命中结论；memory_connector 不可用时写查询意图、不可用原因和替代证据。
-- 如果上下文无法支撑稳定项目名称，不要创建模糊项目；生成 follow_up_draft 询问项目、目标、owner。
-- AI听记或本地听记的说话人标签只能作为弱证据；如果多人会议的 transcript 大段只有同一个 speaker，说明说话人标注不可信，不能据此认定 owner，也不能直接私聊该 speaker。
-- 候选人流程状态 follow-up 不能只依赖本地项目里的旧摘要或 AI 听记。若 Work Item、候选项目或 follow-up 涉及候选人的推进、淘汰、人才池、offer、最终决策或流程关闭，先用 xiaoqing_interview 读取候选人当前阶段、最终决策、决策时间和决策说明；小青已给出终态时，关闭/抑制对应 TODO 和 follow-up，不要再问 HR “是否继续/是否关闭”。小青仍是 pending/waiting 且缺决策说明时，才可以生成面向 HR 的状态确认 follow-up。
-- 样例：如果小青显示“最终决策=淘汰/已淘汰”，输出 todo_changes.close 和 follow_up_changes.suppress；如果小青显示“最终决策=waiting/pending”，可以保留跟进，但 question_text 要写成“当前小青最终决策仍为 waiting，请确认是否要更新最终决策”，而不是让 HR 代替你查小青。
-- 行政、工商、法务、财务、人事合规类事项必须区分汇报人、推动人和实际执行 owner；只有材料明确写出“某人负责/待办/owner/由某人完成”且不是低可信说话人标签推导时，才能给该人生成 follow_up_draft。否则只更新项目背景或生成需要确认真实 owner 的 TODO，不要直接私聊。
-- 只有消息、会议纪要或文档明确证明 TODO 完成时，才能自动清理 TODO，并写入 completion_evidence。
-- Work Item 来源为 follow_up_completion_check 时，只是在提醒你检查已有 follow-up 是否完成；只有 sources、DWS 检索、会议纪要或 memory_recall 明确证明 owner 已完成时，才能 close TODO。completion_evidence 必须写 source、reason、description、completed_at；证据不足时不要 close，也不要新建 TODO。
-- 生成 TODO 或 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
-- owner_user_id 不能靠猜。只有消息、会议纪要、文档、候选上下文或 DWS/通讯录结果明确支持“这个人负责/承诺完成/被指定为 owner”时，才能给 TODO 或 follow_up_draft 填 owner_user_id。参与人、发言人、转述人、群成员或 AI 听记 speaker 标签本身都不是 owner 证据。
-- todo_changes 如果填写 owner_user_id，必须同时填写 owner_evidence={{source, reason, description}}，说明 owner 判定来自哪条事实；证据不足时不要填 owner_user_id。
-- 输出 schema 要求每个 todo_changes 都带 owner_evidence；如果本次 action 不分配或修改 owner，owner_evidence 写 source="existing_todo"、reason="owner 未变更"、description="本次只处理状态/完成证据，不重新判定 owner"。
-- follow_up_draft.risk_check 必须包含 owner_evidence={{source, reason, description}}，说明为什么可以追问这个 owner；缺少 owner_evidence 时不要生成 follow_up_draft。
-- 每个 follow_up_draft 必须绑定一个 TODO：跟进已有 TODO 时填写 todo_id；跟进本次新建 TODO 时，todo_changes.create 和 follow_up_drafts 使用相同的 todo_ref，系统会把 todo_ref 转成真实 todo_id。不能生成没有 TODO 绑定的 follow_up_draft。
-- follow_up_draft.status 固定填 draft；不要用 approved 表达“需审批”。项目跟进发送必须依赖 risk_check 审计：sensitive=true 表示不能在群里公开追问，发送端会优先转私聊或延后。
-- follow_up_draft.target_kind 只表示实际发送位置：能回到来源群聊就用 group，并且 target_conversation_id 必须填写 DWS 可直接发送的 openConversationId（通常以 cid 开头）；不要填 AI 搜问或业务搜索结果里的普通群号/数字群号。不能确定 openConversationId 但已确定 owner_user_id 时用 direct。不要把“没有群上下文”写成 owner_in_group=false 来阻断发送。
-- risk_check 是结构化输出必填的审计说明。涉及人事、试用期、转正、绩效、薪酬、offer、候选人隐私、客户敏感承诺或财务敏感信息时，必须设置 sensitive=true，并优先使用 direct target。
-- risk_check.owner_in_group 只记录 group target 是否包含 owner；direct target 可填 false 表示不适用，但不能用它阻断发送。
-- 每个 follow_up_draft 都必须是完整任务卡片：title、description、owners、scheduled_at(time)、priority、tags、participants 必填，files 可为空数组。description 必须写完整上下文和背景，说明来源、为什么要跟进、当前已知状态、期望 owner 确认什么，不能只写一句催办。
-- follow_up_draft.owners 必须包含至少一个带 user_id 的 owner，且主 owner 必须同时写入 owner_user_id/owner_name。participants 写相关参与人或事项来源人；没有额外参与人时至少包含 owner。tags 写项目标签、业务线或风险标签。
-- follow_up_draft.question_text 必须包含一句简短来源或依据，例如“基于某群/某会议/某文档提到的事项”，避免让 owner 不知道 AI 为什么突然追问；措辞必须是确认进展，不要像分配新任务。
-- todo_changes.title 必须短，只写 owner 要完成的动作；todo_changes.description 用来写详细上下文，必须说明来源事项、具体对象、交付内容、完成标准和产出用途。不要把这些细节塞进 title。
-- 跟进时间指导：P0 今天跟进；P1 在 3 天内跟进；P2 在上下文或 OKR 暗示需要时本周内跟进。scheduled_at 和 next_follow_up_at 必须落在工作日 09:00-18:00；夜间或周末不要安排发送。
+{skill_text}
 
-输出要求：
-- 只输出 TaskAgentDecision JSON。
-- action 只能是 discard、create_project 或 update_project。
-- failure_risk 和 failure_risk_score 必须始终填写；低风险一次性事项通常 action=discard。
-- 非 discard 决策必须能解释和公司目标、OKR/KR、关键项目或管理风险的关系；否则 discard。
-- update_project 必须引用候选或已确认项目 id。
-- todo_changes 的 close/cancel/update 必须引用 todo_id。
-- follow_up_drafts 的 owner_user_id 不能为空，且必须有 todo_id 或 todo_ref；title、description、owners、scheduled_at、priority、tags、participants 字段必须完整。
-- follow_up_drafts 不需要人工审批字段；可发送性由 scheduled_at、target_kind、target_conversation_id 和 owner_user_id 决定。
-- follow_up_changes 用于更新已有 follow_up_drafts；必须引用 follow_up_id，且只能在当前 Work Item 明确支持时使用。
-- memory_connector 可用时，非 discard 决策的 memory_recall_used 必须为 true，且 project.memory_context 不能为空。
-- memory_connector 不可用时，非 discard 决策的 memory_recall_used 必须为 false，且 project.memory_context 仍不能为空。
-
-Memory connector 状态:
+Memory connector status facts:
 {memory_status}
-{example_prompt}
 
-Work Item JSON:
+Current Work Item JSON:
 {work_item_json}
 
-候选上下文:
+Current candidate context:
 {candidate_prompt}
+
+TaskAgentDecision Pydantic JSON schema:
+{decision_schema}
 """
 
 
@@ -568,8 +461,6 @@ def apply_task_agent_decision(
         if todo_change.action == "create" and todo_change.todo_ref.strip():
             todo_refs[todo_change.todo_ref.strip()] = todo_id
     for draft in decision.follow_up_drafts:
-        if _suppress_unreliable_minutes_direct_follow_up(work_item, draft):
-            continue
         _create_follow_up_draft(
             store,
             project_id=project_id,
@@ -588,64 +479,6 @@ def apply_task_agent_decision(
                 now=sync_now,
             )
     return project_id
-
-
-def _suppress_unreliable_minutes_direct_follow_up(
-    work_item: WorkItem,
-    draft: FollowUpDraftDecision,
-) -> bool:
-    if draft.target_kind != "direct":
-        return False
-    if work_item.source.type not in {
-        WorkItemSourceType.AI_MINUTES,
-        WorkItemSourceType.LOCAL_FILE,
-    }:
-        return False
-    if work_item.source.conversation_id.strip():
-        return False
-    return _has_unreliable_minutes_speaker_labels(work_item)
-
-
-def _has_unreliable_minutes_speaker_labels(work_item: WorkItem) -> bool:
-    summary = work_item.summary
-    participants = _minutes_participants(work_item)
-    if len(participants) < 2:
-        return False
-    speakers = _minutes_transcript_speakers(summary)
-    return len(speakers) >= 5 and len(set(speakers)) == 1
-
-
-def _minutes_participants(work_item: WorkItem) -> list[str]:
-    participants = [
-        str(participant).strip()
-        for participant in work_item.context.participants
-        if str(participant).strip()
-    ]
-    if participants:
-        return participants
-    match = re.search(r"参与人[\s*_]*[:：]\s*([^\n\r]+)", work_item.summary)
-    if not match:
-        return []
-    raw = match.group(1)
-    return [
-        value.strip()
-        for value in re.split(r"[,，、]", raw)
-        if value.strip()
-    ]
-
-
-def _minutes_transcript_speakers(summary: str) -> list[str]:
-    speakers: list[str] = []
-    patterns = (
-        re.compile(r"^\[[^\]]+\]\s*([^:：\n]+)\s*[:：]", re.MULTILINE),
-        re.compile(r"^-\s*([^:：\n]+)\s*[:：]", re.MULTILINE),
-    )
-    for pattern in patterns:
-        for match in pattern.finditer(summary):
-            speaker = match.group(1).strip()
-            if speaker:
-                speakers.append(speaker)
-    return speakers
 
 
 def _validate_task_agent_decision(

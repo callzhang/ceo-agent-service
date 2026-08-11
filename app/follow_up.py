@@ -7,7 +7,7 @@ from app.dws_client import DwsError
 from app.external_retry import is_external_dependency_error
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.store import AutoReplyStore
-from app.task_models import ProjectStatus, TodoStatus
+from app.task_models import ProjectStatus, TodoStatus, WorkItem
 from app.todo_sync import (
     refresh_dingtalk_todo_before_follow_up,
 )
@@ -60,14 +60,6 @@ def _json_dict(value: str) -> dict:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
-
-
-def _json_list(value: str) -> list:
-    try:
-        parsed = json.loads(value or "[]")
-    except json.JSONDecodeError:
-        return []
-    return parsed if isinstance(parsed, list) else []
 
 
 def _start_of_day(now: str) -> str:
@@ -140,11 +132,8 @@ def _risk_check(draft) -> dict:
     return _json_dict(draft.risk_check_json)
 
 
-def _is_sensitive_follow_up(project, draft) -> bool:
-    risk_check = _risk_check(draft)
-    if bool(risk_check.get("sensitive")):
-        return True
-    return project is not None and str(project.category) == "HR"
+def _is_sensitive_follow_up(draft) -> bool:
+    return bool(_risk_check(draft).get("sensitive"))
 
 
 def _compact_follow_up_text(value: str, *, limit: int) -> str:
@@ -202,56 +191,6 @@ def _follow_up_background_text(project, todo, draft) -> str:
 
 def _is_open_conversation_id(value: str) -> bool:
     return value.strip().startswith("cid")
-
-
-def _source_conversation_titles(project, target_conversation_id: str) -> list[str]:
-    if project is None:
-        return []
-    try:
-        sources = json.loads(project.source_conversations_json or "[]")
-    except json.JSONDecodeError:
-        return []
-    titles: list[str] = []
-    for source in sources if isinstance(sources, list) else []:
-        if not isinstance(source, dict):
-            continue
-        title = str(source.get("title") or "").strip()
-        conversation_id = str(source.get("conversation_id") or "").strip()
-        if title and conversation_id == target_conversation_id:
-            titles.append(title)
-    return titles
-
-
-def _resolve_group_conversation_id(store: AutoReplyStore, dws, project, draft) -> str:
-    target = draft.target_conversation_id.strip()
-    if not target:
-        return ""
-    if _is_open_conversation_id(target):
-        return target
-
-    for title in _source_conversation_titles(project, target):
-        cached = store.find_conversation_by_title(title)
-        if cached is not None and not cached.single_chat:
-            store.update_follow_up_draft(
-                draft.id,
-                target_conversation_id=cached.conversation_id,
-            )
-            return cached.conversation_id
-        if not hasattr(dws, "search_conversations"):
-            continue
-        matches = [
-            item
-            for item in dws.search_conversations(title)
-            if item.title == title and not item.single_chat
-        ]
-        if len(matches) == 1:
-            conversation_id = matches[0].open_conversation_id
-            store.update_follow_up_draft(
-                draft.id,
-                target_conversation_id=conversation_id,
-            )
-            return conversation_id
-    return ""
 
 
 def _follow_up_message_text(store: AutoReplyStore, draft) -> str:
@@ -347,8 +286,21 @@ def _recoverable_retry_at(now: str) -> str:
     return (current + RECOVERABLE_AUTH_RETRY_DELAY).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _follow_up_idempotency_uuid(draft_id: int) -> str:
-    return str(uuid5(NAMESPACE_URL, f"ceo-agent-service:follow-up:{draft_id}"))
+def _follow_up_revision_uuid(draft, message_text: str) -> str:
+    revision = json.dumps(
+        {
+            "draft_id": draft.id,
+            "todo_id": draft.todo_id,
+            "owner_user_id": draft.owner_user_id,
+            "target_kind": draft.target_kind,
+            "target_conversation_id": draft.target_conversation_id,
+            "message_text": message_text,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return str(uuid5(NAMESPACE_URL, f"ceo-agent-service:follow-up:{revision}"))
 
 
 def _defer_recoverable_follow_up(
@@ -411,28 +363,84 @@ def _defer_policy_follow_up(
     )
 
 
-def _skip_policy_follow_up(
+def _defer_follow_up_for_agent_review(
     store: AutoReplyStore,
     draft,
     *,
     now: str,
     reason: str,
-    detail: dict,
 ) -> None:
-    store.update_follow_up_draft(
-        draft.id,
-        status="skipped",
-        sent_at=now,
-        suppressed_reason=reason,
-        send_result_json=json.dumps(
-            {
-                "skipped": True,
-                "reason": reason,
-                "checked_at": now,
-                **detail,
+    project = store.get_work_project(draft.project_id)
+    todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
+    work_item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "follow_up_completion_check",
+                "ref": f"follow-up-repair:{draft.id}",
+                "title": f"Follow-up repair #{draft.id}",
+                "conversation_id": draft.target_conversation_id,
+                "conversation_title": "",
+                "created_at": now,
             },
-            ensure_ascii=False,
-        ),
+            "summary": json.dumps(
+                {
+                    "reason": reason,
+                    "project": (
+                        {"id": project.id, "title": project.title}
+                        if project is not None
+                        else {"id": draft.project_id}
+                    ),
+                    "todo": (
+                        {
+                            "id": todo.id,
+                            "title": todo.title,
+                            "owner_user_id": todo.owner_user_id,
+                            "owner_name": todo.owner_name,
+                            "status": str(todo.status),
+                        }
+                        if todo is not None
+                        else {"id": draft.todo_id, "missing": True}
+                    ),
+                    "follow_up": {
+                        "id": draft.id,
+                        "owner_user_id": draft.owner_user_id,
+                        "owner_name": draft.owner_name,
+                        "target_kind": draft.target_kind,
+                        "target_conversation_id": draft.target_conversation_id,
+                        "question_text": draft.question_text,
+                        "risk_check": _risk_check(draft),
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            "project_name": project.title if project is not None else "",
+            "context": {
+                "sender": "CEO follow-up dispatcher",
+                "sender_user_id": "",
+                "participants": [draft.owner_name] if draft.owner_name else [],
+                "source_conversation_kind": (
+                    "group" if draft.target_kind == "group" else "direct"
+                ),
+                "source_conversation_title": "",
+            },
+            "task_signals": {
+                "possible_task_update": True,
+                "mentions_follow_up": True,
+                "signal_reason": reason,
+            },
+        }
+    )
+    store.enqueue_work_summary_input(
+        source_type=work_item.source.type.value,
+        source_ref=work_item.source.ref,
+        payload_json=work_item.model_dump_json(),
+    )
+    _defer_policy_follow_up(
+        store,
+        draft,
+        now=now,
+        reason=reason,
+        detail={"agent_review_enqueued": True},
     )
 
 
@@ -446,25 +454,7 @@ def _owner_dingtalk_target(
     owner_user_id = owner_user_id.strip()
     fallback_name = fallback_name.strip()
     if not owner_user_id:
-        if not fallback_name:
-            return "", "", ""
-        cached_profiles = store.find_org_users_by_name(fallback_name)
-        if len(cached_profiles) == 1:
-            cached = cached_profiles[0]
-            return (
-                cached.user_id,
-                cached.open_dingtalk_id or "",
-                (cached.name or fallback_name).strip(),
-            )
-        profiles = dws.search_user_profiles(fallback_name)
-        if len(profiles) != 1:
-            return "", "", fallback_name
-        profile = profiles[0]
-        return (
-            profile.user_id,
-            profile.open_dingtalk_id or "",
-            (profile.name or fallback_name).strip(),
-        )
+        return "", "", fallback_name
     cached = store.get_org_user_profile(owner_user_id)
     if cached is not None and (cached.open_dingtalk_id or cached.name):
         return owner_user_id, cached.open_dingtalk_id or "", (
@@ -474,102 +464,6 @@ def _owner_dingtalk_target(
     return owner_user_id, profile.open_dingtalk_id or "", (
         profile.name or fallback_name
     ).strip()
-
-
-def _people_owner_candidate(people: list) -> tuple[str, str]:
-    for item in people:
-        if not isinstance(item, dict):
-            continue
-        user_id = str(item.get("user_id") or item.get("userid") or "").strip()
-        name = str(item.get("name") or item.get("nick") or "").strip()
-        if user_id:
-            return user_id, name
-    return "", ""
-
-
-def _project_related_owner_candidate(project) -> tuple[str, str]:
-    if project is None:
-        return "", ""
-    for item in _json_list(project.related_people_json):
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").lower()
-        if not any(marker in role for marker in ("owner", "负责人", "执行", "推进")):
-            continue
-        user_id = str(item.get("user_id") or "").strip()
-        name = str(item.get("name") or "").strip()
-        if user_id:
-            return user_id, name
-    return "", ""
-
-
-def _recover_follow_up_owner(store: AutoReplyStore, draft) -> tuple[str, str]:
-    user_id = str(draft.owner_user_id or "").strip()
-    name = str(draft.owner_name or "").strip()
-    if user_id:
-        return user_id, name
-
-    candidate_user_id, candidate_name = _people_owner_candidate(
-        _json_list(draft.owners_json)
-    )
-    if candidate_user_id:
-        store.update_follow_up_draft(
-            draft.id,
-            owner_user_id=candidate_user_id,
-            owner_name=candidate_name,
-        )
-        return candidate_user_id, candidate_name
-
-    todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
-    if todo is not None and todo.owner_user_id.strip():
-        user_id = todo.owner_user_id.strip()
-        name = todo.owner_name.strip()
-        store.update_follow_up_draft(
-            draft.id,
-            owner_user_id=user_id,
-            owner_name=name,
-            owners_json=json.dumps(
-                [{"user_id": user_id, "name": name, "role": "owner"}],
-                ensure_ascii=False,
-            ),
-        )
-        return user_id, name
-
-    project = store.get_work_project(draft.project_id)
-    if project is not None and project.owner_user_id.strip():
-        user_id = project.owner_user_id.strip()
-        name = project.owner_name.strip()
-        store.update_follow_up_draft(
-            draft.id,
-            owner_user_id=user_id,
-            owner_name=name,
-            owners_json=json.dumps(
-                [{"user_id": user_id, "name": name, "role": "owner"}],
-                ensure_ascii=False,
-            ),
-        )
-        return user_id, name
-
-    candidate_user_id, candidate_name = _project_related_owner_candidate(project)
-    if candidate_user_id:
-        store.update_follow_up_draft(
-            draft.id,
-            owner_user_id=candidate_user_id,
-            owner_name=candidate_name,
-            owners_json=json.dumps(
-                [
-                    {
-                        "user_id": candidate_user_id,
-                        "name": candidate_name,
-                        "role": "owner",
-                    }
-                ],
-                ensure_ascii=False,
-            ),
-        )
-        return candidate_user_id, candidate_name
-
-    return "", name
 
 
 def process_due_follow_ups(
@@ -623,15 +517,42 @@ def process_due_follow_ups(
                 },
             )
             continue
-        if draft.todo_id > 0:
-            dingtalk_done, dingtalk_reason = refresh_dingtalk_todo_before_follow_up(
+        if not draft.owner_user_id.strip():
+            _defer_follow_up_for_agent_review(
                 store,
-                dws,
-                work_todo_id=draft.todo_id,
+                draft,
                 now=now,
+                reason="owner_requires_agent_review",
             )
-            if dingtalk_done:
-                continue
+            continue
+        sensitive = _is_sensitive_follow_up(draft)
+        if (sensitive and draft.target_kind != "direct") or (
+            draft.target_kind == "group"
+            and not _is_open_conversation_id(draft.target_conversation_id)
+        ):
+            _defer_follow_up_for_agent_review(
+                store,
+                draft,
+                now=now,
+                reason="target_requires_agent_review",
+            )
+            continue
+        if draft.todo_id <= 0 or store.get_work_todo(draft.todo_id) is None:
+            _defer_follow_up_for_agent_review(
+                store,
+                draft,
+                now=now,
+                reason="todo_binding_requires_agent_review",
+            )
+            continue
+        dingtalk_done, _ = refresh_dingtalk_todo_before_follow_up(
+            store,
+            dws,
+            work_todo_id=draft.todo_id,
+            now=now,
+        )
+        if dingtalk_done:
+            continue
         completed, reason = _completion_supported_by_current_evidence(
             store,
             draft,
@@ -646,45 +567,20 @@ def process_due_follow_ups(
             )
             continue
         try:
-            recovered_owner_user_id, recovered_owner_name = _recover_follow_up_owner(
-                store,
-                draft,
-            )
             owner_user_id, open_dingtalk_id, at_name = _owner_dingtalk_target(
                 store,
                 dws,
-                owner_user_id=recovered_owner_user_id,
-                fallback_name=recovered_owner_name,
+                owner_user_id=draft.owner_user_id,
+                fallback_name=draft.owner_name,
             )
             if not owner_user_id:
-                _defer_policy_follow_up(
+                _defer_follow_up_for_agent_review(
                     store,
                     draft,
                     now=now,
-                    reason="owner_unresolved",
-                    detail={
-                        "owner_name": recovered_owner_name or draft.owner_name,
-                        "todo_id": draft.todo_id,
-                        "project_id": draft.project_id,
-                    },
+                    reason="owner_requires_agent_review",
                 )
                 continue
-            if draft.owner_user_id.strip() != owner_user_id:
-                store.update_follow_up_draft(
-                    draft.id,
-                    owner_user_id=owner_user_id,
-                    owner_name=at_name or recovered_owner_name,
-                    owners_json=json.dumps(
-                        [
-                            {
-                                "user_id": owner_user_id,
-                                "name": at_name or recovered_owner_name,
-                                "role": "owner",
-                            }
-                        ],
-                        ensure_ascii=False,
-                    ),
-                )
             day_start = _start_of_day(now)
             owner_sent_today = store.count_sent_follow_ups_for_owner_since(
                 owner_user_id,
@@ -703,18 +599,8 @@ def process_due_follow_ups(
                     },
                 )
                 continue
-            project = store.get_work_project(draft.project_id)
-            sensitive = _is_sensitive_follow_up(project, draft)
-            group_conversation_id = (
-                _resolve_group_conversation_id(store, dws, project, draft)
-                if draft.target_kind == "group"
-                else ""
-            )
-            send_to_group = (
-                draft.target_kind == "group"
-                and bool(group_conversation_id)
-                and not sensitive
-            )
+            group_conversation_id = draft.target_conversation_id.strip()
+            send_to_group = draft.target_kind == "group"
             if send_to_group:
                 group_sent_today = store.count_sent_follow_ups_for_conversation_since(
                     group_conversation_id,
@@ -741,10 +627,12 @@ def process_due_follow_ups(
             at_open_dingtalk_ids = [open_dingtalk_id] if open_dingtalk_id else []
             at_open_dingtalk_names = [at_name] if at_name else []
             original_text = _follow_up_message_text(store, draft)
+            revision_uuid = _follow_up_revision_uuid(draft, original_text)
             outgoing_text = prepare_outgoing_reply_text(
                 reply_text=original_text,
                 original_text=original_text,
                 feedback_base_url=feedback_base_url,
+                feedback_token=f"spike_{revision_uuid.replace('-', '')}",
             )
             question_text = outgoing_text.text
             feedback_token = outgoing_text.feedback_token
@@ -755,7 +643,7 @@ def process_due_follow_ups(
                     at_users=at_users,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
                     at_open_dingtalk_names=at_open_dingtalk_names,
-                    idempotency_uuid=_follow_up_idempotency_uuid(draft.id),
+                    idempotency_uuid=revision_uuid,
                 )
             else:
                 result = dws.send_message(
@@ -764,7 +652,7 @@ def process_due_follow_ups(
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
                     user_id=None if open_dingtalk_id else owner_user_id or None,
                     open_dingtalk_id=open_dingtalk_id or None,
-                    idempotency_uuid=_follow_up_idempotency_uuid(draft.id),
+                    idempotency_uuid=revision_uuid,
                 )
         except Exception as exc:
             if (isinstance(exc, DwsError) and exc.needs_login) or (

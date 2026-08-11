@@ -224,7 +224,6 @@ def test_maybe_create_dingtalk_todo_skips_missing_deadline(tmp_path):
 @pytest.mark.parametrize(
     "todo_values",
     [
-        {"title": "跟进一下"},
         {"owner_user_id": ""},
         {"completion_evidence_json": json.dumps({"source": "reply_attempt:1"})},
         {"status": "done"},
@@ -249,7 +248,7 @@ def test_maybe_create_dingtalk_todo_skips_ineligible_todos(
     assert dws.created == []
 
 
-def test_maybe_create_dingtalk_todo_skips_hr_project(tmp_path):
+def test_maybe_create_dingtalk_todo_does_not_rejudge_agent_business_category(tmp_path):
     store = _store(tmp_path)
     project_id = store.create_work_project(
         title="HR 事项",
@@ -276,8 +275,25 @@ def test_maybe_create_dingtalk_todo_skips_hr_project(tmp_path):
         now="2026-06-27 10:00:00",
     )
 
-    assert link is None
-    assert dws.created == []
+    assert link is not None
+    assert len(dws.created) == 1
+    assert dws.created[0]["executor_user_id"] == "owner-1"
+
+
+def test_maybe_create_dingtalk_todo_does_not_rejudge_agent_title_semantics(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store, title="跟进一下")
+    dws = FakeTodoDws()
+
+    link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert link is not None
+    assert len(dws.created) == 1
 
 
 def test_maybe_create_dingtalk_todo_skips_existing_active_link(tmp_path):

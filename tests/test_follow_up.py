@@ -60,6 +60,23 @@ class FakeDws:
         return self.todo_payloads.get(task_id, {"id": task_id, "done": False})
 
 
+def _create_bound_todo(
+    store: AutoReplyStore,
+    project_id: int,
+    *,
+    owner_user_id: str = "owner-1",
+    owner_name: str = "Alex",
+) -> int:
+    return store.create_work_todo(
+        project_id=project_id,
+        title="确认当前交付状态",
+        owner_user_id=owner_user_id,
+        owner_name=owner_name,
+        status="open",
+        priority="P1",
+    )
+
+
 def test_due_follow_up_sends_group_message(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
@@ -152,7 +169,7 @@ def test_due_follow_up_defers_outside_local_working_hours(tmp_path):
     assert draft.suppressed_reason == "outside_local_working_hours"
 
 
-def test_due_follow_up_resolves_non_open_group_id_from_cached_source(tmp_path):
+def test_due_follow_up_queues_agent_repair_for_unverified_group_target(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     store.upsert_conversation(
         "cid-open-1",
@@ -186,7 +203,7 @@ def test_due_follow_up_resolves_non_open_group_id_from_cached_source(tmp_path):
         priority="P0",
         next_follow_up_at="2026-06-07 09:00:00",
     )
-    store.create_follow_up_draft(
+    draft_id = store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="owner-1",
@@ -206,10 +223,15 @@ def test_due_follow_up_resolves_non_open_group_id_from_cached_source(tmp_path):
         auto_send=True,
     )
 
-    assert sent == 1
-    assert dws.sent[0]["conversation_id"] == "cid-open-1"
-    sent_draft = store.list_follow_up_drafts(statuses=("sent",))[0]
-    assert sent_draft.target_conversation_id == "cid-open-1"
+    assert sent == 0
+    assert dws.sent == []
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.target_conversation_id == "123456"
+    assert draft.suppressed_reason == "target_requires_agent_review"
+    queued = store.claim_work_summary_inputs(limit=1)
+    assert len(queued) == 1
+    assert queued[0].source_ref == f"follow-up-repair:{draft.id}"
 
 
 def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
@@ -221,7 +243,7 @@ def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
         priority="P0",
         risk_level="high",
     )
-    store.create_work_todo(
+    todo_id = store.create_work_todo(
         project_id=project_id,
         title="给客户交付 ETA",
         owner_user_id="owner-1",
@@ -232,6 +254,7 @@ def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
     )
     store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         owner_name="Alex",
         target_conversation_id="cid-1",
@@ -332,7 +355,7 @@ def test_direct_follow_up_prefers_open_dingtalk_id_for_send_target(tmp_path):
         priority="P0",
         risk_level="high",
     )
-    store.create_work_todo(
+    todo_id = store.create_work_todo(
         project_id=project_id,
         title="给客户交付 ETA",
         owner_user_id="owner-1",
@@ -343,6 +366,7 @@ def test_direct_follow_up_prefers_open_dingtalk_id_for_send_target(tmp_path):
     )
     store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         owner_name="Alex",
         target_kind="direct",
@@ -368,7 +392,7 @@ def test_direct_follow_up_prefers_open_dingtalk_id_for_send_target(tmp_path):
     assert send_result["at_open_dingtalk_ids"] == ["open-owner-1"]
 
 
-def test_group_follow_up_resolves_owner_name_before_sending_at_user(tmp_path):
+def test_group_follow_up_does_not_resolve_owner_from_name(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="Henry/BMW 自动驾驶数据挖掘商机技术响应推进",
@@ -396,20 +420,15 @@ def test_group_follow_up_resolves_owner_name_before_sending_at_user(tmp_path):
         auto_send=True,
     )
 
-    assert sent == 1
-    assert dws.sent[0]["at_users"] == ["jack-user-1"]
-    assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-jack-1"]
-    assert dws.sent[0]["at_open_dingtalk_names"] == ["何耘光"]
-    send_result = json.loads(
-        store.list_follow_up_drafts(statuses=("sent",))[0].send_result_json
-    )
-    assert send_result["at_users"] == ["jack-user-1"]
-    assert send_result["at_open_dingtalk_ids"] == ["open-jack-1"]
-    sent_draft = store.list_follow_up_drafts(statuses=("sent",))[0]
-    assert sent_draft.owner_user_id == "jack-user-1"
+    assert sent == 0
+    assert dws.sent == []
+    draft = store.list_follow_up_drafts(statuses=("draft",))[0]
+    assert draft.owner_user_id == ""
+    assert draft.suppressed_reason == "owner_requires_agent_review"
+    assert len(store.claim_work_summary_inputs(limit=1)) == 1
 
 
-def test_due_follow_up_recovers_missing_draft_owner_from_todo(tmp_path):
+def test_due_follow_up_queues_agent_repair_instead_of_guessing_owner(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="客户交付",
@@ -446,13 +465,16 @@ def test_due_follow_up_recovers_missing_draft_owner_from_todo(tmp_path):
         auto_send=True,
     )
 
-    assert sent == 1
-    assert dws.sent[0]["at_users"] == ["owner-1"]
-    sent_draft = store.get_follow_up_draft(draft_id)
-    assert sent_draft is not None
-    assert sent_draft.status == "sent"
-    assert sent_draft.owner_user_id == "owner-1"
-    assert json.loads(sent_draft.owners_json)[0]["user_id"] == "owner-1"
+    assert sent == 0
+    assert dws.sent == []
+    deferred = store.get_follow_up_draft(draft_id)
+    assert deferred is not None
+    assert deferred.status == "draft"
+    assert deferred.owner_user_id == ""
+    assert deferred.suppressed_reason == "owner_requires_agent_review"
+    queued = store.claim_work_summary_inputs(limit=1)
+    assert len(queued) == 1
+    assert queued[0].source_ref == f"follow-up-repair:{draft_id}"
 
 
 def test_due_follow_up_skips_when_todo_completion_evidence_exists(tmp_path):
@@ -732,8 +754,10 @@ def test_draft_follow_up_sends_direct_message_when_live_send_enabled(tmp_path):
         priority="P1",
         risk_level="medium",
     )
+    todo_id = _create_bound_todo(store, project_id)
     store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         owner_name="Alex",
         target_kind="direct",
@@ -767,8 +791,10 @@ def test_direct_follow_up_with_conversation_id_uses_direct_owner_target(tmp_path
         priority="P1",
         risk_level="medium",
     )
+    todo_id = _create_bound_todo(store, project_id)
     store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         owner_name="Alex",
         target_conversation_id="direct:owner-1",
@@ -813,8 +839,10 @@ def test_follow_up_uses_cached_org_profile_before_live_dws_lookup(tmp_path):
         priority="P1",
         risk_level="medium",
     )
+    todo_id = _create_bound_todo(store, project_id)
     store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         owner_name="Alex",
         target_conversation_id="cid-1",
@@ -869,7 +897,7 @@ def test_dry_run_does_not_send_due_follow_up(tmp_path):
     assert store.list_follow_up_drafts(statuses=("draft",))[0].id == draft_id
 
 
-def test_sensitive_group_follow_up_reroutes_to_direct_message(tmp_path):
+def test_sensitive_group_follow_up_requires_verified_direct_target(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="人事敏感事项",
@@ -898,14 +926,16 @@ def test_sensitive_group_follow_up_reroutes_to_direct_message(tmp_path):
         auto_send=True,
     )
 
-    assert sent == 1
-    assert dws.sent[0]["conversation_id"] is None
-    assert dws.sent[0]["open_dingtalk_id"] == "open-owner-1"
-    assert store.list_follow_up_drafts(statuses=("sent",))[0].id == draft_id
-    sent_result = json.loads(
-        store.list_follow_up_drafts(statuses=("sent",))[0].send_result_json
-    )
-    assert sent_result["target_kind_used"] == "direct"
+    assert sent == 0
+    assert dws.sent == []
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "draft"
+    assert draft.target_kind == "group"
+    assert draft.suppressed_reason == "target_requires_agent_review"
+    queued = store.claim_work_summary_inputs(limit=1)
+    assert len(queued) == 1
+    assert queued[0].source_ref == f"follow-up-repair:{draft_id}"
 
 
 def test_missing_risk_check_does_not_block_sendable_follow_up(tmp_path):
@@ -917,8 +947,10 @@ def test_missing_risk_check_does_not_block_sendable_follow_up(tmp_path):
         priority="P1",
         risk_level="medium",
     )
+    todo_id = _create_bound_todo(store, project_id)
     draft_id = store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         owner_name="Alex",
         target_conversation_id="cid-1",
@@ -940,7 +972,7 @@ def test_missing_risk_check_does_not_block_sendable_follow_up(tmp_path):
     assert store.list_follow_up_drafts(statuses=("sent",))[0].id == draft_id
 
 
-def test_group_follow_up_without_group_falls_back_to_direct_message(tmp_path):
+def test_group_follow_up_without_group_queues_agent_target_repair(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="客户交付",
@@ -949,7 +981,7 @@ def test_group_follow_up_without_group_falls_back_to_direct_message(tmp_path):
         priority="P1",
         risk_level="medium",
     )
-    store.create_follow_up_draft(
+    draft_id = store.create_follow_up_draft(
         project_id=project_id,
         owner_user_id="owner-1",
         owner_name="Alex",
@@ -967,12 +999,46 @@ def test_group_follow_up_without_group_falls_back_to_direct_message(tmp_path):
         auto_send=True,
     )
 
-    assert sent == 1
-    assert dws.sent[0]["conversation_id"] is None
-    assert dws.sent[0]["user_id"] is None
-    assert dws.sent[0]["open_dingtalk_id"] == "open-owner-1"
-    assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-owner-1"]
-    assert not dws.sent[0]["text"].startswith("<@")
+    assert sent == 0
+    assert dws.sent == []
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "draft"
+    assert draft.suppressed_reason == "target_requires_agent_review"
+    queued = store.claim_work_summary_inputs(limit=1)
+    assert len(queued) == 1
+
+
+def test_follow_up_cannot_send_without_bound_todo(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+    )
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请同步进展",
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.suppressed_reason == "todo_binding_requires_agent_review"
+    assert len(store.claim_work_summary_inputs(limit=1)) == 1
 
 
 def test_follow_up_failure_marks_failed_and_records_error(tmp_path):
@@ -995,8 +1061,10 @@ def test_follow_up_failure_marks_failed_and_records_error(tmp_path):
         priority="P0",
         risk_level="high",
     )
+    todo_id = _create_bound_todo(store, project_id)
     draft_id = store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         target_conversation_id="cid-1",
         target_kind="group",
@@ -1033,8 +1101,10 @@ def test_dws_login_required_defers_follow_up_without_marking_failed(tmp_path):
         priority="P0",
         risk_level="high",
     )
+    todo_id = _create_bound_todo(store, project_id)
     draft_id = store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         target_conversation_id="cid-1",
         target_kind="group",
@@ -1079,8 +1149,10 @@ def test_retryable_dws_failure_defers_follow_up_with_stable_idempotency_uuid(tmp
         priority="P0",
         risk_level="high",
     )
+    todo_id = _create_bound_todo(store, project_id)
     draft_id = store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         target_conversation_id="cid-1",
         target_kind="group",
@@ -1105,7 +1177,31 @@ def test_retryable_dws_failure_defers_follow_up_with_stable_idempotency_uuid(tmp
     assert draft.scheduled_at == "2026-06-08 02:15:00"
     result = json.loads(draft.send_result_json)
     assert result["reason"] == "external_dependency_unavailable"
-    assert dws.sent[0]["idempotency_uuid"]
+    first_key = dws.sent[0]["idempotency_uuid"]
+    assert first_key
+
+    process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:16:00",
+        auto_send=True,
+    )
+
+    assert dws.sent[1]["idempotency_uuid"] == first_key
+
+    store.update_follow_up_draft(
+        draft_id,
+        question_text="请同步修正后的进展和预计完成时间",
+        scheduled_at="2026-06-08 02:16:00",
+    )
+    process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:17:00",
+        auto_send=True,
+    )
+
+    assert dws.sent[2]["idempotency_uuid"] != first_key
 
 
 def test_unknown_dws_send_outcome_defers_follow_up_with_stable_idempotency_uuid(
@@ -1126,8 +1222,10 @@ def test_unknown_dws_send_outcome_defers_follow_up_with_stable_idempotency_uuid(
         priority="P0",
         risk_level="high",
     )
+    todo_id = _create_bound_todo(store, project_id)
     draft_id = store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         target_conversation_id="cid-1",
         target_kind="group",
@@ -1164,8 +1262,10 @@ def test_process_due_follow_ups_can_target_one_draft_for_recovery(tmp_path):
         priority="P0",
         risk_level="high",
     )
+    todo_id = _create_bound_todo(store, project_id)
     first_id = store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         target_conversation_id="cid-1",
         target_kind="group",
@@ -1175,6 +1275,7 @@ def test_process_due_follow_ups_can_target_one_draft_for_recovery(tmp_path):
     )
     second_id = store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         target_conversation_id="cid-1",
         target_kind="group",
@@ -1411,6 +1512,7 @@ def test_due_follow_up_defers_when_owner_daily_cap_reached(tmp_path):
         priority="P1",
         risk_level="medium",
     )
+    todo_id = _create_bound_todo(store, project_id)
     for index in range(3):
         sent_id = store.create_follow_up_draft(
             project_id=project_id,
@@ -1425,6 +1527,7 @@ def test_due_follow_up_defers_when_owner_daily_cap_reached(tmp_path):
         assert sent_id > 0
     draft_id = store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         owner_name="Alex",
         target_kind="direct",

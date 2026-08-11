@@ -2,13 +2,12 @@ import json
 from datetime import datetime
 from typing import Any
 
-from app.dws_client import DwsClient, DwsError
+from app.dws_client import DwsError
 from app.store import AutoReplyStore
 from app.task_models import ProjectPriority, TodoStatus
 from app.todo_completion import close_todo_with_completion_evidence
 
 
-WEAK_TITLES = {"跟进一下", "同步进展", "确认进展", "问一下", "推进一下"}
 DINGTALK_TODO_TITLE_LIMIT = 80
 DINGTALK_TODO_CONTEXT_LIMIT = 42
 MAX_DINGTALK_TODO_CREATE_RETRIES = 1
@@ -109,11 +108,6 @@ def _has_completion_evidence(value: str) -> bool:
     if isinstance(evidence, (dict, list)):
         return bool(evidence)
     return bool(evidence)
-
-
-def _is_actionable_title(title: str) -> bool:
-    compact = "".join((title or "").split())
-    return len(compact) >= 6 and compact not in WEAK_TITLES
 
 
 def _normalize_inline_text(value: str) -> str:
@@ -260,20 +254,15 @@ def _dingtalk_todo_title(todo: Any, project: Any = None) -> str:
 
 
 def _todo_is_eligible(store: AutoReplyStore, todo: Any) -> bool:
-    project = store.get_work_project(todo.project_id)
     if todo.status not in {TodoStatus.OPEN, TodoStatus.WAITING_OWNER}:
         return False
     if not todo.owner_user_id.strip():
         return False
     if not _deadline_to_iso(todo.deadline_at):
         return False
-    if not _is_actionable_title(todo.title):
-        return False
-    if not _is_actionable_title(_dingtalk_todo_title(todo, project)):
+    if not todo.title.strip():
         return False
     if _has_completion_evidence(todo.completion_evidence_json):
-        return False
-    if project is not None and str(project.category) == "HR":
         return False
     return store.get_active_work_todo_dingtalk_link(todo.id) is None
 
