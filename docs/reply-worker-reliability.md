@@ -39,6 +39,10 @@ session，使 A 能复用参与者、历史事实、已做决定和此前澄清�
 session 文件缺失、损坏或任一合同项变化时，必须新建会话。新会话仍从 SQLite 任务上下文读取
 事实，不能用旧 session 的输出形状、旧提示或旧工具策略绕过当前校验。
 
+Consumer turn 全程只读；如果 Codex 在同一 Consumer turn 中报告新的 session，且该 run 没有
+持久化执行 receipt，服务把会话指向包含最终结果的最新 session。Audit turn 不适用此规则：一旦
+启动，Audit session 始终不可替换，避免外部动作审计链断裂。
+
 同一时刻只允许一个 A turn 更新该 session。服务使用短期可续租的 transcript 锁保证 JSONL
 顺序；后续消息仍保留在 SQLite 队列，不因锁存在而丢失。
 

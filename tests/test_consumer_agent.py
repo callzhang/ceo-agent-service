@@ -290,6 +290,42 @@ def test_consumer_rotates_session_when_wire_contract_changes(store, task, contex
     )
 
 
+def test_consumer_accepts_read_only_session_handoff(store, task, context):
+    result = {
+        "outcome": "no_action",
+        "summary": "Nothing to do.",
+        "proposal": None,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    }
+    executor = CapturingExecutor(
+        "\n".join(
+            (
+                json.dumps({"type": "thread.started", "thread_id": "session-first"}),
+                json.dumps({"type": "thread.started", "thread_id": "session-final"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": json.dumps(_wire_result(result)),
+                        },
+                    }
+                ),
+            )
+        )
+    )
+
+    outcome = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run(outcome.run_id)
+    assert run is not None and run.codex_session_id == "session-final"
+    assert store.get_codex_session_id(task.conversation_id) == "session-final"
+
+
 def test_consumer_rotates_session_when_service_read_contract_changes(
     store, task, context, monkeypatch
 ):

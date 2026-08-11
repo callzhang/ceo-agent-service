@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from app.agent_result import SideEffectState
 from app.wechat.models import WechatReplyScope
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
@@ -3444,6 +3445,7 @@ class AutoReplyStore:
         *,
         owner: str,
         transcript_start_line: int = 0,
+        allow_consumer_session_handoff: bool = False,
         now: str | datetime | None = None,
     ) -> AgentRun:
         if not codex_session_id.strip():
@@ -3460,23 +3462,52 @@ class AutoReplyStore:
                 now_text=now_text,
                 status_error="agent run session requires running status",
             )
+            current = db.execute(
+                """
+                select role, codex_session_id, side_effect_state
+                from agent_runs
+                where id=?
+                """,
+                (run_id,),
+            ).fetchone()
+            if current is None:
+                raise ValueError("agent run does not exist")
+            current_session_id = str(current["codex_session_id"] or "")
+            replace_session = (
+                allow_consumer_session_handoff
+                and current["role"] == AgentRole.CONSUMER.value
+                and current["side_effect_state"] == SideEffectState.NONE.value
+                and bool(current_session_id)
+                and current_session_id != codex_session_id
+                and db.execute(
+                    """
+                    select 1 from agent_execution_receipts
+                    where agent_run_id=? and completed=1 and persisted=1
+                    limit 1
+                    """,
+                    (run_id,),
+                ).fetchone()
+                is None
+            )
             cursor = db.execute(
                 """
                 update agent_runs
                 set codex_session_id=case
-                        when codex_session_id='' then ? else codex_session_id
+                        when codex_session_id='' or ? then ? else codex_session_id
                     end,
                     transcript_start_line=case
-                        when codex_session_id='' then ? else transcript_start_line
+                        when codex_session_id='' or ? then ? else transcript_start_line
                     end,
                     transcript_end_line=max(transcript_end_line, ?),
                     updated_at=?
                 where id=? and status='running' and lease_owner=?
                   and lease_expires_at>?
-                  and (codex_session_id='' or codex_session_id=?)
+                  and (codex_session_id='' or codex_session_id=? or ?)
                 """,
                 (
+                    int(replace_session),
                     codex_session_id,
+                    int(replace_session),
                     transcript_start_line,
                     transcript_start_line,
                     now_text,
@@ -3484,6 +3515,7 @@ class AutoReplyStore:
                     owner,
                     now_text,
                     codex_session_id,
+                    int(replace_session),
                 ),
             )
             if cursor.rowcount != 1:
