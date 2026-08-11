@@ -2,6 +2,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 
 from app.store import AutoReplyStore
+from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.dingtalk_models import CodexAction, CodexDecision
 from app.wechat.models import WechatAccount
 from app.wechat.consumer import WechatReplyConsumer, WechatTaskProcessingError
@@ -168,6 +169,23 @@ def test_external_dependency_failure_defers_wechat_task_for_retry(
         now="2026-08-08 08:05:01",
         channel="wechat",
     )[0].id == task.id
+
+
+def test_auth_failure_persists_structured_recovery_code(fake_codex, consumer, store):
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.STOP_WITH_ERROR,
+        reason="native authentication unavailable",
+        audit_summary="native authentication unavailable",
+        external_dependency_failed=True,
+        failure_code=CODEX_PROVIDER_AUTH_FAILED,
+    )
+
+    assert consumer.run_once(limit=1) == 1
+
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.recovery_code == CODEX_PROVIDER_AUTH_FAILED
 
 
 def test_consumer_marks_read_only_decision_phase_before_calling_codex(

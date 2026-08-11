@@ -2,6 +2,7 @@ import sqlite3
 
 import pytest
 
+from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.wechat.models import WechatReplyScope
 
@@ -87,6 +88,7 @@ def test_codex_auth_recovery_requeues_only_unsent_wechat_decision_failures(tmp_p
         audit_summary="decision not started",
         send_status="failed",
         send_error="codex_provider_auth_failed: status_auth_required",
+        recovery_code=CODEX_PROVIDER_AUTH_FAILED,
         task_status="failed",
     )
 
@@ -103,6 +105,7 @@ def test_codex_auth_recovery_requeues_only_unsent_wechat_decision_failures(tmp_p
     assert refreshed.force_new_decision is True
     assert refreshed.execution_generation != task.execution_generation
     assert refreshed.error == "codex_auth_restored"
+    assert refreshed.recovery_code == ""
     assert store.get_wechat_delivery_for_task(task.id) is None
 
 
@@ -140,6 +143,38 @@ def test_codex_auth_recovery_does_not_requeue_wechat_task_with_delivery(tmp_path
 
     assert recovered == []
     assert store.get_reply_task(task.id).status == "failed"
+
+
+def test_confirmed_unsent_wechat_failure_can_be_marked_for_auth_recovery(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-08-10 10:00:00", trigger_sender="Alex",
+        trigger_text="please reply",
+    )
+    task = store.claim_reply_tasks(1, channel="wechat")[0]
+    store.finalize_wechat_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        action="stop_with_error",
+        sensitivity_kind="general",
+        codex_reason="provider authentication unavailable",
+        draft_reply_text="",
+        audit_summary="decision not started",
+        send_status="failed",
+        send_error="provider failure details retained in audit",
+        task_status="failed",
+    )
+
+    marked = store.mark_failed_wechat_task_for_codex_auth_recovery(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    assert marked.recovery_code == CODEX_PROVIDER_AUTH_FAILED
+    assert marked.status == "failed"
+    assert store.get_wechat_delivery_for_task(task.id) is None
 
 
 def test_read_state_ready_account_scopes(tmp_path):

@@ -14,6 +14,7 @@ from app.codex_history import (
     find_codex_session_path,
 )
 from app.codex_runner import CodexRunner
+from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED, classify_codex_process_failure
 from app.config import assistant_signature, forbidden_path_prefixes
 from app.dingtalk_models import CodexAction, CodexDecision
 from app.process_runner import run_process_with_idle_timeout
@@ -54,7 +55,13 @@ def error_agent_envelope_json(
     reason: str,
     *,
     external_dependency_failed: bool = False,
+    failure_code: str = "",
 ) -> str:
+    domain_payload: dict[str, object] = {}
+    if external_dependency_failed:
+        domain_payload["external_dependency_failed"] = True
+    if failure_code:
+        domain_payload["failure_code"] = failure_code
     return json.dumps(
         {
             "kind": "error",
@@ -64,11 +71,7 @@ def error_agent_envelope_json(
                 "sensitivity_kind": "general",
             },
             "system_actions": [],
-            "domain_payload": (
-                {"external_dependency_failed": True}
-                if external_dependency_failed
-                else {}
-            ),
+            "domain_payload": domain_payload,
             "audit": {"summary": reason, "documents": [], "confidence": 0},
         },
         ensure_ascii=False,
@@ -87,6 +90,7 @@ def codex_decision_from_envelope(envelope: Any) -> CodexDecision:
             external_dependency_failed=bool(
                 parsed.domain_payload.get("external_dependency_failed", False)
             ),
+            failure_code=str(parsed.domain_payload.get("failure_code") or ""),
         )
     if parsed.user_response.mode == UserResponseMode.NO_REPLY:
         action = CodexAction.NO_REPLY
@@ -912,9 +916,17 @@ class CodexDecisionRunner:
                 except (json.JSONDecodeError, ValidationError):
                     pass
             reason = _subprocess_failure_reason(completed.stderr, stdout)
+            failure_code = classify_codex_process_failure(
+                stdout, completed.stderr
+            )
             stop_error = error_agent_envelope_json(
                 reason,
                 external_dependency_failed=True,
+                failure_code=(
+                    failure_code
+                    if failure_code == CODEX_PROVIDER_AUTH_FAILED
+                    else ""
+                ),
             )
             if stdout:
                 return f"{stdout}\n{stop_error}"

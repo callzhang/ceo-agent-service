@@ -5991,6 +5991,7 @@ def test_wechat_consumer_recovers_unsent_auth_failures_when_codex_recovers(
     import time
 
     from app.channel_gate import ChannelGateResult, ChannelGateState
+    from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 
     class StopLoop(Exception):
         pass
@@ -6038,6 +6039,7 @@ def test_wechat_consumer_recovers_unsent_auth_failures_when_codex_recovers(
         audit_summary="decision not started",
         send_status="failed",
         send_error="codex_provider_auth_failed: status_auth_required",
+        recovery_code=CODEX_PROVIDER_AUTH_FAILED,
         task_status="failed",
     )
     settings = SimpleNamespace(

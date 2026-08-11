@@ -15,6 +15,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, TypeAdapter
 
 from app.agent_result import SideEffectState
+from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.wechat.models import WechatReplyScope
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
@@ -300,6 +301,7 @@ class ReplyTask(BaseModel):
     manual_rerun_attempt_id: int = 0
     manual_rerun_revision_key: str = ""
     execution_generation: str = "initial"
+    recovery_code: str = ""
     status: str
     attempts: int
     locked_at: str | None = None
@@ -851,6 +853,7 @@ class AutoReplyStore:
                     manual_rerun_attempt_id integer not null default 0,
                     manual_rerun_revision_key text not null default '',
                     execution_generation text not null default 'initial',
+                    recovery_code text not null default '',
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     locked_at text,
@@ -1364,6 +1367,7 @@ class AutoReplyStore:
                 ("manual_rerun_attempt_id", "integer not null default 0"),
                 ("manual_rerun_revision_key", "text not null default ''"),
                 ("channel", "text not null default 'dingtalk'"),
+                ("recovery_code", "text not null default ''"),
             ):
                 if column not in reply_task_columns:
                     db.execute(
@@ -1579,6 +1583,7 @@ class AutoReplyStore:
                 ("manual_rerun_revision_key", "text not null default ''"),
                 ("channel", "text not null default 'dingtalk'"),
                 ("execution_generation", "text not null default 'initial'"),
+                ("recovery_code", "text not null default ''"),
             ):
                 if column not in reply_task_columns:
                     db.execute(
@@ -2396,6 +2401,7 @@ class AutoReplyStore:
             manual_rerun_attempt_id=row["manual_rerun_attempt_id"],
             manual_rerun_revision_key=row["manual_rerun_revision_key"],
             execution_generation=row["execution_generation"],
+            recovery_code=(row["recovery_code"] if "recovery_code" in row.keys() else ""),
             status=row["status"],
             attempts=row["attempts"],
             locked_at=row["locked_at"],
@@ -6215,6 +6221,7 @@ class AutoReplyStore:
         audit_summary: str,
         send_status: str,
         send_error: str = "",
+        recovery_code: str = "",
         task_status: str = "done",
         available_at: str = "",
         account_id: str = "",
@@ -6232,6 +6239,8 @@ class AutoReplyStore:
             raise ValueError("pending WeChat task requires available_at")
         if task_status != "pending" and available_at:
             raise ValueError("terminal WeChat task cannot set available_at")
+        if recovery_code and task_status not in {"failed", "pending"}:
+            raise ValueError("recovery code requires a recoverable WeChat task")
         has_delivery = bool(reply_text)
         if has_delivery and not all(
             value.strip()
@@ -6322,6 +6331,7 @@ class AutoReplyStore:
                 """
                 update reply_tasks
                 set status=?, locked_at=null, available_at=?, error=?,
+                    recovery_code=?,
                     updated_at=current_timestamp
                 where id=? and status='processing' and execution_generation=?
                 """,
@@ -6329,6 +6339,7 @@ class AutoReplyStore:
                     task_status,
                     available_at if task_status == "pending" else "",
                     send_error if task_status in {"failed", "pending"} else "",
+                    recovery_code if task_status in {"failed", "pending"} else "",
                     task_id,
                     expected_execution_generation,
                 ),
@@ -6365,10 +6376,7 @@ class AutoReplyStore:
                       where sent.conversation_id=tasks.conversation_id
                         and sent.trigger_message_id=tasks.trigger_message_id
                   )
-                  and (
-                      lower(tasks.error) like '%missing bearer or basic authentication%'
-                      or lower(tasks.error) like 'codex_provider_auth_failed:%'
-                  )
+                  and tasks.recovery_code=?
                   and exists (
                       select 1 from reply_attempts as attempts
                       where attempts.id=(
@@ -6381,16 +6389,10 @@ class AutoReplyStore:
                       )
                         and attempts.action='stop_with_error'
                         and attempts.send_status='failed'
-                        and (
-                            lower(attempts.send_error)
-                                like '%missing bearer or basic authentication%'
-                            or lower(attempts.send_error)
-                                like 'codex_provider_auth_failed:%'
-                        )
                   )
                 order by tasks.id
                 """,
-                (updated_since,),
+                (updated_since, CODEX_PROVIDER_AUTH_FAILED),
             ).fetchall()
             if not rows:
                 return []
@@ -6402,7 +6404,7 @@ class AutoReplyStore:
                     update reply_tasks
                     set force_new_decision=1, status='pending', attempts=0,
                         locked_at=null, available_at='', execution_generation=?,
-                        error=?, updated_at=current_timestamp
+                        error=?, recovery_code='', updated_at=current_timestamp
                     where id=? and status='failed' and channel='wechat'
                       and execution_generation=?
                       and not exists (
@@ -6419,6 +6421,57 @@ class AutoReplyStore:
                 ).fetchone()
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
+
+    def mark_failed_wechat_task_for_codex_auth_recovery(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+    ) -> ReplyTask:
+        """Mark one confirmed, unsent WeChat auth failure for safe recovery."""
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from reply_tasks where id=?", (task_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("WeChat task does not exist")
+            if (
+                row["channel"] != "wechat"
+                or row["status"] != "failed"
+                or row["execution_generation"] != expected_execution_generation
+            ):
+                raise ValueError("WeChat task is not an unchanged failed decision")
+            delivery = db.execute(
+                "select 1 from wechat_deliveries where reply_task_id=?", (task_id,)
+            ).fetchone()
+            if delivery is not None:
+                raise ValueError("WeChat task already entered delivery")
+            attempt = db.execute(
+                """
+                select action, send_status from reply_attempts
+                where channel='wechat' and conversation_id=? and trigger_message_id=?
+                order by id desc limit 1
+                """,
+                (row["conversation_id"], row["trigger_message_id"]),
+            ).fetchone()
+            if attempt is None or (
+                attempt["action"] != "stop_with_error"
+                or attempt["send_status"] != "failed"
+            ):
+                raise ValueError("WeChat task has no eligible failed decision")
+            db.execute(
+                """
+                update reply_tasks
+                set recovery_code=?, updated_at=current_timestamp
+                where id=? and status='failed' and execution_generation=?
+                """,
+                (CODEX_PROVIDER_AUTH_FAILED, task_id, expected_execution_generation),
+            )
+            updated = db.execute(
+                "select * from reply_tasks where id=?", (task_id,)
+            ).fetchone()
+            return self._reply_task_from_row(updated)
 
     def create_wechat_delivery(
         self, *, reply_task_id: int, account_id: str, target_type: str,

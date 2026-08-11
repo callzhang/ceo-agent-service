@@ -35,6 +35,11 @@ from app.agent_effects import (
     _mcp_call_completed,
     _normalized_key,
 )
+from app.codex_failure import (
+    CODEX_PROVIDER_AUTH_FAILED,
+    CODEX_PROVIDER_UNAVAILABLE,
+    classify_codex_process_failure,
+)
 from app.codex_runner import CodexRunner
 from app.leak_check import contains_credential
 from app.native_cli_metadata import (
@@ -49,8 +54,6 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
-CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
-CODEX_PROVIDER_AUTH_FAILED = "codex_provider_auth_failed"
 UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS = 60
 UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS = 15 * 60
 
@@ -78,25 +81,10 @@ class AgentTurnRunResult(Generic[ResultT]):
 
 
 def _process_failure_code(process: ProcessRunResult) -> str:
-    detail = f"{process.stdout}\n{process.stderr}".casefold()
-    if (
-        "missing bearer or basic authentication" in detail
-        and "/v1/responses" in detail
-    ):
-        return (
-            f"{CODEX_PROVIDER_AUTH_FAILED}: native Codex CLI authentication "
-            "is unavailable"
-        )
-    if any(
-        marker in detail
-        for marker in (
-            "workspace is out of credits",
-            "hit your usage limit",
-            "quota exceeded",
-        )
-    ):
-        return CODEX_PROVIDER_UNAVAILABLE
-    return "codex_process_failed"
+    code = classify_codex_process_failure(process.stdout, process.stderr)
+    if code == CODEX_PROVIDER_AUTH_FAILED:
+        return f"{code}: native Codex CLI authentication is unavailable"
+    return code
 
 
 def _agent_process_error_code(exc: Exception) -> str:

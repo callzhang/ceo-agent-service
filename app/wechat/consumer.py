@@ -198,6 +198,7 @@ class WechatReplyConsumer:
                 audit_summary=getattr(decision, "audit_summary", "") or "",
                 send_status="failed",
                 send_error=decision.reason or "stop_with_error",
+                recovery_code=decision.failure_code,
                 task_status="pending" if retryable else "failed",
                 available_at=self._retry_available_at() if retryable else "",
             )
