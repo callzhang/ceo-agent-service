@@ -4693,6 +4693,13 @@ def test_terminal_later_attempt_keeps_original_failure_reason_visible(tmp_path: 
     assert "需要你决策：</strong>否" in html
 
 
+def test_codex_process_failure_is_explained_without_internal_code():
+    explanation = audit_web_module._failure_code_explanation("codex_process_failed")
+
+    assert explanation == "Agent 执行进程未成功完成，因此本轮没有得到可验证结果。"
+    assert "codex_process_failed" not in explanation
+
+
 def test_render_attempt_detail_suppresses_quality_warnings_for_skipped_attempts(
     tmp_path: Path,
 ):
