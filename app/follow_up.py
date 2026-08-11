@@ -15,8 +15,6 @@ from app.todo_sync import (
 
 MAX_FOLLOW_UP_AGE_SECONDS = 7 * 24 * 60 * 60
 RECOVERABLE_AUTH_RETRY_DELAY = timedelta(minutes=15)
-MAX_FOLLOW_UPS_PER_OWNER_PER_DAY = 3
-MAX_FOLLOW_UPS_PER_GROUP_PER_DAY = 8
 LOCAL_WORK_TZ = ZoneInfo("Asia/Shanghai")
 LOCAL_WORK_START_HOUR = 9
 LOCAL_WORK_END_HOUR = 18
@@ -60,15 +58,6 @@ def _json_dict(value: str) -> dict:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
-
-
-def _start_of_day(now: str) -> str:
-    current = _parse_follow_up_datetime(now) or datetime.now(timezone.utc).replace(
-        tzinfo=None
-    )
-    return current.replace(hour=0, minute=0, second=0, microsecond=0).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
 
 
 def _tomorrow_morning(now: str) -> str:
@@ -262,23 +251,6 @@ def _skip_completed_follow_up(
     )
 
 
-def _skip_stale_follow_up(store: AutoReplyStore, draft, *, now: str) -> None:
-    store.update_follow_up_draft(
-        draft.id,
-        status="skipped",
-        sent_at=now,
-        send_result_json=json.dumps(
-            {
-                "skipped": True,
-                "reason": "stale_due_follow_up",
-                "scheduled_at": draft.scheduled_at,
-                "max_age_days": 7,
-            },
-            ensure_ascii=False,
-        ),
-    )
-
-
 def _recoverable_retry_at(now: str) -> str:
     current = _parse_follow_up_datetime(now) or datetime.now(timezone.utc).replace(
         tzinfo=None
@@ -372,6 +344,9 @@ def _defer_follow_up_for_agent_review(
 ) -> None:
     project = store.get_work_project(draft.project_id)
     todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
+    dingtalk_link = (
+        store.get_active_work_todo_dingtalk_link(todo.id) if todo is not None else None
+    )
     work_item = WorkItem.model_validate(
         {
             "source": {
@@ -397,6 +372,22 @@ def _defer_follow_up_for_agent_review(
                             "owner_user_id": todo.owner_user_id,
                             "owner_name": todo.owner_name,
                             "status": str(todo.status),
+                            "completion_evidence": _json_dict(
+                                todo.completion_evidence_json
+                            ),
+                            "dingtalk": (
+                                {
+                                    "task_id": dingtalk_link.dingtalk_task_id,
+                                    "done": dingtalk_link.last_dingtalk_done,
+                                    "last_pull_at": dingtalk_link.last_pull_at,
+                                    "last_payload": _json_dict(
+                                        dingtalk_link.last_dingtalk_payload_json
+                                    ),
+                                    "last_error": dingtalk_link.last_error,
+                                }
+                                if dingtalk_link is not None
+                                else None
+                            ),
                         }
                         if todo is not None
                         else {"id": draft.todo_id, "missing": True}
@@ -502,9 +493,6 @@ def process_due_follow_ups(
     for draft in drafts:
         if not auto_send:
             continue
-        if _is_stale_follow_up(draft.scheduled_at, now):
-            _skip_stale_follow_up(store, draft, now=now)
-            continue
         if not _is_local_working_time(now):
             _defer_policy_follow_up(
                 store,
@@ -566,6 +554,17 @@ def process_due_follow_ups(
                 completed=reason != "todo status is cancelled",
             )
             continue
+        if (
+            draft.suppressed_reason == "stale_follow_up_requires_agent_review"
+            or _is_stale_follow_up(draft.scheduled_at, now)
+        ):
+            _defer_follow_up_for_agent_review(
+                store,
+                draft,
+                now=now,
+                reason="stale_follow_up_requires_agent_review",
+            )
+            continue
         try:
             owner_user_id, open_dingtalk_id, at_name = _owner_dingtalk_target(
                 store,
@@ -581,44 +580,8 @@ def process_due_follow_ups(
                     reason="owner_requires_agent_review",
                 )
                 continue
-            day_start = _start_of_day(now)
-            owner_sent_today = store.count_sent_follow_ups_for_owner_since(
-                owner_user_id,
-                day_start,
-            )
-            if owner_sent_today >= MAX_FOLLOW_UPS_PER_OWNER_PER_DAY:
-                _defer_policy_follow_up(
-                    store,
-                    draft,
-                    now=now,
-                    reason="owner_daily_cap",
-                    detail={
-                        "owner_user_id": owner_user_id,
-                        "sent_today": owner_sent_today,
-                        "cap": MAX_FOLLOW_UPS_PER_OWNER_PER_DAY,
-                    },
-                )
-                continue
             group_conversation_id = draft.target_conversation_id.strip()
             send_to_group = draft.target_kind == "group"
-            if send_to_group:
-                group_sent_today = store.count_sent_follow_ups_for_conversation_since(
-                    group_conversation_id,
-                    day_start,
-                )
-                if group_sent_today >= MAX_FOLLOW_UPS_PER_GROUP_PER_DAY:
-                    _defer_policy_follow_up(
-                        store,
-                        draft,
-                        now=now,
-                        reason="group_daily_cap",
-                        detail={
-                            "target_conversation_id": group_conversation_id,
-                            "sent_today": group_sent_today,
-                            "cap": MAX_FOLLOW_UPS_PER_GROUP_PER_DAY,
-                        },
-                    )
-                    continue
             at_users = (
                 [owner_user_id]
                 if send_to_group and owner_user_id

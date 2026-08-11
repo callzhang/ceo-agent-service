@@ -27,9 +27,6 @@ from app.todo_sync import maybe_create_dingtalk_todo, sync_completed_todo_to_din
 from app.todo_completion import complete_follow_ups_for_todo
 
 
-TASK_AGENT_DECISION_SCHEMA_PATH = (
-    Path(__file__).resolve().parent / "schemas" / "task_agent_decision.schema.json"
-)
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
 FOLLOW_UP_WORK_START_HOUR = 9
@@ -138,7 +135,7 @@ class TaskAgentCodexRunner:
             prompt,
             session_id,
             image_paths=None,
-            output_schema_path=TASK_AGENT_DECISION_SCHEMA_PATH,
+            use_output_schema=False,
         )
         if self.executor is not None:
             return self.executor(command, prompt)
@@ -282,12 +279,8 @@ def _recent_follow_up_context_since(created_at: str) -> str:
 def _memory_connector_prompt_status(memory_issue: str) -> str:
     issue = memory_issue.strip()
     if issue:
-        return (
-            f"不可用：{issue}\n"
-            "- 继续处理 Work Item；不要因为 memory_recall 不可用而失败。\n"
-            "- 不能调用 memory_recall 时，在 project.memory_context 记录查询意图、不可用原因和替代证据。"
-        )
-    return "可用：需要用 memory_recall 补足非 discard 决策的历史背景。"
+        return f"不可用：{issue}"
+    return "可用：memory_recall tool is configured."
 
 
 def process_work_item(
@@ -862,9 +855,11 @@ def _apply_follow_up_change(
         values["reaction_summary"] = change.reason
     elif change.action == "reschedule":
         values["status"] = "draft"
+        values["suppressed_reason"] = ""
         if change.next_due_at and change.next_due_at.strip():
             values["scheduled_at"] = change.next_due_at.strip()
     elif change.action == "reassign":
+        values["suppressed_reason"] = ""
         if change.owner_user_id is not None:
             values["owner_user_id"] = change.owner_user_id.strip()
         if change.owner_name is not None:
@@ -872,6 +867,7 @@ def _apply_follow_up_change(
         values["reaction_status"] = "redirect_owner"
         values["reaction_summary"] = change.reason
     elif change.action == "keep_open":
+        values["suppressed_reason"] = ""
         values["reaction_summary"] = change.reason
         if change.todo_id is not None:
             todo = store.get_work_todo(change.todo_id)

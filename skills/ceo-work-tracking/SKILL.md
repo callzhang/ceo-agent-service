@@ -72,8 +72,11 @@ Load `dingtalk-todo` for DingTalk TODO operations, `task-management` for local t
   previous owner before considering a new draft.
 - `follow_up_reply_updates_existing_work_item_instead_of_creating_duplicate`:
   match the reply to the existing TODO and follow-up and mutate those records.
-- `stale_follow_up_is_skipped`: do not send an old draft whose context may no
-  longer be current; leave a recorded skip for fresh Agent evaluation.
+- `stale_follow_up_is_skipped`: when an old draft is presented for
+  reevaluation, read its current project, TODO, external status, and replies;
+  suppress it only when those facts show the old question is no longer
+  appropriate. The service may enqueue reevaluation but cannot decide the
+  semantic outcome.
 - `sensitive_follow_up_uses_verified_direct_target`: use only the verified
   direct identity selected in the decision; never convert a group target to a
   direct target in service code.

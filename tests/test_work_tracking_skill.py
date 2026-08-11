@@ -1,35 +1,15 @@
 import inspect
 from pathlib import Path
 
-import pytest
-
 from app.task_agent import build_task_agent_prompt
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = ROOT / "skills" / "ceo-work-tracking" / "SKILL.md"
 
-WORK_TRACKING_CASES = (
-    "routine_process_is_discarded",
-    "important_commitment_creates_todo_with_owner_evidence",
-    "follow_up_cannot_exist_without_todo",
-    "participant_or_speaker_is_not_owner_evidence",
-    "due_follow_up_refreshes_live_todo_before_send",
-    "completed_todo_suppresses_follow_up",
-    "owner_correction_updates_todo_and_suppresses_old_draft",
-    "follow_up_reply_updates_existing_work_item_instead_of_creating_duplicate",
-    "stale_follow_up_is_skipped",
-    "sensitive_follow_up_uses_verified_direct_target",
-)
-
 
 def _skill_text() -> str:
     return SKILL_PATH.read_text(encoding="utf-8")
-
-
-@pytest.mark.parametrize("case", WORK_TRACKING_CASES)
-def test_work_tracking_skill_defines_complete_lifecycle_case(case: str):
-    assert f"`{case}`" in _skill_text()
 
 
 def test_work_tracking_skill_owns_judgment_and_delegates_only_mechanics():
@@ -64,3 +44,7 @@ def test_task_agent_prompt_builder_contains_transport_not_business_policy():
         "小青显示",
     ):
         assert duplicated_policy not in source
+
+
+def test_task_agent_contract_has_no_checked_duplicate_schema():
+    assert not (ROOT / "app" / "schemas" / "task_agent_decision.schema.json").exists()

@@ -1218,6 +1218,7 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
         target_kind="direct",
         question_text="旧问题：本周会议分析完成了吗？",
         status="draft",
+        suppressed_reason="stale_follow_up_requires_agent_review",
         scheduled_at="2026-07-16T10:00:00+08:00",
     )
     updated_question = (
@@ -1277,6 +1278,7 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
     follow_up = store.get_follow_up_draft(follow_up_id)
     assert follow_up is not None
     assert follow_up.status == "draft"
+    assert follow_up.suppressed_reason == ""
     assert follow_up.question_text == updated_question
     assert follow_up.reaction_summary == "保留跟进，但按 Mina 的反馈更新问题上下文。"
 
@@ -2558,8 +2560,18 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
     assert input_row == ("done", "")
     assert run_count == 1
     assert json.loads(memory_context_json) == memory_unavailable_context
-    assert "Memory connector status facts:\n不可用：memory connector token is expired" in codex.prompts[0]
-    assert "不要因为 memory_recall 不可用而失败" in codex.prompts[0]
+    assert (
+        "Memory connector status facts:\n不可用：memory connector token is expired"
+        in codex.prompts[0]
+    )
+    memory_section = (
+        codex.prompts[0]
+        .split("Memory connector status facts:\n", 1)[1]
+        .split("\n\nCurrent Work Item JSON:", 1)[0]
+    )
+    assert memory_section == "不可用：memory connector token is expired"
+    assert "继续处理" not in memory_section
+    assert "替代证据" not in memory_section
 
 
 def test_task_agent_codex_runner_reuses_user_config_for_memory_recall(tmp_path):
@@ -2912,22 +2924,22 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
     assert runner.last_session_id == "session-task-2"
 
 
-def test_task_agent_schema_uses_strict_object_shapes():
-    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+def test_task_agent_prompt_schema_is_generated_from_validation_model():
+    prompt = build_task_agent_prompt(
+        WorkItem.model_validate(
+            {
+                "source": {"type": "local_file", "ref": "schema-test"},
+                "summary": "schema contract test",
+                "context": {"source_conversation_kind": "file"},
+            }
+        ),
+        "候选项目:\n[]\n\n近期 follow-up 候选:\n[]",
+    )
+    prompt_schema = json.loads(
+        prompt.split("TaskAgentDecision Pydantic JSON schema:\n", 1)[1]
+    )
 
-    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
-
-    def visit(node, path=()):
-        if isinstance(node, dict):
-            if node.get("type") == "object":
-                assert node.get("additionalProperties") is False
-            for key, value in node.items():
-                visit(value, (*path, key))
-        elif isinstance(node, list):
-            for index, item in enumerate(node):
-                visit(item, (*path, str(index)))
-
-    visit(schema)
+    assert prompt_schema == TaskAgentDecision.model_json_schema()
 
 
 def test_task_agent_decision_supports_follow_up_changes():
@@ -2992,45 +3004,7 @@ def test_task_agent_decision_supports_follow_up_changes():
     assert decision.follow_up_changes[0].owner_user_id == "02412744671048909"
 
 
-def test_task_agent_schema_includes_follow_up_changes():
-    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
-
-    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
-
-    assert "follow_up_changes" in schema["required"]
-    assert schema["properties"]["follow_up_changes"] == {
-        "type": "array",
-        "items": {"$ref": "#/$defs/follow_up_change"},
-    }
-    change_schema = schema["$defs"]["follow_up_change"]
-    assert set(change_schema["required"]) == set(change_schema["properties"])
-    assert change_schema["properties"]["follow_up_id"]["type"] == "integer"
-    assert change_schema["properties"]["todo_id"]["type"] == ["integer", "null"]
-    assert change_schema["properties"]["action"]["enum"] == [
-        "suppress",
-        "close",
-        "reschedule",
-        "reassign",
-        "keep_open",
-    ]
-    assert change_schema["properties"]["reason"]["type"] == "string"
-    assert change_schema["properties"]["evidence_check"] == {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["source", "summary"],
-        "properties": {
-            "source": {"type": "string"},
-            "summary": {"type": "string"},
-        },
-    }
-    assert change_schema["properties"]["next_due_at"]["type"] == ["string", "null"]
-    assert change_schema["properties"]["owner_user_id"]["type"] == ["string", "null"]
-    assert change_schema["properties"]["owner_name"]["type"] == ["string", "null"]
-
-
 def test_task_agent_decision_exposes_task_worthiness_risk_fields():
-    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
-
     decision = TaskAgentDecision.model_validate(
         {
             "action": "discard",
@@ -3047,83 +3021,12 @@ def test_task_agent_decision_exposes_task_worthiness_risk_fields():
             "failure_risk_score": 0.1,
         }
     )
-    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
-
     assert decision.failure_risk == "如果不跟进，只会影响单次工具账号使用，不影响公司项目。"
     assert decision.failure_risk_score == 0.1
-    assert "failure_risk" in schema["required"]
-    assert "failure_risk_score" in schema["required"]
-    assert schema["properties"]["failure_risk"]["type"] == "string"
-    assert schema["properties"]["failure_risk_score"]["minimum"] == 0
-    assert schema["properties"]["failure_risk_score"]["maximum"] == 1
-
-
-def test_task_agent_schema_requires_follow_up_owner_user_id_to_be_non_empty():
-    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
-
-    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
-    owner_user_id_schema = schema["$defs"]["follow_up_draft"]["properties"][
-        "owner_user_id"
-    ]
-
-    assert owner_user_id_schema["type"] == "string"
-    assert owner_user_id_schema["minLength"] == 1
-    risk_check_schema = schema["$defs"]["follow_up_draft"]["properties"][
-        "risk_check"
-    ]
-    assert "owner_evidence" in risk_check_schema["required"]
-    owner_evidence_schema = risk_check_schema["properties"]["owner_evidence"]
-    assert owner_evidence_schema["required"] == ["source", "reason", "description"]
-    todo_schema = schema["$defs"]["todo_change"]
-    assert "owner_evidence" in todo_schema["required"]
-    assert todo_schema["properties"]["owner_evidence"]["required"] == [
-        "source",
-        "reason",
-        "description",
-    ]
-
-
-def test_task_agent_schema_requires_project_memory_context():
-    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
-
-    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
-    project_schema = schema["$defs"]["project"]
-    memory_context_schema = schema["$defs"]["memory_context"]
-
-    assert "memory_context" in project_schema["required"]
-    assert project_schema["properties"]["memory_context"] == {
-        "$ref": "#/$defs/memory_context"
-    }
-    assert memory_context_schema["required"] == ["query", "summary", "memories"]
-    assert memory_context_schema["properties"]["query"]["minLength"] == 1
-
-
-def test_task_agent_schema_uses_strict_object_shapes_required_by_codex():
-    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
-
-    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
-
-    def assert_strict_objects(node, path=()):
-        if not isinstance(node, dict):
-            return
-        if node.get("type") == "object":
-            assert node.get("additionalProperties") is False
-            if "properties" in node:
-                assert set(node.get("required", [])) == set(node["properties"])
-        for key, value in node.items():
-            if isinstance(value, dict):
-                assert_strict_objects(value, (*path, key))
-            elif isinstance(value, list):
-                for index, item in enumerate(value):
-                    assert_strict_objects(item, (*path, str(index)))
-
-    assert_strict_objects(schema)
 
 
 def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     from app.task_agent import TaskAgentCodexRunner
-    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
-    from app.codex_runner import CODEX_DECISION_SCHEMA_PATH
 
     calls = []
 
@@ -3164,11 +3067,9 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     assert calls[0][1]["env"] == runner.runner.build_env()
     assert calls[0][1]["total_timeout_seconds"] == 7
     assert calls[0][1]["idle_timeout_seconds"] == 3
-    assert "--output-schema" in command
+    assert "--output-schema" not in command
     assert "--ignore-user-config" not in command
     assert "--disable" not in command
-    assert str(TASK_AGENT_DECISION_SCHEMA_PATH) in command
-    assert str(CODEX_DECISION_SCHEMA_PATH) not in command
 
 
 def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):

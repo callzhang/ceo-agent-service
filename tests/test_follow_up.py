@@ -710,7 +710,7 @@ def test_due_follow_up_sends_when_linked_dingtalk_todo_is_not_done(tmp_path):
     assert store.get_work_todo(todo_id).status == "open"
 
 
-def test_due_follow_up_skips_when_scheduled_more_than_seven_days_ago(tmp_path):
+def test_old_due_follow_up_refreshes_live_todo_then_queues_agent_reevaluation(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="客户交付",
@@ -719,8 +719,17 @@ def test_due_follow_up_skips_when_scheduled_more_than_seven_days_ago(tmp_path):
         priority="P1",
         risk_level="medium",
     )
+    todo_id = _create_bound_todo(store, project_id)
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-stale",
+        executor_user_id="owner-1",
+        title_snapshot="确认当前交付状态",
+        status="active",
+    )
     draft_id = store.create_follow_up_draft(
         project_id=project_id,
+        todo_id=todo_id,
         owner_user_id="owner-1",
         owner_name="Alex",
         target_kind="direct",
@@ -728,6 +737,11 @@ def test_due_follow_up_skips_when_scheduled_more_than_seven_days_ago(tmp_path):
         scheduled_at="2026-06-01 09:00:00",
     )
     dws = FakeDws()
+    dws.todo_payloads["dt-task-stale"] = {
+        "id": "dt-task-stale",
+        "done": False,
+        "modifiedTime": "2026-06-09T08:58:00+08:00",
+    }
 
     sent = process_due_follow_ups(
         store,
@@ -735,14 +749,35 @@ def test_due_follow_up_skips_when_scheduled_more_than_seven_days_ago(tmp_path):
         now="2026-06-09 09:00:01",
         auto_send=True,
     )
+    sent_again = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-10 01:00:01",
+        auto_send=True,
+    )
 
     assert sent == 0
+    assert sent_again == 0
     assert dws.sent == []
-    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
-    assert skipped.id == draft_id
-    result = json.loads(skipped.send_result_json)
-    assert result["reason"] == "stale_due_follow_up"
-    assert result["scheduled_at"] == "2026-06-01 09:00:00"
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "draft"
+    assert draft.suppressed_reason == "stale_follow_up_requires_agent_review"
+    link = store.get_active_work_todo_dingtalk_link(todo_id)
+    assert link is not None
+    assert link.last_pull_at == "2026-06-10 01:00:01"
+    assert json.loads(link.last_dingtalk_payload_json)["modifiedTime"] == (
+        "2026-06-09T08:58:00+08:00"
+    )
+    queued = store.claim_work_summary_inputs(limit=2)
+    assert len(queued) == 1
+    work_item = json.loads(queued[0].payload_json)
+    assert queued[0].source_ref == f"follow-up-repair:{draft_id}"
+    summary = json.loads(work_item["summary"])
+    assert summary["reason"] == "stale_follow_up_requires_agent_review"
+    assert summary["todo"]["status"] == "open"
+    assert summary["todo"]["dingtalk"]["done"] is False
+    assert summary["todo"]["dingtalk"]["last_pull_at"] == "2026-06-10 01:00:01"
 
 
 def test_draft_follow_up_sends_direct_message_when_live_send_enabled(tmp_path):
@@ -1503,7 +1538,7 @@ def test_due_follow_up_does_not_skip_when_recent_reply_asks_for_source(tmp_path)
     assert sent_draft.suppressed_reason == ""
 
 
-def test_due_follow_up_defers_when_owner_daily_cap_reached(tmp_path):
+def test_prior_owner_send_count_does_not_defer_due_follow_up(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="客户交付",
@@ -1544,12 +1579,58 @@ def test_due_follow_up_defers_when_owner_daily_cap_reached(tmp_path):
         auto_send=True,
     )
 
-    assert sent == 0
-    assert dws.sent == []
-    draft = [
-        item
-        for item in store.list_follow_up_drafts(statuses=("draft",))
-        if item.id == draft_id
-    ][0]
-    assert draft.scheduled_at == "2026-06-09 01:00:00"
-    assert draft.suppressed_reason == "owner_daily_cap"
+    assert sent == 1
+    assert len(dws.sent) == 1
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "sent"
+    assert draft.suppressed_reason == ""
+
+
+def test_prior_group_send_count_does_not_defer_due_follow_up(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = _create_bound_todo(store, project_id)
+    for index in range(8):
+        store.create_follow_up_draft(
+            project_id=project_id,
+            owner_user_id=f"owner-{index}",
+            owner_name=f"Owner {index}",
+            target_conversation_id="cid-1",
+            target_kind="group",
+            question_text=f"已发送 {index}",
+            scheduled_at="2026-06-08 01:00:00",
+            status="sent",
+            sent_at=f"2026-06-08 01:{index:02d}:00",
+        )
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请同步这个事项的最新进展。",
+        scheduled_at="2026-06-07 09:00:00",
+    )
+
+    dws = FakeDws()
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 1
+    assert len(dws.sent) == 1
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "sent"
+    assert draft.suppressed_reason == ""
