@@ -1277,6 +1277,129 @@ def test_reviewed_reply_rerun_allows_changed_feedback_to_rotate_generation(
     assert revised_task.execution_generation != first_task.execution_generation
 
 
+def test_actionable_attempt_decision_resolves_source_and_requeues_same_task(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-actionable-decision",
+        conversation_title="HR",
+        single_chat=False,
+        trigger_message_id="msg-actionable-decision",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please decide.",
+        trigger_message_json="{}",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    store.fail_reply_task(
+        task.id,
+        "decision required",
+        expected_execution_generation=task.execution_generation,
+    )
+    source_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="A manager decision is required.",
+        send_status="failed",
+    )
+    feedback = f"Human decision for source attempt #{source_id}: 暂不处理"
+
+    selected_id, requeued = store.record_actionable_attempt_decision(
+        source_id,
+        reviewer_feedback=feedback,
+        conversation_title=task.conversation_title,
+        single_chat=task.single_chat,
+        trigger_create_time=task.trigger_create_time,
+        trigger_message_json=task.trigger_message_json,
+    )
+    repeated_id, repeated_task = store.record_actionable_attempt_decision(
+        source_id,
+        reviewer_feedback=feedback,
+        conversation_title=task.conversation_title,
+        single_chat=task.single_chat,
+        trigger_create_time=task.trigger_create_time,
+        trigger_message_json=task.trigger_message_json,
+    )
+
+    source = store.get_reply_attempt(source_id)
+    selected = store.get_reply_attempt(selected_id)
+    assert requeued.id == task.id
+    assert requeued.status == "pending"
+    assert source is not None and source.send_status == "decision_selected"
+    assert source.reviewer_feedback == feedback
+    assert selected is not None and selected.reviewer_feedback == feedback
+    assert repeated_id == selected_id
+    assert repeated_task.execution_generation == requeued.execution_generation
+
+
+def test_actionable_attempt_decision_rolls_back_queue_when_source_update_fails(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-actionable-rollback",
+        conversation_title="HR",
+        single_chat=False,
+        trigger_message_id="msg-actionable-rollback",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please decide.",
+        trigger_message_json="{}",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    store.fail_reply_task(
+        task.id,
+        "decision required",
+        expected_execution_generation=task.execution_generation,
+    )
+    source_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    with store._connect() as db:
+        db.executescript(
+            f"""
+            create trigger reject_actionable_resolution before update on reply_attempts
+            when old.id={source_id} and new.send_status='decision_selected'
+            begin
+                select raise(abort, 'forced actionable resolution failure');
+            end;
+            """
+        )
+
+    with pytest.raises(
+        sqlite3.IntegrityError,
+        match="forced actionable resolution failure",
+    ):
+        store.record_actionable_attempt_decision(
+            source_id,
+            reviewer_feedback="Human decision: 暂不处理",
+            conversation_title=task.conversation_title,
+            single_chat=task.single_chat,
+            trigger_create_time=task.trigger_create_time,
+            trigger_message_json=task.trigger_message_json,
+        )
+
+    source = store.get_reply_attempt(source_id)
+    unchanged_task = store.get_reply_task(task.id)
+    assert source is not None and source.send_status == "failed"
+    assert unchanged_task is not None and unchanged_task.status == "failed"
+    assert unchanged_task.execution_generation == task.execution_generation
+    assert store.count_reply_attempts() == 1
+
+
 def test_agent_run_is_unique_per_task_generation(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
