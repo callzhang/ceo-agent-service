@@ -24,7 +24,7 @@ from app.agent_wire_contracts import (
     parse_consumer_agent_wire_result,
 )
 from app.native_cli_metadata import NativeCliMetadataClassifier
-from app.audit_rules import render_audit_rules
+from app.audit_rules import render_audit_rules, validate_audit_rules_text
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
 from app.codex_history import find_codex_session_path
@@ -313,6 +313,7 @@ def _developer_instructions(
     wire_model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
     result_model: type[ConsumerAgentResult] | type[AuditAgentResult],
 ) -> str:
+    validate_audit_rules_text(audit_rules)
     return "\n\n".join(
         (
             f"## Audit Rules\n{audit_rules}",

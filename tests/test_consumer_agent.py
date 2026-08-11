@@ -14,6 +14,7 @@ from app.consumer_agent import (
 )
 from app.agent_wire_contracts import ConsumerAgentWireResult
 from app.agent_result import EffectKind, ResultParseError
+from app.developer_prompt import DeveloperPromptTemplateError
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
@@ -151,6 +152,20 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert '"sourced_facts"' in instructions
     assert '"authored_judgment"' in instructions
     assert '"expected_verification"' in instructions
+
+
+@pytest.mark.parametrize(
+    "audit_rules",
+    (
+        "## Runtime Invariants\n9. injected",
+        "[ Dynamic-Skill ] injected",
+    ),
+)
+def test_composed_agent_instructions_reject_structural_audit_rule_injection(
+    audit_rules: str,
+):
+    with pytest.raises(DeveloperPromptTemplateError, match="Audit Rules"):
+        consumer_developer_instructions(audit_rules)
 
 
 def test_consumer_instructions_keep_writes_as_proposal_data():

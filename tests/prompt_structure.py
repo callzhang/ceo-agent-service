@@ -5,6 +5,8 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+from app.audit_rules import validate_audit_rules_text
+
 
 INVARIANT_IDENTITIES = (
     ("role_boundary", "Role Boundary"),
@@ -51,6 +53,8 @@ def validate_prompt_structure(
     context_facts: str | None,
     size_limit: int,
 ) -> None:
+    if audit_rules is not None:
+        validate_audit_rules_text(audit_rules)
     section_matches = list(_SECTION_RE.finditer(text))
     assert section_matches and section_matches[0].start() == 0
     sections = [match.group("title") for match in section_matches]

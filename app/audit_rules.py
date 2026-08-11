@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,6 +24,38 @@ AUDIT_RULE_WRAPPER = (
     "feedback; do not rewrite the candidate yourself."
 )
 EMPTY_AUDIT_RULES = "No additional configurable Audit Rules."
+RESERVED_CORE_SECTION_TITLES = frozenset(
+    {
+        "Runtime Invariants",
+        "Dynamic Skill",
+        "Audit Rules",
+        "Context Facts",
+        "Pydantic Wire Contract",
+        "Pydantic Result Contract",
+        "Pydantic Wire/Result Contract",
+        "Consumer Wire Contract",
+        "Audit Wire Contract",
+        "Consumer Result Contract",
+        "Audit Result Contract",
+        "Consumer Agent Wire Contract",
+        "Audit Agent Wire Contract",
+        "Consumer Agent Result Contract",
+        "Audit Agent Result Contract",
+        "Consumer/Audit Wire Contract",
+        "Consumer/Audit Result Contract",
+    }
+)
+_NORMALIZED_RESERVED_CORE_SECTION_TITLES = frozenset(
+    " ".join(title.casefold().split()) for title in RESERVED_CORE_SECTION_TITLES
+)
+_ATX_HEADING_RE = re.compile(
+    r"^[ \t]{0,3}(?P<level>#{1,6})(?:[ \t]+(?P<title>.*?))?[ \t]*$"
+)
+_FENCE_RE = re.compile(r"^[ \t]{0,3}(?:`{3,}|~{3,})")
+_RESERVED_MARKER_RE = re.compile(
+    r"\[\s*dynamic\s*-\s*skill\s*\]",
+    re.IGNORECASE,
+)
 
 
 def audit_rules_template_path() -> Path:
@@ -42,12 +75,12 @@ def read_audit_rules_template(path: Path | None = None) -> str:
             SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8"),
         )
     text = template_path.read_text(encoding="utf-8")
-    _validate_plain_text(text)
+    validate_audit_rules_text(text)
     return text
 
 
 def write_audit_rules_template(text: str, path: Path | None = None) -> Path:
-    _validate_plain_text(text)
+    validate_audit_rules_text(text)
     template_path = path or audit_rules_template_path()
     template_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(template_path, text)
@@ -65,11 +98,53 @@ def render_audit_rules(role: AgentRole, path: Path | None = None) -> str:
     return f"{wrapper}\n\n{custom}"
 
 
-def _validate_plain_text(text: str) -> None:
+def validate_audit_rules_text(text: str) -> None:
     if TAG_RE.search(text):
         raise DeveloperPromptTemplateError(
             "Audit Rules must be plain text; template tags are not allowed"
         )
+    if _RESERVED_MARKER_RE.search(text):
+        raise DeveloperPromptTemplateError(
+            "Audit Rules contain the reserved structural marker [dynamic-skill]"
+        )
+
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if _FENCE_RE.match(line):
+            raise DeveloperPromptTemplateError(
+                "Audit Rules cannot contain fenced Markdown blocks"
+            )
+        heading = _ATX_HEADING_RE.match(line)
+        if heading is not None:
+            title = _normalize_atx_title(heading.group("title") or "")
+            _validate_heading(title, len(heading.group("level")))
+        if index > 0 and _is_setext_underline(line) and lines[index - 1].strip():
+            _validate_heading(lines[index - 1].strip(), 1 if "=" in line else 2)
+
+
+def _normalize_atx_title(title: str) -> str:
+    stripped = title.strip()
+    closing = len(stripped) - len(stripped.rstrip("#"))
+    if closing and stripped[:-closing].endswith((" ", "\t")):
+        stripped = stripped[:-closing].rstrip()
+    return stripped
+
+
+def _validate_heading(title: str, level: int) -> None:
+    normalized = " ".join(title.casefold().split())
+    if normalized in _NORMALIZED_RESERVED_CORE_SECTION_TITLES:
+        raise DeveloperPromptTemplateError(
+            f"Audit Rules contain reserved core heading: {title}"
+        )
+    if level < 3:
+        raise DeveloperPromptTemplateError(
+            "Audit Rules headings must use level 3 or deeper so they remain nested"
+        )
+
+
+def _is_setext_underline(line: str) -> bool:
+    stripped = line.strip()
+    return bool(stripped) and set(stripped) in ({"="}, {"-"})
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

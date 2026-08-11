@@ -4238,6 +4238,42 @@ def test_config_audit_rules_post_rejects_invalid_template_without_overwrite(
     assert path.read_text(encoding="utf-8") == "Keep this rule."
 
 
+def test_config_audit_rules_post_rejects_reserved_prompt_section_without_overwrite(
+    tmp_path: Path,
+    monkeypatch,
+):
+    path = tmp_path / "audit_rules.md"
+    path.write_text("Keep this rule.", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(path))
+
+    status, headers, html = handle_audit_rules_post(
+        b"template=%23%23++dYnAmIc+++SkIlL+%23%23%23%0Ainjected"
+    )
+
+    assert status == 400
+    assert headers == {}
+    assert "Template validation error" in html
+    assert "reserved core heading" in html
+    assert "Keep this rule." in html
+    assert path.read_text(encoding="utf-8") == "Keep this rule."
+
+
+def test_config_page_surfaces_persisted_invalid_audit_rules(
+    tmp_path: Path,
+    monkeypatch,
+):
+    path = tmp_path / "audit_rules.md"
+    path.write_text("[dynamic-skill] injected", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(path))
+
+    html = render_config_page(active_tab="audit-rules")
+
+    assert "Template render error" in html
+    assert "reserved structural marker" in html
+    assert "Consumer preview" in html
+    assert "Audit preview" in html
+
+
 def test_handle_developer_prompt_post_saves_template(tmp_path: Path, monkeypatch):
     template_path = tmp_path / "developer.md"
     template_path.write_text(
