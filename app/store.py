@@ -11759,7 +11759,7 @@ class AutoReplyStore:
                     update follow_up_send_attempts
                     set state='invalidated', updated_at=current_timestamp
                     where draft_id=?
-                      and state in ('claimed', 'sending', 'unknown', 'retryable')
+                      and state='claimed'
                     """,
                     (draft_id,),
                 )
@@ -11831,7 +11831,7 @@ class AutoReplyStore:
                     update follow_up_send_attempts
                     set state='invalidated', updated_at=current_timestamp
                     where draft_id=?
-                      and state in ('claimed', 'sending', 'unknown', 'retryable')
+                      and state='claimed'
                     """,
                     (draft_id,),
                 )
@@ -12204,8 +12204,6 @@ class AutoReplyStore:
                     claim_token,
                 ],
             )
-            if cursor.rowcount != 1:
-                raise RuntimeError("follow-up claim changed during finalization")
             return cursor.rowcount == 1
 
     def mark_expired_follow_up_sending_unknown(
@@ -12281,18 +12279,22 @@ class AutoReplyStore:
             db.execute("begin immediate")
             attempt = db.execute(
                 """
-                select 1
-                from follow_up_send_attempts
+                update follow_up_send_attempts
+                set state='sent',
+                    result_json=?,
+                    lease_owner='',
+                    lease_until='',
+                    updated_at=current_timestamp
                 where draft_id=?
                   and draft_revision=?
                   and claim_token=?
                   and state='unknown'
                 """,
-                (draft_id, draft_revision, claim_token),
-            ).fetchone()
-            if attempt is None:
+                (result_json, draft_id, draft_revision, claim_token),
+            )
+            if attempt.rowcount != 1:
                 return False
-            cursor = db.execute(
+            db.execute(
                 """
                 update follow_up_drafts
                 set status='sent',
@@ -12309,23 +12311,6 @@ class AutoReplyStore:
                 """,
                 (result_json, sent_at, draft_id, draft_revision, claim_token),
             )
-            if cursor.rowcount != 1:
-                return False
-            db.execute(
-                """
-                update follow_up_send_attempts
-                set state='sent',
-                    result_json=?,
-                    lease_owner='',
-                    lease_until='',
-                    updated_at=current_timestamp
-                where draft_id=?
-                  and draft_revision=?
-                  and claim_token=?
-                  and state='unknown'
-                """,
-                (result_json, draft_id, draft_revision, claim_token),
-            )
             return True
 
     def resolve_unknown_follow_up_attempt_not_sent(
@@ -12338,36 +12323,25 @@ class AutoReplyStore:
     ) -> bool:
         with self._connect() as db:
             db.execute("begin immediate")
-            cursor = db.execute(
+            attempt = db.execute(
                 """
                 update follow_up_send_attempts
-                set state='retryable',
-                    result_json=?,
-                    lease_owner='',
-                    lease_until='',
-                    updated_at=current_timestamp
+                set result_json=?, updated_at=current_timestamp
                 where draft_id=?
                   and draft_revision=?
                   and claim_token=?
                   and state='unknown'
-                  and exists (
-                      select 1 from follow_up_drafts
-                      where id=? and revision=? and send_claim_token=?
-                  )
                 """,
                 (
                     result_json,
                     draft_id,
                     draft_revision,
                     claim_token,
-                    draft_id,
-                    draft_revision,
-                    claim_token,
                 ),
             )
-            if cursor.rowcount != 1:
+            if attempt.rowcount != 1:
                 return False
-            db.execute(
+            cursor = db.execute(
                 """
                 update follow_up_drafts
                 set send_claim_revision=0,
@@ -12378,7 +12352,68 @@ class AutoReplyStore:
                 """,
                 (draft_id, draft_revision, claim_token),
             )
+            db.execute(
+                """
+                update follow_up_send_attempts
+                set state=?,
+                    lease_owner='',
+                    lease_until='',
+                    updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and claim_token=?
+                  and state='unknown'
+                """,
+                (
+                    "retryable" if cursor.rowcount == 1 else "not_sent",
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                ),
+            )
             return True
+
+    def get_prior_unresolved_follow_up_send_attempt(
+        self,
+        *,
+        draft_id: int,
+        before_revision: int,
+    ) -> dict[str, object] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select *
+                from follow_up_send_attempts
+                where draft_id=?
+                  and draft_revision < ?
+                  and state in ('sending', 'unknown', 'sent')
+                order by draft_revision, id
+                limit 1
+                """,
+                (draft_id, before_revision),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def mark_follow_up_sent_review_enqueued(
+        self,
+        *,
+        draft_id: int,
+        draft_revision: int,
+        claim_token: str,
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update follow_up_send_attempts
+                set state='sent_review_enqueued', updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and claim_token=?
+                  and state='sent'
+                """,
+                (draft_id, draft_revision, claim_token),
+            )
+            return cursor.rowcount == 1
 
     def get_follow_up_send_attempt(
         self,

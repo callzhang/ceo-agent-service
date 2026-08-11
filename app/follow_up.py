@@ -17,6 +17,7 @@ MAX_FOLLOW_UP_AGE_SECONDS = 7 * 24 * 60 * 60
 RECOVERABLE_AUTH_RETRY_DELAY = timedelta(minutes=15)
 FOLLOW_UP_SEND_LEASE = timedelta(minutes=5)
 FOLLOW_UP_RECONCILIATION_DELAY = timedelta(minutes=15)
+PRIOR_DELIVERY_REVIEW_REASON = "prior_revision_delivered_requires_agent_review"
 LOCAL_WORK_TZ = ZoneInfo("Asia/Shanghai")
 LOCAL_WORK_START_HOUR = 9
 LOCAL_WORK_END_HOUR = 18
@@ -355,7 +356,8 @@ def _reconcile_unknown_follow_up_attempt(
     attempt: dict[str, object],
     *,
     now: str,
-) -> None:
+) -> str:
+    attempt_revision = int(attempt.get("draft_revision") or 0)
     payload = _json_dict(str(attempt.get("result_json") or "{}"))
     send_result = payload.get("send_result")
     verification: dict[str, object] = {
@@ -375,7 +377,7 @@ def _reconcile_unknown_follow_up_attempt(
             }
     reconciled = {
         **payload,
-        "claimed_revision": draft.revision,
+        "claimed_revision": attempt_revision,
         "idempotency_uuid": str(attempt.get("idempotency_uuid") or ""),
         "reconciliation": verification,
         "reconciled_at": now,
@@ -384,29 +386,30 @@ def _reconcile_unknown_follow_up_attempt(
     state = str(verification.get("state") or "").casefold()
     claim_token = str(attempt.get("claim_token") or "")
     if state == "sent":
-        store.resolve_unknown_follow_up_attempt_sent(
+        resolved = store.resolve_unknown_follow_up_attempt_sent(
             draft.id,
-            draft_revision=draft.revision,
+            draft_revision=attempt_revision,
             claim_token=claim_token,
             sent_at=now,
             result_json=result_json,
         )
-        return
+        return "sent" if resolved else "stale"
     if state == "failed":
-        store.resolve_unknown_follow_up_attempt_not_sent(
+        resolved = store.resolve_unknown_follow_up_attempt_not_sent(
             draft.id,
-            draft_revision=draft.revision,
+            draft_revision=attempt_revision,
             claim_token=claim_token,
             result_json=result_json,
         )
-        return
-    store.defer_unknown_follow_up_attempt(
+        return "not_sent" if resolved else "stale"
+    deferred = store.defer_unknown_follow_up_attempt(
         draft.id,
-        draft_revision=draft.revision,
+        draft_revision=attempt_revision,
         claim_token=claim_token,
         lease_until=_lease_until(now, FOLLOW_UP_RECONCILIATION_DELAY),
         result_json=result_json,
     )
+    return "unknown" if deferred else "stale"
 
 
 def _recover_follow_up_send_attempt(
@@ -491,6 +494,8 @@ def _defer_follow_up_for_agent_review(
     *,
     now: str,
     reason: str,
+    repair_source_ref: str = "",
+    additional_evidence: dict[str, object] | None = None,
 ) -> bool:
     project = store.get_work_project(draft.project_id)
     todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
@@ -498,9 +503,9 @@ def _defer_follow_up_for_agent_review(
         store.get_active_work_todo_dingtalk_link(todo.id) if todo is not None else None
     )
     existing_check = _json_dict(draft.evidence_check_json)
-    repair_source_ref = ""
     if (
-        reason == "stale_follow_up_requires_agent_review"
+        not repair_source_ref
+        and reason == "stale_follow_up_requires_agent_review"
         and draft.suppressed_reason == reason
     ):
         repair_source_ref = str(existing_check.get("repair_source_ref") or "").strip()
@@ -580,6 +585,7 @@ def _defer_follow_up_for_agent_review(
                         "question_text": draft.question_text,
                         "risk_check": _risk_check(draft),
                     },
+                    "delivery_evidence": additional_evidence,
                 },
                 ensure_ascii=False,
             ),
@@ -617,6 +623,117 @@ def _defer_follow_up_for_agent_review(
         source_ref=work_item.source.ref,
         payload_json=work_item.model_dump_json(),
     )
+    return True
+
+
+def _enqueue_prior_delivery_agent_review(
+    store: AutoReplyStore,
+    draft,
+    attempt: dict[str, object],
+    *,
+    now: str,
+) -> bool:
+    attempt_revision = int(attempt.get("draft_revision") or 0)
+    evidence = {
+        "prior_revision": attempt_revision,
+        "prior_idempotency_uuid": str(attempt.get("idempotency_uuid") or ""),
+        "prior_attempt_state": str(attempt.get("state") or ""),
+        "prior_send_result": _json_dict(str(attempt.get("result_json") or "{}")),
+        "current_revision": draft.revision,
+        "current_question_text": draft.question_text,
+        "current_scheduled_at": draft.scheduled_at,
+        "old_content_delivery_proven": True,
+        "corrected_revision_exists": True,
+    }
+    deferred = _defer_follow_up_for_agent_review(
+        store,
+        draft,
+        now=now,
+        reason=PRIOR_DELIVERY_REVIEW_REASON,
+        repair_source_ref=(
+            f"follow-up-repair:{draft.id}:prior-delivery:{attempt_revision}"
+        ),
+        additional_evidence=evidence,
+    )
+    if not deferred:
+        return False
+    store.mark_follow_up_sent_review_enqueued(
+        draft_id=draft.id,
+        draft_revision=attempt_revision,
+        claim_token=str(attempt.get("claim_token") or ""),
+    )
+    return True
+
+
+def _recover_prior_follow_up_send_attempt(
+    store: AutoReplyStore,
+    dws,
+    draft,
+    *,
+    now: str,
+) -> bool:
+    attempt = store.get_prior_unresolved_follow_up_send_attempt(
+        draft_id=draft.id,
+        before_revision=draft.revision,
+    )
+    if attempt is None:
+        return False
+    attempt_revision = int(attempt.get("draft_revision") or 0)
+    state = str(attempt.get("state") or "")
+    if state == "sending":
+        if _attempt_lease_is_active(attempt, now=now):
+            return True
+        payload = _json_dict(str(attempt.get("result_json") or "{}"))
+        payload.update(
+            {
+                "reason": (
+                    "prior revision sending lease expired; outcome requires "
+                    "read-only reconciliation"
+                ),
+                "claimed_revision": attempt_revision,
+                "idempotency_uuid": str(attempt.get("idempotency_uuid") or ""),
+            }
+        )
+        store.mark_expired_follow_up_sending_unknown(
+            draft.id,
+            draft_revision=attempt_revision,
+            now=now,
+            lease_until=now,
+            result_json=json.dumps(payload, ensure_ascii=False),
+        )
+        attempt = store.get_follow_up_send_attempt(
+            draft_id=draft.id,
+            draft_revision=attempt_revision,
+        )
+        if attempt is None or str(attempt.get("state") or "") != "unknown":
+            return True
+        state = "unknown"
+    if state == "unknown":
+        if _attempt_lease_is_active(attempt, now=now):
+            return True
+        outcome = _reconcile_unknown_follow_up_attempt(
+            store,
+            dws,
+            draft,
+            attempt,
+            now=now,
+        )
+        if outcome == "sent":
+            delivered = store.get_follow_up_send_attempt(
+                draft_id=draft.id,
+                draft_revision=attempt_revision,
+            )
+            if delivered is not None:
+                _enqueue_prior_delivery_agent_review(
+                    store,
+                    draft,
+                    delivered,
+                    now=now,
+                )
+        return True
+    if state == "sent":
+        _enqueue_prior_delivery_agent_review(store, draft, attempt, now=now)
+        return True
     return True
 
 
@@ -677,6 +794,10 @@ def process_due_follow_ups(
                 drafts.append(draft)
     for draft in drafts:
         if not auto_send:
+            continue
+        if _recover_prior_follow_up_send_attempt(store, dws, draft, now=now):
+            continue
+        if draft.suppressed_reason == PRIOR_DELIVERY_REVIEW_REASON:
             continue
         if _recover_follow_up_send_attempt(store, dws, draft, now=now):
             continue

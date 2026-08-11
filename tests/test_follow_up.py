@@ -1804,8 +1804,11 @@ def test_transport_timeout_becomes_unknown_without_blind_resend(tmp_path):
         auto_send=True,
     )
 
-    assert len(dws.sent) == 2
-    assert dws.sent[1]["idempotency_uuid"] != first_key
+    assert len(dws.sent) == 1
+    assert store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )["idempotency_uuid"] == first_key
 
 
 def test_unknown_dws_send_outcome_enters_reconciliation_with_stable_uuid(
@@ -1867,7 +1870,7 @@ def test_unknown_dws_send_outcome_enters_reconciliation_with_stable_uuid(
     assert attempt["idempotency_uuid"] == result["idempotency_uuid"]
 
 
-def test_unknown_send_outcome_is_recorded_for_invalidated_claim_revision(tmp_path):
+def test_correction_holds_new_revision_while_old_send_outcome_is_unknown(tmp_path):
     from app.dws_client import DwsError
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
@@ -1914,9 +1917,282 @@ def test_unknown_send_outcome_is_recorded_for_invalidated_claim_revision(tmp_pat
         draft_revision=1,
     )
     assert attempt is not None
-    assert attempt["state"] == "invalidated"
+    assert attempt["state"] == "unknown"
     attempt_result = json.loads(str(attempt["result_json"]))
-    assert attempt_result == {}
+    assert attempt_result["reason"] == "dws_send_outcome_unknown"
+    old_uuid = attempt["idempotency_uuid"]
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-09 02:00:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.sent) == 1
+    unresolved = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert unresolved is not None
+    assert unresolved["state"] == "unknown"
+    assert unresolved["idempotency_uuid"] == old_uuid
+    assert store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=2,
+    ) is None
+
+
+def test_late_send_result_is_persisted_only_on_old_revision_and_queues_review(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="旧问题",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+
+    class CorrectingSuccessDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            super().send_message(*args, **kwargs)
+            store.update_follow_up_draft(
+                draft_id,
+                question_text="修正后的问题",
+                scheduled_at="2026-06-08 01:00:00",
+            )
+            return {"success": True, "result": {"openTaskId": "late-result"}}
+
+    dws = CorrectingSuccessDws()
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.sent) == 1
+    old_uuid = dws.sent[0]["idempotency_uuid"]
+    old_attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert old_attempt is not None
+    assert old_attempt["state"] == "sent"
+    assert old_attempt["idempotency_uuid"] == old_uuid
+    assert json.loads(str(old_attempt["result_json"]))["send_result"]["result"] == {
+        "openTaskId": "late-result"
+    }
+    corrected = store.get_follow_up_draft(draft_id)
+    assert corrected is not None
+    assert corrected.revision == 2
+    assert corrected.status == "draft"
+    assert corrected.question_text == "修正后的问题"
+    assert corrected.send_result_json == "{}"
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:01:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.sent) == 1
+    held = store.get_follow_up_draft(draft_id)
+    assert held is not None
+    assert held.status == "draft"
+    assert held.suppressed_reason == (
+        "prior_revision_delivered_requires_agent_review"
+    )
+    reviewed_attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert reviewed_attempt is not None
+    assert reviewed_attempt["state"] == "sent_review_enqueued"
+    queued = store.claim_work_summary_inputs(limit=2)
+    assert len(queued) == 1
+    assert queued[0].source_ref == f"follow-up-repair:{draft_id}:prior-delivery:1"
+    work_item = json.loads(queued[0].payload_json)
+    summary = json.loads(work_item["summary"])
+    evidence = summary["delivery_evidence"]
+    assert evidence["prior_revision"] == 1
+    assert evidence["prior_idempotency_uuid"] == old_uuid
+    assert evidence["old_content_delivery_proven"] is True
+    assert evidence["current_question_text"] == "修正后的问题"
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-09 02:01:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.sent) == 1
+
+
+def test_corrected_revision_waits_for_old_confirmed_sent_reconciliation(
+    tmp_path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="旧问题",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    original_finalize = store.update_claimed_follow_up_draft
+    monkeypatch.setattr(
+        store,
+        "update_claimed_follow_up_draft",
+        lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    class ConfirmedSentDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            super().send_message(*args, **kwargs)
+            return {"success": True, "result": {"openTaskId": "confirmed-sent"}}
+
+        def verify_message_send_result(self, send_result):
+            return {"state": "sent", "status_result": {"sendStatus": "SUCCESS"}}
+
+    dws = ConfirmedSentDws()
+    with pytest.raises(KeyboardInterrupt):
+        process_due_follow_ups(
+            store,
+            dws,
+            now="2026-06-08 02:00:00",
+            auto_send=True,
+        )
+    old_uuid = dws.sent[0]["idempotency_uuid"]
+    store.update_follow_up_draft(
+        draft_id,
+        question_text="修正后的问题",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    monkeypatch.setattr(store, "update_claimed_follow_up_draft", original_finalize)
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:06:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.sent) == 1
+    old_attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert old_attempt is not None
+    assert old_attempt["state"] == "sent_review_enqueued"
+    assert old_attempt["idempotency_uuid"] == old_uuid
+    reconciliation = json.loads(str(old_attempt["result_json"]))["reconciliation"]
+    assert reconciliation["state"] == "sent"
+    held = store.get_follow_up_draft(draft_id)
+    assert held is not None
+    assert held.question_text == "修正后的问题"
+    assert held.status == "draft"
+    assert held.suppressed_reason == (
+        "prior_revision_delivered_requires_agent_review"
+    )
+    assert store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=2,
+    ) is None
+    assert len(store.claim_work_summary_inputs(limit=2)) == 1
+
+
+def test_old_confirmed_not_sent_releases_corrected_revision(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="旧问题",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    original_finalize = store.update_claimed_follow_up_draft
+    monkeypatch.setattr(
+        store,
+        "update_claimed_follow_up_draft",
+        lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    class ConfirmedFailedDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            super().send_message(*args, **kwargs)
+            return {"success": True, "result": {"openTaskId": "confirmed-failed"}}
+
+        def verify_message_send_result(self, send_result):
+            return {"state": "failed", "status_result": {"sendStatus": "FAILED"}}
+
+    dws = ConfirmedFailedDws()
+    with pytest.raises(KeyboardInterrupt):
+        process_due_follow_ups(
+            store,
+            dws,
+            now="2026-06-08 02:00:00",
+            auto_send=True,
+        )
+    old_uuid = dws.sent[0]["idempotency_uuid"]
+    store.update_follow_up_draft(
+        draft_id,
+        question_text="修正后的问题",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    monkeypatch.setattr(store, "update_claimed_follow_up_draft", original_finalize)
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:06:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.sent) == 1
+    old_attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert old_attempt is not None
+    assert old_attempt["state"] == "not_sent"
+    assert old_attempt["idempotency_uuid"] == old_uuid
+    assert json.loads(str(old_attempt["result_json"]))["reconciliation"]["state"] == (
+        "failed"
+    )
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:07:00",
+        auto_send=True,
+    ) == 1
+    assert len(dws.sent) == 2
+    assert dws.sent[1]["idempotency_uuid"] != old_uuid
+    assert "修正后的问题" in dws.sent[1]["text"]
+    current_attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=2,
+    )
+    assert current_attempt is not None
+    assert current_attempt["state"] == "sent"
+    assert store.claim_work_summary_inputs(limit=2) == []
 
 
 def test_process_due_follow_ups_can_target_one_draft_for_recovery(tmp_path):
