@@ -6245,3 +6245,56 @@ def test_recover_interrupted_wechat_read_only_decision_has_precise_reason(
     assert recovered_task is not None
     assert recovered_task.status == "pending"
     assert recovered_task.error == "interrupted_read_only_decision"
+
+
+def test_requeue_recent_failed_wechat_tasks_only_recovers_codex_auth_failures(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    def failed_task(message_id: str, error: str):
+        assert store.enqueue_reply_task(
+            channel="wechat",
+            conversation_id=f"wechat-{message_id}",
+            conversation_title="Wechat contact",
+            single_chat=True,
+            trigger_message_id=message_id,
+            trigger_create_time="2026-08-11 10:00:00",
+            trigger_sender="contact",
+            trigger_text="Can you reply?",
+        )
+        task = store.claim_reply_tasks(1, channel="wechat")[0]
+        store.finalize_wechat_reply_task(
+            task_id=task.id,
+            expected_execution_generation=task.execution_generation,
+            action="stop_with_error",
+            sensitivity_kind="normal",
+            codex_reason=error,
+            draft_reply_text="",
+            audit_summary="",
+            send_status="failed",
+            send_error=error,
+            task_status="failed",
+        )
+        persisted = store.get_reply_task(task.id)
+        assert persisted is not None
+        return persisted
+
+    auth_error = (
+        "unexpected status 401 Unauthorized: Missing bearer or basic "
+        "authentication in header"
+    )
+    auth_task = failed_task("auth-failure", auth_error)
+    unrelated_task = failed_task("unrelated-failure", "model output was invalid")
+
+    recovered = store.requeue_recent_failed_wechat_read_only_tasks(
+        updated_since="2026-08-10 00:00:00",
+        reason="codex_auth_restored",
+    )
+
+    assert [task.id for task in recovered] == [auth_task.id]
+    assert recovered[0].status == "pending"
+    assert recovered[0].attempts == 0
+    assert recovered[0].execution_generation != auth_task.execution_generation
+    unchanged = store.get_reply_task(unrelated_task.id)
+    assert unchanged is not None and unchanged.status == "failed"

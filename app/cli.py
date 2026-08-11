@@ -2471,6 +2471,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
             elif role == "consumer":
                 from app.channel_gate import CodexChannelGate, ChannelGateState
 
+                previous_gate_state = store.get_service_state("channel_gate:codex")
                 codex_status = CodexChannelGate().check()
                 store.set_service_state(
                     "channel_gate:codex",
@@ -2485,6 +2486,21 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     ),
                 )
                 if codex_status.state is ChannelGateState.READY:
+                    previous_status = ""
+                    if previous_gate_state:
+                        try:
+                            previous_status = str(
+                                json.loads(previous_gate_state).get("status") or ""
+                            )
+                        except json.JSONDecodeError:
+                            previous_status = ""
+                    if previous_status != ChannelGateState.READY.value:
+                        store.requeue_recent_failed_wechat_read_only_tasks(
+                            updated_since=(
+                                datetime.now(timezone.utc) - timedelta(days=3)
+                            ).strftime("%Y-%m-%d %H:%M:%S"),
+                            reason="codex_auth_restored",
+                        )
                     _wx.run_consume_once(store, runner, reader, account)
             else:  # sender: auto-sends only in 'auto' mode, else holds for approval
                 _wx.process_ready_wechat_deliveries(

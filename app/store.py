@@ -6337,6 +6337,89 @@ class AutoReplyStore:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
             return attempt_id
 
+    def requeue_recent_failed_wechat_read_only_tasks(
+        self,
+        *,
+        updated_since: str,
+        reason: str,
+    ) -> list[ReplyTask]:
+        """Retry only proven Codex-auth failures that never reached delivery."""
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("provider recovery reason must be non-empty")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.channel='wechat'
+                  and tasks.status='failed'
+                  and tasks.updated_at>=?
+                  and not exists (
+                      select 1 from wechat_deliveries as deliveries
+                      where deliveries.reply_task_id=tasks.id
+                  )
+                  and not exists (
+                      select 1 from sent_replies as sent
+                      where sent.conversation_id=tasks.conversation_id
+                        and sent.trigger_message_id=tasks.trigger_message_id
+                  )
+                  and (
+                      lower(tasks.error) like '%missing bearer or basic authentication%'
+                      or lower(tasks.error) like 'codex_provider_auth_failed:%'
+                  )
+                  and exists (
+                      select 1 from reply_attempts as attempts
+                      where attempts.id=(
+                          select latest.id from reply_attempts as latest
+                          where latest.channel='wechat'
+                            and latest.conversation_id=tasks.conversation_id
+                            and latest.trigger_message_id=tasks.trigger_message_id
+                          order by latest.id desc
+                          limit 1
+                      )
+                        and attempts.action='stop_with_error'
+                        and attempts.send_status='failed'
+                        and (
+                            lower(attempts.send_error)
+                                like '%missing bearer or basic authentication%'
+                            or lower(attempts.send_error)
+                                like 'codex_provider_auth_failed:%'
+                        )
+                  )
+                order by tasks.id
+                """,
+                (updated_since,),
+            ).fetchall()
+            if not rows:
+                return []
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                next_generation = uuid4().hex
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set force_new_decision=1, status='pending', attempts=0,
+                        locked_at=null, available_at='', execution_generation=?,
+                        error=?, updated_at=current_timestamp
+                    where id=? and status='failed' and channel='wechat'
+                      and execution_generation=?
+                      and not exists (
+                          select 1 from wechat_deliveries
+                          where reply_task_id=reply_tasks.id
+                      )
+                    """,
+                    (next_generation, reason, row["id"], row["execution_generation"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                updated = db.execute(
+                    "select * from reply_tasks where id=?", (row["id"],)
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
     def create_wechat_delivery(
         self, *, reply_task_id: int, account_id: str, target_type: str,
         target_id: str, conversation_id: str, reply_text: str,
