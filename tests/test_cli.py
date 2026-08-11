@@ -299,6 +299,14 @@ def test_channel_doctor_reports_typed_gate_results(monkeypatch, capsys):
             reason_code="status_auth_invalid",
         ),
     )
+    monkeypatch.setattr(
+        "app.channel_gate.CodexChannelGate.check",
+        lambda self: ChannelGateResult(
+            channel="codex",
+            state=ChannelGateState.READY,
+            reason_code="ready",
+        ),
+    )
 
     report = channel_doctor_command()
 
@@ -315,6 +323,13 @@ def test_channel_doctor_reports_typed_gate_results(monkeypatch, capsys):
                 "channel": "lark",
                 "state": "needs_login",
                 "reason_code": "status_auth_invalid",
+                "detail": "",
+                "commands": [],
+            },
+            {
+                "channel": "codex",
+                "state": "ready",
+                "reason_code": "ready",
                 "detail": "",
                 "commands": [],
             },
@@ -5781,6 +5796,7 @@ def test_wechat_consumer_loop_records_failed_trigger_identity(
 ):
     import time
 
+    from app.channel_gate import ChannelGateResult, ChannelGateState
     from app.wechat.consumer import WechatTaskProcessingError
 
     class StopLoop(Exception):
@@ -5804,6 +5820,16 @@ def test_wechat_consumer_loop_records_failed_trigger_identity(
     )
     monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
     monkeypatch.setattr(
+        "app.channel_gate.CodexChannelGate",
+        lambda: SimpleNamespace(
+            check=lambda: ChannelGateResult(
+                channel="codex",
+                state=ChannelGateState.READY,
+                reason_code="ready",
+            )
+        ),
+    )
+    monkeypatch.setattr(
         "app.wechat.service.run_consume_once",
         lambda *a, **k: (_ for _ in ()).throw(
             WechatTaskProcessingError("cid-1", "msg-1", "decision failed")
@@ -5822,6 +5848,57 @@ def test_wechat_consumer_loop_records_failed_trigger_identity(
     assert error.conversation_id == "cid-1"
     assert error.message_id == "msg-1"
     assert error.kind == "wechat_consumer_loop_error"
+
+
+def test_wechat_consumer_waits_for_codex_authentication(
+    monkeypatch,
+    tmp_path,
+):
+    import time
+
+    from app.channel_gate import ChannelGateResult, ChannelGateState
+
+    class StopLoop(Exception):
+        pass
+
+    class UnreadyCodexGate:
+        def check(self):
+            return ChannelGateResult(
+                channel="codex",
+                state=ChannelGateState.NEEDS_LOGIN,
+                reason_code="status_auth_required",
+            )
+
+    db = tmp_path / "w.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a1",
+        account_dir="/a1",
+        db_dir="/a1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+    )
+    settings = SimpleNamespace(
+        db_path=db,
+        workspace=tmp_path,
+        codex_timeout_seconds=30,
+        codex_idle_timeout_seconds=30,
+    )
+    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
+    monkeypatch.setattr("app.channel_gate.CodexChannelGate", UnreadyCodexGate)
+    monkeypatch.setattr(
+        "app.wechat.service.run_consume_once",
+        lambda *a, **k: pytest.fail("consumer must not run before Codex auth"),
+    )
+    monkeypatch.setattr(time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopLoop))
+
+    with pytest.raises(StopLoop):
+        cli._run_wechat_loop(settings, "consumer")
+
+    state = json.loads(store.get_service_state("channel_gate:codex") or "{}")
+    assert state["status"] == "needs_login"
+    assert state["reason_code"] == "status_auth_required"
 
 
 def test_wechat_loop_pauses_after_reader_reports_app_data_denial(

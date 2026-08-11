@@ -2439,7 +2439,23 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
             if role == "producer":
                 _wx.run_produce_once(store, reader, account, self_user_id=account.self_user_id)
             elif role == "consumer":
-                _wx.run_consume_once(store, runner, reader, account)
+                from app.channel_gate import CodexChannelGate, ChannelGateState
+
+                codex_status = CodexChannelGate().check()
+                store.set_service_state(
+                    "channel_gate:codex",
+                    json.dumps(
+                        {
+                            "status": codex_status.state.value,
+                            "reason_code": codex_status.reason_code,
+                            "checked_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                )
+                if codex_status.state is ChannelGateState.READY:
+                    _wx.run_consume_once(store, runner, reader, account)
             else:  # sender: auto-sends only in 'auto' mode, else holds for approval
                 _wx.process_ready_wechat_deliveries(
                     store, wsender,
