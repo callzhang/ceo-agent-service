@@ -4768,6 +4768,50 @@ def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_pat
     assert calls == [("sleep", 60)]
 
 
+def test_task_maintenance_loop_does_not_claim_agent_work_before_codex_ready(
+    monkeypatch, tmp_path
+):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda received: calls.append("work-items"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_okr_reviews_command",
+        lambda received: calls.append("okr-reviews"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda received, max_new_items=None: calls.append("scan-task-sources"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "check_follow_up_completions_command",
+        lambda received, limit=1: calls.append("completion-check"),
+    )
+
+    with pytest.raises(StopLoop):
+        run_task_maintenance_loop(
+            settings,
+            work_item_interval_seconds=60,
+            daily_interval_seconds=3600,
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+            monotonic=lambda: 10.0,
+            network_ready=lambda: True,
+            codex_ready=lambda: False,
+        )
+
+    assert calls == ["scan-task-sources", "completion-check"]
+
+
 def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
     calls = []
 
@@ -4866,6 +4910,7 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
             sleep=sleep,
             monotonic=lambda: next(times),
             network_ready=lambda: True,
+            codex_ready=lambda: True,
         )
 
     assert calls == [
@@ -4931,6 +4976,7 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             monotonic=lambda: 10.0,
             network_ready=lambda: True,
+            codex_ready=lambda: True,
         )
 
     assert calls == [
@@ -5009,6 +5055,7 @@ def test_task_maintenance_loop_does_not_block_follow_up_delivery(
             sleep=sleep,
             monotonic=lambda: next(times),
             network_ready=lambda: True,
+            codex_ready=lambda: True,
         )
 
     assert calls == [
@@ -5113,6 +5160,7 @@ def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             monotonic=lambda: 10.0,
             network_ready=lambda: True,
+            codex_ready=lambda: True,
         )
 
     assert calls == [

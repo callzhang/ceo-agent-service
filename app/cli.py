@@ -2324,6 +2324,7 @@ def run_task_maintenance_loop(
     monotonic: Callable[[], float] = time.monotonic,
     wall_clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     network_ready: Callable[[], bool] = _macos_wifi_connected,
+    codex_ready: Callable[[], bool] | None = None,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
 
@@ -2339,12 +2340,16 @@ def run_task_maintenance_loop(
         if not network_ready():
             sleep(work_item_interval_seconds)
             continue
-        run_step("process_work_items", lambda: process_work_items_command(settings))
-        run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
+        is_codex_ready = (
+            codex_ready() if codex_ready is not None else _codex_channel_ready(store)
+        )
+        if is_codex_ready:
+            run_step("process_work_items", lambda: process_work_items_command(settings))
+            run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
         weekly_hour = int(
             os.getenv("CEO_WEEKLY_OKR_REPORT_HOUR", str(DEFAULT_SCHEDULE_HOUR))
         )
-        if weekly_okr_report_window_open(
+        if is_codex_ready and weekly_okr_report_window_open(
             wall_clock(),
             schedule_hour=weekly_hour,
         ):
@@ -2361,8 +2366,13 @@ def run_task_maintenance_loop(
                     max_new_items=settings.max_batches,
                 ),
             )
-            run_step("process_work_items", lambda: process_work_items_command(settings))
-            run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
+            if is_codex_ready:
+                run_step(
+                    "process_work_items", lambda: process_work_items_command(settings)
+                )
+                run_step(
+                    "process_okr_reviews", lambda: process_okr_reviews_command(settings)
+                )
             run_step(
                 "check_follow_up_completions",
                 lambda: check_follow_up_completions_command(settings, limit=1),
