@@ -313,6 +313,52 @@ def test_consumer_forced_rerun_starts_a_fresh_session(store, task, context):
     assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
 
 
+def test_consumer_retryable_failure_without_tool_progress_rotates_session(
+    store, task, context
+):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(
+        task.conversation_id, consumer_wire_contract_hash()
+    )
+    failed = {
+        "outcome": "failed",
+        "summary": "Could not start the required read.",
+        "proposal": None,
+        "error": {
+            "code": "read_unavailable",
+            "retryable": True,
+            "authorization_required": False,
+        },
+    }
+    executor = CapturingExecutor(
+        "\n".join(
+            (
+                json.dumps({"type": "thread.started", "thread_id": "session-failed"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": json.dumps(_wire_result(failed)),
+                        },
+                    }
+                ),
+            )
+        )
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.outcome.value == "failed"
+    assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert store.get_codex_session_id(task.conversation_id) is None
+
+
 def test_consumer_rotates_damaged_session_after_missing_final_result(
     store, task, context
 ):
