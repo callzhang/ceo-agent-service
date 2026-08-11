@@ -5934,6 +5934,36 @@ def test_service_restart_keeps_unknown_or_effectful_agent_turns_for_recovery(
     assert store.get_agent_run(run.id).status == "unknown"
 
 
+def test_service_restart_releases_unknown_audit_reconciliation_lease(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="stopped-worker"
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="stopped-worker",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="stopped-reconciler")
+    assert claim.claimed
+
+    released = store.release_unknown_audit_reconciliation_leases_after_service_restart()
+
+    assert [item.id for item in released] == [run.id]
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.status == "unknown"
+    assert persisted.lease_owner == ""
+    assert persisted.lease_expires_at == ""
+    assert persisted.reconciliation_next_attempt_at == ""
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+
+
 def test_service_restart_resumes_completed_turn_without_replaying_it(
     tmp_path: Path,
 ) -> None:

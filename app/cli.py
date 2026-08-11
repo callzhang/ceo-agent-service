@@ -2638,11 +2638,15 @@ def _recover_processing_work_summary_inputs_on_service_start(
 
 def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
-    return len(
+    recovered_tasks = (
         store.recover_orphaned_processing_reply_tasks()
         + store.recover_no_effect_agent_runs_after_service_restart()
         + store.resume_completed_agent_turns_after_service_restart()
     )
+    released_reconciliations = (
+        store.release_unknown_audit_reconciliation_leases_after_service_restart()
+    )
+    return len(recovered_tasks) + len(released_reconciliations)
 
 
 def _recover_okr_review_requests_on_service_start(settings: WorkerSettings) -> int:

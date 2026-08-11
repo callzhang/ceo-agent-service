@@ -5241,6 +5241,57 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
+    def release_unknown_audit_reconciliation_leases_after_service_restart(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[AgentRun]:
+        """Make interrupted Audit reconciliation eligible on the next worker pass.
+
+        A service restart terminates the only worker process. An unknown Audit run
+        has not reached a new external action; retaining its old lease only delays
+        the mandatory read-only reconciliation until the former lease expires.
+        """
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select runs.*
+                from agent_runs as runs
+                join reply_tasks as tasks on tasks.id=runs.reply_task_id
+                where runs.status='unknown'
+                  and runs.role='audit'
+                  and runs.reconciliation_suspended=0
+                  and runs.lease_owner<>''
+                  and tasks.status='processing'
+                  and tasks.execution_generation=runs.execution_generation
+                order by runs.updated_at, runs.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            released: list[AgentRun] = []
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update agent_runs
+                    set lease_owner='', lease_expires_at='',
+                        reconciliation_next_attempt_at='', updated_at=current_timestamp
+                    where id=? and status='unknown' and role='audit'
+                      and reconciliation_suspended=0 and lease_owner<>''
+                    """,
+                    (row["id"],),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                updated = db.execute(
+                    "select * from agent_runs where id=?", (row["id"],)
+                ).fetchone()
+                released.append(self._agent_run_from_row(updated, db=db))
+            return released
+
     def resume_completed_agent_turns_after_service_restart(
         self,
         *,
