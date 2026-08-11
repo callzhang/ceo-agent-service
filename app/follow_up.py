@@ -676,27 +676,36 @@ def _recover_prior_follow_up_send_attempt(
     *,
     now: str,
 ) -> bool:
-    attempt = store.get_prior_unresolved_follow_up_send_attempt(
+    attempts = store.list_blocking_prior_follow_up_send_attempts(
         draft_id=draft.id,
         before_revision=draft.revision,
     )
-    if attempt is None:
+    if not attempts:
         return False
-    state = str(attempt.get("state") or "")
-    if state == "sent":
-        review_source_ref = str(attempt.get("review_source_ref") or "")
-        if review_source_ref:
-            review_status = store.get_work_summary_input_status(
-                source_type="follow_up_completion_check",
-                source_ref=review_source_ref,
+    blocked = False
+    for attempt in attempts:
+        state = str(attempt.get("state") or "")
+        if state == "claimed":
+            if _attempt_lease_is_active(attempt, now=now):
+                blocked = True
+                continue
+            invalidated = store.invalidate_expired_prior_follow_up_claim(
+                draft_id=draft.id,
+                draft_revision=int(attempt.get("draft_revision") or 0),
+                claim_token=str(attempt.get("claim_token") or ""),
+                current_revision=draft.revision,
+                now=now,
             )
-            if review_status in {"done", "discarded"}:
-                return False
-            if int(attempt.get("review_enqueued_revision") or 0) >= draft.revision:
-                return True
-        _enqueue_prior_delivery_agent_review(store, draft, attempt, now=now)
-        return True
-    return True
+            blocked = blocked or not invalidated
+            continue
+        if state in {"sending", "unknown"}:
+            blocked = True
+            continue
+        if state == "sent":
+            if int(attempt.get("review_enqueued_revision") or 0) < draft.revision:
+                _enqueue_prior_delivery_agent_review(store, draft, attempt, now=now)
+            blocked = True
+    return blocked
 
 
 def _process_expired_follow_up_reconciliations(

@@ -10908,23 +10908,6 @@ class AutoReplyStore:
             ).fetchone()
             return int(row["id"])
 
-    def get_work_summary_input_status(
-        self,
-        *,
-        source_type: str,
-        source_ref: str,
-    ) -> str:
-        with self._connect() as db:
-            row = db.execute(
-                """
-                select status
-                from work_summary_inputs
-                where source_type=? and source_ref=?
-                """,
-                (source_type, source_ref),
-            ).fetchone()
-            return str(row["status"]) if row is not None else ""
-
     def claim_work_summary_inputs(self, limit: int) -> list[WorkSummaryInput]:
         if limit <= 0:
             return []
@@ -12256,7 +12239,7 @@ class AutoReplyStore:
                 where state in ('sending', 'unknown')
                   and lease_until != ''
                   and datetime(lease_until) <= datetime(?)
-                order by datetime(lease_until), id
+                order by draft_id, draft_revision, id
                 limit ?
                 """,
                 (now, limit),
@@ -12457,26 +12440,77 @@ class AutoReplyStore:
             )
             return True
 
-    def get_prior_unresolved_follow_up_send_attempt(
+    def list_blocking_prior_follow_up_send_attempts(
         self,
         *,
         draft_id: int,
         before_revision: int,
-    ) -> dict[str, object] | None:
+    ) -> list[dict[str, object]]:
         with self._connect() as db:
-            row = db.execute(
+            rows = db.execute(
                 """
-                select *
-                from follow_up_send_attempts
-                where draft_id=?
-                  and draft_revision < ?
-                  and state in ('sending', 'unknown', 'sent')
-                order by draft_revision, id
-                limit 1
+                select attempts.*,
+                       coalesce(reviews.status, '') as review_status
+                from follow_up_send_attempts as attempts
+                left join work_summary_inputs as reviews
+                  on reviews.source_type='follow_up_completion_check'
+                 and reviews.source_ref=attempts.review_source_ref
+                where attempts.draft_id=?
+                  and attempts.draft_revision < ?
+                  and (
+                    attempts.state in ('claimed', 'sending', 'unknown')
+                    or (
+                      attempts.state='sent'
+                      and coalesce(reviews.status, '') not in ('done', 'discarded')
+                    )
+                  )
+                order by attempts.draft_revision, attempts.id
                 """,
                 (draft_id, before_revision),
-            ).fetchone()
-            return dict(row) if row is not None else None
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def invalidate_expired_prior_follow_up_claim(
+        self,
+        *,
+        draft_id: int,
+        draft_revision: int,
+        claim_token: str,
+        current_revision: int,
+        now: str,
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update follow_up_send_attempts
+                set state='invalidated',
+                    lease_owner='',
+                    lease_until='',
+                    updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and claim_token=?
+                  and state='claimed'
+                  and (lease_until='' or datetime(lease_until) <= datetime(?))
+                  and exists (
+                    select 1
+                    from follow_up_drafts
+                    where id=?
+                      and revision=?
+                      and revision > ?
+                  )
+                """,
+                (
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                    now,
+                    draft_id,
+                    current_revision,
+                    draft_revision,
+                ),
+            )
+            return cursor.rowcount == 1
 
     def enqueue_follow_up_delivery_review(
         self,

@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -721,6 +722,177 @@ def test_sent_attempt_review_enqueue_is_exactly_once_for_current_revision(tmp_pa
     queued = store.claim_work_summary_inputs(limit=2)
     assert len(queued) == 1
     assert queued[0].source_ref == source_ref
+
+
+def test_blocking_prior_attempt_query_returns_all_revisions_in_order(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        status="draft",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    for revision in (1, 2):
+        token = f"token-{revision}"
+        owner = f"sender-{revision}"
+        assert store.claim_follow_up_draft_revision(
+            draft_id,
+            expected_revision=revision,
+            claim_token=token,
+            idempotency_uuid=f"uuid-{revision}",
+            lease_owner=owner,
+            claimed_at="2026-06-08 02:00:00",
+            lease_until="2026-06-08 02:05:00",
+        )
+        assert store.transition_follow_up_attempt_to_sending(
+            draft_id,
+            claimed_revision=revision,
+            claim_token=token,
+            lease_owner=owner,
+            now="2026-06-08 02:00:00",
+            lease_until="2026-06-08 02:05:00",
+        )
+        assert store.mark_follow_up_sending_unknown(
+            draft_id,
+            draft_revision=revision,
+            claim_token=token,
+            lease_owner=owner,
+            lease_until="2026-06-08 02:15:00",
+            result_json=json.dumps({"idempotency_uuid": f"uuid-{revision}"}),
+        )
+        store.update_follow_up_draft(
+            draft_id,
+            question_text=f"revision-{revision + 1}",
+            scheduled_at="2026-06-08 01:00:00",
+        )
+
+    def read_blockers(_):
+        return store.list_blocking_prior_follow_up_send_attempts(
+            draft_id=draft_id,
+            before_revision=3,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_reader, second_reader = list(pool.map(read_blockers, range(2)))
+
+    assert [row["draft_revision"] for row in first_reader] == [1, 2]
+    assert [row["draft_revision"] for row in second_reader] == [1, 2]
+    assert [row["claim_token"] for row in first_reader] == ["token-1", "token-2"]
+
+
+def test_done_old_review_does_not_mask_newer_unknown_attempt(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="revision-1",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    assert store.claim_follow_up_draft_revision(
+        draft_id,
+        expected_revision=1,
+        claim_token="token-1",
+        idempotency_uuid="uuid-1",
+        lease_owner="sender-1",
+        claimed_at="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    assert store.transition_follow_up_attempt_to_sending(
+        draft_id,
+        claimed_revision=1,
+        claim_token="token-1",
+        lease_owner="sender-1",
+        now="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    store.update_follow_up_draft(
+        draft_id,
+        question_text="revision-2",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    assert not store.update_claimed_follow_up_draft(
+        draft_id,
+        claimed_revision=1,
+        claim_token="token-1",
+        lease_owner="sender-1",
+        now="2026-06-08 02:01:00",
+        attempt_state="sent",
+        attempt_result_json=json.dumps({"idempotency_uuid": "uuid-1"}),
+        status="sent",
+        send_result_json=json.dumps({"idempotency_uuid": "uuid-1"}),
+    )
+    source_ref = f"follow-up-repair:{draft_id}:prior-delivery:1:current:2"
+    assert store.enqueue_follow_up_delivery_review(
+        draft_id=draft_id,
+        draft_revision=1,
+        claim_token="token-1",
+        current_revision=2,
+        source_type="follow_up_completion_check",
+        source_ref=source_ref,
+        payload_json="{}",
+    )
+    review = store.claim_work_summary_inputs(limit=1)[0]
+    store.mark_work_summary_input_done(review.id)
+
+    assert store.claim_follow_up_draft_revision(
+        draft_id,
+        expected_revision=2,
+        claim_token="token-2",
+        idempotency_uuid="uuid-2",
+        lease_owner="sender-2",
+        claimed_at="2026-06-08 02:01:00",
+        lease_until="2026-06-08 02:06:00",
+    )
+    assert store.transition_follow_up_attempt_to_sending(
+        draft_id,
+        claimed_revision=2,
+        claim_token="token-2",
+        lease_owner="sender-2",
+        now="2026-06-08 02:01:00",
+        lease_until="2026-06-08 02:06:00",
+    )
+    assert store.mark_follow_up_sending_unknown(
+        draft_id,
+        draft_revision=2,
+        claim_token="token-2",
+        lease_owner="sender-2",
+        lease_until="2026-06-08 02:15:00",
+        result_json=json.dumps({"idempotency_uuid": "uuid-2"}),
+    )
+    store.update_follow_up_draft(
+        draft_id,
+        question_text="revision-3",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    dws = FakeDws()
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:02:00",
+        auto_send=True,
+    ) == 0
+    assert dws.sent == []
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:16:00",
+        auto_send=True,
+    ) == 0
+    assert dws.sent == []
+    rev2 = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=2,
+    )
+    assert rev2 is not None
+    assert rev2["state"] == "unknown"
 
 
 def test_due_follow_up_defers_outside_local_working_hours(tmp_path):
