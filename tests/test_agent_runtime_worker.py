@@ -1376,6 +1376,109 @@ class SkillReceiptProtocolExecutor(ProtocolCodexExecutor):
         return records
 
 
+class ProvidedSkillReceiptProtocolExecutor(SkillReceiptProtocolExecutor):
+    """Exercises receipt transport for a supplied set without semantic selection."""
+
+    message_text = "Please provide the missing reviewed fact."
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        records = self._skill_records(prompt)
+        audit_turn = "Candidate revision\n" in prompt
+        if not audit_turn:
+            records.append(
+                _agent_result_event(
+                    _consumer_protocol_result(
+                        "proposal",
+                        "Prepared the protocol fixture candidate.",
+                        proposal={
+                            "objective": "Request one missing reviewed fact.",
+                            "actions": [
+                                {
+                                    "description": "Send the protocol fixture message.",
+                                    "capability": "agent_cli.dws",
+                                    "operation": "chat message send",
+                                    "target": {"group": "cid-1"},
+                                    "payload": {
+                                        "argv": [
+                                            "dws",
+                                            "chat",
+                                            "message",
+                                            "send",
+                                            "--group",
+                                            "cid-1",
+                                            "--text",
+                                            self.message_text,
+                                            "--yes",
+                                        ]
+                                    },
+                                    "expected_verification": (
+                                        "Read the source group and find the exact message."
+                                    ),
+                                }
+                            ],
+                            "sourced_facts": [],
+                            "authored_judgment": (
+                                "This deterministic fixture tests protocol transport only."
+                            ),
+                        },
+                    )
+                )
+            )
+            return records
+
+        candidate = _prompt_json_section(prompt, "Candidate revision\n")
+        action = candidate["proposal"]["actions"][0]
+        write_command = shlex.join(action["payload"]["argv"])
+        verify_command = "dws chat message list --group cid-1 --time 2026-07-29"
+        records.extend(
+            (
+                _reviewed_cli_event(
+                    "item.started",
+                    "provided-set-write",
+                    write_command,
+                    effectful=True,
+                ),
+                _reviewed_cli_event(
+                    "item.completed",
+                    "provided-set-write",
+                    write_command,
+                    output=json.dumps({"success": True, "message_id": "provided-1"}),
+                    effectful=True,
+                ),
+                _reviewed_cli_event(
+                    "item.started",
+                    "provided-set-verify",
+                    verify_command,
+                ),
+                _reviewed_cli_event(
+                    "item.completed",
+                    "provided-set-verify",
+                    verify_command,
+                    output=json.dumps(
+                        {
+                            "messages": [
+                                {
+                                    "message_id": "provided-1",
+                                    "text": self.message_text,
+                                }
+                            ]
+                        }
+                    ),
+                ),
+                _agent_result_event(
+                    _audit_protocol_result(
+                        "executed",
+                        int(candidate["proposal_revision"]),
+                        "The supplied-set protocol candidate was verified.",
+                        operation_id=str(candidate["operation_id"]),
+                        live_reference={"message_id": "provided-1"},
+                    )
+                ),
+            )
+        )
+        return records
+
+
 class MessageClarificationSkillExecutor(SkillReceiptProtocolExecutor):
     question = "Which delivery date should the plan use?"
     message_text = f"<@open-user-1> {question}"
@@ -4160,12 +4263,12 @@ def _task4_installed_skill_paths(
     return skill_paths
 
 
-def _personnel_specialist_skill_paths(
+def _provided_skill_paths(
     tmp_path: Path,
     monkeypatch,
     names: tuple[str, ...],
 ) -> dict[str, Path]:
-    skills_root = tmp_path / "personnel-specialist-skills"
+    skills_root = tmp_path / "provided-skills"
     skill_paths: dict[str, Path] = {}
     for name in names:
         path = skills_root / name / "SKILL.md"
@@ -4294,59 +4397,27 @@ def test_direct_clarification_uses_native_business_and_operation_skill_receipts(
     _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
 
 
-@pytest.mark.parametrize(
-    ("trigger_text", "skill_names"),
-    [
-        (
-            "Please discuss this employee's compensation adjustment.",
-            (
-                "ceo-personnel-communication",
-                "dingtalk-chat",
-            ),
-        ),
-        (
-            "Please evaluate this external candidate for the role.",
-            (
-                "ceo-personnel-communication",
-                "stardust-interview",
-                "dingtalk-chat",
-            ),
-        ),
-        (
-            "Please handle this personnel approval and report the result.",
-            (
-                "ceo-personnel-communication",
-                "dingtalk-oa-approval",
-                "dingtalk-chat",
-            ),
-        ),
-        (
-            "Please perform the requested OKR review and scoring.",
-            (
-                "dingtang-okr-review",
-                "dingtalk-chat",
-            ),
-        ),
-    ],
-)
-def test_specialist_composition_uses_native_a_b_path_and_exact_sha_receipts(
+def test_provided_skill_set_protocol_persists_hands_off_and_rereads_exact_sha(
     tmp_path: Path,
     monkeypatch,
-    trigger_text: str,
-    skill_names: tuple[str, ...],
 ):
-    skill_paths = _personnel_specialist_skill_paths(
+    skill_names = (
+        "ceo-personnel-communication",
+        "stardust-interview",
+        "dingtalk-chat",
+    )
+    skill_paths = _provided_skill_paths(
         tmp_path,
         monkeypatch,
         skill_names,
     )
-    trigger = _message(f"@CEO Agent {trigger_text}").model_copy(
+    trigger = _message("@CEO Agent Review the supplied Skill set.").model_copy(
         update={
             "sender_open_dingtalk_id": "open-user-1",
             "mentioned_user_ids": ["agent-user-id"],
         }
     )
-    executor = MessageClarificationSkillExecutor(skill_paths)
+    executor = ProvidedSkillReceiptProtocolExecutor(skill_paths)
     worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
     _enqueue(worker.store, trigger)
 

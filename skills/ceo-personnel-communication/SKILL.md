@@ -31,6 +31,10 @@ available evidence.
    compensation, performance, promotion, employment, health, leave, or other
    sensitive facts.
 
+When the recipient asks about their own personnel information, the subject and
+recipient are the same person. Use supported self-related facts without asking
+who the subject is; do not infer facts or authorization for anyone else.
+
 Load `dingtalk-contact` when current identity, organization, or HR
 responsibility evidence is needed. Load `dingtalk-chat` before chat delivery.
 
@@ -38,6 +42,10 @@ responsibility evidence is needed. Load `dingtalk-chat` before chat delivery.
 
 - Load `stardust-interview` for candidate evaluation and follow its evidence,
   role-fit, and interview workflow.
+  Use `stardust-interview` to read available conversation context, resume, role
+  requirements, and interview records before evaluating. Ask for specifically
+  missing candidate or role material only after the available evidence has
+  been read.
 - Load `dingtalk-oa-approval` for approval work and follow its complete-material,
   decision, action, notification, and verification workflow.
 - Load `dingtang-okr-review` only for an actual OKR review or scoring task.

@@ -73,9 +73,12 @@ def test_personnel_skill_reuses_specialist_skills_without_copying_workflows():
     text = _skill_prose()
 
     assert "Load `stardust-interview` for candidate evaluation" in text
+    assert "Use `stardust-interview` to read available conversation context" in text
+    assert "resume, role requirements, and interview records" in text
     assert "Load `dingtalk-oa-approval` for approval work" in text
     assert "Load `dingtang-okr-review` only for an actual OKR review or scoring task" in text
     assert "Do not reproduce or replace those specialist workflows here" in text
+    assert "When the recipient asks about their own personnel information" in text
     for forbidden in (
         "dws oa approval",
         "queue_okr_review",
@@ -103,4 +106,3 @@ def test_canonical_prompt_delegates_personnel_and_candidate_policy_to_skill():
     assert "没有列出的字段不要编造" in text
     assert "凭证" in text
     assert "只有明确需要 <var: principal> 处理时才回复" not in text
-

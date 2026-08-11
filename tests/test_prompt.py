@@ -39,6 +39,16 @@ CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会�
 ![image](https://gw.alicdn.com/imgextra/i4/O1CN01DXenu91IyBR0wQXk9_!!6000000000961-2-tps-148-72.png)
 ![image](https://gw.alicdn.com/imgextra/i4/O1CN01DXenu91IyBR0wQXk9_!!6000000000961-2-tps-148-72.png)
 [https://alidocs.dingtalk.com/i/nodes/vy20BglGWOKXmP5zs0OGQn6DWA7depqY?corpId=ding8ffc70a4ef94915f35c2f4657eb6378f&utm_medium=im_card&utm_source=im](https://alidocs.dingtalk.com/i/nodes/vy20BglGWOKXmP5zs0OGQn6DWA7depqY?corpId=ding8ffc70a4ef94915f35c2f4657eb6378f&utm_medium=im_card&utm_source=im)"""
+PERSONNEL_SKILL_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "skills"
+    / "ceo-personnel-communication"
+    / "SKILL.md"
+)
+
+
+def _personnel_skill_prose() -> str:
+    return " ".join(PERSONNEL_SKILL_PATH.read_text(encoding="utf-8").split())
 
 
 @pytest.fixture(autouse=True)
@@ -177,12 +187,15 @@ def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
     assert "memory_write 失败不应改变最终 JSON" in template
 
 
-def test_developer_prompt_keeps_business_metrics_out_of_personnel_sensitivity():
+def test_personnel_skill_keeps_business_facts_out_of_personnel_sensitivity():
     template = read_developer_prompt_template()
+    skill = _personnel_skill_prose()
 
-    assert "ROI、新订单、合同额、项目交付、客户进展、审批流状态、OKR 证据、财务核算或业务风险复盘" in template
-    assert "默认是业务事项，仍用 general" in template
-    assert "只有问题要求评价这个人的绩效、晋升、薪酬、去留、转正、请假、岗位匹配、个人工作状态" in template
+    assert "A person's name alone does not make a business fact personnel information" in skill
+    assert "Ownership, delivery, revenue, customer progress, project risk" in skill
+    assert "A person's name alone does not make a business fact personnel information" not in template
+    assert "没有列出的字段不要编造职位或上下级关系" in template
+    assert "刷新凭证或弹出授权页" in template
 
 
 def test_developer_prompt_delegates_latest_material_review_to_business_skill():
@@ -587,12 +600,14 @@ def test_build_turn_prompt_sanitizes_quoted_card_without_repeating_assets():
     assert prompt.count("https://alidocs.dingtalk.com/i/nodes/") <= 3
 
 
-def test_thread_prompt_explains_first_person_single_chat_subject():
+def test_personnel_skill_explains_first_person_single_chat_subject():
     prompt = ceo_agent_thread_prompt()
+    skill = _personnel_skill_prose()
 
-    assert "单聊里可以回答发信人关于他自己的请假、调休" in prompt
-    assert "domain_payload.personnel_subject_user_id 必须填写该消息的 sender_user_id" in prompt
-    assert "不要对 internal_personnel 追问“关于谁”" in prompt
+    assert "When the recipient asks about their own personnel information" in skill
+    assert "the subject and recipient are the same person" in skill
+    assert "单聊里可以回答发信人关于他自己的请假、调休" not in prompt
+    assert "没有列出的字段不要编造职位或上下级关系" in prompt
 
 
 def test_thread_prompt_delegates_direct_message_triage_to_business_skill():
@@ -819,13 +834,15 @@ def test_thread_prompt_delegates_minutes_handling_to_business_skill():
     assert "最具体适用的业务 Skill" in prompt
 
 
-def test_thread_prompt_requires_candidate_context_lookup_before_clarifying():
+def test_personnel_skill_requires_candidate_context_lookup_before_clarifying():
     prompt = ceo_agent_thread_prompt()
+    skill = _personnel_skill_prose()
 
-    assert "候选人上下文不能只看当前一句话" in prompt
-    assert "先查会话名、消息、引用、AI 听记、面试记录、简历和岗位材料" in prompt
-    assert "查不到候选人对象、岗位或部门时" in prompt
-    assert "自己组织追问" in prompt
+    assert "Use `stardust-interview` to read available conversation context" in skill
+    assert "resume, role requirements, and interview records" in skill
+    assert "Ask for specifically missing candidate or role material only after" in skill
+    assert "候选人上下文不能只看当前一句话" not in prompt
+    assert "先查会话名、消息、引用、AI 听记、面试记录、简历和岗位材料" not in prompt
 
 
 def test_thread_prompt_delegates_lightweight_interaction_judgment():
