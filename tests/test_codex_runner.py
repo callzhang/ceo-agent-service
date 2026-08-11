@@ -87,6 +87,56 @@ def test_codex_command_supports_strict_read_only_policy(tmp_path: Path):
     assert "Read-only invocation. Do not write." in _developer_instructions_arg(command)
 
 
+def test_native_read_fixture_command_ignores_user_config_and_exposes_only_reads(
+    tmp_path: Path,
+):
+    from tests.support.native_codex_read_fixture import (
+        assert_isolated_read_only_fixture_command,
+        isolate_read_only_fixture_command,
+    )
+
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="review fixture",
+        session_id=None,
+        approval_policy="never",
+        use_approval_bypass=False,
+    )
+    insert_at = command.index("--cd")
+    command[insert_at:insert_at] = [
+        "-c",
+        'features.plugins=true',
+        "-c",
+        'features.apps=true',
+        "-c",
+        'mcp_servers.foreign.command="unsafe-server"',
+        "-c",
+        'mcp_servers.foreign.enabled_tools=["write"]',
+    ]
+    isolated = isolate_read_only_fixture_command(
+        command,
+        server_command="python",
+        server_args=("-m", "tests.support.fixture"),
+        server_cwd=str(tmp_path),
+    )
+
+    assert_isolated_read_only_fixture_command(isolated)
+    assert "--ignore-user-config" in isolated
+    assert "--ignore-rules" in isolated
+    assert "--ephemeral" in isolated
+    assert isolated[isolated.index("--sandbox") + 1] == "read-only"
+    assert "features.plugins=false" in isolated
+    assert "features.apps=false" in isolated
+    assert "tools.enabled_tools=[]" in isolated
+    assert 'web_search="disabled"' in isolated
+    assert 'approval_policy="never"' in isolated
+    assert (
+        'mcp_servers.agent_cli.enabled_tools=["read_skill","execute_reviewed_read"]'
+        in isolated
+    )
+    assert all("execute_reviewed_write" not in item for item in isolated)
+    assert all("mcp_servers.foreign" not in item for item in isolated)
+
+
 def test_codex_command_read_only_resume_inherits_native_user_config(tmp_path: Path):
     command = CodexRunner(workspace=tmp_path).build_command(
         prompt="hello",

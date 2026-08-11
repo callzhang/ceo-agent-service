@@ -73,12 +73,12 @@ def test_personnel_skill_reuses_specialist_skills_without_copying_workflows():
     text = _skill_prose()
 
     assert "Load `stardust-interview` for candidate evaluation" in text
-    assert "Use `stardust-interview` to read available conversation context" in text
-    assert "resume, role requirements, and interview records" in text
     assert "Load `dingtalk-oa-approval` for approval work" in text
     assert "Load `dingtang-okr-review` only for an actual OKR review or scoring task" in text
     assert "Do not reproduce or replace those specialist workflows here" in text
     assert "When the recipient asks about their own personnel information" in text
+    assert "resume, role requirements, and interview records" not in text
+    assert "Ask for specifically missing candidate or role material" not in text
     for forbidden in (
         "dws oa approval",
         "queue_okr_review",

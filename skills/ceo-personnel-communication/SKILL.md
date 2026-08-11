@@ -42,10 +42,6 @@ responsibility evidence is needed. Load `dingtalk-chat` before chat delivery.
 
 - Load `stardust-interview` for candidate evaluation and follow its evidence,
   role-fit, and interview workflow.
-  Use `stardust-interview` to read available conversation context, resume, role
-  requirements, and interview records before evaluating. Ask for specifically
-  missing candidate or role material only after the available evidence has
-  been read.
 - Load `dingtalk-oa-approval` for approval work and follow its complete-material,
   decision, action, notification, and verification workflow.
 - Load `dingtang-okr-review` only for an actual OKR review or scoring task.

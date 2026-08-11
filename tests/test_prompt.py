@@ -834,13 +834,15 @@ def test_thread_prompt_delegates_minutes_handling_to_business_skill():
     assert "最具体适用的业务 Skill" in prompt
 
 
-def test_personnel_skill_requires_candidate_context_lookup_before_clarifying():
+def test_personnel_skill_delegates_candidate_evidence_to_specialist():
     prompt = ceo_agent_thread_prompt()
     skill = _personnel_skill_prose()
 
-    assert "Use `stardust-interview` to read available conversation context" in skill
-    assert "resume, role requirements, and interview records" in skill
-    assert "Ask for specifically missing candidate or role material only after" in skill
+    assert "Load `stardust-interview` for candidate evaluation" in skill
+    assert "follow its evidence, role-fit, and interview workflow" in skill
+    assert "Do not reproduce or replace those specialist workflows here" in skill
+    assert "resume, role requirements, and interview records" not in skill
+    assert "Ask for specifically missing candidate or role material" not in skill
     assert "候选人上下文不能只看当前一句话" not in prompt
     assert "先查会话名、消息、引用、AI 听记、面试记录、简历和岗位材料" not in prompt
 

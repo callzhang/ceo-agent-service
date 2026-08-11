@@ -11,9 +11,13 @@ from pathlib import Path
 import pytest
 
 from app.agent_wire_contracts import parse_consumer_agent_wire_result
-from app.codex_runner import CodexRunner, _config_string
+from app.codex_runner import CodexRunner
 from app.consumer_agent import SCHEMA_PATH, consumer_developer_instructions
 from app.process_runner import run_process_with_idle_timeout
+from tests.support.native_codex_read_fixture import (
+    assert_isolated_read_only_fixture_command,
+    isolate_read_only_fixture_command,
+)
 
 
 pytestmark = [
@@ -104,19 +108,20 @@ def _native_consumer(
             "You are Consumer Agent A. Perform business judgment from verified evidence."
         ),
         use_approval_bypass=False,
-        preserve_native_model_config=True,
     )
     command.insert(command.index("--cd"), "--skip-git-repo-check")
-    insert_at = command.index("--cd")
-    command[insert_at:insert_at] = [
-        "-c", _config_string("mcp_servers.agent_cli.command", sys.executable),
-        "-c", _config_string(
-            "mcp_servers.agent_cli.args",
-            ["-m", "tests.support.task5_read_fixture_mcp", str(config_path), str(log_path)],
+    command = isolate_read_only_fixture_command(
+        command,
+        server_command=sys.executable,
+        server_args=(
+            "-m",
+            "tests.support.task5_read_fixture_mcp",
+            str(config_path),
+            str(log_path),
         ),
-        "-c", _config_string("mcp_servers.agent_cli.cwd", str(REPOSITORY_ROOT)),
-        "-c", 'mcp_servers.agent_cli.enabled_tools=["read_skill","execute_reviewed_read"]',
-    ]
+        server_cwd=str(REPOSITORY_ROOT),
+    )
+    assert_isolated_read_only_fixture_command(command)
     process = run_process_with_idle_timeout(
         command,
         prompt=prompt,
