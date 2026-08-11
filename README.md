@@ -21,7 +21,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **Consumer / Audit Agent 执行**：Consumer A 代表管理者，用原生 `codex exec` 读取材料、判断业务并提出精确候选；Audit B 独立审阅、执行和读回外部动作。A 没有任务驱动的写权限，B 是唯一写入者。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
 - **材料与工具上下文**：服务传递材料引用、原始 ID、链接和精确读取命令；A 自行决定读取哪些钉钉文档、文件、OA 材料和本地 workspace 资料，B 在写入前独立核对实时状态。
-- **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。写入结果未知时只在原 B session 中核对，不能盲目重放。
+- **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。任务领取前同时检查 DingTalk、Lark 和 Codex CLI 认证；Codex 未认证时任务保持 pending，不产生可避免的 Agent 失败。写入结果未知时只在原 B session 中核对，不能盲目重放。
 - **人工接管**：对需要本人处理的消息发送 handoff，并暂停该会话的自动回复直到检测到真人回复。
 - **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时生成跟进。多人会议默认发到 Agent 核验过、明确承接该业务或后续行动的团队群；涉及个人隐私、薪酬绩效或不适合公开的个人负面反馈时，可以私信相关参会人。
