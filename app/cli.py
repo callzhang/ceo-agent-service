@@ -100,7 +100,8 @@ from app.work_profile import (
 )
 from app.worker import (
     DingTalkAutoReplyWorker,
-    _is_codex_authorization_wait_reason,
+    _is_codex_provider_recovery_wait_reason,
+    _is_terminal_codex_auth_failure,
     _normalize_codex_stop_error_reason,
 )
 from app.weekly_okr_report import (
@@ -1000,11 +1001,13 @@ def process_work_items_command(settings: WorkerSettings) -> int:
 
 
 def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> bool:
-    if isinstance(error, Exception) and is_external_dependency_error(error):
-        return True
     error_text = str(error)
     normalized_error = _normalize_codex_stop_error_reason(error_text)
-    if _is_codex_authorization_wait_reason(normalized_error):
+    if _is_terminal_codex_auth_failure(normalized_error):
+        return False
+    if isinstance(error, Exception) and is_external_dependency_error(error):
+        return True
+    if _is_codex_provider_recovery_wait_reason(normalized_error):
         return True
     if attempts >= WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS:
         return False

@@ -1482,7 +1482,7 @@ def test_process_work_items_command_backoffs_transient_codex_failure(
     assert row["available_at"] > ""
 
 
-def test_process_work_items_command_backoffs_native_codex_missing_auth_header(
+def test_process_work_items_command_fails_native_codex_missing_auth_header(
     tmp_path,
     monkeypatch,
     capsys,
@@ -1540,21 +1540,21 @@ def test_process_work_items_command_backoffs_native_codex_missing_auth_header(
             """,
             (input_id,),
         ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "failed"
     assert row["attempts"] == 1
-    assert row["error"].startswith("codex_provider_unavailable:")
-    assert "native Codex temporarily omitted the authenticated request header" in row[
+    assert row["error"].startswith("codex_provider_auth_failed:")
+    assert "without a bearer/basic auth header" in row[
         "error"
     ]
     assert "restore Codex CLI login" not in row["error"]
     assert "request id" not in row["error"]
-    assert row["available_at"] > ""
+    assert row["available_at"] == ""
     recorded = AutoReplyStore(db_path).list_errors(limit=1)[0]
     assert recorded.kind == "task_agent"
     assert recorded.detail == row["error"]
 
 
-def test_process_work_items_command_keeps_native_missing_header_pending_after_limit(
+def test_process_work_items_command_keeps_native_missing_header_terminal_after_limit(
     tmp_path,
     monkeypatch,
     capsys,
@@ -1617,10 +1617,10 @@ def test_process_work_items_command_keeps_native_missing_header_pending_after_li
             """,
             (input_id,),
         ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "failed"
     assert row["attempts"] == 4
-    assert row["error"].startswith("codex_provider_unavailable:")
-    assert row["available_at"] > ""
+    assert row["error"].startswith("codex_provider_auth_failed:")
+    assert row["available_at"] == ""
 
 
 def test_process_work_items_command_keeps_codex_transport_failure_pending_after_limit(

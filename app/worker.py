@@ -287,24 +287,24 @@ def _is_dingteam_okr_login_error(reason: str) -> bool:
 
 
 def _normalize_codex_stop_error_reason(reason: str) -> str:
-    if _is_codex_authorization_wait_reason(reason):
+    if _is_codex_provider_recovery_wait_reason(reason):
         return reason
-    if _is_codex_provider_transport_error(reason):
-        return _codex_provider_transport_error(reason)
     if _is_codex_provider_auth_error(reason):
         return _codex_provider_auth_error(reason)
     if _is_codex_login_required_error(reason):
         return f"{CODEX_LOGIN_REQUIRED_PREFIX}: {reason}"
+    if _is_codex_provider_transport_error(reason):
+        return _codex_provider_transport_error(reason)
     return reason
 
 
-def _is_codex_authorization_wait_reason(reason: str) -> bool:
+def _is_codex_provider_recovery_wait_reason(reason: str) -> bool:
+    return reason.startswith(CODEX_PROVIDER_UNAVAILABLE_PREFIX)
+
+
+def _is_terminal_codex_auth_failure(reason: str) -> bool:
     return reason.startswith(
-        (
-            CODEX_PROVIDER_AUTH_FAILED_PREFIX,
-            CODEX_PROVIDER_UNAVAILABLE_PREFIX,
-            CODEX_LOGIN_REQUIRED_PREFIX,
-        )
+        (CODEX_PROVIDER_AUTH_FAILED_PREFIX, CODEX_LOGIN_REQUIRED_PREFIX)
     )
 
 
@@ -390,12 +390,6 @@ class CalendarConflictContext:
 
 class ReplyTaskProcessingError(RuntimeError):
     """Raised after recording a processing failure so queued tasks can retry."""
-
-
-class CodexAuthorizationRequiredError(ReplyTaskProcessingError):
-    """Raised when Codex login or selected provider credentials must be restored."""
-
-    needs_authorization = True
 
 
 class DwsAuthorizationRequiredError(ReplyTaskProcessingError):
@@ -1513,9 +1507,17 @@ class DingTalkAutoReplyWorker:
             except Exception as exc:
                 error = str(exc)
                 authorization_wait_error = _normalize_codex_stop_error_reason(error)
-                if self._is_authorization_error(
-                    exc
-                ) or _is_codex_authorization_wait_reason(authorization_wait_error):
+                terminal_codex_auth_failure = _is_terminal_codex_auth_failure(
+                    authorization_wait_error
+                )
+                if terminal_codex_auth_failure:
+                    error = authorization_wait_error
+                if not terminal_codex_auth_failure and (
+                    self._is_authorization_error(exc)
+                    or _is_codex_provider_recovery_wait_reason(
+                        authorization_wait_error
+                    )
+                ):
                     provider_recovery = authorization_wait_error.startswith(
                         CODEX_PROVIDER_UNAVAILABLE_PREFIX
                     )
@@ -1589,7 +1591,7 @@ class DingTalkAutoReplyWorker:
                     task_status, attempt_id = self._record_agent_runtime_failure_attempt(
                         task,
                         error,
-                        retryable=True,
+                        retryable=not terminal_codex_auth_failure,
                         prior_run_snapshot=run_snapshot,
                         allow_clean_session_retry=clean_session_retry,
                     )
