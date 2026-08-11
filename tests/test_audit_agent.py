@@ -718,6 +718,75 @@ def test_audit_recovers_completed_session_only_dingtalk_receipt(setup, tmp_path,
     )
 
 
+def test_audit_ignores_session_replay_of_streamed_write(setup, tmp_path, monkeypatch):
+    store, task, audit_context, parent = setup
+    session_id = "streamed-write-also-in-session"
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    argv = [
+        "dws", "chat", "message", "send", "--group", "cid-agent",
+        "--text", "done", "--yes",
+    ]
+    descriptor = describe_native_command(
+        {"type": "command_execution", "argv": argv}
+    )
+    assert descriptor is not None
+    session_path = (
+        tmp_path / "sessions" / "2026" / "08" / "11"
+        / f"rollout-2026-08-11T04-00-00-{session_id}.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        "\n".join(
+            json.dumps(line, ensure_ascii=False)
+            for line in (
+                {"type": "session_meta", "payload": {"id": session_id}},
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "mcp_tool_call_end",
+                        "call_id": "session-copy-of-streamed-write",
+                        "invocation": {
+                            "server": "agent_cli",
+                            "tool": "execute_reviewed_write",
+                            "arguments": {"argv": argv},
+                        },
+                        "result": {
+                            "Ok": {
+                                "content": [{"type": "text", "text": "accepted"}],
+                                "structuredContent": {
+                                    "cli": "dws",
+                                    "operation": descriptor.command_path,
+                                    "operation_digest": descriptor.command_digest,
+                                    "target_identifiers": descriptor.target_identifiers,
+                                    "result_digest": "session-copy-result",
+                                },
+                                "isError": False,
+                            }
+                        },
+                    },
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(_audit_jsonl("operation-1", session=session_id)),
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run(result.run_id)
+    assert run is not None and run.status == "completed"
+    effectful_starts = [
+        event
+        for event in run.tool_events
+        if event["type"] == "item.started"
+        and event["item"]["metadata"]["effect"] == "effectful"
+    ]
+    assert len(effectful_starts) == 1
+
+
 def test_audit_does_not_renew_conversation_session_lock(setup, monkeypatch):
     store, task, audit_context, parent = setup
     renewals = 0
