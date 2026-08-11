@@ -8351,7 +8351,10 @@ def _agent_failure_reason_text(
         code = str(error.get("code") or "unknown") if isinstance(error, dict) else "unknown"
         detail = str(error.get("detail") or "") if isinstance(error, dict) else ""
         effect = "未执行外部操作" if run.side_effect_state == "none" else "外部操作状态需要核对"
-        lines.append(f"{run.role.value}: {detail or _failure_code_explanation(code)}；{effect}。")
+        safe_detail = detail.strip()
+        if not safe_detail or safe_detail.startswith("处理未完成，失败代码："):
+            safe_detail = _failure_code_explanation(code)
+        lines.append(f"{run.role.value}: {safe_detail}；{effect}。")
     if not lines:
         stored_summary = attempt.audit_summary.strip()
         stored_code = (attempt.send_error or attempt.codex_reason).strip()
@@ -8371,6 +8374,8 @@ def _failure_code_explanation(code: str) -> str:
         return "Agent 返回了结果，但结果不符合当前严格 JSON 契约。"
     if code == "codex_result_missing":
         return "Agent 运行没有输出可验证的结果 JSON。"
+    if code == "codex_process_failed":
+        return "Agent 执行进程未成功完成，因此本轮没有得到可验证结果。"
     return f"处理未完成，失败代码：{code or 'unknown'}。"
 
 
