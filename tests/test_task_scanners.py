@@ -332,6 +332,9 @@ def test_scan_ai_minutes_walks_paginated_adapter(tmp_path):
         def __init__(self):
             self.tokens = []
 
+        def list_minutes(self):
+            raise AssertionError("paginated adapter should be used")
+
         def list_minutes_page(self, *, limit, cursor):
             self.tokens.append((limit, cursor))
             if not cursor:
@@ -352,12 +355,66 @@ def test_scan_ai_minutes_walks_paginated_adapter(tmp_path):
     dws = FakeDws()
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
+    store.set_daily_scan_state(
+        "ai_minutes",
+        last_success_at="2026-08-10T00:00:00+00:00",
+        cursor_json=json.dumps({"seen_ids": ["minutes-2"]}),
+    )
     count = scan_ai_minutes(store, dws, enqueue_existing_on_first_scan=True)
 
-    assert count == 2
+    assert count == 1
     assert dws.tokens == [(50, ""), (50, "token-2")]
     claimed = store.claim_work_summary_inputs(limit=10)
-    assert {row.source_ref for row in claimed} == {"minutes-1", "minutes-2"}
+    assert {row.source_ref for row in claimed} == {"minutes-1"}
+
+
+def test_scan_ai_minutes_baselines_only_latest_page_on_first_scan(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.tokens = []
+
+        def list_minutes(self):
+            raise AssertionError("paginated adapter should be used")
+
+        def list_minutes_page(self, *, limit, cursor):
+            self.tokens.append((limit, cursor))
+            return {
+                "items": [{"taskUuid": "minutes-1", "title": "最新会议"}],
+                "has_more": True,
+                "next_token": "older-page",
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_ai_minutes(store, dws) == 0
+    assert dws.tokens == [(50, "")]
+    assert json.loads(store.get_daily_scan_state("ai_minutes")["cursor_json"]) == {
+        "seen_ids": ["minutes-1"],
+    }
+
+
+def test_scan_ai_minutes_preserves_seen_cursor_when_pagination_fails(tmp_path):
+    class FakeDws:
+        def list_minutes(self):
+            raise AssertionError("paginated adapter should be used")
+
+        def list_minutes_page(self, *, limit, cursor):
+            raise RuntimeError("page request failed")
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    state = {"seen_ids": ["minutes-1"]}
+    store.set_daily_scan_state(
+        "ai_minutes",
+        last_success_at="2026-08-10T00:00:00+00:00",
+        cursor_json=json.dumps(state),
+    )
+
+    assert scan_ai_minutes(store, FakeDws()) == 0
+    saved = store.get_daily_scan_state("ai_minutes")
+    assert json.loads(saved["cursor_json"]) == state
+    assert saved["last_success_at"] == "2026-08-10T00:00:00+00:00"
+    assert saved["last_error"] == "page request failed"
 
 
 def test_scan_ai_minutes_baselines_existing_items_on_first_scan(tmp_path):

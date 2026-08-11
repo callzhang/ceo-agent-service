@@ -199,27 +199,33 @@ def scan_ai_minutes(
         )
         return 0
 
+    state = store.get_daily_scan_state(AI_MINUTES_SCANNER) or {}
+    raw_cursor = state.get("cursor_json") or "{}"
+    try:
+        cursor = json.loads(raw_cursor)
+    except json.JSONDecodeError:
+        cursor = {}
+        raw_cursor = "{}"
+    previous_seen_ids = set(str(value) for value in (cursor.get("seen_ids") or []))
+
     list_minutes_page = getattr(dws, "list_minutes_page", None)
     try:
         if list_minutes_page is not None:
-            minutes_items = _list_all_ai_minutes(list_minutes_page)
+            minutes_items = _list_incremental_ai_minutes(
+                list_minutes_page,
+                previous_seen_ids,
+            )
         else:
             minutes_items = list_minutes()
     except Exception as exc:
         store.set_daily_scan_state(
             AI_MINUTES_SCANNER,
-            last_success_at="",
-            cursor_json="{}",
+            last_success_at=state.get("last_success_at") or "",
+            cursor_json=raw_cursor,
             last_error=str(exc),
         )
         return 0
 
-    state = store.get_daily_scan_state(AI_MINUTES_SCANNER) or {}
-    try:
-        cursor = json.loads(state.get("cursor_json") or "{}")
-    except json.JSONDecodeError:
-        cursor = {}
-    previous_seen_ids = set(str(value) for value in (cursor.get("seen_ids") or []))
     first_scan = not previous_seen_ids
     seen_ids = set(previous_seen_ids)
     count = 0
@@ -604,14 +610,56 @@ def _oa_task_field(task: dict[str, Any], names: tuple[str, ...]) -> str:
     return ""
 
 
-def _list_all_ai_minutes(list_minutes_page) -> list[dict]:
+def _minutes_item_time(item: dict) -> str:
+    return str(
+        item.get("createdAt")
+        or item.get("startTimeISO")
+        or item.get("startTime")
+        or ""
+    ).strip()
+
+
+def _page_is_newest_first(items: list[dict], previous_oldest: str) -> bool:
+    times = [_minutes_item_time(item) for item in items]
+    if not times or any(not value for value in times):
+        return False
+    if any(earlier < later for earlier, later in zip(times, times[1:])):
+        return False
+    return not previous_oldest or times[0] <= previous_oldest
+
+
+def _list_incremental_ai_minutes(
+    list_minutes_page,
+    seen_ids: set[str],
+) -> list[dict]:
+    """Read from newest until the durable seen boundary, without full rescans."""
     items: list[dict] = []
     cursor = ""
     seen_tokens: set[str] = set()
+    previous_oldest = ""
     for _ in range(100):
         page = list_minutes_page(limit=50, cursor=cursor)
-        page_items = page.get("items") or []
+        page_items = [item for item in (page.get("items") or []) if isinstance(item, dict)]
         items.extend(item for item in page_items if isinstance(item, dict))
+        item_ids = {
+            str(
+                item.get("taskUuid")
+                or item.get("minutesId")
+                or item.get("id")
+                or item.get("task_uuid")
+                or item.get("uuid")
+                or ""
+            )
+            for item in page_items
+        }
+        item_ids.discard("")
+        newest_first = _page_is_newest_first(page_items, previous_oldest)
+        if not seen_ids:
+            break
+        if item_ids and item_ids.issubset(seen_ids) and newest_first:
+            break
+        if newest_first:
+            previous_oldest = _minutes_item_time(page_items[-1])
         cursor = str(page.get("next_token") or "")
         has_more = bool(page.get("has_more"))
         if not has_more or not cursor or cursor in seen_tokens:

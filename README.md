@@ -416,7 +416,7 @@ cd /path/to/ceo-agent-service
 CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-message
 ```
 
-`scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。AI 听记通过当前 `dws` 登录态增量读取。
+`scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。AI 听记通过当前 `dws` 登录态从最新页读取到已记录边界；首次只建立最新页基线，分页失败保留已记录边界并报出扫描错误，不会清空状态后重复拉取历史。
 
 CEO reply agent 使用原生 `codex exec`，保留用户的 `~/.codex` 配置、MCP、plugins、hooks 和
 skills。无需把 Exa、Memory 或 Xiaoqing 再配置到仓库或 `.env`，也绝不把它们的 OAuth/token
