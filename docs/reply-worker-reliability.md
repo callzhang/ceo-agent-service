@@ -384,6 +384,10 @@ service delivery ledger as its identity. The Agent's free-form operation label
 does not decide whether an action is a message send. When the exact trigger has
 no delivery record, the unknown run is closed as absent and the task rotates to
 a fresh generation; the old write is never replayed.
+For a mixed action such as an approval plus applicant notification, the ledger
+records only the missing direct notification as absent. Other actions still
+require their own live readback, so recovery can execute only the missing
+delivery without replaying the approval.
 On service startup, unfinished unknown Audit reconciliation leases are released
 immediately. The next worker pass continues the read-only reconciliation; it
 does not mark the old external action as absent or replay it because of restart.
