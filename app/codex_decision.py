@@ -13,8 +13,11 @@ from app.codex_history import (
     extract_codex_audit_events_from_session,
     find_codex_session_path,
 )
+from app.codex_failure import (
+    CODEX_PROVIDER_AUTH_FAILED,
+    classify_codex_process_failure,
+)
 from app.codex_runner import CodexRunner
-from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED, classify_codex_process_failure
 from app.config import assistant_signature, forbidden_path_prefixes
 from app.dingtalk_models import CodexAction, CodexDecision
 from app.process_runner import run_process_with_idle_timeout

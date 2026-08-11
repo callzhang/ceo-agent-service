@@ -2401,7 +2401,9 @@ class AutoReplyStore:
             manual_rerun_attempt_id=row["manual_rerun_attempt_id"],
             manual_rerun_revision_key=row["manual_rerun_revision_key"],
             execution_generation=row["execution_generation"],
-            recovery_code=(row["recovery_code"] if "recovery_code" in row.keys() else ""),
+            recovery_code=(
+                row["recovery_code"] if "recovery_code" in row.keys() else ""
+            ),
             status=row["status"],
             attempts=row["attempts"],
             locked_at=row["locked_at"],

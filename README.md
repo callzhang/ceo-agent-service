@@ -65,7 +65,7 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
-所有服务启动的 Codex 通道（包括微信消费）均复用安装用户的 Codex 配置、MCP、插件和 skills。服务不会复制 OAuth 或 token；单个 MCP 的认证失败按实际依赖错误处理，不会触发 Agent 自行登录。若 Codex 登录恢复，微信消费者只会重新排入最近三天内、没有 delivery 或 `sent_replies` 记录、且最后一次明确因 Codex 认证失败而未开始决策的任务；每条恢复任务都会创建新的 generation，已进入发送路径的任务不会自动重放。
+所有服务启动的 Codex 通道（包括微信消费）均复用安装用户的 Codex 配置、MCP、插件和 skills。服务不会复制 OAuth 或 token；单个 MCP 的认证失败按实际依赖错误处理，不会触发 Agent 自行登录。微信任务将认证恢复资格作为独立状态持久化，不依赖提供方的原始错误文案。Codex 登录恢复后，消费者只会重新排入最近三天内、没有 delivery 或 `sent_replies` 记录、且带有该恢复资格的未开始决策任务；每条恢复任务都会创建新的 generation，已进入发送路径的任务不会自动重放。
 
 Agent 必须如实返回动作结果；只有诊断、没有完成用户要求的动作时不能标为 `executed`。可向对话参与者补齐的事实必须变成一个具体澄清消息候选，不得要求 Derek 选择“继续还是追问”。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
 
