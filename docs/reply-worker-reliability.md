@@ -184,6 +184,12 @@ Provider 恢复”显示这类任务。退避到期后，下一次持久队列�
 `available_at` 而不启动 Agent。重领旧 run 时必须 resume 该 run 自己已记录的 Codex session；
 同一对话后来产生的新 session 不能覆盖旧 run 的审计身份。只有当前仍处于终态的失败才使用红色。
 
+服务启动恢复分三类：没有任何 Agent run 的 processing task 回到 pending；仍在运行且已证明没有
+副作用的 turn 会创建新 generation；而最新 turn 已经 `completed`、不存在 `running/unknown` 的
+task 会在**同一 generation**回到 pending，由状态机从持久化结果继续。最后一种不重新调用
+Consumer/Audit，也不重放消息、审批或其他外部动作，避免“完成了 Agent turn 却等 30 分钟才 stale
+requeue”的空档。
+
 旧版本已经落为 `failed` 的 Consumer 运行时故障，只能通过 Store 的受限恢复迁移回原 generation：
 task 和指定 Consumer run 必须是同代最新 run 且仍为 `failed`，并明确 `retryable=true`、
 `side_effect_state=none`；同代

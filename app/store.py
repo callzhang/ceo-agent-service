@@ -5209,6 +5209,77 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
+    def resume_completed_agent_turns_after_service_restart(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        """Resume orchestration interrupted after a terminal Agent turn.
+
+        The persisted AgentRun is already the durable source of truth. Requeue
+        the same generation so AgentOrchestrator can derive the next state from
+        it, rather than waiting for stale-task recovery or rerunning a turn.
+        """
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and not exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and runs.status in ('running', 'unknown')
+                  )
+                  and (
+                      select latest.status
+                      from agent_runs as latest
+                      where latest.reply_task_id=tasks.id
+                        and latest.execution_generation=tasks.execution_generation
+                      order by latest.id desc
+                      limit 1
+                  )='completed'
+                order by tasks.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', locked_at=null, available_at='',
+                        error='service_restart_after_completed_turn',
+                        updated_at=current_timestamp
+                    where id=? and status='processing' and execution_generation=?
+                      and not exists (
+                          select 1
+                          from agent_runs as runs
+                          where runs.reply_task_id=reply_tasks.id
+                            and runs.execution_generation=reply_tasks.execution_generation
+                            and runs.status in ('running', 'unknown')
+                      )
+                    """,
+                    (row["id"], row["execution_generation"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                db.execute(
+                    "delete from codex_session_locks where conversation_id=?",
+                    (row["conversation_id"],),
+                )
+                updated = db.execute(
+                    "select * from reply_tasks where id=?", (row["id"],)
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
     def mark_wechat_read_only_decision_started(
         self,
         task_id: int,
