@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 import zipfile
 
@@ -5,6 +6,20 @@ import pytest
 
 import app.agent_cli as agent_cli
 from app.native_cli_metadata import AgentReadOnlyViolationError
+
+
+def test_agent_cli_mcp_tools_publish_searchable_descriptions():
+    tools = asyncio.run(agent_cli.server.list_tools())
+    descriptions = {tool.name: tool.description for tool in tools}
+
+    assert set(descriptions) == {
+        "read_skill",
+        "read_spreadsheet",
+        "execute_reviewed_read",
+        "execute_reviewed_write",
+    }
+    assert all(description.strip() for description in descriptions.values())
+    assert "calendar event" in descriptions["execute_reviewed_read"]
 
 
 def test_read_skill_allows_markdown_referenced_by_an_installed_skill(

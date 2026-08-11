@@ -497,6 +497,11 @@ server = FastMCP(
     ),
 )
 def read_skill_tool(path: str) -> dict[str, str]:
+    """Read an installed Agent skill or its referenced Markdown safely.
+
+    Use this before following product-specific DWS procedures. The path must
+    identify a Markdown file inside an installed skill directory.
+    """
     return read_skill(path)
 
 
@@ -510,6 +515,11 @@ def read_skill_tool(path: str) -> dict[str, str]:
     ),
 )
 def read_spreadsheet_tool(path: str) -> dict[str, object]:
+    """Read a downloaded Excel workbook through the bounded read-only parser.
+
+    Use this for temporary .xlsx or .xlsm material. It returns a limited sheet
+    preview and never executes workbook code or arbitrary Python.
+    """
     return read_spreadsheet(path)
 
 
@@ -523,6 +533,12 @@ def read_spreadsheet_tool(path: str) -> dict[str, object]:
     ),
 )
 def execute_reviewed_read_tool(argv: list[str]) -> dict[str, object]:
+    """Run one exact reviewed read-only command and return an audit receipt.
+
+    Use the provided argv for live enterprise evidence such as a message,
+    calendar event, document, file, approval, person, mail, or meeting. This
+    cannot perform writes, shell composition, or interactive authentication.
+    """
     return execute_reviewed_read(argv)
 
 
@@ -538,6 +554,11 @@ def execute_reviewed_read_tool(argv: list[str]) -> dict[str, object]:
 def execute_reviewed_write_tool(
     argv: list[str], authorization_id: str | None = None
 ) -> dict[str, object]:
+    """Execute an Audit-approved external write and return its receipt.
+
+    This tool accepts only reviewed commands with a matching authorization.
+    Consumer Agents must describe writes as proposal data and never call it.
+    """
     return execute_reviewed_write(argv, authorization_id=authorization_id)
 
 
