@@ -615,7 +615,12 @@ class DingTalkAutoReplyWorker:
         return (
             DingTalkAutoReplyWorker._is_dws_message_read_kind(kind)
             and isinstance(exc, DwsError)
-            and DwsClient.is_message_read_retryable_error_code(exc.code)
+            and (
+                DwsClient.is_message_read_retryable_error_code(exc.code)
+                # DWS returns this generic code before it invokes a read tool.
+                # It is retryable for reads, but must not mask write failures.
+                or exc.code in DwsClient.GENERIC_BUSINESS_RETRYABLE_ERROR_CODES
+            )
         )
 
     @staticmethod

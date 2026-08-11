@@ -2007,6 +2007,64 @@ def test_call_dws_suppresses_message_read_system_errors(tmp_path: Path, monkeypa
     assert state["count"] == 3
 
 
+def test_call_dws_suppresses_prepare_call_tool_error_for_mentioned_messages(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    transient_error = DwsError(
+        "dws command failed before the mention query could run",
+        code="PREPARE_CALL_TOOL_ERROR",
+    )
+    dws = FakeDws([], {})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    def fail_read():
+        raise transient_error
+
+    assert (
+        worker._call_dws(
+            "read_mentioned_messages",
+            fail_read,
+            notify_title="CEO read mentioned messages failed",
+            default=[],
+        )
+        == []
+    )
+    assert worker.store.count_errors() == 0
+    assert notifications == []
+
+    state = json.loads(
+        worker.store.get_service_state(
+            "dws_transient_error_count:read_mentioned_messages"
+        )
+        or "{}"
+    )
+    assert state["count"] == 1
+
+    assert (
+        worker._call_dws(
+            "read_mentioned_messages",
+            lambda: [],
+            notify_title="CEO read mentioned messages failed",
+            default=[],
+        )
+        == []
+    )
+    state = json.loads(
+        worker.store.get_service_state(
+            "dws_transient_error_count:read_mentioned_messages"
+        )
+        or "{}"
+    )
+    assert state["count"] == 0
+    assert state["last_error"] == ""
+
+
 def test_read_recent_messages_missing_direct_chat_target_is_empty_context(
     tmp_path: Path, monkeypatch
 ):
