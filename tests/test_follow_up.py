@@ -3,6 +3,8 @@ import json
 from app.dws_client import DwsUserProfile
 from app.follow_up import process_due_follow_ups
 from app.store import AutoReplyStore
+from app.task_agent import apply_task_agent_decision
+from app.task_models import TaskAgentDecision, WorkItem
 
 
 class FakeDws:
@@ -771,13 +773,70 @@ def test_old_due_follow_up_refreshes_live_todo_then_queues_agent_reevaluation(tm
     )
     queued = store.claim_work_summary_inputs(limit=2)
     assert len(queued) == 1
+    first_repair_source_ref = queued[0].source_ref
     work_item = json.loads(queued[0].payload_json)
-    assert queued[0].source_ref == f"follow-up-repair:{draft_id}"
+    assert queued[0].source_ref.startswith(f"follow-up-repair:{draft_id}:")
     summary = json.loads(work_item["summary"])
     assert summary["reason"] == "stale_follow_up_requires_agent_review"
     assert summary["todo"]["status"] == "open"
     assert summary["todo"]["dingtalk"]["done"] is False
     assert summary["todo"]["dingtalk"]["last_pull_at"] == "2026-06-10 01:00:01"
+
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "客户交付",
+                "memory_context": {
+                    "query": "客户交付",
+                    "summary": "Current repair context supplied by the work item.",
+                },
+            },
+            "follow_up_changes": [
+                {
+                    "follow_up_id": draft_id,
+                    "todo_id": todo_id,
+                    "action": "keep_open",
+                    "reason": "Current TODO is still open; ask again next workday.",
+                    "next_due_at": "2026-06-11T10:00:00+08:00",
+                }
+            ],
+            "memory_recall_used": True,
+        }
+    )
+    apply_task_agent_decision(
+        store,
+        summary_input_id=queued[0].id,
+        work_item=WorkItem.model_validate_json(queued[0].payload_json),
+        decision=decision,
+        memory_recall_attempted=True,
+        now="2026-06-10 01:05:00",
+    )
+    store.mark_work_summary_input_done(queued[0].id)
+
+    repaired = store.get_follow_up_draft(draft_id)
+    assert repaired is not None
+    assert repaired.suppressed_reason == ""
+    assert repaired.scheduled_at == "2026-06-11T10:00:00+08:00"
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-10 01:06:00",
+        auto_send=True,
+    ) == 0
+    assert store.claim_work_summary_inputs(limit=2) == []
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-19 02:00:01",
+        auto_send=True,
+    ) == 0
+    later_repairs = store.claim_work_summary_inputs(limit=2)
+    assert len(later_repairs) == 1
+    assert later_repairs[0].source_ref.startswith(f"follow-up-repair:{draft_id}:")
+    assert later_repairs[0].source_ref != first_repair_source_ref
 
 
 def test_draft_follow_up_sends_direct_message_when_live_send_enabled(tmp_path):

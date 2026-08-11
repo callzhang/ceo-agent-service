@@ -1,7 +1,76 @@
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class StrictTaskModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+OWNER_IDENTITY_FIELD_ALIASES = {
+    "user_id": "user_id",
+    "owner_user_id": "user_id",
+    "name": "display_name",
+    "display_name": "display_name",
+    "owner_name": "display_name",
+    "open_dingtalk_id": "open_dingtalk_id",
+}
+
+
+def owner_identity_record(
+    values: Mapping[str, object],
+) -> frozenset[tuple[str, str]]:
+    record: dict[str, str] = {}
+    for source_field, canonical_field in OWNER_IDENTITY_FIELD_ALIASES.items():
+        value = str(values.get(source_field) or "").strip()
+        if not value:
+            continue
+        if canonical_field == "display_name":
+            value = value.casefold()
+        if canonical_field in record and record[canonical_field] != value:
+            raise ValueError(f"conflicting owner identity field: {canonical_field}")
+        record[canonical_field] = value
+    return frozenset(record.items())
+
+
+def owner_identity_evidence_records(
+    evidence: object,
+) -> list[frozenset[tuple[str, str]]]:
+    items: list[object]
+    if isinstance(evidence, list):
+        items = list(evidence)
+    elif isinstance(evidence, dict):
+        items = [evidence]
+        for key in ("records", "verified_resolution"):
+            nested = evidence.get(key)
+            if isinstance(nested, list):
+                items.extend(nested)
+            elif isinstance(nested, dict):
+                items.append(nested)
+    else:
+        items = []
+    records: list[frozenset[tuple[str, str]]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        record = owner_identity_record(item)
+        if record:
+            records.append(record)
+    return records
+
+
+def owner_identity_is_supported(
+    assigned: Mapping[str, object],
+    evidence: object,
+) -> bool:
+    assigned_record = owner_identity_record(assigned)
+    if not assigned_record:
+        return True
+    return any(
+        assigned_record <= evidence_record
+        for evidence_record in owner_identity_evidence_records(evidence)
+    )
 
 
 class WorkItemSourceType(StrEnum):
@@ -130,14 +199,14 @@ class WorkItem(BaseModel):
     task_signals: WorkItemTaskSignals = Field(default_factory=WorkItemTaskSignals)
 
 
-class ProjectFact(BaseModel):
+class ProjectFact(StrictTaskModel):
     description: str
     source: str
     created: str = ""
     updated: str = ""
 
 
-class ProjectMemoryContextItem(BaseModel):
+class ProjectMemoryContextItem(StrictTaskModel):
     source: str = "memory_recall"
     uuid: str = ""
     text: str = ""
@@ -145,13 +214,13 @@ class ProjectMemoryContextItem(BaseModel):
     created_at: str = ""
 
 
-class ProjectMemoryContext(BaseModel):
+class ProjectMemoryContext(StrictTaskModel):
     query: str = ""
     summary: str = ""
     memories: list[ProjectMemoryContextItem] = Field(default_factory=list)
 
 
-class TaskProjectPatch(BaseModel):
+class TaskProjectPatch(StrictTaskModel):
     id: int | None = None
     title: str = ""
     category: ProjectCategory = ProjectCategory.OTHER
@@ -162,6 +231,7 @@ class TaskProjectPatch(BaseModel):
     needs_derek_attention: bool = False
     owner_user_id: str = ""
     owner_name: str = ""
+    owner_evidence: dict[str, Any] = Field(default_factory=dict)
     related_people: list[dict[str, str]] = Field(default_factory=list)
     goal: str = ""
     background: str = ""
@@ -175,7 +245,7 @@ class TaskProjectPatch(BaseModel):
     source_conversations: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class TodoChange(BaseModel):
+class TodoChange(StrictTaskModel):
     action: Literal["create", "update", "close", "cancel"]
     todo_id: int | None = None
     todo_ref: str = ""
@@ -193,7 +263,7 @@ class TodoChange(BaseModel):
     blocker: str = ""
 
 
-class FollowUpDraftDecision(BaseModel):
+class FollowUpDraftDecision(StrictTaskModel):
     todo_id: int | None = None
     todo_ref: str = ""
     title: str
@@ -213,7 +283,7 @@ class FollowUpDraftDecision(BaseModel):
     status: FollowUpDraftStatus = FollowUpDraftStatus.DRAFT
 
 
-class FollowUpDraftChange(BaseModel):
+class FollowUpDraftChange(StrictTaskModel):
     follow_up_id: int
     todo_id: int | None = None
     action: Literal["suppress", "close", "reschedule", "reassign", "keep_open"]
@@ -222,9 +292,10 @@ class FollowUpDraftChange(BaseModel):
     next_due_at: str | None = None
     owner_user_id: str | None = None
     owner_name: str | None = None
+    owner_evidence: dict[str, Any] = Field(default_factory=dict)
 
 
-class TaskAgentDecision(BaseModel):
+class TaskAgentDecision(StrictTaskModel):
     action: Literal["discard", "create_project", "update_project"]
     discard_reason: str = ""
     project: TaskProjectPatch | None = None
@@ -250,6 +321,7 @@ class WorkProject(BaseModel):
     needs_derek_attention: bool = False
     owner_user_id: str = ""
     owner_name: str = ""
+    owner_evidence_json: str = "{}"
     related_people_json: str = "[]"
     goal: str = ""
     background: str = ""
@@ -273,6 +345,7 @@ class WorkTodo(BaseModel):
     description: str = ""
     owner_user_id: str = ""
     owner_name: str = ""
+    owner_evidence_json: str = "{}"
     status: TodoStatus
     priority: ProjectPriority
     deadline_at: str = ""

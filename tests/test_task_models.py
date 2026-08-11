@@ -180,3 +180,107 @@ def test_task_agent_decision_accepts_project_todo_and_follow_up():
     assert decision.todo_changes[0].todo_ref == "source-links"
     assert decision.follow_up_drafts[0].todo_ref == "source-links"
     assert decision.follow_up_drafts[0].status == FollowUpDraftStatus.DRAFT
+
+
+def test_task_agent_decision_rejects_unknown_root_field():
+    with pytest.raises(ValidationError, match="unexpected_root"):
+        TaskAgentDecision.model_validate(
+            {"action": "discard", "unexpected_root": True}
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload", "unknown_field"),
+    [
+        (
+            {
+                "action": "create_project",
+                "project": {"title": "x", "unexpected_project": True},
+            },
+            "unexpected_project",
+        ),
+        (
+            {
+                "action": "create_project",
+                "todo_changes": [
+                    {"action": "create", "unexpected_todo": True}
+                ],
+            },
+            "unexpected_todo",
+        ),
+        (
+            {
+                "action": "create_project",
+                "project": {
+                    "title": "x",
+                    "memory_context": {"unexpected_memory": True},
+                },
+            },
+            "unexpected_memory",
+        ),
+        (
+            {
+                "action": "create_project",
+                "follow_up_drafts": [
+                    {
+                        "title": "x",
+                        "description": "x",
+                        "target_kind": "group",
+                        "question_text": "x",
+                        "unexpected_draft": True,
+                    }
+                ],
+            },
+            "unexpected_draft",
+        ),
+        (
+            {
+                "action": "update_project",
+                "follow_up_changes": [
+                    {
+                        "follow_up_id": 1,
+                        "action": "suppress",
+                        "unexpected_change": True,
+                    }
+                ],
+            },
+            "unexpected_change",
+        ),
+        (
+            {
+                "action": "create_project",
+                "project": {
+                    "title": "x",
+                    "facts": [
+                        {
+                            "description": "x",
+                            "source": "input",
+                            "unexpected_fact": True,
+                        }
+                    ],
+                },
+            },
+            "unexpected_fact",
+        ),
+        (
+            {
+                "action": "create_project",
+                "project": {
+                    "title": "x",
+                    "memory_context": {
+                        "memories": [
+                            {
+                                "source": "memory_recall",
+                                "unexpected_memory_item": True,
+                            }
+                        ]
+                    },
+                },
+            },
+            "unexpected_memory_item",
+        ),
+    ],
+)
+def test_task_agent_decision_rejects_unknown_nested_field(payload, unknown_field):
+    with pytest.raises(ValidationError, match=unknown_field):
+        TaskAgentDecision.model_validate(payload)

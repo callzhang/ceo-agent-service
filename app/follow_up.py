@@ -347,11 +347,40 @@ def _defer_follow_up_for_agent_review(
     dingtalk_link = (
         store.get_active_work_todo_dingtalk_link(todo.id) if todo is not None else None
     )
+    existing_check = _json_dict(draft.evidence_check_json)
+    repair_source_ref = ""
+    if (
+        reason == "stale_follow_up_requires_agent_review"
+        and draft.suppressed_reason == reason
+    ):
+        repair_source_ref = str(existing_check.get("repair_source_ref") or "").strip()
+    if reason == "stale_follow_up_requires_agent_review" and not repair_source_ref:
+        revision = json.dumps(
+            {
+                "draft_id": draft.id,
+                "todo_id": draft.todo_id,
+                "owner_user_id": draft.owner_user_id,
+                "target_kind": draft.target_kind,
+                "target_conversation_id": draft.target_conversation_id,
+                "question_text": draft.question_text,
+                "scheduled_at": draft.scheduled_at,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        repair_revision = uuid5(
+            NAMESPACE_URL,
+            f"ceo-agent-service:follow-up-repair:{revision}",
+        )
+        repair_source_ref = f"follow-up-repair:{draft.id}:{repair_revision}"
+    if not repair_source_ref:
+        repair_source_ref = f"follow-up-repair:{draft.id}"
     work_item = WorkItem.model_validate(
         {
             "source": {
                 "type": "follow_up_completion_check",
-                "ref": f"follow-up-repair:{draft.id}",
+                "ref": repair_source_ref,
                 "title": f"Follow-up repair #{draft.id}",
                 "conversation_id": draft.target_conversation_id,
                 "conversation_title": "",
@@ -431,7 +460,10 @@ def _defer_follow_up_for_agent_review(
         draft,
         now=now,
         reason=reason,
-        detail={"agent_review_enqueued": True},
+        detail={
+            "agent_review_enqueued": True,
+            "repair_source_ref": repair_source_ref,
+        },
     )
 
 

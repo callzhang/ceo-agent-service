@@ -166,6 +166,16 @@ def _memory_context():
     }
 
 
+def _owner_evidence(user_id="owner-1", name="Alex", source="reply_attempt:1"):
+    return {
+        "user_id": user_id,
+        "name": name,
+        "source": source,
+        "reason": "The source explicitly assigns this owner.",
+        "description": "The stable owner identity is verified by the cited source.",
+    }
+
+
 def _follow_up_draft_payload(**overrides):
     payload = {
         "title": "确认项目边界",
@@ -189,6 +199,8 @@ def _follow_up_draft_payload(**overrides):
             "sensitive": False,
             "reason": "普通项目进展确认",
             "owner_evidence": {
+                "user_id": "owner-1",
+                "name": "Alex",
                 "source": "reply_attempt:1",
                 "reason": "来源消息明确说明 owner 是 Alex。",
                 "description": "售前群消息写明售前知识库需要补齐来源链接，owner 是 Alex。",
@@ -456,6 +468,11 @@ def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
                 "needs_derek_attention": False,
                 "owner_user_id": "02412744671048909",
                 "owner_name": "Ming Hu(胡明)/运维",
+                "owner_evidence": _owner_evidence(
+                    "02412744671048909",
+                    "Ming Hu(胡明)/运维",
+                    "reply_attempt:1992",
+                ),
                 "related_people": [],
                 "goal": "完成海外数据合规和中美开发隔离闭环。",
                 "background": "Lily反馈该P0事项应由胡明和运维负责，不能继续追Lily。",
@@ -484,6 +501,11 @@ def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
                     "title": "确认海外数据合规 P0 当前状态与真实 owner 分工",
                     "owner_user_id": "02412744671048909",
                     "owner_name": "Ming Hu(胡明)",
+                    "owner_evidence": _owner_evidence(
+                        "02412744671048909",
+                        "Ming Hu(胡明)",
+                        "reply_attempt:1992",
+                    ),
                     "status": "open",
                     "priority": "P0",
                     "completion_evidence": None,
@@ -739,6 +761,7 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
                 "needs_derek_attention": False,
                 "owner_user_id": "owner-1",
                 "owner_name": "Alex",
+                "owner_evidence": _owner_evidence(),
                 "related_people": [],
                 "goal": "沉淀售前材料",
                 "background": "售前知识库项目。",
@@ -765,6 +788,7 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
                     "description": "基于售前群 2026-06-07 的讨论，Alex 需要补齐售前知识库材料来源链接，写清每份材料对应的客户场景、缺口 owner 和可验收的完成状态。",
                     "owner_user_id": "owner-1",
                     "owner_name": "Alex",
+                    "owner_evidence": _owner_evidence(),
                     "status": "open",
                     "priority": "P1",
                     "next_follow_up_at": "2026-06-10 09:00:00",
@@ -937,6 +961,11 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
                 "needs_derek_attention": False,
                 "owner_user_id": "02412744671048909",
                 "owner_name": "Ming Hu(胡明)/运维",
+                "owner_evidence": _owner_evidence(
+                    "02412744671048909",
+                    "Ming Hu(胡明)/运维",
+                    "reply_attempt:1992",
+                ),
                 "related_people": [],
                 "goal": "",
                 "background": "Lily反馈该P0事项由胡明和运维负责，不能继续追Lily。",
@@ -964,6 +993,11 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
                     "title": "确认海外数据合规 P0 当前状态与真实 owner 分工",
                     "owner_user_id": "02412744671048909",
                     "owner_name": "Ming Hu(胡明)",
+                    "owner_evidence": _owner_evidence(
+                        "02412744671048909",
+                        "Ming Hu(胡明)",
+                        "reply_attempt:1992",
+                    ),
                     "status": "open",
                     "priority": "P0",
                     "deadline_at": "2026-06-28T23:00:00+08:00",
@@ -1035,6 +1069,9 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
         title="将唐华 L5/对外总监 title 的 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
         owner_name="邹婧玮(Mina 邹)",
+        owner_evidence_json=json.dumps(
+            _owner_evidence("mina-user-1", "邹婧玮(Mina 邹)")
+        ),
         status="open",
         priority="P1",
         deadline_at="2026-07-03 18:00:00",
@@ -1203,6 +1240,9 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
         title="整理本周最需要改的3场会议",
         owner_user_id="mina-user-1",
         owner_name="邹婧玮(Mina 邹)",
+        owner_evidence_json=json.dumps(
+            _owner_evidence("mina-user-1", "邹婧玮(Mina 邹)")
+        ),
         status="open",
         priority="P1",
         deadline_at="2026-07-17T18:00:00+08:00",
@@ -1258,6 +1298,7 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
                     "action": "keep_open",
                     "reason": "保留跟进，但按 Mina 的反馈更新问题上下文。",
                     "evidence_check": {"source": "reply_attempt:2704"},
+                    "next_due_at": "2026-07-17T10:00:00+08:00",
                 }
             ],
             "update_summary": "按 Mina 反馈更新待办上下文。",
@@ -1273,6 +1314,7 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
         work_item=_work_item(project_name="会议治理"),
         decision=decision,
         memory_recall_attempted=True,
+        now="2026-07-16 01:00:00",
     )
 
     follow_up = store.get_follow_up_draft(follow_up_id)
@@ -1351,6 +1393,52 @@ def test_follow_up_change_reschedule_requires_next_due_at(tmp_path):
     assert drafts[0].scheduled_at == ""
 
 
+@pytest.mark.parametrize(
+    ("next_due_at", "now", "error"),
+    [
+        ("", "2026-07-16 01:00:00", "required for keep_open"),
+        (
+            "2026-07-16T20:00:00+08:00",
+            "2026-07-16 01:00:00",
+            "within local work hours",
+        ),
+        (
+            "2026-07-16T09:00:00+08:00",
+            "2026-07-16 02:00:00",
+            "must be in the future",
+        ),
+    ],
+)
+def test_follow_up_keep_open_requires_future_work_hours_schedule(
+    tmp_path,
+    next_due_at,
+    now,
+    error,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Schedule validation")
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        status="draft",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="keep_open",
+        next_due_at=next_due_at,
+    )
+
+    with pytest.raises(ValueError, match=error):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+            now=now,
+        )
+
+
 def test_follow_up_change_reassign_requires_owner_identity(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
@@ -1426,6 +1514,7 @@ def test_apply_decision_creates_dingtalk_todo_for_high_confidence_todo(
                     "title": "给客户同步验收 ETA",
                     "owner_user_id": "owner-1",
                     "owner_name": "Alex",
+                    "owner_evidence": _owner_evidence(),
                     "status": "open",
                     "priority": "P1",
                     "deadline_at": "2026-07-01 18:00:00",
@@ -1498,6 +1587,9 @@ def test_apply_decision_creates_dingtalk_todo_for_updated_todo(
                     "title": "给客户同步最新验收 ETA",
                     "owner_user_id": "owner-2",
                     "owner_name": "Mina",
+                    "owner_evidence": _owner_evidence(
+                        "owner-2", "Mina", "reply_attempt:owner-change"
+                    ),
                     "deadline_at": "2026-07-02 18:00:00",
                 }
             ],
@@ -1856,6 +1948,7 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
                     "title": "确认项目边界",
                     "owner_user_id": "owner-1",
                     "owner_name": "Alex",
+                    "owner_evidence": _owner_evidence(),
                     "status": "open",
                     "priority": "P1",
                     "follow_up_question": "项目目标和 owner 是否确认？",
@@ -1897,6 +1990,8 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
         "sensitive": False,
         "reason": "普通项目进展确认",
         "owner_evidence": {
+            "user_id": "owner-1",
+            "name": "Alex",
             "source": "reply_attempt:1",
             "reason": "来源消息明确说明 owner 是 Alex。",
             "description": "售前群消息写明售前知识库需要补齐来源链接，owner 是 Alex。",
@@ -1922,6 +2017,7 @@ def test_follow_up_draft_scheduled_after_hours_moves_to_next_workday(tmp_path):
                     "title": "确认项目边界",
                     "owner_user_id": "owner-1",
                     "owner_name": "Alex",
+                    "owner_evidence": _owner_evidence(),
                     "status": "open",
                     "priority": "P1",
                     "next_follow_up_at": "2026-07-04T21:30:00+08:00",
@@ -2022,6 +2118,9 @@ def test_service_does_not_rejudge_agent_owner_evidence_from_message_text(tmp_pat
                     "title": "确认王东翠工商变更真实 owner",
                     "owner_user_id": "owner-1",
                     "owner_name": "刘瑞安",
+                    "owner_evidence": _owner_evidence(
+                        "owner-1", "刘瑞安", "dws_contact:owner-1"
+                    ),
                     "status": "open",
                     "priority": "P1",
                     "follow_up_question": "王东翠工商变更真实 owner 是谁？",
@@ -2054,6 +2153,8 @@ def test_service_does_not_rejudge_agent_owner_evidence_from_message_text(tmp_pat
                         "sensitive": False,
                         "reason": "直接确认真实 owner",
                         "owner_evidence": {
+                            "user_id": "owner-1",
+                            "name": "刘瑞安",
                             "source": "dws_contact:owner-1",
                             "reason": "通讯录唯一匹配刘瑞安，但低可信听记仍不能直接私聊。",
                             "description": "只确认到刘瑞安的 userId，未证明该事项可以从听记直接私聊追问。",
@@ -2081,6 +2182,314 @@ def test_service_does_not_rejudge_agent_owner_evidence_from_message_text(tmp_pat
     drafts = store.list_follow_up_drafts(statuses=("draft",))
     assert len(drafts) == 1
     assert drafts[0].owner_user_id == "owner-1"
+
+
+def test_project_owner_create_rejects_missing_evidence_before_persistence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "Owner validation",
+                "owner_user_id": "uid-1",
+                "owner_name": "Display One",
+                "memory_context": _memory_context(),
+            },
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(ValueError, match="project.owner_evidence"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+    assert store.list_work_projects() == []
+
+
+def test_project_owner_create_persists_coherent_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    evidence = _owner_evidence("uid-1", "Display One")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "Owner validation",
+                "owner_user_id": "uid-1",
+                "owner_name": "Display One",
+                "owner_evidence": evidence,
+                "memory_context": _memory_context(),
+            },
+            "memory_recall_used": True,
+        }
+    )
+
+    project_id = apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    project = store.get_work_project(project_id)
+    assert project is not None
+    assert json.loads(project.owner_evidence_json) == evidence
+
+
+def test_todo_owner_update_rejects_cross_record_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Owner validation")
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Validate owner",
+        owner_user_id="uid-old",
+        owner_name="Display Old",
+        owner_evidence_json=json.dumps(
+            _owner_evidence("uid-old", "Display Old")
+        ),
+        status="open",
+        priority="P1",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "Owner validation",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "owner_user_id": "uid-new",
+                    "owner_name": "Display New",
+                    "owner_evidence": {
+                        "records": [
+                            _owner_evidence("uid-new", "Display Other"),
+                            _owner_evidence("uid-other", "Display New"),
+                        ],
+                        "source": "verified resolution set",
+                        "reason": "candidate records",
+                        "description": "No single record supports both fields.",
+                    },
+                }
+            ],
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(ValueError, match="does not support assigned owner"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+    assert store.get_work_todo(todo_id).owner_user_id == "uid-old"
+
+
+def test_todo_owner_update_persists_coherent_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Owner validation")
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Validate owner",
+        status="open",
+        priority="P1",
+    )
+    evidence = _owner_evidence("uid-new", "Display New")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "Owner validation",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "owner_user_id": "uid-new",
+                    "owner_name": "Display New",
+                    "owner_evidence": evidence,
+                }
+            ],
+            "memory_recall_used": True,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.owner_user_id == "uid-new"
+    assert json.loads(todo.owner_evidence_json) == evidence
+
+
+def test_unchanged_todo_owner_requires_persisted_verified_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Owner validation")
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Validate owner",
+        owner_user_id="uid-1",
+        owner_name="Display One",
+        status="open",
+        priority="P1",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "Owner validation",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "owner_user_id": "uid-1",
+                    "owner_name": "Display One",
+                }
+            ],
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(ValueError, match="todo_change.owner_evidence"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+
+def test_unchanged_todo_owner_reuses_persisted_verified_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Owner validation")
+    evidence = _owner_evidence("uid-1", "Display One")
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Validate owner",
+        owner_user_id="uid-1",
+        owner_name="Display One",
+        owner_evidence_json=json.dumps(evidence),
+        status="open",
+        priority="P1",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "Owner validation",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "owner_user_id": "uid-1",
+                    "owner_name": "Display One",
+                    "description": "Owner reconfirmed the current plan.",
+                }
+            ],
+            "memory_recall_used": True,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.description == "Owner reconfirmed the current plan."
+    assert json.loads(todo.owner_evidence_json) == evidence
+
+
+def test_follow_up_reassign_rejects_missing_evidence_before_update(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Owner validation")
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="uid-old",
+        owner_name="Display Old",
+        status="sent",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="reassign",
+        owner_user_id="uid-new",
+        owner_name="Display New",
+    )
+
+    with pytest.raises(ValueError, match="follow_up_change.owner_evidence"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+    assert store.get_follow_up_draft(follow_up_id).owner_user_id == "uid-old"
+
+
+def test_follow_up_reassign_accepts_coherent_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Owner validation")
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="uid-old",
+        owner_name="Display Old",
+        status="sent",
+    )
+    evidence = _owner_evidence("uid-new", "Display New")
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="reassign",
+        owner_user_id="uid-new",
+        owner_name="Display New",
+    )
+    decision.follow_up_changes[0].owner_evidence = evidence
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    assert follow_up is not None
+    assert follow_up.owner_user_id == "uid-new"
+    assert json.loads(follow_up.evidence_check_json)["owner_evidence"] == evidence
 
 
 def test_follow_up_draft_requires_owner_evidence(tmp_path):
@@ -2367,7 +2776,7 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(
         ).fetchone()
     assert input_row[0] == "failed"
     assert "memory_recall tool event" in input_row[1]
-    assert run_row == (input_id, "task-session-1", "创建项目。", 1)
+    assert run_row is None
 
 
 def test_process_work_item_allows_memory_recall_runtime_failure_with_tool_event(
@@ -2716,7 +3125,7 @@ def test_process_work_item_failure_does_not_create_partial_project(tmp_path):
     assert input_row == ("failed",)
     assert project_count == (0,)
     assert update_count == (0,)
-    assert run_count == (1,)
+    assert run_count == (0,)
 
 
 def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):

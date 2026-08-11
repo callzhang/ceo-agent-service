@@ -1,7 +1,8 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
@@ -18,6 +19,7 @@ from app.task_models import (
     TodoStatus,
     WorkItem,
     WorkSummaryInput,
+    owner_identity_is_supported,
 )
 from app.task_retrieval import (
     render_candidate_prompt,
@@ -31,6 +33,7 @@ TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
 FOLLOW_UP_WORK_START_HOUR = 9
 FOLLOW_UP_WORK_END_HOUR = 18
+FOLLOW_UP_WORK_TZ = ZoneInfo("Asia/Shanghai")
 WORK_TRACKING_SKILL_PATH = repo_root() / "skills" / "ceo-work-tracking" / "SKILL.md"
 
 
@@ -317,13 +320,6 @@ def process_work_item(
             memory_issue=memory_issue,
         )
         codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
-        store.record_task_agent_run(
-            summary_input_id=work_input.id,
-            codex_session_id=codex_session_id,
-            decision_json=_json_dumps(decision.model_dump(mode="json")),
-            audit_summary=decision.update_summary,
-            memory_recall_used=decision.memory_recall_used,
-        )
         audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
         memory_recall_attempted = _audit_events_include_memory_recall(
             audit_tool_events
@@ -337,6 +333,21 @@ def process_work_item(
             audit_tool_events,
             memory_issue=memory_issue,
             memory_runtime_unavailable=memory_runtime_unavailable,
+        )
+        _validate_task_agent_decision(
+            decision,
+            memory_issue=memory_issue,
+            memory_recall_attempted=memory_recall_attempted,
+            memory_runtime_unavailable=memory_runtime_unavailable,
+            now=now,
+        )
+        _validate_owner_changes(store, decision)
+        store.record_task_agent_run(
+            summary_input_id=work_input.id,
+            codex_session_id=codex_session_id,
+            decision_json=_json_dumps(decision.model_dump(mode="json")),
+            audit_summary=decision.update_summary,
+            memory_recall_used=decision.memory_recall_used,
         )
         apply_task_agent_decision(
             store,
@@ -377,6 +388,15 @@ def apply_task_agent_decision(
     dws=None,
     now: str = "",
 ) -> int | None:
+    _validate_task_agent_decision(
+        decision,
+        memory_issue=memory_issue,
+        memory_recall_attempted=memory_recall_attempted,
+        memory_runtime_unavailable=memory_runtime_unavailable,
+        now=now,
+    )
+    _validate_owner_changes(store, decision)
+
     if record_run:
         store.record_task_agent_run(
             summary_input_id=summary_input_id,
@@ -385,12 +405,6 @@ def apply_task_agent_decision(
             audit_summary=decision.update_summary,
             memory_recall_used=decision.memory_recall_used,
         )
-    _validate_task_agent_decision(
-        decision,
-        memory_issue=memory_issue,
-        memory_recall_attempted=memory_recall_attempted,
-        memory_runtime_unavailable=memory_runtime_unavailable,
-    )
 
     if decision.action == "discard":
         return None
@@ -480,6 +494,7 @@ def _validate_task_agent_decision(
     memory_issue: str = "",
     memory_recall_attempted: bool = False,
     memory_runtime_unavailable: bool = False,
+    now: str = "",
 ) -> None:
     for todo_change in decision.todo_changes:
         if todo_change.action != "create" and todo_change.todo_id is None:
@@ -536,6 +551,14 @@ def _validate_task_agent_decision(
             raise ValueError(
                 "follow_up_change.next_due_at is required for reschedule"
             )
+        if change.action == "keep_open" and not (
+            change.next_due_at and change.next_due_at.strip()
+        ):
+            raise ValueError(
+                "follow_up_change.next_due_at is required for keep_open"
+            )
+        if change.action in {"reschedule", "keep_open"}:
+            _validate_future_follow_up_time(change.next_due_at or "", now=now)
         if change.action == "reassign" and not (
             (change.owner_user_id and change.owner_user_id.strip())
             or (change.owner_name and change.owner_name.strip())
@@ -574,6 +597,179 @@ def _require_evidence_fields(
     for field in fields:
         if not str(evidence.get(field) or "").strip():
             raise ValueError(f"{label}.{field} is required")
+
+
+def _validate_future_follow_up_time(value: str, *, now: str) -> None:
+    try:
+        scheduled = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("follow_up_change.next_due_at must be an ISO datetime") from exc
+    local_scheduled = (
+        scheduled.replace(tzinfo=FOLLOW_UP_WORK_TZ)
+        if scheduled.tzinfo is None
+        else scheduled.astimezone(FOLLOW_UP_WORK_TZ)
+    )
+    if local_scheduled.weekday() >= 5 or not (
+        FOLLOW_UP_WORK_START_HOUR
+        <= local_scheduled.hour
+        < FOLLOW_UP_WORK_END_HOUR
+    ):
+        raise ValueError("follow_up_change.next_due_at must be within local work hours")
+    if now.strip():
+        try:
+            current = datetime.fromisoformat(now.strip().replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("now must be an ISO datetime") from exc
+    else:
+        current = datetime.now(timezone.utc)
+    current_aware = (
+        current.replace(tzinfo=timezone.utc)
+        if current.tzinfo is None
+        else current.astimezone(timezone.utc)
+    )
+    if local_scheduled.astimezone(timezone.utc) <= current_aware:
+        raise ValueError("follow_up_change.next_due_at must be in the future")
+
+
+def _json_object(value: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _require_supported_owner(
+    *,
+    assigned: dict[str, object],
+    evidence: object,
+    label: str,
+) -> None:
+    if not any(str(value or "").strip() for value in assigned.values()):
+        return
+    _require_evidence_fields(
+        evidence,
+        label=label,
+        fields=("source", "reason", "description"),
+    )
+    if not owner_identity_is_supported(assigned, evidence):
+        raise ValueError(f"{label} does not support assigned owner identity")
+
+
+def _validate_owner_changes(store: AutoReplyStore, decision: TaskAgentDecision) -> None:
+    project = decision.project
+    if project is not None:
+        current_project = (
+            store.get_work_project(project.id)
+            if decision.action == "update_project" and project.id is not None
+            else None
+        )
+        final_project_owner = {
+            "owner_user_id": (
+                project.owner_user_id
+                if "owner_user_id" in project.model_fields_set
+                else current_project.owner_user_id if current_project is not None else ""
+            ),
+            "owner_name": (
+                project.owner_name
+                if "owner_name" in project.model_fields_set
+                else current_project.owner_name if current_project is not None else ""
+            ),
+        }
+        project_owner_changed = current_project is None or final_project_owner != {
+            "owner_user_id": current_project.owner_user_id,
+            "owner_name": current_project.owner_name,
+        }
+        project_evidence = project.owner_evidence
+        if not project_evidence and not project_owner_changed and current_project is not None:
+            project_evidence = _json_object(current_project.owner_evidence_json)
+        _require_supported_owner(
+            assigned=final_project_owner,
+            evidence=project_evidence,
+            label="project.owner_evidence",
+        )
+
+    for change in decision.todo_changes:
+        current_todo = (
+            store.get_work_todo(change.todo_id)
+            if change.todo_id is not None and change.action != "create"
+            else None
+        )
+        if change.action == "create" or {
+            "owner_user_id",
+            "owner_name",
+            "owner_evidence",
+        } & change.model_fields_set:
+            final_todo_owner = {
+                "owner_user_id": (
+                    change.owner_user_id
+                    if "owner_user_id" in change.model_fields_set
+                    else current_todo.owner_user_id if current_todo is not None else ""
+                ),
+                "owner_name": (
+                    change.owner_name
+                    if "owner_name" in change.model_fields_set
+                    else current_todo.owner_name if current_todo is not None else ""
+                ),
+            }
+            todo_owner_changed = current_todo is None or final_todo_owner != {
+                "owner_user_id": current_todo.owner_user_id,
+                "owner_name": current_todo.owner_name,
+            }
+            todo_evidence = change.owner_evidence
+            if not todo_evidence and not todo_owner_changed and current_todo is not None:
+                todo_evidence = _json_object(current_todo.owner_evidence_json)
+            _require_supported_owner(
+                assigned=final_todo_owner,
+                evidence=todo_evidence,
+                label="todo_change.owner_evidence",
+            )
+
+    for draft in decision.follow_up_drafts:
+        evidence = draft.risk_check.get("owner_evidence")
+        _require_supported_owner(
+            assigned={
+                "owner_user_id": draft.owner_user_id,
+                "owner_name": draft.owner_name,
+            },
+            evidence=evidence,
+            label="follow_up_draft.risk_check.owner_evidence",
+        )
+        for index, owner in enumerate(draft.owners):
+            _require_supported_owner(
+                assigned=owner,
+                evidence=evidence,
+                label=f"follow_up_draft.owners[{index}].owner_evidence",
+            )
+
+    for change in decision.follow_up_changes:
+        if change.action != "reassign":
+            continue
+        current = store.get_follow_up_draft(change.follow_up_id)
+        if current is None:
+            continue
+        final_owner = {
+            "owner_user_id": (
+                change.owner_user_id
+                if change.owner_user_id is not None
+                else current.owner_user_id
+            ),
+            "owner_name": (
+                change.owner_name if change.owner_name is not None else current.owner_name
+            ),
+        }
+        changed = final_owner != {
+            "owner_user_id": current.owner_user_id,
+            "owner_name": current.owner_name,
+        }
+        evidence = change.owner_evidence
+        if not evidence and not changed:
+            evidence = _json_object(current.risk_check_json).get("owner_evidence")
+        _require_supported_owner(
+            assigned=final_owner,
+            evidence=evidence,
+            label="follow_up_change.owner_evidence",
+        )
 
 
 def _validate_memory_recall_tool_event(
@@ -660,6 +856,7 @@ def _project_values(project, only_fields: set[str] | None = None) -> dict[str, o
         "needs_derek_attention": "needs_derek_attention",
         "owner_user_id": "owner_user_id",
         "owner_name": "owner_name",
+        "owner_evidence": "owner_evidence_json",
         "related_people": "related_people_json",
         "goal": "goal",
         "background": "background",
@@ -681,6 +878,7 @@ def _project_values(project, only_fields: set[str] | None = None) -> dict[str, o
             "tags",
             "related_people",
             "memory_context",
+            "owner_evidence",
             "facts",
             "source_conversations",
         }:
@@ -737,6 +935,7 @@ def _todo_values(
         "description",
         "owner_user_id",
         "owner_name",
+        "owner_evidence",
         "status",
         "priority",
         "deadline_at",
@@ -751,7 +950,10 @@ def _todo_values(
         if value not in ("", None):
             if field == "next_follow_up_at":
                 value = _normalize_follow_up_time(str(value))
-            values[field] = _enum_value(value)
+            if field == "owner_evidence":
+                values["owner_evidence_json"] = _json_dumps(value)
+            else:
+                values[field] = _enum_value(value)
     if (
         only_fields is None or "completion_evidence" in only_fields
     ) and change.completion_evidence is not None:
@@ -837,6 +1039,7 @@ def _apply_follow_up_change(
         "action": change.action,
         "reason": change.reason,
         "evidence": change.evidence_check,
+        "owner_evidence": change.owner_evidence,
     }
     values: dict[str, object] = {
         "evidence_check_json": _json_dumps(evidence),
@@ -867,7 +1070,9 @@ def _apply_follow_up_change(
         values["reaction_status"] = "redirect_owner"
         values["reaction_summary"] = change.reason
     elif change.action == "keep_open":
+        values["status"] = "draft"
         values["suppressed_reason"] = ""
+        values["scheduled_at"] = change.next_due_at or ""
         values["reaction_summary"] = change.reason
         if change.todo_id is not None:
             todo = store.get_work_todo(change.todo_id)

@@ -1199,6 +1199,7 @@ class AutoReplyStore:
                     needs_derek_attention integer not null default 0,
                     owner_user_id text not null default '',
                     owner_name text not null default '',
+                    owner_evidence_json text not null default '{}',
                     related_people_json text not null default '[]',
                     goal text not null default '',
                     background text not null default '',
@@ -1223,6 +1224,7 @@ class AutoReplyStore:
                     description text not null default '',
                     owner_user_id text not null default '',
                     owner_name text not null default '',
+                    owner_evidence_json text not null default '{}',
                     status text not null default 'open',
                     priority text not null default 'none',
                     deadline_at text not null default '',
@@ -1610,11 +1612,21 @@ class AutoReplyStore:
             }
             for column, definition in (
                 ("description", "text not null default ''"),
+                ("owner_evidence_json", "text not null default '{}'"),
             ):
                 if column not in work_todo_columns:
                     db.execute(
                         f"alter table work_todos add column {column} {definition}"
                     )
+            work_project_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(work_projects)").fetchall()
+            }
+            if "owner_evidence_json" not in work_project_columns:
+                db.execute(
+                    "alter table work_projects add column "
+                    "owner_evidence_json text not null default '{}'"
+                )
             work_todo_dingtalk_link_columns = {
                 row["name"]
                 for row in db.execute(
@@ -11001,6 +11013,7 @@ class AutoReplyStore:
             "needs_derek_attention",
             "owner_user_id",
             "owner_name",
+            "owner_evidence_json",
             "related_people_json",
             "goal",
             "background",
@@ -11041,6 +11054,7 @@ class AutoReplyStore:
             "needs_derek_attention",
             "owner_user_id",
             "owner_name",
+            "owner_evidence_json",
             "related_people_json",
             "goal",
             "background",
@@ -11141,6 +11155,7 @@ class AutoReplyStore:
             "description",
             "owner_user_id",
             "owner_name",
+            "owner_evidence_json",
             "status",
             "priority",
             "deadline_at",
@@ -11170,6 +11185,7 @@ class AutoReplyStore:
             "description",
             "owner_user_id",
             "owner_name",
+            "owner_evidence_json",
             "status",
             "priority",
             "deadline_at",

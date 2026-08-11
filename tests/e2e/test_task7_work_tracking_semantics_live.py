@@ -14,7 +14,11 @@ import pytest
 
 from app.codex_runner import CodexRunner
 from app.process_runner import run_process_with_idle_timeout
-from app.task_models import TaskAgentDecision
+from app.task_models import (
+    TaskAgentDecision,
+    owner_identity_evidence_records,
+    owner_identity_record,
+)
 from tests.support.native_codex_read_fixture import (
     assert_isolated_read_only_fixture_command,
     isolate_read_only_fixture_command,
@@ -48,37 +52,13 @@ def _follow_up_changes(decision: TaskAgentDecision, *actions: str):
     return [change for change in decision.follow_up_changes if change.action in actions]
 
 
-IDENTITY_FIELD_ALIASES = {
-    "user_id": "user_id",
-    "owner_user_id": "user_id",
-    "name": "display_name",
-    "display_name": "display_name",
-    "owner_name": "display_name",
-    "open_dingtalk_id": "open_dingtalk_id",
-}
-
-
-def _identity_record(values: dict[str, object]) -> frozenset[tuple[str, str]]:
-    record: dict[str, str] = {}
-    for source_field, canonical_field in IDENTITY_FIELD_ALIASES.items():
-        value = str(values.get(source_field) or "").strip()
-        if not value:
-            continue
-        if canonical_field == "display_name":
-            value = value.casefold()
-        if canonical_field in record:
-            assert record[canonical_field] == value
-        record[canonical_field] = value
-    return frozenset(record.items())
-
-
 def _assigned_owner_identities(
     decision: TaskAgentDecision,
 ) -> list[frozenset[tuple[str, str]]]:
     assigned: list[frozenset[tuple[str, str]]] = []
 
     def add(values: dict[str, object]) -> None:
-        record = _identity_record(values)
+        record = owner_identity_record(values)
         if record:
             assigned.append(record)
 
@@ -118,17 +98,22 @@ def _assigned_owner_identities(
 def _supported_owner_identities(
     current_data: dict[str, object],
 ) -> list[frozenset[tuple[str, str]]]:
-    evidence_items: list[object] = []
-    for key in ("owner_evidence", "verified_owner_resolution"):
-        value = current_data.get(key, [])
-        evidence_items.extend(value if isinstance(value, list) else [value])
-    supported: list[frozenset[tuple[str, str]]] = []
-    for item in evidence_items:
-        if isinstance(item, dict):
-            record = _identity_record(item)
-            if record:
-                supported.append(record)
-    return supported
+    return owner_identity_evidence_records(
+        [
+            *(
+                current_data.get("owner_evidence", [])
+                if isinstance(current_data.get("owner_evidence", []), list)
+                else [current_data.get("owner_evidence")]
+            ),
+            *(
+                current_data.get("verified_owner_resolution", [])
+                if isinstance(
+                    current_data.get("verified_owner_resolution", []), list
+                )
+                else [current_data.get("verified_owner_resolution")]
+            ),
+        ]
+    )
 
 
 def _assert_assigned_owners_are_supported(

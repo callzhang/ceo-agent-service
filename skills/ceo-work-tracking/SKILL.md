@@ -76,7 +76,8 @@ Load `dingtalk-todo` for DingTalk TODO operations, `task-management` for local t
   reevaluation, read its current project, TODO, external status, and replies;
   suppress it only when those facts show the old question is no longer
   appropriate. The service may enqueue reevaluation but cannot decide the
-  semantic outcome.
+  semantic outcome. If the decision keeps the follow-up open, provide a new
+  future work-hours schedule; the revised draft is a new repair revision.
 - `sensitive_follow_up_uses_verified_direct_target`: use only the verified
   direct identity selected in the decision; never convert a group target to a
   direct target in service code.
