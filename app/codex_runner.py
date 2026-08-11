@@ -17,30 +17,14 @@ CODEX_DEVELOPER_INSTRUCTIONS_PREFIX = (
     "answering. Return only the requested JSON."
 )
 DWS_MATERIAL_READING_INSTRUCTIONS = """
-DingTalk material reading
+DingTalk material access
 
-- When judgment depends on DingTalk documents, AI minutes, or files, inspect material before deciding.
-- Use DWS read-only commands with `--timeout 900 --format json` so unstable network reads can wait up to fifteen minutes.
-- Docs: `dws doc info --node <URL> --format json`; if online doc and content needed, `dws doc read --node <URL> --format json`.
-- Minutes: `dws minutes get info --id <MINUTES_ID> --format json`.
-- Ordinary files: use relevant DWS file/drive read/download capability only when text context is insufficient.
+- Use the exact read command supplied in the task context without rewriting or substituting it.
+- Operation discovery and syntax belong to the loaded operation Skill.
 - Never run `dws auth login`, `dws auth reset`, `dws auth logout`, or any command that asks for interactive/browser authorization.
 - If DWS reports not_authenticated, not authenticated, exit code 2, or a login/session problem, classify it as a DWS login/tool issue, not as missing material from the sender.
 - If DWS reports AGENT_CODE_NOT_EXISTS, openBrowser, personalAuthorization, PAT permission failure, or a CLI authorization page, stop that tool path and classify it as DWS authorization/configuration unavailable; do not retry the command and do not start a login flow.
-- If permission fails, state the missing permission/material and do not invent contents.
-- If a required DWS read still fails and no other material supports the judgment, return an error envelope whose audit summary starts with `dws_transient_dependency_unavailable:`; do not send a refusal, handoff, clarification, or unsupported answer.
-- If some materials fail but others are readable, use readable materials and mention limitation.
-- record why each material command was used.
 - Do not expose tokens, cookies, OAuth codes, signed URLs, local credential paths, or raw secret-bearing commands.
-
-DingTalk mail handling
-
-- A truncated mail card or quoted mail preview is only a locator. Do not treat its visible excerpt as the complete message and do not ask the sender to paste the body before trying mail lookup.
-- Start with `dws mail mailbox list --format json`, choose the mailbox matching the principal, then locate the original with `dws mail message search --email <MAILBOX> --query '<KQL>' --format json` using the quoted subject and sender.
-- Read the complete original with `dws mail message get --email <MAILBOX> --id <MESSAGE_ID> --format json`. Inspect linked documents or sheets when the requested approval depends on them.
-- Before replying, inspect the current mail thread or sent state to avoid duplicate replies.
-- When the trigger explicitly authorizes replying and the review is complete, emit one `dws_mail_reply` system action containing mailbox, original message_id, reply subject, and reply content, plus a normal DingTalk acknowledgement in user_response.text.
-- The worker owns externally visible mail delivery and retry deduplication: do not execute `dws mail message reply` directly from the decision agent.
 """.strip()
 XIAOQING_INTERVIEW_READING_INSTRUCTIONS = """
 Xiaoqing interview material reading

@@ -4916,6 +4916,279 @@ def test_unavailable_decisive_material_returns_dependency_failure_without_invent
     assert attempt.send_error == "document_dependency_unavailable"
 
 
+def _task5_operation_skill_fixture(name: str) -> str:
+    if name in {"dingtalk-shared", "dingtalk-chat"}:
+        return _triage_operation_skill_fixture(name)
+    if name == "dingtalk-minutes":
+        return """---
+name: dingtalk-minutes
+description: Representative DingTalk Minutes operation fixture.
+metadata:
+  requires: dingtalk-shared
+---
+# DingTalk Minutes Operations
+
+Load `dingtalk-shared`. Read meeting identity, summary, tasks, and transcript
+through their reviewed Minutes operations. Read transcript only when needed.
+"""
+    if name == "dingtalk-mail":
+        return """---
+name: dingtalk-mail
+description: Representative DingTalk mail operation fixture.
+metadata:
+  requires: dingtalk-shared
+---
+# DingTalk Mail Operations
+
+Load `dingtalk-shared`. Resolve a mailbox, search the complete original, read
+the thread and sent state, and reread them after any reviewed mail action.
+"""
+    if name == "dingtalk-doc":
+        return _document_operation_skill_fixture(name)
+    raise AssertionError(f"unexpected Task 5 operation Skill fixture: {name}")
+
+
+def _task5_installed_skill_paths(
+    tmp_path: Path,
+    monkeypatch,
+    business_skill: str,
+    operation_skills: tuple[str, ...],
+) -> dict[str, Path]:
+    skills_root = tmp_path / "installed-skills"
+    skill_paths: dict[str, Path] = {}
+    for name in (business_skill, *operation_skills):
+        path = skills_root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        content = (
+            (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
+            if name == business_skill
+            else _task5_operation_skill_fixture(name)
+        )
+        path.write_text(content, encoding="utf-8")
+        skill_paths[name] = path.resolve()
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (skills_root,))
+    return skill_paths
+
+
+class Task5BehaviorProtocolExecutor(Task4BehaviorProtocolExecutor):
+    def __init__(
+        self,
+        skill_paths: dict[str, Path],
+        scenario: Task4BehaviorScenario,
+        evidence_commands: tuple[str, ...],
+        review_text: str,
+    ) -> None:
+        super().__init__(skill_paths, scenario)
+        self.evidence_commands = evidence_commands
+        self.review_text = review_text
+
+    def _evidence_records(
+        self,
+        prompt: str,
+        *,
+        prefix: str,
+    ) -> list[dict[str, object]]:
+        records: list[dict[str, object]] = []
+        for index, command in enumerate(self.evidence_commands):
+            self.read_commands.append(command)
+            output = {
+                "source": self.scenario.name,
+                "read_index": index,
+                "content": (
+                    "equivalent reply already present in the current sent thread"
+                    if self.scenario.name == "duplicate_mail_reply"
+                    else "verified current evidence"
+                ),
+            }
+            records.extend(
+                (
+                    _reviewed_cli_event(
+                        "item.started",
+                        f"{prefix}-{self.scenario.name}-read-{index}",
+                        command,
+                    ),
+                    _reviewed_cli_event(
+                        "item.completed",
+                        f"{prefix}-{self.scenario.name}-read-{index}",
+                        command,
+                        output=json.dumps(output),
+                    ),
+                )
+            )
+        return records
+
+
+def test_meeting_work_uses_native_consumer_audit_skill_receipts_and_rereads(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task5_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-meeting-work",
+        ("dingtalk-shared", "dingtalk-minutes", "dingtalk-chat"),
+    )
+    minutes_url = "https://shanji.dingtalk.com/app/transcribes/minutes-1"
+    trigger = _message(f"Review this silent meeting and deliver actions: {minutes_url}")
+    commands = (
+        "dws minutes get info --id minutes-1 --format json",
+        "dws minutes get summary --id minutes-1 --format json",
+        "dws minutes get todos --id minutes-1 --format json",
+        "dws minutes get transcription --id minutes-1 --format json",
+    )
+    meeting_text = "@Alex owns the rollout plan. @Mina receives the risk thresholds."
+    executor = Task5BehaviorProtocolExecutor(
+        skill_paths,
+        Task4BehaviorScenario(
+            name="silent_meeting_actions",
+            outcome="proposal",
+            summary="The silent meeting assigns two concrete follow-ups.",
+            read_mode="meeting",
+        ),
+        commands,
+        meeting_text,
+    )
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    assert executor.consumer_loaded_skills == list(skill_paths)
+    assert executor.audit_loaded_skills == list(skill_paths)
+    assert executor.read_commands == list(commands) * 2
+    assert "@Alex owns" in meeting_text
+    assert "@Mina receives" in meeting_text
+    assert not meeting_text.startswith("@Alex @Mina")
+    assert _task4_completed_operations(runs[0]) == [
+        "minutes get info",
+        "minutes get summary",
+        "minutes get todos",
+        "minutes get transcription",
+    ]
+    assert executor.write_operations == ["chat message send"]
+    assert executor.external_readbacks == [
+        "dws chat message list --group cid-1 --time 2026-07-29"
+    ]
+
+
+def test_mail_reply_draft_uses_native_consumer_audit_receipts_and_complete_thread(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task5_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-mail-review",
+        ("dingtalk-shared", "dingtalk-mail", "dingtalk-doc", "dingtalk-chat"),
+    )
+    trigger = _message(
+        "Propose a reply here after review; do not send mail: "
+        "[Mail card] Subject: Contract approval; preview: Please approve..."
+    )
+    commands = (
+        "dws mail mailbox list --format json",
+        "dws mail message search --email principal@example.test --query 'subject:Contract approval' --format json",
+        "dws mail message get --email principal@example.test --id mail-1 --format json",
+        "dws mail message thread --email principal@example.test --id mail-1 --format json",
+        "dws doc info --node https://alidocs.dingtalk.com/i/nodes/contract-1 --format json",
+        "dws doc read --node https://alidocs.dingtalk.com/i/nodes/contract-1 --format json",
+    )
+    executor = Task5BehaviorProtocolExecutor(
+        skill_paths,
+        Task4BehaviorScenario(
+            name="authorized_complete_mail_review",
+            outcome="proposal",
+            summary="The complete current thread and linked contract support the reply.",
+            read_mode="mail",
+        ),
+        commands,
+        "Reviewed the complete thread and posted one requested reply draft.",
+    )
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    assert executor.consumer_loaded_skills == list(skill_paths)
+    assert executor.audit_loaded_skills == list(skill_paths)
+    assert executor.read_commands == list(commands) * 2
+    assert _task4_completed_operations(runs[0]) == [
+        "mail mailbox list",
+        "mail message search",
+        "mail message get",
+        "mail message thread",
+        "doc info",
+        "doc read",
+    ]
+    assert executor.write_operations == ["chat message send"]
+    assert executor.external_readbacks == [
+        "dws chat message list --group cid-1 --time 2026-07-29"
+    ]
+    assert all(
+        "mail message reply" not in operation
+        for run in runs
+        for operation in _task4_completed_operations(run)
+    )
+
+
+def test_complete_mail_thread_suppresses_duplicate_reply_without_effect(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task5_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-mail-review",
+        ("dingtalk-shared", "dingtalk-mail"),
+    )
+    trigger = _message(
+        "Reply to this mail: [Mail card] Subject: Contract approval; preview: Please approve..."
+    )
+    commands = (
+        "dws mail mailbox list --format json",
+        "dws mail message search --email principal@example.test --query 'subject:Contract approval' --format json",
+        "dws mail message get --email principal@example.test --id mail-1 --format json",
+        "dws mail message thread --email principal@example.test --id mail-1 --format json",
+    )
+    executor = Task5BehaviorProtocolExecutor(
+        skill_paths,
+        Task4BehaviorScenario(
+            name="duplicate_mail_reply",
+            outcome="no_action",
+            summary="The complete current thread already contains the equivalent reply.",
+            read_mode="mail",
+        ),
+        commands,
+        "This text must not be delivered.",
+    )
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    runs = _assert_task4_receipts_and_consumer_read_only(
+        worker,
+        skill_paths,
+        expected_roles=(AgentRole.CONSUMER,),
+    )
+    result = _task4_consumer_result(worker)
+    assert result["outcome"] == "no_action"
+    assert result["proposal"] is None
+    assert executor.read_commands == list(commands)
+    assert executor.write_operations == []
+    assert executor.external_readbacks == []
+    assert _task4_completed_operations(runs[0]) == [
+        "mail mailbox list",
+        "mail message search",
+        "mail message get",
+        "mail message thread",
+    ]
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "skipped"
+
+
 @pytest.mark.parametrize(
     ("oa_state", "raw_payload", "live_output", "attempt_status", "effectful"),
     [

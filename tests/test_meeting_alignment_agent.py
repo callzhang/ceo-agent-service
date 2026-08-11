@@ -13,6 +13,19 @@ from app.meeting_alignment_agent import (
 from app.meeting_alignment_models import MeetingSource
 
 
+@pytest.fixture(autouse=True)
+def _use_canonical_developer_prompt(monkeypatch):
+    monkeypatch.setenv(
+        "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH",
+        str(
+            Path(__file__).resolve().parents[1]
+            / "app"
+            / "defaults"
+            / "developer_prompt.md"
+        ),
+    )
+
+
 def source(*, participant_count: int = 3) -> MeetingSource:
     participants = [
         {"name": "Derek", "user_id": "derek"},
@@ -178,6 +191,15 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "不能改成 no_action" in prompt
     assert "真实 @" in prompt
     assert "放在对应的任务、问题或信息所在句子中" in prompt
+    assert "禁止在消息开头集中列一排 @ 人员" in prompt
+
+
+def test_prompt_keeps_each_participant_mention_adjacent_to_concrete_content():
+    prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="profile"
+    )
+
+    assert "每个真实 @ 都必须放在对应的任务、问题或信息所在句子中" in prompt
     assert "禁止在消息开头集中列一排 @ 人员" in prompt
 
 

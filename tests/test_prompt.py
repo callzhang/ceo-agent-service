@@ -810,13 +810,13 @@ def test_seed_prompt_delegates_calendar_rules_to_business_skills():
     assert "最具体适用的业务 Skill" in prompt
 
 
-def test_thread_prompt_requires_minutes_material_action_item_handling():
+def test_thread_prompt_delegates_minutes_handling_to_business_skill():
     prompt = ceo_agent_thread_prompt()
 
-    assert "静默会" in prompt
-    assert "AI 听记" in prompt
-    assert "处理事项" in prompt
-    assert "不能只总结会议" in prompt
+    assert "如果新消息或引用涉及“静默会”、AI 听记、会议纪要链接或会议材料" not in prompt
+    assert "涉及专业业务流程时" in prompt
+    assert "agent_cli.read_skill" in prompt
+    assert "最具体适用的业务 Skill" in prompt
 
 
 def test_thread_prompt_requires_candidate_context_lookup_before_clarifying():

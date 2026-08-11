@@ -29,6 +29,10 @@ def _isolate_memory_connector_env(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CEO_CODEX_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("CEO_CODEX_MODEL_REASONING_EFFORT", raising=False)
     monkeypatch.delenv("CEO_CODEX_PROFILE", raising=False)
+    monkeypatch.setenv(
+        "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH",
+        str(Path(__file__).resolve().parents[1] / "app" / "defaults" / "developer_prompt.md"),
+    )
 
 
 def _developer_instructions_arg(command: list[str]) -> str:
@@ -247,10 +251,11 @@ def test_codex_runner_blocks_reply_when_only_dws_material_read_fails(tmp_path: P
     assert len(runner.last_audit_tool_events) == 2
 
 
-def test_codex_developer_instructions_give_dws_reads_fifteen_minute_timeout():
+def test_codex_developer_instructions_leave_read_options_to_operation_skills():
     instructions = codex_developer_instructions()
 
-    assert "--timeout 900" in instructions
+    assert "--timeout 900" not in instructions
+    assert "Operation discovery and syntax belong to the loaded operation Skill" in instructions
 
 
 def test_codex_developer_instructions_require_xiaoqing_for_interview_links():
@@ -580,23 +585,23 @@ def test_codex_runner_does_not_forward_dws_oauth_override_env(
 def test_codex_developer_instructions_include_dws_material_reading_guidance():
     instructions = codex_developer_instructions()
 
-    assert "DingTalk material reading" in instructions
+    assert "DingTalk material access" in instructions
 
 
-def test_codex_developer_instructions_require_full_mail_lookup_and_structured_reply():
+def test_codex_developer_instructions_delegate_operation_syntax_to_skills():
     instructions = codex_developer_instructions()
 
-    assert "DingTalk mail handling" in instructions
-    assert "mailbox list" in instructions
-    assert "mail message search" in instructions
-    assert "mail message get" in instructions
-    assert "truncated mail card" in instructions
-    assert "dws_mail_reply" in instructions
-    assert "do not execute `dws mail message reply` directly" in instructions
-    assert "dws doc info --node" in instructions
-    assert "dws doc read --node" in instructions
-    assert "dws minutes get info --id" in instructions
-    assert "record why each material command was used" in instructions
+    assert "DingTalk mail handling" not in instructions
+    assert "mailbox list" not in instructions
+    assert "mail message search" not in instructions
+    assert "mail message get" not in instructions
+    assert "dws doc info --node" not in instructions
+    assert "dws doc read --node" not in instructions
+    assert "dws minutes get info --id" not in instructions
+    assert "Use the exact read command supplied in the task context" in instructions
+    assert "Operation discovery and syntax belong to the loaded operation Skill" in instructions
+    assert "classify it as a DWS login/tool issue" in instructions
+    assert "classify it as DWS authorization/configuration unavailable" in instructions
     assert "Do not expose tokens" in instructions
 
 
