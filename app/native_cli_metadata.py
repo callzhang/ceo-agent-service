@@ -608,6 +608,7 @@ def _argv_target_identifiers(argv: tuple[str, ...]) -> dict[str, str]:
             "conversation",
             "group",
             "email",
+            "from",
             "node",
             "url",
             "user",

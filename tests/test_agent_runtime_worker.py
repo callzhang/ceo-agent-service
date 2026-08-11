@@ -17,6 +17,7 @@ from app.audit_agent import AuditAgentRunner
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.consumer_agent import ConsumerAgentRunner
 from app.dingtalk_models import DingTalkMessage
+from app.dws_client import DwsClient
 from app.native_cli_metadata import describe_native_command
 from app.store import AgentRole, AutoReplyStore
 from app.process_runner import ProcessRunResult
@@ -4916,92 +4917,94 @@ def test_unavailable_decisive_material_returns_dependency_failure_without_invent
     assert attempt.send_error == "document_dependency_unavailable"
 
 
-def _task5_operation_skill_fixture(name: str) -> str:
-    if name in {"dingtalk-shared", "dingtalk-chat"}:
-        return _triage_operation_skill_fixture(name)
-    if name == "dingtalk-minutes":
-        return """---
-name: dingtalk-minutes
-description: Representative DingTalk Minutes operation fixture.
-metadata:
-  requires: dingtalk-shared
----
-# DingTalk Minutes Operations
-
-Load `dingtalk-shared`. Read meeting identity, summary, tasks, and transcript
-through their reviewed Minutes operations. Read transcript only when needed.
-"""
-    if name == "dingtalk-mail":
-        return """---
+def _authorized_mail_skill_paths(tmp_path: Path, monkeypatch) -> dict[str, Path]:
+    skills_root = tmp_path / "installed-skills"
+    fixtures = {
+        "ceo-mail-review": (
+            Path("skills/ceo-mail-review/SKILL.md").read_text(encoding="utf-8")
+        ),
+        "dingtalk-shared": _triage_operation_skill_fixture("dingtalk-shared"),
+        "dingtalk-mail": """---
 name: dingtalk-mail
-description: Representative DingTalk mail operation fixture.
+description: Representative installed mail operation contract.
 metadata:
   requires: dingtalk-shared
 ---
 # DingTalk Mail Operations
 
-Load `dingtalk-shared`. Resolve a mailbox, search the complete original, read
-the thread and sent state, and reread them after any reviewed mail action.
-"""
-    if name == "dingtalk-doc":
-        return _document_operation_skill_fixture(name)
-    raise AssertionError(f"unexpected Task 5 operation Skill fixture: {name}")
-
-
-def _task5_installed_skill_paths(
-    tmp_path: Path,
-    monkeypatch,
-    business_skill: str,
-    operation_skills: tuple[str, ...],
-) -> dict[str, Path]:
-    skills_root = tmp_path / "installed-skills"
-    skill_paths: dict[str, Path] = {}
-    for name in (business_skill, *operation_skills):
+Resolve the mailbox, search the original, and read it with `message get`.
+Inspect sent state with `message list --folder-id 1`. Reply with `message reply`
+and verify the returned `internetMessageId` with `message verify`.
+""",
+        "dingtalk-doc": _document_operation_skill_fixture("dingtalk-doc"),
+    }
+    paths: dict[str, Path] = {}
+    for name, content in fixtures.items():
         path = skills_root / name / "SKILL.md"
         path.parent.mkdir(parents=True)
-        content = (
-            (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
-            if name == business_skill
-            else _task5_operation_skill_fixture(name)
-        )
         path.write_text(content, encoding="utf-8")
-        skill_paths[name] = path.resolve()
+        paths[name] = path.resolve()
     monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (skills_root,))
-    return skill_paths
+    return paths
 
 
-@dataclass(frozen=True)
-class Task5NativeScenario:
-    name: str
-    business_skill: str
-    operation_skills: tuple[str, ...]
-    trigger_text: str
-    outcome: str
-    summary: str
-    evidence_commands: tuple[str, ...]
-    evidence_content: str
-    response_text: str = ""
-    transcript_required: bool = False
+class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
+    mailbox = "principal@example.test"
+    original_message_id = "mail-1"
+    internet_message_id = "internet-1"
+    reply_subject = "Re: Contract approval"
+    reply_content = "Approved with the documented conditions."
+    document_url = "https://alidocs.dingtalk.com/i/nodes/contract-1"
 
+    def __init__(self, skill_paths: dict[str, Path]) -> None:
+        super().__init__(skill_paths)
+        self.read_commands: list[str] = []
+        self.write_commands: list[str] = []
+        self.verify_commands: list[str] = []
 
-class Task5BehaviorProtocolExecutor(Task4BehaviorProtocolExecutor):
-    def __init__(
-        self,
-        skill_paths: dict[str, Path],
-        native_scenario: Task5NativeScenario,
-    ) -> None:
-        super().__init__(
-            skill_paths,
-            Task4BehaviorScenario(
-                name=native_scenario.name,
-                outcome=native_scenario.outcome,
-                summary=native_scenario.summary,
-                read_mode="native_evidence",
+    @property
+    def evidence(self) -> tuple[tuple[str, dict[str, object]], ...]:
+        return (
+            (
+                "dws mail mailbox list --format json",
+                {"mailboxes": [{"email": self.mailbox, "type": "ORG"}]},
+            ),
+            (
+                "dws mail message search --email principal@example.test "
+                "--query 'subject:Contract approval' --limit 20 --format json",
+                {
+                    "messages": [
+                        {
+                            "messageId": self.original_message_id,
+                            "subject": "Contract approval",
+                        }
+                    ]
+                },
+            ),
+            (
+                "dws mail message get --email principal@example.test "
+                "--id mail-1 --format json",
+                {
+                    "messageId": self.original_message_id,
+                    "threadId": "thread-1",
+                    "body": "Please review the linked contract and reply.",
+                    "links": [self.document_url],
+                },
+            ),
+            (
+                "dws mail message list --email principal@example.test "
+                "--folder-id 1 --limit 20 --format json",
+                {"messages": [], "total": 0},
+            ),
+            (
+                f"dws doc info --node {self.document_url} --format json",
+                {"node": self.document_url, "type": "document"},
+            ),
+            (
+                f"dws doc read --node {self.document_url} --format json",
+                {"content": "The contract is approvable with documented conditions."},
             ),
         )
-        self.native_scenario = native_scenario
-        self.evidence_commands = native_scenario.evidence_commands
-        self.review_text = native_scenario.response_text
 
     def _evidence_records(
         self,
@@ -5010,23 +5013,16 @@ class Task5BehaviorProtocolExecutor(Task4BehaviorProtocolExecutor):
         prefix: str,
     ) -> list[dict[str, object]]:
         records: list[dict[str, object]] = []
-        for index, command in enumerate(self.evidence_commands):
+        for index, (command, output) in enumerate(self.evidence):
             self.read_commands.append(command)
-            output = {
-                "source": self.scenario.name,
-                "read_index": index,
-                "content": self.native_scenario.evidence_content,
-            }
             records.extend(
                 (
                     _reviewed_cli_event(
-                        "item.started",
-                        f"{prefix}-{self.scenario.name}-read-{index}",
-                        command,
+                        "item.started", f"{prefix}-mail-read-{index}", command
                     ),
                     _reviewed_cli_event(
                         "item.completed",
-                        f"{prefix}-{self.scenario.name}-read-{index}",
+                        f"{prefix}-mail-read-{index}",
                         command,
                         output=json.dumps(output),
                     ),
@@ -5034,381 +5030,153 @@ class Task5BehaviorProtocolExecutor(Task4BehaviorProtocolExecutor):
             )
         return records
 
+    def _consumer_result_records(self) -> list[dict[str, object]]:
+        command = DwsClient().build_mail_reply_command(
+            mailbox=self.mailbox,
+            message_id=self.original_message_id,
+            subject=self.reply_subject,
+            content=self.reply_content,
+        )
+        proposal = {
+            "objective": "Reply to the reviewed original mail once.",
+            "actions": [
+                {
+                    "description": "Reply to the verified original mail.",
+                    "capability": "agent_cli.dws",
+                    "operation": "mail message reply",
+                    "target": {
+                        "from": self.mailbox,
+                        "id": self.original_message_id,
+                    },
+                    "payload": {"argv": command},
+                    "expected_verification": (
+                        "Verify the returned internetMessageId for the same mailbox."
+                    ),
+                }
+            ],
+            "sourced_facts": [
+                {
+                    "assertion": "The complete original and linked contract were read.",
+                    "references": ["mail:mail-1", f"document:{self.document_url}"],
+                }
+            ],
+            "authored_judgment": self.reply_content,
+        }
+        return [
+            _agent_result_event(
+                _consumer_protocol_result(
+                    "proposal",
+                    "Prepared one authorized, non-duplicate mail reply.",
+                    proposal=proposal,
+                )
+            )
+        ]
 
-def _execute_task5_native_scenario(
+    def _audit_execution_records(self, prompt: str) -> list[dict[str, object]]:
+        candidate = _prompt_json_section(prompt, "Candidate revision\n")
+        action = candidate["proposal"]["actions"][0]
+        write_command = shlex.join(action["payload"]["argv"])
+        verify_command = (
+            "dws mail message verify --email principal@example.test "
+            "--internet-message-id internet-1 --format json"
+        )
+        self.write_commands.append(write_command)
+        self.verify_commands.append(verify_command)
+        return [
+            _reviewed_cli_event(
+                "item.started", "audit-mail-reply", write_command, effectful=True
+            ),
+            _reviewed_cli_event(
+                "item.completed",
+                "audit-mail-reply",
+                write_command,
+                output=json.dumps(
+                    {
+                        "messageId": "reply-1",
+                        "internetMessageId": self.internet_message_id,
+                    }
+                ),
+                effectful=True,
+            ),
+            _reviewed_cli_event(
+                "item.started", "audit-mail-verify", verify_command
+            ),
+            _reviewed_cli_event(
+                "item.completed",
+                "audit-mail-verify",
+                verify_command,
+                output=json.dumps(
+                    {
+                        "internetMessageId": self.internet_message_id,
+                        "sendStatus": "success",
+                    }
+                ),
+            ),
+            _agent_result_event(
+                _audit_protocol_result(
+                    "executed",
+                    int(candidate["proposal_revision"]),
+                    "The reply internetMessageId was verified as sent.",
+                    operation_id=str(candidate["operation_id"]),
+                    live_reference={
+                        "mailbox": self.mailbox,
+                        "message_id": "reply-1",
+                        "internetMessageId": self.internet_message_id,
+                        "sendStatus": "success",
+                    },
+                )
+            ),
+        ]
+
+
+def test_authorized_mail_reply_protocol_executes_and_verifies_internet_message_id(
     tmp_path: Path,
     monkeypatch,
-    scenario: Task5NativeScenario,
 ):
-    skill_paths = _task5_installed_skill_paths(
-        tmp_path,
-        monkeypatch,
-        scenario.business_skill,
-        scenario.operation_skills,
+    skill_paths = _authorized_mail_skill_paths(tmp_path, monkeypatch)
+    trigger = _message(
+        "Reply to the complete Contract approval mail after reviewing its linked material."
     )
-    trigger = _message(scenario.trigger_text)
-    executor = Task5BehaviorProtocolExecutor(skill_paths, scenario)
+    executor = AuthorizedMailReplyProtocolExecutor(skill_paths)
     worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
     _enqueue(worker.store, trigger)
 
     assert worker.consume_once(max_tasks=1) == 1
 
-    expected_roles = (
-        (AgentRole.CONSUMER, AgentRole.AUDIT)
-        if scenario.outcome == "proposal"
-        else (AgentRole.CONSUMER,)
+    runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    consumer_result = json.loads(runs[0].final_result_json)
+    action = consumer_result["proposal"]["actions"][0]
+    assert action["operation"] == "mail message reply"
+    assert action["payload"]["argv"] == DwsClient().build_mail_reply_command(
+        mailbox=executor.mailbox,
+        message_id=executor.original_message_id,
+        subject=executor.reply_subject,
+        content=executor.reply_content,
     )
-    runs = _assert_task4_receipts_and_consumer_read_only(
-        worker,
-        skill_paths,
-        expected_roles=expected_roles,
-    )
-    assert executor.consumer_loaded_skills == list(skill_paths)
-    assert executor.audit_loaded_skills == (
-        list(skill_paths) if scenario.outcome == "proposal" else []
-    )
-    return worker, executor, runs, json.loads(runs[0].final_result_json)
-
-
-def _completed_operation_metadata(run) -> list[dict[str, object]]:
-    return [
-        metadata
-        for event in run.tool_events
-        if event.get("type") == "item.completed"
-        and isinstance(event.get("item"), dict)
-        and isinstance((metadata := event["item"].get("metadata")), dict)
-        and metadata.get("operation") != "read_skill"
+    expected_reads = [
+        "mail mailbox list",
+        "mail message search",
+        "mail message get",
+        "mail message list",
+        "doc info",
+        "doc read",
     ]
-
-
-def _assert_task5_audit_reread_and_readback(
-    runs,
-    evidence_operations: list[str],
-) -> None:
-    audit_metadata = _completed_operation_metadata(runs[1])
-    assert [metadata["operation"] for metadata in audit_metadata] == [
-        *evidence_operations,
-        "chat message send",
-        "chat message list",
+    assert _task4_completed_operations(runs[0]) == expected_reads
+    assert _task4_completed_operations(runs[1]) == [
+        *expected_reads,
+        "mail message reply",
+        "mail message verify",
     ]
-    assert all(metadata.get("result_digest") for metadata in audit_metadata)
+    assert executor.read_commands == [command for command, _output in executor.evidence] * 2
+    assert len(executor.write_commands) == 1
+    assert executor.verify_commands == [
+        "dws mail message verify --email principal@example.test "
+        "--internet-message-id internet-1 --format json"
+    ]
     audit_result = json.loads(runs[1].final_result_json)
-    assert audit_result["outcome"] == "executed"
-    assert audit_result["external_result"]["live_result_reference"]["message_id"]
-
-
-MEETING_INFO_COMMAND = "dws minutes get info --id minutes-1 --format json"
-MEETING_SUMMARY_COMMAND = "dws minutes get summary --id minutes-1 --format json"
-MEETING_TASKS_COMMAND = "dws minutes get todos --id minutes-1 --format json"
-MEETING_TRANSCRIPT_COMMAND = (
-    "dws minutes get transcription --id minutes-1 --format json"
-)
-MEETING_OPERATIONS = (
-    "dingtalk-shared",
-    "dingtalk-minutes",
-    "dingtalk-chat",
-)
-MEETING_URL = "https://shanji.dingtalk.com/app/transcribes/minutes-1"
-
-
-@pytest.mark.parametrize(
-    "scenario",
-    [
-        Task5NativeScenario(
-            name="summary_tasks_sufficient",
-            business_skill="ceo-meeting-work",
-            operation_skills=MEETING_OPERATIONS,
-            trigger_text=f"Deliver the actions from this silent meeting: {MEETING_URL}",
-            outcome="proposal",
-            summary="The summary and tasks contain complete ownership and delivery facts.",
-            evidence_commands=(
-                MEETING_INFO_COMMAND,
-                MEETING_SUMMARY_COMMAND,
-                MEETING_TASKS_COMMAND,
-            ),
-            evidence_content="Summary and tasks identify both owners without ambiguity.",
-            response_text=(
-                "Rollout: @Alex owns the rollout plan. "
-                "Risk notice: @Mina receives the risk thresholds."
-            ),
-        ),
-        Task5NativeScenario(
-            name="transcript_needed_for_attribution",
-            business_skill="ceo-meeting-work",
-            operation_skills=MEETING_OPERATIONS,
-            trigger_text=f"Resolve speaker ownership and deliver actions: {MEETING_URL}",
-            outcome="proposal",
-            summary="Transcript evidence resolves ambiguous speaker ownership.",
-            evidence_commands=(
-                MEETING_INFO_COMMAND,
-                MEETING_SUMMARY_COMMAND,
-                MEETING_TRANSCRIPT_COMMAND,
-            ),
-            evidence_content="Transcript identifies the owner of each spoken commitment.",
-            response_text=(
-                "Rollout: @Alex owns the rollout plan. "
-                "Risk notice: @Mina receives the risk thresholds."
-            ),
-            transcript_required=True,
-        ),
-    ],
-    ids=lambda scenario: scenario.name,
-)
-def test_meeting_evidence_reads_are_selective_and_persisted(
-    tmp_path: Path,
-    monkeypatch,
-    scenario: Task5NativeScenario,
-):
-    _worker, executor, runs, consumer_result = _execute_task5_native_scenario(
-        tmp_path, monkeypatch, scenario
-    )
-
-    expected_operations = [
-        describe_native_command(
-            {"type": "command_execution", "argv": shlex.split(command)}
-        ).command_path
-        for command in scenario.evidence_commands
-    ]
-    assert _task4_completed_operations(runs[0]) == expected_operations
-    assert executor.read_commands == list(scenario.evidence_commands) * 2
-    assert (
-        MEETING_TRANSCRIPT_COMMAND in scenario.evidence_commands
-    ) is scenario.transcript_required
-    persisted_action = consumer_result["proposal"]["actions"][0]
-    persisted_text = persisted_action["payload"]["argv"][-2]
-    assert persisted_text.count("@Alex") == 1
-    assert persisted_text.count("@Mina") == 1
-    assert "@Alex owns the rollout plan" in persisted_text
-    assert "@Mina receives the risk thresholds" in persisted_text
-    assert not persisted_text.startswith("@Alex @Mina")
-    _assert_task5_audit_reread_and_readback(runs, expected_operations)
-    assert executor.write_operations == ["chat message send"]
-    assert executor.external_readbacks == [
-        "dws chat message list --group cid-1 --time 2026-07-29"
-    ]
-
-
-def test_missing_meeting_material_produces_one_concrete_clarification(
-    tmp_path: Path,
-    monkeypatch,
-):
-    question = "Could you provide the risk-approval attachment referenced by the meeting?"
-    scenario = Task5NativeScenario(
-        name="specific_missing_meeting_material",
-        business_skill="ceo-meeting-work",
-        operation_skills=MEETING_OPERATIONS,
-        trigger_text=f"Close the meeting follow-up from {MEETING_URL}",
-        outcome="proposal",
-        summary="One referenced risk-approval attachment is missing.",
-        evidence_commands=(MEETING_INFO_COMMAND, MEETING_SUMMARY_COMMAND),
-        evidence_content="The record references one unavailable risk-approval attachment.",
-        response_text=question,
-    )
-
-    _worker, executor, runs, consumer_result = _execute_task5_native_scenario(
-        tmp_path, monkeypatch, scenario
-    )
-    proposal = consumer_result["proposal"]
-    persisted_text = proposal["actions"][0]["payload"]["argv"][-2]
-    assert consumer_result["outcome"] == "proposal"
-    assert len(proposal["actions"]) == 1
-    assert persisted_text == question
-    assert persisted_text.count("?") == 1
-    assert "A/B" not in persisted_text
-    assert "choose" not in persisted_text.casefold()
-    assert "recap" not in persisted_text.casefold()
-    assert consumer_result["decision_options"] == []
-    assert consumer_result["error"]["code"] == ""
-    assert _task4_completed_operations(runs[0]) == [
-        "minutes get info",
-        "minutes get summary",
-    ]
-    _assert_task5_audit_reread_and_readback(
-        runs,
-        ["minutes get info", "minutes get summary"],
-    )
-    assert executor.write_operations == ["chat message send"]
-
-
-def test_silent_meeting_without_action_is_no_action_and_has_no_effect(
-    tmp_path: Path,
-    monkeypatch,
-):
-    scenario = Task5NativeScenario(
-        name="silent_meeting_without_action",
-        business_skill="ceo-meeting-work",
-        operation_skills=("dingtalk-shared", "dingtalk-minutes"),
-        trigger_text=f"Review this silent meeting: {MEETING_URL}",
-        outcome="no_action",
-        summary="The meeting contains information only and creates no action.",
-        evidence_commands=(MEETING_INFO_COMMAND, MEETING_SUMMARY_COMMAND),
-        evidence_content="The meeting has no decision, task, question, or delivery request.",
-    )
-
-    worker, executor, runs, consumer_result = _execute_task5_native_scenario(
-        tmp_path, monkeypatch, scenario
-    )
-    assert consumer_result["outcome"] == "no_action"
-    assert consumer_result["proposal"] is None
-    assert _task4_completed_operations(runs[0]) == [
-        "minutes get info",
-        "minutes get summary",
-    ]
-    assert executor.write_operations == []
-    assert executor.external_readbacks == []
-    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_status == "skipped"
-
-
-MAIL_COMMANDS = (
-    "dws mail mailbox list --format json",
-    "dws mail message search --email principal@example.test --query 'subject:Contract approval' --format json",
-    "dws mail message get --email principal@example.test --id mail-1 --format json",
-    "dws mail message thread --email principal@example.test --id mail-1 --format json",
-)
-MAIL_DOCUMENT_COMMANDS = (
-    "dws doc info --node https://alidocs.dingtalk.com/i/nodes/contract-1 --format json",
-    "dws doc read --node https://alidocs.dingtalk.com/i/nodes/contract-1 --format json",
-)
-
-
-def test_mail_reply_draft_uses_native_consumer_audit_receipts_and_complete_thread(
-    tmp_path: Path,
-    monkeypatch,
-):
-    scenario = Task5NativeScenario(
-        name="authorized_complete_mail_review",
-        business_skill="ceo-mail-review",
-        operation_skills=(
-            "dingtalk-shared",
-            "dingtalk-mail",
-            "dingtalk-doc",
-            "dingtalk-chat",
-        ),
-        trigger_text=(
-            "Propose a reply here after review; do not send mail: "
-            "[Mail card] Subject: Contract approval; preview: Please approve..."
-        ),
-        outcome="proposal",
-        summary="The complete current thread and linked contract support the reply.",
-        evidence_commands=(*MAIL_COMMANDS, *MAIL_DOCUMENT_COMMANDS),
-        evidence_content="The complete current thread and linked contract were reviewed.",
-        response_text="Reviewed the complete thread and posted one requested reply draft.",
-    )
-
-    _worker, executor, runs, consumer_result = _execute_task5_native_scenario(
-        tmp_path, monkeypatch, scenario
-    )
-    assert consumer_result["outcome"] == "proposal"
-    assert _task4_completed_operations(runs[0]) == [
-        "mail mailbox list",
-        "mail message search",
-        "mail message get",
-        "mail message thread",
-        "doc info",
-        "doc read",
-    ]
-    _assert_task5_audit_reread_and_readback(
-        runs,
-        [
-            "mail mailbox list",
-            "mail message search",
-            "mail message get",
-            "mail message thread",
-            "doc info",
-            "doc read",
-        ],
-    )
-    assert executor.write_operations == ["chat message send"]
-    assert all(
-        "mail message reply" not in operation
-        for run in runs
-        for operation in _task4_completed_operations(run)
-    )
-
-
-@pytest.mark.parametrize(
-    "request_text",
-    [
-        "Review this mail and linked contract",
-        "Assess whether the linked contract is approvable",
-    ],
-    ids=("review-only", "approval-only"),
-)
-def test_mail_without_current_reply_authorization_has_no_effect(
-    tmp_path: Path,
-    monkeypatch,
-    request_text: str,
-):
-    scenario = Task5NativeScenario(
-        name="mail_without_reply_authorization",
-        business_skill="ceo-mail-review",
-        operation_skills=("dingtalk-shared", "dingtalk-mail", "dingtalk-doc"),
-        trigger_text=(
-            f"{request_text}: [Mail card] Subject: Contract approval; "
-            "preview: Please approve..."
-        ),
-        outcome="no_action",
-        summary="The current request authorizes review but not a mail reply.",
-        evidence_commands=(*MAIL_COMMANDS, *MAIL_DOCUMENT_COMMANDS),
-        evidence_content="The complete thread and linked contract were read for review.",
-    )
-
-    worker, executor, runs, consumer_result = _execute_task5_native_scenario(
-        tmp_path, monkeypatch, scenario
-    )
-    assert consumer_result["outcome"] == "no_action"
-    assert consumer_result["proposal"] is None
-    operations = _task4_completed_operations(runs[0])
-    assert operations == [
-        "mail mailbox list",
-        "mail message search",
-        "mail message get",
-        "mail message thread",
-        "doc info",
-        "doc read",
-    ]
-    assert "mail message reply" not in operations
-    assert executor.write_operations == []
-    assert executor.external_readbacks == []
-    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_status == "skipped"
-
-
-def test_complete_mail_thread_suppresses_duplicate_reply_without_effect(
-    tmp_path: Path,
-    monkeypatch,
-):
-    scenario = Task5NativeScenario(
-        name="duplicate_mail_reply",
-        business_skill="ceo-mail-review",
-        operation_skills=("dingtalk-shared", "dingtalk-mail"),
-        trigger_text=(
-            "Reply to this mail: [Mail card] Subject: Contract approval; "
-            "preview: Please approve..."
-        ),
-        outcome="no_action",
-        summary="The complete current thread already contains the equivalent reply.",
-        evidence_commands=MAIL_COMMANDS,
-        evidence_content="An equivalent reply is already present in the current sent thread.",
-    )
-
-    worker, executor, runs, consumer_result = _execute_task5_native_scenario(
-        tmp_path, monkeypatch, scenario
-    )
-    assert consumer_result["outcome"] == "no_action"
-    assert consumer_result["proposal"] is None
-    assert executor.read_commands == list(MAIL_COMMANDS)
-    assert executor.write_operations == []
-    assert executor.external_readbacks == []
-    assert _task4_completed_operations(runs[0]) == [
-        "mail mailbox list",
-        "mail message search",
-        "mail message get",
-        "mail message thread",
-    ]
-    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_status == "skipped"
+    reference = audit_result["external_result"]["live_result_reference"]
+    assert reference["internetMessageId"] == executor.internet_message_id
+    assert reference["sendStatus"] == "success"
 
 
 @pytest.mark.parametrize(

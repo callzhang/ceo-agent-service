@@ -2368,6 +2368,38 @@ def test_effect_registry_requires_registered_inner_cli_operation_relation():
     )
 
 
+def test_controlled_cli_mail_verify_reads_back_reply_for_same_mailbox():
+    registry = McpToolEffectRegistry.default()
+    write = {
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "mail message reply",
+        "target_identifiers": {
+            "from": "principal@example.test",
+            "id": "mail-1",
+        },
+    }
+    read = {
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_read",
+        "operation": "mail message verify",
+        "target_identifiers": {
+            "email": "principal@example.test",
+            "internet-message-id": "internet-1",
+        },
+    }
+
+    assert registry.readback_operations_match(
+        read_server="agent_cli",
+        read_tool="execute_reviewed_read",
+        write_server="agent_cli",
+        write_tool="execute_reviewed_write",
+        read_operation="mail message verify",
+        write_operation="mail message reply",
+    )
+    assert _read_matches_action(read, write, registry)
+
+
 def test_unregistered_controlled_write_cannot_confirm_without_readback(setup):
     store, task, audit_context, parent = setup
     relation_key = (

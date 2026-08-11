@@ -322,9 +322,16 @@ def _normalized_shared_targets(
         "group",
         "open-conversation-id",
     }
+    mail_keys = {"email", "from"}
     for key, value in targets.items():
         normalized_key = key.replace("_", "-").casefold()
-        namespace = "conversation" if normalized_key in conversation_keys else normalized_key
+        namespace = (
+            "conversation"
+            if normalized_key in conversation_keys
+            else "email"
+            if normalized_key in mail_keys
+            else normalized_key
+        )
         if namespace in normalized and normalized[namespace] != value:
             return None
         normalized[namespace] = value

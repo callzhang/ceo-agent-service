@@ -12,6 +12,7 @@ from app.agent_cli import (
 from app.agent_result import EffectKind
 from app.native_cli_metadata import AgentReadOnlyViolationError, NativeCliMetadataClassifier
 from app.native_cli_metadata import describe_native_command
+from app.dws_client import DwsClient
 
 
 def test_classifier_accepts_pptx_stdout_extraction_pipeline_as_local_read():
@@ -126,6 +127,50 @@ def test_dws_direct_message_targets_preserve_user_and_idempotency_identity():
     assert user_read_descriptor.target_identifiers == {"user": "user-1"}
     assert status_read_descriptor is not None
     assert status_read_descriptor.target_identifiers == {"uuid": "operation-1"}
+
+
+def test_dws_mail_reply_and_verify_preserve_shared_mailbox_identity():
+    reply_descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": DwsClient().build_mail_reply_command(
+                mailbox="principal@example.test",
+                message_id="mail-1",
+                subject="Re: Contract approval",
+                content="Approved with the documented conditions.",
+            ),
+        }
+    )
+    verify_descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                "dws",
+                "mail",
+                "message",
+                "verify",
+                "--email",
+                "principal@example.test",
+                "--internet-message-id",
+                "internet-1",
+                "--format",
+                "json",
+            ],
+        }
+    )
+
+    assert reply_descriptor is not None
+    assert reply_descriptor.command_path == "mail message reply"
+    assert reply_descriptor.target_identifiers == {
+        "from": "principal@example.test",
+        "id": "mail-1",
+    }
+    assert verify_descriptor is not None
+    assert verify_descriptor.command_path == "mail message verify"
+    assert verify_descriptor.target_identifiers == {
+        "email": "principal@example.test",
+        "internet-message-id": "internet-1",
+    }
 
 
 @pytest.mark.parametrize(
