@@ -3358,6 +3358,7 @@ def test_render_config_page_shows_message_routing_logic():
     assert 'value="responsibility_summary"' not in html
     assert 'value="CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY"' in html
     assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in html
+    assert "CEO_PROMPT_VAR_CALENDAR_RULES_PATH" not in html
     assert 'value="MESSAGE_RECOVERY_INTERVAL"' not in html
     assert 'value="CEO_CURRENT_USER_DISPLAY_NAMES"' not in html
     assert 'value="CEO_STYLE_SPEAKER_NAMES"' not in html
@@ -4127,6 +4128,7 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
     assert 'value="responsibility_summary"' not in html
     assert 'value="CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY"' in html
     assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in html
+    assert "CEO_PROMPT_VAR_CALENDAR_RULES_PATH" not in html
     assert 'value="CEO_PRINCIPAL_NAME"' not in html
     assert 'value="CEO_PRINCIPAL_DISPLAY_NAME"' not in html
     assert 'value="CEO_PRINCIPAL_HANDOFF_NAME"' not in html

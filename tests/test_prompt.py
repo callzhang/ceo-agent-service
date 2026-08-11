@@ -1,18 +1,25 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.config import env_file_path
 from app.config import profile_evidence_dir
 from app.config import repo_root
 from app.config import work_profile_path
 from app.developer_prompt import (
+    CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS,
+    DeveloperPromptTemplateError,
     SEED_DEVELOPER_PROMPT_TEMPLATE,
+    configurable_prompt_variable_pairs,
     developer_prompt_template_path,
+    prompt_template_variables,
     read_developer_prompt_template,
     read_user_prompt_template,
     render_developer_prompt_template,
     user_prompt_template_path,
+    write_configurable_prompt_variables,
 )
 from app.prompt import (
     LinkedDocumentContext,
@@ -32,6 +39,15 @@ CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会�
 ![image](https://gw.alicdn.com/imgextra/i4/O1CN01DXenu91IyBR0wQXk9_!!6000000000961-2-tps-148-72.png)
 ![image](https://gw.alicdn.com/imgextra/i4/O1CN01DXenu91IyBR0wQXk9_!!6000000000961-2-tps-148-72.png)
 [https://alidocs.dingtalk.com/i/nodes/vy20BglGWOKXmP5zs0OGQn6DWA7depqY?corpId=ding8ffc70a4ef94915f35c2f4657eb6378f&utm_medium=im_card&utm_source=im](https://alidocs.dingtalk.com/i/nodes/vy20BglGWOKXmP5zs0OGQn6DWA7depqY?corpId=ding8ffc70a4ef94915f35c2f4657eb6378f&utm_medium=im_card&utm_source=im)"""
+
+
+@pytest.fixture(autouse=True)
+def _render_prompt_tests_from_canonical_seed(monkeypatch):
+    # Installation-local prompt state is synchronized and read back at deployment.
+    monkeypatch.setenv(
+        "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH",
+        str(SEED_DEVELOPER_PROMPT_TEMPLATE),
+    )
 
 
 def test_developer_prompt_template_path_can_be_overridden(tmp_path, monkeypatch):
@@ -79,6 +95,24 @@ def test_default_developer_prompt_assigns_tool_execution_to_current_agent_role()
 
     assert "你必须自行读取材料并通过当前角色获准的 CLI/MCP 工具完成任务" in prompt
     assert "AI 只负责生成结构化计划" not in prompt
+
+
+def test_calendar_rules_path_is_not_an_effective_prompt_variable(monkeypatch):
+    monkeypatch.setenv(
+        "CEO_PROMPT_VAR_CALENDAR_RULES_PATH",
+        "custom/calendar-rules.md",
+    )
+
+    assert "calendar_rules_path" not in CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS
+    assert "calendar_rules_path" not in prompt_template_variables()
+    assert "calendar_rules_path" not in dict(configurable_prompt_variable_pairs())
+    assert "CEO_PROMPT_VAR_CALENDAR_RULES_PATH" not in (
+        Path(".env.example").read_text(encoding="utf-8")
+    )
+    with pytest.raises(DeveloperPromptTemplateError, match="unsupported"):
+        write_configurable_prompt_variables(
+            [("CEO_PROMPT_VAR_CALENDAR_RULES_PATH", "custom/calendar-rules.md")]
+        )
 
 
 def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeypatch):
@@ -768,20 +802,12 @@ def test_thread_prompt_does_not_default_oa_calendar_to_no_reply():
     assert "不能因为通知格式默认 no_reply" in prompt
 
 
-def test_thread_prompt_references_calendar_rules():
-    prompt = ceo_agent_thread_prompt()
+def test_seed_prompt_delegates_calendar_rules_to_business_skills():
+    prompt = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
-    assert "management/OA/日历规则.md" in prompt
-    assert "请直接@我文档让我批阅即可，只有存疑再约会。" in prompt
-    assert "是否需要详细描述由你判断" in prompt
-    assert "最近上下文事项和会议标题" in prompt
-    assert "如果最近事项和标题已经能判断有必要参加，直接接受日程" in prompt
-    assert "优先在日历中评论" in prompt
-    assert "评论能力不可用时再在聊天中追问" in prompt
-    assert "静默会、异步评审、材料审阅或明确要求处理事项" in prompt
-    assert "这条规则优先于普通文档批阅转交规则" in prompt
-    assert "精确 DWS 命令读取" in prompt
-    assert "不能替代会议描述、会议评论或链接材料成为静默会任务来源" in prompt
+    assert "<var: calendar_rules_path>" not in prompt
+    assert "agent_cli.read_skill" in prompt
+    assert "最具体适用的业务 Skill" in prompt
 
 
 def test_thread_prompt_requires_minutes_material_action_item_handling():

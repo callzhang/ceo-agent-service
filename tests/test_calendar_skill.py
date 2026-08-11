@@ -75,3 +75,11 @@ def test_runtime_developer_prompt_is_ignored_deployment_state():
     # Task 10 deploys and reads back this installation-local copy explicitly.
     # Code tests cover only the canonical seed and never assume prompt equality.
     assert "data/prompts/" in gitignore
+
+
+def test_calendar_e2e_does_not_import_the_unit_worker_harness():
+    e2e = (
+        ROOT / "tests" / "e2e" / "test_consumer_audit_live.py"
+    ).read_text(encoding="utf-8")
+
+    assert "tests.test_agent_runtime_worker" not in e2e

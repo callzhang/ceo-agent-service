@@ -1,7 +1,8 @@
-"""Opt-in native Codex checks against the test-only AuditSink MCP server."""
+"""Deterministic runner contracts plus opt-in native Codex checks."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -9,16 +10,46 @@ from pathlib import Path
 
 import pytest
 
+from app.agent_context import AgentTaskContext, MaterialReference
+from app.agent_orchestrator import AgentOrchestrator
+from app.audit_agent import AuditAgentRunner
 from app.codex_runner import CodexRunner, _config_string
+from app.consumer_agent import ConsumerAgentRunner
+from app.native_cli_metadata import describe_native_command
 from app.process_runner import run_process_with_idle_timeout
+from app.process_runner import ProcessRunResult
+from app.store import AgentRole, AutoReplyStore
 from tests.support.audit_sink_mcp import AuditSink
-from tests.test_agent_runtime_worker import (
-    CalendarClarificationProtocolExecutor,
-    _enqueue,
-    _message,
-    _prompt_json_section,
-    _worker_with_protocol_executor,
-)
+
+
+QUESTION = "What specific decision or input do you need from Derek in this meeting?"
+MESSAGE_TEXT = f"<@inviter-1> {QUESTION}"
+CALENDAR_SKILL = """---
+name: dingtalk-calendar
+description: Representative calendar operation fixture.
+metadata:
+  requires: dingtalk-shared
+---
+# Calendar Operations
+
+Load `dingtalk-shared` before DWS calendar operations.
+Read an invitation with `dws calendar event get --id <event-id> --format json`.
+Respond with `dws calendar event respond --id <event-id> --status <status> --yes`.
+When supported, clarify with `dws calendar event comment --id <event-id> --text <question> --yes`.
+Read the event again after every response or comment.
+"""
+CHAT_SKILL = """---
+name: dingtalk-chat
+description: Representative source-chat operation fixture.
+metadata:
+  requires: dingtalk-shared
+---
+# Chat Operations
+
+Load `dingtalk-shared` before DWS chat operations.
+For calendar fallback, send in the source group with `dws chat message send --group <conversation-id> --at-open-dingtalk-ids <inviter-id> --text <question> --yes`.
+Never open a direct chat when the source is a group. Read back with `dws chat message list --group <conversation-id> --time <date>` and verify the exact addressed question.
+"""
 
 
 def _enabled() -> bool:
@@ -51,66 +82,437 @@ def _allow_isolated_test_workspace(command: list[str]) -> list[str]:
     return allowed
 
 
-def test_scripted_calendar_clarification_is_executed_without_human_handoff(
+def _json_section(prompt: str, heading: str):
+    start = prompt.index(heading) + len(heading)
+    value, _end = json.JSONDecoder().raw_decode(prompt[start:].lstrip())
+    return value
+
+
+def _skill_record(path: Path, call_id: str) -> tuple[dict[str, object], str]:
+    content = path.read_text(encoding="utf-8")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    receipt = {
+        "content": content,
+        "sha256": digest,
+        "path": str(path.resolve()),
+        "name": path.parent.name,
+    }
+    return (
+        {
+            "type": "item.completed",
+            "item": {
+                "id": call_id,
+                "type": "mcp_tool_call",
+                "server": "agent_cli",
+                "tool": "read_skill",
+                "arguments": {"path": str(path.resolve())},
+                "status": "completed",
+                "result": {
+                    "content": [{"type": "text", "text": json.dumps(receipt)}],
+                    "structuredContent": receipt,
+                    "isError": False,
+                },
+            },
+        },
+        digest,
+    )
+
+
+def _reviewed_records(
+    call_id: str,
+    argv: list[str],
+    *,
+    write: bool = False,
+    stdout: str = "{}",
+) -> tuple[dict[str, object], dict[str, object]]:
+    descriptor = describe_native_command(
+        {"type": "command_execution", "argv": argv}
+    )
+    assert descriptor is not None
+    receipt = {
+        "cli": descriptor.cli,
+        "operation": descriptor.command_path,
+        "operation_digest": descriptor.command_digest,
+        "target_identifiers": descriptor.target_identifiers,
+        "result_digest": hashlib.sha256(stdout.encode("utf-8")).hexdigest(),
+        "stdout": stdout,
+    }
+    item = {
+        "id": call_id,
+        "type": "mcp_tool_call",
+        "server": "agent_cli",
+        "tool": "execute_reviewed_write" if write else "execute_reviewed_read",
+        "arguments": {"argv": argv},
+        "status": "in_progress",
+    }
+    return (
+        {"type": "item.started", "item": item},
+        {
+            "type": "item.completed",
+            "item": {
+                **item,
+                "status": "completed",
+                "result": {
+                    "content": [{"type": "text", "text": json.dumps(receipt)}],
+                    "structuredContent": receipt,
+                    "isError": False,
+                },
+            },
+        },
+    )
+
+
+def _consumer_result_record(proposal: dict[str, object]) -> dict[str, object]:
+    wire = {
+        "outcome": "proposal",
+        "summary": "Prepared one source-group clarification.",
+        "proposal_json": json.dumps(proposal),
+        "decision_options_json": "[]",
+        "error_code": "",
+        "error_retryable": False,
+        "error_authorization_required": False,
+    }
+    return {
+        "type": "item.completed",
+        "item": {"type": "agent_message", "text": json.dumps(wire)},
+    }
+
+
+def _audit_result_record(operation_id: str) -> dict[str, object]:
+    external_result = {
+        "operation_id": operation_id,
+        "verification_summary": "The exact question is present in source group cid-1.",
+        "live_result_reference": {
+            "conversation_id": "cid-1",
+            "message_id": "question-1",
+        },
+    }
+    wire = {
+        "outcome": "executed",
+        "summary": "The source-group clarification was sent and verified.",
+        "proposal_revision": 0,
+        "side_effect_state": "confirmed",
+        "feedback_json": None,
+        "external_result_json": json.dumps(external_result),
+        "reconciliation_json": "[]",
+        "error_code": "",
+        "error_retryable": False,
+        "error_authorization_required": False,
+    }
+    return {
+        "type": "item.completed",
+        "item": {"type": "agent_message", "text": json.dumps(wire)},
+    }
+
+
+class CalendarRunnerContractExecutor:
+    def __init__(self, skill_paths: dict[str, Path]) -> None:
+        self.skill_paths = skill_paths
+        self.commands: list[list[str]] = []
+        self.prompts: list[str] = []
+        self.handed_off_skills: list[dict[str, str]] = []
+
+    def __call__(self, command, *, prompt: str, on_stdout_line, **_kwargs):
+        self.commands.append(list(command))
+        self.prompts.append(prompt)
+        audit_turn = "Candidate revision\n" in prompt
+        records = self._audit_records(prompt) if audit_turn else self._consumer_records(prompt)
+        session = "calendar-audit-session" if audit_turn else "calendar-consumer-session"
+        lines = [
+            json.dumps({"type": "thread.started", "thread_id": session}),
+            *(json.dumps(record) for record in records),
+        ]
+        stdout = "\n".join(lines)
+        for line in lines:
+            on_stdout_line(line)
+        return ProcessRunResult(0, stdout, "")
+
+    def _skill_records(self, role: str) -> list[dict[str, object]]:
+        records = []
+        for name in ("ceo-calendar-invite", "dingtalk-calendar", "dingtalk-chat"):
+            record, _digest = _skill_record(
+                self.skill_paths[name],
+                f"{role}-skill-{name}",
+            )
+            records.append(record)
+        return records
+
+    def _event_records(self, role: str) -> list[dict[str, object]]:
+        event = {
+            "event_id": "event-1",
+            "title": "Portfolio review",
+            "organizer": {
+                "name": "Inviter",
+                "open_dingtalk_id": "inviter-1",
+            },
+            "attendees": ["Derek", "Inviter"],
+            "description": "Review the portfolio.",
+            "comments": [],
+            "linked_materials": [],
+            "self_response": "needs_action",
+            "conflicting_accepted_events": [],
+            "requested_principal_input": None,
+        }
+        return list(
+            _reviewed_records(
+                f"{role}-event-read",
+                ["dws", "calendar", "event", "get", "--id", "event-1", "--format", "json"],
+                stdout=json.dumps(event),
+            )
+        )
+
+    def _consumer_records(self, prompt: str) -> list[dict[str, object]]:
+        materials = _json_section(
+            prompt,
+            "Raw material references and exact read commands\n",
+        )
+        assert materials[0]["read_commands"] == [
+            "dws calendar event get --id event-1 --format json"
+        ]
+        proposal = {
+            "objective": "Clarify the principal's requested meeting input.",
+            "actions": [
+                {
+                    "description": "Ask the verified inviter in the source group.",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"group": "cid-1"},
+                    "payload": {
+                        "argv": [
+                            "dws",
+                            "chat",
+                            "message",
+                            "send",
+                            "--group",
+                            "cid-1",
+                            "--at-open-dingtalk-ids",
+                            "inviter-1",
+                            "--text",
+                            MESSAGE_TEXT,
+                            "--yes",
+                        ]
+                    },
+                    "expected_verification": "Read source group cid-1 for the exact question.",
+                }
+            ],
+            "sourced_facts": [
+                {
+                    "assertion": "The verified inviter openDingTalk ID is inviter-1.",
+                    "references": ["calendar event event-1"],
+                }
+            ],
+            "authored_judgment": "The requested principal input remains unclear.",
+        }
+        return [
+            *self._skill_records("consumer"),
+            *self._event_records("consumer"),
+            _consumer_result_record(proposal),
+        ]
+
+    def _audit_records(self, prompt: str) -> list[dict[str, object]]:
+        self.handed_off_skills = _json_section(
+            prompt,
+            "Verified Skills read by Consumer A\n",
+        )
+        candidate = _json_section(prompt, "Candidate revision\n")
+        argv = candidate["proposal"]["actions"][0]["payload"]["argv"]
+        assert candidate["proposal"]["actions"][0]["target"] == {"group": "cid-1"}
+        assert "--user" not in argv
+        verify_argv = [
+            "dws",
+            "chat",
+            "message",
+            "list",
+            "--group",
+            "cid-1",
+            "--time",
+            "2026-08-11",
+        ]
+        return [
+            *self._skill_records("audit"),
+            *self._event_records("audit"),
+            *_reviewed_records(
+                "audit-question-write",
+                argv,
+                write=True,
+                stdout=json.dumps({"success": True, "message_id": "question-1"}),
+            ),
+            *_reviewed_records(
+                "audit-question-verify",
+                verify_argv,
+                stdout=json.dumps(
+                    {
+                        "messages": [
+                            {
+                                "message_id": "question-1",
+                                "conversation_id": "cid-1",
+                                "mentioned_open_dingtalk_ids": ["inviter-1"],
+                                "text": MESSAGE_TEXT,
+                            }
+                        ]
+                    }
+                ),
+            ),
+            _audit_result_record(candidate["operation_id"]),
+        ]
+
+
+def _persisted_skill_receipts(run) -> dict[str, tuple[str, str]]:
+    receipts = {}
+    for event in run.tool_events:
+        item = event.get("item")
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        if not isinstance(metadata, dict) or "skill_name" not in metadata:
+            continue
+        receipts[str(metadata["skill_name"])] = (
+            str(metadata["skill_path"]),
+            str(metadata["skill_sha256"]),
+        )
+    return receipts
+
+
+def test_deterministic_native_runner_calendar_clarification_contract(
     tmp_path: Path,
     monkeypatch,
 ):
     skills_root = tmp_path / "installed-skills"
-    skill_paths: dict[str, Path] = {}
     repository_root = Path(__file__).resolve().parents[2]
-    for name in ("ceo-calendar-invite", "dingtalk-calendar", "dingtalk-chat"):
+    skill_contents = {
+        "ceo-calendar-invite": (
+            repository_root / "skills" / "ceo-calendar-invite" / "SKILL.md"
+        ).read_text(encoding="utf-8"),
+        "dingtalk-calendar": CALENDAR_SKILL,
+        "dingtalk-chat": CHAT_SKILL,
+    }
+    skill_paths: dict[str, Path] = {}
+    for name, content in skill_contents.items():
         path = skills_root / name / "SKILL.md"
         path.parent.mkdir(parents=True)
-        content = (
-            (repository_root / "skills" / name / "SKILL.md").read_text(
-                encoding="utf-8"
-            )
-            if name == "ceo-calendar-invite"
-            else f"---\nname: {name}\n---\n# {name}\n"
-        )
         path.write_text(content, encoding="utf-8")
-        skill_paths[name] = path
+        skill_paths[name] = path.resolve()
     monkeypatch.setattr(
         "app.agent_skill_usage.AGENT_SKILL_ROOTS",
         (skills_root,),
     )
+    assert "event respond" in CALENDAR_SKILL
+    assert "event comment" in CALENDAR_SKILL
+    assert "source group" in CHAT_SKILL
+    assert "dingtalk-shared" in CALENDAR_SKILL + CHAT_SKILL
 
-    trigger = _message(
-        "dingtalk://dingtalkclient/action/open_mini_app?page=detail%3FuniqueId%3Devent-1",
-        raw_payload={"eventId": "event-1"},
+    store = AutoReplyStore(tmp_path / "calendar-contract.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Calendar source group",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-11 10:00:00",
+        trigger_sender="Inviter",
+        trigger_text="Calendar invitation event-1",
+        execution_generation="calendar-contract",
     )
-    executor = CalendarClarificationProtocolExecutor(skill_paths)
-    worker, _dws = _worker_with_protocol_executor(
-        tmp_path,
-        [trigger],
-        executor,
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    context = AgentTaskContext(
+        task_id=task.id,
+        channel="dingtalk",
+        conversation_id="cid-1",
+        conversation_title="Calendar source group",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_sender="Inviter",
+        trigger_text="Calendar invitation event-1",
+        trigger_create_time="2026-08-11 10:00:00",
+        messages=(),
+        materials=(
+            MaterialReference(
+                kind="dingtalk_calendar",
+                reference=json.dumps({"event_id": "event-1"}),
+                source_message_id="msg-1",
+                read_commands=(
+                    "dws calendar event get --id event-1 --format json",
+                ),
+            ),
+        ),
+        prior_receipts=(),
+        trigger_raw_payload={"eventId": "event-1"},
     )
-    _enqueue(worker.store, trigger)
+    executor = CalendarRunnerContractExecutor(skill_paths)
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ConsumerAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+            owner="calendar-contract-consumer",
+            codex_session_exists=lambda _session_id: True,
+        ),
+        audit=AuditAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+            owner="calendar-contract-audit",
+        ),
+    )
+    result = orchestrator.process(task, context, refresh_context=lambda: context)
 
-    assert worker.consume_once(max_tasks=1) == 1
-
-    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_status == "completed"
-    assert attempt.send_status != "needs_human"
-    assert executor.consumer_loaded_skills[0] == "ceo-calendar-invite"
-    assert executor.audit_loaded_skills == executor.consumer_loaded_skills
-    assert executor.event_reads == 2
-    assert executor.sent_questions == 1
-    assert CalendarClarificationProtocolExecutor.question in executor.prompts[1]
-    candidate = _prompt_json_section(executor.prompts[1], "Candidate revision\n")
-    action = candidate["proposal"]["actions"][0]
-    argv = action["payload"]["argv"]
-    assert action["target"] == {"group": "cid-1"}
-    assert argv[argv.index("--group") + 1] == "cid-1"
-    assert argv[argv.index("--at-open-dingtalk-ids") + 1] == "inviter-1"
-    assert "<@inviter-1>" in argv[argv.index("--text") + 1]
-    assert "--user" not in argv
-    assert "--group cid-1" in executor.question_write_command
-    assert "--user" not in executor.question_write_command
-    assert executor.question_verify_command == (
-        "dws chat message list --group cid-1 --time 2026-07-29"
+    assert result.status == "executed"
+    assert result.final_role is AgentRole.AUDIT
+    assert result.audit_result is not None
+    assert result.audit_result.outcome.value == "executed"
+    assert len(executor.commands) == 2
+    assert all("--output-schema" in command for command in executor.commands)
+    assert (
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_spreadsheet"]'
+        in executor.commands[0]
     )
-    assert "--user" not in executor.question_verify_command
+    assert "execute_reviewed_write" not in " ".join(executor.commands[0])
+    assert (
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill", "read_spreadsheet"]'
+        in executor.commands[1]
+    )
+    assert "Raw material references and exact read commands" in executor.prompts[0]
+    assert "Candidate revision" in executor.prompts[1]
+
+    expected_receipts = {
+        name: (
+            str(path.resolve()),
+            hashlib.sha256(skill_contents[name].encode("utf-8")).hexdigest(),
+        )
+        for name, path in skill_paths.items()
+    }
+    runs = store.list_agent_runs_for_task_generation(
+        task.id,
+        task.execution_generation,
+    )
+    assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
+    assert all(run.status == "completed" for run in runs)
+    assert _persisted_skill_receipts(runs[0]) == expected_receipts
+    assert _persisted_skill_receipts(runs[1]) == expected_receipts
+    assert {
+        item["name"]: (item["path"], item["sha256"])
+        for item in executor.handed_off_skills
+    } == expected_receipts
+
+    audit_operations = [
+        event["item"]["metadata"]["operation"]
+        for event in runs[1].tool_events
+        if event.get("type") == "item.completed"
+        and isinstance(event.get("item"), dict)
+        and isinstance(event["item"].get("metadata"), dict)
+    ]
+    assert "calendar event get" in audit_operations
+    assert "chat message send" in audit_operations
+    assert "chat message list" in audit_operations
+    audit_event_operations = [
+        event["item"]["metadata"]["operation"]
+        for event in runs[1].tool_events
+        if isinstance(event.get("item"), dict)
+        and isinstance(event["item"].get("metadata"), dict)
+    ]
+    write_index = audit_event_operations.index("chat message send")
+    assert audit_event_operations[:write_index].count("read_skill") == len(
+        expected_receipts
+    )
 
 
 @pytest.mark.live

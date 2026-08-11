@@ -35,7 +35,6 @@ CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS = {
     ),
     "forbidden_reply_text_terms": "",
     "oa_approval_rules": "management/OA/钉钉审批审阅原则.md",
-    "calendar_rules_path": "management/OA/日历规则.md",
 }
 
 

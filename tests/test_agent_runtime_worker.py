@@ -1194,6 +1194,40 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
         return records
 
 
+def _calendar_operation_skill_fixture(name: str) -> str:
+    if name == "dingtalk-calendar":
+        return """---
+name: dingtalk-calendar
+description: Representative calendar operation fixture.
+metadata:
+  requires: dingtalk-shared
+---
+# Calendar Operations
+
+Load `dingtalk-shared` before calendar operations. Read invitations with
+`dws calendar event get --id <event-id> --format json`. Respond with
+`dws calendar event respond --id <event-id> --status <status> --yes`; when
+supported, clarify with `dws calendar event comment --id <event-id> --text
+<question> --yes`. Read the event again after a response or comment.
+"""
+    if name == "dingtalk-chat":
+        return """---
+name: dingtalk-chat
+description: Representative source-chat operation fixture.
+metadata:
+  requires: dingtalk-shared
+---
+# Chat Operations
+
+Load `dingtalk-shared` before chat operations. Calendar fallback stays in the
+source group: `dws chat message send --group <conversation-id>
+--at-open-dingtalk-ids <inviter-id> --text <question> --yes`. Never open a
+direct chat for a group source. Verify with `dws chat message list --group
+<conversation-id> --time <date>`.
+"""
+    raise AssertionError(f"unexpected operation Skill fixture: {name}")
+
+
 class NativeCommandStub:
     def __init__(self, read_output: dict[str, object]) -> None:
         self.read_output = read_output
@@ -3328,7 +3362,7 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
         content = (
             (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
             if name == "ceo-calendar-invite"
-            else f"---\nname: {name}\n---\n# {name}\n"
+            else _calendar_operation_skill_fixture(name)
         )
         path.write_text(content, encoding="utf-8")
         skill_paths[name] = path
