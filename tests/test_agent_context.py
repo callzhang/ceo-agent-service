@@ -12,7 +12,23 @@ from app.agent_context import (
 )
 from app.agent_contracts import ConsumerProposal
 from app.agent_skill_usage import LoadedSkillReceipt
+from app.developer_prompt import SEED_DEVELOPER_PROMPT_TEMPLATE
 from tests.prompt_structure import validate_prompt_structure
+
+
+def test_role_boundary_invariant_is_complete_across_all_core_prompts():
+    expected_runtime = (
+        "1. [role_boundary] Role Boundary: Consumer Agent A is Derek's read-only "
+        "representative; Audit Agent B is the only role allowed to execute an "
+        "accepted candidate."
+    )
+    expected_default = expected_runtime.replace("Derek's", "<var: principal>'s")
+
+    assert _CONSUMER_AGENT_RULES.splitlines()[1] == expected_runtime
+    assert _AUDIT_AGENT_RULES.splitlines()[1] == expected_runtime
+    assert SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(
+        encoding="utf-8"
+    ).splitlines()[1] == expected_default
 
 
 def test_consumer_core_prompt_contains_only_runtime_invariants():
@@ -569,7 +585,11 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert '"operation_id": "op-2"' in rendered
     assert "请补充材料。" in rendered
     assert "dws oa approval detail --instance-id pid-1 --format json" in rendered
-    assert "only executor" in rendered
+    assert (
+        "1. [role_boundary] Role Boundary: Consumer Agent A is Derek's read-only "
+        "representative; Audit Agent B is the only role allowed to execute an "
+        "accepted candidate."
+    ) in rendered
     assert "cannot change A's business meaning" in rendered
     assert "corrected revision remains executable" in rendered
     assert "group-send candidate" not in rendered

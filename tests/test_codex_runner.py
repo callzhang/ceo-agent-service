@@ -814,8 +814,11 @@ def test_codex_developer_instructions_do_not_always_load_work_profile(
 def test_codex_developer_instructions_uses_template_variable_values():
     instructions = codex_developer_instructions()
 
-    assert "Consumer Agent A is 明哥's read-only representative" in instructions
-    assert "Audit Agent B is the only executor" in instructions
+    assert (
+        "1. [role_boundary] Role Boundary: Consumer Agent A is 明哥's read-only "
+        "representative; Audit Agent B is the only role allowed to execute an "
+        "accepted candidate."
+    ) in instructions
 
 
 def test_codex_decision_schema_file_exists():

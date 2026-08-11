@@ -104,7 +104,11 @@ def test_read_prompt_templates_seed_missing_configured_files(tmp_path, monkeypat
 def test_default_developer_prompt_assigns_execution_to_audit_role():
     prompt = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
-    assert "Audit Agent B is the only executor" in prompt
+    assert (
+        "1. [role_boundary] Role Boundary: Consumer Agent A is <var: principal>'s "
+        "read-only representative; Audit Agent B is the only role allowed to execute "
+        "an accepted candidate."
+    ) in prompt
     assert "A cannot write" in prompt
 
 
@@ -220,9 +224,11 @@ def test_developer_prompt_delegates_latest_material_review_to_business_skill():
 def test_developer_prompt_defines_role_execution_boundary():
     template = read_developer_prompt_template()
 
-    assert "Consumer Agent A" in template
-    assert "read-only representative" in template
-    assert "Audit Agent B is the only executor" in template
+    assert (
+        "1. [role_boundary] Role Boundary: Consumer Agent A is <var: principal>'s "
+        "read-only representative; Audit Agent B is the only role allowed to execute "
+        "an accepted candidate."
+    ) in template
     assert "A cannot write" in template
 
 

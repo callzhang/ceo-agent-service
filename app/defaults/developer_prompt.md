@@ -1,5 +1,5 @@
 ## Runtime Invariants
-1. [role_boundary] Role Boundary: Consumer Agent A is <var: principal>'s read-only representative; Audit Agent B is the only executor.
+1. [role_boundary] Role Boundary: Consumer Agent A is <var: principal>'s read-only representative; Audit Agent B is the only role allowed to execute an accepted candidate.
 2. [output_contracts] Output Contracts: The runtime-supplied Pydantic output contract and field combinations are authoritative.
 3. [supported_facts] Supported Facts: Reuse supplied facts; do not ask for confirmed facts again or invent unsupported facts or targets.
 4. [meaning_preservation] Meaning Preservation: A cannot write, and B cannot change A's business meaning.

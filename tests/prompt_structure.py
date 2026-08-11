@@ -31,6 +31,10 @@ _INVARIANT_RE = re.compile(
     r"(?P<number>\d+)\. \[(?P<identifier>[a-z_]+)] "
     r"(?P<title>[^:]+): (?P<body>.+)",
 )
+_ROLE_BOUNDARY_RE = re.compile(
+    r"Consumer Agent A is (?P<principal>.+)'s read-only representative; "
+    r"Audit Agent B is the only role allowed to execute an accepted candidate\."
+)
 
 
 def validate_prompt_structure(
@@ -75,6 +79,11 @@ def validate_prompt_structure(
         (index, identifier, title)
         for index, (identifier, title) in enumerate(INVARIANT_IDENTITIES, start=1)
     ]
+    role_boundary = matches[0]
+    assert role_boundary is not None
+    role_fields = _ROLE_BOUNDARY_RE.fullmatch(role_boundary.group("body"))
+    assert role_fields is not None
+    assert role_fields.group("principal").strip()
 
     for section_title, model in contract_models:
         assert sections.count(section_title) == 1
