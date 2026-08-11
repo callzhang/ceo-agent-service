@@ -652,6 +652,77 @@ def test_expired_reconciliation_attempt_is_claimed_by_only_one_worker(tmp_path):
     assert still_claimed["lease_owner"] == "reconciler-a"
 
 
+def test_sent_attempt_review_enqueue_is_exactly_once_for_current_revision(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        status="draft",
+        scheduled_at="2026-07-01 01:00:00",
+    )
+    assert store.claim_follow_up_draft_revision(
+        draft_id,
+        expected_revision=1,
+        claim_token="send-token",
+        idempotency_uuid="send-uuid",
+        lease_owner="sender",
+        claimed_at="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    assert store.transition_follow_up_attempt_to_sending(
+        draft_id,
+        claimed_revision=1,
+        claim_token="send-token",
+        lease_owner="sender",
+        now="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    assert store.update_claimed_follow_up_draft(
+        draft_id,
+        claimed_revision=1,
+        claim_token="send-token",
+        lease_owner="sender",
+        now="2026-06-08 02:01:00",
+        attempt_state="sent",
+        attempt_result_json=json.dumps({"idempotency_uuid": "send-uuid"}),
+        status="sent",
+        send_result_json=json.dumps({"idempotency_uuid": "send-uuid"}),
+    )
+    source_ref = f"follow-up-repair:{draft_id}:prior-delivery:1:current:2"
+
+    first = store.enqueue_follow_up_delivery_review(
+        draft_id=draft_id,
+        draft_revision=1,
+        claim_token="send-token",
+        current_revision=2,
+        source_type="follow_up_completion_check",
+        source_ref=source_ref,
+        payload_json="{}",
+    )
+    second = store.enqueue_follow_up_delivery_review(
+        draft_id=draft_id,
+        draft_revision=1,
+        claim_token="send-token",
+        current_revision=2,
+        source_type="follow_up_completion_check",
+        source_ref=source_ref,
+        payload_json="{}",
+    )
+
+    assert first is True
+    assert second is False
+    attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert attempt is not None
+    assert attempt["state"] == "sent"
+    assert attempt["review_enqueued_revision"] == 2
+    queued = store.claim_work_summary_inputs(limit=2)
+    assert len(queued) == 1
+    assert queued[0].source_ref == source_ref
+
+
 def test_due_follow_up_defers_outside_local_working_hours(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
@@ -2078,13 +2149,13 @@ def test_future_scheduled_correction_does_not_delay_expired_old_readback(
         draft_revision=1,
     )
     assert old_attempt is not None
-    assert old_attempt["state"] == "sent_review_enqueued"
+    assert old_attempt["state"] == "sent"
+    assert old_attempt["review_enqueued_revision"] == 2
     held = store.get_follow_up_draft(draft_id)
     assert held is not None
     assert held.question_text == "修正后的问题"
-    assert held.suppressed_reason == (
-        "prior_revision_delivered_requires_agent_review"
-    )
+    assert held.scheduled_at == "2026-07-01 01:00:00"
+    assert held.suppressed_reason == ""
     assert len(store.claim_work_summary_inputs(limit=2)) == 1
 
 
@@ -2112,7 +2183,7 @@ def test_late_send_result_is_persisted_only_on_old_revision_and_queues_review(
             store.update_follow_up_draft(
                 draft_id,
                 question_text="修正后的问题",
-                scheduled_at="2026-06-08 01:00:00",
+                scheduled_at="2026-07-01 01:00:00",
             )
             return {"success": True, "result": {"openTaskId": "late-result"}}
 
@@ -2140,7 +2211,23 @@ def test_late_send_result_is_persisted_only_on_old_revision_and_queues_review(
     assert corrected.revision == 2
     assert corrected.status == "draft"
     assert corrected.question_text == "修正后的问题"
+    assert corrected.scheduled_at == "2026-07-01 01:00:00"
+    assert corrected.suppressed_reason == ""
     assert corrected.send_result_json == "{}"
+    queued = store.claim_work_summary_inputs(limit=2)
+    assert len(queued) == 1
+    assert queued[0].source_ref == (
+        f"follow-up-repair:{draft_id}:prior-delivery:1:current:2"
+    )
+    work_item = json.loads(queued[0].payload_json)
+    summary = json.loads(work_item["summary"])
+    evidence = summary["delivery_evidence"]
+    assert evidence["prior_revision"] == 1
+    assert evidence["prior_idempotency_uuid"] == old_uuid
+    assert evidence["old_content_delivery_proven"] is True
+    assert evidence["prior_delivered_text"]
+    assert evidence["current_revision"] == 2
+    assert evidence["current_question_text"] == "修正后的问题"
 
     assert process_due_follow_ups(
         store,
@@ -2152,25 +2239,16 @@ def test_late_send_result_is_persisted_only_on_old_revision_and_queues_review(
     held = store.get_follow_up_draft(draft_id)
     assert held is not None
     assert held.status == "draft"
-    assert held.suppressed_reason == (
-        "prior_revision_delivered_requires_agent_review"
-    )
+    assert held.scheduled_at == "2026-07-01 01:00:00"
+    assert held.suppressed_reason == ""
     reviewed_attempt = store.get_follow_up_send_attempt(
         draft_id=draft_id,
         draft_revision=1,
     )
     assert reviewed_attempt is not None
-    assert reviewed_attempt["state"] == "sent_review_enqueued"
-    queued = store.claim_work_summary_inputs(limit=2)
-    assert len(queued) == 1
-    assert queued[0].source_ref == f"follow-up-repair:{draft_id}:prior-delivery:1"
-    work_item = json.loads(queued[0].payload_json)
-    summary = json.loads(work_item["summary"])
-    evidence = summary["delivery_evidence"]
-    assert evidence["prior_revision"] == 1
-    assert evidence["prior_idempotency_uuid"] == old_uuid
-    assert evidence["old_content_delivery_proven"] is True
-    assert evidence["current_question_text"] == "修正后的问题"
+    assert reviewed_attempt["state"] == "sent"
+    assert reviewed_attempt["review_enqueued_revision"] == 2
+    assert store.claim_work_summary_inputs(limit=2) == []
     assert process_due_follow_ups(
         store,
         dws,
@@ -2241,7 +2319,8 @@ def test_corrected_revision_waits_for_old_confirmed_sent_reconciliation(
         draft_revision=1,
     )
     assert old_attempt is not None
-    assert old_attempt["state"] == "sent_review_enqueued"
+    assert old_attempt["state"] == "sent"
+    assert old_attempt["review_enqueued_revision"] == 2
     assert old_attempt["idempotency_uuid"] == old_uuid
     reconciliation = json.loads(str(old_attempt["result_json"]))["reconciliation"]
     assert reconciliation["state"] == "sent"
@@ -2249,14 +2328,21 @@ def test_corrected_revision_waits_for_old_confirmed_sent_reconciliation(
     assert held is not None
     assert held.question_text == "修正后的问题"
     assert held.status == "draft"
-    assert held.suppressed_reason == (
-        "prior_revision_delivered_requires_agent_review"
-    )
+    assert held.scheduled_at == "2026-06-08 01:00:00"
+    assert held.suppressed_reason == ""
     assert store.get_follow_up_send_attempt(
         draft_id=draft_id,
         draft_revision=2,
     ) is None
     assert len(store.claim_work_summary_inputs(limit=2)) == 1
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:07:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.sent) == 1
+    assert store.claim_work_summary_inputs(limit=2) == []
 
 
 def test_old_confirmed_not_sent_releases_corrected_revision(tmp_path, monkeypatch):

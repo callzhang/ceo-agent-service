@@ -468,7 +468,7 @@ def _defer_policy_follow_up(
     )
 
 
-def _defer_follow_up_for_agent_review(
+def _work_tracking_review_item(
     store: AutoReplyStore,
     draft,
     *,
@@ -476,7 +476,7 @@ def _defer_follow_up_for_agent_review(
     reason: str,
     repair_source_ref: str = "",
     additional_evidence: dict[str, object] | None = None,
-) -> bool:
+) -> tuple[WorkItem, str]:
     project = store.get_work_project(draft.project_id)
     todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
     dingtalk_link = (
@@ -586,6 +586,26 @@ def _defer_follow_up_for_agent_review(
             },
         }
     )
+    return work_item, repair_source_ref
+
+
+def _defer_follow_up_for_agent_review(
+    store: AutoReplyStore,
+    draft,
+    *,
+    now: str,
+    reason: str,
+    repair_source_ref: str = "",
+    additional_evidence: dict[str, object] | None = None,
+) -> bool:
+    work_item, resolved_source_ref = _work_tracking_review_item(
+        store,
+        draft,
+        now=now,
+        reason=reason,
+        repair_source_ref=repair_source_ref,
+        additional_evidence=additional_evidence,
+    )
     deferred = _defer_policy_follow_up(
         store,
         draft,
@@ -593,7 +613,7 @@ def _defer_follow_up_for_agent_review(
         reason=reason,
         detail={
             "agent_review_enqueued": True,
-            "repair_source_ref": repair_source_ref,
+            "repair_source_ref": resolved_source_ref,
         },
     )
     if not deferred:
@@ -614,35 +634,40 @@ def _enqueue_prior_delivery_agent_review(
     now: str,
 ) -> bool:
     attempt_revision = int(attempt.get("draft_revision") or 0)
+    attempt_result = _json_dict(str(attempt.get("result_json") or "{}"))
     evidence = {
         "prior_revision": attempt_revision,
         "prior_idempotency_uuid": str(attempt.get("idempotency_uuid") or ""),
         "prior_attempt_state": str(attempt.get("state") or ""),
-        "prior_send_result": _json_dict(str(attempt.get("result_json") or "{}")),
+        "prior_send_result": attempt_result,
+        "prior_delivered_text": str(attempt_result.get("delivered_text") or ""),
         "current_revision": draft.revision,
         "current_question_text": draft.question_text,
         "current_scheduled_at": draft.scheduled_at,
         "old_content_delivery_proven": True,
         "corrected_revision_exists": True,
     }
-    deferred = _defer_follow_up_for_agent_review(
+    source_ref = (
+        f"follow-up-repair:{draft.id}:prior-delivery:{attempt_revision}:"
+        f"current:{draft.revision}"
+    )
+    work_item, _ = _work_tracking_review_item(
         store,
         draft,
         now=now,
         reason=PRIOR_DELIVERY_REVIEW_REASON,
-        repair_source_ref=(
-            f"follow-up-repair:{draft.id}:prior-delivery:{attempt_revision}"
-        ),
+        repair_source_ref=source_ref,
         additional_evidence=evidence,
     )
-    if not deferred:
-        return False
-    store.mark_follow_up_sent_review_enqueued(
+    return store.enqueue_follow_up_delivery_review(
         draft_id=draft.id,
         draft_revision=attempt_revision,
         claim_token=str(attempt.get("claim_token") or ""),
+        current_revision=draft.revision,
+        source_type=work_item.source.type.value,
+        source_ref=work_item.source.ref,
+        payload_json=work_item.model_dump_json(),
     )
-    return True
 
 
 def _recover_prior_follow_up_send_attempt(
@@ -659,6 +684,16 @@ def _recover_prior_follow_up_send_attempt(
         return False
     state = str(attempt.get("state") or "")
     if state == "sent":
+        review_source_ref = str(attempt.get("review_source_ref") or "")
+        if review_source_ref:
+            review_status = store.get_work_summary_input_status(
+                source_type="follow_up_completion_check",
+                source_ref=review_source_ref,
+            )
+            if review_status in {"done", "discarded"}:
+                return False
+            if int(attempt.get("review_enqueued_revision") or 0) >= draft.revision:
+                return True
         _enqueue_prior_delivery_agent_review(store, draft, attempt, now=now)
         return True
     return True
@@ -968,6 +1003,7 @@ def process_due_follow_ups(
             persisted_send_result = json.dumps(
                 {
                     "send_result": result or {},
+                    "delivered_text": question_text,
                     "claimed_revision": draft.revision,
                     "idempotency_uuid": revision_uuid,
                 },
@@ -1128,6 +1164,7 @@ def process_due_follow_ups(
                 "claimed_revision": draft.revision,
                 "idempotency_uuid": revision_uuid,
                 "send_result": result or {},
+                "delivered_text": question_text,
             },
             ensure_ascii=False,
         )
@@ -1153,4 +1190,23 @@ def process_due_follow_ups(
         )
         if finalized:
             sent += 1
+            continue
+        delivered = store.get_follow_up_send_attempt(
+            draft_id=draft.id,
+            draft_revision=draft.revision,
+        )
+        current = store.get_follow_up_draft(draft.id)
+        if (
+            delivered is not None
+            and delivered.get("state") == "sent"
+            and delivered.get("idempotency_uuid") == revision_uuid
+            and current is not None
+            and current.revision > draft.revision
+        ):
+            _enqueue_prior_delivery_agent_review(
+                store,
+                current,
+                delivered,
+                now=now,
+            )
     return sent

@@ -1359,6 +1359,8 @@ class AutoReplyStore:
                     claimed_at text not null default '',
                     lease_until text not null default '',
                     result_json text not null default '{}',
+                    review_enqueued_revision integer not null default 0,
+                    review_source_ref text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp
                 );
@@ -1700,6 +1702,8 @@ class AutoReplyStore:
                 ("lease_owner", "text not null default ''"),
                 ("claimed_at", "text not null default ''"),
                 ("lease_until", "text not null default ''"),
+                ("review_enqueued_revision", "integer not null default 0"),
+                ("review_source_ref", "text not null default ''"),
             ):
                 if column not in follow_up_send_attempt_columns:
                     db.execute(
@@ -10904,6 +10908,23 @@ class AutoReplyStore:
             ).fetchone()
             return int(row["id"])
 
+    def get_work_summary_input_status(
+        self,
+        *,
+        source_type: str,
+        source_ref: str,
+    ) -> str:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select status
+                from work_summary_inputs
+                where source_type=? and source_ref=?
+                """,
+                (source_type, source_ref),
+            ).fetchone()
+            return str(row["status"]) if row is not None else ""
+
     def claim_work_summary_inputs(self, limit: int) -> list[WorkSummaryInput]:
         if limit <= 0:
             return []
@@ -12457,26 +12478,68 @@ class AutoReplyStore:
             ).fetchone()
             return dict(row) if row is not None else None
 
-    def mark_follow_up_sent_review_enqueued(
+    def enqueue_follow_up_delivery_review(
         self,
         *,
         draft_id: int,
         draft_revision: int,
         claim_token: str,
+        current_revision: int,
+        source_type: str,
+        source_ref: str,
+        payload_json: str,
     ) -> bool:
         with self._connect() as db:
-            cursor = db.execute(
+            db.execute("begin immediate")
+            attempt = db.execute(
                 """
                 update follow_up_send_attempts
-                set state='sent_review_enqueued', updated_at=current_timestamp
+                set review_enqueued_revision=?,
+                    review_source_ref=?,
+                    updated_at=current_timestamp
                 where draft_id=?
                   and draft_revision=?
                   and claim_token=?
                   and state='sent'
+                  and review_enqueued_revision < ?
                 """,
-                (draft_id, draft_revision, claim_token),
+                (
+                    current_revision,
+                    source_ref,
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                    current_revision,
+                ),
             )
-            return cursor.rowcount == 1
+            if attempt.rowcount != 1:
+                return False
+            db.execute(
+                """
+                insert into work_summary_inputs (source_type, source_ref, payload_json)
+                values (?, ?, ?)
+                on conflict(source_type, source_ref) do update set
+                    payload_json=excluded.payload_json,
+                    status=case
+                        when work_summary_inputs.status in ('failed', 'discarded')
+                            then 'pending'
+                        else work_summary_inputs.status
+                    end,
+                    error=case
+                        when work_summary_inputs.status in ('failed', 'discarded')
+                            then ''
+                        else work_summary_inputs.error
+                    end,
+                    available_at=case
+                        when work_summary_inputs.status in ('failed', 'discarded')
+                            then ''
+                        else work_summary_inputs.available_at
+                    end,
+                    updated_at=current_timestamp
+                """,
+                (source_type, source_ref, payload_json),
+            )
+            return True
 
     def get_follow_up_send_attempt(
         self,
