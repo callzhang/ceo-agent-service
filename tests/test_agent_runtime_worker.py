@@ -4583,6 +4583,64 @@ def test_attached_image_is_inspected_without_inventing_an_image_skill(
     assert all("image" not in name for name in executor.consumer_loaded_skills)
 
 
+def test_audit_fails_closed_when_refreshed_image_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-document-review",
+        ("dingtalk-shared", "dingtalk-chat"),
+    )
+    trigger = _message("Review this image: [图片消息](mediaId=@img-token-1)")
+    executor = Task4BehaviorProtocolExecutor(
+        skill_paths,
+        Task4BehaviorScenario(
+            name="image_refresh_failure",
+            outcome="proposal",
+            summary="Inspected the image and prepared the review.",
+            read_mode="image_input",
+        ),
+    )
+    worker, dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        executor,
+        max_task_attempts=1,
+    )
+    dws_local_path = tmp_path / "first-resolution.png"
+    dws_local_path.write_bytes(TINY_PNG)
+    resolutions = iter(
+        (
+            {"localPath": str(dws_local_path)},
+            {"downloadUrl": "https://signed.example.test/expired.png"},
+        )
+    )
+    monkeypatch.setattr(
+        dws,
+        "get_resource_download_url",
+        lambda *_args, **_kwargs: next(resolutions),
+    )
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_error == "image_dependency_unavailable"
+    assert len(executor.image_inspections) == 1
+    assert executor.write_operations == []
+    assert executor.external_readbacks == []
+    runs = _task4_agent_runs(worker)
+    assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
+    assert runs[1].status == "failed"
+    assert runs[1].tool_events == []
+    assert json.loads(runs[1].structured_error_json)["code"] == (
+        "image_dependency_unavailable"
+    )
+
+
 @pytest.mark.parametrize(
     "invalid_bytes",
     [b"\x89PNG\r\n\x1a\ntruncated", b"<html>not an image</html>"],

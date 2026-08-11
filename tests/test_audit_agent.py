@@ -9,7 +9,7 @@ import pytest
 
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_contracts import AuditAgentResult, ConsumerProposal, ProposedAction
-from app.agent_effects import McpToolEffectRegistry
+from app.agent_effects import EffectKind, McpToolEffectRegistry
 from app.agent_turn_runner import (
     _action_receipt_operation_id,
     _json_digest,
@@ -2266,11 +2266,55 @@ def test_effect_registry_requires_registered_inner_cli_operation_relation():
         **relation,
         read_operation="chat member list",
     )
-    assert not registry.has_readback_for(
+    assert registry.has_readback_for(
         write_server="agent_cli",
         write_tool="execute_reviewed_write",
         write_operation="unregistered write operation",
     )
+
+
+def test_unregistered_controlled_write_cannot_confirm_without_readback(setup):
+    store, task, audit_context, parent = setup
+    relation_key = (
+        "agent_cli",
+        "execute_reviewed_read",
+        "agent_cli",
+        "execute_reviewed_write",
+    )
+    registry = McpToolEffectRegistry(
+        {
+            ("agent_cli", "execute_reviewed_read"): EffectKind.READ_ONLY,
+            ("agent_cli", "execute_reviewed_write"): EffectKind.EFFECTFUL,
+        },
+        readbacks={
+            ("agent_cli", "execute_reviewed_read"): {
+                ("agent_cli", "execute_reviewed_write")
+            }
+        },
+        readback_operation_modes={relation_key: "registered"},
+        readback_operation_relations={
+            relation_key: {("oa approval detail", "oa approval approve")}
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="audit_external_readback_missing"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(
+                _audit_jsonl(
+                    "operation-1",
+                    session="session-b",
+                    include_verification=False,
+                )
+            ),
+            mcp_effect_registry=registry,
+        ).run(
+            task,
+            audit_context,
+            turn_attempt=0,
+            parent_agent_run_id=parent.id,
+        )
 
 
 def test_controlled_cli_readback_rejects_conflicting_shared_target():

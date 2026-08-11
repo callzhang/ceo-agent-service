@@ -263,19 +263,10 @@ class McpToolEffectRegistry:
             for read, targets in self._readbacks.items()
             if write in targets
         ]
-        if not write_operation:
-            return bool(relation_keys)
-        return any(
-            self._readback_operation_modes.get(key, "outer") == "outer"
-            or any(
-                registered_write == write_operation
-                for _registered_read, registered_write in self._readback_operation_relations.get(
-                    key,
-                    (),
-                )
-            )
-            for key in relation_keys
-        )
+        # A configured relation establishes the readback requirement. Registered
+        # operations constrain which read can satisfy it; an unknown inner write
+        # must not turn a controlled wrapper into a no-readback effect.
+        return bool(relation_keys)
 
     def readback_targets_match(
         self,

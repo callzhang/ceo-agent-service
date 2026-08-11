@@ -6,7 +6,10 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-from app.agent_context import AuditTurnContext
+from app.agent_context import (
+    IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY,
+    AuditTurnContext,
+)
 from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
@@ -88,6 +91,8 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
+        if image_failure := self._image_dependency_failure(claim.run, context):
+            return image_failure
         invalid_actions = _invalid_operation_contracts(context, self.effects)
         if invalid_actions:
             return self._return_invalid_candidate(
@@ -127,6 +132,7 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
+        self._image_dependency_failure(claim.run, context)
         database_absence = _database_delivery_absence_reconciliation(
             self.store,
             task,
@@ -188,6 +194,7 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
+        self._image_dependency_failure(claim.run, context)
         if _database_delivery_absence_reconciliation(
             self.store,
             task,
@@ -416,6 +423,38 @@ class AuditAgentRunner:
                 not self.dry_run and recovery_phase != "reconcile"
             ),
             image_paths=[Path(path) for path in context.task.image_paths],
+        )
+
+    def _image_dependency_failure(
+        self,
+        run: AgentRun,
+        context: AuditTurnContext,
+    ) -> AgentTurnRunResult[AuditAgentResult] | None:
+        image_error = context.task.image_dependency_error
+        if image_error is None:
+            return None
+        if run.status != "running":
+            raise RuntimeError(image_error.code)
+        result = AuditAgentResult(
+            outcome=AuditOutcome.FAILED,
+            summary=IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY,
+            proposal_revision=run.proposal_revision,
+            side_effect_state=SideEffectState.NONE,
+            feedback=None,
+            external_result=None,
+            reconciliation=(),
+            error=image_error,
+        )
+        failed = self.store.fail_agent_run(
+            run.id,
+            image_error.model_dump(mode="json"),
+            owner=self.owner,
+        )
+        return AgentTurnRunResult(
+            run_id=failed.id,
+            result=result,
+            transcript_start_line=failed.transcript_start_line,
+            transcript_end_line=failed.transcript_end_line,
         )
 
 

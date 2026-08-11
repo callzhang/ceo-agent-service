@@ -7,14 +7,17 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
-from app.agent_context import AgentTaskContext
+from app.agent_context import (
+    IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY,
+    AgentTaskContext,
+)
 from app.agent_contracts import (
     AuditFeedback,
     ConsumerAgentResult,
     ConsumerOutcome,
     ConsumerProposal,
 )
-from app.agent_result import AgentError, ResultParseError
+from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
     parse_consumer_agent_wire_result,
@@ -275,15 +278,12 @@ class ConsumerAgentRunner:
             native_cli_classifier=self.native_cli_classifier,
         )
 
-        if context.unresolved_image_count:
+        if (image_error := context.image_dependency_error) is not None:
             result = ConsumerAgentResult(
                 outcome=ConsumerOutcome.FAILED,
-                summary="Referenced image content could not be supplied to the agent.",
+                summary=IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY,
                 proposal=None,
-                error=AgentError(
-                    code="image_dependency_unavailable",
-                    retryable=False,
-                ),
+                error=image_error,
             )
             failed = self.store.fail_agent_run(
                 claim.run.id,

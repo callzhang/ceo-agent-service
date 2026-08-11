@@ -3,7 +3,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from app.agent_contracts import AuditFeedback, ConsumerProposal
+from app.agent_result import AgentError
 from app.agent_skill_usage import LoadedSkillReceipt
+
+
+IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY = (
+    "Referenced image content could not be supplied to the agent."
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +71,12 @@ class AgentTaskContext:
             material.kind == "dingtalk_image" for material in self.materials
         )
         return max(referenced - len(self.image_paths), 0)
+
+    @property
+    def image_dependency_error(self) -> AgentError | None:
+        if not self.unresolved_image_count:
+            return None
+        return AgentError(code="image_dependency_unavailable", retryable=False)
 
     def render(
         self,

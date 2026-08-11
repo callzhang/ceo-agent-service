@@ -422,9 +422,20 @@ fully load as a supported image before they are copied into the Agent task.
 Per-task directories and files use modes `0700` and `0600`; the worker deletes
 only the exact paths created for that task in a `finally` block after
 Consumer/Audit processing.
+Consumer and Audit apply the same required-image dependency invariant to their
+respective task contexts. If Audit context refresh cannot resolve an image that
+Consumer inspected, Audit fails with `image_dependency_unavailable` before any
+review or external effect.
 
 An `agent_cli` command that returns a structured error receipt is recorded as a
 failed effect with its retryability and channel state. It is not treated as an
 unreviewed tool call or an unknown successful write. Native DWS/Lark commands may
 run for up to 15 minutes, matching the documented CLI timeout and remaining below
 the enclosing Agent turn limit.
+
+Controlled native writes require the readback relation configured for the outer
+`execute_reviewed_write` tool. Registered inner operation pairs determine which
+native read can satisfy that requirement; an unregistered inner write operation
+cannot bypass readback or become confirmed from its write receipt alone. Direct
+effect tools with no configured readback relation retain their explicit
+no-readback recovery behavior.
