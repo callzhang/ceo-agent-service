@@ -1123,11 +1123,15 @@ def _is_dingtalk_chat_send_argv(
     metadata: dict[str, object],
     argv: tuple[str, ...] | None,
 ) -> bool:
+    operation = metadata.get("operation")
     return (
         _is_dingtalk_chat_send(metadata)
         and argv is not None
-        and len(argv) >= 4
-        and argv[1:4] == ("chat", "message", "send")
+        and len(argv) >= 3
+        and argv[0] == "dws"
+        and isinstance(operation, str)
+        and operation.startswith("chat ")
+        and bool(_command_option_value(argv, "--text"))
     )
 
 

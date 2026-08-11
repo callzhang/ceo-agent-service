@@ -16,6 +16,7 @@ from app.agent_contracts import (
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_turn_runner import (
     _action_receipt_operation_id,
+    _is_dingtalk_chat_send_argv,
     _json_digest,
     _metadata_matches_action,
     _read_matches_action,
@@ -1422,6 +1423,21 @@ def test_controlled_receipt_uses_command_digest_not_display_operation_name():
     }
 
     assert _metadata_matches_action(receipt, action)
+
+
+def test_delivery_ledger_recognizes_current_text_message_command():
+    metadata = {
+        "effect": "effectful",
+        "capability": "agent_cli.dws",
+        "operation": "chat +messages-send",
+        "target_identifiers": {"open-dingtalk-id": "user-1"},
+    }
+    argv = (
+        "dws", "chat", "+messages-send", "--open-dingtalk-id", "user-1",
+        "--text", "done", "--yes",
+    )
+
+    assert _is_dingtalk_chat_send_argv(metadata, argv)
 
 
 def test_recovery_execution_completes_from_controlled_receipts_without_agent_json(
