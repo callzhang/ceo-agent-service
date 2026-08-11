@@ -1,6 +1,6 @@
 import asyncio
+import subprocess
 from pathlib import Path
-import zipfile
 
 import pytest
 
@@ -14,7 +14,6 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
 
     assert set(descriptions) == {
         "read_skill",
-        "read_spreadsheet",
         "execute_reviewed_read",
         "execute_reviewed_write",
     }
@@ -53,35 +52,23 @@ def test_read_skill_rejects_files_outside_an_installed_skill(
         agent_cli.read_skill(str(target))
 
 
-def test_read_spreadsheet_reads_downloaded_xlsx_without_shell(tmp_path: Path):
-    workbook_path = tmp_path / "material.xlsx"
-    with zipfile.ZipFile(workbook_path, "w") as workbook:
-        workbook.writestr(
-            "xl/workbook.xml",
-            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet 1" sheetId="1" r:id="rId1"/></sheets></workbook>',
-        )
-        workbook.writestr(
-            "xl/_rels/workbook.xml.rels",
-            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"/></Relationships>',
-        )
-        workbook.writestr(
-            "xl/sharedStrings.xml",
-            '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>领域</t></si><si><t>高招募难度</t></si></sst>',
-        )
-        workbook.writestr(
-            "xl/worksheets/sheet1.xml",
-            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row></sheetData></worksheet>',
-        )
+def test_execute_reviewed_read_allows_python_when_principal_policy_allows_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[ceo_agent.local_read_policy]\nblocked_commands = [\"rm\"]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_AGENT_CODEX_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/bin/python3")
 
-    result = agent_cli.read_spreadsheet(str(workbook_path))
+    receipt = agent_cli.execute_reviewed_read(
+        ["python3", "-c", "print('workbook parsed')"],
+        process_runner=lambda argv, **_: subprocess.CompletedProcess(
+            argv, 0, "workbook parsed\n", ""
+        ),
+    )
 
-    assert result == {
-        "format": "xlsx",
-        "sheets": [
-            {
-                "name": "Sheet 1",
-                "rows": [{"row": 1, "cells": {"A": "领域", "B": "高招募难度"}}],
-                "truncated": False,
-            }
-        ],
-    }
+    assert receipt["cli"] == "local-shell"
+    assert receipt["stdout"] == "workbook parsed\n"

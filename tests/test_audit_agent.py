@@ -732,7 +732,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert 'approval_policy="untrusted"' in command
     assert 'approvals_reviewer="auto_review"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
-    assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill", "read_spreadsheet"]' in command
+    assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill"]' in command
     assert 'web_search="disabled"' not in command
     assert any(
         "Authoritative Audit role boundary" in option
@@ -811,7 +811,7 @@ def test_dry_run_audit_command_exposes_only_reviewed_read_tools(setup):
     assert result.result.error.code == "dry_run_execution_suppressed"
     assert result.result.side_effect_state.value == "none"
     assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_spreadsheet"]'
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill"]'
         in command
     )
     assert "execute_reviewed_write" not in command
@@ -2448,11 +2448,11 @@ def test_definitely_absent_recovery_reads_before_executing_same_revision_once(se
     assert all(run.codex_session_id not in command for command in executor.commands)
     assert all("resume" not in command for command in executor.commands)
     assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_spreadsheet"]'
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill"]'
         in executor.commands[0]
     )
     assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill", "read_spreadsheet"]'
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill"]'
         in executor.commands[1]
     )
     assert "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST" in " ".join(executor.commands[1])

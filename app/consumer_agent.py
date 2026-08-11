@@ -38,10 +38,10 @@ lets the Agent use the principal's local CLI credential store and makes a
 reviewed local read command independently repeatable by Audit B. Unknown shell
 commands and every write command remain forbidden for Consumer Agent A.
 
-For a downloaded `.xlsx` or `.xlsm` file in the temporary material directory,
-call `agent_cli.read_spreadsheet` with its exact path. This is the approved
-Python-backed spreadsheet reader; do not fall back to direct Python or shell
-execution to inspect the workbook.
+For a downloaded local material file, call `agent_cli.execute_reviewed_read`
+with a direct read command. Python is valid for parsing a workbook or another
+format when it is not denied by the principal's local command policy. Do not
+return `needs_human` merely because a material requires a local parser.
 
 Before proposing a DingTalk message send, read
 `/Users/derek/.agents/skills/dws/multi/dingtalk-chat/SKILL.md` with

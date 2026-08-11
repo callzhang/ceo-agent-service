@@ -7,11 +7,8 @@ import os
 import shutil
 import stat
 import subprocess
-import tempfile
-import zipfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from xml.etree import ElementTree
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -34,10 +31,6 @@ from app.native_cli_metadata import (
 
 MAX_CLI_OUTPUT_BYTES = MAX_PROCESS_OUTPUT_BYTES
 MAX_SKILL_BYTES = 256 * 1024
-MAX_SPREADSHEET_BYTES = 20 * 1024 * 1024
-MAX_SPREADSHEET_ROWS = 200
-MAX_SPREADSHEET_COLUMNS = 64
-MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 CLI_TIMEOUT_SECONDS = 15 * 60
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 CliOutputLimitError = ProcessOutputLimitError
@@ -45,10 +38,6 @@ AGENT_SKILL_ROOTS = (
     Path.home() / ".agents" / "skills",
     Path.home() / ".codex" / "skills",
     Path.home() / ".codex" / "plugins",
-)
-SPREADSHEET_MATERIAL_ROOTS = (
-    Path("/tmp").resolve(),
-    Path(tempfile.gettempdir()).resolve(),
 )
 
 
@@ -167,173 +156,6 @@ def read_skill(path: str) -> dict[str, str]:
         "content": content,
         "sha256": hashlib.sha256(content_bytes).hexdigest(),
     }
-
-
-def read_spreadsheet(
-    path: str,
-    *,
-    max_rows: int = MAX_SPREADSHEET_ROWS,
-    max_columns: int = MAX_SPREADSHEET_COLUMNS,
-) -> dict[str, object]:
-    """Read a downloaded xlsx workbook without granting an Agent shell access."""
-    if not 1 <= max_rows <= MAX_SPREADSHEET_ROWS:
-        raise AgentReadOnlyViolationError("spreadsheet_row_limit_invalid")
-    if not 1 <= max_columns <= MAX_SPREADSHEET_COLUMNS:
-        raise AgentReadOnlyViolationError("spreadsheet_column_limit_invalid")
-    material_path = Path(path).expanduser().resolve(strict=True)
-    if material_path.suffix.casefold() not in {".xlsx", ".xlsm"}:
-        raise AgentReadOnlyViolationError("spreadsheet_format_unsupported")
-    if not any(material_path.is_relative_to(root) for root in SPREADSHEET_MATERIAL_ROOTS):
-        raise AgentReadOnlyViolationError("spreadsheet_path_forbidden")
-    flags = os.O_RDONLY | os.O_NONBLOCK
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    with os.fdopen(os.open(material_path, flags), "rb") as material_file:
-        file_stat = os.fstat(material_file.fileno())
-        if not stat.S_ISREG(file_stat.st_mode):
-            raise AgentReadOnlyViolationError("spreadsheet_file_not_regular")
-        if file_stat.st_size > MAX_SPREADSHEET_BYTES:
-            raise AgentReadOnlyViolationError("spreadsheet_file_too_large")
-        try:
-            with zipfile.ZipFile(material_file) as workbook:
-                return _read_xlsx_workbook(
-                    workbook,
-                    max_rows=max_rows,
-                    max_columns=max_columns,
-                )
-        except zipfile.BadZipFile as exc:
-            raise AgentReadOnlyViolationError("spreadsheet_file_invalid") from exc
-        except ElementTree.ParseError as exc:
-            raise AgentReadOnlyViolationError("spreadsheet_xml_invalid") from exc
-
-
-def _read_xlsx_workbook(
-    workbook: zipfile.ZipFile,
-    *,
-    max_rows: int,
-    max_columns: int,
-) -> dict[str, object]:
-    shared_strings = _xlsx_shared_strings(workbook)
-    sheets = _xlsx_sheet_parts(workbook)
-    previews: list[dict[str, object]] = []
-    remaining_chars = MAX_SPREADSHEET_PREVIEW_CHARS
-    for name, part in sheets:
-        preview, remaining_chars = _xlsx_sheet_preview(
-            workbook,
-            name=name,
-            part=part,
-            shared_strings=shared_strings,
-            max_rows=max_rows,
-            max_columns=max_columns,
-            remaining_chars=remaining_chars,
-        )
-        previews.append(preview)
-        if remaining_chars == 0:
-            break
-    return {"format": "xlsx", "sheets": previews}
-
-
-def _xlsx_shared_strings(workbook: zipfile.ZipFile) -> list[str]:
-    try:
-        root = ElementTree.fromstring(workbook.read("xl/sharedStrings.xml"))
-    except KeyError:
-        return []
-    return [
-        "".join(node.text or "" for node in item.iter() if node.tag.endswith("}t"))
-        for item in root
-        if item.tag.endswith("}si")
-    ]
-
-
-def _xlsx_sheet_parts(workbook: zipfile.ZipFile) -> list[tuple[str, str]]:
-    workbook_root = ElementTree.fromstring(workbook.read("xl/workbook.xml"))
-    relationships_root = ElementTree.fromstring(
-        workbook.read("xl/_rels/workbook.xml.rels")
-    )
-    targets = {
-        relation.attrib.get("Id", ""): relation.attrib.get("Target", "")
-        for relation in relationships_root
-        if relation.tag.endswith("}Relationship")
-    }
-    sheets: list[tuple[str, str]] = []
-    for sheet in workbook_root.iter():
-        if not sheet.tag.endswith("}sheet"):
-            continue
-        relationship_id = next(
-            (value for key, value in sheet.attrib.items() if key.endswith("}id")),
-            "",
-        )
-        target = targets.get(relationship_id, "")
-        if target:
-            sheets.append((sheet.attrib.get("name", "Sheet"), f"xl/{target}"))
-    if sheets:
-        return sheets
-    return [
-        (Path(name).stem, name)
-        for name in sorted(workbook.namelist())
-        if name.startswith("xl/worksheets/") and name.endswith(".xml")
-    ]
-
-
-def _xlsx_sheet_preview(
-    workbook: zipfile.ZipFile,
-    *,
-    name: str,
-    part: str,
-    shared_strings: list[str],
-    max_rows: int,
-    max_columns: int,
-    remaining_chars: int,
-) -> tuple[dict[str, object], int]:
-    root = ElementTree.fromstring(workbook.read(part))
-    rows: list[dict[str, object]] = []
-    truncated = False
-    for row in (node for node in root.iter() if node.tag.endswith("}row")):
-        if len(rows) >= max_rows:
-            truncated = True
-            break
-        cells: dict[str, str] = {}
-        for cell in (node for node in row if node.tag.endswith("}c")):
-            reference = cell.attrib.get("r", "")
-            column = "".join(character for character in reference if character.isalpha())
-            if not column or _xlsx_column_number(column) > max_columns:
-                continue
-            value = _xlsx_cell_value(cell, shared_strings)
-            if value:
-                value = value[:remaining_chars]
-                cells[column] = value
-                remaining_chars -= len(value)
-                if remaining_chars == 0:
-                    truncated = True
-                    break
-        if cells:
-            rows.append({"row": int(row.attrib.get("r", len(rows) + 1)), "cells": cells})
-        if truncated:
-            break
-    return {"name": name, "rows": rows, "truncated": truncated}, remaining_chars
-
-
-def _xlsx_column_number(column: str) -> int:
-    result = 0
-    for character in column.upper():
-        result = result * 26 + ord(character) - ord("A") + 1
-    return result
-
-
-def _xlsx_cell_value(cell: ElementTree.Element, shared_strings: list[str]) -> str:
-    cell_type = cell.attrib.get("t", "")
-    text = "".join(
-        node.text or "" for node in cell.iter() if node.tag.endswith("}t")
-    )
-    if text:
-        return text
-    raw_value = next(
-        (node.text or "" for node in cell if node.tag.endswith("}v")),
-        "",
-    )
-    if cell_type == "s" and raw_value.isdigit():
-        index = int(raw_value)
-        return shared_strings[index] if index < len(shared_strings) else ""
-    return raw_value
 
 
 def _is_authorized_skill_markdown(skill_path: Path, roots: Sequence[Path]) -> bool:
@@ -506,24 +328,6 @@ def read_skill_tool(path: str) -> dict[str, str]:
 
 
 @server.tool(
-    name="read_spreadsheet",
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
-    ),
-)
-def read_spreadsheet_tool(path: str) -> dict[str, object]:
-    """Read a downloaded Excel workbook through the bounded read-only parser.
-
-    Use this for temporary .xlsx or .xlsm material. It returns a limited sheet
-    preview and never executes workbook code or arbitrary Python.
-    """
-    return read_spreadsheet(path)
-
-
-@server.tool(
     name="execute_reviewed_read",
     annotations=ToolAnnotations(
         readOnlyHint=True,
@@ -533,11 +337,13 @@ def read_spreadsheet_tool(path: str) -> dict[str, object]:
     ),
 )
 def execute_reviewed_read_tool(argv: list[str]) -> dict[str, object]:
-    """Run one exact reviewed read-only command and return an audit receipt.
+    """Run one reviewed DWS, Lark, or local read command and return a receipt.
 
     Use the provided argv for live enterprise evidence such as a message,
-    calendar event, document, file, approval, person, mail, or meeting. This
-    cannot perform writes, shell composition, or interactive authentication.
+    calendar event, document, file, approval, person, mail, or meeting. DWS
+    and Lark use published effect metadata. Local commands use the principal's
+    `ceo_agent.local_read_policy` blacklist, so Python is available unless the
+    principal has explicitly blocked it.
     """
     return execute_reviewed_read(argv)
 
