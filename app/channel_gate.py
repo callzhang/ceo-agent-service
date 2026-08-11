@@ -40,6 +40,7 @@ AUTH_ERROR_CODES = frozenset(
     }
 )
 DWS_CHANNEL_GATE_TIMEOUT_SECONDS = 10
+CODEX_CHANNEL_GATE_TIMEOUT_SECONDS = 10
 
 
 class ChannelGateState(StrEnum):
@@ -500,12 +501,71 @@ class LarkChannelGate:
         return _result(self.channel_name, ChannelGateState.READY, "ready", commands)
 
 
+class CodexChannelGate:
+    """Verify the native Codex CLI before a task starts an Agent run."""
+
+    channel_name = "codex"
+
+    def __init__(
+        self,
+        *,
+        binary: str = "codex",
+        runner: CliRunner = subprocess.run,
+    ):
+        self.binary = binary
+        self.runner = runner
+
+    def check(self) -> ChannelGateResult:
+        commands: list[list[str]] = []
+        if not self.binary.strip():
+            return _result(
+                self.channel_name,
+                ChannelGateState.BLOCKED,
+                "configuration_missing",
+                commands,
+                detail="Codex CLI binary is not configured",
+            )
+        status = _run_command(
+            channel=self.channel_name,
+            phase="status",
+            command=[self.binary, "login", "status"],
+            commands=commands,
+            runner=self.runner,
+            env=os.environ.copy(),
+            timeout_seconds=CODEX_CHANNEL_GATE_TIMEOUT_SECONDS,
+        )
+        if isinstance(status, ChannelGateResult):
+            return status
+        detail = _safe_detail(status.stdout, status.stderr)
+        normalized = f"{status.stdout}\n{status.stderr}".casefold()
+        if "not logged in" in normalized or "not authenticated" in normalized:
+            return _result(
+                self.channel_name,
+                ChannelGateState.NEEDS_LOGIN,
+                "status_auth_required",
+                commands,
+                detail=detail,
+            )
+        if status.returncode != 0:
+            return _generic_failure(
+                channel=self.channel_name,
+                phase="status",
+                completed=status,
+                commands=commands,
+            )
+        return _result(self.channel_name, ChannelGateState.READY, "ready", commands)
+
+
 def default_channel_gates(
-    *, dws_binary: str = "dws", lark_binary: str = "lark-cli"
+    *,
+    dws_binary: str = "dws",
+    lark_binary: str = "lark-cli",
+    codex_binary: str = "codex",
 ) -> dict[str, ChannelGate]:
     gates: tuple[ChannelGate, ...] = (
         DwsChannelGate(binary=dws_binary),
         LarkChannelGate(binary=lark_binary),
+        CodexChannelGate(binary=codex_binary),
     )
     return {gate.channel_name: gate for gate in gates}
 

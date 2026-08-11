@@ -1526,6 +1526,7 @@ def test_worker_defaults_to_real_channel_gates(tmp_path, monkeypatch):
 
     assert isinstance(worker.channel_gates["dingtalk"], DwsChannelGate)
     assert isinstance(worker.channel_gates["lark"], LarkChannelGate)
+    assert worker.channel_gates["codex"].channel_name == "codex"
 
 
 def test_notification_url_includes_attempt_id(tmp_path, monkeypatch):
@@ -1785,6 +1786,40 @@ def test_required_channels_for_task_detects_referenced_channel_capabilities(
         "dingtalk",
         "lark",
     }
+
+
+def test_consume_once_waits_for_codex_gate_before_starting_agent_run(
+    tmp_path, monkeypatch
+):
+    dws = FakeDws([], {})
+    codex = FakeCodex([])
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        channel_gates={
+            "dingtalk": FixedGate("dingtalk", ChannelGateState.READY),
+            "lark": FixedGate("lark", ChannelGateState.READY),
+            "codex": FixedGate("codex", ChannelGateState.NEEDS_LOGIN),
+        },
+    )
+    trigger = message("请处理审批")
+    assert worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        channel="dingtalk",
+    )
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert codex.calls == []
+    assert worker.store.count_reply_tasks(status="pending") == 1
 
 
 def test_produce_once_records_list_unread_failure_without_crashing(

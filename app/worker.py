@@ -740,8 +740,7 @@ class DingTalkAutoReplyWorker:
         results = [self._channel_result(channel) for channel in sorted(channels)]
         return all(result.state is ChannelGateState.READY for result in results)
 
-    @staticmethod
-    def required_channels_for_task(task: ReplyTask) -> set[str]:
+    def required_channels_for_task(self, task: ReplyTask) -> set[str]:
         channels = {task.channel}
         try:
             payload = json.loads(task.trigger_message_json)
@@ -761,6 +760,10 @@ class DingTalkAutoReplyWorker:
                     host, ("feishu.cn", "larksuite.com", "larkoffice.com")
                 ):
                     channels.add("lark")
+        # Every reply task invokes the Consumer/Audit Codex pipeline.  Tests or
+        # explicitly constrained embeddings may provide a smaller gate set.
+        if "codex" in self.channel_gates:
+            channels.add("codex")
         return channels
 
     @staticmethod

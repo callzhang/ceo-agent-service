@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from app.channel_gate import (
     ChannelGateResult,
     ChannelGateState,
+    CodexChannelGate,
     DwsChannelGate,
     LarkChannelGate,
     LoginCoordinator,
@@ -28,6 +29,16 @@ class FakeProcess:
 
     def poll(self) -> int | None:
         return self.returncode
+
+
+def test_codex_gate_requires_login_before_agent_runs():
+    runner = ScriptedRunner([completed(1, stderr="Not logged in")])
+
+    result = CodexChannelGate(binary="codex", runner=runner).check()
+
+    assert result.state is ChannelGateState.NEEDS_LOGIN
+    assert result.reason_code == "status_auth_required"
+    assert runner.commands == [["codex", "login", "status"]]
 
 
 def test_login_coordinator_starts_one_process_and_suppresses_repeats(tmp_path):
