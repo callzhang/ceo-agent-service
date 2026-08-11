@@ -13,18 +13,45 @@ def _skill_text() -> str:
 
 
 @pytest.mark.parametrize(
-    ("case", "decision"),
+    ("case", "handling"),
     [
-        ("direct_decision_request", "proposal"),
-        ("acknowledgment_without_responsibility_change", "reaction_or_no_action"),
-        ("broadcast_without_principal_action", "no_action"),
-        ("direct_agent_mention", "proposal"),
-        ("participant_can_supply_missing_fact", "clarification_proposal"),
-        ("newer_context_completed_matter", "no_action"),
+        (
+            "direct_decision_request",
+            "Use canonical `proposal` with a grounded response or authorized action.",
+        ),
+        (
+            "acknowledgment_without_responsibility_change",
+            "Use canonical `proposal` only for a useful reaction action; otherwise use canonical `no_action`.",
+        ),
+        (
+            "broadcast_without_principal_action",
+            "Use canonical `no_action`.",
+        ),
+        (
+            "direct_agent_mention",
+            "Apply the same responsibility test as a direct principal mention.",
+        ),
+        (
+            "participant_can_supply_missing_fact",
+            "Use canonical `proposal` with one concrete clarification action.",
+        ),
+        (
+            "newer_context_completed_matter",
+            "Use canonical `no_action`.",
+        ),
     ],
 )
-def test_message_triage_skill_defines_behavior_case(case: str, decision: str):
-    assert f"| `{case}` | `{decision}` |" in _skill_text()
+def test_message_triage_skill_defines_behavior_case(case: str, handling: str):
+    assert f"- `{case}`: {handling}" in _skill_text()
+
+
+def test_message_triage_skill_uses_only_canonical_consumer_outcomes():
+    text = _skill_text()
+
+    assert "`reaction_or_no_action`" not in text
+    assert "`clarification_proposal`" not in text
+    assert "A reaction or clarification is an action inside a canonical `proposal`" in text
+    assert "never a workflow-specific outcome" in text
 
 
 def test_message_triage_skill_defines_complete_judgment_workflow():
@@ -36,9 +63,9 @@ def test_message_triage_skill_defines_complete_judgment_workflow():
         "same as a direct mention of the principal",
         "requires a decision, commitment, explanation, correction, or next step",
         "does not change responsibility, delivery, timing, permission, cost, or approval",
-        "one context-appropriate reaction only when it adds useful acknowledgment",
+        "reaction action in a canonical `proposal` only when it adds useful acknowledgment",
         "A broadcast mention alone does not create principal responsibility",
-        "ask that participant one concrete factual question in the source conversation",
+        "one concrete factual question to that participant in a canonical `proposal`",
         "not an A/B selection and not `needs_human`",
         "newer context shows completion, supersession, or a sufficient response",
         "Do not invent recipients, accounts, identifiers, responsibilities, or targets",
