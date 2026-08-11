@@ -4700,6 +4700,44 @@ def test_codex_process_failure_is_explained_without_internal_code():
     assert "codex_process_failed" not in explanation
 
 
+def test_failure_reason_uses_human_stage_label_without_double_punctuation(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-readable-stage",
+        conversation_title="审批通知",
+        trigger_message_id="msg-readable-stage",
+        trigger_sender="OA审批",
+        trigger_text="请处理审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="failed",
+    )
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    run = AgentRun.model_construct(
+        role=AgentRole.CONSUMER,
+        status="failed",
+        structured_error_json=json.dumps(
+            {
+                "code": "codex_process_failed",
+                "detail": "处理未完成，失败代码：codex_process_failed。",
+            }
+        ),
+        side_effect_state="none",
+    )
+
+    reason = audit_web_module._agent_failure_reason_text(attempt, [run])
+
+    assert reason == (
+        "生成回复阶段：Agent 执行进程未成功完成，因此本轮没有得到可验证结果；"
+        "未执行外部操作。"
+    )
+    assert "consumer:" not in reason
+    assert "。；" not in reason
+
+
 def test_render_attempt_detail_suppresses_quality_warnings_for_skipped_attempts(
     tmp_path: Path,
 ):

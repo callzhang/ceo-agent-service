@@ -8368,7 +8368,11 @@ def _agent_failure_reason_text(
         safe_detail = detail.strip()
         if not safe_detail or safe_detail.startswith("处理未完成，失败代码："):
             safe_detail = _failure_code_explanation(code)
-        lines.append(f"{run.role.value}: {safe_detail}；{effect}。")
+        stage = {
+            AgentRole.CONSUMER: "生成回复阶段",
+            AgentRole.AUDIT: "执行审计阶段",
+        }.get(run.role, "Agent 执行阶段")
+        lines.append(f"{stage}：{safe_detail.rstrip('。；; ')}；{effect}。")
     if not lines:
         stored_summary = attempt.audit_summary.strip()
         stored_code = (attempt.send_error or attempt.codex_reason).strip()
