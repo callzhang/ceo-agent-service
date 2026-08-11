@@ -1355,6 +1355,9 @@ class AutoReplyStore:
                     claim_token text not null unique,
                     idempotency_uuid text not null,
                     state text not null default 'claimed',
+                    lease_owner text not null default '',
+                    claimed_at text not null default '',
+                    lease_until text not null default '',
                     result_json text not null default '{}',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp
@@ -1684,6 +1687,22 @@ class AutoReplyStore:
                 if column not in follow_up_draft_columns:
                     db.execute(
                         f"alter table follow_up_drafts add column {column} {definition}"
+                    )
+            follow_up_send_attempt_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(follow_up_send_attempts)"
+                ).fetchall()
+            }
+            for column, definition in (
+                ("lease_owner", "text not null default ''"),
+                ("claimed_at", "text not null default ''"),
+                ("lease_until", "text not null default ''"),
+            ):
+                if column not in follow_up_send_attempt_columns:
+                    db.execute(
+                        "alter table follow_up_send_attempts "
+                        f"add column {column} {definition}"
                     )
             db.execute(
                 """
@@ -11739,7 +11758,8 @@ class AutoReplyStore:
                     """
                     update follow_up_send_attempts
                     set state='invalidated', updated_at=current_timestamp
-                    where draft_id=? and state='claimed'
+                    where draft_id=?
+                      and state in ('claimed', 'sending', 'unknown', 'retryable')
                     """,
                     (draft_id,),
                 )
@@ -11810,7 +11830,8 @@ class AutoReplyStore:
                     """
                     update follow_up_send_attempts
                     set state='invalidated', updated_at=current_timestamp
-                    where draft_id=? and state='claimed'
+                    where draft_id=?
+                      and state in ('claimed', 'sending', 'unknown', 'retryable')
                     """,
                     (draft_id,),
                 )
@@ -11823,8 +11844,75 @@ class AutoReplyStore:
         expected_revision: int,
         claim_token: str,
         idempotency_uuid: str,
+        lease_owner: str,
+        claimed_at: str,
+        lease_until: str,
     ) -> bool:
         with self._connect() as db:
+            db.execute("begin immediate")
+            draft = db.execute(
+                """
+                select revision, status, send_claim_token
+                from follow_up_drafts
+                where id=? and revision=?
+                """,
+                (draft_id, expected_revision),
+            ).fetchone()
+            if draft is None or str(draft["status"]) not in {"draft", "approved"}:
+                return False
+            attempt = db.execute(
+                """
+                select *
+                from follow_up_send_attempts
+                where draft_id=? and draft_revision=?
+                order by id desc
+                limit 1
+                """,
+                (draft_id, expected_revision),
+            ).fetchone()
+            if attempt is not None:
+                if str(attempt["idempotency_uuid"]) != idempotency_uuid:
+                    return False
+                state = str(attempt["state"])
+                lease_expired = not str(attempt["lease_until"] or "").strip() or (
+                    db.execute(
+                        "select datetime(?) <= datetime(?)",
+                        (attempt["lease_until"], claimed_at),
+                    ).fetchone()[0]
+                    == 1
+                )
+                if state != "retryable" and not (
+                    state == "claimed" and lease_expired
+                ):
+                    return False
+                reclaimed = db.execute(
+                    """
+                    update follow_up_send_attempts
+                    set state='claimed',
+                        claim_token=?,
+                        lease_owner=?,
+                        claimed_at=?,
+                        lease_until=?,
+                        updated_at=current_timestamp
+                    where id=?
+                      and state=?
+                      and claim_token=?
+                    """,
+                    (
+                        claim_token,
+                        lease_owner,
+                        claimed_at,
+                        lease_until,
+                        attempt["id"],
+                        state,
+                        attempt["claim_token"],
+                    ),
+                )
+                if reclaimed.rowcount != 1:
+                    return False
+            elif str(draft["send_claim_token"] or "").strip():
+                return False
+
             cursor = db.execute(
                 """
                 update follow_up_drafts
@@ -11834,7 +11922,6 @@ class AutoReplyStore:
                     updated_at=current_timestamp
                 where id=?
                   and revision=?
-                  and send_claim_token=''
                   and status in ('draft', 'approved')
                 """,
                 (
@@ -11845,7 +11932,7 @@ class AutoReplyStore:
                     expected_revision,
                 ),
             )
-            if cursor.rowcount == 1:
+            if cursor.rowcount == 1 and attempt is None:
                 db.execute(
                     """
                     insert into follow_up_send_attempts (
@@ -11853,12 +11940,187 @@ class AutoReplyStore:
                         draft_revision,
                         claim_token,
                         idempotency_uuid,
-                        state
-                    ) values (?, ?, ?, ?, 'claimed')
+                        state,
+                        lease_owner,
+                        claimed_at,
+                        lease_until
+                    ) values (?, ?, ?, ?, 'claimed', ?, ?, ?)
                     """,
-                    (draft_id, expected_revision, claim_token, idempotency_uuid),
+                    (
+                        draft_id,
+                        expected_revision,
+                        claim_token,
+                        idempotency_uuid,
+                        lease_owner,
+                        claimed_at,
+                        lease_until,
+                    ),
                 )
             return cursor.rowcount == 1
+
+    def transition_follow_up_attempt_to_sending(
+        self,
+        draft_id: int,
+        *,
+        claimed_revision: int,
+        claim_token: str,
+        lease_owner: str,
+        now: str,
+        lease_until: str,
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update follow_up_send_attempts
+                set state='sending',
+                    lease_until=?,
+                    updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and state='claimed'
+                  and claim_token=?
+                  and lease_owner=?
+                  and datetime(lease_until) >= datetime(?)
+                  and exists (
+                      select 1 from follow_up_drafts
+                      where id=?
+                        and revision=?
+                        and send_claim_revision=?
+                        and send_claim_token=?
+                        and status in ('draft', 'approved')
+                  )
+                """,
+                (
+                    lease_until,
+                    draft_id,
+                    claimed_revision,
+                    claim_token,
+                    lease_owner,
+                    now,
+                    draft_id,
+                    claimed_revision,
+                    claimed_revision,
+                    claim_token,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def record_follow_up_sending_result(
+        self,
+        draft_id: int,
+        *,
+        draft_revision: int,
+        claim_token: str,
+        lease_owner: str,
+        now: str,
+        result_json: str,
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update follow_up_send_attempts
+                set result_json=?, updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and state='sending'
+                  and claim_token=?
+                  and lease_owner=?
+                  and datetime(lease_until) >= datetime(?)
+                """,
+                (
+                    result_json,
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                    lease_owner,
+                    now,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def mark_follow_up_sending_unknown(
+        self,
+        draft_id: int,
+        *,
+        draft_revision: int,
+        claim_token: str,
+        lease_owner: str,
+        lease_until: str,
+        result_json: str,
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update follow_up_send_attempts
+                set state='unknown',
+                    result_json=?,
+                    lease_owner='',
+                    lease_until=?,
+                    updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and state='sending'
+                  and claim_token=?
+                  and lease_owner=?
+                """,
+                (
+                    result_json,
+                    lease_until,
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                    lease_owner,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def mark_follow_up_sending_retryable(
+        self,
+        draft_id: int,
+        *,
+        draft_revision: int,
+        claim_token: str,
+        lease_owner: str,
+        result_json: str,
+    ) -> bool:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            cursor = db.execute(
+                """
+                update follow_up_send_attempts
+                set state='retryable',
+                    result_json=?,
+                    lease_owner='',
+                    lease_until='',
+                    updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and state='sending'
+                  and claim_token=?
+                  and lease_owner=?
+                """,
+                (
+                    result_json,
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                    lease_owner,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return False
+            db.execute(
+                """
+                update follow_up_drafts
+                set send_claim_revision=0,
+                    send_claim_token='',
+                    send_claim_idempotency_uuid='',
+                    updated_at=current_timestamp
+                where id=? and revision=? and send_claim_token=?
+                """,
+                (draft_id, draft_revision, claim_token),
+            )
+            return True
 
     def update_claimed_follow_up_draft(
         self,
@@ -11866,6 +12128,8 @@ class AutoReplyStore:
         *,
         claimed_revision: int,
         claim_token: str,
+        lease_owner: str,
+        now: str,
         attempt_state: str,
         attempt_result_json: str,
         **values,
@@ -11894,6 +12158,30 @@ class AutoReplyStore:
             assignments.append(f"{key}=?")
             parameters.append(value)
         with self._connect() as db:
+            db.execute("begin immediate")
+            attempt = db.execute(
+                """
+                update follow_up_send_attempts
+                set state=?, result_json=?, updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and state='sending'
+                  and claim_token=?
+                  and lease_owner=?
+                  and datetime(lease_until) >= datetime(?)
+                """,
+                (
+                    attempt_state,
+                    attempt_result_json,
+                    draft_id,
+                    claimed_revision,
+                    claim_token,
+                    lease_owner,
+                    now,
+                ),
+            )
+            if attempt.rowcount != 1:
+                return False
             cursor = db.execute(
                 f"""
                 update follow_up_drafts
@@ -11916,46 +12204,181 @@ class AutoReplyStore:
                     claim_token,
                 ],
             )
-            db.execute(
+            if cursor.rowcount != 1:
+                raise RuntimeError("follow-up claim changed during finalization")
+            return cursor.rowcount == 1
+
+    def mark_expired_follow_up_sending_unknown(
+        self,
+        draft_id: int,
+        *,
+        draft_revision: int,
+        now: str,
+        lease_until: str,
+        result_json: str,
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
                 """
                 update follow_up_send_attempts
-                set state=?, result_json=?, updated_at=current_timestamp
+                set state='unknown',
+                    lease_owner='',
+                    lease_until=?,
+                    result_json=?,
+                    updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and state='sending'
+                  and datetime(lease_until) <= datetime(?)
+                """,
+                (lease_until, result_json, draft_id, draft_revision, now),
+            )
+            return cursor.rowcount == 1
+
+    def defer_unknown_follow_up_attempt(
+        self,
+        draft_id: int,
+        *,
+        draft_revision: int,
+        claim_token: str,
+        lease_until: str,
+        result_json: str,
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update follow_up_send_attempts
+                set state='unknown',
+                    lease_owner='',
+                    lease_until=?,
+                    result_json=?,
+                    updated_at=current_timestamp
                 where draft_id=?
                   and draft_revision=?
                   and claim_token=?
+                  and state='unknown'
                 """,
                 (
-                    attempt_state,
-                    attempt_result_json,
+                    lease_until,
+                    result_json,
                     draft_id,
-                    claimed_revision,
+                    draft_revision,
                     claim_token,
                 ),
             )
             return cursor.rowcount == 1
 
-    def follow_up_claim_is_current(
+    def resolve_unknown_follow_up_attempt_sent(
         self,
         draft_id: int,
         *,
-        claimed_revision: int,
+        draft_revision: int,
         claim_token: str,
+        sent_at: str,
+        result_json: str,
     ) -> bool:
         with self._connect() as db:
-            row = db.execute(
+            db.execute("begin immediate")
+            attempt = db.execute(
                 """
                 select 1
-                from follow_up_drafts
+                from follow_up_send_attempts
+                where draft_id=?
+                  and draft_revision=?
+                  and claim_token=?
+                  and state='unknown'
+                """,
+                (draft_id, draft_revision, claim_token),
+            ).fetchone()
+            if attempt is None:
+                return False
+            cursor = db.execute(
+                """
+                update follow_up_drafts
+                set status='sent',
+                    send_result_json=?,
+                    sent_at=?,
+                    revision=revision+1,
+                    send_claim_revision=0,
+                    send_claim_token='',
+                    send_claim_idempotency_uuid='',
+                    updated_at=current_timestamp
                 where id=?
                   and revision=?
-                  and send_claim_revision=?
                   and send_claim_token=?
-                  and status in ('draft', 'approved')
-                limit 1
                 """,
-                (draft_id, claimed_revision, claimed_revision, claim_token),
-            ).fetchone()
-            return row is not None
+                (result_json, sent_at, draft_id, draft_revision, claim_token),
+            )
+            if cursor.rowcount != 1:
+                return False
+            db.execute(
+                """
+                update follow_up_send_attempts
+                set state='sent',
+                    result_json=?,
+                    lease_owner='',
+                    lease_until='',
+                    updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and claim_token=?
+                  and state='unknown'
+                """,
+                (result_json, draft_id, draft_revision, claim_token),
+            )
+            return True
+
+    def resolve_unknown_follow_up_attempt_not_sent(
+        self,
+        draft_id: int,
+        *,
+        draft_revision: int,
+        claim_token: str,
+        result_json: str,
+    ) -> bool:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            cursor = db.execute(
+                """
+                update follow_up_send_attempts
+                set state='retryable',
+                    result_json=?,
+                    lease_owner='',
+                    lease_until='',
+                    updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and claim_token=?
+                  and state='unknown'
+                  and exists (
+                      select 1 from follow_up_drafts
+                      where id=? and revision=? and send_claim_token=?
+                  )
+                """,
+                (
+                    result_json,
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return False
+            db.execute(
+                """
+                update follow_up_drafts
+                set send_claim_revision=0,
+                    send_claim_token='',
+                    send_claim_idempotency_uuid='',
+                    updated_at=current_timestamp
+                where id=? and revision=? and send_claim_token=?
+                """,
+                (draft_id, draft_revision, claim_token),
+            )
+            return True
 
     def get_follow_up_send_attempt(
         self,
