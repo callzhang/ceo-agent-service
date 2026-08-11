@@ -12,7 +12,7 @@ from app.agent_contracts import (
     AuditFeedback,
     AuditOutcome,
 )
-from app.agent_result import AgentError, SideEffectState
+from app.agent_result import AgentError, EffectKind, SideEffectState
 from app.agent_wire_contracts import AuditAgentWireResult, parse_audit_agent_wire_result
 from app.agent_cli import RECOVERY_WRITE_ALLOWLIST_ENV
 from app.audit_rules import render_audit_rules
@@ -129,6 +129,11 @@ class AuditAgentRunner:
         )
         if database_absence:
             return self._requeue_absent_direct_delivery(task, claim.run)
+        ledger_absences = _direct_delivery_ledger_absences(
+            self.store,
+            task,
+            context,
+        )
         try:
             return self._execute_claimed(
                 task,
@@ -136,6 +141,7 @@ class AuditAgentRunner:
                 run=claim.run,
                 rendered_rules=rendered_rules,
                 recovery_phase="reconcile",
+                recovery_ledger_absences=ledger_absences,
             )
         except Exception as exc:
             recovery_error = _audit_recovery_error_code(exc)
@@ -313,6 +319,7 @@ class AuditAgentRunner:
         recovery_phase: str = "",
         authorized_recovery_actions: frozenset[int] = frozenset(),
         recovery_authorizations: tuple[dict[str, object], ...] = (),
+        recovery_ledger_absences: tuple[tuple[int, str], ...] = (),
     ) -> AgentTurnRunResult[AuditAgentResult]:
         expected_effect_actions = tuple(
             _expected_effect_action(action, self.effects, action_index=index)
@@ -330,7 +337,13 @@ class AuditAgentRunner:
         return process.execute(
             run=run,
             prompt=(
-                _recovery_prompt(run, context, expected_effect_actions, self.effects)
+                _recovery_prompt(
+                    run,
+                    context,
+                    expected_effect_actions,
+                    self.effects,
+                    ledger_absences=dict(recovery_ledger_absences),
+                )
                 if recovery_phase == "reconcile"
                 else _recovery_execute_prompt(
                     run,
@@ -404,6 +417,10 @@ class AuditAgentRunner:
                 str(entry["authorization_id"]): int(entry["action_index"])
                 for entry in recovery_authorizations
             },
+            recovery_evidence=tuple(
+                _delivery_ledger_absence_event(context, action_index, digest)
+                for action_index, digest in recovery_ledger_absences
+            ),
             allow_effectful_tools=(
                 not self.dry_run and recovery_phase != "reconcile"
             ),
@@ -524,6 +541,65 @@ def _database_delivery_absence_reconciliation(
     return True
 
 
+def _direct_delivery_ledger_absences(
+    store: AutoReplyStore,
+    task: ReplyTask,
+    context: AuditTurnContext,
+) -> tuple[tuple[int, str], ...]:
+    """Record only direct deliveries missing from the service ledger."""
+    if store.has_sent_reply_for_trigger(task.conversation_id, task.trigger_message_id):
+        return ()
+    entries: list[tuple[int, str]] = []
+    for action_index, action in enumerate(context.proposal.actions):
+        if _is_direct_chat_send(action):
+            entries.append(
+                (
+                    action_index,
+                    _json_digest(
+                        {
+                            "source": "sent_replies",
+                            "conversation_id": task.conversation_id,
+                            "trigger_message_id": task.trigger_message_id,
+                            "action_index": action_index,
+                            "disposition": "absent",
+                        }
+                    ),
+                )
+            )
+    return tuple(entries)
+
+
+def _delivery_ledger_absence_event(
+    context: AuditTurnContext,
+    action_index: int,
+    result_digest: str,
+) -> dict[str, object]:
+    action = context.proposal.actions[action_index]
+    return {
+        "type": "item.completed",
+        "item": {
+            "type": "service_reconciliation",
+            "id": f"delivery-ledger-absence-{action_index}",
+            "status": "completed",
+            "metadata": {
+                "effect": EffectKind.READ_ONLY.value,
+                "capability": "service.delivery_ledger",
+                "operation": "sent_reply_exists",
+                "operation_digest": _json_digest(
+                    {"operation": "sent_reply_exists", "action_index": action_index}
+                ),
+                "target_identifiers": dict(action.target),
+                "arguments_digest": _json_digest(
+                    {"action_index": action_index, "disposition": "absent"}
+                ),
+                "reviewed_server": "service_delivery_ledger",
+                "reviewed_tool": "sent_reply_exists",
+                "result_digest": result_digest,
+            },
+        },
+    }
+
+
 def _is_direct_chat_send(action: object) -> bool:
     capability = getattr(action, "capability", "")
     payload = getattr(action, "payload", None)
@@ -624,6 +700,7 @@ def _recovery_prompt(
     context: AuditTurnContext,
     actions: tuple[dict[str, object], ...],
     registry: McpToolEffectRegistry,
+    ledger_absences: dict[int, str] | None = None,
 ) -> str:
     identity = json.dumps(
         {
@@ -648,8 +725,28 @@ def _recovery_prompt(
             f"{unavailable}. Do not execute or replay these actions. Unless an exact "
             "persisted receipt already confirms them, return needs_human."
         )
+    ledger_guidance = ""
+    if ledger_absences:
+        ledger_guidance = (
+            "\nThe service delivery ledger proves these exact direct deliveries are absent. "
+            "Do not read or write them in this phase. Include one absent reconciliation "
+            "entry for each using its supplied digest: "
+            + json.dumps(
+                [
+                    {
+                        "action_index": action_index,
+                        "disposition": "absent",
+                        "read_result_digest": digest,
+                    }
+                    for action_index, digest in sorted(ledger_absences.items())
+                ],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "."
+        )
     return (
-        f"{context.render()}\n\nUnknown outcome recovery: {identity}{guidance}\n"
+        f"{context.render()}\n\nUnknown outcome recovery: {identity}{guidance}{ledger_guidance}\n"
         "For every unresolved action that has a configured readback, return one "
         "reconciliation entry with its action_index, a disposition of present, "
         "absent, or ambiguous, and the exact result_digest from the matching live "
