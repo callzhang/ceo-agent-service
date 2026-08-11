@@ -4903,6 +4903,181 @@ def test_render_attempt_list_uses_failed_action_pill_color(tmp_path: Path):
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
+def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-actionable",
+        conversation_title="HR",
+        trigger_message_id="msg-actionable",
+        trigger_sender="Mina",
+        trigger_text="Please review this.",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="Current task did not complete",
+        send_status="failed",
+    )
+
+    html = render_attempt_list(store, include_chart=False)
+
+    assert "状态：</strong>需要你处理" in html
+    assert "原因：</strong>Current task did not complete" in html
+    assert "外部副作用：</strong>未执行任何外部动作" in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/"' in html
+    assert ">重试当前任务</button>" in html
+    assert ">暂不处理</button>" in html
+    assert ">人工处理</a>" in html
+    assert ">技术详情</a>" in html
+
+
+def test_history_retrying_item_shows_persisted_plan_without_human_choices(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-retrying",
+        conversation_title="HR",
+        single_chat=False,
+        trigger_message_id="msg-retrying",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please review this.",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    retry_at = "2026-08-11 05:14:00"
+    store.defer_reply_task(
+        task.id,
+        "Codex provider unavailable",
+        expected_execution_generation=task.execution_generation,
+        available_at=retry_at,
+    )
+    store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="Codex provider unavailable",
+        send_status="failed",
+    )
+    persisted_task = store.get_reply_task(task.id)
+    assert persisted_task is not None
+
+    html = render_attempt_list(store, include_chart=False)
+
+    assert "状态：</strong>系统失败，正在自动恢复" in html
+    assert f"第 {persisted_task.attempts}/3 次" in html
+    assert audit_web_module._format_local_time(retry_at) in html
+    assert ">重试当前任务</button>" not in html
+    assert ">暂不处理</button>" not in html
+    assert ">技术详情</a>" in html
+
+
+def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-choice-history",
+        conversation_title="Management",
+        single_chat=False,
+        trigger_message_id="msg-choice-history",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Mina",
+        trigger_text="Choose a plan.",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    claimed = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    )
+    run = store.complete_agent_run(
+        claimed.run.id,
+        {
+            "outcome": "needs_human",
+            "summary": "A management choice is required.",
+            "proposal": None,
+            "decision_options": [
+                {
+                    "key": "A",
+                    "label": "同意当前方案",
+                    "instruction": "同意已核验方案并发布。",
+                    "consequence": "会执行已审计的外部动作。",
+                },
+                {
+                    "key": "B",
+                    "label": "要求补充材料",
+                    "instruction": "要求补充材料并发布。",
+                    "consequence": "当前外部动作不会执行。",
+                },
+            ],
+            "error": {
+                "code": "decision_required",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        },
+        owner="consumer",
+    )
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=run.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="A management choice is required.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="A management choice is required.",
+        send_status="needs_human",
+        send_error="needs_human",
+        channel="dingtalk",
+    )
+
+    html = render_attempt_list(store, include_chart=False)
+
+    assert "A. 同意当前方案" in html
+    assert "B. 要求补充材料" in html
+    assert f'action="/attempts/{attempt_id}/human-decision?return_to=/"' in html
+
+
+def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-detail-attention",
+        conversation_title="Operations",
+        trigger_message_id="msg-detail-attention",
+        trigger_sender="Mina",
+        trigger_text="Please complete this task.",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="Current task did not complete",
+        send_status="failed",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "状态：</strong>需要你处理" in html
+    assert "原因：</strong>Current task did not complete" in html
+    assert "外部副作用：</strong>未执行任何外部动作" in html
+
+
 def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     tmp_path: Path,
 ):

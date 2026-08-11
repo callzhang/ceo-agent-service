@@ -81,6 +81,10 @@ from app.config import (
 )
 from app.embedding import EmbeddingClient
 from app.history import safe_observability_error
+from app.history_actions import (
+    HistoryAttention,
+    reply_history_attention,
+)
 from app.developer_prompt import (
     configurable_prompt_variable_pairs,
     DeveloperPromptTemplateError,
@@ -401,6 +405,11 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-row-actions .open-dingtalk-action{border-color:rgba(0,180,138,.38);color:#005b49;background:#ddfff6}
 .attempt-row-actions .open-dingtalk-action:hover{background:#cafff1}
 .attempt-row-actions .disabled-action{display:inline-flex;align-items:center;justify-content:center;width:96px;height:30px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);color:var(--muted);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
+.history-attention{display:grid;gap:4px;margin-top:9px;padding:9px 10px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft);color:var(--charcoal);font-size:13px;line-height:1.45}
+.history-attention-actions{display:flex;align-items:center;gap:7px;margin-top:5px;flex-wrap:wrap}
+.history-attention-actions form{display:inline-flex;margin:0}
+.history-attention-actions .compact-button,.history-attention-actions button{display:inline-flex;align-items:center;justify-content:center;min-width:96px;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
+.history-attention-actions button.rerun{border-color:rgba(55,114,207,.34);color:#245aa5;background:rgba(55,114,207,.10)}
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
 .attempt-conversation-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid rgba(0,180,138,.34);background:#f3fffb}
 .attempt-conversation-left{display:flex;align-items:center;gap:14px;min-width:0}
@@ -4178,7 +4187,8 @@ def _render_attempt_list(
         store,
         sent_replies_by_attempt.values(),
     )
-    reply_task_cache: dict[tuple[str, str, str], object | None] = {}
+    reply_task_cache: dict[tuple[str, str, str], ReplyTask | None] = {}
+    agent_runs_cache: dict[tuple[int, str], list[AgentRun]] = {}
     for history_item in history_items:
         if history_item.kind == "task":
             items.append(_task_history_card(history_item))
@@ -4212,6 +4222,41 @@ def _render_attempt_list(
         wechat_delivery_id = wechat_ready_delivery_by_attempt.get(attempt.id)
         detail_href = f"/attempts/{attempt.id}"
         history_type = _history_attempt_type(attempt)
+        attention = None
+        attention_status = attempt.send_status.strip().lower()
+        if attention_status in {"failed", "needs_human"}:
+            reply_task = (
+                _reply_task_for_attempt(store, attempt, reply_task_cache)
+                if attention_status == "failed"
+                else None
+            )
+            agent_runs = _agent_runs_for_attempt(
+                store,
+                attempt,
+                agent_runs_cache,
+            )
+            terminal_run = next(
+                (run for run in agent_runs if run.id == attempt.agent_run_id),
+                None,
+            )
+            attention = reply_history_attention(
+                attempt,
+                task=reply_task,
+                decision_options=_needs_human_decision_options(attempt, agent_runs),
+                side_effect_state=(
+                    terminal_run.side_effect_state
+                    if terminal_run is not None
+                    else "none"
+                ),
+            )
+        attention_html = _history_attention_html(
+            attention,
+            actions_html=_reply_history_attention_actions(
+                attempt,
+                attention,
+                return_to="/",
+            ),
+        )
         recovery_state = _attempt_recovery_display_state(
             store,
             attempt,
@@ -4242,6 +4287,7 @@ def _render_attempt_list(
             f"{_attempt_reply_line(attempt)}"
             f"{_attempt_outcome_line(attempt)}"
             "</div>"
+            f"{attention_html}"
             f"{_attempt_feedback_summary(feedback_events, sent_reply)}"
             f"{foot_section}"
             "</article>"
@@ -6082,6 +6128,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
     )
     later_attempt = _later_attempt_for_display(store, attempt)
     agent_runs = []
+    terminal_run = None
     if attempt.agent_run_id:
         terminal_run = store.get_agent_run(attempt.agent_run_id)
         if terminal_run is not None:
@@ -6089,6 +6136,19 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
                 terminal_run.reply_task_id,
                 terminal_run.execution_generation,
             )
+    reply_task = store.get_reply_task_for_message(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+        channel=attempt.channel,
+    )
+    attention = reply_history_attention(
+        attempt,
+        task=reply_task,
+        decision_options=_needs_human_decision_options(attempt, agent_runs),
+        side_effect_state=(
+            terminal_run.side_effect_state if terminal_run is not None else "none"
+        ),
+    )
     return 200, render_page(
         f"Attempt #{attempt.id}",
         _attempt_detail_body(
@@ -6098,6 +6158,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             feedback_events,
             later_attempt,
             agent_runs,
+            attention,
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
@@ -8131,6 +8192,7 @@ def _attempt_detail_body(
     feedback_events: list[FeedbackEvent],
     later_attempt: ReplyAttempt | None = None,
     agent_runs: list[AgentRun] | None = None,
+    attention: HistoryAttention | None = None,
 ) -> str:
     agent_runs = agent_runs or []
     resolved_by_later = later_attempt is not None and _attempt_is_terminal(
@@ -8176,7 +8238,12 @@ def _attempt_detail_body(
             sent_reply,
             later_attempt=later_attempt,
         ),
-        status_html=_attempt_status_card(attempt, later_attempt, agent_runs),
+        status_html=_attempt_status_card(
+            attempt,
+            later_attempt,
+            agent_runs,
+            attention,
+        ),
         fields=fields,
         pills_html=_attempt_action_pills(attempt, later_attempt=later_attempt),
         trigger_title="Trigger",
@@ -8819,10 +8886,27 @@ def _attempt_action_pills(
 def _attempt_recovery_display_state(
     store: AutoReplyStore,
     attempt: ReplyAttempt,
-    task_cache: dict[tuple[str, str, str], object | None],
+    task_cache: dict[tuple[str, str, str], ReplyTask | None],
 ) -> str:
     if attempt.send_status.strip().lower() != "failed":
         return ""
+    task = _reply_task_for_attempt(store, attempt, task_cache)
+    if task is None:
+        return ""
+    if task.status == "done":
+        return "recovered"
+    if task.status == "pending":
+        return "queued"
+    if task.status == "processing":
+        return "processing"
+    return ""
+
+
+def _reply_task_for_attempt(
+    store: AutoReplyStore,
+    attempt: ReplyAttempt,
+    task_cache: dict[tuple[str, str, str], ReplyTask | None],
+) -> ReplyTask | None:
     task_key = (
         attempt.channel,
         attempt.conversation_id,
@@ -8836,15 +8920,103 @@ def _attempt_recovery_display_state(
             channel=attempt.channel,
         )
         task_cache[task_key] = task
-    if task is None:
+    return task
+
+
+def _agent_runs_for_attempt(
+    store: AutoReplyStore,
+    attempt: ReplyAttempt,
+    cache: dict[tuple[int, str], list[AgentRun]],
+) -> list[AgentRun]:
+    if not attempt.agent_run_id:
+        return []
+    terminal_run = store.get_agent_run(attempt.agent_run_id)
+    if terminal_run is None:
+        return []
+    key = (terminal_run.reply_task_id, terminal_run.execution_generation)
+    if key not in cache:
+        cache[key] = store.list_agent_runs_for_task_generation(*key)
+    return cache[key]
+
+
+def _history_attention_html(
+    attention: HistoryAttention | None,
+    *,
+    actions_html: str,
+) -> str:
+    if attention is None:
         return ""
-    if task.status == "done":
-        return "recovered"
-    if task.status == "pending":
-        return "queued"
-    if task.status == "processing":
-        return "processing"
-    return ""
+    heading = (
+        "需要你处理"
+        if attention.kind == "needs_manager"
+        else "系统失败，正在自动恢复"
+    )
+    retry_html = ""
+    if attention.retry_at:
+        retry_html = (
+            "<div><strong>重试计划：</strong>"
+            f"第 {attention.retry_attempt}/{attention.retry_limit} 次；"
+            f"将在 {escape(_format_local_time(attention.retry_at))} 自动重试；"
+            "耗尽后转为“需要你处理”。</div>"
+        )
+    return (
+        '<section class="history-attention">'
+        f"<div><strong>状态：</strong>{escape(heading)}</div>"
+        f"<div><strong>原因：</strong>{escape(attention.reason)}</div>"
+        f"<div><strong>外部副作用：</strong>{escape(attention.external_effect)}</div>"
+        f"{retry_html}{actions_html}"
+        "</section>"
+    )
+
+
+def _reply_history_attention_actions(
+    attempt: ReplyAttempt,
+    attention: HistoryAttention | None,
+    *,
+    return_to: str,
+) -> str:
+    if attention is None:
+        return ""
+    return_to_query = quote(return_to, safe="/")
+    detail_href = f"/attempts/{attempt.id}"
+    dingtalk_href = (
+        "/open-dingtalk-popup?"
+        f"conversation_id={quote(attempt.conversation_id, safe='')}"
+    )
+    items: list[str] = []
+    for action in attention.actions:
+        if action.key == "retry":
+            items.append(
+                f'<form method="post" action="{detail_href}/rerun?return_to={return_to_query}" '
+                "onsubmit=\"return confirm('确认重新处理当前任务？系统会先核对已有外部动作。')\">"
+                '<button class="rerun" type="submit">重试当前任务</button></form>'
+            )
+            continue
+        if action.key == "manual":
+            manual_href = dingtalk_href if attempt.channel == "dingtalk" else detail_href
+            items.append(
+                f'<a class="compact-button" href="{escape(manual_href, quote=True)}">'
+                "人工处理</a>"
+            )
+            continue
+        if action.key == "details":
+            items.append(
+                f'<a class="compact-button" href="{detail_href}">技术详情</a>'
+            )
+            continue
+        label = (
+            action.label
+            if action.key == "defer"
+            else f"{action.key}. {action.label}"
+        )
+        items.append(
+            f'<form method="post" action="{detail_href}/human-decision?return_to={return_to_query}">'
+            f'<input type="hidden" name="instruction" value="{escape(action.instruction, quote=True)}">'
+            f'<button type="submit">{escape(label)}</button></form>'
+        )
+    if not items:
+        return ""
+    return '<div class="history-attention-actions">' + "".join(items) + "</div>"
 
 
 def _recovery_action(state: str) -> tuple[str, str]:
@@ -9113,6 +9285,7 @@ def _attempt_status_card(
     attempt: ReplyAttempt,
     later_attempt: ReplyAttempt | None,
     agent_runs: list[AgentRun] | None = None,
+    attention: HistoryAttention | None = None,
 ) -> str:
     active_attempt = later_attempt or attempt
     later_is_terminal = later_attempt is not None and _attempt_is_terminal(
@@ -9134,8 +9307,6 @@ def _attempt_status_card(
         message = "这条回复已发送，无需你操作。"
     elif active_attempt.send_status == "skipped":
         message = "这条事项已判定无需回复，无需你操作。"
-    elif active_attempt.send_status == "needs_human":
-        message = "这条事项等待你的决策。请阅读下方已核验的事实，再提交具体处理指令。"
     elif active_attempt.send_status == "pending_reconciliation":
         continuation = ""
         if later_attempt is not None:
@@ -9144,6 +9315,10 @@ def _attempt_status_card(
                 "正在继续核对同一事项。"
             )
         message = continuation + _pending_reconciliation_message(agent_runs or [])
+    elif attention is not None:
+        return _history_attention_html(attention, actions_html="")
+    elif active_attempt.send_status == "needs_human":
+        message = "这条事项等待你的决策。请阅读下方已核验的事实，再提交具体处理指令。"
     elif active_attempt.send_status == "failed":
         message = "这次处理没有完成。可使用“重新处理”重新读取材料并执行当前规则。"
     else:
