@@ -415,6 +415,11 @@ turn. The same file path and SHA-256 are supplied through native Codex `--image`
 inputs to Consumer A and Audit B. A DingTalk media ID, URL, or other reference is
 only discovery metadata; if it cannot produce an actual local file, Consumer A
 fails with `image_dependency_unavailable` before making a content judgment.
+Chat-supplied URLs are restricted to public HTTP(S) destinations after DNS
+resolution, and every redirect is validated before it is followed. Downloaded
+bytes must decode and fully load as a supported image. Per-task directories and
+files use modes `0700` and `0600`; the worker deletes only the exact paths created
+for that task in a `finally` block after Consumer/Audit processing.
 
 An `agent_cli` command that returns a structured error receipt is recorded as a
 failed effect with its retryability and channel state. It is not treated as an

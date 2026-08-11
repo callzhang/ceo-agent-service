@@ -1,10 +1,10 @@
 import hashlib
+import io
 import json
 import logging
+import os
 import re
 import shlex
-import shutil
-import urllib.request
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -71,6 +71,7 @@ from app.org_cache import (
 )
 from app.permission import PermissionGate
 from app.prompt import MaterialReferenceContext
+from app.public_http import read_public_http_bytes
 from app.store import (
     AgentRun,
     AgentRunLeaseLostError,
@@ -79,6 +80,7 @@ from app.store import (
     ReplyTask,
 )
 from app.work_profile import safe_excerpt
+from PIL import Image, UnidentifiedImageError
 
 
 ORCHESTRATION_ATTEMPT_STATUS = {
@@ -444,6 +446,7 @@ class DingTalkAutoReplyWorker:
             now=lambda: self._now().astimezone(timezone.utc),
         )
         self._pass_channel_results: dict[str, ChannelGateResult] = {}
+        self._task_image_paths: dict[int, set[Path]] = {}
         self.agent_orchestrator = agent_orchestrator
 
     def _agent_orchestrator(self) -> AgentOrchestrator:
@@ -491,16 +494,8 @@ class DingTalkAutoReplyWorker:
         return ()
 
     def run_once(self, max_batches: int | None = None) -> None:
-        try:
-            self.produce_once(max_tasks=max_batches)
-            self.consume_once(max_tasks=max_batches)
-        finally:
-            self._cleanup_image_attachment_cache()
-
-    def _cleanup_image_attachment_cache(self) -> None:
-        image_dir = self.store.path.parent / "image-attachments"
-        if image_dir.exists():
-            shutil.rmtree(image_dir)
+        self.produce_once(max_tasks=max_batches)
+        self.consume_once(max_tasks=max_batches)
 
     def _call_dws(
         self,
@@ -1865,25 +1860,28 @@ class DingTalkAutoReplyWorker:
         trigger: DingTalkMessage,
         context_messages: list[DingTalkMessage],
     ) -> bool:
-        context = self._build_agent_task_context(
-            conversation=conversation,
-            task=task,
-            trigger=trigger,
-            context_messages=context_messages,
-        )
-        result = self._agent_orchestrator().process(
-            task,
-            context,
-            refresh_context=lambda: self._refresh_agent_task_context(
+        try:
+            context = self._build_agent_task_context(
                 conversation=conversation,
                 task=task,
                 trigger=trigger,
-            ),
-        )
-        try:
-            return self._apply_orchestration_result(task, result)
-        except AgentRunLeaseLostError:
-            return False
+                context_messages=context_messages,
+            )
+            result = self._agent_orchestrator().process(
+                task,
+                context,
+                refresh_context=lambda: self._refresh_agent_task_context(
+                    conversation=conversation,
+                    task=task,
+                    trigger=trigger,
+                ),
+            )
+            try:
+                return self._apply_orchestration_result(task, result)
+            except AgentRunLeaseLostError:
+                return False
+        finally:
+            self._cleanup_task_image_paths(task.id)
 
     def _refresh_agent_task_context(
         self,
@@ -2096,6 +2094,7 @@ class DingTalkAutoReplyWorker:
             context_messages=context_messages,
         )
         image_paths = self._collect_agent_image_paths(
+            task_id=task.id,
             trigger=trigger,
             context_messages=context_messages,
         )
@@ -2333,6 +2332,7 @@ class DingTalkAutoReplyWorker:
     def _collect_agent_image_paths(
         self,
         *,
+        task_id: int,
         trigger: DingTalkMessage,
         context_messages: list[DingTalkMessage],
     ) -> list[Path]:
@@ -2347,7 +2347,7 @@ class DingTalkAutoReplyWorker:
                     continue
                 seen_sources.add(source_key)
                 try:
-                    path = self._resolve_message_image(message, payload)
+                    path = self._resolve_message_image(task_id, message, payload)
                 except Exception as exc:
                     self.store.record_error(
                         message.open_conversation_id,
@@ -2387,6 +2387,7 @@ class DingTalkAutoReplyWorker:
 
     def _resolve_message_image(
         self,
+        task_id: int,
         message: DingTalkMessage,
         payload: dict[str, str],
     ) -> Path | None:
@@ -2420,7 +2421,8 @@ class DingTalkAutoReplyWorker:
             return None
         if len(data) > DOWNLOADED_IMAGE_MAX_BYTES:
             raise DwsError("dingtalk_image_too_large")
-        return self._write_message_image(message, source, data)
+        suffix = self._decoded_image_suffix(data)
+        return self._write_message_image(task_id, message, suffix, data)
 
     @staticmethod
     def _download_url_from_payload(payload: object) -> str:
@@ -2455,49 +2457,65 @@ class DingTalkAutoReplyWorker:
         return path
 
     def _download_image_bytes(self, url: str) -> bytes:
-        http_request = urllib.request.Request(url)
-        with urllib.request.urlopen(
-            http_request,
-            timeout=DOWNLOAD_TIMEOUT_SECONDS,
-        ) as response:
-            content_length = response.headers.get("Content-Length")
-            if content_length and int(content_length) > DOWNLOADED_IMAGE_MAX_BYTES:
-                raise DwsError("dingtalk_image_too_large")
-            data = response.read(DOWNLOADED_IMAGE_MAX_BYTES + 1)
-        if len(data) > DOWNLOADED_IMAGE_MAX_BYTES:
-            raise DwsError("dingtalk_image_too_large")
-        return data
+        return read_public_http_bytes(
+            url,
+            max_bytes=DOWNLOADED_IMAGE_MAX_BYTES,
+            timeout_seconds=DOWNLOAD_TIMEOUT_SECONDS,
+        )
+
+    @staticmethod
+    def _decoded_image_suffix(data: bytes) -> str:
+        suffixes = {
+            "GIF": ".gif",
+            "JPEG": ".jpg",
+            "PNG": ".png",
+            "WEBP": ".webp",
+        }
+        try:
+            with Image.open(io.BytesIO(data)) as image:
+                image_format = str(image.format or "").upper()
+                if image_format not in suffixes:
+                    raise DwsError("dingtalk_image_format_unsupported")
+                image.verify()
+            with Image.open(io.BytesIO(data)) as image:
+                image.load()
+        except (Image.DecompressionBombError, UnidentifiedImageError, OSError, SyntaxError) as exc:
+            raise DwsError("dingtalk_image_invalid") from exc
+        return suffixes[image_format]
 
     def _write_message_image(
         self,
+        task_id: int,
         message: DingTalkMessage,
-        source: str,
+        suffix: str,
         data: bytes,
     ) -> Path:
-        image_dir = self.store.path.parent / "image-attachments"
-        image_dir.mkdir(parents=True, exist_ok=True)
+        image_root = self.store.path.parent / "image-attachments"
+        image_root.mkdir(mode=0o700, exist_ok=True)
+        image_root.chmod(0o700)
+        image_dir = image_root / f"task-{task_id}"
+        image_dir.mkdir(mode=0o700, exist_ok=True)
+        image_dir.chmod(0o700)
         safe_message_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", message.open_message_id)
-        suffix = self._image_suffix(source, data)
         digest = hashlib.sha256(data).hexdigest()[:16]
         path = image_dir / f"{safe_message_id}_{digest}{suffix}"
-        path.write_bytes(data)
+        self._task_image_paths.setdefault(task_id, set()).add(path)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        with os.fdopen(os.open(path, flags, 0o600), "wb") as image_file:
+            image_file.write(data)
+        path.chmod(0o600)
         return path
 
-    @staticmethod
-    def _image_suffix(source: str, data: bytes) -> str:
-        source_path = urlsplit(source).path.casefold()
-        for suffix in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-            if source_path.endswith(suffix):
-                return suffix
-        if data.startswith(b"\x89PNG\r\n\x1a\n"):
-            return ".png"
-        if data.startswith(b"\xff\xd8\xff"):
-            return ".jpg"
-        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-            return ".webp"
-        if data.startswith((b"GIF87a", b"GIF89a")):
-            return ".gif"
-        return ".img"
+    def _cleanup_task_image_paths(self, task_id: int) -> None:
+        paths = self._task_image_paths.pop(task_id, set())
+        directories = {path.parent for path in paths}
+        for path in paths:
+            path.unlink(missing_ok=True)
+        for directory in directories:
+            try:
+                directory.rmdir()
+            except OSError:
+                continue
 
     @staticmethod
     def _raw_calendar_event_id(message: DingTalkMessage) -> str:

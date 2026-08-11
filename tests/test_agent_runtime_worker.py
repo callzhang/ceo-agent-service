@@ -21,6 +21,7 @@ from app.native_cli_metadata import describe_native_command
 from app.store import AgentRole, AutoReplyStore
 from app.process_runner import ProcessRunResult
 from app.worker import ORCHESTRATION_ATTEMPT_STATUS, DingTalkAutoReplyWorker
+from tests.support.image_bytes import TINY_PNG
 
 
 NOW = datetime(2026, 7, 29, 9, 0, tzinfo=timezone.utc)
@@ -1673,6 +1674,7 @@ class Task4BehaviorProtocolExecutor(ConsumerAuditLifecycleExecutor):
         self.scenario = scenario
         self.read_commands: list[str] = []
         self.image_inspections: list[tuple[str, str]] = []
+        self.image_input_modes: list[tuple[int, int]] = []
         self.write_operations: list[str] = []
         self.external_readbacks: list[str] = []
 
@@ -1690,6 +1692,12 @@ class Task4BehaviorProtocolExecutor(ConsumerAuditLifecycleExecutor):
             assert image_path.is_file()
             self.image_inspections.append(
                 (str(image_path.resolve()), sha256(image_path.read_bytes()).hexdigest())
+            )
+            self.image_input_modes.append(
+                (
+                    image_path.parent.stat().st_mode & 0o777,
+                    image_path.stat().st_mode & 0o777,
+                )
             )
             return []
         if mode == "chat_context":
@@ -4503,7 +4511,7 @@ def test_attached_image_is_inspected_without_inventing_an_image_skill(
     tmp_path: Path,
     monkeypatch,
 ):
-    image_bytes = b"\x89PNG\r\n\x1a\nactual-task-4-image"
+    image_bytes = TINY_PNG
     monkeypatch.setattr(
         DingTalkAutoReplyWorker,
         "_download_image_bytes",
@@ -4525,6 +4533,9 @@ def test_attached_image_is_inspected_without_inventing_an_image_skill(
     )
     executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
     worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    unrelated = tmp_path / "image-attachments" / "unrelated.txt"
+    unrelated.parent.mkdir(mode=0o700)
+    unrelated.write_text("preserve", encoding="utf-8")
     _enqueue(worker.store, trigger)
 
     assert worker.consume_once(max_tasks=1) == 1
@@ -4537,9 +4548,137 @@ def test_attached_image_is_inspected_without_inventing_an_image_skill(
     assert len(executor.image_inspections) == 2
     assert {receipt[1] for receipt in executor.image_inspections} == {expected_sha}
     assert len({receipt[0] for receipt in executor.image_inspections}) == 1
+    assert executor.image_input_modes == [(0o700, 0o600), (0o700, 0o600)]
+    assert all(not Path(receipt[0]).exists() for receipt in executor.image_inspections)
+    assert unrelated.read_text(encoding="utf-8") == "preserve"
     assert executor.read_commands == []
     assert len(executor.external_readbacks) == 1
     assert all("image" not in name for name in executor.consumer_loaded_skills)
+
+
+@pytest.mark.parametrize(
+    "invalid_bytes",
+    [b"\x89PNG\r\n\x1a\ntruncated", b"<html>not an image</html>"],
+)
+def test_invalid_image_fails_decode_before_agent_turn(
+    tmp_path: Path,
+    monkeypatch,
+    invalid_bytes: bytes,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-document-review",
+        ("dingtalk-shared", "dingtalk-chat"),
+    )
+    monkeypatch.setattr(
+        DingTalkAutoReplyWorker,
+        "_download_image_bytes",
+        lambda _self, _url: invalid_bytes,
+    )
+    trigger = _message("Review: ![image](https://example.test/truncated.png)")
+    executor = Task4BehaviorProtocolExecutor(
+        skill_paths,
+        Task4BehaviorScenario(
+            name="truncated_image",
+            outcome="proposal",
+            summary="Must not inspect malformed bytes.",
+            read_mode="image_input",
+        ),
+    )
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        executor,
+        max_task_attempts=1,
+    )
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_error == "image_dependency_unavailable"
+    assert executor.commands == []
+
+
+def test_private_image_url_fails_before_network_or_agent_turn(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-document-review",
+        ("dingtalk-shared", "dingtalk-chat"),
+    )
+    monkeypatch.setattr(
+        "app.public_http.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (2, 1, 6, "", ("169.254.169.254", 80)),
+        ],
+    )
+    trigger = _message("Review: ![image](http://metadata.internal/latest.png)")
+    executor = Task4BehaviorProtocolExecutor(
+        skill_paths,
+        Task4BehaviorScenario(
+            name="private_image_url",
+            outcome="proposal",
+            summary="Must not inspect a private URL.",
+            read_mode="image_input",
+        ),
+    )
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        executor,
+        max_task_attempts=1,
+    )
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_error == "image_dependency_unavailable"
+    assert executor.commands == []
+
+
+def test_task_image_is_removed_after_failed_consumer_turn(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-document-review",
+        ("dingtalk-shared", "dingtalk-chat"),
+    )
+    monkeypatch.setattr(
+        DingTalkAutoReplyWorker,
+        "_download_image_bytes",
+        lambda _self, _url: TINY_PNG,
+    )
+    trigger = _message("Review: ![image](https://example.test/failure.png)")
+    executor = Task4BehaviorProtocolExecutor(
+        skill_paths,
+        Task4BehaviorScenario(
+            name="failed_image_review",
+            outcome="failed",
+            summary="Agent dependency failed after image inspection.",
+            read_mode="image_input",
+            error_code="review_dependency_unavailable",
+        ),
+    )
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        executor,
+        max_task_attempts=1,
+    )
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert len(executor.image_inspections) == 1
+    assert not Path(executor.image_inspections[0][0]).exists()
 
 
 def test_unresolved_image_fails_before_metadata_can_be_claimed_as_inspection(

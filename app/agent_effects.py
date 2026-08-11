@@ -63,6 +63,11 @@ class McpToolEffectRegistry:
         dry_run_arguments: dict[tuple[str, str], str] | None = None,
         readbacks: dict[tuple[str, str], set[tuple[str, str]]] | None = None,
         readback_target_modes: dict[tuple[str, str, str, str], str] | None = None,
+        readback_operation_modes: dict[tuple[str, str, str, str], str] | None = None,
+        readback_operation_relations: dict[
+            tuple[str, str, str, str], set[tuple[str, str]]
+        ]
+        | None = None,
     ) -> None:
         self._effects = dict(effects)
         self._dry_run_arguments = dict(dry_run_arguments or {})
@@ -70,6 +75,11 @@ class McpToolEffectRegistry:
             key: frozenset(values) for key, values in (readbacks or {}).items()
         }
         self._readback_target_modes = dict(readback_target_modes or {})
+        self._readback_operation_modes = dict(readback_operation_modes or {})
+        self._readback_operation_relations = {
+            key: frozenset(values)
+            for key, values in (readback_operation_relations or {}).items()
+        }
 
     @classmethod
     def from_path(cls, path: Path) -> "McpToolEffectRegistry":
@@ -83,6 +93,10 @@ class McpToolEffectRegistry:
         dry_run_arguments: dict[tuple[str, str], str] = {}
         readbacks: dict[tuple[str, str], set[tuple[str, str]]] = {}
         readback_target_modes: dict[tuple[str, str, str, str], str] = {}
+        readback_operation_modes: dict[tuple[str, str, str, str], str] = {}
+        readback_operation_relations: dict[
+            tuple[str, str, str, str], set[tuple[str, str]]
+        ] = {}
         for item in tools:
             if not isinstance(item, dict):
                 raise ValueError("MCP effect registry tools must be objects")
@@ -127,13 +141,31 @@ class McpToolEffectRegistry:
                 if target_match not in {"exact", "shared"}:
                     raise ValueError("MCP readback target match is invalid")
                 readback_target_modes[
-                    (
-                        key[0],
-                        key[1],
-                        target["server"].strip(),
-                        target["tool"].strip(),
+                    relation_key := (
+                        key[0], key[1], target["server"].strip(), target["tool"].strip()
                     )
                 ] = target_match
+                operation_match = target.get("operation_match", "outer")
+                if operation_match not in {"outer", "registered"}:
+                    raise ValueError("MCP readback operation match is invalid")
+                readback_operation_modes[relation_key] = operation_match
+                operation_relations = target.get("operation_relations", [])
+                if not isinstance(operation_relations, list):
+                    raise ValueError("MCP readback operation relations must be a list")
+                for relation in operation_relations:
+                    if (
+                        not isinstance(relation, dict)
+                        or not isinstance(relation.get("read"), str)
+                        or not relation["read"].strip()
+                        or not isinstance(relation.get("write"), str)
+                        or not relation["write"].strip()
+                    ):
+                        raise ValueError("MCP readback operation relation is invalid")
+                    readback_operation_relations.setdefault(relation_key, set()).add(
+                        (relation["read"].strip(), relation["write"].strip())
+                    )
+                if operation_match == "registered" and not operation_relations:
+                    raise ValueError("registered MCP readback requires operation relations")
         for read_key, write_keys in readbacks.items():
             if any(
                 effects.get(write_key) is not EffectKind.EFFECTFUL
@@ -147,6 +179,8 @@ class McpToolEffectRegistry:
             dry_run_arguments=dry_run_arguments,
             readbacks=readbacks,
             readback_target_modes=readback_target_modes,
+            readback_operation_modes=readback_operation_modes,
+            readback_operation_relations=readback_operation_relations,
         )
 
     @classmethod
@@ -216,9 +250,32 @@ class McpToolEffectRegistry:
             (read_server, read_tool), ()
         )
 
-    def has_readback_for(self, *, write_server: str, write_tool: str) -> bool:
+    def has_readback_for(
+        self,
+        *,
+        write_server: str,
+        write_tool: str,
+        write_operation: str = "",
+    ) -> bool:
         write = (write_server, write_tool)
-        return any(write in targets for targets in self._readbacks.values())
+        relation_keys = [
+            (*read, *write)
+            for read, targets in self._readbacks.items()
+            if write in targets
+        ]
+        if not write_operation:
+            return bool(relation_keys)
+        return any(
+            self._readback_operation_modes.get(key, "outer") == "outer"
+            or any(
+                registered_write == write_operation
+                for _registered_read, registered_write in self._readback_operation_relations.get(
+                    key,
+                    (),
+                )
+            )
+            for key in relation_keys
+        )
 
     def readback_targets_match(
         self,
@@ -243,6 +300,24 @@ class McpToolEffectRegistry:
         return bool(shared_keys) and all(
             normalized_read_targets[key] == normalized_write_targets[key]
             for key in shared_keys
+        )
+
+    def readback_operations_match(
+        self,
+        *,
+        read_server: str,
+        read_tool: str,
+        write_server: str,
+        write_tool: str,
+        read_operation: str,
+        write_operation: str,
+    ) -> bool:
+        relation_key = (read_server, read_tool, write_server, write_tool)
+        if self._readback_operation_modes.get(relation_key, "outer") == "outer":
+            return True
+        return (read_operation, write_operation) in self._readback_operation_relations.get(
+            relation_key,
+            (),
         )
 
 

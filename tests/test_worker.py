@@ -56,6 +56,7 @@ from app.worker import (
     PROCESSING_ACK,
     DingTalkAutoReplyWorker,
 )
+from tests.support.image_bytes import TINY_PNG
 
 
 CONTEXT_HEADER = "上下文消息（自上次回复后的新信息，最多 20 条）:"
@@ -9827,7 +9828,7 @@ def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws_local_path = tmp_path / "dws-downloaded-image.png"
-    dws_local_path.write_bytes(b"\x89PNG\r\n\x1a\nlocal-image")
+    dws_local_path.write_bytes(TINY_PNG)
     dws.resource_download_urls[("cid-1", "msg-image-1", "@img-token-1", "mediaId")] = {
         "localPath": str(dws_local_path),
         "response": {
@@ -9861,7 +9862,7 @@ def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch
     resolved_path = Path(context.image_paths[0])
     assert resolved_path.name.endswith(".png")
     assert context.image_sha256s == (
-        hashlib.sha256(b"\x89PNG\r\n\x1a\nlocal-image").hexdigest(),
+        hashlib.sha256(TINY_PNG).hexdigest(),
     )
 
 

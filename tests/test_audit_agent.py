@@ -351,6 +351,7 @@ def _audit_jsonl(
     write_text: str = "done",
     include_verification: bool = True,
     verification_targets: tuple[str, ...] | None = None,
+    verification_argv: tuple[str, ...] | None = None,
     proposal_revision: int = 0,
     authorization_id: str = "",
 ) -> str:
@@ -434,9 +435,17 @@ def _audit_jsonl(
         effective_verification_targets = verification_targets or (write_target,)
         for index, verification_target in enumerate(effective_verification_targets):
             arguments = {
-                "argv": [
-                    "dws", "chat", "message", "list", "--group", verification_target,
-                    "--time", "2026-08-06",
+                "argv": list(verification_argv)
+                if verification_argv is not None
+                else [
+                    "dws",
+                    "chat",
+                    "message",
+                    "list",
+                    "--group",
+                    verification_target,
+                    "--time",
+                    "2026-08-06",
                 ]
             }
             descriptor = describe_native_command(
@@ -1017,6 +1026,30 @@ def test_audit_rejects_post_write_readback_for_unrelated_target(setup):
                     "operation-1",
                     session="session-b",
                     verification_targets=("cid-unrelated",),
+                )
+            ),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+
+def test_audit_rejects_same_target_readback_for_wrong_native_operation(setup):
+    store, task, audit_context, parent = setup
+
+    with pytest.raises(RuntimeError, match="audit_external_readback_missing"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(
+                _audit_jsonl(
+                    "operation-1",
+                    session="session-b",
+                    verification_argv=(
+                        "dws",
+                        "chat",
+                        "member",
+                        "list",
+                        "--group",
+                        "cid-agent",
+                    ),
                 )
             ),
         ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
@@ -2199,17 +2232,44 @@ def test_controlled_cli_readback_matches_shared_oa_instance_target():
         {
             "reviewed_server": "agent_cli",
             "reviewed_tool": "execute_reviewed_read",
+            "operation": "oa approval tasks",
             "target_identifiers": {"instance-id": "process-1"},
         },
         {
             "reviewed_server": "agent_cli",
             "reviewed_tool": "execute_reviewed_write",
+            "operation": "oa approval approve",
             "target_identifiers": {
                 "instance-id": "process-1",
                 "task-id": "task-1",
             },
         },
         registry,
+    )
+
+
+def test_effect_registry_requires_registered_inner_cli_operation_relation():
+    registry = McpToolEffectRegistry.default()
+    relation = {
+        "read_server": "agent_cli",
+        "read_tool": "execute_reviewed_read",
+        "write_server": "agent_cli",
+        "write_tool": "execute_reviewed_write",
+        "write_operation": "chat message send",
+    }
+
+    assert registry.readback_operations_match(
+        **relation,
+        read_operation="chat message list",
+    )
+    assert not registry.readback_operations_match(
+        **relation,
+        read_operation="chat member list",
+    )
+    assert not registry.has_readback_for(
+        write_server="agent_cli",
+        write_tool="execute_reviewed_write",
+        write_operation="unregistered write operation",
     )
 
 
@@ -2220,11 +2280,13 @@ def test_controlled_cli_readback_rejects_conflicting_shared_target():
         {
             "reviewed_server": "agent_cli",
             "reviewed_tool": "execute_reviewed_read",
+            "operation": "oa approval tasks",
             "target_identifiers": {"instance-id": "process-2"},
         },
         {
             "reviewed_server": "agent_cli",
             "reviewed_tool": "execute_reviewed_write",
+            "operation": "oa approval approve",
             "target_identifiers": {
                 "instance-id": "process-1",
                 "task-id": "task-1",
@@ -2244,11 +2306,13 @@ def test_controlled_cli_readback_matches_conversation_target_aliases(
         {
             "reviewed_server": "agent_cli",
             "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat message list",
             "target_identifiers": {"group": "conversation-1"},
         },
         {
             "reviewed_server": "agent_cli",
             "reviewed_tool": "execute_reviewed_write",
+            "operation": "chat message send",
             "target_identifiers": {write_target_key: "conversation-1"},
         },
         registry,
@@ -2262,11 +2326,13 @@ def test_controlled_cli_readback_does_not_alias_unrelated_target_names():
         {
             "reviewed_server": "agent_cli",
             "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat message list",
             "target_identifiers": {"group": "same-value"},
         },
         {
             "reviewed_server": "agent_cli",
             "reviewed_tool": "execute_reviewed_write",
+            "operation": "chat message send",
             "target_identifiers": {"open-dingtalk-id": "same-value"},
         },
         registry,

@@ -9,7 +9,17 @@
         {
           "server": "agent_cli",
           "tool": "execute_reviewed_write",
-          "target_match": "shared"
+          "target_match": "shared",
+          "operation_match": "registered",
+          "operation_relations": [
+            {"read": "calendar event get", "write": "calendar event respond"},
+            {"read": "chat message list", "write": "chat message send"},
+            {"read": "chat message reaction list", "write": "chat message reaction add"},
+            {"read": "oa approval detail", "write": "oa approval approve"},
+            {"read": "oa approval detail", "write": "oa approval comment"},
+            {"read": "oa approval tasks", "write": "oa approval approve"},
+            {"read": "oa approval tasks", "write": "oa approval comment"}
+          ]
         }
       ]
     },

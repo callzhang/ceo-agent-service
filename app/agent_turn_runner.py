@@ -1171,6 +1171,15 @@ def _read_matches_action(
         write_tool=write_tool,
     ):
         return False
+    if not registry.readback_operations_match(
+        read_server=read_server,
+        read_tool=read_tool,
+        write_server=write_server,
+        write_tool=write_tool,
+        read_operation=str(read.get("operation") or ""),
+        write_operation=str(action.get("operation") or ""),
+    ):
+        return False
     read_target = read.get("target_identifiers")
     action_target = action.get("target_identifiers")
     if not isinstance(read_target, dict) or not isinstance(action_target, dict):
@@ -1192,6 +1201,7 @@ def _action_has_readback(
     return registry.has_readback_for(
         write_server=str(action.get("reviewed_server") or ""),
         write_tool=str(action.get("reviewed_tool") or ""),
+        write_operation=str(action.get("operation") or ""),
     )
 
 
