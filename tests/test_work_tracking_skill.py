@@ -139,3 +139,57 @@ def test_live_owner_assertion_accepts_identity_in_supported_evidence_set():
             ]
         },
     )
+
+
+def _owned_todo_decision(*, owner_user_id: str, owner_name: str):
+    return TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "title": "Complete launch checklist",
+                    "owner_user_id": owner_user_id,
+                    "owner_name": owner_name,
+                }
+            ],
+        }
+    )
+
+
+def test_live_owner_assertion_rejects_cross_record_identity_match():
+    decision = _owned_todo_decision(
+        owner_user_id="uid-1",
+        owner_name="Display One",
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_assigned_owners_are_supported(
+            decision,
+            {
+                "owner_evidence": [
+                    {"user_id": "uid-1", "name": "Display Two"},
+                    {"user_id": "uid-2", "name": "Display One"},
+                ]
+            },
+        )
+
+
+def test_live_owner_assertion_accepts_coherent_identity_pair():
+    decision = _owned_todo_decision(
+        owner_user_id="uid-1",
+        owner_name="Display One",
+    )
+
+    _assert_assigned_owners_are_supported(
+        decision,
+        {
+            "verified_owner_resolution": [
+                {
+                    "user_id": "uid-1",
+                    "display_name": "Display One",
+                    "source": "verified directory resolution",
+                }
+            ]
+        },
+    )

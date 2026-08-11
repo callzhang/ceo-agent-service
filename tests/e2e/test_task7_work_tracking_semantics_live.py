@@ -48,69 +48,86 @@ def _follow_up_changes(decision: TaskAgentDecision, *actions: str):
     return [change for change in decision.follow_up_changes if change.action in actions]
 
 
-def _identity_tokens(*, user_id: object = "", name: object = "") -> set[str]:
-    tokens: set[str] = set()
-    if str(user_id or "").strip():
-        tokens.add(f"user_id:{str(user_id).strip()}")
-    if str(name or "").strip():
-        tokens.add(f"name:{str(name).strip().casefold()}")
-    return tokens
+IDENTITY_FIELD_ALIASES = {
+    "user_id": "user_id",
+    "owner_user_id": "user_id",
+    "name": "display_name",
+    "display_name": "display_name",
+    "owner_name": "display_name",
+    "open_dingtalk_id": "open_dingtalk_id",
+}
 
 
-def _assigned_owner_identities(decision: TaskAgentDecision) -> set[str]:
-    assigned: set[str] = set()
+def _identity_record(values: dict[str, object]) -> frozenset[tuple[str, str]]:
+    record: dict[str, str] = {}
+    for source_field, canonical_field in IDENTITY_FIELD_ALIASES.items():
+        value = str(values.get(source_field) or "").strip()
+        if not value:
+            continue
+        if canonical_field == "display_name":
+            value = value.casefold()
+        if canonical_field in record:
+            assert record[canonical_field] == value
+        record[canonical_field] = value
+    return frozenset(record.items())
+
+
+def _assigned_owner_identities(
+    decision: TaskAgentDecision,
+) -> list[frozenset[tuple[str, str]]]:
+    assigned: list[frozenset[tuple[str, str]]] = []
+
+    def add(values: dict[str, object]) -> None:
+        record = _identity_record(values)
+        if record:
+            assigned.append(record)
+
     for change in decision.todo_changes:
-        assigned.update(
-            _identity_tokens(
-                user_id=change.owner_user_id,
-                name=change.owner_name,
-            )
+        add(
+            {
+                "owner_user_id": change.owner_user_id,
+                "owner_name": change.owner_name,
+            }
         )
     for draft in decision.follow_up_drafts:
-        assigned.update(
-            _identity_tokens(
-                user_id=draft.owner_user_id,
-                name=draft.owner_name,
-            )
+        add(
+            {
+                "owner_user_id": draft.owner_user_id,
+                "owner_name": draft.owner_name,
+            }
         )
         for owner in draft.owners:
-            assigned.update(
-                _identity_tokens(
-                    user_id=owner.get("user_id"),
-                    name=owner.get("name"),
-                )
-            )
+            add(owner)
     for change in decision.follow_up_changes:
-        assigned.update(
-            _identity_tokens(
-                user_id=change.owner_user_id,
-                name=change.owner_name,
-            )
+        add(
+            {
+                "owner_user_id": change.owner_user_id,
+                "owner_name": change.owner_name,
+            }
         )
     if decision.project is not None:
-        assigned.update(
-            _identity_tokens(
-                user_id=decision.project.owner_user_id,
-                name=decision.project.owner_name,
-            )
+        add(
+            {
+                "owner_user_id": decision.project.owner_user_id,
+                "owner_name": decision.project.owner_name,
+            }
         )
     return assigned
 
 
-def _supported_owner_identities(current_data: dict[str, object]) -> set[str]:
+def _supported_owner_identities(
+    current_data: dict[str, object],
+) -> list[frozenset[tuple[str, str]]]:
     evidence_items: list[object] = []
     for key in ("owner_evidence", "verified_owner_resolution"):
         value = current_data.get(key, [])
         evidence_items.extend(value if isinstance(value, list) else [value])
-    supported: set[str] = set()
+    supported: list[frozenset[tuple[str, str]]] = []
     for item in evidence_items:
         if isinstance(item, dict):
-            supported.update(
-                _identity_tokens(
-                    user_id=item.get("user_id"),
-                    name=item.get("name"),
-                )
-            )
+            record = _identity_record(item)
+            if record:
+                supported.append(record)
     return supported
 
 
@@ -118,9 +135,9 @@ def _assert_assigned_owners_are_supported(
     decision: TaskAgentDecision,
     current_data: dict[str, object],
 ) -> None:
-    assert _assigned_owner_identities(decision) <= _supported_owner_identities(
-        current_data
-    )
+    supported = _supported_owner_identities(current_data)
+    for assigned in _assigned_owner_identities(decision):
+        assert any(assigned <= evidence_record for evidence_record in supported)
 
 
 def _verify_discard(
@@ -189,7 +206,7 @@ def _verify_speaker_not_owner(
     decision: TaskAgentDecision,
     current_data: dict[str, object],
 ) -> None:
-    assert _supported_owner_identities(current_data) == set()
+    assert _supported_owner_identities(current_data) == []
     _assert_assigned_owners_are_supported(decision, current_data)
     if decision.action != "discard":
         assert decision.follow_up_drafts == []
