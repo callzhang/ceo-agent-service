@@ -627,6 +627,78 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     }
 
 
+def test_audit_recovers_completed_session_only_dingtalk_receipt(setup, tmp_path, monkeypatch):
+    store, task, audit_context, parent = setup
+    session_id = "session-only-receipt"
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    argv = [
+        "dws", "chat", "message", "send", "--group", "cid-agent",
+        "--text", "done", "--yes",
+    ]
+    descriptor = describe_native_command(
+        {"type": "command_execution", "argv": argv}
+    )
+    assert descriptor is not None
+    receipt = {
+        "content": [{"type": "text", "text": "accepted"}],
+        "structuredContent": {
+            "cli": "dws",
+            "operation": descriptor.command_path,
+            "operation_digest": descriptor.command_digest,
+            "target_identifiers": descriptor.target_identifiers,
+            "result_digest": "session-only-result",
+        },
+        "isError": False,
+    }
+    session_path = (
+        tmp_path / "sessions" / "2026" / "08" / "11"
+        / f"rollout-2026-08-11T04-00-00-{session_id}.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        "\n".join(
+            json.dumps(line, ensure_ascii=False)
+            for line in (
+                {"type": "session_meta", "payload": {"id": session_id}},
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "mcp_tool_call_end",
+                        "call_id": "session-write",
+                        "invocation": {
+                            "server": "agent_cli",
+                            "tool": "execute_reviewed_write",
+                            "arguments": {"argv": argv},
+                        },
+                        "result": {"Ok": receipt},
+                    },
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+    # The streaming transport omitted the completed MCP lifecycle; its durable
+    # local session is the only successful controlled-send receipt.
+    stdout = _audit_jsonl(
+        "operation-1", session=session_id, include_write=False,
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stdout),
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run(result.run_id)
+    assert run is not None and run.status == "completed"
+    assert [event["type"] for event in run.tool_events] == [
+        "item.started", "item.completed"
+    ]
+    assert store.has_sent_reply_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    )
+
+
 def test_audit_does_not_renew_conversation_session_lock(setup, monkeypatch):
     store, task, audit_context, parent = setup
     renewals = 0

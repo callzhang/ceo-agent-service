@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -40,7 +41,11 @@ from app.codex_failure import (
     CODEX_PROVIDER_UNAVAILABLE,
     classify_codex_process_failure,
 )
-from app.codex_runner import CodexRunner
+from app.codex_history import (
+    count_codex_session_lines,
+    extract_codex_mcp_tool_results_from_session,
+)
+from app.codex_runner import CodexRunner, _codex_home
 from app.leak_check import contains_credential
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -173,6 +178,9 @@ class AgentTurnProcess(Generic[ResultT]):
         recovery_started_actions: set[int] = set()
         effect_action_counts = [0] * len(expected_effect_actions)
         effect_action_by_call_id: dict[str, int] = {}
+        completed_effect_call_ids: set[str] = set()
+        observed_session_id = ""
+        session_transcript_end = 0
         recovery_event_start = len(run.tool_events)
         completed_before_recovery = (
             _action_completion_accounting(
@@ -189,8 +197,83 @@ class AgentTurnProcess(Generic[ResultT]):
             run.transcript_end_line if recover_unknown else run.transcript_start_line
         )
 
-        def persist_line(line: str) -> None:
+        def persist_effect_event(payload: dict[str, object]) -> None:
             nonlocal line_count, saw_json
+            nonlocal primary_turn_started, primary_turn_closed
+            event = self._normalized_effect_event(
+                payload,
+                read_only=(
+                    run.role is AgentRole.CONSUMER
+                    or recovery_phase == "reconcile"
+                ),
+                operation_id=run.operation_id,
+            )
+            if event is None:
+                return
+            item = event.get("item")
+            metadata = item.get("metadata") if isinstance(item, dict) else None
+            effect = metadata.get("effect") if isinstance(metadata, dict) else None
+            call_id = str(item.get("id") or item.get("call_id") or "") if isinstance(item, dict) else ""
+            if event.get("type") == "item.completed" and call_id:
+                completed_effect_call_ids.add(call_id)
+            if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
+                if event.get("type") == "item.started":
+                    authorization_id = metadata.get("authorization_id")
+                    if recovery_phase == "execute":
+                        action_index = recovery_authorizations.get(
+                            str(authorization_id or "")
+                        )
+                        if (
+                            action_index is None
+                            or action_index >= len(expected_effect_actions)
+                            or not _metadata_matches_action(
+                                metadata, expected_effect_actions[action_index]
+                            )
+                        ):
+                            action_index = None
+                    else:
+                        candidates = [
+                            index
+                            for index, action in enumerate(expected_effect_actions)
+                            if _metadata_matches_action(metadata, action)
+                        ]
+                        action_index = (
+                            min(candidates, key=effect_action_counts.__getitem__)
+                            if candidates
+                            else None
+                        )
+                    if action_index is not None:
+                        metadata["action_index"] = action_index
+                        effect_action_counts[action_index] += 1
+                        effect_action_by_call_id[call_id] = action_index
+                else:
+                    action_index = effect_action_by_call_id.get(call_id)
+                    if action_index is not None:
+                        metadata["action_index"] = action_index
+            if (
+                recovery_phase == "execute"
+                and event.get("type") == "item.started"
+                and effect == EffectKind.EFFECTFUL.value
+            ):
+                action_index = metadata.get("action_index")
+                if (
+                    action_index is None
+                    or action_index not in authorized_recovery_actions
+                    or action_index in completed_before_recovery
+                    or action_index in recovery_started_actions
+                ):
+                    raise RuntimeError("audit_recovery_action_not_authorized")
+                recovery_started_actions.add(action_index)
+            if recover_unknown:
+                self.store.append_unknown_agent_run_event(
+                    run.id, event, owner=self.owner
+                )
+            else:
+                self.store.append_agent_run_event(run.id, event, owner=self.owner)
+            self._record_direct_send_receipt(event, payload, run=run)
+
+        def persist_line(line: str) -> None:
+            nonlocal line_count, saw_json, observed_session_id
             nonlocal primary_turn_started, primary_turn_closed
             if not line.strip():
                 return
@@ -224,6 +307,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 on_progress()
             new_session = _session_id(payload)
             if new_session:
+                observed_session_id = new_session
                 if recover_unknown:
                     # Reconciliation and the narrowly authorized follow-up write
                     # run as fresh sessions. Preserve the original session on the
@@ -247,74 +331,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         self.task.single_chat,
                         new_session,
                     )
-            event = self._normalized_effect_event(
-                payload,
-                read_only=(
-                    run.role is AgentRole.CONSUMER
-                    or recovery_phase == "reconcile"
-                ),
-                operation_id=run.operation_id,
-            )
-            if event is not None:
-                item = event.get("item")
-                metadata = item.get("metadata") if isinstance(item, dict) else None
-                effect = metadata.get("effect") if isinstance(metadata, dict) else None
-                if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
-                    call_id = str(item.get("id") or item.get("call_id") or "")
-                    if event.get("type") == "item.started":
-                        authorization_id = metadata.get("authorization_id")
-                        if recovery_phase == "execute":
-                            action_index = recovery_authorizations.get(
-                                str(authorization_id or "")
-                            )
-                            if (
-                                action_index is None
-                                or action_index >= len(expected_effect_actions)
-                                or not _metadata_matches_action(
-                                    metadata, expected_effect_actions[action_index]
-                                )
-                            ):
-                                action_index = None
-                        else:
-                            candidates = [
-                                index
-                                for index, action in enumerate(expected_effect_actions)
-                                if _metadata_matches_action(metadata, action)
-                            ]
-                            action_index = (
-                                min(candidates, key=effect_action_counts.__getitem__)
-                                if candidates
-                                else None
-                            )
-                        if action_index is not None:
-                            metadata["action_index"] = action_index
-                            effect_action_counts[action_index] += 1
-                            effect_action_by_call_id[call_id] = action_index
-                    else:
-                        action_index = effect_action_by_call_id.get(call_id)
-                        if action_index is not None:
-                            metadata["action_index"] = action_index
-                if (
-                    recovery_phase == "execute"
-                    and event.get("type") == "item.started"
-                    and effect == EffectKind.EFFECTFUL.value
-                ):
-                    action_index = metadata.get("action_index")
-                    if (
-                        action_index is None
-                        or action_index not in authorized_recovery_actions
-                        or action_index in completed_before_recovery
-                        or action_index in recovery_started_actions
-                    ):
-                        raise RuntimeError("audit_recovery_action_not_authorized")
-                    recovery_started_actions.add(action_index)
-                if recover_unknown:
-                    self.store.append_unknown_agent_run_event(
-                        run.id, event, owner=self.owner
-                    )
-                else:
-                    self.store.append_agent_run_event(run.id, event, owner=self.owner)
-                self._record_direct_send_receipt(event, payload, run=run)
+            persist_effect_event(payload)
             if primary_turn_started and payload_type in {
                 "turn.completed",
                 "turn.failed",
@@ -352,6 +369,47 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             self._raise_for_process_failure(process, run=run)
             result = parse_result(process.stdout)
+            session_for_receipts = observed_session_id or session_id or run.codex_session_id
+            if session_for_receipts:
+                session_start = 0 if recover_unknown else transcript_start
+                # The CLI can flush local session events after the JSON stream has
+                # ended. Wait briefly for a stable line count, then replay only
+                # previously unseen completed calls through the normal validator.
+                previous_count = -1
+                for _ in range(4):
+                    session_end = count_codex_session_lines(
+                        session_for_receipts, codex_home=_codex_home()
+                    )
+                    if session_end == previous_count:
+                        break
+                    previous_count = session_end
+                    time.sleep(0.05)
+                session_transcript_end = max(previous_count, 0)
+                for completed_payload in extract_codex_mcp_tool_results_from_session(
+                    session_for_receipts,
+                    codex_home=_codex_home(),
+                    start_line=session_start,
+                    end_line=max(previous_count, 0),
+                ):
+                    completed_item = completed_payload.get("item")
+                    call_id = (
+                        str(completed_item.get("id") or "")
+                        if isinstance(completed_item, dict)
+                        else ""
+                    )
+                    if not call_id or call_id in completed_effect_call_ids:
+                        continue
+                    start_payload = {
+                        "type": "item.started",
+                        "item": {
+                            key: value
+                            for key, value in completed_item.items()
+                            if key not in {"status", "result"}
+                        }
+                        | {"status": "in_progress"},
+                    }
+                    persist_effect_event(start_payload)
+                    persist_effect_event(completed_payload)
             if _contains_sensitive_value(result.model_dump(mode="json")):
                 raise ValueError("agent_result_contains_sensitive_value")
         except ResultParseError as exc:
@@ -401,7 +459,11 @@ class AgentTurnProcess(Generic[ResultT]):
             if provider_recovery == CODEX_PROVIDER_UNAVAILABLE:
                 raise RuntimeError(code) from exc
             raise
-        transcript_end = transcript_start + line_count
+        transcript_end = (
+            run.transcript_end_line
+            if recover_unknown
+            else max(transcript_start + line_count, session_transcript_end)
+        )
         outcome = getattr(result, "outcome")
         side_effect_state = getattr(result, "side_effect_state", SideEffectState.NONE)
         persisted = self.store.get_agent_run(run.id)

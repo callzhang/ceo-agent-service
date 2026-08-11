@@ -5,6 +5,7 @@ from pathlib import Path
 from app.codex_history import (
     count_codex_session_lines,
     extract_codex_audit_events_from_session,
+    extract_codex_mcp_tool_results_from_session,
     find_codex_session_path,
     render_local_codex_session,
     refresh_codex_session_path_index,
@@ -242,6 +243,72 @@ def test_extract_codex_audit_events_from_session_respects_line_range(tmp_path: P
             "output": "Output:\n岗位画像.md:1:项目经理",
             "path": "岗位画像.md",
         },
+    ]
+
+
+def test_extract_codex_mcp_tool_results_from_session_reads_event_receipt(
+    tmp_path: Path,
+):
+    session_id = "019e2c00-mcp-receipt"
+    session_path = (
+        tmp_path
+        / "sessions"
+        / "2026"
+        / "08"
+        / "11"
+        / f"rollout-2026-08-11T04-00-00-{session_id}.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    receipt = {
+        "content": [{"type": "text", "text": "accepted"}],
+        "structuredContent": {
+            "operation": "chat message send",
+            "operation_digest": "digest",
+            "target_identifiers": {"group": "group-1"},
+            "result_digest": "result-digest",
+        },
+        "isError": False,
+    }
+    session_path.write_text(
+        "\n".join(
+            json.dumps(line, ensure_ascii=False)
+            for line in (
+                {"type": "session_meta", "payload": {"id": session_id}},
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "mcp_tool_call_end",
+                        "call_id": "call-1",
+                        "invocation": {
+                            "server": "agent_cli",
+                            "tool": "execute_reviewed_write",
+                            "arguments": {"argv": ["dws", "chat"]},
+                        },
+                        "result": {"Ok": receipt},
+                    },
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    events = extract_codex_mcp_tool_results_from_session(
+        session_id, codex_home=tmp_path
+    )
+
+    assert events == [
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call",
+                "id": "call-1",
+                "server": "agent_cli",
+                "tool": "execute_reviewed_write",
+                "arguments": {"argv": ["dws", "chat"]},
+                "status": "completed",
+                "result": receipt,
+            },
+        }
     ]
 
 
