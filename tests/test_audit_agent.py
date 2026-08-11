@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_context import AgentTaskContext, AuditTurnContext
+from app.agent_context import AgentTaskContext, AuditTurnContext, MaterialReference
 from app.agent_contracts import AuditAgentResult, ConsumerProposal, ProposedAction
 from app.agent_effects import EffectKind, McpToolEffectRegistry
 from app.agent_turn_runner import (
@@ -1267,6 +1267,101 @@ def _seed_crashed_audit_write(setup):
         "group": "cid-agent"
     }
     return store, task, audit_context, run
+
+
+def _with_unresolved_image(context: AuditTurnContext) -> AuditTurnContext:
+    return replace(
+        context,
+        task=replace(
+            context.task,
+            materials=(
+                *context.task.materials,
+                MaterialReference(
+                    kind="dingtalk_image",
+                    reference='{"media_id":"@image-1"}',
+                    source_message_id=context.task.trigger_message_id,
+                    read_commands=(),
+                ),
+            ),
+            image_paths=(),
+            image_sha256s=(),
+        ),
+    )
+
+
+def _assert_image_recovery_deferred(store, task, run_id: int) -> None:
+    persisted = store.get_agent_run(run_id)
+    current_task = store.get_reply_task(task.id)
+    assert persisted is not None
+    assert persisted.status == "unknown"
+    assert persisted.lease_owner == ""
+    assert persisted.lease_expires_at == ""
+    assert persisted.reconciliation_suspended is False
+    assert persisted.reconciliation_next_attempt_at
+    assert json.loads(persisted.structured_error_json) == {
+        "code": "image_dependency_unavailable",
+        "retryable": True,
+    }
+    assert current_task is not None and current_task.status == "processing"
+
+
+def test_reconciliation_image_dependency_releases_unknown_run_lease(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor("")
+
+    with pytest.raises(RuntimeError, match="image_dependency_unavailable"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+            owner="image-reconciliation-owner",
+        ).recover(task, _with_unresolved_image(audit_context), run=run)
+
+    _assert_image_recovery_deferred(store, task, run.id)
+    assert executor.commands == []
+
+
+def test_recovery_execution_image_dependency_releases_unknown_run_lease(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    reconcile = CapturingExecutor(
+        _audit_result_jsonl(
+            "reconciled",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            reconciliation=[
+                {
+                    "action_index": 0,
+                    "disposition": "absent",
+                    "read_result_digest": "recovery-read-digest",
+                }
+            ],
+        )
+    )
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=reconcile,
+    ).recover(task, audit_context, run=run)
+    reconciled = store.get_agent_run(run.id)
+    assert reconciled is not None
+    event_count = len(reconciled.tool_events)
+    executor = CapturingExecutor("")
+
+    with pytest.raises(RuntimeError, match="image_dependency_unavailable"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+            owner="image-execution-owner",
+        ).execute_recovery(
+            task,
+            _with_unresolved_image(audit_context),
+            run=reconciled,
+        )
+
+    _assert_image_recovery_deferred(store, task, run.id)
+    assert len(store.get_agent_run(run.id).tool_events) == event_count
+    assert executor.commands == []
 
 
 def test_crash_after_write_uses_fresh_read_only_recovery_and_confirms_without_replay(

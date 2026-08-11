@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import (
+    IMAGE_DEPENDENCY_UNAVAILABLE_CODE,
     IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY,
     AuditTurnContext,
 )
@@ -132,16 +133,16 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        self._image_dependency_failure(claim.run, context)
-        database_absence = _database_delivery_absence_reconciliation(
-            self.store,
-            task,
-            context,
-            claim.run,
-        )
-        if database_absence:
-            return self._requeue_absent_direct_delivery(task, claim.run)
         try:
+            self._image_dependency_failure(claim.run, context)
+            database_absence = _database_delivery_absence_reconciliation(
+                self.store,
+                task,
+                context,
+                claim.run,
+            )
+            if database_absence:
+                return self._requeue_absent_direct_delivery(task, claim.run)
             return self._execute_claimed(
                 task,
                 context,
@@ -150,22 +151,7 @@ class AuditAgentRunner:
                 recovery_phase="reconcile",
             )
         except Exception as exc:
-            recovery_error = _audit_recovery_error_code(exc)
-            persisted = self.store.get_agent_run(run.id)
-            if (
-                persisted is not None
-                and persisted.status == "unknown"
-                and persisted.lease_owner == self.owner
-            ):
-                self.store.defer_unknown_agent_run_reconciliation(
-                    run.id,
-                    {"code": recovery_error, "retryable": True},
-                    owner=self.owner,
-                    expected_execution_generation=run.execution_generation,
-                    next_attempt_at=unknown_reconciliation_retry_at(
-                        persisted.reconciliation_attempts
-                    ),
-                )
+            self._defer_claimed_unknown_recovery(claim.run, exc)
             raise
 
     def execute_recovery(
@@ -194,36 +180,40 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        self._image_dependency_failure(claim.run, context)
-        if _database_delivery_absence_reconciliation(
-            self.store,
-            task,
-            context,
-            claim.run,
-        ):
-            return self._requeue_absent_direct_delivery(task, claim.run)
-        authorizations = _recovery_authorizations(
-            run, context, absent, self.effects
-        )
-        if len(authorizations) != len(absent):
-            return self._requeue_for_consumer(
+        try:
+            self._image_dependency_failure(claim.run, context)
+            if _database_delivery_absence_reconciliation(
+                self.store,
                 task,
+                context,
                 claim.run,
-                code="audit_recovery_candidate_invalid",
-                summary=(
-                    "The absent action cannot execute under the current command "
-                    "contract; Consumer Agent A must produce a valid replacement."
-                ),
+            ):
+                return self._requeue_absent_direct_delivery(task, claim.run)
+            authorizations = _recovery_authorizations(
+                run, context, absent, self.effects
             )
-        return self._execute_claimed(
-            task,
-            context,
-            run=claim.run,
-            rendered_rules=render_audit_rules(AgentRole.AUDIT),
-            recovery_phase="execute",
-            authorized_recovery_actions=absent,
-            recovery_authorizations=authorizations,
-        )
+            if len(authorizations) != len(absent):
+                return self._requeue_for_consumer(
+                    task,
+                    claim.run,
+                    code="audit_recovery_candidate_invalid",
+                    summary=(
+                        "The absent action cannot execute under the current command "
+                        "contract; Consumer Agent A must produce a valid replacement."
+                    ),
+                )
+            return self._execute_claimed(
+                task,
+                context,
+                run=claim.run,
+                rendered_rules=render_audit_rules(AgentRole.AUDIT),
+                recovery_phase="execute",
+                authorized_recovery_actions=absent,
+                recovery_authorizations=authorizations,
+            )
+        except Exception as exc:
+            self._defer_claimed_unknown_recovery(claim.run, exc)
+            raise
 
     def _requeue_absent_direct_delivery(
         self,
@@ -457,12 +447,36 @@ class AuditAgentRunner:
             transcript_end_line=failed.transcript_end_line,
         )
 
+    def _defer_claimed_unknown_recovery(
+        self,
+        run: AgentRun,
+        exc: Exception,
+    ) -> None:
+        persisted = self.store.get_agent_run(run.id)
+        if (
+            persisted is None
+            or persisted.status != "unknown"
+            or persisted.lease_owner != self.owner
+        ):
+            return
+        self.store.defer_unknown_agent_run_reconciliation(
+            run.id,
+            {"code": _audit_recovery_error_code(exc), "retryable": True},
+            owner=self.owner,
+            expected_execution_generation=run.execution_generation,
+            next_attempt_at=unknown_reconciliation_retry_at(
+                persisted.reconciliation_attempts
+            ),
+        )
+
 
 def _audit_recovery_error_code(exc: Exception) -> str:
     code = _agent_process_error_code(exc)
     if code != "codex_process_failed":
         return code
     detail = str(exc).strip()
+    if detail == IMAGE_DEPENDENCY_UNAVAILABLE_CODE:
+        return detail
     if detail.startswith("audit_"):
         return detail
     return "audit_recovery_result_invalid"

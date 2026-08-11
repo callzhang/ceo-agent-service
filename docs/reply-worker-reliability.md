@@ -354,6 +354,10 @@ Failed read-only reconciliation attempts keep the external result unknown and
 use persisted exponential retry delays from one minute up to fifteen minutes.
 They are never immediately reclaimed in a hot loop, and the delay does not
 authorize replaying an approval, message, or other external action.
+If a required image is unavailable after either reconciliation or recovery
+execution claims the unknown run, the same formal deferral transition records
+`image_dependency_unavailable`, clears the recovery lease, and schedules the
+next attempt without invoking an Agent or external effect.
 
 Audit validates the mechanical command contract before starting an execution.
 A DWS write without `--yes` is returned to Consumer A as a revision instead of

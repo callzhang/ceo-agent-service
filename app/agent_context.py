@@ -7,6 +7,7 @@ from app.agent_result import AgentError
 from app.agent_skill_usage import LoadedSkillReceipt
 
 
+IMAGE_DEPENDENCY_UNAVAILABLE_CODE = "image_dependency_unavailable"
 IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY = (
     "Referenced image content could not be supplied to the agent."
 )
@@ -76,7 +77,7 @@ class AgentTaskContext:
     def image_dependency_error(self) -> AgentError | None:
         if not self.unresolved_image_count:
             return None
-        return AgentError(code="image_dependency_unavailable", retryable=False)
+        return AgentError(code=IMAGE_DEPENDENCY_UNAVAILABLE_CODE, retryable=False)
 
     def render(
         self,
