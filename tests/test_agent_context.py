@@ -71,10 +71,13 @@ def test_context_renders_reference_and_command_without_resolved_body():
 def test_context_contains_only_the_agreed_business_rules():
     rendered = _context().render()
 
-    assert "execute the provided live DWS commands" in rendered
-    assert "do not invent a `--task-id` argument" in rendered
-    assert "internal_personnel" in rendered
-    assert "HR conversation may skip counterpart identity matching" in rendered
+    assert "Execute the provided read commands" in rendered
+    assert "do not invent a `--task-id` argument" not in rendered
+    assert "internal_personnel" not in rendered
+    assert "HR conversation may skip counterpart identity matching" not in rendered
+    assert "For every current OA task" not in rendered
+    assert "When a factual evidence gap prevents approval" not in rendered
+    assert "same OA process as idempotency evidence" not in rendered
     assert "Never expose credentials" in rendered
     assert "confidence" not in rendered
     assert "trusted target" not in rendered.casefold()
@@ -265,8 +268,8 @@ def test_oa_complete_form_fields_still_require_live_detail_read():
     assert "task_id=tid-1" in rendered
     assert "dws oa approval detail" in rendered
     assert "dws oa approval tasks --instance-id pid-1 --format json" in rendered
-    assert "execute the provided live DWS commands" in rendered
-    assert "do not select by applicant or title similarity" in rendered
+    assert "Execute the provided read commands" in rendered
+    assert "do not select by applicant or title similarity" not in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
@@ -283,22 +286,22 @@ def test_oa_instance_id_only_still_requires_agent_live_detail_read():
     assert "agent_cli.execute_reviewed_read" in rendered
     assert "local CLI credential store" in rendered
     assert "never emit `proposed_actions`" in rendered
-    assert "execute the provided live DWS commands" in rendered
+    assert "execute the provided live DWS commands" not in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
-def test_oa_ambiguous_candidates_require_needs_human():
+def test_oa_ambiguity_policy_is_not_duplicated_in_agent_context():
     rendered = _oa_context(
         reference="pending OA candidates",
         read_commands=("dws oa approval tasks --instance-id pid-ambiguous --format json",),
     ).render()
 
-    assert "multiple OA candidates remain" in rendered
-    assert "return needs_human" in rendered
+    assert "multiple OA candidates remain" not in rendered
+    assert "dws oa approval tasks --instance-id pid-ambiguous" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
-def test_oa_completed_task_requires_no_action():
+def test_oa_completion_policy_is_not_duplicated_in_agent_context():
     rendered = _oa_context(
         reference="process_instance_id=pid-completed",
         read_commands=(
@@ -306,10 +309,9 @@ def test_oa_completed_task_requires_no_action():
         ),
     ).render()
 
-    assert "already completed" in rendered
-    assert "applicant notification is confirmed" in rendered
-    assert "return no_action" in rendered
-    assert "propose only the missing notification" in rendered
+    assert "already completed" not in rendered
+    assert "applicant notification is confirmed" not in rendered
+    assert "propose only the missing notification" not in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
@@ -321,7 +323,7 @@ def test_oa_lets_live_api_enforce_task_ownership():
         ),
     ).render()
 
-    assert "Let the OA API enforce task ownership" in rendered
+    assert "Let the OA API enforce task ownership" not in rendered
     assert "belongs to another user" not in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
@@ -377,7 +379,7 @@ def test_consumer_context_turns_recoverable_evidence_gap_into_clarifying_proposa
     assert "irreducible personal or management decision" in rendered
 
 
-def test_oa_context_requires_autonomous_review_before_escalating_to_derek():
+def test_oa_business_workflow_is_not_duplicated_in_agent_context():
     rendered = _oa_context(
         reference="process_instance_id=pid-1; task_id=tid-1",
         read_commands=(
@@ -387,12 +389,10 @@ def test_oa_context_requires_autonomous_review_before_escalating_to_derek():
         trigger_text="请审批这个申请",
     ).render()
 
-    assert "review each OA instance to a business outcome" in rendered
-    assert "propose the approval action" in rendered
-    assert "comment on that OA instance" in rendered
-    assert "notify the actual applicant" in rendered
-    assert "Do not ask Derek to choose between continuing and clarifying" in rendered
-    assert "Only an irreducible management choice" in rendered
+    assert "review each OA instance to a business outcome" not in rendered
+    assert "propose the approval action" not in rendered
+    assert "comment on that OA instance" not in rendered
+    assert "notify the actual applicant" not in rendered
 
 
 def test_single_chat_context_requires_direct_message_target():
@@ -453,8 +453,8 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert "payload unchanged" in rendered
     assert "return revision_required" in rendered
     assert "Reject a group-send candidate for a single-chat task" in rendered
-    assert "OA factual gap" in rendered
-    assert "exact OA comment and applicant notification" in rendered
+    assert "OA factual gap" not in rendered
+    assert "exact OA comment and applicant notification" not in rendered
     assert "Effective Audit Rules" not in rendered
     assert "Only publish supported facts." not in rendered
     _assert_no_service_oa_resolution_fields(rendered)

@@ -40,6 +40,13 @@ Skills list and call `agent_cli.read_skill` for the most specific applicable bus
 Then load the operation Skill named by that business Skill before proposing a
 concrete CLI or MCP action. Do not ask the service to classify the domain for you.
 
+Compose installed specialist Skills dynamically. OA approval work must also
+load `dingtalk-oa-approval`; candidate interview or evaluation must also load
+`stardust-interview`; and OKR review or scoring must load
+`dingtang-okr-review`, in addition to the applicable business Skill. Ordinary
+OKR discussion does not require the specialized scoring workflow. Follow the
+specialist Skill instead of reproducing its workflow in your response.
+
 For live DingTalk, Lark, or local file evidence, call `agent_cli.execute_reviewed_read`
 with the exact reviewed read command. This
 lets the Agent use the principal's local CLI credential store and makes a

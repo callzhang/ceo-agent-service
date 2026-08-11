@@ -4160,6 +4160,36 @@ def _task4_installed_skill_paths(
     return skill_paths
 
 
+def _personnel_specialist_skill_paths(
+    tmp_path: Path,
+    monkeypatch,
+    names: tuple[str, ...],
+) -> dict[str, Path]:
+    skills_root = tmp_path / "personnel-specialist-skills"
+    skill_paths: dict[str, Path] = {}
+    for name in names:
+        path = skills_root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        if name == "ceo-personnel-communication":
+            content = (Path("skills") / name / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+        elif name == "dingtalk-chat":
+            content = _triage_operation_skill_fixture(name)
+        else:
+            content = (
+                "---\n"
+                f"name: {name}\n"
+                f"description: Specialist fixture for {name}.\n"
+                "---\n"
+                f"# {name}\n"
+            )
+        path.write_text(content, encoding="utf-8")
+        skill_paths[name] = path.resolve()
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (skills_root,))
+    return skill_paths
+
+
 def _task4_agent_runs(worker):
     task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
     assert task is not None
@@ -4262,6 +4292,70 @@ def test_direct_clarification_uses_native_business_and_operation_skill_receipts(
     assert executor.sent_questions == 1
     assert MessageClarificationSkillExecutor.question in executor.prompts[1]
     _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+
+
+@pytest.mark.parametrize(
+    ("trigger_text", "skill_names"),
+    [
+        (
+            "Please discuss this employee's compensation adjustment.",
+            (
+                "ceo-personnel-communication",
+                "dingtalk-chat",
+            ),
+        ),
+        (
+            "Please evaluate this external candidate for the role.",
+            (
+                "ceo-personnel-communication",
+                "stardust-interview",
+                "dingtalk-chat",
+            ),
+        ),
+        (
+            "Please handle this personnel approval and report the result.",
+            (
+                "ceo-personnel-communication",
+                "dingtalk-oa-approval",
+                "dingtalk-chat",
+            ),
+        ),
+        (
+            "Please perform the requested OKR review and scoring.",
+            (
+                "dingtang-okr-review",
+                "dingtalk-chat",
+            ),
+        ),
+    ],
+)
+def test_specialist_composition_uses_native_a_b_path_and_exact_sha_receipts(
+    tmp_path: Path,
+    monkeypatch,
+    trigger_text: str,
+    skill_names: tuple[str, ...],
+):
+    skill_paths = _personnel_specialist_skill_paths(
+        tmp_path,
+        monkeypatch,
+        skill_names,
+    )
+    trigger = _message(f"@CEO Agent {trigger_text}").model_copy(
+        update={
+            "sender_open_dingtalk_id": "open-user-1",
+            "mentioned_user_ids": ["agent-user-id"],
+        }
+    )
+    executor = MessageClarificationSkillExecutor(skill_paths)
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert executor.consumer_loaded_skills == list(skill_names)
+    assert executor.audit_loaded_skills == list(skill_names)
+    runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
 
 
 def test_document_read_uses_exact_commands_and_native_skill_receipts(

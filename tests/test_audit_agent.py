@@ -18,6 +18,7 @@ from app.agent_turn_runner import (
 )
 from app.agent_skill_usage import LoadedSkillReceipt
 from app.audit_agent import (
+    AUDIT_SKILL_HANDOFF_INSTRUCTION,
     AuditAgentRunner,
     _expected_effect_action,
     _recovery_authorizations,
@@ -684,6 +685,19 @@ def test_scripted_audit_voluntarily_requires_revision_without_applicable_skill(s
     assert result.result.feedback is not None
     assert "No applicable business Skill" in result.result.feedback.observation
     assert store.get_agent_run(result.run_id).tool_events == []
+
+
+def test_audit_instructions_require_specialist_skill_reread_before_execution():
+    instructions = AUDIT_SKILL_HANDOFF_INSTRUCTION
+
+    assert "OA approval work" in instructions
+    assert "candidate interview or evaluation" in instructions
+    assert "OKR review or scoring" in instructions
+    assert "`dingtalk-oa-approval`" in instructions
+    assert "`stardust-interview`" in instructions
+    assert "`dingtang-okr-review`" in instructions
+    assert "verified Consumer receipt" in instructions
+    assert "before review or execution" in instructions
 
 
 def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):

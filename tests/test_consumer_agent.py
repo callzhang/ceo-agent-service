@@ -133,6 +133,19 @@ def test_consumer_instructions_require_dynamic_business_and_operation_skill_read
     assert "Do not ask the service to classify the domain" in instructions
 
 
+def test_consumer_instructions_require_dynamic_specialist_skill_composition():
+    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+
+    assert "OA approval work" in instructions
+    assert "candidate interview or evaluation" in instructions
+    assert "OKR review or scoring" in instructions
+    assert "`dingtalk-oa-approval`" in instructions
+    assert "`stardust-interview`" in instructions
+    assert "`dingtang-okr-review`" in instructions
+    assert "in addition to the applicable business Skill" in instructions
+    assert "Ordinary\nOKR discussion" in instructions
+
+
 def _failed_reviewed_read_jsonl() -> str:
     argv = ["dws", "oa", "approval", "detail", "--instance-id", "pid-1"]
     from app.native_cli_metadata import describe_native_command
