@@ -602,7 +602,8 @@ def test_consumer_preserves_codex_cli_authentication_failure(store, task, contex
     assert error["code"].startswith(
         "codex_provider_auth_failed"
     )
-    assert error["authorization_required"] is True
+    assert error["authorization_required"] is False
+    assert error["retryable"] is False
 
 
 def test_consumer_reads_current_audit_rules_for_each_turn(

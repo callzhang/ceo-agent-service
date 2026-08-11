@@ -292,6 +292,19 @@ delivery failure and must not create an error event or user-facing failure
 notification. Group-chat resolution, authorization failures, transport errors,
 and every attempted external action remain error-reporting paths.
 
+### Codex authentication ownership
+
+The CEO service uses the authentication state already owned by the local Codex
+App/CLI. It does not read or modify `~/.codex/auth.json`, launch `codex login`,
+run `codex login status` as a task gate, or inspect/restart Codex app-server
+processes. DWS and Lark remain explicit channel gates; Codex is invoked directly.
+A Codex 401/403, missing auth header, or explicit login-required failure is
+persisted immediately as a terminal failed task and surfaced through the normal
+failed-attempt notification. It is not converted into an authorization wait,
+assigned a recovery code, or retried when a later login probe changes state.
+Transient provider transport failures remain eligible for the existing bounded
+retry.
+
 ### Recent error reconciliation
 
 The hourly quality check treats an error as open only until a later durable

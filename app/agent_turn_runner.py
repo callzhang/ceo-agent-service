@@ -123,7 +123,7 @@ def _result_parse_error_detail(exc: ResultParseError) -> str:
     return str(exc)[:240]
 
 
-def _requires_authorization(code: str) -> bool:
+def _is_terminal_codex_auth_failure(code: str) -> bool:
     return code.startswith(CODEX_PROVIDER_AUTH_FAILED)
 
 
@@ -1068,12 +1068,13 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted = self.store.get_agent_run(run.id)
         if persisted is not None and persisted.status == "running":
             if persisted.side_effect_state == SideEffectState.NONE.value:
+                terminal_auth_failure = _is_terminal_codex_auth_failure(code)
                 self.store.fail_agent_run(
                     run.id,
                     {
                         "code": code,
-                        "retryable": True,
-                        "authorization_required": _requires_authorization(code),
+                        "retryable": not terminal_auth_failure,
+                        "authorization_required": False,
                         **({"detail": detail} if detail else {}),
                     },
                     owner=self.owner,

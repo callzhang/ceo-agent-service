@@ -14,6 +14,7 @@ from typing import Callable
 from pydantic import ValidationError
 
 from app.agent_envelope import SendDingTalkReplyAction
+from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.dingtalk_models import CodexAction
 from app.wechat.models import WechatAccount, WechatMessage
 from app.wechat.prompt import build_wechat_turn_prompt
@@ -186,6 +187,7 @@ class WechatReplyConsumer:
         else:  # STOP_WITH_ERROR (and anything unexpected)
             retryable = (
                 bool(getattr(decision, "external_dependency_failed", False))
+                and decision.failure_code != CODEX_PROVIDER_AUTH_FAILED
                 and task.attempts < self.max_task_attempts
             )
             self.store.finalize_wechat_reply_task(
@@ -198,7 +200,6 @@ class WechatReplyConsumer:
                 audit_summary=getattr(decision, "audit_summary", "") or "",
                 send_status="failed",
                 send_error=decision.reason or "stop_with_error",
-                recovery_code=decision.failure_code,
                 task_status="pending" if retryable else "failed",
                 available_at=self._retry_available_at() if retryable else "",
             )

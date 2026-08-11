@@ -171,7 +171,7 @@ def test_external_dependency_failure_defers_wechat_task_for_retry(
     )[0].id == task.id
 
 
-def test_auth_failure_persists_structured_recovery_code(fake_codex, consumer, store):
+def test_auth_failure_is_terminal_without_service_recovery(fake_codex, consumer, store):
     fake_codex.decision = CodexDecision(
         action=CodexAction.STOP_WITH_ERROR,
         reason="native authentication unavailable",
@@ -184,8 +184,9 @@ def test_auth_failure_persists_structured_recovery_code(fake_codex, consumer, st
 
     task = store.get_reply_task(1)
     assert task is not None
-    assert task.status == "pending"
-    assert task.recovery_code == CODEX_PROVIDER_AUTH_FAILED
+    assert task.status == "failed"
+    assert task.recovery_code == ""
+    assert task.available_at == ""
 
 
 def test_consumer_marks_read_only_decision_phase_before_calling_codex(
