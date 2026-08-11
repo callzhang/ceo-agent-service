@@ -1763,7 +1763,11 @@ class Task4BehaviorProtocolExecutor(ConsumerAuditLifecycleExecutor):
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
         command = shlex.join(action["payload"]["argv"])
-        verify_command = "dws chat message list --group cid-1 --time 2026-07-29"
+        verify_command = (
+            "dws chat message reaction list --message-id msg-1"
+            if self.scenario.useful_reaction
+            else "dws chat message list --group cid-1 --time 2026-07-29"
+        )
         self.write_operations.append(str(action["operation"]))
         self.external_readbacks.append(verify_command)
         return [
@@ -2030,7 +2034,11 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
                             ),
                         )
                     )
-                    verify_command = oa_material["read_commands"][0]
+                    verify_command = next(
+                        command
+                        for command in oa_material["read_commands"]
+                        if command.startswith("dws oa approval tasks ")
+                    )
                     verify_output = self.native_executor(verify_command)
                     records.extend(
                         (
@@ -4375,7 +4383,7 @@ def test_acknowledgment_proposes_reaction_only_when_useful(
     assert "chat message reaction add" in _task4_completed_operations(runs[1])
     assert executor.write_operations == ["chat message reaction add"]
     assert executor.external_readbacks == [
-        "dws chat message list --group cid-1 --time 2026-07-29"
+        "dws chat message reaction list --message-id msg-1"
     ]
 
 

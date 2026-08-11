@@ -134,32 +134,6 @@ def _is_terminal_codex_auth_failure(code: str) -> bool:
     return code.startswith(CODEX_PROVIDER_AUTH_FAILED)
 
 
-def _has_external_readback_after_effects(
-    events: list[dict[str, object]],
-) -> bool:
-    last_effect_index = -1
-    readback_indexes: list[int] = []
-    for index, event in enumerate(events):
-        item = event.get("item")
-        metadata = item.get("metadata") if isinstance(item, dict) else None
-        if (
-            event.get("type") == "item.completed"
-            and isinstance(metadata, dict)
-            and metadata.get("effect") == EffectKind.EFFECTFUL.value
-        ):
-            last_effect_index = index
-        if (
-            event.get("type") == "item.completed"
-            and isinstance(metadata, dict)
-            and metadata.get("effect") == EffectKind.READ_ONLY.value
-            and metadata.get("operation") != "read_skill"
-        ):
-            readback_indexes.append(index)
-    if last_effect_index < 0:
-        return bool(readback_indexes)
-    return any(index > last_effect_index for index in readback_indexes)
-
-
 class AgentTurnProcess(Generic[ResultT]):
     def __init__(
         self,
@@ -734,7 +708,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 registry=self.effects,
             )
             if completed == set(range(len(expected_effect_actions))) and all_effects_closed:
-                if _has_external_readback_after_effects(persisted.tool_events):
+                if _actions_have_required_readbacks(
+                    persisted.tool_events,
+                    expected_effect_actions,
+                    self.effects,
+                ):
                     return
                 self.store.mark_agent_run_unknown(
                     run.id,
@@ -927,7 +905,11 @@ class AgentTurnProcess(Generic[ResultT]):
             or not all_effects_closed
         ):
             raise RuntimeError("audit_execution_evidence_missing")
-        if not _has_external_readback_after_effects(persisted.tool_events):
+        if not _actions_have_required_readbacks(
+            persisted.tool_events,
+            expected_effect_actions,
+            self.effects,
+        ):
             raise RuntimeError("audit_external_readback_missing")
 
     def _raise_for_process_failure(
@@ -1231,6 +1213,38 @@ def _matching_read_digest(
         if _read_matches_action(metadata, action, registry) and isinstance(digest, str):
             return digest
     return ""
+
+
+def _actions_have_required_readbacks(
+    events: list[dict[str, object]],
+    actions: tuple[dict[str, object], ...],
+    registry: McpToolEffectRegistry,
+) -> bool:
+    for action_index, action in enumerate(actions):
+        if not _action_has_readback(action, registry):
+            continue
+        write_indexes = [
+            index
+            for index, event in enumerate(events)
+            if event.get("type") == "item.completed"
+            and (metadata := _event_metadata(event)) is not None
+            and metadata.get("effect") == EffectKind.EFFECTFUL.value
+            and metadata.get("action_index") in {None, action_index}
+            and _metadata_matches_action(metadata, action)
+        ]
+        if not write_indexes:
+            write_indexes = [-1]
+        if any(
+            not _matching_read_digest(
+                events,
+                action,
+                after_index=write_index,
+                registry=registry,
+            )
+            for write_index in write_indexes
+        ):
+            return False
+    return True
 
 
 def _validated_reconciliation(

@@ -347,8 +347,10 @@ def _audit_jsonl(
     write_error: bool = False,
     write_target: str = "cid-agent",
     write_count: int = 1,
+    write_targets: tuple[str, ...] | None = None,
     write_text: str = "done",
     include_verification: bool = True,
+    verification_targets: tuple[str, ...] | None = None,
     proposal_revision: int = 0,
     authorization_id: str = "",
 ) -> str:
@@ -361,7 +363,8 @@ def _audit_jsonl(
     }
     records = [json.dumps({"type": "thread.started", "thread_id": session})]
     if include_write:
-        for index in range(write_count):
+        effective_write_targets = write_targets or (write_target,) * write_count
+        for index, effective_write_target in enumerate(effective_write_targets):
             arguments = {
                 "argv": [
                     "dws",
@@ -369,7 +372,7 @@ def _audit_jsonl(
                     "message",
                     "send",
                     "--group",
-                    write_target,
+                    effective_write_target,
                     "--text",
                     write_text,
                     "--yes",
@@ -381,7 +384,7 @@ def _audit_jsonl(
                 "cli": "dws",
                 "operation": "chat message send",
                 "operation_digest": "placeholder",
-                "target_identifiers": {"group": write_target},
+                "target_identifiers": {"group": effective_write_target},
                 "result_digest": "result-digest",
                 "stdout": "{}",
             }
@@ -428,50 +431,52 @@ def _audit_jsonl(
                 )
             )
     if include_write and include_verification:
-        arguments = {
-            "argv": [
-                "dws", "chat", "message", "list", "--group", write_target,
-                "--time", "2026-08-06",
-            ]
-        }
-        descriptor = describe_native_command(
-            {"type": "command_execution", "argv": arguments["argv"]}
-        )
-        assert descriptor is not None
-        receipt = {
-            "cli": "dws",
-            "operation": descriptor.command_path,
-            "operation_digest": descriptor.command_digest,
-            "target_identifiers": descriptor.target_identifiers,
-            "result_digest": "verification-digest",
-            "stdout": "{}",
-        }
-        item = {
-            "type": "mcp_tool_call",
-            "id": "verify-1",
-            "server": "agent_cli",
-            "tool": "execute_reviewed_read",
-            "arguments": arguments,
-            "status": "in_progress",
-        }
-        records.append(json.dumps({"type": "item.started", "item": item}))
-        records.append(
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        **item,
-                        "status": "completed",
-                        "result": {
-                            "content": [
-                                {"type": "text", "text": json.dumps(receipt)}
-                            ],
-                            "isError": False,
-                        },
-                    },
-                }
+        effective_verification_targets = verification_targets or (write_target,)
+        for index, verification_target in enumerate(effective_verification_targets):
+            arguments = {
+                "argv": [
+                    "dws", "chat", "message", "list", "--group", verification_target,
+                    "--time", "2026-08-06",
+                ]
+            }
+            descriptor = describe_native_command(
+                {"type": "command_execution", "argv": arguments["argv"]}
             )
-        )
+            assert descriptor is not None
+            receipt = {
+                "cli": "dws",
+                "operation": descriptor.command_path,
+                "operation_digest": descriptor.command_digest,
+                "target_identifiers": descriptor.target_identifiers,
+                "result_digest": f"verification-digest-{index}",
+                "stdout": "{}",
+            }
+            item = {
+                "type": "mcp_tool_call",
+                "id": f"verify-{index + 1}",
+                "server": "agent_cli",
+                "tool": "execute_reviewed_read",
+                "arguments": arguments,
+                "status": "in_progress",
+            }
+            records.append(json.dumps({"type": "item.started", "item": item}))
+            records.append(
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            **item,
+                            "status": "completed",
+                            "result": {
+                                "content": [
+                                    {"type": "text", "text": json.dumps(receipt)}
+                                ],
+                                "isError": False,
+                            },
+                        },
+                    }
+                )
+            )
     records.append(
         json.dumps(
             {
@@ -998,6 +1003,101 @@ def test_audit_rejects_exact_completed_effect_without_external_readback(setup):
     assert persisted is not None
     assert persisted.status == "unknown"
     assert persisted.side_effect_state == "unknown"
+
+
+def test_audit_rejects_post_write_readback_for_unrelated_target(setup):
+    store, task, audit_context, parent = setup
+
+    with pytest.raises(RuntimeError, match="audit_external_readback_missing"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(
+                _audit_jsonl(
+                    "operation-1",
+                    session="session-b",
+                    verification_targets=("cid-unrelated",),
+                )
+            ),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+
+@pytest.mark.parametrize(
+    ("verification_targets", "confirmed"),
+    [
+        (("cid-agent",), False),
+        (("cid-agent", "cid-second"), True),
+    ],
+)
+def test_each_effect_action_requires_matching_post_write_readback(
+    setup,
+    verification_targets,
+    confirmed,
+):
+    store, task, audit_context, parent = setup
+    proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send both results",
+            "actions": [
+                {
+                    "description": f"Send to {target}",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"group": target},
+                    "payload": {
+                        "argv": [
+                            "dws",
+                            "chat",
+                            "message",
+                            "send",
+                            "--group",
+                            target,
+                            "--text",
+                            "done",
+                            "--yes",
+                        ]
+                    },
+                    "expected_verification": "Message exists",
+                }
+                for target in ("cid-agent", "cid-second")
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Both sends were requested.",
+        }
+    )
+    context = replace(audit_context, proposal=proposal)
+    runner = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _audit_jsonl(
+                "operation-1",
+                session="session-b",
+                write_targets=("cid-agent", "cid-second"),
+                verification_targets=verification_targets,
+            )
+        ),
+    )
+
+    if confirmed:
+        result = runner.run(
+            task,
+            context,
+            turn_attempt=0,
+            parent_agent_run_id=parent.id,
+        )
+        persisted = store.get_agent_run(result.run_id)
+        assert persisted is not None
+        assert persisted.status == "completed"
+        assert persisted.side_effect_state == "confirmed"
+    else:
+        with pytest.raises(RuntimeError, match="audit_external_readback_missing"):
+            runner.run(
+                task,
+                context,
+                turn_attempt=0,
+                parent_agent_run_id=parent.id,
+            )
 
 
 def test_audit_rejects_direct_shell_event(setup):
