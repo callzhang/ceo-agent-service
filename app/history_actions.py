@@ -8,6 +8,20 @@ from app.store import ReplyAttempt, ReplyTask
 from app.worker import MAX_REPLY_TASK_ATTEMPTS
 
 
+_READABLE_FAILURE_REASONS = {
+    "consumer_retry_exhausted": (
+        "Agent 生成回复连续重试后仍未得到可验证结果，已达到本轮重试上限。"
+    ),
+    "audit_retry_exhausted": (
+        "Agent 执行审计连续重试后仍未得到可验证结果，已达到本轮重试上限。"
+    ),
+    "codex_process_failed": "Agent 执行进程未成功完成，因此本轮没有得到可验证结果。",
+    "codex_result_invalid": "Agent 已返回结果，但结果不符合当前校验契约。",
+    "codex_result_missing": "Agent 运行结束，但没有输出可验证结果。",
+    "agent_read_only_violation": "Agent 在只读阶段尝试执行外部动作，系统已安全阻止。",
+}
+
+
 @dataclass(frozen=True)
 class HistoryAction:
     key: str
@@ -49,6 +63,7 @@ def reply_history_attention(
         or attempt.send_error
         or "处理未完成"
     ).strip()
+    reason = _readable_failure_reason(reason)
     external_effect = external_effects[side_effect_state]
 
     if (
@@ -141,6 +156,7 @@ def meeting_history_attention(
         or job.error
         or "会议任务未完成"
     ).strip()
+    reason = _readable_failure_reason(reason)
     if job.status == "retry":
         return HistoryAttention(
             kind="automatic_recovery",
@@ -169,10 +185,15 @@ def task_history_attention(item: HistoryItem) -> HistoryAttention | None:
         return None
     return HistoryAttention(
         kind="needs_manager",
-        reason=item.output_text.strip() or "任务动作未完成",
+        reason=_readable_failure_reason(item.output_text.strip() or "任务动作未完成"),
         external_effect="任务记录未确认完成",
         actions=(
             HistoryAction("manual", "人工处理"),
             HistoryAction("details", "技术详情"),
         ),
     )
+
+
+def _readable_failure_reason(reason: str) -> str:
+    normalized = reason.strip()
+    return _READABLE_FAILURE_REASONS.get(normalized, normalized)

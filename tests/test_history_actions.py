@@ -99,6 +99,23 @@ def test_exhausted_failure_requires_manager_and_offers_safe_choices():
     ]
 
 
+def test_internal_retry_code_is_rendered_as_readable_failure_reason():
+    attempt = _attempt(audit_summary="consumer_retry_exhausted")
+
+    state = reply_history_attention(
+        attempt,
+        task=_task(status="failed", attempts=3),
+        decision_options=(),
+        side_effect_state="none",
+    )
+
+    assert state is not None
+    assert state.reason == (
+        "Agent 生成回复连续重试后仍未得到可验证结果，已达到本轮重试上限。"
+    )
+    assert "consumer_retry_exhausted" not in state.reason
+
+
 def test_agent_supplied_choices_are_preserved_for_general_needs_human():
     attempt = _attempt(
         send_status="needs_human",
