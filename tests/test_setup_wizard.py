@@ -846,6 +846,38 @@ def test_run_setup_cli_components_records_bootstrap_failure(
     assert event.stderr_excerpt == "cannot install [REDACTED_PATH]"
 
 
+def test_setup_cli_components_propagates_business_skill_install_conflict(
+    monkeypatch,
+    tmp_path: Path,
+):
+    script = tmp_path / "scripts" / "bootstrap-local-components.sh"
+    script.parent.mkdir()
+    script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        return subprocess.CompletedProcess(
+            args,
+            1,
+            stdout=(
+                '{"status":"failed","summary":"Business Skill installation failed.",'
+                '"components":[{"name":"ceo-business-skills","status":"failed",'
+                '"detail":"refusing to overwrite user-owned Skill: '
+                'ceo-calendar-invite"}]}'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.setup_wizard.subprocess.run", fake_run)
+
+    event = run_setup_action("setup_cli_components", repo_root=tmp_path, env={})
+
+    assert event.status == "failed"
+    assert event.summary == "Business Skill installation failed."
+    assert "ceo-business-skills" in event.evidence["components_json"]
+    assert "ceo-calendar-invite" in event.evidence["components_json"]
+
+
 def test_check_dingtalk_cli_reports_missing_binary(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         "app.setup_wizard.shutil.which",

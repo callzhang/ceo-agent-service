@@ -2,9 +2,42 @@
 set -u
 
 FORMAT_TEXT=1
-if [[ "${1:-}" == "--format" && "${2:-}" == "json" ]]; then
-  FORMAT_TEXT=0
-fi
+COMPONENT="all"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --format)
+      if [[ "${2:-}" != "json" ]]; then
+        printf 'usage: %s [--format json] [--component NAME]\n' "$0" >&2
+        exit 2
+      fi
+      FORMAT_TEXT=0
+      shift 2
+      ;;
+    --component)
+      if [[ -z "${2:-}" ]]; then
+        printf 'usage: %s [--format json] [--component NAME]\n' "$0" >&2
+        exit 2
+      fi
+      COMPONENT="$2"
+      shift 2
+      ;;
+    *)
+      printf 'unknown argument: %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "${COMPONENT}" in
+  all|terminal-notifier|codex|nvwa-skill|ceo-business-skills) ;;
+  *)
+    printf 'unknown component: %s\n' "${COMPONENT}" >&2
+    exit 2
+    ;;
+esac
 
 RESULTS=()
 FAILED=0
@@ -163,9 +196,40 @@ ensure_nvwa() {
   record "nvwa-skill" "failed" "Missing Nvwa skill and no approved NVWA_SKILL_SOURCE directory was provided."
 }
 
-ensure_terminal_notifier
-ensure_codex
-ensure_nvwa
+ensure_ceo_business_skills() {
+  local detail
+  if detail="$(
+    PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" python3 - "${HOME}/.agents/skills" 2>&1 <<'PY'
+from pathlib import Path
+import sys
+
+from app.business_skills import BusinessSkillError, install_bundled_business_skills
+
+try:
+    installed = install_bundled_business_skills(Path(sys.argv[1]))
+except BusinessSkillError as exc:
+    raise SystemExit(str(exc))
+print("installed " + ", ".join(item.name for item in installed))
+PY
+  )"; then
+    record "ceo-business-skills" "done" "${detail}"
+  else
+    record "ceo-business-skills" "failed" "${detail}"
+  fi
+}
+
+if [[ "${COMPONENT}" == "all" || "${COMPONENT}" == "terminal-notifier" ]]; then
+  ensure_terminal_notifier
+fi
+if [[ "${COMPONENT}" == "all" || "${COMPONENT}" == "codex" ]]; then
+  ensure_codex
+fi
+if [[ "${COMPONENT}" == "all" || "${COMPONENT}" == "nvwa-skill" ]]; then
+  ensure_nvwa
+fi
+if [[ "${COMPONENT}" == "all" || "${COMPONENT}" == "ceo-business-skills" ]]; then
+  ensure_ceo_business_skills
+fi
 
 if [[ "${FORMAT_TEXT}" == "0" ]]; then
   emit_json
