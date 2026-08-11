@@ -2679,6 +2679,175 @@ def test_reconciliation_after_receipt_write_conflicts_at_finalization_cas(
     assert store.claim_work_summary_inputs(limit=2) == []
 
 
+def _create_conflicted_follow_up_attempt(store, draft_id):
+    assert store.claim_follow_up_draft_revision(
+        draft_id,
+        expected_revision=1,
+        claim_token="sender-token",
+        idempotency_uuid="conflict-uuid",
+        lease_owner="sender",
+        claimed_at="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    assert store.transition_follow_up_attempt_to_sending(
+        draft_id,
+        claimed_revision=1,
+        claim_token="sender-token",
+        lease_owner="sender",
+        now="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    store.update_follow_up_draft(
+        draft_id,
+        question_text="修正后的问题",
+        scheduled_at="2026-07-01 01:00:00",
+    )
+    claimed = store.claim_expired_follow_up_reconciliation_attempts(
+        now="2026-06-08 02:06:00",
+        lease_owner="first-reconciler",
+        lease_until="2026-06-08 02:11:00",
+        limit=1,
+    )
+    assert len(claimed) == 1
+    assert store.resolve_unknown_follow_up_attempt_not_sent(
+        draft_id,
+        draft_revision=1,
+        claim_token="sender-token",
+        lease_owner="first-reconciler",
+        now="2026-06-08 02:06:00",
+        result_json=json.dumps({"reconciliation": {"state": "failed"}}),
+    )
+    attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert attempt is not None
+    transition = store.apply_follow_up_late_send_result(
+        attempt_id=int(attempt["id"]),
+        draft_id=draft_id,
+        draft_revision=1,
+        claim_token="sender-token",
+        idempotency_uuid="conflict-uuid",
+        outcome="sent",
+        result_json=json.dumps(
+            {
+                "send_result": {
+                    "success": True,
+                    "result": {"openTaskId": "conflict-receipt"},
+                },
+                "delivered_text": "旧问题",
+            }
+        ),
+        sent_at="2026-06-08 02:06:00",
+    )
+    assert transition["outcome"] == "conflict"
+
+
+@pytest.mark.parametrize(
+    ("readback_state", "expected_attempt_state", "expected_reviews"),
+    [
+        ("sent", "sent", 1),
+        ("failed", "not_sent", 0),
+        ("ambiguous", "unknown", 0),
+    ],
+)
+def test_conflicting_late_result_is_reconciled_read_only(
+    tmp_path,
+    readback_state,
+    expected_attempt_state,
+    expected_reviews,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="旧问题",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    _create_conflicted_follow_up_attempt(store, draft_id)
+
+    class ReadbackDws(FakeDws):
+        def __init__(self):
+            super().__init__()
+            self.verify_calls = []
+
+        def verify_message_send_result(self, send_result):
+            self.verify_calls.append(send_result)
+            return {"state": readback_state}
+
+    dws = ReadbackDws()
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:07:00",
+        auto_send=True,
+    ) == 0
+
+    assert dws.sent == []
+    assert dws.verify_calls == [
+        {"success": True, "result": {"openTaskId": "conflict-receipt"}}
+    ]
+    attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert attempt is not None
+    assert attempt["state"] == expected_attempt_state
+    assert json.loads(str(attempt["conflict_json"]))["late_outcome"] == "sent"
+    assert len(store.claim_work_summary_inputs(limit=2)) == expected_reviews
+    if readback_state == "ambiguous":
+        assert attempt["lease_owner"] == ""
+        assert attempt["lease_until"] == "2026-06-08 02:22:00"
+
+
+def test_ambiguous_conflict_retry_is_claimed_by_only_one_reconciler(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        status="draft",
+        scheduled_at="2026-07-01 01:00:00",
+    )
+    _create_conflicted_follow_up_attempt(store, draft_id)
+    dws = FakeDws()
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:07:00",
+        auto_send=True,
+    ) == 0
+    assert dws.sent == []
+    assert store.claim_expired_follow_up_reconciliation_attempts(
+        now="2026-06-08 02:21:59",
+        lease_owner="too-early",
+        lease_until="2026-06-08 02:26:59",
+        limit=1,
+    ) == []
+
+    def claim(owner):
+        return store.claim_expired_follow_up_reconciliation_attempts(
+            now="2026-06-08 02:22:00",
+            lease_owner=owner,
+            lease_until="2026-06-08 02:27:00",
+            limit=1,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(pool.map(claim, ("reconciler-a", "reconciler-b")))
+
+    claimed = [attempt for batch in claims for attempt in batch]
+    assert len(claimed) == 1
+    assert claimed[0]["draft_id"] == draft_id
+    assert claimed[0]["lease_owner"] in {"reconciler-a", "reconciler-b"}
+
+
 def test_corrected_revision_waits_for_old_confirmed_sent_reconciliation(
     tmp_path,
     monkeypatch,

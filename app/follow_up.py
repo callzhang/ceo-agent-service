@@ -361,6 +361,11 @@ def _reconcile_unknown_follow_up_attempt(
 ) -> str:
     attempt_revision = int(attempt.get("draft_revision") or 0)
     payload = _json_dict(str(attempt.get("result_json") or "{}"))
+    if _json_dict(str(attempt.get("conflict_json") or "{}")):
+        payload = {
+            **payload,
+            **_json_dict(str(attempt.get("late_result_json") or "{}")),
+        }
     send_result = payload.get("send_result")
     verification: dict[str, object] = {
         "state": "ambiguous",

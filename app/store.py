@@ -12098,7 +12098,17 @@ class AutoReplyStore:
             contradictory = (confirmed_sent and outcome == "failed") or (
                 confirmed_failed and outcome == "sent"
             )
-            if contradictory or existing_conflict != "{}":
+            if existing_conflict != "{}":
+                db.execute(
+                    """
+                    update follow_up_send_attempts
+                    set late_result_json=?, updated_at=current_timestamp
+                    where id=? and claim_token=? and idempotency_uuid=?
+                    """,
+                    (result_json, attempt_id, claim_token, idempotency_uuid),
+                )
+                return {"outcome": "conflict", "draft_finalized": False}
+            if contradictory:
                 conflict_json = json.dumps(
                     {
                         "existing_state": state,
@@ -12113,13 +12123,14 @@ class AutoReplyStore:
                     update follow_up_send_attempts
                     set state='unknown',
                         lease_owner='',
-                        lease_until='',
+                        lease_until=?,
                         late_result_json=?,
                         conflict_json=?,
                         updated_at=current_timestamp
                     where id=? and claim_token=? and idempotency_uuid=?
                     """,
                     (
+                        sent_at,
                         result_json,
                         conflict_json,
                         attempt_id,
