@@ -15,6 +15,7 @@ from app.agent_contracts import (
 )
 from app.agent_orchestrator import AgentOrchestrator
 from app.agent_result import ResultParseError, SideEffectState
+from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AutoReplyStore
 
@@ -146,6 +147,12 @@ class ScriptedConsumer:
             owner=self.owner,
         )
         result = self.results.popleft()
+        for event in getattr(self, "tool_events", ()):
+            self.store.append_agent_run_event(
+                claim.run.id,
+                event,
+                owner=self.owner,
+            )
         if result.outcome is ConsumerOutcome.FAILED:
             self.store.fail_agent_run(
                 claim.run.id,
@@ -169,6 +176,30 @@ class ScriptedConsumer:
             }
         )
         return AgentTurnRunResult(claim.run.id, result, 0, 1)
+
+
+class ReceiptScriptedConsumer(ScriptedConsumer):
+    def __init__(self, store, receipt, *results):
+        super().__init__(store, *results)
+        self.receipt = receipt
+        self.tool_events = (
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "id": "skill-read",
+                    "server": "agent_cli",
+                    "tool": "read_skill",
+                    "status": "completed",
+                    "metadata": {
+                        "effect": "read_only",
+                        "skill_name": self.receipt.name,
+                        "skill_path": self.receipt.path,
+                        "skill_sha256": self.receipt.sha256,
+                    },
+                },
+            },
+        )
 
 
 class ScriptedAudit:
@@ -244,6 +275,7 @@ class RecoveringScriptedAudit(ScriptedAudit):
         super().__init__(store)
         self.recovery_result = result
         self.recovery_calls = []
+        self.recovery_contexts = []
 
     def recover(self, task, context, *, run):
         claim = self.store.claim_unknown_agent_run(
@@ -278,6 +310,7 @@ class RecoveringScriptedAudit(ScriptedAudit):
                 "revision": context.proposal_revision,
             }
         )
+        self.recovery_contexts.append(context)
         return AgentTurnRunResult(completed.id, result, 1, 2)
 
 
@@ -572,6 +605,87 @@ def test_proposal_is_executed_only_by_fresh_audit_session(store):
     assert audit.calls[0]["operation_id"] == (
         f"agent-task:{task.id}:{task.execution_generation}:proposal:0"
     )
+
+
+def test_audit_receives_exact_parent_consumer_skill_on_initial_and_normal_retry(store):
+    task = _task(store)
+    receipt = LoadedSkillReceipt(
+        name="business-review",
+        path="/Users/derek/.agents/skills/business-review/SKILL.md",
+        sha256="a" * 64,
+    )
+    consumer = ReceiptScriptedConsumer(
+        store,
+        receipt,
+        _consumer_result("proposal", "candidate"),
+    )
+    audit = ScriptedAudit(
+        store,
+        _audit_result("failed", 0, code="temporary", retryable=True),
+        _audit_result("executed", 0),
+    )
+
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
+
+    assert result.status == "executed"
+    assert [call["context"].consumer_skills for call in audit.calls] == [
+        (receipt,),
+        (receipt,),
+    ]
+
+
+def test_unknown_audit_recovery_receives_exact_parent_consumer_skill(store):
+    pending = _task(store)
+    task = store.claim_reply_task(pending.id)
+    assert task is not None
+    receipt = LoadedSkillReceipt(
+        name="business-review",
+        path="/Users/derek/.agents/skills/business-review/SKILL.md",
+        sha256="b" * 64,
+    )
+    consumer = ReceiptScriptedConsumer(
+        store,
+        receipt,
+        _consumer_result("proposal", "candidate"),
+    )
+    consumer.run(
+        task,
+        _context(task),
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+    parent = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert parent is not None
+    audit_run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
+        owner="crashed-audit",
+    ).run
+    store.set_agent_run_session(audit_run.id, "audit-session", owner="crashed-audit")
+    store.mark_agent_run_unknown(
+        audit_run.id,
+        {"code": "write_outcome_unknown", "retryable": False},
+        owner="crashed-audit",
+    )
+    audit = RecoveringScriptedAudit(store, _audit_result("needs_human", 0))
+
+    _process(
+        AgentOrchestrator(store=store, consumer=ScriptedConsumer(store), audit=audit),
+        task,
+    )
+
+    assert audit.recovery_contexts[0].consumer_skills == (receipt,)
 
 
 def test_two_feedback_cycles_resume_same_consumer_and_create_fresh_auditors(store):

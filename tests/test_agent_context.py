@@ -7,6 +7,7 @@ from app.agent_context import (
     PriorReceipt,
 )
 from app.agent_contracts import ConsumerProposal
+from app.agent_skill_usage import LoadedSkillReceipt
 
 
 def _context(
@@ -134,6 +135,55 @@ def test_context_gives_each_agent_turn_an_explicit_execution_time():
     assert "2026-07-28 14:15:00 +0800" in consumer
     assert "2026-07-28 14:16:00 +0800" in audit
     assert '"create_time": "2026-07-28 12:00:00"' in audit
+
+
+def test_audit_context_renders_verified_consumer_skill_receipts_as_json():
+    receipt = LoadedSkillReceipt(
+        name="business-review",
+        path="/Users/derek/.agents/skills/business-review/SKILL.md",
+        sha256="a" * 64,
+    )
+    rendered = AuditTurnContext(
+        task=_context(),
+        proposal_revision=0,
+        operation_id="op-skill",
+        proposal=ConsumerProposal.model_validate(
+            {
+                "objective": "Review",
+                "actions": [
+                    {
+                        "description": "Send reviewed result.",
+                        "capability": "agent_cli.dws",
+                        "operation": "chat message send",
+                        "target": {"group": "cid"},
+                        "payload": {
+                            "argv": [
+                                "dws",
+                                "chat",
+                                "message",
+                                "send",
+                                "--group",
+                                "cid",
+                                "--text",
+                                "reviewed",
+                                "--yes",
+                            ]
+                        },
+                        "expected_verification": "Read back the message.",
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "Review using the applicable Skill.",
+            }
+        ),
+        audit_rules="",
+        consumer_skills=(receipt,),
+    ).render()
+
+    assert "Verified Skills read by Consumer A" in rendered
+    assert '"name": "business-review"' in rendered
+    assert f'"sha256": "{"a" * 64}"' in rendered
+    assert '"path": "/Users/derek/.agents/skills/business-review/SKILL.md"' in rendered
 
 
 def test_agent_rules_require_elapsed_time_review_for_time_sensitive_actions():

@@ -14,7 +14,6 @@ from app.agent_contracts import (
 )
 from app.agent_result import AgentError, SideEffectState
 from app.agent_wire_contracts import AuditAgentWireResult, parse_audit_agent_wire_result
-from app.agent_cli import RECOVERY_WRITE_ALLOWLIST_ENV
 from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import (
@@ -32,6 +31,13 @@ from app.native_cli_metadata import (
 )
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
+
+
+AUDIT_SKILL_HANDOFF_INSTRUCTION = (
+    "Verified Consumer Skill receipts are mandatory review evidence. Reread every "
+    "supplied path and compare its sha256 before accepting or executing the proposal."
+)
+RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "audit_agent_wire.schema.json"
@@ -350,6 +356,8 @@ class AuditAgentRunner:
             expected_schema=AuditAgentWireResult.model_json_schema(),
             developer_instructions=audit_developer_instructions(
                 "Audit Agent B independently reviews and executes accepted candidates.\n\n"
+                + AUDIT_SKILL_HANDOFF_INSTRUCTION
+                + "\n\n"
                 + (
                     "This is recovery of an unknown external outcome in a fresh, isolated "
                     "Audit session. This phase is strictly read-only: reconcile live state for "

@@ -27,6 +27,11 @@ SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "consumer_agent_wire
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 REVIEWED_DWS_READ_INSTRUCTIONS = """
+Before making a domain judgment, inspect the installed Skill catalog or native
+Skills list and call `agent_cli.read_skill` for the most specific applicable business Skill.
+Then load the operation Skill named by that business Skill before proposing a
+concrete CLI or MCP action. Do not ask the service to classify the domain for you.
+
 For live DingTalk, Lark, or local file evidence, call `agent_cli.execute_reviewed_read`
 with the exact reviewed read command. This
 lets the Agent use the principal's local CLI credential store and makes a
@@ -363,6 +368,12 @@ def audit_developer_instructions(role_instruction: str) -> str:
     return _role_developer_instructions(
         role_instruction,
         capability_instructions=(
+            "Reread every verified Skill path supplied from Consumer A with "
+            "agent_cli.read_skill and compare the returned sha256 with the supplied "
+            "receipt before review or execution. Also read the operation Skill for "
+            "each proposed capability. A missing, unreadable, or changed Skill, or "
+            "no applicable business Skill for a domain proposal, requires you to "
+            "return revision_required rather than guess. "
             "Use agent_cli.execute_reviewed_read for every live read and "
             "agent_cli.execute_reviewed_write for every allowed external write. "
             "When exact candidate content comes from a local file, independently "

@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from app.agent_contracts import AuditFeedback, ConsumerProposal
+from app.agent_skill_usage import LoadedSkillReceipt
 
 
 @dataclass(frozen=True)
@@ -156,12 +157,24 @@ class AuditTurnContext:
     operation_id: str
     proposal: ConsumerProposal
     audit_rules: str
+    consumer_skills: tuple[LoadedSkillReceipt, ...] = ()
 
     def render(self, *, current_time: str | None = None) -> str:
         return "\n\n".join(
             (
                 _AUDIT_AGENT_RULES,
                 self.task.render_business_context(current_time=current_time),
+                "Verified Skills read by Consumer A\n"
+                + _json(
+                    [
+                        {
+                            "name": receipt.name,
+                            "path": receipt.path,
+                            "sha256": receipt.sha256,
+                        }
+                        for receipt in self.consumer_skills
+                    ]
+                ),
                 "Candidate revision\n"
                 + _json(
                     {

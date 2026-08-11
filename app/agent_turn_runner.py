@@ -24,6 +24,7 @@ from app.agent_result import (
     ResultParseError,
     SideEffectState,
 )
+from app.agent_skill_usage import normalized_read_skill_metadata
 from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
     LEASE_SECONDS,
@@ -555,6 +556,7 @@ class AgentTurnProcess(Generic[ResultT]):
         native_cli = ""
         authorization_id = ""
         validated_receipt: dict[str, object] | None = None
+        skill_metadata: dict[str, str] | None = None
         controlled_receipt_failed = False
         if call.server == "agent_cli" and call.tool in {
             "execute_reviewed_read",
@@ -596,12 +598,22 @@ class AgentTurnProcess(Generic[ResultT]):
                 controlled_receipt_failed = (
                     "error" in receipt or item.get("status") != "completed"
                 )
+        elif call.server == "agent_cli" and call.tool == "read_skill":
+            if payload.get("type") == "item.completed":
+                skill_metadata = normalized_read_skill_metadata(
+                    item.get("arguments"), item.get("result")
+                )
+                controlled_receipt_failed = (
+                    skill_metadata is None
+                    or item.get("status") != "completed"
+                )
         event_type = str(payload["type"])
         if controlled_receipt_failed:
             event_type = "item.failed"
         elif (
             event_type == "item.completed"
             and validated_receipt is None
+            and skill_metadata is None
             and not _mcp_call_completed(payload)
         ):
             event_type = "item.failed"
@@ -638,6 +650,10 @@ class AgentTurnProcess(Generic[ResultT]):
                 failure_gate_state = receipt_error.get("gate_state")
                 if isinstance(failure_gate_state, str) and failure_gate_state:
                     metadata["failure_gate_state"] = failure_gate_state
+        if controlled_receipt_failed and call.tool == "read_skill":
+            metadata["failure_code"] = "agent_cli_skill_receipt_invalid"
+        if event_type == "item.completed" and skill_metadata is not None:
+            metadata.update(skill_metadata)
         if event_type == "item.completed":
             result_digest = (
                 validated_receipt.get("result_digest")

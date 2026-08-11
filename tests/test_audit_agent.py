@@ -1,4 +1,5 @@
 import json
+import hashlib
 import sqlite3
 import tomllib
 from dataclasses import replace
@@ -15,6 +16,7 @@ from app.agent_turn_runner import (
     _metadata_matches_action,
     _read_matches_action,
 )
+from app.agent_skill_usage import LoadedSkillReceipt
 from app.audit_agent import (
     AuditAgentRunner,
     _expected_effect_action,
@@ -126,6 +128,17 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
     assert "Never execute a DWS write command without --yes" in instructions
     assert "missing command syntax is a read-only evidence task" in instructions
     assert "reviewed local read command" in instructions
+
+
+def test_audit_instructions_require_receipt_sha_comparison_and_fail_closed_review():
+    instructions = audit_developer_instructions("Audit role test")
+
+    assert "Reread every verified Skill path" in instructions
+    assert "compare the returned sha256 with the supplied receipt" in instructions
+    assert "read the operation Skill" in instructions
+    assert "missing, unreadable, or changed" in instructions
+    assert "no applicable business Skill" in instructions
+    assert "return revision_required" in instructions
 
 
 def _wire_result(result: dict[str, object]) -> dict[str, object]:
@@ -493,6 +506,55 @@ def _dry_run_suppressed_jsonl(*, proposal_revision: int = 0) -> str:
     )
 
 
+def _skill_read_jsonl(path: Path, content: str) -> tuple[str, str]:
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    receipt = {"content": content, "sha256": digest}
+    item = {
+        "type": "mcp_tool_call",
+        "id": "skill-read",
+        "server": "agent_cli",
+        "tool": "read_skill",
+        "arguments": {"path": str(path)},
+        "status": "completed",
+        "result": {
+            "content": [{"type": "text", "text": json.dumps(receipt)}],
+            "structuredContent": receipt,
+            "isError": False,
+        },
+    }
+    return json.dumps({"type": "item.completed", "item": item}), digest
+
+
+def _revision_required_jsonl(observation: str) -> str:
+    result = {
+        "outcome": "revision_required",
+        "summary": observation,
+        "proposal_revision": 0,
+        "side_effect_state": "none",
+        "feedback": {
+            "rule": "verified Skill handoff",
+            "observation": observation,
+            "requested_revision": "Load the applicable business Skill and replace the proposal.",
+        },
+        "external_result": None,
+        "reconciliation": [],
+        "error": {
+            "code": "",
+            "retryable": False,
+            "authorization_required": False,
+        },
+    }
+    return json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": json.dumps(_wire_result(result)),
+            },
+        }
+    )
+
+
 @pytest.fixture
 def setup(tmp_path):
     store = AutoReplyStore(tmp_path / "agent.sqlite3")
@@ -520,6 +582,89 @@ def setup(tmp_path):
     ).run
     audit_context = AuditTurnContext(task=context, proposal_revision=0, operation_id="operation-1", proposal=proposal, audit_rules="Check authority.")
     return store, task, audit_context, parent
+
+
+def test_scripted_matching_consumer_skill_sha_proceeds(
+    setup, tmp_path, monkeypatch
+):
+    store, task, audit_context, parent = setup
+    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    content = "# Business review\n"
+    skill_path.write_text(content, encoding="utf-8")
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",))
+    skill_event, digest = _skill_read_jsonl(skill_path, content)
+    context = replace(
+        audit_context,
+        consumer_skills=(
+            LoadedSkillReceipt("business-review", str(skill_path), digest),
+        ),
+    )
+    execution = _audit_jsonl("operation-1", session="session-match").splitlines()
+    stream = "\n".join((execution[0], skill_event, *execution[1:]))
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream),
+    ).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert result.result.outcome.value == "executed"
+    persisted = store.get_agent_run(result.run_id)
+    assert persisted is not None
+    skill_metadata = persisted.tool_events[0]["item"]["metadata"]
+    assert skill_metadata["skill_path"] == str(skill_path)
+    assert skill_metadata["skill_sha256"] == digest
+
+
+def test_scripted_changed_consumer_skill_sha_requires_revision(
+    setup, tmp_path, monkeypatch
+):
+    store, task, audit_context, parent = setup
+    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    content = "# Changed business review\n"
+    skill_path.write_text(content, encoding="utf-8")
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",))
+    skill_event, _digest = _skill_read_jsonl(skill_path, content)
+    context = replace(
+        audit_context,
+        consumer_skills=(
+            LoadedSkillReceipt("business-review", str(skill_path), "a" * 64),
+        ),
+    )
+    stream = "\n".join(
+        (skill_event, _revision_required_jsonl("The Skill sha256 changed."))
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream),
+    ).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert result.result.outcome.value == "revision_required"
+    assert result.result.feedback is not None
+    assert "changed" in result.result.feedback.observation
+    assert store.get_agent_run(result.run_id).side_effect_state == "none"
+
+
+def test_scripted_domain_proposal_without_applicable_skill_requires_revision(setup):
+    store, task, audit_context, parent = setup
+    executor = CapturingExecutor(
+        _revision_required_jsonl("No applicable business Skill was verified.")
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert result.result.outcome.value == "revision_required"
+    assert result.result.feedback is not None
+    assert "No applicable business Skill" in result.result.feedback.observation
+    assert store.get_agent_run(result.run_id).tool_events == []
 
 
 def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):

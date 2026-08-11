@@ -15,6 +15,7 @@ from app.agent_contracts import (
     ConsumerProposal,
 )
 from app.agent_result import AgentError, ResultParseError, SideEffectState
+from app.agent_skill_usage import LoadedSkillReceipt, loaded_skill_receipts
 from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
@@ -255,6 +256,9 @@ class AgentOrchestrator:
                             )
                         )
                     if isinstance(state, _ExecuteAuditRecovery):
+                        consumer_skills = self._consumer_skills(
+                            state.run.parent_agent_run_id
+                        )
                         self.audit.execute_recovery(
                             task,
                             AuditTurnContext(
@@ -263,10 +267,14 @@ class AgentOrchestrator:
                                 operation_id=state.run.operation_id,
                                 proposal=state.proposal,
                                 audit_rules="",
+                                consumer_skills=consumer_skills,
                             ),
                             run=state.run,
                         )
                     elif isinstance(state, _RecoverAudit):
+                        consumer_skills = self._consumer_skills(
+                            state.run.parent_agent_run_id
+                        )
                         self.audit.recover(
                             task,
                             AuditTurnContext(
@@ -275,10 +283,12 @@ class AgentOrchestrator:
                                 operation_id=state.run.operation_id,
                                 proposal=state.proposal,
                                 audit_rules="",
+                                consumer_skills=consumer_skills,
                             ),
                             run=state.run,
                         )
                     else:
+                        consumer_skills = self._consumer_skills(state.parent_run_id)
                         self.audit.run(
                             task,
                             AuditTurnContext(
@@ -287,6 +297,7 @@ class AgentOrchestrator:
                                 operation_id=_operation_id(task, state.proposal_revision),
                                 proposal=state.proposal,
                                 audit_rules="",
+                                consumer_skills=consumer_skills,
                             ),
                             turn_attempt=state.turn_attempt,
                             parent_agent_run_id=state.parent_run_id,
@@ -319,6 +330,16 @@ class AgentOrchestrator:
                 feedback_cycles=self._feedback_cycles(task),
             )
         )
+
+    def _consumer_skills(
+        self, parent_run_id: int | None
+    ) -> tuple[LoadedSkillReceipt, ...]:
+        if parent_run_id is None:
+            return ()
+        parent = self.store.get_agent_run(parent_run_id)
+        if parent is None or parent.role is not AgentRole.CONSUMER:
+            return ()
+        return loaded_skill_receipts(parent.tool_events)
 
     def _derive_state(
         self,

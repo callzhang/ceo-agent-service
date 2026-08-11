@@ -124,6 +124,15 @@ def test_consumer_instructions_keep_writes_as_proposal_data():
     assert "Never\ninvoke, test, verify, or otherwise execute a write command yourself" in instructions
 
 
+def test_consumer_instructions_require_dynamic_business_and_operation_skill_reads():
+    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+
+    assert "inspect the installed Skill catalog" in instructions
+    assert "most specific applicable business Skill" in instructions
+    assert "load the operation Skill named by that business Skill" in instructions
+    assert "Do not ask the service to classify the domain" in instructions
+
+
 def _failed_reviewed_read_jsonl() -> str:
     argv = ["dws", "oa", "approval", "detail", "--instance-id", "pid-1"]
     from app.native_cli_metadata import describe_native_command
