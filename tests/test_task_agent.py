@@ -2489,7 +2489,84 @@ def test_follow_up_reassign_accepts_coherent_evidence(tmp_path):
     follow_up = store.get_follow_up_draft(follow_up_id)
     assert follow_up is not None
     assert follow_up.owner_user_id == "uid-new"
-    assert json.loads(follow_up.evidence_check_json)["owner_evidence"] == evidence
+    assert json.loads(follow_up.risk_check_json)["owner_evidence"] == evidence
+    assert "owner_evidence" not in json.loads(follow_up.evidence_check_json)
+
+
+def test_follow_up_reassign_reuses_canonical_current_owner_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Owner validation")
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="uid-old",
+        owner_name="Display Old",
+        risk_check_json=json.dumps(
+            {
+                "sensitive": False,
+                "owner_evidence": _owner_evidence("uid-old", "Display Old"),
+            }
+        ),
+        status="sent",
+    )
+    new_evidence = _owner_evidence("uid-new", "Display New")
+    verified_reassign = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="reassign",
+        owner_user_id="uid-new",
+        owner_name="Display New",
+    )
+    verified_reassign.follow_up_changes[0].owner_evidence = new_evidence
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=verified_reassign,
+        memory_recall_attempted=True,
+    )
+
+    unchanged_reassign = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="reassign",
+        owner_user_id="uid-new",
+        owner_name="Display New",
+    )
+    apply_task_agent_decision(
+        store,
+        summary_input_id=2,
+        work_item=_work_item(),
+        decision=unchanged_reassign,
+        memory_recall_attempted=True,
+    )
+
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    assert follow_up is not None
+    current_risk_check = json.loads(follow_up.risk_check_json)
+    assert current_risk_check["sensitive"] is False
+    assert current_risk_check["owner_evidence"] == new_evidence
+
+    cross_identity = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="reassign",
+        owner_user_id="uid-new",
+        owner_name="Display Old",
+    )
+    with pytest.raises(ValueError, match="follow_up_change.owner_evidence"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=3,
+            work_item=_work_item(),
+            decision=cross_identity,
+            memory_recall_attempted=True,
+        )
+    unchanged = store.get_follow_up_draft(follow_up_id)
+    assert unchanged is not None
+    assert unchanged.owner_user_id == "uid-new"
+    assert unchanged.owner_name == "Display New"
+    assert json.loads(unchanged.risk_check_json) == current_risk_check
 
 
 def test_follow_up_draft_requires_owner_evidence(tmp_path):

@@ -1039,7 +1039,6 @@ def _apply_follow_up_change(
         "action": change.action,
         "reason": change.reason,
         "evidence": change.evidence_check,
-        "owner_evidence": change.owner_evidence,
     }
     values: dict[str, object] = {
         "evidence_check_json": _json_dumps(evidence),
@@ -1067,6 +1066,10 @@ def _apply_follow_up_change(
             values["owner_user_id"] = change.owner_user_id.strip()
         if change.owner_name is not None:
             values["owner_name"] = change.owner_name.strip()
+        if change.owner_evidence:
+            risk_check = _json_object(current.risk_check_json)
+            risk_check["owner_evidence"] = change.owner_evidence
+            values["risk_check_json"] = _json_dumps(risk_check)
         values["reaction_status"] = "redirect_owner"
         values["reaction_summary"] = change.reason
     elif change.action == "keep_open":
