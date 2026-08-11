@@ -427,7 +427,7 @@ def _reconcile_unknown_follow_up_attempt(
     state = str(verification.get("state") or "").casefold()
     claim_token = str(attempt.get("claim_token") or "")
     if state == "sent":
-        resolved = store.resolve_unknown_follow_up_attempt_sent(
+        resolution = store.resolve_unknown_follow_up_attempt_sent(
             draft.id,
             draft_revision=attempt_revision,
             claim_token=claim_token,
@@ -436,7 +436,12 @@ def _reconcile_unknown_follow_up_attempt(
             sent_at=now,
             result_json=result_json,
         )
-        return "sent" if resolved else "stale"
+        outcome = str(resolution.get("outcome") or "")
+        if outcome == "draft_finalized":
+            return "sent_finalized"
+        if outcome == "review_required":
+            return "sent_review_required"
+        return "stale"
     if state == "failed":
         resolved = store.resolve_unknown_follow_up_attempt_not_sent(
             draft.id,
@@ -474,6 +479,11 @@ def _recover_follow_up_send_attempt(
     state = str(attempt.get("state") or "")
     if state == "claimed":
         return _attempt_lease_is_active(attempt, now=now)
+    if state == "sent":
+        store.finalize_reviewed_current_follow_up_delivery(
+            draft_id=draft.id,
+            draft_revision=draft.revision,
+        )
     return True
 
 
@@ -849,25 +859,16 @@ def _process_expired_follow_up_reconciliations(
             reconciliation_owner=lease_owner,
         )
         attempt_revision = int(attempt.get("draft_revision") or 0)
-        if outcome == "sent":
+        if outcome in {"sent_finalized", "sent_review_required"}:
             delivered = store.get_follow_up_send_attempt(
                 draft_id=draft.id,
                 draft_revision=attempt_revision,
             )
             current = store.get_follow_up_draft(draft.id)
-            current_result = (
-                _json_dict(current.send_result_json) if current is not None else {}
-            )
-            exact_revision_finalized = (
-                current is not None
-                and current.status == "sent"
-                and str(current_result.get("idempotency_uuid") or "")
-                == str(attempt.get("idempotency_uuid") or "")
-            )
             if (
-                delivered is not None
+                outcome == "sent_review_required"
+                and delivered is not None
                 and current is not None
-                and not exact_revision_finalized
             ):
                 _enqueue_prior_delivery_agent_review(
                     store,

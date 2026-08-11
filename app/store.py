@@ -12579,9 +12579,32 @@ class AutoReplyStore:
         now: str,
         sent_at: str,
         result_json: str,
-    ) -> bool:
+    ) -> dict[str, object]:
         with self._connect() as db:
             db.execute("begin immediate")
+            claimed_attempt = db.execute(
+                """
+                select idempotency_uuid
+                from follow_up_send_attempts
+                where draft_id=?
+                  and draft_revision=?
+                  and claim_token=?
+                  and state='unknown'
+                  and lease_owner=?
+                  and datetime(lease_until) > datetime(?)
+                order by id desc
+                limit 1
+                """,
+                (
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                    lease_owner,
+                    now,
+                ),
+            ).fetchone()
+            if claimed_attempt is None:
+                return {"outcome": "stale_attempt"}
             attempt = db.execute(
                 """
                 update follow_up_send_attempts
@@ -12607,8 +12630,8 @@ class AutoReplyStore:
                 ),
             )
             if attempt.rowcount != 1:
-                return False
-            db.execute(
+                return {"outcome": "stale_attempt"}
+            draft = db.execute(
                 """
                 update follow_up_drafts
                 set status='sent',
@@ -12621,11 +12644,35 @@ class AutoReplyStore:
                     updated_at=current_timestamp
                 where id=?
                   and revision=?
-                  and send_claim_token=?
+                  and status in ('draft', 'approved')
+                  and (
+                    (
+                      send_claim_revision=?
+                      and send_claim_token=?
+                      and send_claim_idempotency_uuid=?
+                    )
+                    or (
+                      send_claim_revision=0
+                      and send_claim_token=''
+                      and send_claim_idempotency_uuid=''
+                    )
+                  )
                 """,
-                (result_json, sent_at, draft_id, draft_revision, claim_token),
+                (
+                    result_json,
+                    sent_at,
+                    draft_id,
+                    draft_revision,
+                    draft_revision,
+                    claim_token,
+                    claimed_attempt["idempotency_uuid"],
+                ),
             )
-            return True
+            return {
+                "outcome": (
+                    "draft_finalized" if draft.rowcount == 1 else "review_required"
+                )
+            }
 
     def resolve_unknown_follow_up_attempt_not_sent(
         self,
@@ -12722,6 +12769,56 @@ class AutoReplyStore:
                 (draft_id, before_revision),
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def finalize_reviewed_current_follow_up_delivery(
+        self,
+        *,
+        draft_id: int,
+        draft_revision: int,
+    ) -> bool:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            attempt = db.execute(
+                """
+                select attempts.result_json
+                from follow_up_send_attempts as attempts
+                join work_summary_inputs as reviews
+                  on reviews.source_type='follow_up_completion_check'
+                 and reviews.source_ref=attempts.review_source_ref
+                where attempts.draft_id=?
+                  and attempts.draft_revision=?
+                  and attempts.state='sent'
+                  and attempts.review_enqueued_revision=?
+                  and attempts.review_source_ref!=''
+                  and reviews.status='done'
+                order by attempts.id desc
+                limit 1
+                """,
+                (draft_id, draft_revision, draft_revision),
+            ).fetchone()
+            if attempt is None:
+                return False
+            cursor = db.execute(
+                """
+                update follow_up_drafts
+                set status='sent',
+                    send_result_json=?,
+                    sent_at=current_timestamp,
+                    revision=revision+1,
+                    send_claim_revision=0,
+                    send_claim_token='',
+                    send_claim_idempotency_uuid='',
+                    updated_at=current_timestamp
+                where id=?
+                  and revision=?
+                  and status in ('draft', 'approved')
+                  and send_claim_revision=0
+                  and send_claim_token=''
+                  and send_claim_idempotency_uuid=''
+                """,
+                (attempt["result_json"], draft_id, draft_revision),
+            )
+            return cursor.rowcount == 1
 
     def invalidate_expired_prior_follow_up_claim(
         self,

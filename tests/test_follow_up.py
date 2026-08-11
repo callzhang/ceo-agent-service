@@ -2743,6 +2743,206 @@ def _create_conflicted_follow_up_attempt(store, draft_id):
     assert transition["outcome"] == "conflict"
 
 
+def _claim_same_revision_authoritative_sent_upgrade(store, draft_id, lease_owner):
+    assert store.claim_follow_up_draft_revision(
+        draft_id,
+        expected_revision=1,
+        claim_token="same-revision-token",
+        idempotency_uuid="same-revision-uuid",
+        lease_owner="sender",
+        claimed_at="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    assert store.transition_follow_up_attempt_to_sending(
+        draft_id,
+        claimed_revision=1,
+        claim_token="same-revision-token",
+        lease_owner="sender",
+        now="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    assert store.mark_follow_up_sending_unknown(
+        draft_id,
+        draft_revision=1,
+        claim_token="same-revision-token",
+        lease_owner="sender",
+        lease_until="2026-06-08 02:05:00",
+        result_json=json.dumps(
+            {"send_result": {"success": True, "result": {"openTaskId": "same"}}}
+        ),
+    )
+    failed_claim = store.claim_expired_follow_up_reconciliation_attempts(
+        now="2026-06-08 02:06:00",
+        lease_owner="failed-readback",
+        lease_until="2026-06-08 02:11:00",
+        limit=1,
+    )
+    assert len(failed_claim) == 1
+    assert store.resolve_unknown_follow_up_attempt_not_sent(
+        draft_id,
+        draft_revision=1,
+        claim_token="same-revision-token",
+        lease_owner="failed-readback",
+        now="2026-06-08 02:06:00",
+        result_json=json.dumps({"reconciliation": {"state": "failed"}}),
+    )
+    claimless = store.get_follow_up_draft(draft_id)
+    assert claimless is not None
+    assert claimless.revision == 1
+    assert claimless.send_claim_token == ""
+    attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert attempt is not None
+    assert store.apply_follow_up_late_send_result(
+        attempt_id=int(attempt["id"]),
+        draft_id=draft_id,
+        draft_revision=1,
+        claim_token="same-revision-token",
+        idempotency_uuid="same-revision-uuid",
+        outcome="sent",
+        result_json=json.dumps(
+            {"send_result": {"success": True, "result": {"openTaskId": "same"}}}
+        ),
+        sent_at="2026-06-08 02:06:00",
+    )["outcome"] == "conflict"
+    upgraded_claim = store.claim_expired_follow_up_reconciliation_attempts(
+        now="2026-06-08 02:07:00",
+        lease_owner=lease_owner,
+        lease_until="2026-06-08 02:12:00",
+        limit=1,
+    )
+    assert len(upgraded_claim) == 1
+    return upgraded_claim[0]
+
+
+def test_same_revision_authoritative_sent_upgrade_finalizes_claimless_draft(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        status="draft",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    _claim_same_revision_authoritative_sent_upgrade(store, draft_id, "upgrade")
+
+    resolution = store.resolve_unknown_follow_up_attempt_sent(
+        draft_id,
+        draft_revision=1,
+        claim_token="same-revision-token",
+        lease_owner="upgrade",
+        now="2026-06-08 02:07:00",
+        sent_at="2026-06-08 02:07:00",
+        result_json=json.dumps({"reconciliation": {"state": "sent"}}),
+    )
+
+    assert resolution["outcome"] == "draft_finalized"
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "sent"
+    assert draft.revision == 2
+
+
+def test_newer_claim_prevents_sent_upgrade_overwrite_and_queues_review(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        status="draft",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    _claim_same_revision_authoritative_sent_upgrade(store, draft_id, "upgrade")
+    with store._connect() as db:
+        db.execute(
+            """
+            update follow_up_drafts
+            set send_claim_revision=1,
+                send_claim_token='newer-token',
+                send_claim_idempotency_uuid='newer-uuid'
+            where id=? and revision=1
+            """,
+            (draft_id,),
+        )
+
+    class SentReadbackDws(FakeDws):
+        def verify_message_send_result(self, send_result):
+            return {"state": "sent"}
+
+    dws = SentReadbackDws()
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:13:00",
+        auto_send=True,
+    ) == 0
+    held = store.get_follow_up_draft(draft_id)
+    assert held is not None
+    assert held.status == "draft"
+    assert held.revision == 1
+    assert held.send_claim_token == "newer-token"
+    reviews = store.claim_work_summary_inputs(limit=2)
+    assert len(reviews) == 1
+    store.mark_work_summary_input_done(reviews[0].id)
+
+    with store._connect() as db:
+        db.execute(
+            """
+            update follow_up_drafts
+            set send_claim_revision=0,
+                send_claim_token='',
+                send_claim_idempotency_uuid=''
+            where id=? and revision=1 and send_claim_token='newer-token'
+            """,
+            (draft_id,),
+        )
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:14:00",
+        auto_send=True,
+    ) == 0
+    finalized = store.get_follow_up_draft(draft_id)
+    assert finalized is not None
+    assert finalized.status == "sent"
+    assert finalized.revision == 2
+    assert dws.sent == []
+
+
+def test_same_revision_sent_upgrade_has_one_concurrent_finalizer(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        status="draft",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    _claim_same_revision_authoritative_sent_upgrade(store, draft_id, "upgrade")
+
+    def finalize(_):
+        return store.resolve_unknown_follow_up_attempt_sent(
+            draft_id,
+            draft_revision=1,
+            claim_token="same-revision-token",
+            lease_owner="upgrade",
+            now="2026-06-08 02:07:00",
+            sent_at="2026-06-08 02:07:00",
+            result_json=json.dumps({"reconciliation": {"state": "sent"}}),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(finalize, range(2)))
+
+    assert sorted(result["outcome"] for result in outcomes) == [
+        "draft_finalized",
+        "stale_attempt",
+    ]
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "sent"
+    assert draft.revision == 2
+
+
 @pytest.mark.parametrize(
     ("readback_state", "expected_attempt_state", "expected_reviews"),
     [
