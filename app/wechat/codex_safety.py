@@ -167,7 +167,7 @@ def make_role_agent_command(
     # agent_cli executes the Agent's reviewed native reads outside the Codex
     # read-only filesystem sandbox, where the user's CLI credential store is
     # available. Audit B additionally gets its controlled write tool.
-    agent_cli_tools = ["execute_reviewed_read", "read_skill"]
+    agent_cli_tools = ["execute_reviewed_read", "read_skill", "read_spreadsheet"]
     approval_options = ["-c", 'approval_policy="never"']
     if allow_write:
         agent_cli_tools.insert(1, "execute_reviewed_write")
@@ -283,7 +283,7 @@ def make_read_only_with_reviewed_tools(
             "-c",
             f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli_cwd)}",
             "-c",
-            'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read","read_skill"]',
+            'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read","read_skill","read_spreadsheet"]',
         ],
     )
 
@@ -321,7 +321,7 @@ def make_direct_agent_sandbox(
             f"mcp_servers.agent_cli.cwd={json.dumps(controlled_cli_cwd)}",
             "-c",
             "mcp_servers.agent_cli.enabled_tools="
-            '["execute_reviewed_read","execute_reviewed_write","read_skill"]',
+            '["execute_reviewed_read","execute_reviewed_write","read_skill","read_spreadsheet"]',
         ],
     )
 
