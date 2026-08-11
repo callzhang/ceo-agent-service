@@ -299,15 +299,6 @@ def test_channel_doctor_reports_typed_gate_results(monkeypatch, capsys):
             reason_code="status_auth_invalid",
         ),
     )
-    monkeypatch.setattr(
-        "app.channel_gate.CodexChannelGate.check",
-        lambda self: ChannelGateResult(
-            channel="codex",
-            state=ChannelGateState.READY,
-            reason_code="ready",
-        ),
-    )
-
     report = channel_doctor_command()
 
     assert report == {
@@ -323,13 +314,6 @@ def test_channel_doctor_reports_typed_gate_results(monkeypatch, capsys):
                 "channel": "lark",
                 "state": "needs_login",
                 "reason_code": "status_auth_invalid",
-                "detail": "",
-                "commands": [],
-            },
-            {
-                "channel": "codex",
-                "state": "ready",
-                "reason_code": "ready",
                 "detail": "",
                 "commands": [],
             },
@@ -1527,7 +1511,7 @@ def test_process_work_items_command_backoffs_transient_codex_failure(
     assert row["available_at"] > ""
 
 
-def test_process_work_items_command_backoffs_native_codex_missing_auth_header(
+def test_process_work_items_command_fails_native_codex_missing_auth_header(
     tmp_path,
     monkeypatch,
     capsys,
@@ -1585,21 +1569,21 @@ def test_process_work_items_command_backoffs_native_codex_missing_auth_header(
             """,
             (input_id,),
         ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "failed"
     assert row["attempts"] == 1
-    assert row["error"].startswith("codex_provider_unavailable:")
-    assert "native Codex temporarily omitted the authenticated request header" in row[
+    assert row["error"].startswith("codex_provider_auth_failed:")
+    assert "without a bearer/basic auth header" in row[
         "error"
     ]
     assert "restore Codex CLI login" not in row["error"]
     assert "request id" not in row["error"]
-    assert row["available_at"] > ""
+    assert row["available_at"] == ""
     recorded = AutoReplyStore(db_path).list_errors(limit=1)[0]
     assert recorded.kind == "task_agent"
     assert recorded.detail == row["error"]
 
 
-def test_process_work_items_command_keeps_native_missing_header_pending_after_limit(
+def test_process_work_items_command_keeps_native_missing_header_terminal_after_limit(
     tmp_path,
     monkeypatch,
     capsys,
@@ -1662,10 +1646,10 @@ def test_process_work_items_command_keeps_native_missing_header_pending_after_li
             """,
             (input_id,),
         ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "failed"
     assert row["attempts"] == 4
-    assert row["error"].startswith("codex_provider_unavailable:")
-    assert row["available_at"] > ""
+    assert row["error"].startswith("codex_provider_auth_failed:")
+    assert row["available_at"] == ""
 
 
 def test_process_work_items_command_keeps_codex_transport_failure_pending_after_limit(
@@ -4452,7 +4436,6 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
             max_tasks=4,
             sleep=sleep,
             network_ready=lambda: True,
-            codex_ready=lambda: True,
         )
 
     assert calls[0][:3] == ("produce-meeting", store, dws)
@@ -4517,7 +4500,6 @@ def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
             max_tasks=4,
             sleep=sleep,
             network_ready=lambda: False,
-            codex_ready=lambda: True,
         )
 
     assert calls == [
@@ -4526,7 +4508,7 @@ def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
     ]
 
 
-def test_meeting_consumer_waits_for_codex_gate_before_claiming(monkeypatch, tmp_path):
+def test_meeting_consumer_does_not_preflight_codex_auth(monkeypatch, tmp_path):
     calls = []
 
     class StopLoop(Exception):
@@ -4544,7 +4526,6 @@ def test_meeting_consumer_waits_for_codex_gate_before_claiming(monkeypatch, tmp_
         "consume_meeting_alignment_jobs",
         lambda *args, **kwargs: calls.append("consume-meeting"),
     )
-
     with pytest.raises(StopLoop):
         cli.run_meeting_consumer_loop(
             settings,
@@ -4552,10 +4533,9 @@ def test_meeting_consumer_waits_for_codex_gate_before_claiming(monkeypatch, tmp_
             max_tasks=1,
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             network_ready=lambda: True,
-            codex_ready=lambda: False,
         )
 
-    assert calls == []
+    assert calls == ["consume-meeting"]
 
 
 def test_meeting_producer_suppresses_transient_dws_dependency_error(
@@ -4709,7 +4689,6 @@ def test_meeting_consumer_dry_run_and_zero_limit_never_deliver(monkeypatch, tmp_
             max_tasks=0,
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             network_ready=lambda: True,
-            codex_ready=lambda: True,
         )
 
     assert calls[0]["limit"] == 0
@@ -4768,7 +4747,7 @@ def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_pat
     assert calls == [("sleep", 60)]
 
 
-def test_task_maintenance_loop_does_not_claim_agent_work_before_codex_ready(
+def test_task_maintenance_loop_does_not_preflight_codex_auth(
     monkeypatch, tmp_path
 ):
     calls = []
@@ -4797,7 +4776,6 @@ def test_task_maintenance_loop_does_not_claim_agent_work_before_codex_ready(
         "check_follow_up_completions_command",
         lambda received, limit=1: calls.append("completion-check"),
     )
-
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
             settings,
@@ -4806,10 +4784,17 @@ def test_task_maintenance_loop_does_not_claim_agent_work_before_codex_ready(
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             monotonic=lambda: 10.0,
             network_ready=lambda: True,
-            codex_ready=lambda: False,
+            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
         )
 
-    assert calls == ["scan-task-sources", "completion-check"]
+    assert calls == [
+        "work-items",
+        "okr-reviews",
+        "scan-task-sources",
+        "work-items",
+        "okr-reviews",
+        "completion-check",
+    ]
 
 
 def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
@@ -4910,7 +4895,6 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
             sleep=sleep,
             monotonic=lambda: next(times),
             network_ready=lambda: True,
-            codex_ready=lambda: True,
         )
 
     assert calls == [
@@ -4976,7 +4960,6 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             monotonic=lambda: 10.0,
             network_ready=lambda: True,
-            codex_ready=lambda: True,
         )
 
     assert calls == [
@@ -5055,7 +5038,6 @@ def test_task_maintenance_loop_does_not_block_follow_up_delivery(
             sleep=sleep,
             monotonic=lambda: next(times),
             network_ready=lambda: True,
-            codex_ready=lambda: True,
         )
 
     assert calls == [
@@ -5160,7 +5142,6 @@ def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             monotonic=lambda: 10.0,
             network_ready=lambda: True,
-            codex_ready=lambda: True,
         )
 
     assert calls == [
@@ -5879,7 +5860,6 @@ def test_wechat_consumer_loop_records_failed_trigger_identity(
 ):
     import time
 
-    from app.channel_gate import ChannelGateResult, ChannelGateState
     from app.wechat.consumer import WechatTaskProcessingError
 
     class StopLoop(Exception):
@@ -5903,16 +5883,6 @@ def test_wechat_consumer_loop_records_failed_trigger_identity(
     )
     monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
     monkeypatch.setattr(
-        "app.channel_gate.CodexChannelGate",
-        lambda: SimpleNamespace(
-            check=lambda: ChannelGateResult(
-                channel="codex",
-                state=ChannelGateState.READY,
-                reason_code="ready",
-            )
-        ),
-    )
-    monkeypatch.setattr(
         "app.wechat.service.run_consume_once",
         lambda *a, **k: (_ for _ in ()).throw(
             WechatTaskProcessingError("cid-1", "msg-1", "decision failed")
@@ -5933,24 +5903,14 @@ def test_wechat_consumer_loop_records_failed_trigger_identity(
     assert error.kind == "wechat_consumer_loop_error"
 
 
-def test_wechat_consumer_waits_for_codex_authentication(
+def test_wechat_consumer_does_not_preflight_codex_authentication(
     monkeypatch,
     tmp_path,
 ):
     import time
 
-    from app.channel_gate import ChannelGateResult, ChannelGateState
-
     class StopLoop(Exception):
         pass
-
-    class UnreadyCodexGate:
-        def check(self):
-            return ChannelGateResult(
-                channel="codex",
-                state=ChannelGateState.NEEDS_LOGIN,
-                reason_code="status_auth_required",
-            )
 
     db = tmp_path / "w.sqlite3"
     store = AutoReplyStore(db)
@@ -5969,87 +5929,6 @@ def test_wechat_consumer_waits_for_codex_authentication(
         codex_idle_timeout_seconds=30,
     )
     monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    monkeypatch.setattr("app.channel_gate.CodexChannelGate", UnreadyCodexGate)
-    monkeypatch.setattr(
-        "app.wechat.service.run_consume_once",
-        lambda *a, **k: pytest.fail("consumer must not run before Codex auth"),
-    )
-    monkeypatch.setattr(time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopLoop))
-
-    with pytest.raises(StopLoop):
-        cli._run_wechat_loop(settings, "consumer")
-
-    state = json.loads(store.get_service_state("channel_gate:codex") or "{}")
-    assert state["status"] == "needs_login"
-    assert state["reason_code"] == "status_auth_required"
-
-
-def test_wechat_consumer_recovers_unsent_auth_failures_when_codex_recovers(
-    monkeypatch,
-    tmp_path,
-):
-    import time
-
-    from app.channel_gate import ChannelGateResult, ChannelGateState
-    from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
-
-    class StopLoop(Exception):
-        pass
-
-    class ReadyCodexGate:
-        def check(self):
-            return ChannelGateResult(
-                channel="codex",
-                state=ChannelGateState.READY,
-                reason_code="ready",
-            )
-
-    db = tmp_path / "w.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="a1",
-        account_dir="/a1",
-        db_dir="/a1/db_storage",
-        app_version="4.1.10",
-        self_user_id="self-1",
-        capability_status="ready",
-    )
-    store.set_service_state(
-        "channel_gate:codex",
-        json.dumps({"status": "needs_login", "reason_code": "status_auth_required"}),
-    )
-    store.enqueue_reply_task(
-        channel="wechat",
-        conversation_id="u1",
-        conversation_title="Alex",
-        single_chat=True,
-        trigger_message_id="m1",
-        trigger_create_time="2026-08-10 10:00:00",
-        trigger_sender="Alex",
-        trigger_text="please reply",
-    )
-    task = store.claim_reply_tasks(1, channel="wechat")[0]
-    store.finalize_wechat_reply_task(
-        task_id=task.id,
-        expected_execution_generation=task.execution_generation,
-        action="stop_with_error",
-        sensitivity_kind="general",
-        codex_reason="provider authentication unavailable",
-        draft_reply_text="",
-        audit_summary="decision not started",
-        send_status="failed",
-        send_error="codex_provider_auth_failed: status_auth_required",
-        recovery_code=CODEX_PROVIDER_AUTH_FAILED,
-        task_status="failed",
-    )
-    settings = SimpleNamespace(
-        db_path=db,
-        workspace=tmp_path,
-        codex_timeout_seconds=30,
-        codex_idle_timeout_seconds=30,
-    )
-    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
-    monkeypatch.setattr("app.channel_gate.CodexChannelGate", ReadyCodexGate)
     consumed = []
     monkeypatch.setattr(
         "app.wechat.service.run_consume_once",
@@ -6060,11 +5939,6 @@ def test_wechat_consumer_recovers_unsent_auth_failures_when_codex_recovers(
     with pytest.raises(StopLoop):
         cli._run_wechat_loop(settings, "consumer")
 
-    recovered = store.get_reply_task(task.id)
-    assert recovered is not None
-    assert recovered.status == "pending"
-    assert recovered.force_new_decision is True
-    assert recovered.execution_generation != task.execution_generation
     assert consumed == [True]
 
 

@@ -100,7 +100,8 @@ from app.work_profile import (
 )
 from app.worker import (
     DingTalkAutoReplyWorker,
-    _is_codex_authorization_wait_reason,
+    _is_codex_provider_recovery_wait_reason,
+    _is_terminal_codex_auth_failure,
     _normalize_codex_stop_error_reason,
 )
 from app.weekly_okr_report import (
@@ -1000,11 +1001,13 @@ def process_work_items_command(settings: WorkerSettings) -> int:
 
 
 def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> bool:
-    if isinstance(error, Exception) and is_external_dependency_error(error):
-        return True
     error_text = str(error)
     normalized_error = _normalize_codex_stop_error_reason(error_text)
-    if _is_codex_authorization_wait_reason(normalized_error):
+    if _is_terminal_codex_auth_failure(normalized_error):
+        return False
+    if isinstance(error, Exception) and is_external_dependency_error(error):
+        return True
+    if _is_codex_provider_recovery_wait_reason(normalized_error):
         return True
     if attempts >= WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS:
         return False
@@ -2227,7 +2230,6 @@ def run_meeting_consumer_loop(
     max_tasks: int | None = None,
     sleep: Callable[[int], None] = time.sleep,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
-    codex_ready: Callable[[], bool] | None = None,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
     dws = _create_meeting_dws(settings)
@@ -2250,12 +2252,6 @@ def run_meeting_consumer_loop(
         if not network_ready():
             sleep(poll_interval_seconds)
             continue
-        is_codex_ready = (
-            codex_ready() if codex_ready is not None else _codex_channel_ready(store)
-        )
-        if not is_codex_ready:
-            sleep(poll_interval_seconds)
-            continue
         try:
             consume_meeting_alignment_jobs(
                 store,
@@ -2275,29 +2271,6 @@ def run_meeting_consumer_loop(
                     str(exc),
                 )
         sleep(poll_interval_seconds)
-
-
-def _codex_channel_ready(store: AutoReplyStore) -> bool:
-    from app.channel_gate import CodexChannelGate, ChannelGateState
-
-    result = CodexChannelGate().check()
-    checked_at = datetime.now(timezone.utc).isoformat()
-    store.set_service_state(
-        "channel_gate:codex",
-        json.dumps(
-            {
-                "status": result.state.value,
-                "reason_code": result.reason_code,
-                "checked_at": checked_at,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
-    )
-    if result.state is ChannelGateState.READY:
-        store.set_service_state("channel_gate_last_success:codex", checked_at)
-        return True
-    return False
 
 
 def replay_recent_meetings_command(
@@ -2327,7 +2300,6 @@ def run_task_maintenance_loop(
     monotonic: Callable[[], float] = time.monotonic,
     wall_clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     network_ready: Callable[[], bool] = _macos_wifi_connected,
-    codex_ready: Callable[[], bool] | None = None,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
 
@@ -2343,16 +2315,12 @@ def run_task_maintenance_loop(
         if not network_ready():
             sleep(work_item_interval_seconds)
             continue
-        is_codex_ready = (
-            codex_ready() if codex_ready is not None else _codex_channel_ready(store)
-        )
-        if is_codex_ready:
-            run_step("process_work_items", lambda: process_work_items_command(settings))
-            run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
+        run_step("process_work_items", lambda: process_work_items_command(settings))
+        run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
         weekly_hour = int(
             os.getenv("CEO_WEEKLY_OKR_REPORT_HOUR", str(DEFAULT_SCHEDULE_HOUR))
         )
-        if is_codex_ready and weekly_okr_report_window_open(
+        if weekly_okr_report_window_open(
             wall_clock(),
             schedule_hour=weekly_hour,
         ):
@@ -2369,13 +2337,8 @@ def run_task_maintenance_loop(
                     max_new_items=settings.max_batches,
                 ),
             )
-            if is_codex_ready:
-                run_step(
-                    "process_work_items", lambda: process_work_items_command(settings)
-                )
-                run_step(
-                    "process_okr_reviews", lambda: process_okr_reviews_command(settings)
-                )
+            run_step("process_work_items", lambda: process_work_items_command(settings))
+            run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
             run_step(
                 "check_follow_up_completions",
                 lambda: check_follow_up_completions_command(settings, limit=1),
@@ -2482,39 +2445,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
             if role == "producer":
                 _wx.run_produce_once(store, reader, account, self_user_id=account.self_user_id)
             elif role == "consumer":
-                from app.channel_gate import CodexChannelGate, ChannelGateState
-
-                previous_gate_state = store.get_service_state("channel_gate:codex")
-                codex_status = CodexChannelGate().check()
-                store.set_service_state(
-                    "channel_gate:codex",
-                    json.dumps(
-                        {
-                            "status": codex_status.state.value,
-                            "reason_code": codex_status.reason_code,
-                            "checked_at": datetime.now(timezone.utc).isoformat(),
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
-                )
-                if codex_status.state is ChannelGateState.READY:
-                    previous_status = ""
-                    if previous_gate_state:
-                        try:
-                            previous_status = str(
-                                json.loads(previous_gate_state).get("status") or ""
-                            )
-                        except json.JSONDecodeError:
-                            previous_status = ""
-                    if previous_status != ChannelGateState.READY.value:
-                        store.requeue_recent_failed_wechat_read_only_tasks(
-                            updated_since=(
-                                datetime.now(timezone.utc) - timedelta(days=3)
-                            ).strftime("%Y-%m-%d %H:%M:%S"),
-                            reason="codex_auth_restored",
-                        )
-                    _wx.run_consume_once(store, runner, reader, account)
+                _wx.run_consume_once(store, runner, reader, account)
             else:  # sender: auto-sends only in 'auto' mode, else holds for approval
                 _wx.process_ready_wechat_deliveries(
                     store, wsender,

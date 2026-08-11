@@ -15,7 +15,6 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, TypeAdapter
 
 from app.agent_result import SideEffectState
-from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.wechat.models import WechatReplyScope
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
@@ -6371,131 +6370,6 @@ class AutoReplyStore:
             if task_cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
             return attempt_id
-
-    def requeue_recent_failed_wechat_read_only_tasks(
-        self,
-        *,
-        updated_since: str,
-        reason: str,
-    ) -> list[ReplyTask]:
-        """Retry only proven Codex-auth failures that never reached delivery."""
-        reason = reason.strip()
-        if not reason:
-            raise ValueError("provider recovery reason must be non-empty")
-        with self._connect() as db:
-            db.execute("begin immediate")
-            rows = db.execute(
-                """
-                select tasks.*
-                from reply_tasks as tasks
-                where tasks.channel='wechat'
-                  and tasks.status='failed'
-                  and tasks.updated_at>=?
-                  and not exists (
-                      select 1 from wechat_deliveries as deliveries
-                      where deliveries.reply_task_id=tasks.id
-                  )
-                  and not exists (
-                      select 1 from sent_replies as sent
-                      where sent.conversation_id=tasks.conversation_id
-                        and sent.trigger_message_id=tasks.trigger_message_id
-                  )
-                  and tasks.recovery_code=?
-                  and exists (
-                      select 1 from reply_attempts as attempts
-                      where attempts.id=(
-                          select latest.id from reply_attempts as latest
-                          where latest.channel='wechat'
-                            and latest.conversation_id=tasks.conversation_id
-                            and latest.trigger_message_id=tasks.trigger_message_id
-                          order by latest.id desc
-                          limit 1
-                      )
-                        and attempts.action='stop_with_error'
-                        and attempts.send_status='failed'
-                  )
-                order by tasks.id
-                """,
-                (updated_since, CODEX_PROVIDER_AUTH_FAILED),
-            ).fetchall()
-            if not rows:
-                return []
-            recovered: list[ReplyTask] = []
-            for row in rows:
-                next_generation = uuid4().hex
-                cursor = db.execute(
-                    """
-                    update reply_tasks
-                    set force_new_decision=1, status='pending', attempts=0,
-                        locked_at=null, available_at='', execution_generation=?,
-                        error=?, recovery_code='', updated_at=current_timestamp
-                    where id=? and status='failed' and channel='wechat'
-                      and execution_generation=?
-                      and not exists (
-                          select 1 from wechat_deliveries
-                          where reply_task_id=reply_tasks.id
-                      )
-                    """,
-                    (next_generation, reason, row["id"], row["execution_generation"]),
-                )
-                if cursor.rowcount != 1:
-                    continue
-                updated = db.execute(
-                    "select * from reply_tasks where id=?", (row["id"],)
-                ).fetchone()
-                recovered.append(self._reply_task_from_row(updated))
-            return recovered
-
-    def mark_failed_wechat_task_for_codex_auth_recovery(
-        self,
-        task_id: int,
-        *,
-        expected_execution_generation: str,
-    ) -> ReplyTask:
-        """Mark one confirmed, unsent WeChat auth failure for safe recovery."""
-        with self._connect() as db:
-            db.execute("begin immediate")
-            row = db.execute(
-                "select * from reply_tasks where id=?", (task_id,)
-            ).fetchone()
-            if row is None:
-                raise ValueError("WeChat task does not exist")
-            if (
-                row["channel"] != "wechat"
-                or row["status"] != "failed"
-                or row["execution_generation"] != expected_execution_generation
-            ):
-                raise ValueError("WeChat task is not an unchanged failed decision")
-            delivery = db.execute(
-                "select 1 from wechat_deliveries where reply_task_id=?", (task_id,)
-            ).fetchone()
-            if delivery is not None:
-                raise ValueError("WeChat task already entered delivery")
-            attempt = db.execute(
-                """
-                select action, send_status from reply_attempts
-                where channel='wechat' and conversation_id=? and trigger_message_id=?
-                order by id desc limit 1
-                """,
-                (row["conversation_id"], row["trigger_message_id"]),
-            ).fetchone()
-            if attempt is None or (
-                attempt["action"] != "stop_with_error"
-                or attempt["send_status"] != "failed"
-            ):
-                raise ValueError("WeChat task has no eligible failed decision")
-            db.execute(
-                """
-                update reply_tasks
-                set recovery_code=?, updated_at=current_timestamp
-                where id=? and status='failed' and execution_generation=?
-                """,
-                (CODEX_PROVIDER_AUTH_FAILED, task_id, expected_execution_generation),
-            )
-            updated = db.execute(
-                "select * from reply_tasks where id=?", (task_id,)
-            ).fetchone()
-            return self._reply_task_from_row(updated)
 
     def create_wechat_delivery(
         self, *, reply_task_id: int, account_id: str, target_type: str,
