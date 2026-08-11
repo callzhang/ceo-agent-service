@@ -207,6 +207,15 @@ class ConsumerAgentRunner:
         conversation_session_id = (
             self.store.get_codex_session_id(task.conversation_id) or None
         )
+        if task.force_new_decision and conversation_session_id:
+            # A forced rerun must reassess the task with the current tools and
+            # instructions. Resuming the old conversation can replay a failed
+            # tool path before the agent sees those changes.
+            self.store.clear_codex_session_if_matches(
+                task.conversation_id,
+                conversation_session_id,
+            )
+            conversation_session_id = None
         if (
             conversation_session_id
             and self.store.get_codex_session_contract_hash(task.conversation_id)
