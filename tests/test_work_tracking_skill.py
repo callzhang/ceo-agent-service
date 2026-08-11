@@ -1,7 +1,15 @@
 import inspect
 from pathlib import Path
 
+import pytest
+
 from app.task_agent import build_task_agent_prompt
+from app.task_models import TaskAgentDecision, TodoChange
+from tests.e2e.test_task7_work_tracking_semantics_live import (
+    _assert_assigned_owners_are_supported,
+    _verify_bound_follow_up,
+    _verify_speaker_not_owner,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,3 +56,86 @@ def test_task_agent_prompt_builder_contains_transport_not_business_policy():
 
 def test_task_agent_contract_has_no_checked_duplicate_schema():
     assert not (ROOT / "app" / "schemas" / "task_agent_decision.schema.json").exists()
+
+
+def _follow_up_decision(
+    *,
+    todo_id=None,
+    todo_ref="",
+    owner_user_id="",
+    owner_name="",
+):
+    return TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "todo_changes": [],
+            "follow_up_drafts": [
+                {
+                    "todo_id": todo_id,
+                    "todo_ref": todo_ref,
+                    "title": "Progress check",
+                    "description": "Current delivery state",
+                    "owner_user_id": owner_user_id,
+                    "owner_name": owner_name,
+                    "target_kind": "direct",
+                    "question_text": "What is the current blocker and ETA?",
+                }
+            ],
+        }
+    )
+
+
+def test_live_binding_assertion_rejects_invented_existing_todo_id():
+    decision = _follow_up_decision(todo_id=999)
+
+    with pytest.raises(AssertionError):
+        _verify_bound_follow_up(decision, {"current_todos": []})
+
+
+def test_live_binding_assertion_accepts_explicit_same_decision_todo_ref():
+    decision = _follow_up_decision(todo_ref="launch-checklist")
+    decision.todo_changes.append(
+        TodoChange.model_validate(
+            {
+                "action": "create",
+                "todo_ref": "launch-checklist",
+                "title": "Complete launch checklist",
+            }
+        )
+    )
+
+    _verify_bound_follow_up(decision, {"current_todos": []})
+
+
+def test_live_owner_assertion_rejects_identity_without_owner_evidence():
+    decision = _follow_up_decision(todo_ref="launch-checklist", owner_name="Sam")
+
+    with pytest.raises(AssertionError):
+        _verify_speaker_not_owner(
+            decision,
+            {"owner_evidence": [], "verified_owner_resolution": []},
+        )
+
+
+def test_live_owner_assertion_accepts_identity_in_supported_evidence_set():
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "title": "Complete launch checklist",
+                    "owner_user_id": "uid-1",
+                }
+            ],
+        }
+    )
+
+    _assert_assigned_owners_are_supported(
+        decision,
+        {
+            "owner_evidence": [
+                {"user_id": "uid-1", "source": "explicit commitment"}
+            ]
+        },
+    )
