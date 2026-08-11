@@ -989,6 +989,16 @@ class AgentTurnProcess(Generic[ResultT]):
                     },
                     owner=self.owner,
                 )
+            elif failure := _closed_effect_failure(persisted, fallback_code=code):
+                self.store.fail_agent_run(
+                    run.id,
+                    {
+                        **failure,
+                        **({"detail": detail} if detail else {}),
+                    },
+                    owner=self.owner,
+                    side_effect_state=SideEffectState.CONFIRMED.value,
+                )
             else:
                 self.store.mark_agent_run_unknown(
                     run.id,
@@ -1097,6 +1107,41 @@ def _command_option_value(
         return ""
     value = argv[index + 1]
     return value if value and not value.startswith("--") else ""
+
+
+def _closed_effect_failure(
+    run: AgentRun,
+    *,
+    fallback_code: str,
+) -> dict[str, object] | None:
+    if (
+        run.effect_started_count <= 0
+        or run.effect_failed_count <= 0
+        or run.effect_unreviewed_count
+        or run.effect_started_count
+        > run.effect_completed_count
+        + run.effect_failed_count
+        + run.effect_receipt_count
+    ):
+        return None
+    for event in reversed(run.tool_events):
+        if event.get("type") != "item.failed":
+            continue
+        item = event.get("item")
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        if not isinstance(metadata, dict) or metadata.get("effect") != "effectful":
+            continue
+        failure_code = metadata.get("failure_code")
+        return {
+            "code": (
+                failure_code
+                if isinstance(failure_code, str) and failure_code
+                else fallback_code
+            ),
+            "retryable": bool(metadata.get("failure_retryable", False)),
+            "authorization_required": False,
+        }
+    return None
 
 
 def _session_id(payload: dict[str, object]) -> str:

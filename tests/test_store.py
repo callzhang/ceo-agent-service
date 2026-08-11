@@ -909,6 +909,88 @@ def test_service_restart_releases_pending_unknown_audit_reconciliation_lease(
     assert store.claim_unknown_agent_run(run.id, owner="new-reconciler").claimed
 
 
+def test_finalize_closed_failed_audit_run_repairs_completed_unknown_state(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store,
+        task_id,
+        "initial",
+        owner="worker-1",
+    ).run
+    for event in (
+        {
+            "type": "item.started",
+            "item": {
+                "id": "write-1",
+                "metadata": {"effect": "effectful", "action_index": 0},
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "write-1",
+                "metadata": {"effect": "effectful", "action_index": 0},
+            },
+        },
+        {
+            "type": "item.started",
+            "item": {
+                "id": "write-2",
+                "metadata": {"effect": "effectful", "action_index": 1},
+            },
+        },
+        {
+            "type": "item.failed",
+            "item": {
+                "id": "write-2",
+                "metadata": {
+                    "effect": "effectful",
+                    "action_index": 1,
+                    "failure_code": "reconciliation_read_failed",
+                    "failure_retryable": False,
+                    "failure_gate_state": "unavailable",
+                },
+            },
+        },
+    ):
+        store.append_agent_run_event(run.id, event, owner="worker-1")
+    unknown = store.mark_agent_run_unknown(
+        run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="worker-1",
+    )
+    claim = store.claim_unknown_agent_run(unknown.id, owner="reconciler")
+    assert claim.claimed
+    store.complete_agent_run(
+        unknown.id,
+        {
+            "outcome": "needs_human",
+            "summary": "audit_recovery_ambiguous",
+        },
+        owner="reconciler",
+        side_effect_state="unknown",
+        expected_status="unknown",
+    )
+
+    repaired = store.finalize_closed_failed_audit_run(
+        unknown.id,
+        reason="Applicant identity is not available in the current organization.",
+    )
+
+    assert repaired.status == "failed"
+    assert repaired.side_effect_state == "confirmed"
+    assert repaired.final_result_json == ""
+    assert json.loads(repaired.structured_error_json) == {
+        "authorization_required": False,
+        "code": "reconciliation_read_failed",
+        "reason": "Applicant identity is not available in the current organization.",
+        "retryable": False,
+    }
+
+
 def test_reconciliation_defer_rejects_stale_generation_even_with_live_lease(
     tmp_path: Path,
 ) -> None:

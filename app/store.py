@@ -4056,6 +4056,98 @@ class AutoReplyStore:
             now=now,
         )
 
+    def finalize_closed_failed_audit_run(
+        self,
+        run_id: int,
+        *,
+        reason: str,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        """Replace a false unknown with the exact closed write failure."""
+        if not reason.strip():
+            raise ValueError("reason must be non-empty")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("agent run does not exist")
+            if (
+                row["role"] != AgentRole.AUDIT.value
+                or row["status"] not in {"unknown", "completed"}
+                or row["side_effect_state"] != "unknown"
+                or int(row["effect_failed_count"]) <= 0
+                or int(row["effect_unreviewed_count"]) != 0
+                or int(row["effect_started_count"])
+                > int(row["effect_completed_count"])
+                + int(row["effect_failed_count"])
+                + int(row["effect_receipt_count"])
+            ):
+                raise ValueError("agent run does not have a closed failed effect")
+            failed_event = db.execute(
+                """
+                select event_json
+                from agent_run_events
+                where agent_run_id=? and event_type='item.failed'
+                  and effect_kind='effectful'
+                order by sequence desc
+                limit 1
+                """,
+                (run_id,),
+            ).fetchone()
+            if failed_event is None:
+                raise ValueError("agent run has no persisted failed effect event")
+            event = json.loads(str(failed_event["event_json"]))
+            item = event.get("item") if isinstance(event, dict) else None
+            metadata = item.get("metadata") if isinstance(item, dict) else None
+            failure_code = (
+                metadata.get("failure_code") if isinstance(metadata, dict) else None
+            )
+            if not isinstance(failure_code, str) or not failure_code:
+                failure_code = "audit_action_failed_before_completion"
+            side_effect_state = (
+                "confirmed"
+                if int(row["effect_completed_count"])
+                + int(row["effect_receipt_count"])
+                else "none"
+            )
+            structured_error = json.dumps(
+                {
+                    "authorization_required": False,
+                    "code": failure_code,
+                    "reason": reason.strip(),
+                    "retryable": False,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            cursor = db.execute(
+                """
+                update agent_runs
+                set status='failed', final_result_json='', structured_error_json=?,
+                    side_effect_state=?, reconciliation_suspended=0,
+                    reconciliation_next_attempt_at='', lease_owner='',
+                    lease_expires_at='', completed_at=?, updated_at=?
+                where id=? and status=? and side_effect_state='unknown'
+                """,
+                (
+                    structured_error,
+                    side_effect_state,
+                    now_text,
+                    now_text,
+                    run_id,
+                    row["status"],
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"agent run changed: {run_id}")
+            updated = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(updated, db=db)
+
     def persist_unknown_agent_run_result(
         self,
         run_id: int,

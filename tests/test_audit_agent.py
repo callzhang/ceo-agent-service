@@ -917,6 +917,116 @@ def test_audit_preserves_agent_cli_error_receipt_without_confirming_effect(setup
     assert metadata["failure_gate_state"] == "unavailable"
 
 
+def test_audit_process_failure_with_all_effects_closed_is_failed_not_unknown(setup):
+    store, task, audit_context, parent = setup
+    first_action = audit_context.proposal.actions[0]
+    second_action = ProposedAction.model_validate(
+        {
+            "description": "Notify applicant",
+            "capability": "agent_cli.dws",
+            "operation": "chat message send",
+            "target": {"user": "applicant-1"},
+            "payload": {
+                "argv": [
+                    "dws",
+                    "chat",
+                    "message",
+                    "send",
+                    "--user",
+                    "applicant-1",
+                    "--text",
+                    "pending",
+                    "--yes",
+                ]
+            },
+            "expected_verification": "Applicant receives the pending result",
+        }
+    )
+    context = replace(
+        audit_context,
+        proposal=audit_context.proposal.model_copy(
+            update={"actions": (first_action, second_action)}
+        ),
+    )
+    first_lines = _audit_jsonl(
+        "operation-1",
+        session="session-known-partial-failure",
+        include_verification=False,
+    ).splitlines()
+    failed_arguments = second_action.payload
+    failed_descriptor = describe_native_command(
+        {"type": "command_execution", "argv": failed_arguments["argv"]}
+    )
+    assert failed_descriptor is not None
+    failed_item = {
+        "type": "mcp_tool_call",
+        "id": "write-2",
+        "server": "agent_cli",
+        "tool": "execute_reviewed_write",
+        "arguments": failed_arguments,
+        "status": "in_progress",
+    }
+    failure_receipt = {
+        "cli": failed_descriptor.cli,
+        "operation": failed_descriptor.command_path,
+        "operation_digest": failed_descriptor.command_digest,
+        "target_identifiers": failed_descriptor.target_identifiers,
+        "result_digest": "failed-result-digest",
+        "stdout": "",
+        "error": {
+            "channel": "dws",
+            "code": "reconciliation_read_failed",
+            "retryable": False,
+            "gate_state": "unavailable",
+        }
+    }
+    stdout = "\n".join(
+        (
+            *first_lines[:-1],
+            json.dumps({"type": "item.started", "item": failed_item}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        **failed_item,
+                        "status": "completed",
+                        "result": {
+                            "content": [
+                                {"type": "text", "text": json.dumps(failure_receipt)}
+                            ],
+                            "isError": False,
+                        },
+                    },
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(stdout, returncode=1),
+        ).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert run.status == "failed"
+    assert run.side_effect_state == "confirmed"
+    assert run.effect_started_count == 2
+    assert run.effect_completed_count == 1
+    assert run.effect_failed_count == 1
+    assert json.loads(run.structured_error_json)["code"] == (
+        "reconciliation_read_failed"
+    )
+
+
 @pytest.mark.parametrize(
     ("write_target", "write_count"),
     (("cid-unrelated", 1), ("cid-agent", 2)),
