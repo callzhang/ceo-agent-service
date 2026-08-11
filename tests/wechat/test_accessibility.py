@@ -183,6 +183,27 @@ def test_sender_persists_specific_pre_action_failure_reason(store):
     assert persisted.pre_action_failure is True
 
 
+def test_sender_labels_missing_pre_action_failure_reason(store):
+    sender = WechatSender(
+        store,
+        FakeRunner(
+            AccessibilityResult(
+                action_performed=False,
+                visible_confirmation=False,
+            )
+        ),
+    )
+    delivery = _seed_delivery(store)
+
+    outcome = sender.send(delivery, _scope("verified"))
+
+    persisted = store.get_wechat_delivery_for_task(1)
+    assert outcome == SendOutcome("failed", "sender_result_missing_failure_reason")
+    assert persisted is not None
+    assert persisted.error == "sender_result_missing_failure_reason"
+    assert persisted.pre_action_failure is True
+
+
 def test_return_key_attempt_is_unknown_when_composer_confirmation_fails():
     result = _result_after_return(cleared=False, target_fingerprint="fp-1")
 

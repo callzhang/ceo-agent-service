@@ -288,7 +288,10 @@ class WechatSender:
         elif result.action_performed:
             status, error = "send_unknown", "no_visible_confirmation"
         else:
-            status, error = "failed", result.failure_reason or "action_not_performed"
+            status, error = (
+                "failed",
+                result.failure_reason or "sender_result_missing_failure_reason",
+            )
         self.store.set_wechat_delivery_status(
             delivery.id,
             status,
