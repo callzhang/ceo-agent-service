@@ -240,7 +240,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     assert 'approval_policy="never"' in command
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command
-    assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill"]' in command
+    assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_spreadsheet"]' in command
     assert "execute_reviewed_write" not in " ".join(command)
     assert store.get_agent_run(result.run_id).role.value == "consumer"
     assert any(
@@ -251,6 +251,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         "call `agent_cli.execute_reviewed_read`" in option
         for option in command
     )
+    assert any("agent_cli.read_spreadsheet" in option for option in command)
     assert any(
         "dingtalk-chat/SKILL.md" in option
         and "not a reason to return `needs_human`" in option
