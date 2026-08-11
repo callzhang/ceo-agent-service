@@ -440,5 +440,9 @@ class FollowUpDraft(BaseModel):
     dedupe_key: str = ""
     scheduled_at: str = ""
     sent_at: str = ""
+    revision: int = 1
+    send_claim_revision: int = 0
+    send_claim_token: str = ""
+    send_claim_idempotency_uuid: str = ""
     created_at: str
     updated_at: str = ""

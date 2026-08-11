@@ -512,7 +512,9 @@ def _validate_task_agent_decision(
         if not draft.description.strip():
             raise ValueError("follow_up_draft.description is required")
         if not draft.owner_user_id.strip():
-            raise ValueError("follow_up_draft.owner_user_id is required")
+            raise ValueError(
+                "follow_up_draft.owner_user_id is required as stable owner ID"
+            )
         owner_ids = [
             str(owner.get("user_id") or "").strip()
             for owner in draft.owners
@@ -647,6 +649,16 @@ def _require_supported_owner(
 ) -> None:
     if not any(str(value or "").strip() for value in assigned.values()):
         return
+    stable_id = next(
+        (
+            str(assigned.get(field) or "").strip()
+            for field in ("owner_user_id", "user_id", "open_dingtalk_id")
+            if str(assigned.get(field) or "").strip()
+        ),
+        "",
+    )
+    if not stable_id:
+        raise ValueError(f"{label} requires a stable owner ID")
     _require_evidence_fields(
         evidence,
         label=label,

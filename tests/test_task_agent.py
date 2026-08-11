@@ -2211,6 +2211,32 @@ def test_project_owner_create_rejects_missing_evidence_before_persistence(tmp_pa
     assert store.list_work_projects() == []
 
 
+def test_project_owner_create_rejects_name_only_identity(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "Owner validation",
+                "owner_name": "Display One",
+                "owner_evidence": _owner_evidence("", "Display One"),
+                "memory_context": _memory_context(),
+            },
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(ValueError, match="stable owner ID"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+    assert store.list_work_projects() == []
+
+
 def test_project_owner_create_persists_coherent_evidence(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     evidence = _owner_evidence("uid-1", "Display One")
@@ -2294,6 +2320,38 @@ def test_todo_owner_update_rejects_cross_record_evidence(tmp_path):
         )
 
     assert store.get_work_todo(todo_id).owner_user_id == "uid-old"
+
+
+def test_todo_owner_create_rejects_name_only_identity(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "Owner validation",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "title": "Validate owner",
+                    "owner_name": "Display One",
+                    "owner_evidence": _owner_evidence("", "Display One"),
+                }
+            ],
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(ValueError, match="requires a stable owner ID"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+    assert store.list_work_todos() == []
 
 
 def test_todo_owner_update_persists_coherent_evidence(tmp_path):
@@ -2459,6 +2517,42 @@ def test_follow_up_reassign_rejects_missing_evidence_before_update(tmp_path):
     assert store.get_follow_up_draft(follow_up_id).owner_user_id == "uid-old"
 
 
+def test_follow_up_reassign_cannot_clear_stable_owner_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Owner validation")
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="uid-old",
+        owner_name="Display Old",
+        risk_check_json=json.dumps(
+            {"owner_evidence": _owner_evidence("uid-old", "Display Old")}
+        ),
+        status="sent",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="reassign",
+        owner_user_id="",
+        owner_name="Display New",
+    )
+    decision.follow_up_changes[0].owner_evidence = _owner_evidence(
+        "uid-new", "Display New"
+    )
+
+    with pytest.raises(ValueError, match="requires a stable owner ID"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+    unchanged = store.get_follow_up_draft(follow_up_id)
+    assert unchanged is not None
+    assert unchanged.owner_user_id == "uid-old"
+
+
 def test_follow_up_reassign_accepts_coherent_evidence(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="Owner validation")
@@ -2621,6 +2715,54 @@ def test_follow_up_draft_requires_owner_evidence(tmp_path):
             decision=decision,
         )
 
+    assert store.list_follow_up_drafts(statuses=("draft",)) == []
+
+
+def test_follow_up_draft_rejects_name_only_owner(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "Owner validation",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "todo_ref": "bound-todo",
+                    "title": "Bound TODO",
+                    "owner_user_id": "uid-1",
+                    "owner_name": "Display One",
+                    "owner_evidence": _owner_evidence("uid-1", "Display One"),
+                }
+            ],
+            "follow_up_drafts": [
+                {
+                    "todo_ref": "bound-todo",
+                    "title": "Follow up",
+                    "description": "Check progress",
+                    "owner_name": "Display One",
+                    "target_kind": "direct",
+                    "question_text": "Current progress?",
+                    "scheduled_at": "2026-07-16 09:00:00",
+                    "risk_check": {
+                        "owner_evidence": _owner_evidence("", "Display One")
+                    },
+                }
+            ],
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(ValueError, match="stable owner ID"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
     assert store.list_follow_up_drafts(statuses=("draft",)) == []
 
 

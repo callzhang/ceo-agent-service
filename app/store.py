@@ -1335,6 +1335,10 @@ class AutoReplyStore:
                     dedupe_key text not null default '',
                     scheduled_at text not null default '',
                     sent_at text not null default '',
+                    revision integer not null default 1,
+                    send_claim_revision integer not null default 0,
+                    send_claim_token text not null default '',
+                    send_claim_idempotency_uuid text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp
                 );
@@ -1344,6 +1348,19 @@ class AutoReplyStore:
                     on follow_up_drafts(owner_user_id, sent_at, id);
                 create index if not exists idx_follow_up_drafts_conversation_sent
                     on follow_up_drafts(target_conversation_id, sent_at, id);
+                create table if not exists follow_up_send_attempts (
+                    id integer primary key autoincrement,
+                    draft_id integer not null,
+                    draft_revision integer not null,
+                    claim_token text not null unique,
+                    idempotency_uuid text not null,
+                    state text not null default 'claimed',
+                    result_json text not null default '{}',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
+                create index if not exists idx_follow_up_send_attempts_draft_revision
+                    on follow_up_send_attempts(draft_id, draft_revision, id);
                 create table if not exists daily_scan_state (
                     scanner_name text primary key,
                     last_success_at text not null default '',
@@ -1656,6 +1673,13 @@ class AutoReplyStore:
                 ("suppressed_reason", "text not null default ''"),
                 ("dedupe_key", "text not null default ''"),
                 ("updated_at", "text not null default ''"),
+                ("revision", "integer not null default 1"),
+                ("send_claim_revision", "integer not null default 0"),
+                ("send_claim_token", "text not null default ''"),
+                (
+                    "send_claim_idempotency_uuid",
+                    "text not null default ''",
+                ),
             ):
                 if column not in follow_up_draft_columns:
                     db.execute(
@@ -11697,15 +11721,260 @@ class AutoReplyStore:
             assignments.append(f"{key}=?")
             parameters.append(value)
         with self._connect() as db:
-            db.execute(
+            cursor = db.execute(
                 f"""
                 update follow_up_drafts
                 set {', '.join(assignments)},
+                    revision=revision+1,
+                    send_claim_revision=0,
+                    send_claim_token='',
+                    send_claim_idempotency_uuid='',
                     updated_at=current_timestamp
                 where id=?
                 """,
                 [*parameters, draft_id],
             )
+            if cursor.rowcount == 1:
+                db.execute(
+                    """
+                    update follow_up_send_attempts
+                    set state='invalidated', updated_at=current_timestamp
+                    where draft_id=? and state='claimed'
+                    """,
+                    (draft_id,),
+                )
+
+    def update_follow_up_draft_if_revision(
+        self,
+        draft_id: int,
+        expected_revision: int,
+        **values,
+    ) -> bool:
+        if not values:
+            return False
+        allowed_columns = {
+            "project_id",
+            "todo_id",
+            "title",
+            "description",
+            "owner_user_id",
+            "owner_name",
+            "owners_json",
+            "target_conversation_id",
+            "target_kind",
+            "question_text",
+            "priority",
+            "tags_json",
+            "participants_json",
+            "files_json",
+            "risk_check_json",
+            "status",
+            "send_result_json",
+            "evidence_check_json",
+            "reaction_status",
+            "reaction_summary",
+            "suppressed_reason",
+            "dedupe_key",
+            "scheduled_at",
+            "sent_at",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        if not filtered:
+            return False
+        if filtered.get("status") == "sent" and "sent_at" not in filtered:
+            filtered["sent_at"] = "__CURRENT_TIMESTAMP__"
+        assignments = []
+        parameters = []
+        for key, value in filtered.items():
+            if key == "sent_at" and value == "__CURRENT_TIMESTAMP__":
+                assignments.append("sent_at=current_timestamp")
+                continue
+            assignments.append(f"{key}=?")
+            parameters.append(value)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"""
+                update follow_up_drafts
+                set {', '.join(assignments)},
+                    revision=revision+1,
+                    send_claim_revision=0,
+                    send_claim_token='',
+                    send_claim_idempotency_uuid='',
+                    updated_at=current_timestamp
+                where id=? and revision=?
+                """,
+                [*parameters, draft_id, expected_revision],
+            )
+            if cursor.rowcount == 1:
+                db.execute(
+                    """
+                    update follow_up_send_attempts
+                    set state='invalidated', updated_at=current_timestamp
+                    where draft_id=? and state='claimed'
+                    """,
+                    (draft_id,),
+                )
+            return cursor.rowcount == 1
+
+    def claim_follow_up_draft_revision(
+        self,
+        draft_id: int,
+        *,
+        expected_revision: int,
+        claim_token: str,
+        idempotency_uuid: str,
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update follow_up_drafts
+                set send_claim_revision=?,
+                    send_claim_token=?,
+                    send_claim_idempotency_uuid=?,
+                    updated_at=current_timestamp
+                where id=?
+                  and revision=?
+                  and send_claim_token=''
+                  and status in ('draft', 'approved')
+                """,
+                (
+                    expected_revision,
+                    claim_token,
+                    idempotency_uuid,
+                    draft_id,
+                    expected_revision,
+                ),
+            )
+            if cursor.rowcount == 1:
+                db.execute(
+                    """
+                    insert into follow_up_send_attempts (
+                        draft_id,
+                        draft_revision,
+                        claim_token,
+                        idempotency_uuid,
+                        state
+                    ) values (?, ?, ?, ?, 'claimed')
+                    """,
+                    (draft_id, expected_revision, claim_token, idempotency_uuid),
+                )
+            return cursor.rowcount == 1
+
+    def update_claimed_follow_up_draft(
+        self,
+        draft_id: int,
+        *,
+        claimed_revision: int,
+        claim_token: str,
+        attempt_state: str,
+        attempt_result_json: str,
+        **values,
+    ) -> bool:
+        if not values:
+            return False
+        allowed_columns = {
+            "status",
+            "send_result_json",
+            "evidence_check_json",
+            "suppressed_reason",
+            "scheduled_at",
+            "sent_at",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        if not filtered:
+            return False
+        if filtered.get("status") == "sent" and "sent_at" not in filtered:
+            filtered["sent_at"] = "__CURRENT_TIMESTAMP__"
+        assignments = []
+        parameters = []
+        for key, value in filtered.items():
+            if key == "sent_at" and value == "__CURRENT_TIMESTAMP__":
+                assignments.append("sent_at=current_timestamp")
+                continue
+            assignments.append(f"{key}=?")
+            parameters.append(value)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"""
+                update follow_up_drafts
+                set {', '.join(assignments)},
+                    revision=revision+1,
+                    send_claim_revision=0,
+                    send_claim_token='',
+                    send_claim_idempotency_uuid='',
+                    updated_at=current_timestamp
+                where id=?
+                  and revision=?
+                  and send_claim_revision=?
+                  and send_claim_token=?
+                """,
+                [
+                    *parameters,
+                    draft_id,
+                    claimed_revision,
+                    claimed_revision,
+                    claim_token,
+                ],
+            )
+            db.execute(
+                """
+                update follow_up_send_attempts
+                set state=?, result_json=?, updated_at=current_timestamp
+                where draft_id=?
+                  and draft_revision=?
+                  and claim_token=?
+                """,
+                (
+                    attempt_state,
+                    attempt_result_json,
+                    draft_id,
+                    claimed_revision,
+                    claim_token,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def follow_up_claim_is_current(
+        self,
+        draft_id: int,
+        *,
+        claimed_revision: int,
+        claim_token: str,
+    ) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select 1
+                from follow_up_drafts
+                where id=?
+                  and revision=?
+                  and send_claim_revision=?
+                  and send_claim_token=?
+                  and status in ('draft', 'approved')
+                limit 1
+                """,
+                (draft_id, claimed_revision, claimed_revision, claim_token),
+            ).fetchone()
+            return row is not None
+
+    def get_follow_up_send_attempt(
+        self,
+        *,
+        draft_id: int,
+        draft_revision: int,
+    ) -> dict[str, object] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select *
+                from follow_up_send_attempts
+                where draft_id=? and draft_revision=?
+                order by id desc
+                limit 1
+                """,
+                (draft_id, draft_revision),
+            ).fetchone()
+            return dict(row) if row is not None else None
 
     def get_follow_up_draft(self, draft_id: int) -> FollowUpDraft | None:
         if draft_id <= 0:

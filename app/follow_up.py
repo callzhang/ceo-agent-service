@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
 from app.dws_client import DwsError
@@ -231,7 +231,7 @@ def _skip_completed_follow_up(
     now: str,
     reason: str,
     completed: bool = True,
-) -> None:
+) -> bool:
     status = "completed" if completed else "skipped"
     payload = {
         "completed": completed,
@@ -241,8 +241,9 @@ def _skip_completed_follow_up(
         "checked_at": now,
         "evidence_check": "completion_supported",
     }
-    store.update_follow_up_draft(
+    return store.update_follow_up_draft_if_revision(
         draft.id,
+        draft.revision,
         status=status,
         sent_at=now,
         send_result_json=json.dumps(payload, ensure_ascii=False),
@@ -282,22 +283,42 @@ def _defer_recoverable_follow_up(
     now: str,
     reason: str,
     error: str,
-) -> None:
-    store.update_follow_up_draft(
+    claim_token: str = "",
+    idempotency_uuid: str = "",
+) -> bool:
+    result_json = json.dumps(
+        {
+            "recoverable": True,
+            "reason": reason,
+            "error": error,
+            "claimed_revision": draft.revision,
+            "idempotency_uuid": idempotency_uuid,
+            "retry_delay_minutes": int(
+                RECOVERABLE_AUTH_RETRY_DELAY.total_seconds() // 60
+            ),
+        },
+        ensure_ascii=False,
+    )
+    update = {
+        "status": "draft",
+        "scheduled_at": _recoverable_retry_at(now),
+        "send_result_json": result_json,
+    }
+    if claim_token:
+        return store.update_claimed_follow_up_draft(
+            draft.id,
+            claimed_revision=draft.revision,
+            claim_token=claim_token,
+            attempt_state=(
+                "unknown" if reason == "dws_send_outcome_unknown" else "retryable"
+            ),
+            attempt_result_json=result_json,
+            **update,
+        )
+    return store.update_follow_up_draft_if_revision(
         draft.id,
-        status="draft",
-        scheduled_at=_recoverable_retry_at(now),
-        send_result_json=json.dumps(
-            {
-                "recoverable": True,
-                "reason": reason,
-                "error": error,
-                "retry_delay_minutes": int(
-                    RECOVERABLE_AUTH_RETRY_DELAY.total_seconds() // 60
-                ),
-            },
-            ensure_ascii=False,
-        ),
+        draft.revision,
+        **update,
     )
 
 
@@ -316,10 +337,11 @@ def _defer_policy_follow_up(
     now: str,
     reason: str,
     detail: dict,
-) -> None:
+) -> bool:
     next_scheduled_at = str(detail.get("next_scheduled_at") or "").strip()
-    store.update_follow_up_draft(
+    return store.update_follow_up_draft_if_revision(
         draft.id,
+        draft.revision,
         status="draft",
         scheduled_at=next_scheduled_at or _tomorrow_morning(now),
         suppressed_reason=reason,
@@ -341,7 +363,7 @@ def _defer_follow_up_for_agent_review(
     *,
     now: str,
     reason: str,
-) -> None:
+) -> bool:
     project = store.get_work_project(draft.project_id)
     todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
     dingtalk_link = (
@@ -450,12 +472,7 @@ def _defer_follow_up_for_agent_review(
             },
         }
     )
-    store.enqueue_work_summary_input(
-        source_type=work_item.source.type.value,
-        source_ref=work_item.source.ref,
-        payload_json=work_item.model_dump_json(),
-    )
-    _defer_policy_follow_up(
+    deferred = _defer_policy_follow_up(
         store,
         draft,
         now=now,
@@ -465,6 +482,14 @@ def _defer_follow_up_for_agent_review(
             "repair_source_ref": repair_source_ref,
         },
     )
+    if not deferred:
+        return False
+    store.enqueue_work_summary_input(
+        source_type=work_item.source.type.value,
+        source_ref=work_item.source.ref,
+        payload_json=work_item.model_dump_json(),
+    )
+    return True
 
 
 def _owner_dingtalk_target(
@@ -597,6 +622,8 @@ def process_due_follow_ups(
                 reason="stale_follow_up_requires_agent_review",
             )
             continue
+        claim_token = ""
+        revision_uuid = ""
         try:
             owner_user_id, open_dingtalk_id, at_name = _owner_dingtalk_target(
                 store,
@@ -631,6 +658,22 @@ def process_due_follow_ups(
             )
             question_text = outgoing_text.text
             feedback_token = outgoing_text.feedback_token
+            claim_token = str(uuid4())
+            if not store.claim_follow_up_draft_revision(
+                draft.id,
+                expected_revision=draft.revision,
+                claim_token=claim_token,
+                idempotency_uuid=revision_uuid,
+            ):
+                # A correction won the revision race; leave its revision queued.
+                store.get_follow_up_draft(draft.id)
+                continue
+            if not store.follow_up_claim_is_current(
+                draft.id,
+                claimed_revision=draft.revision,
+                claim_token=claim_token,
+            ):
+                continue
             if send_to_group:
                 result = dws.send_message(
                     group_conversation_id,
@@ -664,6 +707,8 @@ def process_due_follow_ups(
                     now=now,
                     reason=reason,
                     error=str(exc),
+                    claim_token=claim_token,
+                    idempotency_uuid=revision_uuid,
                 )
                 store.record_error(
                     draft.target_conversation_id,
@@ -679,6 +724,8 @@ def process_due_follow_ups(
                     now=now,
                     reason="dws_send_outcome_unknown",
                     error=str(exc),
+                    claim_token=claim_token,
+                    idempotency_uuid=revision_uuid,
                 )
                 store.record_error(
                     draft.target_conversation_id,
@@ -687,11 +734,34 @@ def process_due_follow_ups(
                     str(exc),
                 )
                 continue
-            store.update_follow_up_draft(
-                draft.id,
-                status="failed",
-                send_result_json=json.dumps({"error": str(exc)}, ensure_ascii=False),
-            )
+            if claim_token:
+                failed_result_json = json.dumps(
+                    {
+                        "error": str(exc),
+                        "claimed_revision": draft.revision,
+                        "idempotency_uuid": revision_uuid,
+                    },
+                    ensure_ascii=False,
+                )
+                store.update_claimed_follow_up_draft(
+                    draft.id,
+                    claimed_revision=draft.revision,
+                    claim_token=claim_token,
+                    attempt_state="failed",
+                    attempt_result_json=failed_result_json,
+                    status="failed",
+                    send_result_json=failed_result_json,
+                )
+            else:
+                store.update_follow_up_draft_if_revision(
+                    draft.id,
+                    draft.revision,
+                    status="failed",
+                    send_result_json=json.dumps(
+                        {"error": str(exc)},
+                        ensure_ascii=False,
+                    ),
+                )
             store.record_error(
                 draft.target_conversation_id,
                 None,
@@ -699,22 +769,29 @@ def process_due_follow_ups(
                 str(exc),
             )
             continue
-        store.update_follow_up_draft(
+        sent_result_json = json.dumps(
+            {
+                "owner_user_id": owner_user_id,
+                "at_users": at_users,
+                "at_open_dingtalk_ids": at_open_dingtalk_ids,
+                "at_open_dingtalk_names": at_open_dingtalk_names,
+                "feedback_token": feedback_token,
+                "sensitive": sensitive,
+                "target_kind_used": "group" if send_to_group else "direct",
+                "claimed_revision": draft.revision,
+                "idempotency_uuid": revision_uuid,
+                "send_result": result or {},
+            },
+            ensure_ascii=False,
+        )
+        finalized = store.update_claimed_follow_up_draft(
             draft.id,
+            claimed_revision=draft.revision,
+            claim_token=claim_token,
+            attempt_state="sent",
+            attempt_result_json=sent_result_json,
             status="sent",
-            send_result_json=json.dumps(
-                {
-                    "owner_user_id": owner_user_id,
-                    "at_users": at_users,
-                    "at_open_dingtalk_ids": at_open_dingtalk_ids,
-                    "at_open_dingtalk_names": at_open_dingtalk_names,
-                    "feedback_token": feedback_token,
-                    "sensitive": sensitive,
-                    "target_kind_used": "group" if send_to_group else "direct",
-                    "send_result": result or {},
-                },
-                ensure_ascii=False,
-            ),
+            send_result_json=sent_result_json,
             evidence_check_json=json.dumps(
                 {
                     "checked_at": now,
@@ -725,5 +802,6 @@ def process_due_follow_ups(
             ),
             sent_at=now,
         )
-        sent += 1
+        if finalized:
+            sent += 1
     return sent
