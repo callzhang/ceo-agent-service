@@ -2423,7 +2423,7 @@ class DingTalkAutoReplyWorker:
         *,
         strict: bool = False,
     ) -> tuple[list[DingTalkMessage], list[DingTalkMessage]]:
-        if self._is_service_task_trigger(trigger):
+        if self._is_oa_pending_scan_trigger(trigger):
             return [trigger], [trigger]
         context_messages: list[DingTalkMessage] = []
         unread_messages: list[DingTalkMessage] = []
@@ -2451,11 +2451,7 @@ class DingTalkAutoReplyWorker:
         )
 
     @staticmethod
-    def _is_service_task_trigger(trigger: DingTalkMessage) -> bool:
-        if trigger.raw_payload.get("service_task"):
-            return True
-        # OA scan tasks persisted before the explicit service_task field must
-        # retain their no-chat-lookup behavior after a service restart.
+    def _is_oa_pending_scan_trigger(trigger: DingTalkMessage) -> bool:
         return str(trigger.raw_payload.get("source") or "") == "oa_pending_scan"
 
     def _enqueue_reply_task(
