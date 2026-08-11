@@ -4452,6 +4452,7 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
             max_tasks=4,
             sleep=sleep,
             network_ready=lambda: True,
+            codex_ready=lambda: True,
         )
 
     assert calls[0][:3] == ("produce-meeting", store, dws)
@@ -4516,12 +4517,45 @@ def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
             max_tasks=4,
             sleep=sleep,
             network_ready=lambda: False,
+            codex_ready=lambda: True,
         )
 
     assert calls == [
         ("sleep", 60),
         ("sleep", 10),
     ]
+
+
+def test_meeting_consumer_waits_for_codex_gate_before_claiming(monkeypatch, tmp_path):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path / "memory",
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: object())
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: object())
+    monkeypatch.setattr(cli, "MeetingAlignmentCodexRunner", lambda **kwargs: object())
+    monkeypatch.setattr(
+        cli,
+        "consume_meeting_alignment_jobs",
+        lambda *args, **kwargs: calls.append("consume-meeting"),
+    )
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_consumer_loop(
+            settings,
+            poll_interval_seconds=10,
+            max_tasks=1,
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+            network_ready=lambda: True,
+            codex_ready=lambda: False,
+        )
+
+    assert calls == []
 
 
 def test_meeting_producer_suppresses_transient_dws_dependency_error(
@@ -4675,6 +4709,7 @@ def test_meeting_consumer_dry_run_and_zero_limit_never_deliver(monkeypatch, tmp_
             max_tasks=0,
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             network_ready=lambda: True,
+            codex_ready=lambda: True,
         )
 
     assert calls[0]["limit"] == 0

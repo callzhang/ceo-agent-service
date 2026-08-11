@@ -2224,6 +2224,7 @@ def run_meeting_consumer_loop(
     max_tasks: int | None = None,
     sleep: Callable[[int], None] = time.sleep,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
+    codex_ready: Callable[[], bool] | None = None,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
     dws = _create_meeting_dws(settings)
@@ -2246,6 +2247,12 @@ def run_meeting_consumer_loop(
         if not network_ready():
             sleep(poll_interval_seconds)
             continue
+        is_codex_ready = (
+            codex_ready() if codex_ready is not None else _codex_channel_ready(store)
+        )
+        if not is_codex_ready:
+            sleep(poll_interval_seconds)
+            continue
         try:
             consume_meeting_alignment_jobs(
                 store,
@@ -2265,6 +2272,29 @@ def run_meeting_consumer_loop(
                     str(exc),
                 )
         sleep(poll_interval_seconds)
+
+
+def _codex_channel_ready(store: AutoReplyStore) -> bool:
+    from app.channel_gate import CodexChannelGate, ChannelGateState
+
+    result = CodexChannelGate().check()
+    checked_at = datetime.now(timezone.utc).isoformat()
+    store.set_service_state(
+        "channel_gate:codex",
+        json.dumps(
+            {
+                "status": result.state.value,
+                "reason_code": result.reason_code,
+                "checked_at": checked_at,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+    )
+    if result.state is ChannelGateState.READY:
+        store.set_service_state("channel_gate_last_success:codex", checked_at)
+        return True
+    return False
 
 
 def replay_recent_meetings_command(
