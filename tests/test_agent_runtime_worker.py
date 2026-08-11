@@ -1244,6 +1244,359 @@ direct chat for a group source. Verify with `dws chat message list --group
     raise AssertionError(f"unexpected operation Skill fixture: {name}")
 
 
+def _triage_operation_skill_fixture(name: str) -> str:
+    if name == "dingtalk-shared":
+        return _calendar_operation_skill_fixture(name)
+    if name == "dingtalk-chat":
+        return """---
+name: dingtalk-chat
+description: Representative source-chat operation fixture.
+metadata:
+  requires: dingtalk-shared
+---
+# Chat Operations
+
+Load `dingtalk-shared` before chat operations. Read a source group with
+`dws chat message list --group <conversation-id> --time <date>`. Send one
+addressed clarification with `dws chat message send --group <conversation-id>
+--at-open-dingtalk-ids <participant-id> --text <question> --yes`, then verify it
+with the same source-group read.
+"""
+    raise AssertionError(f"unexpected operation Skill fixture: {name}")
+
+
+def _document_operation_skill_fixture(name: str) -> str:
+    if name in {"dingtalk-shared", "dingtalk-chat"}:
+        return _triage_operation_skill_fixture(name)
+    if name == "dingtalk-doc":
+        return """---
+name: dingtalk-doc
+description: Representative DingTalk document operation fixture.
+metadata:
+  requires: dingtalk-shared
+---
+# DingTalk Document Operations
+
+Load `dingtalk-shared`. Discover a supplied node with the exact reviewed info
+command, then read its current content with the exact reviewed document command.
+Do not infer document content from the reference or from the service prompt.
+"""
+    raise AssertionError(f"unexpected operation Skill fixture: {name}")
+
+
+class SkillReceiptProtocolExecutor(ProtocolCodexExecutor):
+    def __init__(self, skill_paths: dict[str, Path]) -> None:
+        super().__init__()
+        self.skill_paths = skill_paths
+        self.consumer_loaded_skills: list[str] = []
+        self.audit_loaded_skills: list[str] = []
+
+    def _skill_records(self, prompt: str) -> list[dict[str, object]]:
+        audit_turn = "Candidate revision\n" in prompt
+        prefix = "audit" if audit_turn else "consumer"
+        loaded = self.audit_loaded_skills if audit_turn else self.consumer_loaded_skills
+        records: list[dict[str, object]] = []
+        for name, path in self.skill_paths.items():
+            loaded.append(name)
+            records.extend(_skill_read_events(f"{prefix}-skill-{name}", path))
+        if audit_turn:
+            receipts = _prompt_json_section(
+                prompt,
+                "Verified Skills read by Consumer A\n",
+            )
+            expected = {
+                name: {
+                    "path": str(path.resolve()),
+                    "sha256": sha256(path.read_bytes()).hexdigest(),
+                }
+                for name, path in self.skill_paths.items()
+            }
+            assert {
+                item["name"]: {
+                    "path": item["path"],
+                    "sha256": item["sha256"],
+                }
+                for item in receipts
+            } == expected
+        return records
+
+
+class MessageClarificationSkillExecutor(SkillReceiptProtocolExecutor):
+    question = "Which delivery date should the plan use?"
+    message_text = f"<@open-user-1> {question}"
+
+    def __init__(self, skill_paths: dict[str, Path]) -> None:
+        super().__init__(skill_paths)
+        self.context_reads = 0
+        self.sent_questions = 0
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        records = self._skill_records(prompt)
+        audit_turn = "Candidate revision\n" in prompt
+        prefix = "audit" if audit_turn else "consumer"
+        read_command = "dws chat message list --group cid-1 --time 2026-07-29"
+        self.context_reads += 1
+        records.extend(
+            (
+                _reviewed_cli_event("item.started", f"{prefix}-chat-read", read_command),
+                _reviewed_cli_event(
+                    "item.completed",
+                    f"{prefix}-chat-read",
+                    read_command,
+                    output=json.dumps(
+                        {
+                            "messages": [
+                                {
+                                    "message_id": "msg-1",
+                                    "sender_open_dingtalk_id": "open-user-1",
+                                    "text": "@CEO Agent Please prepare the plan.",
+                                }
+                            ]
+                        }
+                    ),
+                ),
+            )
+        )
+        if not audit_turn:
+            records.append(
+                _agent_result_event(
+                    _consumer_protocol_result(
+                        "proposal",
+                        "Prepared one participant-answerable factual clarification.",
+                        proposal={
+                            "objective": "Clarify the missing delivery date.",
+                            "actions": [
+                                {
+                                    "description": "Ask the sender one factual question.",
+                                    "capability": "agent_cli.dws",
+                                    "operation": "chat message send",
+                                    "target": {"group": "cid-1"},
+                                    "payload": {
+                                        "argv": [
+                                            "dws",
+                                            "chat",
+                                            "message",
+                                            "send",
+                                            "--group",
+                                            "cid-1",
+                                            "--at-open-dingtalk-ids",
+                                            "open-user-1",
+                                            "--text",
+                                            self.message_text,
+                                            "--yes",
+                                        ]
+                                    },
+                                    "expected_verification": (
+                                        "Read the source group and find the exact question."
+                                    ),
+                                }
+                            ],
+                            "sourced_facts": [
+                                {
+                                    "assertion": "The sender identity is open-user-1.",
+                                    "references": ["source message msg-1"],
+                                }
+                            ],
+                            "authored_judgment": (
+                                "The sender can supply the missing delivery date."
+                            ),
+                        },
+                    )
+                )
+            )
+            return records
+
+        candidate = _prompt_json_section(prompt, "Candidate revision\n")
+        action = candidate["proposal"]["actions"][0]
+        write_command = shlex.join(action["payload"]["argv"])
+        self.sent_questions += 1
+        records.extend(
+            (
+                _reviewed_cli_event(
+                    "item.started",
+                    "triage-question-write",
+                    write_command,
+                    effectful=True,
+                ),
+                _reviewed_cli_event(
+                    "item.completed",
+                    "triage-question-write",
+                    write_command,
+                    output=json.dumps({"success": True, "message_id": "question-1"}),
+                    effectful=True,
+                ),
+                _reviewed_cli_event("item.started", "triage-question-verify", read_command),
+                _reviewed_cli_event(
+                    "item.completed",
+                    "triage-question-verify",
+                    read_command,
+                    output=json.dumps(
+                        {
+                            "messages": [
+                                {
+                                    "message_id": "question-1",
+                                    "text": self.message_text,
+                                }
+                            ]
+                        }
+                    ),
+                ),
+                _agent_result_event(
+                    _audit_protocol_result(
+                        "executed",
+                        int(candidate["proposal_revision"]),
+                        "The exact clarification was verified in the source group.",
+                        operation_id=str(candidate["operation_id"]),
+                        live_reference={"message_id": "question-1"},
+                    )
+                ),
+            )
+        )
+        return records
+
+
+class DocumentReadSkillExecutor(SkillReceiptProtocolExecutor):
+    reply_text = "The current document identifies launch readiness as the decision."
+
+    def __init__(self, skill_paths: dict[str, Path]) -> None:
+        super().__init__(skill_paths)
+        self.document_reads: list[str] = []
+        self.sent_replies = 0
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        records = self._skill_records(prompt)
+        audit_turn = "Candidate revision\n" in prompt
+        prefix = "audit" if audit_turn else "consumer"
+        materials = _prompt_json_section(
+            prompt,
+            "Raw material references and exact read commands\n",
+        )
+        document = next(
+            item
+            for item in materials
+            if isinstance(item, dict) and item.get("kind") == "dingtalk_doc"
+        )
+        for index, command in enumerate(document["read_commands"]):
+            self.document_reads.append(command)
+            output = (
+                {"type": "document", "title": "Launch review"}
+                if " doc info " in command
+                else {
+                    "title": "Launch review",
+                    "content": "Decision required: confirm launch readiness.",
+                    "version": 7,
+                }
+            )
+            records.extend(
+                (
+                    _reviewed_cli_event(
+                        "item.started",
+                        f"{prefix}-document-read-{index}",
+                        command,
+                    ),
+                    _reviewed_cli_event(
+                        "item.completed",
+                        f"{prefix}-document-read-{index}",
+                        command,
+                        output=json.dumps(output),
+                    ),
+                )
+            )
+        if not audit_turn:
+            records.append(
+                _agent_result_event(
+                    _consumer_protocol_result(
+                        "proposal",
+                        "Reviewed the current document and prepared the conclusion.",
+                        proposal={
+                            "objective": "Return the evidence-based document review.",
+                            "actions": [
+                                {
+                                    "description": "Reply with the current conclusion.",
+                                    "capability": "agent_cli.dws",
+                                    "operation": "chat message send",
+                                    "target": {"group": "cid-1"},
+                                    "payload": {
+                                        "argv": [
+                                            "dws",
+                                            "chat",
+                                            "message",
+                                            "send",
+                                            "--group",
+                                            "cid-1",
+                                            "--text",
+                                            self.reply_text,
+                                            "--yes",
+                                        ]
+                                    },
+                                    "expected_verification": (
+                                        "Read the source group and find the exact review."
+                                    ),
+                                }
+                            ],
+                            "sourced_facts": [
+                                {
+                                    "assertion": "Document version 7 requires a launch decision.",
+                                    "references": [str(document["reference"])],
+                                }
+                            ],
+                            "authored_judgment": "The current material is readable and decisive.",
+                        },
+                    )
+                )
+            )
+            return records
+
+        candidate = _prompt_json_section(prompt, "Candidate revision\n")
+        action = candidate["proposal"]["actions"][0]
+        write_command = shlex.join(action["payload"]["argv"])
+        verify_command = "dws chat message list --group cid-1 --time 2026-07-29"
+        self.sent_replies += 1
+        records.extend(
+            (
+                _reviewed_cli_event(
+                    "item.started",
+                    "document-reply-write",
+                    write_command,
+                    effectful=True,
+                ),
+                _reviewed_cli_event(
+                    "item.completed",
+                    "document-reply-write",
+                    write_command,
+                    output=json.dumps({"success": True, "message_id": "review-1"}),
+                    effectful=True,
+                ),
+                _reviewed_cli_event("item.started", "document-reply-verify", verify_command),
+                _reviewed_cli_event(
+                    "item.completed",
+                    "document-reply-verify",
+                    verify_command,
+                    output=json.dumps(
+                        {
+                            "messages": [
+                                {"message_id": "review-1", "text": self.reply_text}
+                            ]
+                        }
+                    ),
+                ),
+                _agent_result_event(
+                    _audit_protocol_result(
+                        "executed",
+                        int(candidate["proposal_revision"]),
+                        "The current document was reread and the review was verified.",
+                        operation_id=str(candidate["operation_id"]),
+                        live_reference={
+                            "message_id": "review-1",
+                            "document_version": 7,
+                        },
+                    )
+                ),
+            )
+        )
+        return records
+
+
 class NativeCommandStub:
     def __init__(self, read_output: dict[str, object]) -> None:
         self.read_output = read_output
@@ -3441,6 +3794,129 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
         "dws chat message list --group cid-1 --time 2026-07-29"
     )
     assert "--user" not in executor.question_verify_command
+
+
+def _assert_task4_receipts_and_consumer_read_only(worker, skill_paths):
+    task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    runs = worker.store.list_agent_runs_for_task_generation(
+        task.id,
+        task.execution_generation,
+    )
+    assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
+    expected = {
+        name: (str(path.resolve()), sha256(path.read_bytes()).hexdigest())
+        for name, path in skill_paths.items()
+    }
+    for run in runs:
+        receipts = {
+            str(metadata["skill_name"]): (
+                str(metadata["skill_path"]),
+                str(metadata["skill_sha256"]),
+            )
+            for event in run.tool_events
+            if isinstance(event.get("item"), dict)
+            and isinstance((metadata := event["item"].get("metadata")), dict)
+            and "skill_name" in metadata
+        }
+        assert receipts == expected
+    assert all(
+        event["item"].get("tool") != "execute_reviewed_write"
+        for event in runs[0].tool_events
+        if isinstance(event.get("item"), dict)
+    )
+
+
+def test_direct_clarification_uses_native_business_and_operation_skill_receipts(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skills_root = tmp_path / "installed-skills"
+    skill_paths: dict[str, Path] = {}
+    for name in (
+        "ceo-message-triage",
+        "dingtalk-shared",
+        "dingtalk-chat",
+    ):
+        path = skills_root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        content = (
+            (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
+            if name == "ceo-message-triage"
+            else _triage_operation_skill_fixture(name)
+        )
+        path.write_text(content, encoding="utf-8")
+        skill_paths[name] = path
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (skills_root,))
+
+    trigger = _message("@CEO Agent Please prepare the plan.").model_copy(
+        update={
+            "sender_open_dingtalk_id": "open-user-1",
+            "mentioned_user_ids": ["agent-user-id"],
+        }
+    )
+    executor = MessageClarificationSkillExecutor(skill_paths)
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "completed"
+    assert attempt.send_status != "needs_human"
+    expected_names = list(skill_paths)
+    assert executor.consumer_loaded_skills == expected_names
+    assert executor.audit_loaded_skills == expected_names
+    assert executor.context_reads == 2
+    assert executor.sent_questions == 1
+    assert MessageClarificationSkillExecutor.question in executor.prompts[1]
+    _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+
+
+def test_document_read_uses_exact_commands_and_native_skill_receipts(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skills_root = tmp_path / "installed-skills"
+    skill_paths: dict[str, Path] = {}
+    for name in (
+        "ceo-document-review",
+        "dingtalk-shared",
+        "dingtalk-doc",
+        "dingtalk-chat",
+    ):
+        path = skills_root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        content = (
+            (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
+            if name == "ceo-document-review"
+            else _document_operation_skill_fixture(name)
+        )
+        path.write_text(content, encoding="utf-8")
+        skill_paths[name] = path
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (skills_root,))
+
+    document_url = "https://alidocs.dingtalk.com/i/nodes/doc-task-4"
+    trigger = _message(f"@CEO Agent Please review {document_url}")
+    executor = DocumentReadSkillExecutor(skill_paths)
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "completed"
+    expected_names = list(skill_paths)
+    assert executor.consumer_loaded_skills == expected_names
+    assert executor.audit_loaded_skills == expected_names
+    expected_commands = [
+        f"dws doc info --node {document_url} --format json",
+        f"dws doc read --node {document_url} --format json",
+    ]
+    assert executor.document_reads == expected_commands * 2
+    assert executor.sent_replies == 1
+    assert DocumentReadSkillExecutor.reply_text in executor.prompts[1]
+    _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
 
 
 @pytest.mark.parametrize(

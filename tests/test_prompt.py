@@ -185,13 +185,13 @@ def test_developer_prompt_keeps_business_metrics_out_of_personnel_sensitivity():
     assert "只有问题要求评价这个人的绩效、晋升、薪酬、去留、转正、请假、岗位匹配、个人工作状态" in template
 
 
-def test_developer_prompt_requires_latest_material_after_update_feedback():
+def test_developer_prompt_delegates_latest_material_review_to_business_skill():
     template = read_developer_prompt_template()
 
-    assert "前一次依据的材料已经被修改、补充、评论确认或按要求更新" in template
-    assert "不能沿用前一次读取材料时形成的旧结论" in template
-    assert "必须用上下文提供的精确命令重新读取当前可访问的最新材料" in template
-    assert "体现本轮实际依据" in template
+    assert "前一次依据的材料已经被修改、补充、评论确认或按要求更新" not in template
+    assert "处理文档时，如果是钉钉文档可以用评论功能" not in template
+    assert "涉及专业业务流程时" in template
+    assert "agent_cli.read_skill" in template
 
 
 def test_developer_prompt_defines_non_executable_action_boundary():
@@ -595,11 +595,12 @@ def test_thread_prompt_explains_first_person_single_chat_subject():
     assert "不要对 internal_personnel 追问“关于谁”" in prompt
 
 
-def test_thread_prompt_treats_mentioned_arrangements_requiring_principal_as_replies():
+def test_thread_prompt_delegates_direct_message_triage_to_business_skill():
     prompt = ceo_agent_thread_prompt()
 
-    assert "明确要求 明哥 处理、确认、决策或对某个结论表态" in prompt
-    assert "即使没有问号，也应视为需要回复" in prompt
+    assert "明确要求 明哥 处理、确认、决策或对某个结论表态" not in prompt
+    assert "涉及专业业务流程时" in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
 def test_thread_prompt_requires_direct_structured_output_for_analysis_requests():
@@ -705,15 +706,14 @@ def test_build_turn_prompt_includes_sender_org_lines():
     assert '"title": "首席人力资源专家兼HRVP"' in prompt
 
 
-def test_thread_prompt_requires_dws_doc_read_for_alidocs_links():
+def test_thread_prompt_delegates_document_commands_to_operation_skills():
     prompt = ceo_agent_thread_prompt()
 
-    assert 'dws doc info --node "<链接>" --format json' in prompt
-    assert 'dws doc read --node "<链接>" --format json' in prompt
-    assert "extension=able" in prompt
-    assert "dws aitable" in prompt
-    assert "禁止用 curl、HTTP API 或浏览器直接读钉钉材料" in prompt
-    assert "材料读不到，不能凭感觉回复" in prompt
+    assert 'dws doc info --node "<链接>" --format json' not in prompt
+    assert 'dws doc read --node "<链接>" --format json' not in prompt
+    assert "extension=able" not in prompt
+    assert "普通钉钉文件不同于钉钉在线文档" not in prompt
+    assert "agent_cli.read_skill" in prompt
     assert "DWS 登录/工具问题" in prompt
     assert "不要说成对方没有提供材料" in prompt
 
@@ -828,50 +828,29 @@ def test_thread_prompt_requires_candidate_context_lookup_before_clarifying():
     assert "自己组织追问" in prompt
 
 
-def test_thread_prompt_requires_witty_reply_for_direct_jokes():
+def test_thread_prompt_delegates_lightweight_interaction_judgment():
     prompt = ceo_agent_thread_prompt()
 
-    assert "真人直接 @明哥 或分身开玩笑" in prompt
-    assert "简短、机智、克制的玩笑" in prompt
-    assert "体现判断力和幽默感" in prompt
-    assert "不要写成流程说明或机制解释" in prompt
-    assert "二选一" in prompt
-    assert "裁掉一个" in prompt
-    assert "不要真的选择某个人" in prompt
-    assert "不要空 no_reply" in prompt
-    assert "如果玩笑要求分身做无法真实执行的动作" not in prompt
+    assert "真人直接 @明哥 或分身开玩笑" not in prompt
+    assert "不要为了显得参与而发送低信息增益文字" not in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
 def test_thread_prompt_prevents_interjecting_on_group_broadcasts():
     prompt = ceo_agent_thread_prompt()
 
-    assert "全员通知、流程提醒、OKR/复盘/会议安排等广播消息" in prompt
-    assert "@所有人不是自动跳过的理由" in prompt
-    assert "先判断是否需要 明哥 处理、确认、决策、表态或执行动作" in prompt
-    assert "没有点名要求 明哥 处理、确认或决策" in prompt
-    assert "默认 no_reply" in prompt
-    assert "不要因为 明哥 可以补充管理建议就插嘴" in prompt
-    assert "正向推进团队共识、执行承诺、复盘改进或协作氛围" in prompt
-    assert "优先用 dws_message_reaction 表达支持" in prompt
-
-
-def test_thread_prompt_requires_positive_reply_for_high_value_customer_leads():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "高价值客户线索、客户现场 demo、关键客户多角色参与" in prompt
-    assert "不能只用 reaction" in prompt
-    assert "用 send_reply 正面回应" in prompt
+    assert "@所有人不是自动跳过的理由" not in prompt
+    assert "群聊广播如果是在推进高价值客户线索" not in prompt
+    assert "agent_cli.read_skill" in prompt
 
 
 def test_thread_prompt_prefers_reaction_for_low_information_group_mentions():
     prompt = ceo_agent_thread_prompt()
 
-    assert "即使对方直接 @明哥" in prompt
-    assert "和当前业务决策、交付、客户、招聘、审批、日程、文档处理无关" in prompt
-    assert "强行发表观点" in prompt
-    assert "用 dws_message_reaction 做机智、贴合上下文的轻量回应" in prompt
-    assert "不要为了显得参与而发送低信息增益文字" in prompt
-    assert "只有需要明确业务判断、承诺、解释原因、给出下一步、纠偏误解或同步具体决定" in prompt
+    assert "不要为了显得参与而发送低信息增益文字" not in prompt
+    assert "不要为了“礼貌收口”发送“收到”“好的”这类低信息增益文字" not in prompt
+    assert "no_reply 通常用空数组" in prompt
+    assert "dws_message_reaction" in prompt
 
 
 def test_thread_prompt_allows_markdown_document_reply():
@@ -882,45 +861,19 @@ def test_thread_prompt_allows_markdown_document_reply():
     assert "服务会创建 Markdown 文档并在聊天里回复文档链接" in prompt
 
 
-def test_thread_prompt_prefers_text_emotion_for_light_human_handoff():
+def test_thread_prompt_keeps_generic_reaction_output_contract():
     prompt = ceo_agent_thread_prompt()
 
-    assert "我让明哥本人看一下" in prompt
-    assert "不要发送“我让明哥本人看一下”这类正式文字回复" in prompt
-    assert "reaction_type\":\"text_emotion\"" in prompt
-    assert "我去摇人" in prompt
-    assert "呼叫中" in prompt
-    assert "不要编造 emotion_id、background_id" in prompt
-
-
-def test_thread_prompt_prefers_reaction_for_low_information_single_chat_closings():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "单聊里如果对方只是" in prompt
-    assert "表示感谢、确认收到、认可或客气收口" in prompt
-    assert "优先输出 no_reply" in prompt
-    assert "用 `dws_message_reaction` 轻量表达收到或认可" in prompt
-    assert "不要为了“礼貌收口”发送“收到”“好的”这类低信息增益文字" in prompt
-    assert "确认本身会影响执行责任、交付边界、时间安排、权限/费用/审批等正式事项" in prompt
+    assert "我让明哥本人看一下" not in prompt
+    assert "dws_message_reaction" in prompt
 
 
 def test_thread_prompt_treats_existing_principal_reaction_as_handled():
     prompt = ceo_agent_thread_prompt()
 
-    assert "如果“新消息”里显示已有" in prompt
-    assert "或当前用户的 reaction" in prompt
-    assert "通常说明真人已经用轻量方式处理过" in prompt
-    assert "否则输出 no_reply，不要再补发文字" in prompt
-
-
-def test_thread_prompt_uses_reaction_for_handled_light_reminders():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "如果上下文显示问题已经被其他人或 明哥 处理完，不要再补文字回复" in prompt
-    assert "提醒、催办、审批/日程/文档到达通知、呼叫本人或正向协作收口" in prompt
-    assert "轻量 reaction 不会造成承诺、误解或越权" in prompt
-    assert "应输出 no_reply 并使用 dws_message_reaction 表达收到/支持" in prompt
-    assert "已有 明哥 reaction 时，才空 no_reply" in prompt
+    assert "已有 reaction" not in prompt
+    assert "通常说明真人已经用轻量方式处理过" not in prompt
+    assert "dws_message_reaction" in prompt
 
 
 def test_build_turn_prompt_includes_prefetched_dingtalk_document():
