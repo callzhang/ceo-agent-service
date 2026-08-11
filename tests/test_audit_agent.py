@@ -2388,7 +2388,10 @@ def test_controlled_cli_mail_verify_reads_back_reply_for_same_mailbox():
             "email": "principal@example.test",
             "internet-message-id": "internet-1",
         },
-        "result_identifiers": {"stdout.internetMessageId": "internet-1"},
+        "result_identifiers": {
+            "stdout.internetMessageId": "internet-1",
+            "stdout.sendStatus": "SUCCESS",
+        },
     }
 
     assert registry.readback_operations_match(
@@ -2407,9 +2410,45 @@ def test_controlled_cli_mail_verify_reads_back_reply_for_same_mailbox():
             "email": "principal@example.test",
             "internet-message-id": "internet-2",
         },
-        "result_identifiers": {"stdout.internetMessageId": "internet-2"},
+        "result_identifiers": {
+            "stdout.internetMessageId": "internet-2",
+            "stdout.sendStatus": "SUCCESS",
+        },
     }
     assert not _read_matches_action(mismatched_read, write, registry)
+
+
+@pytest.mark.parametrize(
+    "send_status",
+    ("failed", "posting", "partial_success", "unknown", None),
+)
+def test_controlled_cli_mail_verify_requires_success_delivery_state(send_status):
+    registry = McpToolEffectRegistry.default()
+    write = {
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "mail message reply",
+        "target_identifiers": {
+            "from": "principal@example.test",
+            "id": "mail-1",
+        },
+        "result_identifiers": {"stdout.internetMessageId": "internet-1"},
+    }
+    result_identifiers = {"stdout.internetMessageId": "internet-1"}
+    if send_status is not None:
+        result_identifiers["stdout.sendStatus"] = send_status
+    read = {
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_read",
+        "operation": "mail message verify",
+        "target_identifiers": {
+            "email": "principal@example.test",
+            "internet-message-id": "internet-1",
+        },
+        "result_identifiers": result_identifiers,
+    }
+
+    assert not _read_matches_action(read, write, registry)
 
 
 def test_unregistered_controlled_write_cannot_confirm_without_readback(setup):

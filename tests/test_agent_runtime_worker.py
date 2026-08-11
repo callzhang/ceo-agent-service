@@ -5369,7 +5369,8 @@ def test_authorized_mail_reply_protocol_executes_and_verifies_internet_message_i
         "stdout.internetMessageId": executor.internet_message_id
     }
     assert completed_metadata["mail message verify"]["result_identifiers"] == {
-        "stdout.internetMessageId": executor.internet_message_id
+        "stdout.internetMessageId": executor.internet_message_id,
+        "stdout.sendStatus": "success",
     }
     audit_result = json.loads(runs[1].final_result_json)
     reference = audit_result["external_result"]["live_result_reference"]
@@ -5411,7 +5412,8 @@ def test_mail_reply_verify_with_different_write_receipt_id_is_not_confirmed(
         "internet-message-id"
     ] == "internet-2"
     assert completed_metadata["mail message verify"]["result_identifiers"] == {
-        "stdout.internetMessageId": "internet-2"
+        "stdout.internetMessageId": "internet-2",
+        "stdout.sendStatus": "success",
     }
 
 

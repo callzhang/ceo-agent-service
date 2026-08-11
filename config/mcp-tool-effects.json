@@ -24,6 +24,13 @@
                   "read_target": "internet-message-id",
                   "read_result": "stdout.internetMessageId"
                 }
+              ],
+              "read_result_constraints": [
+                {
+                  "path": "stdout.sendStatus",
+                  "equals": "success",
+                  "comparison": "casefold"
+                }
               ]
             },
             {"read": "oa approval detail", "write": "oa approval approve"},

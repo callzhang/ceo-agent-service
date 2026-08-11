@@ -72,6 +72,10 @@ class McpToolEffectRegistry:
             tuple[str, str, str, str, str, str], tuple[dict[str, str], ...]
         ]
         | None = None,
+        readback_result_constraints: dict[
+            tuple[str, str, str, str, str, str], tuple[dict[str, str], ...]
+        ]
+        | None = None,
     ) -> None:
         self._effects = dict(effects)
         self._dry_run_arguments = dict(dry_run_arguments or {})
@@ -85,6 +89,9 @@ class McpToolEffectRegistry:
             for key, values in (readback_operation_relations or {}).items()
         }
         self._readback_identity_matches = dict(readback_identity_matches or {})
+        self._readback_result_constraints = dict(
+            readback_result_constraints or {}
+        )
 
     @classmethod
     def from_path(cls, path: Path) -> "McpToolEffectRegistry":
@@ -103,6 +110,9 @@ class McpToolEffectRegistry:
             tuple[str, str, str, str], set[tuple[str, str]]
         ] = {}
         readback_identity_matches: dict[
+            tuple[str, str, str, str, str, str], tuple[dict[str, str], ...]
+        ] = {}
+        readback_result_constraints: dict[
             tuple[str, str, str, str, str, str], tuple[dict[str, str], ...]
         ] = {}
         for item in tools:
@@ -211,6 +221,44 @@ class McpToolEffectRegistry:
                         readback_identity_matches[identity_key] = tuple(
                             normalized_matches
                         )
+                    result_constraints = relation.get(
+                        "read_result_constraints", []
+                    )
+                    if not isinstance(result_constraints, list):
+                        raise ValueError(
+                            "MCP readback result constraints must be a list"
+                        )
+                    normalized_constraints: list[dict[str, str]] = []
+                    for constraint in result_constraints:
+                        if (
+                            not isinstance(constraint, dict)
+                            or set(constraint)
+                            != {"path", "equals", "comparison"}
+                            or not isinstance(constraint.get("path"), str)
+                            or not constraint["path"].strip()
+                            or not isinstance(constraint.get("equals"), str)
+                            or not isinstance(constraint.get("comparison"), str)
+                            or constraint["comparison"] not in {"exact", "casefold"}
+                        ):
+                            raise ValueError(
+                                "MCP readback result constraint is invalid"
+                            )
+                        normalized_constraints.append(
+                            {
+                                "path": constraint["path"].strip(),
+                                "equals": constraint["equals"],
+                                "comparison": constraint["comparison"],
+                            }
+                        )
+                    if normalized_constraints:
+                        constraint_key = (
+                            *relation_key,
+                            relation["read"].strip(),
+                            relation["write"].strip(),
+                        )
+                        readback_result_constraints[constraint_key] = tuple(
+                            normalized_constraints
+                        )
                 if operation_match == "registered" and not operation_relations:
                     raise ValueError("registered MCP readback requires operation relations")
         for read_key, write_keys in readbacks.items():
@@ -229,6 +277,7 @@ class McpToolEffectRegistry:
             readback_operation_modes=readback_operation_modes,
             readback_operation_relations=readback_operation_relations,
             readback_identity_matches=readback_identity_matches,
+            readback_result_constraints=readback_result_constraints,
         )
 
     @classmethod
@@ -378,6 +427,10 @@ class McpToolEffectRegistry:
                 )
             if (server, tool, operation) == (write_server, write_tool, write_operation):
                 paths.update(match["write_result"] for match in matches)
+        for key, constraints in self._readback_result_constraints.items():
+            read_server, read_tool, _write_server, _write_tool, read_operation, _write_operation = key
+            if (server, tool, operation) == (read_server, read_tool, read_operation):
+                paths.update(constraint["path"] for constraint in constraints)
         return {
             path: value
             for path in paths
@@ -421,6 +474,26 @@ class McpToolEffectRegistry:
                 and read_result_identifiers.get(read_result) != write_value
             ):
                 return False
+        constraints = self._readback_result_constraints.get(
+            (
+                read_server,
+                read_tool,
+                write_server,
+                write_tool,
+                read_operation,
+                write_operation,
+            ),
+            (),
+        )
+        if any(
+            not _result_constraint_matches(
+                read_result_identifiers.get(constraint["path"]),
+                constraint["equals"],
+                constraint["comparison"],
+            )
+            for constraint in constraints
+        ):
+            return False
         return True
 
 
@@ -444,6 +517,18 @@ def _target_value(targets: dict[str, object], expected_key: str) -> object:
         if key.replace("_", "-").casefold() == normalized_expected:
             return value
     return None
+
+
+def _result_constraint_matches(
+    actual: object,
+    expected: str,
+    comparison: str,
+) -> bool:
+    if not isinstance(actual, str):
+        return False
+    if comparison == "casefold":
+        return actual.casefold() == expected.casefold()
+    return actual == expected
 
 
 def _normalized_shared_targets(
