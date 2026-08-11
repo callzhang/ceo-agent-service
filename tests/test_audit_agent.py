@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_context import AgentTaskContext, AuditTurnContext, MaterialReference
+from app.agent_context import (
+    AgentTaskContext,
+    AuditTurnContext,
+    MaterialReference,
+    _AUDIT_AGENT_RULES,
+)
 from app.agent_contracts import AuditAgentResult, ConsumerProposal, ProposedAction
 from app.agent_effects import EffectKind, McpToolEffectRegistry
 from app.agent_turn_runner import (
@@ -19,7 +24,6 @@ from app.agent_turn_runner import (
 from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_wire_contracts import AuditAgentWireResult
 from app.audit_agent import (
-    AUDIT_SKILL_HANDOFF_INSTRUCTION,
     AuditAgentRunner,
     _expected_effect_action,
     _recovery_authorizations,
@@ -30,6 +34,7 @@ from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
+from tests.prompt_structure import validate_prompt_structure
 
 
 class CapturingExecutor:
@@ -88,23 +93,25 @@ class ExactReceiptExecutor(CapturingExecutor):
 
 def test_audit_composed_instructions_are_skill_first_and_schema_authoritative():
     audit_rules = "AUDIT-RULE-SENTINEL: preserve the candidate meaning."
-
-    instructions = audit_developer_instructions(
-        "Audit Agent B executes accepted candidates.\n\n" + audit_rules
+    instructions = (
+        audit_developer_instructions(audit_rules)
+        + "\n\n"
+        + _AUDIT_AGENT_RULES
+        + "\n\n## Context Facts\nsynthetic context"
     )
 
-    wire_schema = json.dumps(
-        AuditAgentWireResult.model_json_schema(),
-        ensure_ascii=False,
-        separators=(",", ":"),
+    validate_prompt_structure(
+        instructions,
+        contract_models=(
+            ("Pydantic Wire Contract", AuditAgentWireResult),
+            ("Pydantic Result Contract", AuditAgentResult),
+        ),
+        require_audit_rules=True,
+        require_context_facts=True,
+        size_limit=12_000,
     )
     assert audit_rules in instructions
-    assert wire_schema in instructions
-    assert instructions.count("agent_cli.read_skill") == 1
-    assert "OA approval work" not in instructions
-    assert "candidate interview" not in instructions
-    assert "memory_write" not in instructions
-    assert len(instructions) < 12_000
+    assert "Reread the exact verified Consumer Skill receipts" in instructions
 
 
 def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
@@ -128,9 +135,10 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
 
 
 def test_audit_developer_instructions_define_wire_json_field_shapes():
-    instructions = audit_developer_instructions("Audit role test")
+    instructions = audit_developer_instructions("Verify every supported fact.")
 
-    assert "current Pydantic wire output contract is authoritative" in instructions
+    assert "## Pydantic Wire Contract" in instructions
+    assert "## Pydantic Result Contract" in instructions
     assert '"external_result_json"' in instructions
     assert '"reconciliation_json"' in instructions
     assert '"side_effect_state"' in instructions
@@ -139,13 +147,12 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
 
 
 def test_audit_instructions_require_receipt_sha_comparison_and_fail_closed_review():
-    instructions = audit_developer_instructions("Audit role test")
+    instructions = audit_developer_instructions("Verify every supported fact.")
 
-    assert "Reread every verified Consumer Skill receipt" in instructions
-    assert "verify its digest" in instructions
-    assert "load every required operation Skill" in instructions
-    assert "missing or changed" in instructions
-    assert "return revision_required" in instructions
+    assert "Reread the exact verified Consumer Skill receipts" in instructions
+    assert "verify each sha256" in instructions
+    assert "required operation Skills" in instructions
+    assert instructions.count("[dynamic-skill]") == 1
 
 
 def _wire_result(result: dict[str, object]) -> dict[str, object]:
@@ -694,14 +701,12 @@ def test_scripted_audit_voluntarily_requires_revision_without_applicable_skill(s
 
 
 def test_audit_instructions_require_dynamic_skill_reread_before_execution():
-    instructions = AUDIT_SKILL_HANDOFF_INSTRUCTION
+    instructions = audit_developer_instructions("test rules")
 
-    assert "Verified Consumer Skill receipts" in instructions
-    assert "verify its sha256" in instructions
-    assert "every operation Skill it requires" in instructions
-    assert "before accepting or executing" in instructions
-    assert "OA approval work" not in instructions
-    assert "candidate interview" not in instructions
+    assert "Reread the exact verified Consumer Skill receipts" in instructions
+    assert "verify each sha256" in instructions
+    assert "required operation Skills" in instructions
+    assert instructions.count("[dynamic-skill]") == 1
 
 
 def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):
@@ -771,10 +776,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill", "read_spreadsheet"]' in command
     assert 'web_search="disabled"' not in command
-    assert any(
-        "current Pydantic wire output contract is authoritative" in option
-        for option in command
-    )
+    assert any("## Pydantic Wire Contract" in option for option in command)
     assert any("AuditAgentWireResult" in option for option in command)
     assert any("agent_cli.read_skill" in option for option in command)
     assert "every write command remain forbidden for Consumer" not in " ".join(command)
@@ -850,7 +852,8 @@ def test_dry_run_audit_command_exposes_only_reviewed_read_tools(setup):
     assert "execute_reviewed_write" not in command
     assert 'approval_policy="never"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
-    assert any("dry_run_execution_suppressed" in item for item in command)
+    assert "dry_run_execution_suppressed" in executor.prompts[0]
+    assert "dry_run_execution_suppressed" not in " ".join(command)
 
 
 def test_audit_reads_current_audit_rules_for_each_turn(

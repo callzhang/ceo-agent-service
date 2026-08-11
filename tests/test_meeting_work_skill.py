@@ -66,7 +66,7 @@ def test_canonical_prompt_delegates_meeting_policy_to_skill():
     assert "如果新消息或引用涉及“静默会”、AI 听记、会议纪要链接或会议材料" not in text
     assert "most specific applicable business Skill" in text
     assert "agent_cli.read_skill" in text
-    assert "return only matching JSON" in text
+    assert "2. [output_contracts] Output Contracts:" in text
 
 
 def test_meeting_work_skill_has_no_command_catalog_or_output_schema():

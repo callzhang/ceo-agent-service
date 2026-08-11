@@ -1,5 +1,4 @@
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -32,6 +31,7 @@ from app.prompt import (
     work_profile_instruction,
 )
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS
+from tests.prompt_structure import validate_prompt_structure
 
 
 CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会议进行了修改，您是否已完成审核？是否可以定稿了？
@@ -177,29 +177,15 @@ def test_default_developer_prompt_template_is_a_separate_file():
 
 
 def test_canonical_default_prompt_keeps_only_runtime_invariants_and_skill_loading():
-    template = read_developer_prompt_template()
+    template = render_developer_prompt_template(read_developer_prompt_template())
 
-    assert "Consumer Agent A" in template
-    assert "Audit Agent B" in template
-    assert "Pydantic output contract" in template
-    assert "unsupported facts or targets" in template
-    assert "corrected revision" in template
-    assert "read-only reconciliation" in template
-    assert template.count("agent_cli.read_skill") == 1
-    for migrated_term in (
-        "日历",
-        "审批",
-        "OKR",
-        "候选人",
-        "会议",
-        "邮件",
-        "memory_write",
-        "memory_recall",
-        "personnel_subject_user_id",
-    ):
-        assert migrated_term.casefold() not in template.casefold()
-    assert re.search(r"\bOA\b", template, re.IGNORECASE) is None
-    assert len(template) < 3_000
+    validate_prompt_structure(
+        template,
+        contract_models=(),
+        require_audit_rules=False,
+        require_context_facts=False,
+        size_limit=3_000,
+    )
 
 
 def test_developer_prompt_delegates_memory_operations_to_installed_skills():
@@ -208,8 +194,7 @@ def test_developer_prompt_delegates_memory_operations_to_installed_skills():
     assert "memory_connector" not in template
     assert "memory_recall" not in template
     assert "memory_write" not in template
-    assert "unavailable Memory dependency is a dependency result" in template
-    assert "never a trigger for login" in template
+    assert "unavailable Memory dependency never triggers login" in template
 
 
 def test_personnel_skill_keeps_business_facts_out_of_personnel_sensitivity():

@@ -105,7 +105,7 @@ def _native_consumer(
         output_schema_path=SCHEMA_PATH,
         approval_policy="never",
         developer_instructions=consumer_developer_instructions(
-            "You are Consumer Agent A. Perform business judgment from verified evidence."
+            "Perform business judgment only from verified evidence."
         ),
         use_approval_bypass=False,
     )

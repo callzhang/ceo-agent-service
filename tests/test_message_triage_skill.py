@@ -82,7 +82,7 @@ def test_canonical_prompt_delegates_message_triage_judgment_to_skill():
     assert "有些消息不需要正式文字回复，但适合轻量表达态度" not in text
     assert "most specific applicable business Skill" in text
     assert "agent_cli.read_skill" in text
-    assert "return only matching JSON" in text
+    assert "2. [output_contracts] Output Contracts:" in text
 
 
 def test_message_triage_skill_has_no_command_catalog_or_python_router():

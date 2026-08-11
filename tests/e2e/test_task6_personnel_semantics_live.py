@@ -249,7 +249,7 @@ def _native_consumer(tmp_path: Path, case: SemanticCase):
         output_schema_path=SCHEMA_PATH,
         approval_policy="never",
         developer_instructions=consumer_developer_instructions(
-            "You are Consumer Agent A. Select Skills from meaning and enforce audience privacy."
+            "Select Skills from meaning and enforce audience privacy."
         ),
         use_approval_bypass=False,
     )

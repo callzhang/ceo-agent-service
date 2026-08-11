@@ -11,8 +11,9 @@ from app.codex_runner import (
     memory_connector_config_issue,
 )
 from app.codex_decision import CodexDecisionRunner
-from app.dingtalk_models import CodexAction
+from app.dingtalk_models import CodexAction, CodexDecision
 from app.dws_client import DWS_AGENT_CODE_ENV
+from tests.prompt_structure import validate_prompt_structure
 
 
 @pytest.fixture(autouse=True)
@@ -220,10 +221,10 @@ def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
     assert "not_authenticated" in instructions
     assert "exit code 2" in instructions
     assert "DWS login/tool issue" in instructions
-    assert "not as missing material" in instructions
-    assert "Never run `dws auth login`" in instructions
+    assert "Dependency Authentication" in instructions
+    assert "Never run login, reset, or logout" in instructions
     assert "AGENT_CODE_NOT_EXISTS" in instructions
-    assert "do not start a login flow" in instructions
+    assert "unavailable Memory dependency never triggers login" in instructions
 
 
 def test_codex_runner_blocks_reply_when_only_dws_material_read_fails(tmp_path: Path):
@@ -305,29 +306,20 @@ def test_codex_developer_instructions_leave_read_options_to_operation_skills():
     instructions = codex_developer_instructions()
 
     assert "--timeout 900" not in instructions
-    assert "Operation discovery and syntax belong to the loaded operation Skill" in instructions
+    assert "read every operation Skill it requires" in instructions
+    assert instructions.count("[dynamic-skill]") == 1
 
 
 def test_codex_composed_prompt_keeps_runtime_invariants_not_domain_workflows():
     instructions = codex_developer_instructions()
 
-    assert "Pydantic output contract" in instructions
-    assert "unsupported facts or targets" in instructions
-    assert "corrected revision" in instructions
-    assert "read-only reconciliation" in instructions
-    assert instructions.count("agent_cli.read_skill") == 1
-    for migrated_term in (
-        "Xiaoqing interview",
-        "calendar_response_status",
-        "queue_okr_review",
-        "OA approval",
-        "memory_write",
-        "memory_recall",
-        "meeting",
-        "mail handling",
-    ):
-        assert migrated_term.casefold() not in instructions.casefold()
-    assert len(instructions) < 5_000
+    validate_prompt_structure(
+        instructions,
+        contract_models=(("Pydantic Wire/Result Contract", CodexDecision),),
+        require_audit_rules=False,
+        require_context_facts=False,
+        size_limit=5_000,
+    )
 
 
 def test_codex_developer_instructions_leave_interview_workflow_to_skills():
@@ -515,8 +507,7 @@ def test_codex_command_treats_native_memory_oauth_as_runtime_owned(
 
     assert not any("mcp_servers.memory_connector" in item for item in command)
     assert memory_connector_config_issue() == ""
-    assert "Memory dependency is a dependency result" in developer_arg
-    assert "never a trigger for login" in developer_arg
+    assert "unavailable Memory dependency never triggers login" in developer_arg
 
 
 def test_codex_command_does_not_auto_fallback_to_configured_profile(
@@ -648,10 +639,11 @@ def test_codex_runner_does_not_forward_dws_oauth_override_env(
     assert "DINGTALK_APP_SECRET" not in env
 
 
-def test_codex_developer_instructions_include_runtime_dependency_guidance():
+def test_codex_developer_instructions_fold_dependency_guidance_into_invariant_eight():
     instructions = codex_developer_instructions()
 
-    assert "Runtime dependency handling" in instructions
+    assert "Runtime dependency handling" not in instructions
+    assert "8. [dependency_auth] Dependency Authentication:" in instructions
 
 
 def test_codex_developer_instructions_delegate_operation_syntax_to_skills():
@@ -664,11 +656,11 @@ def test_codex_developer_instructions_delegate_operation_syntax_to_skills():
     assert "dws doc info --node" not in instructions
     assert "dws doc read --node" not in instructions
     assert "dws minutes get info --id" not in instructions
-    assert "Use the exact read command supplied in the task context" in instructions
-    assert "Operation discovery and syntax belong to the loaded operation Skill" in instructions
-    assert "classify it as a DWS login/tool issue" in instructions
-    assert "classify it as DWS authorization/configuration unavailable" in instructions
-    assert "Do not expose tokens" in instructions
+    assert "Use the exact read command supplied in the task context" not in instructions
+    assert "read every operation Skill it requires" in instructions
+    assert "as a DWS login/tool issue" in instructions
+    assert "as DWS authorization/configuration unavailable" in instructions
+    assert "External Secrecy" in instructions
 
 
 def test_builds_new_thread_command(tmp_path: Path):
@@ -787,7 +779,7 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message(monkey
     )
     instructions = codex_developer_instructions()
 
-    assert instructions.startswith("You are the local CEO agent worker.")
+    assert instructions.startswith("## Role\n")
     assert "Consumer Agent A is 明哥's read-only representative" in instructions
     assert "agent_cli.read_skill" in instructions
     assert "星尘数据的CEO，负责算法部、售前部、市场部、HR部的工作。" not in instructions

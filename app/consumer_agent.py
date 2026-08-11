@@ -16,7 +16,6 @@ from app.agent_contracts import (
     AuditFeedback,
     ConsumerAgentResult,
     ConsumerOutcome,
-    ConsumerProposal,
 )
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
@@ -35,11 +34,7 @@ from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_com
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "consumer_agent_wire.schema.json"
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
-DYNAMIC_SKILL_INSTRUCTION = (
-    "Select and load the most specific applicable business Skill with "
-    "`agent_cli.read_skill`, then load every operation Skill it requires; follow "
-    "those Skills for evidence, judgment, action shape, and verification."
-)
+DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 
 
 def consumer_wire_contract_hash() -> str:
@@ -217,14 +212,12 @@ class ConsumerAgentRunner:
                         proposal_revision=proposal_revision,
                         feedback=feedback,
                     )
-                    + "\n\n"
-                    + _consumer_proposal_contract()
                 ),
                 session_id=session_id,
                 schema_path=SCHEMA_PATH,
                 expected_schema=ConsumerAgentWireResult.model_json_schema(),
                 developer_instructions=consumer_developer_instructions(
-                    "Consumer Agent A is read-only.\n\n" + rendered_rules
+                    rendered_rules
                 ),
                 configure_command=lambda command: make_consumer_agent_command(
                     command,
@@ -275,67 +268,62 @@ class ConsumerAgentRunner:
             raise
 
 
-def consumer_developer_instructions(role_instruction: str) -> str:
-    instructions = _role_developer_instructions(
-        role_instruction,
-        capability_instructions=DYNAMIC_SKILL_INSTRUCTION,
-    )
-    return (
-        f"{instructions}\n\n{_wire_contract(ConsumerAgentWireResult)}"
-        f"\n\n{_consumer_proposal_contract()}"
-    )
-
-
-def _consumer_proposal_contract() -> str:
-    proposal_schema = json.dumps(
-        ConsumerProposal.model_json_schema(),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return (
-        "For proposal outcome, proposal_json must decode to this JSON Schema exactly. "
-        "Use this current contract instead of proposal shapes from earlier turns:\n"
-        f"{proposal_schema}"
-    )
-
-
-def audit_developer_instructions(role_instruction: str) -> str:
-    instructions = _role_developer_instructions(
-        role_instruction,
-        capability_instructions=(
-            "Reread every verified Consumer Skill receipt with `agent_cli.read_skill`, "
-            "verify its digest, and load every required operation Skill before review "
-            "or execution; return revision_required when Skill evidence is missing or changed."
+def consumer_developer_instructions(audit_rules: str) -> str:
+    return _role_developer_instructions(
+        role="Consumer Agent A is Derek's read-only representative.",
+        audit_rules=audit_rules,
+        skill_instruction=(
+            "Select and read the most specific applicable business Skill with "
+            "`agent_cli.read_skill`, then read every operation Skill it requires."
         ),
-    )
-    result_schema = json.dumps(
-        AuditAgentResult.model_json_schema(),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return (
-        f"{instructions}\n\n{_wire_contract(AuditAgentWireResult)}\n\n"
-        "The decoded Audit result must match this current Pydantic contract:\n"
-        f"{result_schema}"
+        wire_model=ConsumerAgentWireResult,
+        result_model=ConsumerAgentResult,
     )
 
 
-def _wire_contract(model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult]) -> str:
-    schema = json.dumps(
-        model.model_json_schema(),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return (
-        "The current Pydantic wire output contract is authoritative. Return one JSON "
-        "object matching this schema exactly:\n"
-        f"{schema}"
+def audit_developer_instructions(audit_rules: str) -> str:
+    return _role_developer_instructions(
+        role="Audit Agent B independently reviews and executes accepted candidates.",
+        audit_rules=audit_rules,
+        skill_instruction=(
+            "Reread the exact verified Consumer Skill receipts supplied in Context "
+            "Facts with `agent_cli.read_skill`, verify each sha256, and read all "
+            "required operation Skills before review or execution."
+        ),
+        wire_model=AuditAgentWireResult,
+        result_model=AuditAgentResult,
     )
 
 
 def _role_developer_instructions(
-    role_instruction: str,
     *,
-    capability_instructions: str,
+    role: str,
+    audit_rules: str,
+    skill_instruction: str,
+    wire_model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
+    result_model: type[ConsumerAgentResult] | type[AuditAgentResult],
 ) -> str:
-    return role_instruction + "\n\n" + capability_instructions
+    return "\n\n".join(
+        (
+            f"## Role\n{role}",
+            f"## Audit Rules\n{audit_rules}",
+            f"## Dynamic Skill\n{DYNAMIC_SKILL_MARKER} {skill_instruction}",
+            f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
+            f"## Pydantic Result Contract\n{_schema_json(result_model)}",
+        )
+    )
+
+
+def _schema_json(
+    model: type[
+        ConsumerAgentWireResult
+        | AuditAgentWireResult
+        | ConsumerAgentResult
+        | AuditAgentResult
+    ],
+) -> str:
+    return json.dumps(
+        model.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )

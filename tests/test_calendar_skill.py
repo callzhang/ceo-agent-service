@@ -66,7 +66,7 @@ def test_developer_prompts_delegate_calendar_policy_to_business_skills():
     assert "agent_cli.read_skill" in text
     assert "最具体适用的业务 Skill" not in text
     assert "Pydantic output contract" in text
-    assert "return only matching JSON" in text
+    assert "2. [output_contracts] Output Contracts:" in text
     assert "user_response.mode 必须是" not in text
 
 

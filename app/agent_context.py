@@ -92,7 +92,7 @@ class AgentTaskContext:
         ]
         if feedback is not None:
             sections.append(
-                "Audit feedback requiring a complete replacement proposal\n"
+                "### Audit Feedback Requiring A Replacement Proposal\n"
                 + _json(
                     {
                         "proposal_revision": proposal_revision,
@@ -102,7 +102,12 @@ class AgentTaskContext:
             )
         return "\n\n".join(sections)
 
-    def render_business_context(self, *, current_time: str | None = None) -> str:
+    def render_business_context(
+        self,
+        *,
+        current_time: str | None = None,
+        include_heading: bool = True,
+    ) -> str:
         trigger = {
             "task_id": self.task_id,
             "channel": self.channel,
@@ -183,7 +188,8 @@ class AgentTaskContext:
                     }
                 )
             )
-        return "\n\n".join(sections)
+        body = "\n\n".join(sections)
+        return f"## Context Facts\n{body}" if include_heading else body
 
 
 @dataclass(frozen=True)
@@ -196,10 +202,12 @@ class AuditTurnContext:
     consumer_skills: tuple[LoadedSkillReceipt, ...] = ()
 
     def render(self, *, current_time: str | None = None) -> str:
-        return "\n\n".join(
+        context_facts = "\n\n".join(
             (
-                _AUDIT_AGENT_RULES,
-                self.task.render_business_context(current_time=current_time),
+                self.task.render_business_context(
+                    current_time=current_time,
+                    include_heading=False,
+                ),
                 "Verified Skills read by Consumer A\n"
                 + _json(
                     [
@@ -221,6 +229,7 @@ class AuditTurnContext:
                 ),
             )
         )
+        return f"{_AUDIT_AGENT_RULES}\n\n## Context Facts\n{context_facts}"
 
 
 def _json(value: object) -> str:
@@ -231,25 +240,23 @@ def _current_local_time() -> str:
     return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
 
 
-_CONSUMER_AGENT_RULES = """Consumer Agent A runtime invariants
+_CONSUMER_AGENT_RULES = """## Runtime Invariants
+1. [role_boundary] Role Boundary: Consumer Agent A is Derek's read-only representative; Audit Agent B is the only executor.
+2. [output_contracts] Output Contracts: The supplied Pydantic output contracts and field combinations are authoritative.
+3. [supported_facts] Supported Facts: Reuse supplied facts; do not ask for confirmed facts again or invent unsupported facts or targets.
+4. [meaning_preservation] Meaning Preservation: A cannot write, and B cannot change A's business meaning.
+5. [duplicate_effects] Duplicate Effects: Suppress exact duplicate effects; a corrected revision remains executable.
+6. [unknown_effects] Unknown Effects: Unknown effects require read-only reconciliation and never blind replay.
+7. [external_secrecy] External Secrecy: Credentials and runtime internals never enter external messages or persisted summaries.
+8. [dependency_auth] Dependency Authentication: Surface authentication and dependency failures as dependency results; classify DWS not_authenticated or exit code 2 as a DWS login/tool issue, and AGENT_CODE_NOT_EXISTS, openBrowser, personalAuthorization, or PAT permission failure as DWS authorization/configuration unavailable. Never run login, reset, or logout; an unavailable Memory dependency never triggers login."""
 
-1. Consumer Agent A is Derek's read-only representative; Audit Agent B is the only executor.
-2. The supplied Pydantic output contracts and field combinations are authoritative.
-3. Reuse supplied facts; do not ask for confirmed facts again or invent unsupported facts or targets.
-4. A cannot write, and B cannot change A's business meaning.
-5. Suppress exact duplicate effects; a corrected revision remains executable.
-6. Unknown effects require read-only reconciliation and never blind replay.
-7. Credentials and runtime internals never enter external messages or persisted summaries.
-8. Surface authentication failures; never run login, reset, or logout. An unavailable Memory dependency is a dependency result and never a trigger for login."""
 
-
-_AUDIT_AGENT_RULES = """Audit Agent B runtime invariants
-
-1. Consumer Agent A is Derek's read-only representative; Audit Agent B is the only executor and executes only an accepted candidate.
-2. The supplied Pydantic output contracts and field combinations are authoritative.
-3. Reuse supplied facts; do not invent unsupported facts or targets.
-4. A cannot write, and B cannot change A's business meaning; request a revision instead.
-5. Suppress exact duplicate effects; a corrected revision remains executable.
-6. Unknown effects require read-only reconciliation and never blind replay.
-7. Credentials and runtime internals never enter external messages or persisted summaries.
-8. Surface authentication failures; never run login, reset, or logout. An unavailable Memory dependency is a dependency result and never a trigger for login."""
+_AUDIT_AGENT_RULES = """## Runtime Invariants
+1. [role_boundary] Role Boundary: Consumer Agent A is Derek's read-only representative; Audit Agent B is the only executor and executes only an accepted candidate.
+2. [output_contracts] Output Contracts: The supplied Pydantic output contracts and field combinations are authoritative.
+3. [supported_facts] Supported Facts: Reuse supplied facts; do not invent unsupported facts or targets.
+4. [meaning_preservation] Meaning Preservation: A cannot write, and B cannot change A's business meaning; request a revision instead.
+5. [duplicate_effects] Duplicate Effects: Suppress exact duplicate effects; a corrected revision remains executable.
+6. [unknown_effects] Unknown Effects: Unknown effects require read-only reconciliation and never blind replay.
+7. [external_secrecy] External Secrecy: Credentials and runtime internals never enter external messages or persisted summaries.
+8. [dependency_auth] Dependency Authentication: Surface authentication and dependency failures as dependency results; classify DWS not_authenticated or exit code 2 as a DWS login/tool issue, and AGENT_CODE_NOT_EXISTS, openBrowser, personalAuthorization, or PAT permission failure as DWS authorization/configuration unavailable. Never run login, reset, or logout; an unavailable Memory dependency never triggers login."""

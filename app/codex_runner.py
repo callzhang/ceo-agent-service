@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from app.dws_client import dws_noninteractive_environment
+from app.dingtalk_models import CodexDecision
 from app.prompt import ceo_agent_thread_prompt
 
 
@@ -12,16 +13,6 @@ CODEX_DECISION_SCHEMA_PATH = (
 AGENT_ENVELOPE_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "agent_envelope.schema.json"
 )
-CODEX_DEVELOPER_INSTRUCTIONS_PREFIX = "You are the local CEO agent worker."
-RUNTIME_DEPENDENCY_INSTRUCTIONS = """Runtime dependency handling
-
-- Use the exact read command supplied in the task context without rewriting or substituting it.
-- Operation discovery and syntax belong to the loaded operation Skill.
-- Never run `dws auth login`, `dws auth reset`, `dws auth logout`, or any command that asks for interactive/browser authorization.
-- If DWS reports not_authenticated, not authenticated, exit code 2, or a login/session problem, classify it as a DWS login/tool issue, not as missing material from the sender.
-- If DWS reports AGENT_CODE_NOT_EXISTS, openBrowser, personalAuthorization, PAT permission failure, or a CLI authorization page, stop that tool path and classify it as DWS authorization/configuration unavailable; do not retry the command and do not start a login flow.
-- Do not expose tokens, cookies, OAuth codes, signed URLs, local credential paths, or raw secret-bearing commands.
-""".strip()
 # The CEO worker owns DWS readiness and authorization gating. Codex exec resume
 # does not support `-s`, so use the explicit bypass flag for both new and resumed
 # decision threads.
@@ -40,11 +31,12 @@ DEFAULT_CODEX_MODEL_REASONING_EFFORT = "medium"
 
 
 def codex_developer_instructions() -> str:
-    return (
-        f"{CODEX_DEVELOPER_INSTRUCTIONS_PREFIX}\n\n"
-        f"{RUNTIME_DEPENDENCY_INSTRUCTIONS}\n\n"
-        f"{ceo_agent_thread_prompt()}"
+    schema = json.dumps(
+        CodexDecision.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
+    return f"{ceo_agent_thread_prompt()}\n\n## Pydantic Wire/Result Contract\n{schema}"
 
 
 def _config_string(key: str, value: object) -> str:

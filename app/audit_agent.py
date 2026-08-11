@@ -37,11 +37,6 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
 
-AUDIT_SKILL_HANDOFF_INSTRUCTION = (
-    "Verified Consumer Skill receipts are mandatory review evidence. Reread each "
-    "supplied path, verify its sha256, and load every operation Skill it requires "
-    "before accepting or executing the proposal."
-)
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 
 
@@ -331,19 +326,29 @@ class AuditAgentRunner:
             codex_bin=self.codex_bin,
             mcp_effect_registry=self.effects,
         )
+        turn_prompt = (
+            _recovery_prompt(run, context, expected_effect_actions, self.effects)
+            if recovery_phase == "reconcile"
+            else _recovery_execute_prompt(
+                run,
+                context,
+                recovery_authorizations,
+            )
+            if recovery_phase == "execute"
+            else context.render()
+        )
+        if self.dry_run:
+            turn_prompt += (
+                "\n\n### Dry Run Context\n"
+                "Use read-only tools to complete the independent review. Return "
+                "revision_required normally when the candidate must change. When "
+                "the candidate is executable but execution is suppressed only by "
+                "dry-run, return needs_human with error code "
+                "dry_run_execution_suppressed and side_effect_state none."
+            )
         return process.execute(
             run=run,
-            prompt=(
-                _recovery_prompt(run, context, expected_effect_actions, self.effects)
-                if recovery_phase == "reconcile"
-                else _recovery_execute_prompt(
-                    run,
-                    context,
-                    recovery_authorizations,
-                )
-                if recovery_phase == "execute"
-                else context.render()
-            ),
+            prompt=turn_prompt,
             # A recovery has complete persisted task, proposal, and operation
             # context. Do not resume an interrupted execution thread: a terminal
             # Codex session cannot produce the independent read-only evidence that
@@ -353,32 +358,7 @@ class AuditAgentRunner:
             schema_path=SCHEMA_PATH,
             expected_schema=AuditAgentWireResult.model_json_schema(),
             developer_instructions=audit_developer_instructions(
-                "Audit Agent B independently reviews and executes accepted candidates.\n\n"
-                + AUDIT_SKILL_HANDOFF_INSTRUCTION
-                + "\n\n"
-                + (
-                    "This is recovery of an unknown external outcome in a fresh, isolated "
-                    "Audit session. This phase is strictly read-only: reconcile live state for "
-                    "each exact operation and return outcome reconciled with structured "
-                    "per-action dispositions. Never execute or replay a write in this "
-                    "phase; a later turn will consume persisted absent dispositions.\n\n"
-                    if recovery_phase == "reconcile"
-                    else "This is recovery execution in a fresh, isolated Audit session. Execute "
-                    "only the action indexes that the persisted reconciliation proved "
-                    "absent. Do not repeat present or ambiguous actions.\n\n"
-                    if recovery_phase == "execute"
-                    else ""
-                )
-                + (
-                    "Dry-run is active. Use read-only tools to complete the independent "
-                    "review. Return revision_required normally when the candidate must "
-                    "change. When the candidate is executable but execution is suppressed "
-                    "only by dry-run, return needs_human with error code "
-                    "dry_run_execution_suppressed and side_effect_state none.\n\n"
-                    if self.dry_run
-                    else ""
-                )
-                + rendered_rules
+                rendered_rules
             ),
             configure_command=lambda command: make_audit_agent_command(
                 command,
@@ -712,7 +692,7 @@ def _recovery_prompt(
             "persisted receipt already confirms them, return needs_human."
         )
     return (
-        f"{context.render()}\n\nUnknown outcome recovery: {identity}{guidance}\n"
+        f"{context.render()}\n\n### Unknown Outcome Recovery\n{identity}{guidance}\n"
         "For every unresolved action that has a configured readback, return one "
         "reconciliation entry with its action_index, a disposition of present, "
         "absent, or ambiguous, and the exact result_digest from the matching live "
@@ -722,9 +702,8 @@ def _recovery_prompt(
         "reconciled with side_effect_state unknown and no external_result. "
         "reconciliation_json must be a JSON-encoded array whose entries contain "
         "exactly action_index, disposition, and read_result_digest. Do not wrap the "
-        "array in an operation_id/entries object. Before any DWS read, load the "
-        "operation-specific installed skill with agent_cli.read_skill; an unknown "
-        "readback command is an evidence task, not a reason to fail or escalate. "
+        "array in an operation_id/entries object. An unknown readback command is an "
+        "evidence task, not a reason to fail or escalate. "
         "Use a target-scoped read with the same stable target identifier as the "
         "original action, such as group/conversation, user/open-dingtalk-id, "
         "instance-id/task-id, or uuid. Do not replace a target-scoped read with a "

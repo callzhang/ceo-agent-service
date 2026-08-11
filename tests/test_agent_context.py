@@ -1,3 +1,5 @@
+import pytest
+
 from app.agent_context import (
     AgentContextMessage,
     AgentTaskContext,
@@ -10,39 +12,65 @@ from app.agent_context import (
 )
 from app.agent_contracts import ConsumerProposal
 from app.agent_skill_usage import LoadedSkillReceipt
-
-
-MIGRATED_DOMAIN_PROMPT_TERMS = (
-    "calendar",
-    "OA work",
-    "internal_personnel",
-    "candidate interview",
-    "meeting minutes",
-    "mail handling",
-    "work tracking",
-)
-
-
-def _assert_core_prompt_boundary(text: str) -> None:
-    assert "Consumer Agent A" in text
-    assert "Audit Agent B" in text
-    assert "Pydantic" in text
-    assert "unsupported facts or targets" in text
-    assert "corrected revision" in text
-    assert "read-only reconciliation" in text
-    assert "credentials and runtime internals" in text.casefold()
-    assert "login, reset, or logout" in text
-    assert "Memory dependency" in text
-    assert all(term.casefold() not in text.casefold() for term in MIGRATED_DOMAIN_PROMPT_TERMS)
-    assert len(text) < 2_500
+from tests.prompt_structure import validate_prompt_structure
 
 
 def test_consumer_core_prompt_contains_only_runtime_invariants():
-    _assert_core_prompt_boundary(_CONSUMER_AGENT_RULES)
+    text = "## Role\nConsumer Agent A\n\n" + _CONSUMER_AGENT_RULES + (
+        "\n\n## Dynamic Skill\n[dynamic-skill] test"
+    )
+    validate_prompt_structure(
+        text,
+        contract_models=(),
+        require_audit_rules=False,
+        require_context_facts=False,
+        size_limit=2_500,
+    )
 
 
 def test_audit_core_prompt_contains_only_runtime_invariants():
-    _assert_core_prompt_boundary(_AUDIT_AGENT_RULES)
+    text = "## Role\nAudit Agent B\n\n" + _AUDIT_AGENT_RULES + (
+        "\n\n## Dynamic Skill\n[dynamic-skill] test"
+    )
+    validate_prompt_structure(
+        text,
+        contract_models=(),
+        require_audit_rules=False,
+        require_context_facts=False,
+        size_limit=2_500,
+    )
+
+
+def test_prompt_structure_rejects_synthetic_ninth_policy():
+    text = "## Role\nConsumer Agent A\n\n" + _CONSUMER_AGENT_RULES + (
+        "\n9. [extra_policy] Extra Policy: must not load globally."
+        "\n\n## Dynamic Skill\n[dynamic-skill] test"
+    )
+
+    with pytest.raises(AssertionError):
+        validate_prompt_structure(
+            text,
+            contract_models=(),
+            require_audit_rules=False,
+            require_context_facts=False,
+            size_limit=2_500,
+        )
+
+
+def test_prompt_structure_rejects_unpermitted_policy_section():
+    text = "## Role\nConsumer Agent A\n\n" + _CONSUMER_AGENT_RULES + (
+        "\n\n## Dynamic Skill\n[dynamic-skill] test"
+        "\n\n## Dependency Policy\nextra global policy"
+    )
+
+    with pytest.raises(AssertionError):
+        validate_prompt_structure(
+            text,
+            contract_models=(),
+            require_audit_rules=False,
+            require_context_facts=False,
+            size_limit=2_500,
+        )
 
 
 def _context(
@@ -390,7 +418,7 @@ def test_context_forbids_agent_auth_commands():
 
     assert "dws auth login" not in rendered
     assert "lark auth login" not in rendered
-    assert "never run login, reset, or logout" in rendered
+    assert "Never run login, reset, or logout" in rendered
 
 
 def test_consumer_context_is_read_only_and_reuses_supplied_facts():

@@ -76,7 +76,7 @@ def test_canonical_prompt_delegates_document_review_judgment_to_skill():
     assert "普通钉钉文件不同于钉钉在线文档" not in text
     assert "most specific applicable business Skill" in text
     assert "agent_cli.read_skill" in text
-    assert "return only matching JSON" in text
+    assert "2. [output_contracts] Output Contracts:" in text
 
 
 def test_document_review_skill_has_no_command_catalog_or_python_router():

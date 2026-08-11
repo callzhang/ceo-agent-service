@@ -66,7 +66,7 @@ def test_canonical_prompt_delegates_mail_policy_to_skill():
     assert "决策 agent 不得直接发送邮件" not in text
     assert "most specific applicable business Skill" in text
     assert "agent_cli.read_skill" in text
-    assert "return only matching JSON" in text
+    assert "2. [output_contracts] Output Contracts:" in text
 
 
 def test_mail_review_skill_has_no_command_catalog_or_output_schema():

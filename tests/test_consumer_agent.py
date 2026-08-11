@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_context import AgentTaskContext
-from app.agent_contracts import ConsumerProposal
+from app.agent_context import AgentTaskContext, _CONSUMER_AGENT_RULES
+from app.agent_contracts import ConsumerAgentResult
 from app.consumer_agent import (
     ConsumerAgentRunner,
     consumer_developer_instructions,
@@ -19,6 +19,7 @@ from app.native_cli_metadata import (
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
+from tests.prompt_structure import validate_prompt_structure
 
 
 class CapturingExecutor:
@@ -62,30 +63,25 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
 
 def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative():
     audit_rules = "AUDIT-RULE-SENTINEL: verify supported facts."
-
-    instructions = consumer_developer_instructions(
-        "Consumer Agent A is read-only.\n\n" + audit_rules
+    instructions = (
+        consumer_developer_instructions(audit_rules)
+        + "\n\n"
+        + _CONSUMER_AGENT_RULES
+        + "\n\n## Context Facts\nsynthetic context"
     )
 
-    wire_schema = json.dumps(
-        ConsumerAgentWireResult.model_json_schema(),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    proposal_schema = json.dumps(
-        ConsumerProposal.model_json_schema(),
-        ensure_ascii=False,
-        separators=(",", ":"),
+    validate_prompt_structure(
+        instructions,
+        contract_models=(
+            ("Pydantic Wire Contract", ConsumerAgentWireResult),
+            ("Pydantic Result Contract", ConsumerAgentResult),
+        ),
+        require_audit_rules=True,
+        require_context_facts=True,
+        size_limit=12_000,
     )
     assert audit_rules in instructions
-    assert wire_schema in instructions
-    assert proposal_schema in instructions
-    assert instructions.count("agent_cli.read_skill") == 1
-    assert "OA approval work" not in instructions
-    assert "candidate interview" not in instructions
-    assert "Before proposing a DingTalk message send" not in instructions
-    assert "memory_write" not in instructions
-    assert len(instructions) < 12_000
+    assert "Select and read" in instructions
 
 
 def _result_jsonl(*, session: str = "session-a") -> str:
@@ -138,9 +134,12 @@ def _proposal_jsonl(payload: dict[str, object]) -> str:
 
 
 def test_consumer_instructions_include_the_runtime_proposal_schema():
-    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+    instructions = consumer_developer_instructions("Verify every supported fact.")
 
-    assert "proposal_json must decode to this JSON Schema exactly" in instructions
+    assert "## Pydantic Wire Contract" in instructions
+    assert "## Pydantic Result Contract" in instructions
+    assert '"title":"ConsumerAgentWireResult"' in instructions
+    assert '"title":"ConsumerAgentResult"' in instructions
     assert '"objective"' in instructions
     assert '"sourced_facts"' in instructions
     assert '"authored_judgment"' in instructions
@@ -148,22 +147,22 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
 
 
 def test_consumer_instructions_keep_writes_as_proposal_data():
-    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+    instructions = consumer_developer_instructions("AUDIT-RULE-SENTINEL")
 
-    assert "Consumer Agent A is read-only" in instructions
+    assert "AUDIT-RULE-SENTINEL" in instructions
     assert '"proposal_json"' in instructions
 
 
 def test_consumer_instructions_require_dynamic_business_and_operation_skill_reads():
-    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+    instructions = consumer_developer_instructions("Verify every supported fact.")
 
     assert "most specific applicable business Skill" in instructions
-    assert "load every operation Skill it requires" in instructions
+    assert "read every operation Skill it requires" in instructions
     assert instructions.count("agent_cli.read_skill") == 1
 
 
 def test_consumer_instructions_do_not_enumerate_specialist_workflows():
-    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+    instructions = consumer_developer_instructions("Verify every supported fact.")
 
     assert "OA approval work" not in instructions
     assert "candidate interview or evaluation" not in instructions
@@ -294,15 +293,11 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         for option in command
     )
     assert any("agent_cli.read_skill" in option for option in command)
-    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+    instructions = consumer_developer_instructions("Verify every supported fact.")
     assert "most specific applicable business Skill" in instructions
-    assert any(
-        "current Pydantic wire output contract is authoritative" in option
-        for option in command
-    )
+    assert any("## Pydantic Wire Contract" in option for option in command)
     assert any("ConsumerAgentWireResult" in option for option in command)
-    assert "proposal_json must decode to this JSON Schema exactly" in executor.prompts[0]
-    assert '"expected_verification"' in executor.prompts[0]
+    assert "## Runtime Invariants" in executor.prompts[0]
 
 
 def test_consumer_rotates_session_when_wire_contract_changes(store, task, context):
