@@ -1,6 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
-from app.quality_gate import add_channel_health, scan_hourly_quality, write_hourly_quality_state
+from app.quality_gate import (
+    add_channel_health,
+    required_live_channels,
+    scan_hourly_quality,
+    write_hourly_quality_state,
+)
 from app.cli import WorkerSettings, quality_check_command
 from app.store import AutoReplyStore
 
@@ -27,6 +32,26 @@ def test_quality_gate_fails_closed_when_a_required_source_is_missing(tmp_path):
     assert not report.ok
     assert "reply_tasks" in report.missing_sources
     assert {issue.code for issue in report.violations} == {"source_missing"}
+
+
+def test_required_live_channels_skips_unused_lark_but_includes_referenced_lark(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    _insert_reply_task(store)
+
+    assert required_live_channels(store.path) == frozenset({"codex", "dingtalk"})
+
+    with store._connect() as db:
+        db.execute(
+            """update reply_tasks set trigger_message_json=?
+               where conversation_id='conversation'""",
+            ('{"link":"https://example.larksuite.com/docx/demo"}',),
+        )
+
+    assert required_live_channels(store.path) == frozenset(
+        {"codex", "dingtalk", "lark"}
+    )
 
 
 def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):

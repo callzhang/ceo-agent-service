@@ -1549,6 +1549,7 @@ def quality_check_command(
 ) -> int:
     from app.quality_gate import (
         add_channel_health,
+        required_live_channels,
         scan_hourly_quality,
         write_hourly_quality_state,
     )
@@ -1557,9 +1558,11 @@ def quality_check_command(
     if verify_channels:
         from app.channel_gate import default_channel_gates
 
+        gates = default_channel_gates()
         channel_states = {
-            name: gate.check().state.value
-            for name, gate in default_channel_gates().items()
+            name: gates[name].check().state.value
+            for name in sorted(required_live_channels(settings.db_path))
+            if name in gates
         }
         report = add_channel_health(report, channel_states)
     write_hourly_quality_state(report, state_file)
