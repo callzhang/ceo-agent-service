@@ -171,13 +171,10 @@ class AgentTurnProcess(Generic[ResultT]):
         recovery_phase: str = "",
         authorized_recovery_actions: frozenset[int] = frozenset(),
         recovery_authorizations: dict[str, int] | None = None,
-        recovery_evidence: tuple[dict[str, object], ...] = (),
         allow_effectful_tools: bool = False,
     ) -> AgentTurnRunResult[ResultT]:
         if recovery_phase not in {"", "reconcile", "execute"}:
             raise ValueError("invalid recovery phase")
-        if recovery_evidence and recovery_phase != "reconcile":
-            raise ValueError("recovery evidence requires reconciliation")
         recover_unknown = bool(recovery_phase)
         recovery_authorizations = recovery_authorizations or {}
         line_count = 0
@@ -202,12 +199,6 @@ class AgentTurnProcess(Generic[ResultT]):
         transcript_start = (
             run.transcript_end_line if recover_unknown else run.transcript_start_line
         )
-        for evidence in recovery_evidence:
-            self.store.append_unknown_agent_run_event(
-                run.id,
-                evidence,
-                owner=self.owner,
-            )
 
         def persist_line(line: str) -> None:
             nonlocal line_count, saw_json

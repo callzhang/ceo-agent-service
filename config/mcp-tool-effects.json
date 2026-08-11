@@ -24,18 +24,6 @@
       "effect": "effectful"
     },
     {
-      "server": "service_delivery_ledger",
-      "tool": "sent_reply_exists",
-      "effect": "read_only",
-      "readback_for": [
-        {
-          "server": "agent_cli",
-          "tool": "execute_reviewed_write",
-          "target_match": "shared"
-        }
-      ]
-    },
-    {
       "server": "memory_connector",
       "tool": "user_get",
       "effect": "read_only"
