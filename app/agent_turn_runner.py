@@ -399,6 +399,31 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
                     if not call_id or call_id in completed_effect_call_ids:
                         continue
+                    # Session history contains every MCP call, including
+                    # read-only integrations owned outside this effect registry.
+                    # They are useful audit context but cannot create execution
+                    # evidence here; only a reviewed call may be replayed into
+                    # the durable effect ledger.
+                    call = self.effects.classify(completed_item)
+                    if call is None:
+                        continue
+                    if run.role is AgentRole.CONSUMER:
+                        continue
+                    if recovery_phase != "reconcile" and call.effect is EffectKind.READ_ONLY:
+                        continue
+                    # A session-only read without a controlled receipt cannot
+                    # become audit evidence. Ignore it here; reconciliation
+                    # validation will still reject a result that relies on it.
+                    try:
+                        self._normalized_effect_event(
+                            completed_payload,
+                            read_only=(recovery_phase == "reconcile"),
+                            operation_id=run.operation_id,
+                        )
+                    except AgentReadOnlyViolationError as exc:
+                        if str(exc) != "agent_cli_receipt_invalid":
+                            raise
+                        continue
                     start_payload = {
                         "type": "item.started",
                         "item": {

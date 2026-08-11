@@ -665,6 +665,24 @@ def test_audit_recovers_completed_session_only_dingtalk_receipt(setup, tmp_path,
                     "type": "event_msg",
                     "payload": {
                         "type": "mcp_tool_call_end",
+                        "call_id": "unreviewed-read",
+                        "invocation": {
+                            "server": "unreviewed_integration",
+                            "tool": "read_context",
+                            "arguments": {"candidate_id": "candidate-1"},
+                        },
+                        "result": {
+                            "Ok": {
+                                "content": [{"type": "text", "text": "read"}],
+                                "isError": False,
+                            }
+                        },
+                    },
+                },
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "mcp_tool_call_end",
                         "call_id": "session-write",
                         "invocation": {
                             "server": "agent_cli",
