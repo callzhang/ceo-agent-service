@@ -19,7 +19,7 @@ Load the operation Skill that matches the actual material type before reading, c
 | DingTalk document | `dingtalk-doc` | read current content |
 | DingTalk AI table | `dingtalk-aitable` | never use document read |
 | ordinary file | `matching drive Skill` | use the supplied exact command |
-| image | `matching file or image Skill` | inspect the image before conclusions |
+| image | none for attached input | inspect the image before conclusions |
 | Lark document | `lark-doc` | read current content |
 | Lark table | `lark-base` | read current table data |
 | Lark file | `lark-drive` | use the supplied exact command |
@@ -30,7 +30,7 @@ For DingTalk stored files, the matching drive Skill is `dingtalk-drive`. Load `d
 
 1. Determine the material's real type from its reference and metadata, then load the matching operation Skill. Do not treat a table as a document or choose a read merely because two references look similar.
 2. The agent chooses and performs every content read. The service exposes references and exact read commands but does not interpret business content. For an ordinary file, use the supplied exact download/read command and inspect the downloaded content.
-3. For image material, inspect the actual image before drawing conclusions. A filename, caption, attachment card, or prior description is not image evidence.
+3. For an attached image, inspect the image content already present in the current Agent input before drawing conclusions. If the input instead exposes an exact supplied local material reference or operation, use that exact reference or operation to inspect the image. Do not load image-generation and do not guess an image-reading Skill. A filename, caption, attachment card, or prior description is not image evidence.
 4. Reread the current material when the sender says it changed, was supplemented, or received new comments. Do not reuse a conclusion from an older version.
 5. Review readable material directly. Do not ask the sender to paste content that the agent can read. Tie conclusions, requested changes, risks, and next steps to the content actually inspected.
 6. If decisive material cannot be read because the dependency, authentication, permission, command, or content is unavailable, return an explicit dependency failure. Do not infer or invent the missing content.

@@ -1281,6 +1281,31 @@ Load `dingtalk-shared`. Discover a supplied node with the exact reviewed info
 command, then read its current content with the exact reviewed document command.
 Do not infer document content from the reference or from the service prompt.
 """
+    if name == "dingtalk-aitable":
+        return """---
+name: dingtalk-aitable
+description: Representative DingTalk AI table operation fixture.
+metadata:
+  requires: dingtalk-shared
+---
+# DingTalk AI Table Operations
+
+Load `dingtalk-shared`. Read the identified table with
+`dws aitable record list --base-id <base-id> --table-id <table-id> --format json`.
+Do not use document read for an identified AI table.
+"""
+    if name == "dingtalk-drive":
+        return """---
+name: dingtalk-drive
+description: Representative DingTalk file operation fixture.
+metadata:
+  requires: dingtalk-shared
+---
+# DingTalk File Operations
+
+Load `dingtalk-shared`. Use the exact supplied drive download command for an
+ordinary file and inspect the downloaded content before review.
+"""
     raise AssertionError(f"unexpected operation Skill fixture: {name}")
 
 
@@ -1595,6 +1620,222 @@ class DocumentReadSkillExecutor(SkillReceiptProtocolExecutor):
             )
         )
         return records
+
+
+@dataclass(frozen=True)
+class Task4BehaviorScenario:
+    name: str
+    outcome: str
+    summary: str
+    read_mode: str
+    error_code: str = ""
+    useful_reaction: bool = False
+
+
+class Task4BehaviorProtocolExecutor(SkillReceiptProtocolExecutor):
+    review_text = "Reviewed the supplied current material."
+
+    def __init__(
+        self,
+        skill_paths: dict[str, Path],
+        scenario: Task4BehaviorScenario,
+    ) -> None:
+        super().__init__(skill_paths)
+        self.scenario = scenario
+        self.read_commands: list[str] = []
+        self.image_inspections = 0
+        self.write_operations: list[str] = []
+
+    def _read_records(
+        self,
+        prompt: str,
+        *,
+        prefix: str,
+    ) -> list[dict[str, object]]:
+        mode = self.scenario.read_mode
+        if mode == "image_input":
+            materials = _prompt_json_section(
+                prompt,
+                "Raw material references and exact read commands\n",
+            )
+            assert any(
+                isinstance(item, dict) and item.get("kind") == "dingtalk_image"
+                for item in materials
+            )
+            self.image_inspections += 1
+            return []
+        if mode == "chat_context":
+            command = "dws chat message list --group cid-1 --time 2026-07-29"
+            output = {
+                "messages": _task4_chat_messages(self.scenario.name),
+            }
+            succeeded = True
+        elif mode == "aitable":
+            command = (
+                "dws aitable record list --base-id base-1 "
+                "--table-id table-1 --format json"
+            )
+            output = {
+                "records": [{"decision": "Proceed", "revision": 4}],
+            }
+            succeeded = True
+        else:
+            materials = _prompt_json_section(
+                prompt,
+                "Raw material references and exact read commands\n",
+            )
+            material_kind = "dingtalk_file" if mode == "ordinary_file" else "dingtalk_doc"
+            material = next(
+                item
+                for item in materials
+                if isinstance(item, dict) and item.get("kind") == material_kind
+            )
+            commands = material["read_commands"]
+            command = commands[0] if mode == "ordinary_file" else commands[-1]
+            output = (
+                {"local_path": "/tmp/review-input.pdf", "content": "Approved facts"}
+                if mode == "ordinary_file"
+                else {"error": "permission_denied", "content": None}
+            )
+            succeeded = True
+        self.read_commands.append(command)
+        return [
+            _reviewed_cli_event("item.started", f"{prefix}-{mode}-read", command),
+            _reviewed_cli_event(
+                "item.completed",
+                f"{prefix}-{mode}-read",
+                command,
+                output=json.dumps(output),
+                succeeded=succeeded,
+            ),
+        ]
+
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        audit_turn = "Candidate revision\n" in prompt
+        prefix = "audit" if audit_turn else "consumer"
+        records = self._skill_records(prompt)
+        records.extend(self._read_records(prompt, prefix=prefix))
+
+        if not audit_turn:
+            if self.scenario.outcome != "proposal":
+                records.append(
+                    _agent_result_event(
+                        _consumer_protocol_result(
+                            self.scenario.outcome,
+                            self.scenario.summary,
+                            code=self.scenario.error_code,
+                        )
+                    )
+                )
+                return records
+            records.append(
+                _agent_result_event(
+                    _consumer_protocol_result(
+                        "proposal",
+                        self.scenario.summary,
+                        proposal=self._proposal(),
+                    )
+                )
+            )
+            return records
+
+        candidate = _prompt_json_section(prompt, "Candidate revision\n")
+        action = candidate["proposal"]["actions"][0]
+        command = shlex.join(action["payload"]["argv"])
+        self.write_operations.append(str(action["operation"]))
+        records.extend(
+            (
+                _reviewed_cli_event(
+                    "item.started",
+                    f"audit-{self.scenario.name}-write",
+                    command,
+                    effectful=True,
+                ),
+                _reviewed_cli_event(
+                    "item.completed",
+                    f"audit-{self.scenario.name}-write",
+                    command,
+                    output=json.dumps({"success": True, "receipt": self.scenario.name}),
+                    effectful=True,
+                ),
+                _agent_result_event(
+                    _audit_protocol_result(
+                        "executed",
+                        int(candidate["proposal_revision"]),
+                        f"Verified {self.scenario.name} behavior.",
+                        operation_id=str(candidate["operation_id"]),
+                        live_reference={"scenario": self.scenario.name},
+                    )
+                ),
+            )
+        )
+        return records
+
+    def _proposal(self) -> dict[str, object]:
+        if self.scenario.useful_reaction:
+            operation = "chat message reaction add"
+            argv = [
+                "dws",
+                "chat",
+                "message",
+                "reaction",
+                "add",
+                "--message-id",
+                "msg-1",
+                "--emoji",
+                "👍",
+                "--yes",
+            ]
+            description = "Add one useful acknowledgment reaction."
+        else:
+            operation = "chat message send"
+            argv = [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--group",
+                "cid-1",
+                "--text",
+                self.review_text,
+                "--yes",
+            ]
+            description = "Send the evidence-based material review."
+        return {
+            "objective": description,
+            "actions": [
+                {
+                    "description": description,
+                    "capability": "agent_cli.dws",
+                    "operation": operation,
+                    "target": {"conversation_id": "cid-1", "message_id": "msg-1"},
+                    "payload": {"argv": argv},
+                    "expected_verification": "Verify the exact reviewed action receipt.",
+                }
+            ],
+            "sourced_facts": [
+                {
+                    "assertion": self.scenario.summary,
+                    "references": [f"scenario:{self.scenario.name}"],
+                }
+            ],
+            "authored_judgment": self.scenario.summary,
+        }
+
+
+def _task4_chat_messages(name: str) -> list[dict[str, object]]:
+    if name == "irrelevant_broadcast":
+        return [{"message_id": "msg-1", "text": "@all Informational update."}]
+    if name == "useful_acknowledgment":
+        return [{"message_id": "msg-1", "text": "Thanks, this closes my request."}]
+    if name == "plain_acknowledgment":
+        return [{"message_id": "msg-1", "text": "Received."}]
+    if name == "completed_context":
+        return [
+            {"message_id": "msg-1", "text": "Please follow up."},
+            {"message_id": "msg-2", "text": "Completed; no follow-up remains."},
+        ]
+    raise AssertionError(f"unexpected Task 4 chat scenario: {name}")
 
 
 class NativeCommandStub:
@@ -3796,14 +4037,49 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
     assert "--user" not in executor.question_verify_command
 
 
-def _assert_task4_receipts_and_consumer_read_only(worker, skill_paths):
+def _task4_installed_skill_paths(
+    tmp_path: Path,
+    monkeypatch,
+    business_skill: str,
+    operation_skills: tuple[str, ...],
+) -> dict[str, Path]:
+    skills_root = tmp_path / "installed-skills"
+    skill_paths: dict[str, Path] = {}
+    for name in (business_skill, *operation_skills):
+        path = skills_root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        content = (
+            (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
+            if name == business_skill
+            else (
+                _triage_operation_skill_fixture(name)
+                if business_skill == "ceo-message-triage"
+                else _document_operation_skill_fixture(name)
+            )
+        )
+        path.write_text(content, encoding="utf-8")
+        skill_paths[name] = path.resolve()
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (skills_root,))
+    return skill_paths
+
+
+def _task4_agent_runs(worker):
     task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
     assert task is not None
-    runs = worker.store.list_agent_runs_for_task_generation(
+    return worker.store.list_agent_runs_for_task_generation(
         task.id,
         task.execution_generation,
     )
-    assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
+
+
+def _assert_task4_receipts_and_consumer_read_only(
+    worker,
+    skill_paths,
+    *,
+    expected_roles=(AgentRole.CONSUMER, AgentRole.AUDIT),
+):
+    runs = _task4_agent_runs(worker)
+    assert [run.role for run in runs] == list(expected_roles)
     expected = {
         name: (str(path.resolve()), sha256(path.read_bytes()).hexdigest())
         for name, path in skill_paths.items()
@@ -3825,6 +4101,24 @@ def _assert_task4_receipts_and_consumer_read_only(worker, skill_paths):
         for event in runs[0].tool_events
         if isinstance(event.get("item"), dict)
     )
+    return runs
+
+
+def _task4_consumer_result(worker) -> dict[str, object]:
+    consumer = _task4_agent_runs(worker)[0]
+    return json.loads(consumer.final_result_json)
+
+
+def _task4_completed_operations(run) -> list[str]:
+    return [
+        str(metadata["operation"])
+        for event in run.tool_events
+        if event.get("type") == "item.completed"
+        and isinstance(event.get("item"), dict)
+        and isinstance((metadata := event["item"].get("metadata")), dict)
+        and "operation" in metadata
+        and metadata["operation"] != "read_skill"
+    ]
 
 
 def test_direct_clarification_uses_native_business_and_operation_skill_receipts(
@@ -3897,7 +4191,7 @@ def test_document_read_uses_exact_commands_and_native_skill_receipts(
     monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (skills_root,))
 
     document_url = "https://alidocs.dingtalk.com/i/nodes/doc-task-4"
-    trigger = _message(f"@CEO Agent Please review {document_url}")
+    trigger = _message(f"@CEO Agent The document changed; review {document_url} again")
     executor = DocumentReadSkillExecutor(skill_paths)
     worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
     _enqueue(worker.store, trigger)
@@ -3917,6 +4211,265 @@ def test_document_read_uses_exact_commands_and_native_skill_receipts(
     assert executor.sent_replies == 1
     assert DocumentReadSkillExecutor.reply_text in executor.prompts[1]
     _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    result = _task4_consumer_result(worker)
+    assert result["proposal"]["sourced_facts"][0]["assertion"] == (
+        "Document version 7 requires a launch decision."
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "trigger_text", "summary", "newer_message"),
+    [
+        (
+            "irrelevant_broadcast",
+            "@all Informational update; no principal action is requested.",
+            "The broadcast assigns no principal action.",
+            None,
+        ),
+        (
+            "plain_acknowledgment",
+            "Received, thank you.",
+            "The acknowledgment needs neither text nor a useful reaction.",
+            None,
+        ),
+        (
+            "completed_context",
+            "Please follow up on this item.",
+            "Newer context confirms completion and suppresses a late follow-up.",
+            _message(
+                "Completed; no follow-up remains.",
+                message_id="msg-2",
+            ),
+        ),
+    ],
+)
+def test_message_triage_no_action_scenarios_have_receipts_and_no_effects(
+    tmp_path: Path,
+    monkeypatch,
+    name: str,
+    trigger_text: str,
+    summary: str,
+    newer_message: DingTalkMessage | None,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-message-triage",
+        ("dingtalk-shared", "dingtalk-chat"),
+    )
+    trigger = _message(trigger_text)
+    messages = [trigger, newer_message] if newer_message is not None else [trigger]
+    scenario = Task4BehaviorScenario(
+        name=name,
+        outcome="no_action",
+        summary=summary,
+        read_mode="chat_context",
+    )
+    executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
+    worker, _dws = _worker_with_protocol_executor(tmp_path, messages, executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    result = _task4_consumer_result(worker)
+    assert result["outcome"] == "no_action"
+    assert result["proposal"] is None
+    assert result["summary"] == summary
+    runs = _assert_task4_receipts_and_consumer_read_only(
+        worker,
+        skill_paths,
+        expected_roles=(AgentRole.CONSUMER,),
+    )
+    assert _task4_completed_operations(runs[0]) == ["chat message list"]
+    assert executor.write_operations == []
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "skipped"
+    if newer_message is not None:
+        assert newer_message.content in executor.prompts[0]
+
+
+def test_acknowledgment_proposes_reaction_only_when_useful(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-message-triage",
+        ("dingtalk-shared", "dingtalk-chat"),
+    )
+    trigger = _message("Thanks, this closes my request.")
+    scenario = Task4BehaviorScenario(
+        name="useful_acknowledgment",
+        outcome="proposal",
+        summary="A lightweight reaction acknowledges closure without adding text.",
+        read_mode="chat_context",
+        useful_reaction=True,
+    )
+    executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    result = _task4_consumer_result(worker)
+    action = result["proposal"]["actions"][0]
+    assert result["outcome"] == "proposal"
+    assert action["operation"] == "chat message reaction add"
+    assert action["payload"]["argv"][-3:-1] == ["--emoji", "👍"]
+    runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    assert "chat message reaction add" in _task4_completed_operations(runs[1])
+    assert executor.write_operations == ["chat message reaction add"]
+
+
+def test_ai_table_uses_aitable_skill_and_never_document_read(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-document-review",
+        ("dingtalk-shared", "dingtalk-aitable", "dingtalk-chat"),
+    )
+    trigger = _message("Review the supplied AI table.")
+    scenario = Task4BehaviorScenario(
+        name="aitable_review",
+        outcome="proposal",
+        summary="Read the current AI table records before review.",
+        read_mode="aitable",
+    )
+    executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    assert "dingtalk-aitable" in executor.consumer_loaded_skills
+    assert "dingtalk-doc" not in executor.consumer_loaded_skills
+    assert executor.read_commands == [
+        "dws aitable record list --base-id base-1 --table-id table-1 --format json",
+        "dws aitable record list --base-id base-1 --table-id table-1 --format json",
+    ]
+    assert "aitable record list" in _task4_completed_operations(runs[0])
+    assert all("doc read" not in operation for run in runs for operation in _task4_completed_operations(run))
+
+
+def test_ordinary_file_uses_supplied_exact_command_in_both_agent_roles(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-document-review",
+        ("dingtalk-shared", "dingtalk-drive", "dingtalk-chat"),
+    )
+    file_id = "file-node-1"
+    trigger = _message(
+        f"[文件] review.pdf fileId: {file_id} url: hidden Please review it."
+    )
+    exact_command = (
+        f"dws drive download --node {file_id} --output <local-path> --format json"
+    )
+    scenario = Task4BehaviorScenario(
+        name="ordinary_file_review",
+        outcome="proposal",
+        summary="Downloaded and inspected the supplied ordinary file.",
+        read_mode="ordinary_file",
+    )
+    executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    assert executor.read_commands == [exact_command, exact_command]
+    assert _task4_completed_operations(runs[0]) == ["drive download"]
+    assert "dingtalk-drive" in executor.audit_loaded_skills
+
+
+def test_attached_image_is_inspected_without_inventing_an_image_skill(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-document-review",
+        ("dingtalk-shared", "dingtalk-chat"),
+    )
+    trigger = _message("Review this image: ![image](https://example.test/review.png)")
+    scenario = Task4BehaviorScenario(
+        name="attached_image_review",
+        outcome="proposal",
+        summary="Inspected the attached image content before concluding.",
+        read_mode="image_input",
+    )
+    executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    result = _task4_consumer_result(worker)
+    assert result["outcome"] == "proposal"
+    assert "Inspected the attached image content" in result["summary"]
+    _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    assert executor.image_inspections == 2
+    assert executor.read_commands == []
+    assert all("image" not in name for name in executor.consumer_loaded_skills)
+
+
+def test_unavailable_decisive_material_returns_dependency_failure_without_invention(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-document-review",
+        ("dingtalk-shared", "dingtalk-doc"),
+    )
+    document_url = "https://alidocs.dingtalk.com/i/nodes/unavailable-task-4"
+    trigger = _message(f"Review {document_url}")
+    summary = "Decisive material is unavailable; no review conclusion was invented."
+    scenario = Task4BehaviorScenario(
+        name="unavailable_material",
+        outcome="failed",
+        summary=summary,
+        read_mode="unavailable",
+        error_code="document_dependency_unavailable",
+    )
+    executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        executor,
+        max_task_attempts=1,
+    )
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    runs = _assert_task4_receipts_and_consumer_read_only(
+        worker,
+        skill_paths,
+        expected_roles=(AgentRole.CONSUMER,),
+    )
+    consumer = runs[0]
+    error = json.loads(consumer.structured_error_json)
+    assert consumer.status == "failed"
+    assert consumer.final_result_json == ""
+    assert error["code"] == "document_dependency_unavailable"
+    assert _task4_completed_operations(runs[0]) == ["doc read"]
+    assert executor.write_operations == []
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "document_dependency_unavailable"
 
 
 @pytest.mark.parametrize(

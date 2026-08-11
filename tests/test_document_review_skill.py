@@ -13,24 +13,28 @@ def _skill_text() -> str:
 
 
 @pytest.mark.parametrize(
-    ("material", "operation_skill", "read_rule"),
+    ("material", "operation_guidance", "read_rule"),
     [
-        ("DingTalk document", "dingtalk-doc", "read current content"),
-        ("DingTalk AI table", "dingtalk-aitable", "never use document read"),
-        ("ordinary file", "matching drive Skill", "use the supplied exact command"),
-        ("image", "matching file or image Skill", "inspect the image before conclusions"),
-        ("Lark document", "lark-doc", "read current content"),
-        ("Lark table", "lark-base", "read current table data"),
-        ("Lark file", "lark-drive", "use the supplied exact command"),
+        ("DingTalk document", "`dingtalk-doc`", "read current content"),
+        ("DingTalk AI table", "`dingtalk-aitable`", "never use document read"),
+        (
+            "ordinary file",
+            "`matching drive Skill`",
+            "use the supplied exact command",
+        ),
+        ("image", "none for attached input", "inspect the image before conclusions"),
+        ("Lark document", "`lark-doc`", "read current content"),
+        ("Lark table", "`lark-base`", "read current table data"),
+        ("Lark file", "`lark-drive`", "use the supplied exact command"),
     ],
 )
 def test_document_review_skill_defines_material_read_path(
     material: str,
-    operation_skill: str,
+    operation_guidance: str,
     read_rule: str,
 ):
     assert (
-        f"| {material} | `{operation_skill}` | {read_rule} |" in _skill_text()
+        f"| {material} | {operation_guidance} | {read_rule} |" in _skill_text()
     )
 
 
@@ -45,13 +49,22 @@ def test_document_review_skill_defines_complete_review_workflow():
         "Do not reuse a conclusion from an older version",
         "Review readable material directly",
         "Do not ask the sender to paste content that the agent can read",
-        "inspect the actual image before drawing conclusions",
         "explicit dependency failure",
         "Do not infer or invent the missing content",
         "Deliver comments in the material when the loaded operation Skill supports comments",
         "otherwise deliver the review in the source conversation",
     ):
         assert required in text
+
+
+def test_document_review_skill_uses_executable_image_inspection_guidance():
+    text = _skill_text()
+
+    assert "`matching file or image Skill`" not in text
+    assert "image content already present in the current Agent input" in text
+    assert "exact supplied local material reference or operation" in text
+    assert "image-generation" in text
+    assert "image-reading Skill" in text
 
 
 def test_canonical_prompt_delegates_document_review_judgment_to_skill():
