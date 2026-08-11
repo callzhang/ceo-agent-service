@@ -37,6 +37,80 @@ def _scan_now(now: datetime | None = None) -> datetime:
     return now if now is not None else datetime.now().astimezone()
 
 
+def _queue_oa_delivery_recovery_tasks(
+    store: AutoReplyStore,
+    *,
+    scan_time: datetime,
+    max_new_items: int | None,
+) -> int:
+    """Queue one new, current-state recovery task for each missing OA receipt."""
+    recent_since = (scan_time - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
+    source_tasks = store.list_terminal_oa_tasks_missing_direct_receipt(
+        updated_since=recent_since,
+        limit=max_new_items,
+    )
+    queued = 0
+    for source_task in source_tasks:
+        try:
+            source_message = DingTalkMessage.model_validate_json(
+                source_task.trigger_message_json
+            )
+        except ValueError:
+            continue
+        raw_payload = source_message.raw_payload
+        process_instance_id = str(raw_payload.get("processInstanceId") or "").strip()
+        task_id = str(raw_payload.get("taskId") or "").strip()
+        if not process_instance_id or not task_id:
+            continue
+        recovery_key = hashlib.sha256(
+            source_task.trigger_message_id.encode("utf-8")
+        ).hexdigest()[:16]
+        trigger = DingTalkMessage(
+            open_conversation_id=source_task.conversation_id,
+            open_message_id=f"oa-recovery:{process_instance_id}:{recovery_key}",
+            conversation_title=source_task.conversation_title,
+            single_chat=True,
+            sender_name="Derek OA",
+            message_type="text",
+            create_time=scan_time.strftime("%Y-%m-%d %H:%M:%S"),
+            content=(
+                "审批恢复：此前处理没有可核验的申请人通知收据。"
+                "请读取当前审批状态、当前任务归属和完整材料。"
+                "审批已经完成时，禁止重复审批，只向实际申请人发送结果通知；"
+                "审批仍待处理时，只执行当前状态下缺失的审批、补充意见或申请人通知。"
+            ),
+            raw_payload={
+                "source": "oa_recovery",
+                "service_task": True,
+                "recovery_of": source_task.trigger_message_id,
+                "processInstanceId": process_instance_id,
+                "taskId": task_id,
+            },
+        )
+        inserted = store.enqueue_reply_task(
+            conversation_id=trigger.open_conversation_id,
+            conversation_title=trigger.conversation_title,
+            single_chat=trigger.single_chat,
+            trigger_message_id=trigger.open_message_id,
+            trigger_create_time=trigger.create_time,
+            trigger_sender=trigger.sender_name,
+            trigger_text=trigger.content,
+            trigger_message_json=trigger.model_dump_json(),
+            oa_url=source_task.oa_url,
+            channel="dingtalk",
+            force_new_decision=True,
+        )
+        if inserted:
+            queued += 1
+        elif store.requeue_terminal_task_missing_delivery_receipt(
+            conversation_id=trigger.open_conversation_id,
+            trigger_message_id=trigger.open_message_id,
+            channel="dingtalk",
+        ) is not None:
+            queued += 1
+    return queued
+
+
 def _matches_any(path: Path, patterns: tuple[str, ...]) -> bool:
     text = str(path)
     name = path.name
@@ -328,6 +402,12 @@ def scan_pending_oa_approvals(
         return 0
 
     scan_time = _scan_now(now)
+    recovery_limit = max_new_items
+    queued = _queue_oa_delivery_recovery_tasks(
+        store,
+        scan_time=scan_time,
+        max_new_items=recovery_limit,
+    )
     scan_date = scan_time.date().isoformat()
     scan_timestamp = scan_time.strftime("%Y-%m-%d %H:%M:%S")
     window_start = (scan_time - timedelta(days=lookback_days)).isoformat(
@@ -377,7 +457,6 @@ def scan_pending_oa_approvals(
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
 
-    queued = 0
     skipped_missing_task_id: list[str] = []
     read_failures: list[str] = []
     seen_process_ids: set[str] = set()
@@ -443,6 +522,7 @@ def scan_pending_oa_approvals(
             ),
             raw_payload={
                 "source": "oa_pending_scan",
+                "service_task": True,
                 "processInstanceId": process_instance_id,
                 "taskId": task_id,
                 "processName": process_name,

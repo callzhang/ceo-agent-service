@@ -521,6 +521,64 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
 
 
+def test_scan_pending_oa_approvals_recovers_recent_terminal_oa_without_receipt(
+    tmp_path,
+):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [DwsOaApprovalCandidate(process_instance_id="proc-1", title="付款申请")]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {"result": {"operationRecords": []}}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    dws = FakeDws()
+    now = datetime.now().astimezone()
+
+    assert scan_pending_oa_approvals(store, dws, now=now) == 1
+    original = store.claim_reply_tasks(limit=1)[0]
+    store.complete_reply_task(
+        original.id,
+        expected_execution_generation=original.execution_generation,
+    )
+
+    assert scan_pending_oa_approvals(store, dws, now=now) == 1
+    recovery = store.claim_reply_tasks(limit=1)[0]
+    payload = json.loads(recovery.trigger_message_json)
+    assert recovery.trigger_message_id.startswith("oa-recovery:proc-1:")
+    assert payload["raw_payload"]["service_task"] is True
+    assert payload["raw_payload"]["recovery_of"] == original.trigger_message_id
+    assert "禁止重复审批" in recovery.trigger_text
+
+    store.complete_reply_task(
+        recovery.id,
+        expected_execution_generation=recovery.execution_generation,
+    )
+    assert scan_pending_oa_approvals(store, dws, now=now) == 1
+    resumed = store.claim_reply_tasks(limit=1)[0]
+    assert resumed.id == recovery.id
+    assert resumed.execution_generation != recovery.execution_generation
+
+
 def test_scan_pending_oa_approvals_covers_an_old_process_that_reaches_me_now(tmp_path):
     class FakeDws:
         def __init__(self):
