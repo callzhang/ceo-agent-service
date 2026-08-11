@@ -1023,7 +1023,12 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
         prefix = "audit" if audit_turn else "consumer"
         loaded = self.audit_loaded_skills if audit_turn else self.consumer_loaded_skills
         records: list[dict[str, object]] = []
-        for name in ("ceo-calendar-invite", "dingtalk-calendar", "dingtalk-chat"):
+        for name in (
+            "ceo-calendar-invite",
+            "dingtalk-shared",
+            "dingtalk-calendar",
+            "dingtalk-chat",
+        ):
             loaded.append(name)
             records.extend(
                 _skill_read_events(f"{prefix}-skill-{name}", self.skill_paths[name])
@@ -1195,6 +1200,17 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
 
 
 def _calendar_operation_skill_fixture(name: str) -> str:
+    if name == "dingtalk-shared":
+        return """---
+name: dingtalk-shared
+description: Representative shared DWS operation fixture.
+---
+# Shared DWS Operations
+
+Check the active organization and authentication with `dws auth status` before
+using a product-specific DWS Skill. Preserve exact DingTalk identifiers returned
+by reviewed reads.
+"""
     if name == "dingtalk-calendar":
         return """---
 name: dingtalk-calendar
@@ -1206,9 +1222,9 @@ metadata:
 
 Load `dingtalk-shared` before calendar operations. Read invitations with
 `dws calendar event get --id <event-id> --format json`. Respond with
-`dws calendar event respond --id <event-id> --status <status> --yes`; when
-supported, clarify with `dws calendar event comment --id <event-id> --text
-<question> --yes`. Read the event again after a response or comment.
+`dws calendar event respond --id <event-id> --status <status> --yes`. This
+fixture has no calendar-comment capability. Read the event again after a
+response.
 """
     if name == "dingtalk-chat":
         return """---
@@ -3356,7 +3372,12 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
 ):
     skills_root = tmp_path / "installed-skills"
     skill_paths: dict[str, Path] = {}
-    for name in ("ceo-calendar-invite", "dingtalk-calendar", "dingtalk-chat"):
+    for name in (
+        "ceo-calendar-invite",
+        "dingtalk-shared",
+        "dingtalk-calendar",
+        "dingtalk-chat",
+    ):
         path = skills_root / name / "SKILL.md"
         path.parent.mkdir(parents=True)
         content = (
@@ -3369,6 +3390,12 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
     monkeypatch.setattr(
         "app.agent_skill_usage.AGENT_SKILL_ROOTS",
         (skills_root,),
+    )
+    assert "event comment" not in _calendar_operation_skill_fixture(
+        "dingtalk-calendar"
+    )
+    assert "no calendar-comment capability" in _calendar_operation_skill_fixture(
+        "dingtalk-calendar"
     )
 
     trigger = _message(
@@ -3391,6 +3418,7 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
     assert attempt.send_status != "needs_human"
     assert executor.consumer_loaded_skills == [
         "ceo-calendar-invite",
+        "dingtalk-shared",
         "dingtalk-calendar",
         "dingtalk-chat",
     ]

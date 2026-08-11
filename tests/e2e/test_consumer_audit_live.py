@@ -24,6 +24,16 @@ from tests.support.audit_sink_mcp import AuditSink
 
 QUESTION = "What specific decision or input do you need from Derek in this meeting?"
 MESSAGE_TEXT = f"<@inviter-1> {QUESTION}"
+SHARED_SKILL = """---
+name: dingtalk-shared
+description: Representative shared DWS operation fixture.
+---
+# Shared DWS Operations
+
+Check the active organization and authentication with `dws auth status` before
+using a product-specific DWS Skill. Preserve exact DingTalk identifiers returned
+by reviewed reads.
+"""
 CALENDAR_SKILL = """---
 name: dingtalk-calendar
 description: Representative calendar operation fixture.
@@ -35,8 +45,8 @@ metadata:
 Load `dingtalk-shared` before DWS calendar operations.
 Read an invitation with `dws calendar event get --id <event-id> --format json`.
 Respond with `dws calendar event respond --id <event-id> --status <status> --yes`.
-When supported, clarify with `dws calendar event comment --id <event-id> --text <question> --yes`.
-Read the event again after every response or comment.
+This fixture has no calendar-comment capability.
+Read the event again after every response.
 """
 CHAT_SKILL = """---
 name: dingtalk-chat
@@ -229,7 +239,12 @@ class CalendarRunnerContractExecutor:
 
     def _skill_records(self, role: str) -> list[dict[str, object]]:
         records = []
-        for name in ("ceo-calendar-invite", "dingtalk-calendar", "dingtalk-chat"):
+        for name in (
+            "ceo-calendar-invite",
+            "dingtalk-shared",
+            "dingtalk-calendar",
+            "dingtalk-chat",
+        ):
             record, _digest = _skill_record(
                 self.skill_paths[name],
                 f"{role}-skill-{name}",
@@ -381,6 +396,7 @@ def test_deterministic_native_runner_calendar_clarification_contract(
         "ceo-calendar-invite": (
             repository_root / "skills" / "ceo-calendar-invite" / "SKILL.md"
         ).read_text(encoding="utf-8"),
+        "dingtalk-shared": SHARED_SKILL,
         "dingtalk-calendar": CALENDAR_SKILL,
         "dingtalk-chat": CHAT_SKILL,
     }
@@ -395,7 +411,8 @@ def test_deterministic_native_runner_calendar_clarification_contract(
         (skills_root,),
     )
     assert "event respond" in CALENDAR_SKILL
-    assert "event comment" in CALENDAR_SKILL
+    assert "event comment" not in CALENDAR_SKILL
+    assert "no calendar-comment capability" in CALENDAR_SKILL
     assert "source group" in CHAT_SKILL
     assert "dingtalk-shared" in CALENDAR_SKILL + CHAT_SKILL
 
@@ -486,6 +503,18 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     )
     assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
     assert all(run.status == "completed" for run in runs)
+    assert set(_persisted_skill_receipts(runs[0])) == {
+        "ceo-calendar-invite",
+        "dingtalk-shared",
+        "dingtalk-calendar",
+        "dingtalk-chat",
+    }
+    assert set(_persisted_skill_receipts(runs[1])) == {
+        "ceo-calendar-invite",
+        "dingtalk-shared",
+        "dingtalk-calendar",
+        "dingtalk-chat",
+    }
     assert _persisted_skill_receipts(runs[0]) == expected_receipts
     assert _persisted_skill_receipts(runs[1]) == expected_receipts
     assert {
