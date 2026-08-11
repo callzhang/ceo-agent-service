@@ -256,6 +256,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         and "not a reason to return `needs_human`" in option
         for option in command
     )
+    assert "external URL, arbitrary shell command, or ad hoc network request" in executor.prompts[0]
     instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
     assert "referenced skill, document,\nconfiguration" in instructions
     assert "normal Agent work" in instructions

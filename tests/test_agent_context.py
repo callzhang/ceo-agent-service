@@ -70,7 +70,7 @@ def test_context_renders_reference_and_command_without_resolved_body():
 def test_context_contains_only_the_agreed_business_rules():
     rendered = _context().render()
 
-    assert "execute the provided live DWS commands" in rendered
+    assert "execute the provided live approval-detail and task-ownership commands" in rendered
     assert "do not invent a `--task-id` argument" in rendered
     assert "internal_personnel" in rendered
     assert "HR conversation may skip counterpart identity matching" in rendered
@@ -215,7 +215,8 @@ def test_oa_complete_form_fields_still_require_live_detail_read():
     assert "task_id=tid-1" in rendered
     assert "dws oa approval detail" in rendered
     assert "dws oa approval tasks --instance-id pid-1 --format json" in rendered
-    assert "execute the provided live DWS commands" in rendered
+    assert "execute the provided live approval-detail and task-ownership commands" in rendered
+    assert "external URL, arbitrary shell command, or ad hoc network request" in rendered
     assert "do not select by applicant or title similarity" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
@@ -233,7 +234,7 @@ def test_oa_instance_id_only_still_requires_agent_live_detail_read():
     assert "agent_cli.execute_reviewed_read" in rendered
     assert "local CLI credential store" in rendered
     assert "never emit `proposed_actions`" in rendered
-    assert "execute the provided live DWS commands" in rendered
+    assert "execute the provided live approval-detail and task-ownership commands" in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 
 
