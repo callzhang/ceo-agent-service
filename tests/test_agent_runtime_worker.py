@@ -954,10 +954,12 @@ def _skill_read_events(
 class ProtocolCodexExecutor:
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self.commands: list[list[str]] = []
         self.session_count = 0
 
-    def __call__(self, _command, *, prompt: str, **kwargs) -> ProcessRunResult:
+    def __call__(self, command, *, prompt: str, **kwargs) -> ProcessRunResult:
         self.prompts.append(prompt)
+        self.commands.append(list(command))
         self.session_count += 1
         records = [
             {
@@ -1632,7 +1634,34 @@ class Task4BehaviorScenario:
     useful_reaction: bool = False
 
 
-class Task4BehaviorProtocolExecutor(SkillReceiptProtocolExecutor):
+class ConsumerAuditLifecycleExecutor(SkillReceiptProtocolExecutor):
+    def records(self, prompt: str) -> list[dict[str, object]]:
+        audit_turn = "Candidate revision\n" in prompt
+        prefix = "audit" if audit_turn else "consumer"
+        records = self._skill_records(prompt)
+        records.extend(self._evidence_records(prompt, prefix=prefix))
+        if not audit_turn:
+            records.extend(self._consumer_result_records())
+            return records
+        records.extend(self._audit_execution_records(prompt))
+        return records
+
+    def _evidence_records(
+        self,
+        prompt: str,
+        *,
+        prefix: str,
+    ) -> list[dict[str, object]]:
+        raise NotImplementedError
+
+    def _consumer_result_records(self) -> list[dict[str, object]]:
+        raise NotImplementedError
+
+    def _audit_execution_records(self, prompt: str) -> list[dict[str, object]]:
+        raise NotImplementedError
+
+
+class Task4BehaviorProtocolExecutor(ConsumerAuditLifecycleExecutor):
     review_text = "Reviewed the supplied current material."
 
     def __init__(
@@ -1643,10 +1672,11 @@ class Task4BehaviorProtocolExecutor(SkillReceiptProtocolExecutor):
         super().__init__(skill_paths)
         self.scenario = scenario
         self.read_commands: list[str] = []
-        self.image_inspections = 0
+        self.image_inspections: list[tuple[str, str]] = []
         self.write_operations: list[str] = []
+        self.external_readbacks: list[str] = []
 
-    def _read_records(
+    def _evidence_records(
         self,
         prompt: str,
         *,
@@ -1654,15 +1684,13 @@ class Task4BehaviorProtocolExecutor(SkillReceiptProtocolExecutor):
     ) -> list[dict[str, object]]:
         mode = self.scenario.read_mode
         if mode == "image_input":
-            materials = _prompt_json_section(
-                prompt,
-                "Raw material references and exact read commands\n",
+            command = self.commands[-1]
+            image_index = command.index("--image") + 1
+            image_path = Path(command[image_index])
+            assert image_path.is_file()
+            self.image_inspections.append(
+                (str(image_path.resolve()), sha256(image_path.read_bytes()).hexdigest())
             )
-            assert any(
-                isinstance(item, dict) and item.get("kind") == "dingtalk_image"
-                for item in materials
-            )
-            self.image_inspections += 1
             return []
         if mode == "chat_context":
             command = "dws chat message list --group cid-1 --time 2026-07-29"
@@ -1710,66 +1738,81 @@ class Task4BehaviorProtocolExecutor(SkillReceiptProtocolExecutor):
             ),
         ]
 
-    def records(self, prompt: str) -> list[dict[str, object]]:
-        audit_turn = "Candidate revision\n" in prompt
-        prefix = "audit" if audit_turn else "consumer"
-        records = self._skill_records(prompt)
-        records.extend(self._read_records(prompt, prefix=prefix))
-
-        if not audit_turn:
-            if self.scenario.outcome != "proposal":
-                records.append(
-                    _agent_result_event(
-                        _consumer_protocol_result(
-                            self.scenario.outcome,
-                            self.scenario.summary,
-                            code=self.scenario.error_code,
-                        )
-                    )
-                )
-                return records
-            records.append(
+    def _consumer_result_records(self) -> list[dict[str, object]]:
+        if self.scenario.outcome != "proposal":
+            return [
                 _agent_result_event(
                     _consumer_protocol_result(
-                        "proposal",
+                        self.scenario.outcome,
                         self.scenario.summary,
-                        proposal=self._proposal(),
+                        code=self.scenario.error_code,
                     )
                 )
+            ]
+        return [
+            _agent_result_event(
+                _consumer_protocol_result(
+                    "proposal",
+                    self.scenario.summary,
+                    proposal=self._proposal(),
+                )
             )
-            return records
+        ]
 
+    def _audit_execution_records(self, prompt: str) -> list[dict[str, object]]:
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
         command = shlex.join(action["payload"]["argv"])
+        verify_command = "dws chat message list --group cid-1 --time 2026-07-29"
         self.write_operations.append(str(action["operation"]))
-        records.extend(
-            (
-                _reviewed_cli_event(
-                    "item.started",
-                    f"audit-{self.scenario.name}-write",
-                    command,
-                    effectful=True,
+        self.external_readbacks.append(verify_command)
+        return [
+            _reviewed_cli_event(
+                "item.started",
+                f"audit-{self.scenario.name}-write",
+                command,
+                effectful=True,
+            ),
+            _reviewed_cli_event(
+                "item.completed",
+                f"audit-{self.scenario.name}-write",
+                command,
+                output=json.dumps({"success": True, "receipt": self.scenario.name}),
+                effectful=True,
+            ),
+            _reviewed_cli_event(
+                "item.started",
+                f"audit-{self.scenario.name}-readback",
+                verify_command,
+            ),
+            _reviewed_cli_event(
+                "item.completed",
+                f"audit-{self.scenario.name}-readback",
+                verify_command,
+                output=json.dumps(
+                    {
+                        "messages": [
+                            {
+                                "message_id": f"receipt-{self.scenario.name}",
+                                "text": self.review_text,
+                            }
+                        ]
+                    }
                 ),
-                _reviewed_cli_event(
-                    "item.completed",
-                    f"audit-{self.scenario.name}-write",
-                    command,
-                    output=json.dumps({"success": True, "receipt": self.scenario.name}),
-                    effectful=True,
-                ),
-                _agent_result_event(
-                    _audit_protocol_result(
-                        "executed",
-                        int(candidate["proposal_revision"]),
-                        f"Verified {self.scenario.name} behavior.",
-                        operation_id=str(candidate["operation_id"]),
-                        live_reference={"scenario": self.scenario.name},
-                    )
-                ),
-            )
-        )
-        return records
+            ),
+            _agent_result_event(
+                _audit_protocol_result(
+                    "executed",
+                    int(candidate["proposal_revision"]),
+                    f"Verified {self.scenario.name} behavior by external readback.",
+                    operation_id=str(candidate["operation_id"]),
+                    live_reference={
+                        "scenario": self.scenario.name,
+                        "message_id": f"receipt-{self.scenario.name}",
+                    },
+                )
+            ),
+        ]
 
     def _proposal(self) -> dict[str, object]:
         if self.scenario.useful_reaction:
@@ -1834,6 +1877,17 @@ def _task4_chat_messages(name: str) -> list[dict[str, object]]:
         return [
             {"message_id": "msg-1", "text": "Please follow up."},
             {"message_id": "msg-2", "text": "Completed; no follow-up remains."},
+        ]
+    if name == "direct_decision_request":
+        return [
+            {
+                "message_id": "msg-1",
+                "text": "Decide whether we should proceed with the reviewed launch plan.",
+            },
+            {
+                "message_id": "evidence-1",
+                "text": "The reviewed launch gates are satisfied.",
+            },
         ]
     raise AssertionError(f"unexpected Task 4 chat scenario: {name}")
 
@@ -4320,6 +4374,52 @@ def test_acknowledgment_proposes_reaction_only_when_useful(
     runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
     assert "chat message reaction add" in _task4_completed_operations(runs[1])
     assert executor.write_operations == ["chat message reaction add"]
+    assert executor.external_readbacks == [
+        "dws chat message list --group cid-1 --time 2026-07-29"
+    ]
+
+
+def test_direct_decision_request_becomes_grounded_proposal(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-message-triage",
+        ("dingtalk-shared", "dingtalk-chat"),
+    )
+    trigger = _message(
+        "Decide whether we should proceed with the reviewed launch plan and reply here."
+    )
+    summary = "Current source context supports proceeding with the launch plan."
+    scenario = Task4BehaviorScenario(
+        name="direct_decision_request",
+        outcome="proposal",
+        summary=summary,
+        read_mode="chat_context",
+    )
+    executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
+    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    result = _task4_consumer_result(worker)
+    assert result["outcome"] == "proposal"
+    assert result["proposal"]["sourced_facts"] == [
+        {
+            "assertion": summary,
+            "references": ["scenario:direct_decision_request"],
+        }
+    ]
+    assert executor.read_commands == [
+        "dws chat message list --group cid-1 --time 2026-07-29",
+        "dws chat message list --group cid-1 --time 2026-07-29",
+    ]
+    _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
+    assert executor.write_operations == ["chat message send"]
+    assert len(executor.external_readbacks) == 1
 
 
 def test_ai_table_uses_aitable_skill_and_never_document_read(
@@ -4395,6 +4495,13 @@ def test_attached_image_is_inspected_without_inventing_an_image_skill(
     tmp_path: Path,
     monkeypatch,
 ):
+    image_bytes = b"\x89PNG\r\n\x1a\nactual-task-4-image"
+    monkeypatch.setattr(
+        DingTalkAutoReplyWorker,
+        "_download_image_bytes",
+        lambda _self, _url: image_bytes,
+        raising=False,
+    )
     skill_paths = _task4_installed_skill_paths(
         tmp_path,
         monkeypatch,
@@ -4418,9 +4525,65 @@ def test_attached_image_is_inspected_without_inventing_an_image_skill(
     assert result["outcome"] == "proposal"
     assert "Inspected the attached image content" in result["summary"]
     _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
-    assert executor.image_inspections == 2
+    expected_sha = sha256(image_bytes).hexdigest()
+    assert len(executor.image_inspections) == 2
+    assert {receipt[1] for receipt in executor.image_inspections} == {expected_sha}
+    assert len({receipt[0] for receipt in executor.image_inspections}) == 1
     assert executor.read_commands == []
+    assert len(executor.external_readbacks) == 1
     assert all("image" not in name for name in executor.consumer_loaded_skills)
+
+
+def test_unresolved_image_fails_before_metadata_can_be_claimed_as_inspection(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skill_paths = _task4_installed_skill_paths(
+        tmp_path,
+        monkeypatch,
+        "ceo-document-review",
+        ("dingtalk-shared", "dingtalk-chat"),
+    )
+
+    def unavailable(_self, _url):
+        raise RuntimeError("image source unavailable")
+
+    monkeypatch.setattr(
+        DingTalkAutoReplyWorker,
+        "_download_image_bytes",
+        unavailable,
+        raising=False,
+    )
+    trigger = _message("Review this image: ![image](https://example.test/missing.png)")
+    scenario = Task4BehaviorScenario(
+        name="missing_image",
+        outcome="proposal",
+        summary="This result must never be reached without image bytes.",
+        read_mode="image_input",
+    )
+    executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path,
+        [trigger],
+        executor,
+        max_task_attempts=1,
+    )
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "image_dependency_unavailable"
+    runs = _task4_agent_runs(worker)
+    assert len(runs) == 1
+    assert runs[0].role is AgentRole.CONSUMER
+    assert runs[0].status == "failed"
+    assert json.loads(runs[0].structured_error_json)["code"] == (
+        "image_dependency_unavailable"
+    )
+    assert executor.commands == []
 
 
 def test_unavailable_decisive_material_returns_dependency_failure_without_invention(

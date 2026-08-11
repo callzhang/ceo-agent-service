@@ -4,6 +4,7 @@ import logging
 import re
 import shlex
 import shutil
+import urllib.request
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -71,7 +72,6 @@ from app.org_cache import (
 from app.permission import PermissionGate
 from app.prompt import MaterialReferenceContext
 from app.store import (
-    AgentRole,
     AgentRun,
     AgentRunLeaseLostError,
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
@@ -2095,6 +2095,10 @@ class DingTalkAutoReplyWorker:
             trigger=trigger,
             context_messages=context_messages,
         )
+        image_paths = self._collect_agent_image_paths(
+            trigger=trigger,
+            context_messages=context_messages,
+        )
         manual_rerun = None
         if task.manual_rerun_attempt_id:
             source_attempt = self.store.get_reply_attempt(task.manual_rerun_attempt_id)
@@ -2126,6 +2130,10 @@ class DingTalkAutoReplyWorker:
             prior_receipts=self._agent_prior_receipts(task),
             manual_rerun=manual_rerun,
             trigger_raw_payload=dict(trigger.raw_payload),
+            image_paths=tuple(str(path.resolve()) for path in image_paths),
+            image_sha256s=tuple(
+                hashlib.sha256(path.read_bytes()).hexdigest() for path in image_paths
+            ),
         )
 
     def _agent_material_references(
@@ -2321,6 +2329,175 @@ class DingTalkAutoReplyWorker:
                     (),
                 )
         return tuple(references)
+
+    def _collect_agent_image_paths(
+        self,
+        *,
+        trigger: DingTalkMessage,
+        context_messages: list[DingTalkMessage],
+    ) -> list[Path]:
+        image_paths: list[Path] = []
+        seen_sources: set[str] = set()
+        for message in self._referenced_document_messages(
+            [trigger],
+            context_messages,
+        ):
+            for source_key, payload in self._message_image_sources(message):
+                if source_key in seen_sources:
+                    continue
+                seen_sources.add(source_key)
+                try:
+                    path = self._resolve_message_image(message, payload)
+                except Exception as exc:
+                    self.store.record_error(
+                        message.open_conversation_id,
+                        message.open_message_id,
+                        "image_download",
+                        self._image_download_error_detail(message, payload, str(exc)),
+                    )
+                    continue
+                if path is None:
+                    self.store.record_error(
+                        message.open_conversation_id,
+                        message.open_message_id,
+                        "image_download",
+                        self._image_download_error_detail(
+                            message,
+                            payload,
+                            "no image content returned",
+                        ),
+                    )
+                    continue
+                image_paths.append(path)
+        return image_paths
+
+    @staticmethod
+    def _image_download_error_detail(
+        message: DingTalkMessage,
+        payload: dict[str, str],
+        error: str,
+    ) -> str:
+        source = (
+            payload.get("media_id")
+            or payload.get("download_code")
+            or payload.get("url")
+        )
+        source_text = f" resource {source}" if source else ""
+        return f"{message.open_message_id}:{source_text} error {error}"
+
+    def _resolve_message_image(
+        self,
+        message: DingTalkMessage,
+        payload: dict[str, str],
+    ) -> Path | None:
+        kind = payload.get("kind")
+        if kind == "url":
+            source = payload["url"]
+            data = self._download_image_bytes(source)
+        elif kind == "media_id":
+            download = self.dws.get_resource_download_url(
+                message.open_conversation_id,
+                message.open_message_id,
+                payload["media_id"],
+                "mediaId",
+            )
+            local_path = self._local_image_path_from_payload(download)
+            if local_path is not None:
+                source = str(local_path)
+                data = local_path.read_bytes()
+            else:
+                source = self._download_url_from_payload(download)
+                if not source:
+                    return None
+                data = self._download_image_bytes(source)
+        elif kind == "download_code":
+            download = self.dws.download_robot_message_file(payload["download_code"])
+            source = self._download_url_from_payload(download)
+            if not source:
+                return None
+            data = self._download_image_bytes(source)
+        else:
+            return None
+        if len(data) > DOWNLOADED_IMAGE_MAX_BYTES:
+            raise DwsError("dingtalk_image_too_large")
+        return self._write_message_image(message, source, data)
+
+    @staticmethod
+    def _download_url_from_payload(payload: object) -> str:
+        if isinstance(payload, dict):
+            for key in ("downloadUrl", "resourceUrl", "url"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            for value in payload.values():
+                url = DingTalkAutoReplyWorker._download_url_from_payload(value)
+                if url:
+                    return url
+        if isinstance(payload, list):
+            for value in payload:
+                url = DingTalkAutoReplyWorker._download_url_from_payload(value)
+                if url:
+                    return url
+        return ""
+
+    @staticmethod
+    def _local_image_path_from_payload(payload: object) -> Path | None:
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("localPath")
+        if not isinstance(value, str) or not value.strip():
+            return None
+        path = Path(value)
+        if not path.is_file():
+            return None
+        if path.stat().st_size > DOWNLOADED_IMAGE_MAX_BYTES:
+            raise DwsError("dingtalk_image_too_large")
+        return path
+
+    def _download_image_bytes(self, url: str) -> bytes:
+        http_request = urllib.request.Request(url)
+        with urllib.request.urlopen(
+            http_request,
+            timeout=DOWNLOAD_TIMEOUT_SECONDS,
+        ) as response:
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > DOWNLOADED_IMAGE_MAX_BYTES:
+                raise DwsError("dingtalk_image_too_large")
+            data = response.read(DOWNLOADED_IMAGE_MAX_BYTES + 1)
+        if len(data) > DOWNLOADED_IMAGE_MAX_BYTES:
+            raise DwsError("dingtalk_image_too_large")
+        return data
+
+    def _write_message_image(
+        self,
+        message: DingTalkMessage,
+        source: str,
+        data: bytes,
+    ) -> Path:
+        image_dir = self.store.path.parent / "image-attachments"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        safe_message_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", message.open_message_id)
+        suffix = self._image_suffix(source, data)
+        digest = hashlib.sha256(data).hexdigest()[:16]
+        path = image_dir / f"{safe_message_id}_{digest}{suffix}"
+        path.write_bytes(data)
+        return path
+
+    @staticmethod
+    def _image_suffix(source: str, data: bytes) -> str:
+        source_path = urlsplit(source).path.casefold()
+        for suffix in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+            if source_path.endswith(suffix):
+                return suffix
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return ".png"
+        if data.startswith(b"\xff\xd8\xff"):
+            return ".jpg"
+        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return ".webp"
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return ".gif"
+        return ".img"
 
     @staticmethod
     def _raw_calendar_event_id(message: DingTalkMessage) -> str:

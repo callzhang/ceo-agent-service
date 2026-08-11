@@ -8,8 +8,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import AgentTaskContext
-from app.agent_contracts import AuditFeedback, ConsumerAgentResult, ConsumerProposal
-from app.agent_result import ResultParseError
+from app.agent_contracts import (
+    AuditFeedback,
+    ConsumerAgentResult,
+    ConsumerOutcome,
+    ConsumerProposal,
+)
+from app.agent_result import AgentError, ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
     parse_consumer_agent_wire_result,
@@ -270,6 +275,28 @@ class ConsumerAgentRunner:
             native_cli_classifier=self.native_cli_classifier,
         )
 
+        if context.unresolved_image_count:
+            result = ConsumerAgentResult(
+                outcome=ConsumerOutcome.FAILED,
+                summary="Referenced image content could not be supplied to the agent.",
+                proposal=None,
+                error=AgentError(
+                    code="image_dependency_unavailable",
+                    retryable=False,
+                ),
+            )
+            failed = self.store.fail_agent_run(
+                claim.run.id,
+                result.error.model_dump(mode="json"),
+                owner=self.owner,
+            )
+            return AgentTurnRunResult(
+                run_id=failed.id,
+                result=result,
+                transcript_start_line=failed.transcript_start_line,
+                transcript_end_line=failed.transcript_end_line,
+            )
+
         def renew_session_lock() -> None:
             if not self.store.renew_codex_session_lock(
                 task.conversation_id,
@@ -305,6 +332,7 @@ class ConsumerAgentRunner:
                 parse_result=parse_consumer_agent_wire_result,
                 persist_conversation_session=persist_conversation_session,
                 on_progress=renew_session_lock,
+                image_paths=[Path(path) for path in context.image_paths],
             )
             self.store.set_codex_session_contract_hash(
                 task.conversation_id,

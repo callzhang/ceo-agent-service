@@ -134,6 +134,32 @@ def _is_terminal_codex_auth_failure(code: str) -> bool:
     return code.startswith(CODEX_PROVIDER_AUTH_FAILED)
 
 
+def _has_external_readback_after_effects(
+    events: list[dict[str, object]],
+) -> bool:
+    last_effect_index = -1
+    readback_indexes: list[int] = []
+    for index, event in enumerate(events):
+        item = event.get("item")
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        if (
+            event.get("type") == "item.completed"
+            and isinstance(metadata, dict)
+            and metadata.get("effect") == EffectKind.EFFECTFUL.value
+        ):
+            last_effect_index = index
+        if (
+            event.get("type") == "item.completed"
+            and isinstance(metadata, dict)
+            and metadata.get("effect") == EffectKind.READ_ONLY.value
+            and metadata.get("operation") != "read_skill"
+        ):
+            readback_indexes.append(index)
+    if last_effect_index < 0:
+        return bool(readback_indexes)
+    return any(index > last_effect_index for index in readback_indexes)
+
+
 class AgentTurnProcess(Generic[ResultT]):
     def __init__(
         self,
@@ -173,6 +199,7 @@ class AgentTurnProcess(Generic[ResultT]):
         authorized_recovery_actions: frozenset[int] = frozenset(),
         recovery_authorizations: dict[str, int] | None = None,
         allow_effectful_tools: bool = False,
+        image_paths: list[Path] | None = None,
     ) -> AgentTurnRunResult[ResultT]:
         if recovery_phase not in {"", "reconcile", "execute"}:
             raise ValueError("invalid recovery phase")
@@ -348,6 +375,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 approval_policy="untrusted" if allow_effectful_tools else "never",
                 developer_instructions=contract_instructions,
                 use_approval_bypass=allow_effectful_tools,
+                image_paths=image_paths,
             )
             configure_command(command)
             process = self.executor(
@@ -706,7 +734,14 @@ class AgentTurnProcess(Generic[ResultT]):
                 registry=self.effects,
             )
             if completed == set(range(len(expected_effect_actions))) and all_effects_closed:
-                return
+                if _has_external_readback_after_effects(persisted.tool_events):
+                    return
+                self.store.mark_agent_run_unknown(
+                    run.id,
+                    {"code": "audit_external_readback_missing", "retryable": True},
+                    owner=self.owner,
+                )
+                raise RuntimeError("audit_external_readback_missing")
             code = (
                 "audit_execution_evidence_missing"
                 if persisted.side_effect_state == SideEffectState.NONE.value
@@ -892,6 +927,8 @@ class AgentTurnProcess(Generic[ResultT]):
             or not all_effects_closed
         ):
             raise RuntimeError("audit_execution_evidence_missing")
+        if not _has_external_readback_after_effects(persisted.tool_events):
+            raise RuntimeError("audit_external_readback_missing")
 
     def _raise_for_process_failure(
         self, process: ProcessRunResult, *, run: AgentRun

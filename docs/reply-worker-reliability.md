@@ -305,6 +305,9 @@ For an executed Audit result, `external_result_json` has one strict shape:
 the live readback, and `live_result_reference` contains the external identifiers
 needed to locate that readback. Richer free-form execution summaries do not replace
 these fields; this keeps successful writes machine-verifiable and recoverable.
+The runtime also requires a completed reviewed external read after the final
+write, or a current live read when matching a durable execution receipt. A write
+completion by itself leaves the Audit run unknown rather than confirmed.
 
 For WeChat, a rotated generation may replace a delivery only while it is unsent.
 `ready_to_send`, `superseded`, and a sender-confirmed `action_not_performed`
@@ -403,6 +406,12 @@ command is the authoritative read path for the current source and may account
 for a source-specific response shape. Consumer Agent A executes it unchanged
 before declaring the material unavailable; a similar command found in a skill
 is not a substitute.
+
+Image references are resolved to bounded local attachment files before an Agent
+turn. The same file path and SHA-256 are supplied through native Codex `--image`
+inputs to Consumer A and Audit B. A DingTalk media ID, URL, or other reference is
+only discovery metadata; if it cannot produce an actual local file, Consumer A
+fails with `image_dependency_unavailable` before making a content judgment.
 
 An `agent_cli` command that returns a structured error receipt is recorded as a
 failed effect with its retryability and channel state. It is not treated as an

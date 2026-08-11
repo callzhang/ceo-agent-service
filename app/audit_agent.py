@@ -415,6 +415,7 @@ class AuditAgentRunner:
             allow_effectful_tools=(
                 not self.dry_run and recovery_phase != "reconcile"
             ),
+            image_paths=[Path(path) for path in context.task.image_paths],
         )
 
 

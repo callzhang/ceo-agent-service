@@ -972,24 +972,32 @@ def test_audit_accepts_matching_persisted_execution_receipt_with_live_read(setup
     assert persisted.side_effect_state == "confirmed"
 
 
-def test_audit_accepts_exact_completed_effect_without_extra_live_read(setup):
+def test_audit_rejects_exact_completed_effect_without_external_readback(setup):
     store, task, audit_context, parent = setup
 
-    result = AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=CapturingExecutor(
-            _audit_jsonl(
-                "operation-1",
-                session="session-b",
-                include_verification=False,
-            )
-        ),
-    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+    with pytest.raises(RuntimeError, match="audit_external_readback_missing"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(
+                _audit_jsonl(
+                    "operation-1",
+                    session="session-b",
+                    include_verification=False,
+                )
+            ),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
 
-    persisted = store.get_agent_run(result.run_id)
-    assert persisted is not None and persisted.status == "completed"
-    assert persisted.side_effect_state == "confirmed"
+    persisted = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert persisted is not None
+    assert persisted.status == "unknown"
+    assert persisted.side_effect_state == "unknown"
 
 
 def test_audit_rejects_direct_shell_event(setup):

@@ -2,6 +2,7 @@ from datetime import datetime
 from datetime import timedelta
 from dataclasses import dataclass
 from enum import StrEnum
+import hashlib
 import importlib
 import json
 from pathlib import Path
@@ -9848,11 +9849,20 @@ def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.resource_download_url_calls == []
+    assert dws.resource_download_url_calls == [
+        ("cid-1", "msg-image-1", "@img-token-1", "mediaId")
+    ]
     assert dws_local_path.exists() is True
     runner = worker._test_agent_runner
     assert isinstance(runner, FakeAgentResultRunner)
-    assert any(item.kind == "dingtalk_image" for item in runner.calls[0][2].materials)
+    context = runner.calls[0][2]
+    assert any(item.kind == "dingtalk_image" for item in context.materials)
+    assert len(context.image_paths) == 1
+    resolved_path = Path(context.image_paths[0])
+    assert resolved_path.name.endswith(".png")
+    assert context.image_sha256s == (
+        hashlib.sha256(b"\x89PNG\r\n\x1a\nlocal-image").hexdigest(),
+    )
 
 
 def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkeypatch):
@@ -9888,10 +9898,13 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
 
     worker.run_once()
 
-    assert dws.resource_download_url_calls == []
+    assert dws.resource_download_url_calls == [
+        ("cid-1", "msg-image-1", "@img-token-1", "mediaId")
+    ]
     assert len(agent_runner(worker).calls) == 1
     prompt = agent_prompt(worker)
     assert codex.calls == []
+    assert agent_runner(worker).calls[0][2].image_paths == ()
     assert '"kind": "dingtalk_image"' in prompt
     assert "msg-image-1" in prompt
     assert "dws chat message download-media --type mediaId" in prompt
@@ -9900,7 +9913,10 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     assert len(attempts) == 1
     assert attempts[0].action == "agent_run"
     assert attempts[0].send_status == "needs_human"
-    assert worker.store.list_errors() == []
+    errors = worker.store.list_errors()
+    assert len(errors) == 1
+    assert errors[0].kind == "image_download"
+    assert "resource download unavailable" in errors[0].detail
 
 
 def test_dingtalk_doc_read_failure_setup_does_not_block_codex(

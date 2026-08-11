@@ -56,6 +56,15 @@ class AgentTaskContext:
     trigger_sender_open_dingtalk_id: str = ""
     trigger_mentioned_user_ids: tuple[str, ...] = ()
     trigger_raw_payload: dict[str, object] = field(default_factory=dict)
+    image_paths: tuple[str, ...] = ()
+    image_sha256s: tuple[str, ...] = ()
+
+    @property
+    def unresolved_image_count(self) -> int:
+        referenced = sum(
+            material.kind == "dingtalk_image" for material in self.materials
+        )
+        return max(referenced - len(self.image_paths), 0)
 
     def render(
         self,
@@ -121,6 +130,20 @@ class AgentTaskContext:
             "Recent conversation context\n" + _json(messages),
             "Raw material references and exact read commands\n" + _json(materials),
         ]
+        if self.image_paths:
+            sections.append(
+                "Actual Codex image inputs\n"
+                + _json(
+                    [
+                        {"path": path, "sha256": sha256}
+                        for path, sha256 in zip(
+                            self.image_paths,
+                            self.image_sha256s,
+                            strict=True,
+                        )
+                    ]
+                )
+            )
         if self.prior_receipts:
             sections.append(
                 "Safe prior execution receipts\n"
