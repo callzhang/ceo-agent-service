@@ -9343,6 +9343,14 @@ def _attempt_status_card(
     attention: HistoryAttention | None = None,
 ) -> str:
     active_attempt = later_attempt or attempt
+    subject = next(
+        (
+            line.strip()
+            for line in attempt.trigger_text.splitlines()
+            if line.strip()
+        ),
+        "未记录事项摘要",
+    )[:180]
     later_is_terminal = later_attempt is not None and _attempt_is_terminal(
         later_attempt
     )
@@ -9371,7 +9379,11 @@ def _attempt_status_card(
             )
         message = continuation + _pending_reconciliation_message(agent_runs or [])
     elif attention is not None:
-        return _history_attention_html(attention, actions_html="")
+        return (
+            '<section class="card compact-card attempt-status-card">'
+            f"<strong>事项：</strong>{escape(subject)}</section>"
+            + _history_attention_html(attention, actions_html="")
+        )
     elif active_attempt.send_status == "needs_human":
         message = "这条事项等待你的决策。请阅读下方已核验的事实，再提交具体处理指令。"
     elif active_attempt.send_status == "failed":
