@@ -634,7 +634,10 @@ def _enqueue_prior_delivery_agent_review(
     now: str,
 ) -> bool:
     attempt_revision = int(attempt.get("draft_revision") or 0)
-    attempt_result = _json_dict(str(attempt.get("result_json") or "{}"))
+    late_result = _json_dict(str(attempt.get("late_result_json") or "{}"))
+    attempt_result = late_result or _json_dict(
+        str(attempt.get("result_json") or "{}")
+    )
     evidence = {
         "prior_revision": attempt_revision,
         "prior_idempotency_uuid": str(attempt.get("idempotency_uuid") or ""),
@@ -668,6 +671,64 @@ def _enqueue_prior_delivery_agent_review(
         source_ref=work_item.source.ref,
         payload_json=work_item.model_dump_json(),
     )
+
+
+def _reopen_failed_follow_up_delivery_reviews(
+    store: AutoReplyStore,
+    *,
+    now: str,
+    limit: int,
+) -> set[int]:
+    handled_draft_ids: set[int] = set()
+    for attempt in store.list_failed_follow_up_delivery_reviews(limit=limit):
+        draft = store.get_follow_up_draft(int(attempt.get("draft_id") or 0))
+        if draft is None:
+            continue
+        if _enqueue_prior_delivery_agent_review(store, draft, attempt, now=now):
+            handled_draft_ids.add(draft.id)
+    return handled_draft_ids
+
+
+def _persist_late_follow_up_result(
+    store: AutoReplyStore,
+    draft,
+    *,
+    attempt_id: int,
+    claim_token: str,
+    idempotency_uuid: str,
+    outcome: str,
+    result_json: str,
+    now: str,
+) -> bool:
+    transition = store.apply_follow_up_late_send_result(
+        attempt_id=attempt_id,
+        draft_id=draft.id,
+        draft_revision=draft.revision,
+        claim_token=claim_token,
+        idempotency_uuid=idempotency_uuid,
+        outcome=outcome,
+        result_json=result_json,
+        sent_at=now,
+    )
+    if transition.get("draft_finalized"):
+        return outcome == "sent"
+    if str(transition.get("outcome") or "") not in {
+        "confirmed_sent",
+        "equivalent_sent",
+    }:
+        return False
+    delivered = store.get_follow_up_send_attempt(
+        draft_id=draft.id,
+        draft_revision=draft.revision,
+    )
+    current = store.get_follow_up_draft(draft.id)
+    if (
+        delivered is not None
+        and current is not None
+        and current.revision > draft.revision
+    ):
+        _enqueue_prior_delivery_agent_review(store, current, delivered, now=now)
+    return False
 
 
 def _recover_prior_follow_up_send_attempt(
@@ -814,6 +875,11 @@ def process_due_follow_ups(
     draft_ids: tuple[int, ...] | None = None,
 ) -> int:
     sent = 0
+    reopened_review_draft_ids = (
+        _reopen_failed_follow_up_delivery_reviews(store, now=now, limit=limit)
+        if auto_send
+        else set()
+    )
     reconciled_draft_ids = (
         _process_expired_follow_up_reconciliations(
             store,
@@ -849,7 +915,7 @@ def process_due_follow_ups(
     for draft in drafts:
         if not auto_send:
             continue
-        if draft.id in reconciled_draft_ids:
+        if draft.id in reconciled_draft_ids or draft.id in reopened_review_draft_ids:
             continue
         if _recover_prior_follow_up_send_attempt(store, draft, now=now):
             continue
@@ -933,6 +999,7 @@ def process_due_follow_ups(
         lease_owner = ""
         sending = False
         revision_uuid = ""
+        attempt_id = 0
         try:
             owner_user_id, open_dingtalk_id, at_name = _owner_dingtalk_target(
                 store,
@@ -991,6 +1058,17 @@ def process_due_follow_ups(
             ):
                 continue
             sending = True
+            attempt = store.get_follow_up_send_attempt(
+                draft_id=draft.id,
+                draft_revision=draft.revision,
+            )
+            if (
+                attempt is None
+                or str(attempt.get("claim_token") or "") != claim_token
+                or str(attempt.get("idempotency_uuid") or "") != revision_uuid
+            ):
+                continue
+            attempt_id = int(attempt["id"])
             if send_to_group:
                 result = dws.send_message(
                     group_conversation_id,
@@ -1009,8 +1087,20 @@ def process_due_follow_ups(
                     open_dingtalk_id=open_dingtalk_id or None,
                     idempotency_uuid=revision_uuid,
                 )
-            persisted_send_result = json.dumps(
+            send_outcome = (
+                "failed"
+                if isinstance(result, dict) and result.get("success") is False
+                else "sent"
+            )
+            sent_result_json = json.dumps(
                 {
+                    "owner_user_id": owner_user_id,
+                    "at_users": at_users,
+                    "at_open_dingtalk_ids": at_open_dingtalk_ids,
+                    "at_open_dingtalk_names": at_open_dingtalk_names,
+                    "feedback_token": feedback_token,
+                    "sensitive": sensitive,
+                    "target_kind_used": "group" if send_to_group else "direct",
                     "send_result": result or {},
                     "delivered_text": question_text,
                     "claimed_revision": draft.revision,
@@ -1018,14 +1108,27 @@ def process_due_follow_ups(
                 },
                 ensure_ascii=False,
             )
-            store.record_follow_up_sending_result(
+            result_recorded = store.record_follow_up_sending_result(
                 draft.id,
                 draft_revision=draft.revision,
                 claim_token=claim_token,
                 lease_owner=lease_owner,
                 now=now,
-                result_json=persisted_send_result,
+                result_json=sent_result_json,
             )
+            if not result_recorded:
+                if _persist_late_follow_up_result(
+                    store,
+                    draft,
+                    attempt_id=attempt_id,
+                    claim_token=claim_token,
+                    idempotency_uuid=revision_uuid,
+                    outcome=send_outcome,
+                    result_json=sent_result_json,
+                    now=now,
+                ):
+                    sent += 1
+                continue
         except Exception as exc:
             if sending and (
                 _dws_send_outcome_is_unknown(exc)
@@ -1161,31 +1264,15 @@ def process_due_follow_ups(
                 str(exc),
             )
             continue
-        sent_result_json = json.dumps(
-            {
-                "owner_user_id": owner_user_id,
-                "at_users": at_users,
-                "at_open_dingtalk_ids": at_open_dingtalk_ids,
-                "at_open_dingtalk_names": at_open_dingtalk_names,
-                "feedback_token": feedback_token,
-                "sensitive": sensitive,
-                "target_kind_used": "group" if send_to_group else "direct",
-                "claimed_revision": draft.revision,
-                "idempotency_uuid": revision_uuid,
-                "send_result": result or {},
-                "delivered_text": question_text,
-            },
-            ensure_ascii=False,
-        )
         finalized = store.update_claimed_follow_up_draft(
             draft.id,
             claimed_revision=draft.revision,
             claim_token=claim_token,
             lease_owner=lease_owner,
             now=now,
-            attempt_state="sent",
+            attempt_state=send_outcome,
             attempt_result_json=sent_result_json,
-            status="sent",
+            status=send_outcome,
             send_result_json=sent_result_json,
             evidence_check_json=json.dumps(
                 {
@@ -1198,24 +1285,18 @@ def process_due_follow_ups(
             sent_at=now,
         )
         if finalized:
-            sent += 1
+            if send_outcome == "sent":
+                sent += 1
             continue
-        delivered = store.get_follow_up_send_attempt(
-            draft_id=draft.id,
-            draft_revision=draft.revision,
-        )
-        current = store.get_follow_up_draft(draft.id)
-        if (
-            delivered is not None
-            and delivered.get("state") == "sent"
-            and delivered.get("idempotency_uuid") == revision_uuid
-            and current is not None
-            and current.revision > draft.revision
+        if _persist_late_follow_up_result(
+            store,
+            draft,
+            attempt_id=attempt_id,
+            claim_token=claim_token,
+            idempotency_uuid=revision_uuid,
+            outcome=send_outcome,
+            result_json=sent_result_json,
+            now=now,
         ):
-            _enqueue_prior_delivery_agent_review(
-                store,
-                current,
-                delivered,
-                now=now,
-            )
+            sent += 1
     return sent

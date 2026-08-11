@@ -2430,6 +2430,255 @@ def test_late_send_result_is_persisted_only_on_old_revision_and_queues_review(
     assert len(dws.sent) == 1
 
 
+@pytest.mark.parametrize(
+    (
+        "reconciliation_outcome",
+        "late_outcome",
+        "expected_state",
+        "review_count",
+        "has_conflict",
+    ),
+    [
+        ("sent", "sent", "sent", 1, False),
+        ("failed", "sent", "unknown", 0, True),
+        ("ambiguous", "sent", "sent", 1, False),
+        ("sent", "failed", "unknown", 0, True),
+        ("failed", "failed", "not_sent", 0, False),
+        ("ambiguous", "failed", "not_sent", 0, False),
+    ],
+)
+def test_delayed_sender_result_merges_or_conflicts_with_reconciliation(
+    tmp_path,
+    reconciliation_outcome,
+    late_outcome,
+    expected_state,
+    review_count,
+    has_conflict,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="旧问题",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+
+    class DelayedResultDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            super().send_message(*args, **kwargs)
+            store.update_follow_up_draft(
+                draft_id,
+                question_text="修正后的问题",
+                scheduled_at="2026-07-01 01:00:00",
+            )
+            attempts = store.claim_expired_follow_up_reconciliation_attempts(
+                now="2026-06-08 02:06:00",
+                lease_owner="reconciler",
+                lease_until="2026-06-08 02:11:00",
+                limit=1,
+            )
+            assert len(attempts) == 1
+            attempt = attempts[0]
+            if reconciliation_outcome == "sent":
+                assert store.resolve_unknown_follow_up_attempt_sent(
+                    draft_id,
+                    draft_revision=1,
+                    claim_token=str(attempt["claim_token"]),
+                    lease_owner="reconciler",
+                    now="2026-06-08 02:06:00",
+                    sent_at="2026-06-08 02:06:00",
+                    result_json=json.dumps({"reconciliation": {"state": "sent"}}),
+                )
+            elif reconciliation_outcome == "failed":
+                assert store.resolve_unknown_follow_up_attempt_not_sent(
+                    draft_id,
+                    draft_revision=1,
+                    claim_token=str(attempt["claim_token"]),
+                    lease_owner="reconciler",
+                    now="2026-06-08 02:06:00",
+                    result_json=json.dumps({"reconciliation": {"state": "failed"}}),
+                )
+            if late_outcome == "failed":
+                return {"success": False, "error": "late send failure"}
+            return {"success": True, "result": {"openTaskId": "late-result"}}
+
+    dws = DelayedResultDws()
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    ) == 0
+
+    assert len(dws.sent) == 1
+    attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert attempt is not None
+    assert attempt["state"] == expected_state
+    late_result = json.loads(str(attempt["late_result_json"]))["send_result"]
+    assert late_result["success"] is (late_outcome == "sent")
+    conflict = json.loads(str(attempt["conflict_json"]))
+    assert bool(conflict) is has_conflict
+    corrected = store.get_follow_up_draft(draft_id)
+    assert corrected is not None
+    assert corrected.revision == 2
+    assert corrected.question_text == "修正后的问题"
+    assert corrected.scheduled_at == "2026-07-01 01:00:00"
+    assert corrected.status == "draft"
+    assert len(store.claim_work_summary_inputs(limit=2)) == review_count
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:07:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.sent) == 1
+
+
+def test_failed_delivery_review_reopens_same_input_and_done_releases_draft(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="旧问题",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+
+    class CorrectingDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            super().send_message(*args, **kwargs)
+            if len(self.sent) == 1:
+                store.update_follow_up_draft(
+                    draft_id,
+                    question_text="修正后的问题",
+                    scheduled_at="2026-06-08 01:00:00",
+                )
+            return {"success": True, "result": {"openTaskId": "delivered"}}
+
+    dws = CorrectingDws()
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    ) == 0
+    first_review = store.claim_work_summary_inputs(limit=1)[0]
+    store.mark_work_summary_input_failed(first_review.id, "retry exhaustion")
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:01:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.sent) == 1
+    reopened = store.claim_work_summary_inputs(limit=2)
+    assert len(reopened) == 1
+    assert reopened[0].id == first_review.id
+    assert reopened[0].source_ref == first_review.source_ref
+    store.mark_work_summary_input_done(reopened[0].id)
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:02:00",
+        auto_send=True,
+    ) == 1
+    assert len(dws.sent) == 2
+    assert "修正后的问题" in dws.sent[1]["text"]
+    assert store.claim_work_summary_inputs(limit=2) == []
+
+
+def test_reconciliation_after_receipt_write_conflicts_at_finalization_cas(
+    tmp_path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="旧问题",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+
+    class CorrectingDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            super().send_message(*args, **kwargs)
+            store.update_follow_up_draft(
+                draft_id,
+                question_text="修正后的问题",
+                scheduled_at="2026-07-01 01:00:00",
+            )
+            return {"success": True, "result": {"openTaskId": "late-result"}}
+
+    original_finalize = store.update_claimed_follow_up_draft
+
+    def reconcile_then_finalize(*args, **kwargs):
+        attempts = store.claim_expired_follow_up_reconciliation_attempts(
+            now="2026-06-08 02:06:00",
+            lease_owner="reconciler",
+            lease_until="2026-06-08 02:11:00",
+            limit=1,
+        )
+        assert len(attempts) == 1
+        assert store.resolve_unknown_follow_up_attempt_not_sent(
+            draft_id,
+            draft_revision=1,
+            claim_token=str(attempts[0]["claim_token"]),
+            lease_owner="reconciler",
+            now="2026-06-08 02:06:00",
+            result_json=json.dumps({"reconciliation": {"state": "failed"}}),
+        )
+        return original_finalize(*args, **kwargs)
+
+    monkeypatch.setattr(store, "update_claimed_follow_up_draft", reconcile_then_finalize)
+    dws = CorrectingDws()
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    ) == 0
+
+    assert len(dws.sent) == 1
+    attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert attempt is not None
+    assert attempt["state"] == "unknown"
+    assert json.loads(str(attempt["conflict_json"]))["late_outcome"] == "sent"
+    corrected = store.get_follow_up_draft(draft_id)
+    assert corrected is not None
+    assert corrected.question_text == "修正后的问题"
+    assert corrected.scheduled_at == "2026-07-01 01:00:00"
+    assert store.claim_work_summary_inputs(limit=2) == []
+
+
 def test_corrected_revision_waits_for_old_confirmed_sent_reconciliation(
     tmp_path,
     monkeypatch,

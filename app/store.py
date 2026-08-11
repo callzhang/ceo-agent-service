@@ -1361,6 +1361,8 @@ class AutoReplyStore:
                     result_json text not null default '{}',
                     review_enqueued_revision integer not null default 0,
                     review_source_ref text not null default '',
+                    late_result_json text not null default '{}',
+                    conflict_json text not null default '{}',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp
                 );
@@ -1704,6 +1706,8 @@ class AutoReplyStore:
                 ("lease_until", "text not null default ''"),
                 ("review_enqueued_revision", "integer not null default 0"),
                 ("review_source_ref", "text not null default ''"),
+                ("late_result_json", "text not null default '{}'"),
+                ("conflict_json", "text not null default '{}'"),
             ):
                 if column not in follow_up_send_attempt_columns:
                     db.execute(
@@ -12050,6 +12054,183 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def apply_follow_up_late_send_result(
+        self,
+        *,
+        attempt_id: int,
+        draft_id: int,
+        draft_revision: int,
+        claim_token: str,
+        idempotency_uuid: str,
+        outcome: str,
+        result_json: str,
+        sent_at: str,
+    ) -> dict[str, object]:
+        if outcome not in {"sent", "failed"}:
+            raise ValueError("late follow-up result must be sent or failed")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                """
+                select *
+                from follow_up_send_attempts
+                where id=?
+                  and draft_id=?
+                  and draft_revision=?
+                  and claim_token=?
+                  and idempotency_uuid=?
+                """,
+                (
+                    attempt_id,
+                    draft_id,
+                    draft_revision,
+                    claim_token,
+                    idempotency_uuid,
+                ),
+            ).fetchone()
+            if row is None:
+                return {"outcome": "stale", "draft_finalized": False}
+
+            state = str(row["state"])
+            existing_conflict = str(row["conflict_json"] or "{}").strip()
+            confirmed_sent = state == "sent"
+            confirmed_failed = state in {"failed", "not_sent", "retryable"}
+            contradictory = (confirmed_sent and outcome == "failed") or (
+                confirmed_failed and outcome == "sent"
+            )
+            if contradictory or existing_conflict != "{}":
+                conflict_json = json.dumps(
+                    {
+                        "existing_state": state,
+                        "existing_result": json.loads(str(row["result_json"] or "{}")),
+                        "late_outcome": outcome,
+                        "late_result": json.loads(result_json),
+                    },
+                    ensure_ascii=False,
+                )
+                db.execute(
+                    """
+                    update follow_up_send_attempts
+                    set state='unknown',
+                        lease_owner='',
+                        lease_until='',
+                        late_result_json=?,
+                        conflict_json=?,
+                        updated_at=current_timestamp
+                    where id=? and claim_token=? and idempotency_uuid=?
+                    """,
+                    (
+                        result_json,
+                        conflict_json,
+                        attempt_id,
+                        claim_token,
+                        idempotency_uuid,
+                    ),
+                )
+                return {"outcome": "conflict", "draft_finalized": False}
+
+            if confirmed_sent or confirmed_failed:
+                db.execute(
+                    """
+                    update follow_up_send_attempts
+                    set late_result_json=?, updated_at=current_timestamp
+                    where id=? and claim_token=? and idempotency_uuid=?
+                    """,
+                    (result_json, attempt_id, claim_token, idempotency_uuid),
+                )
+                return {
+                    "outcome": f"equivalent_{outcome}",
+                    "draft_finalized": False,
+                }
+
+            if state not in {"sending", "unknown"}:
+                return {"outcome": "stale", "draft_finalized": False}
+
+            next_state = "sent" if outcome == "sent" else "not_sent"
+            db.execute(
+                """
+                update follow_up_send_attempts
+                set state=?,
+                    lease_owner='',
+                    lease_until='',
+                    late_result_json=?,
+                    updated_at=current_timestamp
+                where id=? and claim_token=? and idempotency_uuid=?
+                """,
+                (
+                    next_state,
+                    result_json,
+                    attempt_id,
+                    claim_token,
+                    idempotency_uuid,
+                ),
+            )
+            draft_finalized = False
+            if outcome == "sent":
+                draft = db.execute(
+                    """
+                    update follow_up_drafts
+                    set status='sent',
+                        send_result_json=?,
+                        sent_at=?,
+                        revision=revision+1,
+                        send_claim_revision=0,
+                        send_claim_token='',
+                        send_claim_idempotency_uuid='',
+                        updated_at=current_timestamp
+                    where id=?
+                      and revision=?
+                      and send_claim_revision=?
+                      and send_claim_token=?
+                      and send_claim_idempotency_uuid=?
+                    """,
+                    (
+                        result_json,
+                        sent_at,
+                        draft_id,
+                        draft_revision,
+                        draft_revision,
+                        claim_token,
+                        idempotency_uuid,
+                    ),
+                )
+                draft_finalized = draft.rowcount == 1
+            else:
+                draft = db.execute(
+                    """
+                    update follow_up_drafts
+                    set send_claim_revision=0,
+                        send_claim_token='',
+                        send_claim_idempotency_uuid='',
+                        updated_at=current_timestamp
+                    where id=?
+                      and revision=?
+                      and send_claim_revision=?
+                      and send_claim_token=?
+                      and send_claim_idempotency_uuid=?
+                    """,
+                    (
+                        draft_id,
+                        draft_revision,
+                        draft_revision,
+                        claim_token,
+                        idempotency_uuid,
+                    ),
+                )
+                if draft.rowcount == 1:
+                    db.execute(
+                        """
+                        update follow_up_send_attempts
+                        set state='retryable', updated_at=current_timestamp
+                        where id=? and state='not_sent'
+                        """,
+                        (attempt_id,),
+                    )
+            return {
+                "outcome": f"confirmed_{outcome}",
+                "draft_finalized": draft_finalized,
+            }
+
     def mark_follow_up_sending_unknown(
         self,
         draft_id: int,
@@ -12535,7 +12716,20 @@ class AutoReplyStore:
                   and draft_revision=?
                   and claim_token=?
                   and state='sent'
-                  and review_enqueued_revision < ?
+                  and (
+                    review_enqueued_revision < ?
+                    or (
+                      review_enqueued_revision=?
+                      and review_source_ref=?
+                      and exists (
+                        select 1
+                        from work_summary_inputs
+                        where source_type=?
+                          and source_ref=?
+                          and status='failed'
+                      )
+                    )
+                  )
                 """,
                 (
                     current_revision,
@@ -12544,6 +12738,10 @@ class AutoReplyStore:
                     draft_revision,
                     claim_token,
                     current_revision,
+                    current_revision,
+                    source_ref,
+                    source_type,
+                    source_ref,
                 ),
             )
             if attempt.rowcount != 1:
@@ -12574,6 +12772,34 @@ class AutoReplyStore:
                 (source_type, source_ref, payload_json),
             )
             return True
+
+    def list_failed_follow_up_delivery_reviews(
+        self,
+        *,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select attempts.*
+                from follow_up_send_attempts as attempts
+                join work_summary_inputs as reviews
+                  on reviews.source_type='follow_up_completion_check'
+                 and reviews.source_ref=attempts.review_source_ref
+                join follow_up_drafts as drafts
+                  on drafts.id=attempts.draft_id
+                where attempts.state='sent'
+                  and attempts.review_source_ref!=''
+                  and reviews.status='failed'
+                  and drafts.revision >= attempts.review_enqueued_revision
+                order by attempts.draft_id, attempts.draft_revision, attempts.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def get_follow_up_send_attempt(
         self,
