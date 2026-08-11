@@ -179,6 +179,7 @@ class AgentTurnProcess(Generic[ResultT]):
         effect_action_counts = [0] * len(expected_effect_actions)
         effect_action_by_call_id: dict[str, int] = {}
         completed_effect_call_ids: set[str] = set()
+        suppressed_session_replay_call_ids: set[str] = set()
         observed_session_id = ""
         session_transcript_end = 0
         recovery_event_start = len(run.tool_events)
@@ -197,7 +198,9 @@ class AgentTurnProcess(Generic[ResultT]):
             run.transcript_end_line if recover_unknown else run.transcript_start_line
         )
 
-        def persist_effect_event(payload: dict[str, object]) -> None:
+        def persist_effect_event(
+            payload: dict[str, object], *, from_session_replay: bool = False
+        ) -> None:
             nonlocal line_count, saw_json
             nonlocal primary_turn_started, primary_turn_closed
             event = self._normalized_effect_event(
@@ -243,10 +246,21 @@ class AgentTurnProcess(Generic[ResultT]):
                             else None
                         )
                     if action_index is not None:
+                        # The local Codex session can contain the same completed
+                        # controlled call already observed in the live JSON stream,
+                        # but with a different call ID. Replaying it would create a
+                        # second lifecycle in our ledger and falsely make one action
+                        # look like two executions. Keep session-only recovery, but
+                        # never replay an action that live streaming already covered.
+                        if from_session_replay and effect_action_counts[action_index]:
+                            suppressed_session_replay_call_ids.add(call_id)
+                            return
                         metadata["action_index"] = action_index
                         effect_action_counts[action_index] += 1
                         effect_action_by_call_id[call_id] = action_index
                 else:
+                    if from_session_replay and call_id in suppressed_session_replay_call_ids:
+                        return
                     action_index = effect_action_by_call_id.get(call_id)
                     if action_index is not None:
                         metadata["action_index"] = action_index
@@ -433,8 +447,8 @@ class AgentTurnProcess(Generic[ResultT]):
                         }
                         | {"status": "in_progress"},
                     }
-                    persist_effect_event(start_payload)
-                    persist_effect_event(completed_payload)
+                    persist_effect_event(start_payload, from_session_replay=True)
+                    persist_effect_event(completed_payload, from_session_replay=True)
             if _contains_sensitive_value(result.model_dump(mode="json")):
                 raise ValueError("agent_result_contains_sensitive_value")
         except ResultParseError as exc:
