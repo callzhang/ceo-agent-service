@@ -876,6 +876,39 @@ def test_generation_rotation_waits_for_unknown_effect_reconciliation(
     ).claimed is False
 
 
+def test_service_restart_releases_pending_unknown_audit_reconciliation_lease(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="stopped-worker"
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="stopped-worker",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="stopped-reconciler")
+    assert claim.claimed
+    store.requeue_reply_task(
+        task.id,
+        "service_restart_before_reconciliation",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    released = store.release_unknown_audit_reconciliation_leases_after_service_restart()
+
+    assert [item.id for item in released] == [run.id]
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.lease_owner == ""
+    claimed_task = store.claim_reply_tasks(limit=1)
+    assert [item.id for item in claimed_task] == [task.id]
+    assert store.claim_unknown_agent_run(run.id, owner="new-reconciler").claimed
+
+
 def test_reconciliation_defer_rejects_stale_generation_even_with_live_lease(
     tmp_path: Path,
 ) -> None:
