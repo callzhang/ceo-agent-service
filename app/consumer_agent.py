@@ -312,6 +312,21 @@ class ConsumerAgentRunner:
                 task.conversation_id,
                 contract_hash,
             )
+            if (
+                result.result.outcome.value == "failed"
+                and result.result.error.retryable
+            ):
+                persisted = self.store.get_agent_run(claim.run.id)
+                if persisted is not None and not persisted.tool_events:
+                    failed_session_id = persisted.codex_session_id or session_id
+                    if failed_session_id:
+                        # A retryable result without any controlled tool event
+                        # made no evidence progress. Retry with the current
+                        # instructions instead of resuming that dead-end turn.
+                        self.store.clear_codex_session_if_matches(
+                            task.conversation_id,
+                            failed_session_id,
+                        )
             return result
         except ResultParseError as exc:
             persisted = self.store.get_agent_run(claim.run.id)
