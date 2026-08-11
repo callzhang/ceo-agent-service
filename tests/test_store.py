@@ -140,6 +140,80 @@ def test_store_connections_enable_sqlite_concurrency_pragmas(tmp_path: Path):
     assert foreign_keys == 1
 
 
+def test_discard_unstarted_service_tasks_closes_only_no_effect_tasks(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for message_id in ("service-1", "service-2"):
+        assert store.enqueue_reply_task(
+            conversation_id="cid-service",
+            conversation_title="Service",
+            single_chat=True,
+            trigger_message_id=message_id,
+            trigger_create_time="2026-08-11 10:00:00",
+            trigger_sender="Service",
+            trigger_text="synthetic recovery",
+            trigger_message_json=json.dumps(
+                {"raw_payload": {"service_task": True, "source": "repair"}}
+            ),
+        )
+    tasks = store.claim_reply_tasks(limit=2)
+    run = store.claim_agent_run(
+        tasks[0].id,
+        tasks[0].execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    ).run
+
+    discarded = store.discard_unstarted_service_tasks(
+        [tasks[0].id, tasks[1].id],
+        reason="The synthetic recovery source was invalid.",
+    )
+
+    assert [task.status for task in discarded] == ["done", "done"]
+    assert all(task.error == "The synthetic recovery source was invalid." for task in discarded)
+    failed_run = store.get_agent_run(run.id)
+    assert failed_run is not None and failed_run.status == "failed"
+    assert failed_run.side_effect_state == "none"
+    assert json.loads(failed_run.structured_error_json)["code"] == (
+        "invalid_service_task_discarded"
+    )
+
+
+def test_discard_unstarted_service_tasks_rejects_started_effect(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-service",
+        conversation_title="Service",
+        single_chat=True,
+        trigger_message_id="service-effect",
+        trigger_create_time="2026-08-11 10:00:00",
+        trigger_sender="Service",
+        trigger_text="synthetic recovery",
+        trigger_message_json=json.dumps(
+            {"raw_payload": {"service_task": True, "source": "repair"}}
+        ),
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    run = _claim_audit_run(store, task.id, task.execution_generation, owner="worker-1").run
+    store.append_agent_run_event(
+        run.id,
+        {
+            "type": "item.started",
+            "item": {"id": "write-1", "metadata": {"effect": "effectful"}},
+        },
+        owner="worker-1",
+    )
+
+    with pytest.raises(ValueError, match="started or uncertain effects"):
+        store.discard_unstarted_service_tasks(
+            [task.id],
+            reason="The synthetic recovery source was invalid.",
+        )
+
+
 def test_store_connections_can_use_short_busy_timeout(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3", busy_timeout_seconds=2)
 

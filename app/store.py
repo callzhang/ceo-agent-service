@@ -5333,6 +5333,100 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
+    def discard_unstarted_service_tasks(
+        self,
+        task_ids: list[int] | tuple[int, ...],
+        *,
+        reason: str,
+        now: str | datetime | None = None,
+    ) -> list[ReplyTask]:
+        """Finalize explicitly selected synthetic tasks that never started a write."""
+        normalized_ids = tuple(dict.fromkeys(int(task_id) for task_id in task_ids))
+        if not normalized_ids:
+            return []
+        if any(task_id <= 0 for task_id in normalized_ids):
+            raise ValueError("task ids must be positive")
+        if not reason.strip():
+            raise ValueError("reason must be non-empty")
+
+        placeholders = ",".join("?" for _ in normalized_ids)
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            rows = db.execute(
+                f"select * from reply_tasks where id in ({placeholders}) order by id",
+                normalized_ids,
+            ).fetchall()
+            if len(rows) != len(normalized_ids):
+                raise ValueError("one or more reply tasks do not exist")
+            for row in rows:
+                try:
+                    payload = json.loads(str(row["trigger_message_json"]))
+                except json.JSONDecodeError as exc:
+                    raise ValueError("service task payload is invalid") from exc
+                raw_payload = payload.get("raw_payload")
+                if not isinstance(raw_payload, dict) or not raw_payload.get(
+                    "service_task"
+                ):
+                    raise ValueError("reply task is not an explicit service task")
+                if row["status"] not in {"pending", "processing", "failed"}:
+                    raise ValueError("reply task is already terminal")
+                unsafe = db.execute(
+                    """
+                    select 1
+                    from agent_runs
+                    where reply_task_id=? and execution_generation=?
+                      and (side_effect_state<>'none' or effect_started_count>0)
+                    limit 1
+                    """,
+                    (int(row["id"]), str(row["execution_generation"])),
+                ).fetchone()
+                if unsafe is not None:
+                    raise ValueError("service task has started or uncertain effects")
+
+            error_json = json.dumps(
+                {
+                    "authorization_required": False,
+                    "code": "invalid_service_task_discarded",
+                    "reason": reason.strip(),
+                    "retryable": False,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            for row in rows:
+                task_id = int(row["id"])
+                generation = str(row["execution_generation"])
+                db.execute(
+                    """
+                    update agent_runs
+                    set status='failed', structured_error_json=?,
+                        lease_owner='', lease_expires_at='',
+                        completed_at=?, updated_at=?
+                    where reply_task_id=? and execution_generation=?
+                      and status='running' and side_effect_state='none'
+                      and effect_started_count=0
+                    """,
+                    (error_json, now_text, now_text, task_id, generation),
+                )
+                db.execute(
+                    """
+                    update reply_tasks
+                    set status='done', locked_at=null, available_at='', error=?,
+                        updated_at=?
+                    where id=? and execution_generation=?
+                      and status in ('pending', 'processing', 'failed')
+                    """,
+                    (reason.strip(), now_text, task_id, generation),
+                )
+                db.execute(
+                    "delete from codex_session_locks where conversation_id=?",
+                    (str(row["conversation_id"]),),
+                )
+            updated_rows = db.execute(
+                f"select * from reply_tasks where id in ({placeholders}) order by id",
+                normalized_ids,
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in updated_rows]
+
     def release_unknown_audit_reconciliation_leases_after_service_restart(
         self,
         *,
