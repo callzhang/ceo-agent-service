@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -48,6 +49,13 @@ follow-up. Then offer two to four materially different, actionable choices.
 Do not offer "investigate", "ask me", or an option that merely repeats the
 ambiguity.
 """.strip()
+
+
+def consumer_wire_contract_hash() -> str:
+    """Fingerprint the strict wire schema used to decide session compatibility."""
+    schema = ConsumerAgentWireResult.model_json_schema()
+    encoded = json.dumps(schema, sort_keys=True, separators=(",", ":"))
+    return sha256(encoded.encode("utf-8")).hexdigest()
 
 CONSUMER_ROLE_BOUNDARY = """
 Authoritative Consumer role boundary: configurable Audit Rules are review
@@ -183,9 +191,23 @@ class ConsumerAgentRunner:
         rendered_rules: str,
         feedback: AuditFeedback | None,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
+        contract_hash = consumer_wire_contract_hash()
         conversation_session_id = (
             self.store.get_codex_session_id(task.conversation_id) or None
         )
+        if (
+            conversation_session_id
+            and self.store.get_codex_session_contract_hash(task.conversation_id)
+            != contract_hash
+        ):
+            # A resumed session retains its old output contract. Start a fresh
+            # session when the strict wire schema changes instead of accepting
+            # an incompatible result or treating it as a permanent task error.
+            self.store.clear_codex_session_if_matches(
+                task.conversation_id,
+                conversation_session_id,
+            )
+            conversation_session_id = None
         if (
             conversation_session_id
             and not self.codex_session_exists(conversation_session_id)
@@ -208,7 +230,11 @@ class ConsumerAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        session_id = claim.run.codex_session_id or conversation_session_id
+        session_id = (
+            claim.run.codex_session_id
+            if conversation_session_id is not None
+            else None
+        ) or conversation_session_id
         persist_conversation_session = not (
             claim.run.codex_session_id
             and conversation_session_id
@@ -233,7 +259,7 @@ class ConsumerAgentRunner:
                 raise RuntimeError("codex_session_lock_lost")
 
         try:
-            return process.execute(
+            result = process.execute(
                 run=claim.run,
                 prompt=(
                     context.render(
@@ -261,18 +287,24 @@ class ConsumerAgentRunner:
                 persist_conversation_session=persist_conversation_session,
                 on_progress=renew_session_lock,
             )
+            self.store.set_codex_session_contract_hash(
+                task.conversation_id,
+                contract_hash,
+            )
+            return result
         except ResultParseError as exc:
             persisted = self.store.get_agent_run(claim.run.id)
             if (
-                session_id
-                and str(exc) == "no valid typed result JSON found in Codex JSONL"
+                str(exc) == "no valid typed result JSON found in Codex JSONL"
                 and persisted is not None
                 and not persisted.tool_events
             ):
-                self.store.clear_codex_session_if_matches(
-                    task.conversation_id,
-                    session_id,
-                )
+                failed_session_id = session_id or persisted.codex_session_id
+                if failed_session_id:
+                    self.store.clear_codex_session_if_matches(
+                        task.conversation_id,
+                        failed_session_id,
+                    )
             raise
 
 

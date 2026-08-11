@@ -34,8 +34,9 @@ Agent 超时、进程重启和外部写入结果未知时，仍能恢复而不�
 ### Consumer Agent A
 
 每个 `conversation_id` 绑定一个 A Codex session。新消息通过 `codex exec resume` 追加到该
-session，使 A 能复用参与者、历史事实、已做决定和此前澄清结果。只有 session 文件缺失或
-损坏时才轮换会话。
+session，使 A 能复用参与者、历史事实、已做决定和此前澄清结果。服务同时保存严格 Consumer
+wire schema 的指纹；session 文件缺失、损坏或该指纹变化时，必须新建会话。新会话仍从 SQLite
+任务上下文读取事实，不能用旧 session 的输出形状绕过当前校验。
 
 同一时刻只允许一个 A turn 更新该 session。服务使用短期可续租的 transcript 锁保证 JSONL
 顺序；后续消息仍保留在 SQLite 队列，不因锁存在而丢失。
@@ -203,7 +204,8 @@ Consumer A 的 wire result 只负责传输；其中 `proposal_json` 必须解码
 预期验证、带引用的事实和 Agent 判断。旧的简化对象（例如只有 `actions` 和 `verification`）
 会被严格拒绝，不做兼容补齐；运行时把该模型生成的 JSON Schema 直接交给 Agent，避免提示
 文案与实际校验漂移。同一对话 session 可能含有旧版本输出，因此每个新 turn 的任务 prompt
-也会携带当前 schema；Agent 复用对话事实，但不能照搬历史 wire 形状。
+也会携带当前 schema；Agent 复用对话事实，但不能照搬历史 wire 形状。若 schema 指纹已变，
+服务不会恢复旧会话，而是从持久化任务上下文启动新会话；这比兼容旧字段或将任务永久标红更可靠。
 
 Consumer A 可以在 proposal 中描述受控写操作，但不得调用、试验或验证该写操作；它只能执行
 已审核的读取命令。执行与外部回读均由 Audit B 在接受 proposal 后完成。

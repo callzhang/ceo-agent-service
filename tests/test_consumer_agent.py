@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import AgentTaskContext
-from app.consumer_agent import ConsumerAgentRunner, consumer_developer_instructions
+from app.consumer_agent import (
+    ConsumerAgentRunner,
+    consumer_developer_instructions,
+    consumer_wire_contract_hash,
+)
 from app.agent_result import EffectKind, ResultParseError
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -214,6 +218,9 @@ def context(task):
 
 def test_consumer_is_read_only_and_reuses_conversation_session(store, task, context):
     store.upsert_conversation(task.conversation_id, "Group", False, "session-a")
+    store.set_codex_session_contract_hash(
+        task.conversation_id, consumer_wire_contract_hash()
+    )
     executor = CapturingExecutor(_result_jsonl())
 
     result = ConsumerAgentRunner(
@@ -258,6 +265,27 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     )
     assert "proposal_json must decode to this JSON Schema exactly" in executor.prompts[0]
     assert '"expected_verification"' in executor.prompts[0]
+
+
+def test_consumer_rotates_session_when_wire_contract_changes(store, task, context):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
+    executor = CapturingExecutor(_result_jsonl(session="session-fresh"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert executor.commands[0][2] != "resume"
+    assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
+    assert (
+        store.get_codex_session_contract_hash(task.conversation_id)
+        == consumer_wire_contract_hash()
+    )
 
 
 def test_consumer_rotates_damaged_session_after_missing_final_result(
@@ -405,6 +433,9 @@ def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advan
         task.single_chat,
         "session-new",
     )
+    store.set_codex_session_contract_hash(
+        task.conversation_id, consumer_wire_contract_hash()
+    )
     executor = CapturingExecutor(_result_jsonl(session="session-old"))
 
     ConsumerAgentRunner(
@@ -446,6 +477,9 @@ def test_old_run_parse_failure_does_not_clear_newer_conversation_session(
         task.conversation_title,
         task.single_chat,
         "session-new",
+    )
+    store.set_codex_session_contract_hash(
+        task.conversation_id, consumer_wire_contract_hash()
     )
     missing_result = json.dumps({"type": "turn.failed"})
 

@@ -699,7 +699,8 @@ class AutoReplyStore:
                     conversation_id text primary key,
                     title text not null,
                     single_chat integer not null,
-                    codex_session_id text
+                    codex_session_id text,
+                    codex_session_contract_hash text not null default ''
                 );
                 create table if not exists seen_messages (
                     message_id text primary key,
@@ -1496,6 +1497,16 @@ class AutoReplyStore:
                 on service_bugfix_candidates(status, created_at)
                 """
             )
+
+            conversation_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(conversations)").fetchall()
+            }
+            if "codex_session_contract_hash" not in conversation_columns:
+                db.execute(
+                    "alter table conversations add column "
+                    "codex_session_contract_hash text not null default ''"
+                )
 
             reply_attempt_columns = {
                 row["name"]
@@ -7677,6 +7688,36 @@ class AutoReplyStore:
             ).fetchone()
             return None if row is None else row["codex_session_id"]
 
+    def get_codex_session_contract_hash(self, conversation_id: str) -> str:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select codex_session_contract_hash
+                from conversations
+                where conversation_id=?
+                """,
+                (conversation_id,),
+            ).fetchone()
+            return "" if row is None else str(row["codex_session_contract_hash"] or "")
+
+    def set_codex_session_contract_hash(
+        self,
+        conversation_id: str,
+        contract_hash: str,
+    ) -> int:
+        if not contract_hash.strip():
+            raise ValueError("contract_hash must be non-empty")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update conversations
+                set codex_session_contract_hash=?
+                where conversation_id=?
+                """,
+                (contract_hash, conversation_id),
+            )
+            return cursor.rowcount
+
     def acquire_codex_session_lock(self, conversation_id: str, owner: str) -> bool:
         if not conversation_id.strip():
             raise ValueError("missing conversation_id")
@@ -7934,7 +7975,7 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update conversations
-                set codex_session_id=null
+                set codex_session_id=null, codex_session_contract_hash=''
                 where codex_session_id is not null and codex_session_id != ''
                 """
             )
@@ -7945,7 +7986,7 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update conversations
-                set codex_session_id=null
+                set codex_session_id=null, codex_session_contract_hash=''
                 where conversation_id=?
                 """,
                 (conversation_id,),
@@ -7963,7 +8004,7 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update conversations
-                set codex_session_id=null
+                set codex_session_id=null, codex_session_contract_hash=''
                 where conversation_id=? and codex_session_id=?
                 """,
                 (conversation_id, expected_session_id),
