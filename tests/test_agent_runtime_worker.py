@@ -355,6 +355,12 @@ class ContextOnlyDws:
         self.recent_reads = 0
         self.unread_reads = 0
         self.forbidden_material_reads: list[str] = []
+        self.resource_download_urls: dict[
+            tuple[str, str, str, str], object
+        ] = {}
+        self.resource_download_url_calls: list[tuple[str, str, str, str]] = []
+        self.robot_message_file_downloads: dict[str, object] = {}
+        self.robot_message_file_download_calls: list[str] = []
 
     def read_recent_messages(self, _conversation) -> list[DingTalkMessage]:
         self.recent_reads += 1
@@ -363,6 +369,26 @@ class ContextOnlyDws:
     def read_unread_messages(self, _conversation) -> list[DingTalkMessage]:
         self.unread_reads += 1
         return list(self.messages)
+
+    def get_resource_download_url(
+        self,
+        open_conversation_id: str,
+        open_message_id: str,
+        resource_id: str,
+        resource_type: str,
+    ) -> object:
+        key = (
+            open_conversation_id,
+            open_message_id,
+            resource_id,
+            resource_type,
+        )
+        self.resource_download_url_calls.append(key)
+        return self.resource_download_urls[key]
+
+    def download_robot_message_file(self, download_code: str) -> object:
+        self.robot_message_file_download_calls.append(download_code)
+        return self.robot_message_file_downloads[download_code]
 
     def __getattr__(self, name: str):
         if name.startswith(
@@ -4512,19 +4538,15 @@ def test_attached_image_is_inspected_without_inventing_an_image_skill(
     monkeypatch,
 ):
     image_bytes = TINY_PNG
-    monkeypatch.setattr(
-        DingTalkAutoReplyWorker,
-        "_download_image_bytes",
-        lambda _self, _url: image_bytes,
-        raising=False,
-    )
     skill_paths = _task4_installed_skill_paths(
         tmp_path,
         monkeypatch,
         "ceo-document-review",
         ("dingtalk-shared", "dingtalk-chat"),
     )
-    trigger = _message("Review this image: ![image](https://example.test/review.png)")
+    trigger = _message(
+        "Review this image: [图片消息](mediaId=@img-token-1)"
+    )
     scenario = Task4BehaviorScenario(
         name="attached_image_review",
         outcome="proposal",
@@ -4532,7 +4554,12 @@ def test_attached_image_is_inspected_without_inventing_an_image_skill(
         read_mode="image_input",
     )
     executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
-    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    worker, dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    dws_local_path = tmp_path / "dws-image.png"
+    dws_local_path.write_bytes(image_bytes)
+    dws.resource_download_urls[("cid-1", "msg-1", "@img-token-1", "mediaId")] = {
+        "localPath": str(dws_local_path)
+    }
     unrelated = tmp_path / "image-attachments" / "unrelated.txt"
     unrelated.parent.mkdir(mode=0o700)
     unrelated.write_text("preserve", encoding="utf-8")
@@ -4571,12 +4598,7 @@ def test_invalid_image_fails_decode_before_agent_turn(
         "ceo-document-review",
         ("dingtalk-shared", "dingtalk-chat"),
     )
-    monkeypatch.setattr(
-        DingTalkAutoReplyWorker,
-        "_download_image_bytes",
-        lambda _self, _url: invalid_bytes,
-    )
-    trigger = _message("Review: ![image](https://example.test/truncated.png)")
+    trigger = _message("Review: [图片消息](mediaId=@img-token-1)")
     executor = Task4BehaviorProtocolExecutor(
         skill_paths,
         Task4BehaviorScenario(
@@ -4586,12 +4608,17 @@ def test_invalid_image_fails_decode_before_agent_turn(
             read_mode="image_input",
         ),
     )
-    worker, _dws = _worker_with_protocol_executor(
+    worker, dws = _worker_with_protocol_executor(
         tmp_path,
         [trigger],
         executor,
         max_task_attempts=1,
     )
+    dws_local_path = tmp_path / "malformed-image.png"
+    dws_local_path.write_bytes(invalid_bytes)
+    dws.resource_download_urls[("cid-1", "msg-1", "@img-token-1", "mediaId")] = {
+        "localPath": str(dws_local_path)
+    }
     _enqueue(worker.store, trigger)
 
     assert worker.consume_once(max_tasks=1) == 0
@@ -4601,9 +4628,46 @@ def test_invalid_image_fails_decode_before_agent_turn(
     assert executor.commands == []
 
 
-def test_private_image_url_fails_before_network_or_agent_turn(
+@pytest.mark.parametrize(
+    (
+        "source_kind",
+        "trigger_content",
+        "raw_payload",
+        "dws_result",
+        "expected_source",
+    ),
+    [
+        (
+            "direct",
+            "Review: ![image](https://images.example.test/input.png)",
+            None,
+            None,
+            "https://images.example.test/input.png",
+        ),
+        (
+            "media_id",
+            "Review: [图片消息](mediaId=@img-token-1)",
+            None,
+            {"downloadUrl": "https://signed.example.test/input.png"},
+            "@img-token-1",
+        ),
+        (
+            "download_code",
+            "Review the attached image.",
+            {"content": {"downloadCode": "download-code-1"}},
+            {"downloadUrl": "https://signed.example.test/download-code.png"},
+            "download-code-1",
+        ),
+    ],
+)
+def test_image_url_without_dws_local_path_is_never_fetched(
     tmp_path: Path,
     monkeypatch,
+    source_kind: str,
+    trigger_content: str,
+    raw_payload: dict[str, object] | None,
+    dws_result: object,
+    expected_source: str,
 ):
     skill_paths = _task4_installed_skill_paths(
         tmp_path,
@@ -4612,27 +4676,43 @@ def test_private_image_url_fails_before_network_or_agent_turn(
         ("dingtalk-shared", "dingtalk-chat"),
     )
     monkeypatch.setattr(
-        "app.public_http.socket.getaddrinfo",
-        lambda *_args, **_kwargs: [
-            (2, 1, 6, "", ("169.254.169.254", 80)),
-        ],
+        "urllib.request.OpenerDirector.open",
+        lambda *_args, **_kwargs: pytest.fail(
+            "the service must not fetch chat-supplied image URLs"
+        ),
     )
-    trigger = _message("Review: ![image](http://metadata.internal/latest.png)")
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *_args, **_kwargs: pytest.fail(
+            "the service must not fetch chat-supplied image URLs"
+        ),
+    )
+    monkeypatch.setattr(
+        "socket.getaddrinfo",
+        lambda *_args, **_kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))],
+    )
+    trigger = _message(trigger_content, raw_payload=raw_payload)
     executor = Task4BehaviorProtocolExecutor(
         skill_paths,
         Task4BehaviorScenario(
-            name="private_image_url",
+            name="untrusted_image_url",
             outcome="proposal",
-            summary="Must not inspect a private URL.",
+            summary="Must not inspect URL metadata.",
             read_mode="image_input",
         ),
     )
-    worker, _dws = _worker_with_protocol_executor(
+    worker, dws = _worker_with_protocol_executor(
         tmp_path,
         [trigger],
         executor,
         max_task_attempts=1,
     )
+    if source_kind == "media_id":
+        dws.resource_download_urls[("cid-1", "msg-1", "@img-token-1", "mediaId")] = (
+            dws_result
+        )
+    elif source_kind == "download_code":
+        dws.robot_message_file_downloads["download-code-1"] = dws_result
     _enqueue(worker.store, trigger)
 
     assert worker.consume_once(max_tasks=1) == 0
@@ -4640,6 +4720,11 @@ def test_private_image_url_fails_before_network_or_agent_turn(
     assert attempt is not None
     assert attempt.send_error == "image_dependency_unavailable"
     assert executor.commands == []
+    errors = worker.store.list_errors()
+    assert len(errors) == 1
+    assert errors[0].kind == "image_download"
+    assert expected_source in errors[0].detail
+    assert "trusted local image path unavailable" in errors[0].detail
 
 
 def test_task_image_is_removed_after_failed_consumer_turn(
@@ -4652,12 +4737,7 @@ def test_task_image_is_removed_after_failed_consumer_turn(
         "ceo-document-review",
         ("dingtalk-shared", "dingtalk-chat"),
     )
-    monkeypatch.setattr(
-        DingTalkAutoReplyWorker,
-        "_download_image_bytes",
-        lambda _self, _url: TINY_PNG,
-    )
-    trigger = _message("Review: ![image](https://example.test/failure.png)")
+    trigger = _message("Review: [图片消息](mediaId=@img-token-1)")
     executor = Task4BehaviorProtocolExecutor(
         skill_paths,
         Task4BehaviorScenario(
@@ -4668,12 +4748,17 @@ def test_task_image_is_removed_after_failed_consumer_turn(
             error_code="review_dependency_unavailable",
         ),
     )
-    worker, _dws = _worker_with_protocol_executor(
+    worker, dws = _worker_with_protocol_executor(
         tmp_path,
         [trigger],
         executor,
         max_task_attempts=1,
     )
+    dws_local_path = tmp_path / "failed-turn-image.png"
+    dws_local_path.write_bytes(TINY_PNG)
+    dws.resource_download_urls[("cid-1", "msg-1", "@img-token-1", "mediaId")] = {
+        "localPath": str(dws_local_path)
+    }
     _enqueue(worker.store, trigger)
 
     assert worker.consume_once(max_tasks=1) == 0
@@ -4692,15 +4777,6 @@ def test_unresolved_image_fails_before_metadata_can_be_claimed_as_inspection(
         ("dingtalk-shared", "dingtalk-chat"),
     )
 
-    def unavailable(_self, _url):
-        raise RuntimeError("image source unavailable")
-
-    monkeypatch.setattr(
-        DingTalkAutoReplyWorker,
-        "_download_image_bytes",
-        unavailable,
-        raising=False,
-    )
     trigger = _message("Review this image: ![image](https://example.test/missing.png)")
     scenario = Task4BehaviorScenario(
         name="missing_image",

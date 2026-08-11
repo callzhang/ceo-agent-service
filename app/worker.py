@@ -71,7 +71,6 @@ from app.org_cache import (
 )
 from app.permission import PermissionGate
 from app.prompt import MaterialReferenceContext
-from app.public_http import read_public_http_bytes
 from app.store import (
     AgentRun,
     AgentRunLeaseLostError,
@@ -363,7 +362,6 @@ RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
 REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
 DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
 DOWNLOADED_IMAGE_MAX_BYTES = 20 * 1024 * 1024
-DOWNLOAD_TIMEOUT_SECONDS = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 DWS_UPGRADE_CHECK_RESULT_STATE_KEY = "dws_upgrade_check_result"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
@@ -2364,7 +2362,7 @@ class DingTalkAutoReplyWorker:
                         self._image_download_error_detail(
                             message,
                             payload,
-                            "no image content returned",
+                            "trusted local image path unavailable",
                         ),
                     )
                     continue
@@ -2393,8 +2391,7 @@ class DingTalkAutoReplyWorker:
     ) -> Path | None:
         kind = payload.get("kind")
         if kind == "url":
-            source = payload["url"]
-            data = self._download_image_bytes(source)
+            return None
         elif kind == "media_id":
             download = self.dws.get_resource_download_url(
                 message.open_conversation_id,
@@ -2402,45 +2399,18 @@ class DingTalkAutoReplyWorker:
                 payload["media_id"],
                 "mediaId",
             )
-            local_path = self._local_image_path_from_payload(download)
-            if local_path is not None:
-                source = str(local_path)
-                data = local_path.read_bytes()
-            else:
-                source = self._download_url_from_payload(download)
-                if not source:
-                    return None
-                data = self._download_image_bytes(source)
         elif kind == "download_code":
             download = self.dws.download_robot_message_file(payload["download_code"])
-            source = self._download_url_from_payload(download)
-            if not source:
-                return None
-            data = self._download_image_bytes(source)
         else:
             return None
+        local_path = self._local_image_path_from_payload(download)
+        if local_path is None:
+            return None
+        data = local_path.read_bytes()
         if len(data) > DOWNLOADED_IMAGE_MAX_BYTES:
             raise DwsError("dingtalk_image_too_large")
         suffix = self._decoded_image_suffix(data)
         return self._write_message_image(task_id, message, suffix, data)
-
-    @staticmethod
-    def _download_url_from_payload(payload: object) -> str:
-        if isinstance(payload, dict):
-            for key in ("downloadUrl", "resourceUrl", "url"):
-                value = payload.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-            for value in payload.values():
-                url = DingTalkAutoReplyWorker._download_url_from_payload(value)
-                if url:
-                    return url
-        if isinstance(payload, list):
-            for value in payload:
-                url = DingTalkAutoReplyWorker._download_url_from_payload(value)
-                if url:
-                    return url
-        return ""
 
     @staticmethod
     def _local_image_path_from_payload(payload: object) -> Path | None:
@@ -2455,13 +2425,6 @@ class DingTalkAutoReplyWorker:
         if path.stat().st_size > DOWNLOADED_IMAGE_MAX_BYTES:
             raise DwsError("dingtalk_image_too_large")
         return path
-
-    def _download_image_bytes(self, url: str) -> bytes:
-        return read_public_http_bytes(
-            url,
-            max_bytes=DOWNLOADED_IMAGE_MAX_BYTES,
-            timeout_seconds=DOWNLOAD_TIMEOUT_SECONDS,
-        )
 
     @staticmethod
     def _decoded_image_suffix(data: bytes) -> str:
