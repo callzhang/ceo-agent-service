@@ -17,6 +17,8 @@ from app.agent_turn_runner import (
 )
 from app.audit_agent import (
     AuditAgentRunner,
+    _delivery_ledger_absence_event,
+    _direct_delivery_ledger_absences,
     _expected_effect_action,
     _recovery_authorizations,
     _recovery_prompt,
@@ -1101,6 +1103,64 @@ def test_direct_chat_unknown_without_delivery_record_replays_through_recovery(
     assert requeued is not None and requeued.status == "pending"
     assert requeued.execution_generation != task.execution_generation
     assert executor.commands == []
+
+
+def test_mixed_recovery_uses_delivery_ledger_for_only_missing_direct_send(setup):
+    store, task, audit_context, _parent = setup
+    proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Approve and notify",
+            "actions": [
+                {
+                    "description": "Approve the OA task",
+                    "capability": "agent_cli.dws",
+                    "operation": "oa approval approve",
+                    "target": {"instance_id": "process-1", "task_id": "task-1"},
+                    "payload": {
+                        "argv": [
+                            "dws", "oa", "approval", "approve",
+                            "--instance-id", "process-1", "--task-id", "task-1",
+                            "--yes",
+                        ]
+                    },
+                    "expected_verification": "OA task is completed",
+                },
+                {
+                    "description": "Notify the applicant",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"open_dingtalk_id": "applicant-1"},
+                    "payload": {
+                        "argv": [
+                            "dws", "chat", "message", "send",
+                            "--open-dingtalk-id", "applicant-1", "--text", "done",
+                            "--yes",
+                        ]
+                    },
+                    "expected_verification": "Applicant receives the result",
+                },
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "The approval needs a separate applicant notice.",
+        }
+    )
+    context = replace(audit_context, proposal=proposal)
+
+    evidence = _direct_delivery_ledger_absences(store, task, context)
+
+    assert [action_index for action_index, _digest in evidence] == [1]
+    event = _delivery_ledger_absence_event(context, *evidence[0])
+    assert _read_matches_action(
+        event["item"]["metadata"],
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "target_identifiers": {"open_dingtalk_id": "applicant-1"},
+        },
+        McpToolEffectRegistry.default(),
+    )
+    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "done")
+    assert _direct_delivery_ledger_absences(store, task, context) == ()
 
 
 def test_historical_direct_chat_alias_without_delivery_record_rotates_generation(
