@@ -8329,6 +8329,16 @@ def _agent_failure_reason_card(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
 ) -> str:
+    reason = _agent_failure_reason_text(attempt, agent_runs)
+    if not reason:
+        return ""
+    return _text_card("失败原因", reason)
+
+
+def _agent_failure_reason_text(
+    attempt: ReplyAttempt,
+    agent_runs: list[AgentRun],
+) -> str:
     if attempt.send_status != "failed":
         return ""
     failures = [run for run in agent_runs if run.status == "failed"]
@@ -8343,9 +8353,14 @@ def _agent_failure_reason_card(
         effect = "未执行外部操作" if run.side_effect_state == "none" else "外部操作状态需要核对"
         lines.append(f"{run.role.value}: {detail or _failure_code_explanation(code)}；{effect}。")
     if not lines:
-        lines.append(_failure_code_explanation(attempt.send_error or attempt.codex_reason))
+        stored_summary = attempt.audit_summary.strip()
+        stored_code = (attempt.send_error or attempt.codex_reason).strip()
+        if stored_summary and stored_summary != stored_code:
+            lines.append(stored_summary)
+        else:
+            lines.append(_failure_code_explanation(stored_code))
         lines.append("该旧记录未保留字段级错误；后续失败会保存安全的校验字段和阶段。")
-    return _text_card("失败原因", "\n".join(lines))
+    return "\n".join(lines)
 
 
 def _failure_code_explanation(code: str) -> str:
@@ -9365,6 +9380,17 @@ def _attempt_status_card(
     later_is_terminal = later_attempt is not None and _attempt_is_terminal(
         later_attempt
     )
+    original_failure = (
+        _agent_failure_reason_text(attempt, agent_runs or [])
+        if later_is_terminal
+        else ""
+    )
+    original_failure_detail = (
+        "<br><strong>原失败原因：</strong>"
+        + escape(original_failure).replace("\n", "<br>")
+        if original_failure
+        else ""
+    )
     if later_is_terminal:
         message = (
             f'该历史记录已由 <a href="/attempts/{later_attempt.id}">'
@@ -9407,7 +9433,7 @@ def _attempt_status_card(
         f"<strong>事项：</strong>{escape(subject)}"
         f"<br><strong>当前状态：</strong>{message}"
         f"<br><strong>需要你决策：</strong>{'是' if decision_required else '否'}"
-        f"{decision_detail}{result_detail}</section>"
+        f"{original_failure_detail}{decision_detail}{result_detail}</section>"
     )
 
 

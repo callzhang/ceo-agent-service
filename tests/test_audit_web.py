@@ -4658,6 +4658,41 @@ def test_terminal_later_attempt_replaces_stale_pending_detail_fields(tmp_path: P
     assert "audit_recovery_failed" not in html
 
 
+def test_terminal_later_attempt_keeps_original_failure_reason_visible(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_id = store.record_reply_attempt(
+        conversation_id="cid-resolved-failure",
+        conversation_title="审批通知",
+        trigger_message_id="msg-resolved-failure",
+        trigger_sender="OA审批",
+        trigger_text="请处理离职审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        codex_reason="approval_detail_unavailable",
+        audit_summary="审批详情读取链路未完成，未执行外部动作。",
+        send_status="failed",
+    )
+    store.update_reply_attempt(old_id, send_error="approval_detail_unavailable")
+    later_id = store.record_reply_attempt(
+        conversation_id="cid-resolved-failure",
+        conversation_title="审批通知",
+        trigger_message_id="msg-resolved-failure",
+        trigger_sender="OA审批",
+        trigger_text="请处理离职审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="completed",
+        audit_summary="审批已处理并完成回读。",
+    )
+
+    status, html = render_attempt_detail(store, old_id)
+
+    assert status == 200
+    assert f"Attempt #{later_id}" in html
+    assert "原失败原因：</strong>审批详情读取链路未完成，未执行外部动作。" in html
+    assert "需要你决策：</strong>否" in html
+
+
 def test_render_attempt_detail_suppresses_quality_warnings_for_skipped_attempts(
     tmp_path: Path,
 ):
