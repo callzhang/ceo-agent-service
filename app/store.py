@@ -12054,6 +12054,40 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    @staticmethod
+    def authoritative_follow_up_delivery_state(*payloads: object) -> str:
+        states: set[str] = set()
+
+        def collect(value: object) -> None:
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value or "{}")
+                except json.JSONDecodeError:
+                    return
+            if isinstance(value, list):
+                for item in value:
+                    collect(item)
+                return
+            if not isinstance(value, dict):
+                return
+            reconciliation = value.get("reconciliation")
+            if isinstance(reconciliation, dict):
+                state = str(reconciliation.get("state") or "").casefold()
+                if state == "sent":
+                    states.add("sent")
+                elif state in {"failed", "not_sent"}:
+                    states.add("failed")
+            collect(value.get("existing_result"))
+            collect(value.get("reconciliation_evidence"))
+
+        for payload in payloads:
+            collect(payload)
+        if "sent" in states:
+            return "sent"
+        if "failed" in states:
+            return "failed"
+        return "unknown"
+
     def apply_follow_up_late_send_result(
         self,
         *,
@@ -12118,6 +12152,33 @@ class AutoReplyStore:
                     },
                     ensure_ascii=False,
                 )
+                authoritative_state = self.authoritative_follow_up_delivery_state(
+                    row["result_json"]
+                )
+                if authoritative_state == "sent":
+                    db.execute(
+                        """
+                        update follow_up_send_attempts
+                        set state='sent',
+                            lease_owner='',
+                            lease_until='',
+                            late_result_json=?,
+                            conflict_json=?,
+                            updated_at=current_timestamp
+                        where id=? and claim_token=? and idempotency_uuid=?
+                        """,
+                        (
+                            result_json,
+                            conflict_json,
+                            attempt_id,
+                            claim_token,
+                            idempotency_uuid,
+                        ),
+                    )
+                    return {
+                        "outcome": "equivalent_sent",
+                        "draft_finalized": False,
+                    }
                 db.execute(
                     """
                     update follow_up_send_attempts

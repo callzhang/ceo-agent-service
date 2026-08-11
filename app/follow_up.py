@@ -361,17 +361,46 @@ def _reconcile_unknown_follow_up_attempt(
 ) -> str:
     attempt_revision = int(attempt.get("draft_revision") or 0)
     payload = _json_dict(str(attempt.get("result_json") or "{}"))
-    if _json_dict(str(attempt.get("conflict_json") or "{}")):
-        payload = {
-            **payload,
-            **_json_dict(str(attempt.get("late_result_json") or "{}")),
-        }
-    send_result = payload.get("send_result")
+    conflict = _json_dict(str(attempt.get("conflict_json") or "{}"))
+    late_result = _json_dict(str(attempt.get("late_result_json") or "{}"))
+    authoritative_state = store.authoritative_follow_up_delivery_state(
+        payload,
+        conflict,
+    )
     verification: dict[str, object] = {
         "state": "ambiguous",
         "reason": "no persisted send result supports read-only status lookup",
     }
-    if isinstance(send_result, dict) and hasattr(dws, "verify_message_send_result"):
+    if authoritative_state == "sent":
+        verification = {
+            "state": "sent",
+            "reason": "persisted authoritative sent evidence is terminal",
+        }
+    else:
+        existing_result = conflict.get("existing_result")
+        candidates = [
+            payload.get("send_result"),
+            (
+                existing_result.get("send_result")
+                if isinstance(existing_result, dict)
+                else None
+            ),
+            late_result.get("send_result"),
+        ]
+        send_result = next(
+            (
+                candidate
+                for candidate in candidates
+                if isinstance(candidate, dict)
+                and candidate.get("success") is not False
+            ),
+            None,
+        )
+    if (
+        authoritative_state != "sent"
+        and isinstance(send_result, dict)
+        and hasattr(dws, "verify_message_send_result")
+    ):
         try:
             checked = dws.verify_message_send_result(send_result)
             if isinstance(checked, dict):
@@ -382,6 +411,8 @@ def _reconcile_unknown_follow_up_attempt(
                 "reason": "send status readback failed",
                 "error": str(exc),
             }
+    if authoritative_state == "failed" and verification.get("state") == "ambiguous":
+        verification["authoritative_prior_state"] = "failed"
     reconciled = {
         **payload,
         "claimed_revision": attempt_revision,

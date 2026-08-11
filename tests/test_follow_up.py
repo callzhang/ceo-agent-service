@@ -2442,7 +2442,7 @@ def test_late_send_result_is_persisted_only_on_old_revision_and_queues_review(
         ("sent", "sent", "sent", 1, False),
         ("failed", "sent", "unknown", 0, True),
         ("ambiguous", "sent", "sent", 1, False),
-        ("sent", "failed", "unknown", 0, True),
+        ("sent", "failed", "sent", 1, True),
         ("failed", "failed", "not_sent", 0, False),
         ("ambiguous", "failed", "not_sent", 0, False),
     ],
@@ -2846,6 +2846,196 @@ def test_ambiguous_conflict_retry_is_claimed_by_only_one_reconciler(tmp_path):
     assert len(claimed) == 1
     assert claimed[0]["draft_id"] == draft_id
     assert claimed[0]["lease_owner"] in {"reconciler-a", "reconciler-b"}
+
+
+def test_repeated_conflict_reconciliation_upgrades_only_on_confirmed_sent(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="旧问题",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    _create_conflicted_follow_up_attempt(store, draft_id)
+
+    class SequencedReadbackDws(FakeDws):
+        def __init__(self):
+            super().__init__()
+            self.readback_states = iter(("ambiguous", "sent"))
+            self.verify_calls = []
+
+        def verify_message_send_result(self, send_result):
+            self.verify_calls.append(send_result)
+            return {"state": next(self.readback_states)}
+
+    dws = SequencedReadbackDws()
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:07:00",
+        auto_send=True,
+    ) == 0
+    ambiguous = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert ambiguous is not None
+    assert ambiguous["state"] == "unknown"
+    assert ambiguous["lease_until"] == "2026-06-08 02:22:00"
+    assert store.claim_work_summary_inputs(limit=2) == []
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:22:00",
+        auto_send=True,
+    ) == 0
+    confirmed = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert confirmed is not None
+    assert confirmed["state"] == "sent"
+    reviews = store.claim_work_summary_inputs(limit=2)
+    assert len(reviews) == 1
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:23:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.verify_calls) == 2
+    assert dws.sent == []
+    assert store.claim_work_summary_inputs(limit=2) == []
+
+
+def test_sender_only_conflict_uses_status_bearing_receipt_for_readback(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="旧问题",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    assert store.claim_follow_up_draft_revision(
+        draft_id,
+        expected_revision=1,
+        claim_token="sender-token",
+        idempotency_uuid="sender-uuid",
+        lease_owner="sender",
+        claimed_at="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    assert store.transition_follow_up_attempt_to_sending(
+        draft_id,
+        claimed_revision=1,
+        claim_token="sender-token",
+        lease_owner="sender",
+        now="2026-06-08 02:00:00",
+        lease_until="2026-06-08 02:05:00",
+    )
+    sender_result = json.dumps(
+        {
+            "send_result": {
+                "success": True,
+                "result": {"openTaskId": "status-bearing-receipt"},
+            },
+            "delivered_text": "旧问题",
+        }
+    )
+    assert store.record_follow_up_sending_result(
+        draft_id,
+        draft_revision=1,
+        claim_token="sender-token",
+        lease_owner="sender",
+        now="2026-06-08 02:00:00",
+        result_json=sender_result,
+    )
+    store.update_follow_up_draft(
+        draft_id,
+        question_text="修正后的问题",
+        scheduled_at="2026-07-01 01:00:00",
+    )
+    assert not store.update_claimed_follow_up_draft(
+        draft_id,
+        claimed_revision=1,
+        claim_token="sender-token",
+        lease_owner="sender",
+        now="2026-06-08 02:01:00",
+        attempt_state="sent",
+        attempt_result_json=sender_result,
+        status="sent",
+        send_result_json=sender_result,
+    )
+    attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert attempt is not None
+    transition = store.apply_follow_up_late_send_result(
+        attempt_id=int(attempt["id"]),
+        draft_id=draft_id,
+        draft_revision=1,
+        claim_token="sender-token",
+        idempotency_uuid="sender-uuid",
+        outcome="failed",
+        result_json=json.dumps(
+            {"send_result": {"success": False, "error": "delayed failure"}}
+        ),
+        sent_at="2026-06-08 02:02:00",
+    )
+    assert transition["outcome"] == "conflict"
+
+    class ReadbackDws(FakeDws):
+        def __init__(self):
+            super().__init__()
+            self.verify_calls = []
+
+        def verify_message_send_result(self, send_result):
+            self.verify_calls.append(send_result)
+            return {"state": "sent"}
+
+    dws = ReadbackDws()
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:03:00",
+        auto_send=True,
+    ) == 0
+    assert dws.verify_calls == [
+        {"success": True, "result": {"openTaskId": "status-bearing-receipt"}}
+    ]
+    resolved = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert resolved is not None
+    assert resolved["state"] == "sent"
+    assert len(store.claim_work_summary_inputs(limit=2)) == 1
+
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:04:00",
+        auto_send=True,
+    ) == 0
+    assert len(dws.verify_calls) == 1
+    assert dws.sent == []
 
 
 def test_corrected_revision_waits_for_old_confirmed_sent_reconciliation(
