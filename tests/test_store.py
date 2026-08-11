@@ -302,6 +302,61 @@ def test_codex_session_lock_retries_resource_deadlock(tmp_path, monkeypatch):
     assert attempts == 3
 
 
+def test_retry_failed_pre_agent_reply_task_requires_no_run_or_sent_reply(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Alex",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    claimed = store.claim_reply_task(task_id)
+    assert claimed is not None
+    store.fail_reply_task(
+        task_id,
+        "pre_agent_lock_failure",
+        expected_execution_generation=claimed.execution_generation,
+    )
+
+    recovered = store.retry_failed_pre_agent_reply_task(
+        task_id,
+        reason="operator_retry_after_lock_recovery",
+    )
+
+    assert recovered.status == "pending"
+    assert recovered.attempts == 0
+    assert recovered.error == "operator_retry_after_lock_recovery"
+
+    claimed = store.claim_reply_task(task_id)
+    assert claimed is not None
+    store.fail_reply_task(
+        task_id,
+        "second_failure",
+        expected_execution_generation=claimed.execution_generation,
+    )
+    run = store.claim_agent_run(
+        task_id,
+        claimed.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="test-run",
+    ).run
+
+    with pytest.raises(ValueError, match="already has an agent run"):
+        store.retry_failed_pre_agent_reply_task(
+            task_id,
+            reason="must_not_retry",
+        )
+    assert run.id > 0
+
+
 def test_codex_session_lock_replaces_stale_lock(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

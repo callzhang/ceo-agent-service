@@ -5467,6 +5467,65 @@ class AutoReplyStore:
                 raise RuntimeError("recovered reply task was not persisted")
             return self._reply_task_from_row(updated)
 
+    def retry_failed_pre_agent_reply_task(
+        self,
+        task_id: int,
+        *,
+        reason: str,
+    ) -> ReplyTask:
+        """Reopen a failed task only when no agent turn or delivery was recorded."""
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("retry reason must be non-empty")
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            task = db.execute(
+                """
+                select id, execution_generation, conversation_id, trigger_message_id
+                from reply_tasks
+                where id=? and status='failed'
+                """,
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                raise ValueError("failed reply task was not found")
+            agent_run = db.execute(
+                """
+                select 1 from agent_runs
+                where reply_task_id=? and execution_generation=?
+                limit 1
+                """,
+                (task_id, task["execution_generation"]),
+            ).fetchone()
+            if agent_run is not None:
+                raise ValueError("failed reply task already has an agent run")
+            sent_reply = db.execute(
+                """
+                select 1 from sent_replies
+                where conversation_id=? and trigger_message_id=?
+                limit 1
+                """,
+                (task["conversation_id"], task["trigger_message_id"]),
+            ).fetchone()
+            if sent_reply is not None:
+                raise ValueError("failed reply task already has a sent reply")
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending', attempts=0, locked_at=null,
+                    available_at='', error=?, updated_at=?
+                where id=? and status='failed' and execution_generation=?
+                """,
+                (reason, now_text, task_id, task["execution_generation"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            updated = db.execute(
+                "select * from reply_tasks where id=?", (task_id,)
+            ).fetchone()
+            if updated is None:
+                raise RuntimeError("recovered pre-agent reply task was not persisted")
+            return self._reply_task_from_row(updated)
+
     def requeue_failed_unknown_audit_reconciliation(
         self,
         task_id: int,
