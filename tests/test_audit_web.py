@@ -5076,6 +5076,8 @@ def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
+    assert "事项：</strong>Please complete this task." in html
+    assert "需要你决策：</strong>否" in html
     assert "状态：</strong>需要你处理" in html
     assert "原因：</strong>Current task did not complete" in html
     assert "外部副作用：</strong>未执行任何外部动作" in html

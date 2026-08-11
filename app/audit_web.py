@@ -9351,6 +9351,17 @@ def _attempt_status_card(
         ),
         "未记录事项摘要",
     )[:180]
+    decision_required = active_attempt.send_status == "needs_human"
+    decision_detail = ""
+    if decision_required:
+        decision_summary = (
+            active_attempt.audit_summary.strip()
+            or active_attempt.codex_reason.strip()
+        )
+        if decision_summary:
+            decision_detail = (
+                f"<br><strong>待决策问题：</strong>{escape(decision_summary)}"
+            )
     later_is_terminal = later_attempt is not None and _attempt_is_terminal(
         later_attempt
     )
@@ -9372,24 +9383,20 @@ def _attempt_status_card(
             )
         message = continuation + _pending_reconciliation_message(agent_runs or [])
     elif attention is not None:
-        return _history_attention_html(attention, actions_html="")
+        return (
+            '<section class="card compact-card attempt-status-card">'
+            f"<strong>事项：</strong>{escape(subject)}"
+            f"<br><strong>需要你决策：</strong>"
+            f"{'是' if decision_required else '否'}"
+            f"{decision_detail}</section>"
+            + _history_attention_html(attention, actions_html="")
+        )
     elif active_attempt.send_status == "needs_human":
         message = "这条事项等待你的决策。请阅读下方已核验的事实，再提交具体处理指令。"
     elif active_attempt.send_status == "failed":
         message = "这次处理没有完成。可使用“重新处理”重新读取材料并执行当前规则。"
     else:
         return ""
-    decision_required = active_attempt.send_status == "needs_human"
-    decision_detail = ""
-    if decision_required:
-        decision_summary = (
-            active_attempt.audit_summary.strip()
-            or active_attempt.codex_reason.strip()
-        )
-        if decision_summary:
-            decision_detail = (
-                f"<br><strong>待决策问题：</strong>{escape(decision_summary)}"
-            )
     result_detail = (
         "<br><strong>处理结果：</strong>后续任务已完成，详细执行证据见后续记录。"
         if later_is_terminal
