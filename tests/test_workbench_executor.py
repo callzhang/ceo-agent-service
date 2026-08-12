@@ -1,10 +1,12 @@
 import json
 import os
+import sqlite3
 import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -89,6 +91,17 @@ def _write_classifier():
 def _pending_confirmation(store: WorkbenchStore):
     task, turn = _queued(store)
     assert store.claim_next_turn(owner="seed") is not None
+    confirmation_id = str(uuid4())
+    argv = [
+        "dws", "chat", "message", "send", "--group", "cid-1", "--text",
+        "hello", "--yes",
+    ]
+    authorization = agent_cli.review_write_authorization(
+        argv,
+        authorization_id=confirmation_id,
+        action_index=0,
+        classifier=_write_classifier(),
+    )
     confirmation = store.create_confirmation(
         turn.id,
         action_kind="reviewed_cli",
@@ -96,19 +109,15 @@ def _pending_confirmation(store: WorkbenchStore):
         summary="Send update",
         risk="External message",
         arguments_json={
-            "argv": [
-                "dws",
-                "chat",
-                "message",
-                "send",
-                "--group",
-                "cid-1",
-                "--text",
-                "hello",
-                "--yes",
-            ],
+            "argv": argv,
             "action_index": 0,
         },
+        confirmation_id=confirmation_id,
+        canonical_capability=authorization.capability,
+        canonical_operation=authorization.operation,
+        canonical_targets=authorization.target_identifiers,
+        canonical_operation_digest=authorization.operation_digest,
+        canonical_arguments_digest=authorization.arguments_digest,
         owner="seed",
     )
     return task, turn, confirmation
@@ -192,7 +201,7 @@ def test_heartbeat_renews_during_blocked_wait(tmp_path: Path):
 def test_lost_lease_stops_runtime_and_does_not_write_after_loss(tmp_path: Path):
     class LostLeaseStore(WorkbenchStore):
         def renew_turn_lease(self, *args, **kwargs):
-            raise ValueError("turn lease is stale")
+            raise sqlite3.OperationalError("database is busy")
 
     store = LostLeaseStore(tmp_path / "workbench.sqlite3")
     _, turn = _queued(store)
@@ -465,6 +474,101 @@ def test_confirmation_event_atomically_waits_and_runtime_completion_cannot_overw
     executor.close()
 
 
+def test_confirmation_uses_canonical_target_and_waits_for_runtime_quiescence(
+    tmp_path: Path, monkeypatch
+):
+    class AsyncRuntime(FakeRuntime):
+        def wait(self, handle):
+            self.wait_entered.set()
+            assert self.release_wait.wait(5)
+            _release_runtime_owner(handle)
+            return self.result
+
+        def stop(self, handle):
+            self.stop_calls += 1
+
+    store = _store(tmp_path)
+    task, turn = _queued(store)
+    runtime = AsyncRuntime()
+    writer_calls = []
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    executor = WorkbenchExecutor(
+        store,
+        RuntimeRegistry([runtime]),
+        workspace=tmp_path,
+        classifier=_write_classifier(),
+        write_runner=lambda argv, **_: (
+            writer_calls.append(argv)
+            or subprocess.CompletedProcess(argv, 0, "ok", "")
+        ),
+    )
+    event = RuntimeEvent(
+        "confirmation_required",
+        {
+            "kind": "reviewed_cli",
+            "argv": [
+                "dws", "chat", "message", "send", "--group", "executive-group",
+                "--text", "hello", "--yes",
+            ],
+            "target": "Test group",
+            "summary": "Send update",
+            "risk": "External message",
+            "executed": False,
+        },
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(executor.run_once)
+        assert runtime.wait_entered.wait(2)
+        runtime.on_event(event)
+        confirmation = store.list_confirmations(task.id)[0]
+        assert confirmation.target == "group=executive-group"
+        assert confirmation.canonical_operation == "chat message send"
+        assert runtime.stop_calls == 1
+        in_progress = executor.confirm(confirmation.id)
+        assert in_progress.status is ConfirmationStatus.PENDING
+        assert writer_calls == []
+        runtime.release_wait.set()
+        assert running.result(3) == [turn.id]
+    assert executor.confirm(confirmation.id).status is ConfirmationStatus.EXECUTED
+    assert len(writer_calls) == 1
+    executor.close()
+
+
+def test_confirmation_rejects_private_argv_drift_before_writer(tmp_path: Path, monkeypatch):
+    store = _store(tmp_path)
+    task, _, confirmation = _pending_confirmation(store)
+    with store._connect() as db:
+        db.execute(
+            "update workbench_confirmations set arguments_json=? where id=?",
+            (
+                json.dumps(
+                    {
+                        "argv": [
+                            "dws", "chat", "message", "send", "--group",
+                            "different-group", "--text", "hello", "--yes",
+                        ],
+                        "action_index": 0,
+                    }
+                ),
+                confirmation.id,
+            ),
+        )
+    calls = []
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    executor = WorkbenchExecutor(
+        store,
+        RuntimeRegistry(),
+        workspace=tmp_path,
+        classifier=_write_classifier(),
+        write_runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    result = executor.confirm(confirmation.id)
+    assert result.status is ConfirmationStatus.FAILED
+    assert calls == []
+    assert store.get_task(task.id) is not None
+    executor.close()
+
+
 def test_confirm_executes_once_redacts_receipt_and_requeues(
     tmp_path: Path, monkeypatch
 ):
@@ -491,6 +595,12 @@ def test_confirm_executes_once_redacts_receipt_and_requeues(
     assert first.status is ConfirmationStatus.EXECUTED
     assert second.status is ConfirmationStatus.EXECUTED
     assert len(calls) == 1
+    with WorkbenchStore(store.path)._connect() as db:
+        consumed_at = db.execute(
+            "select authorization_consumed_at from workbench_confirmations where id=?",
+            (confirmation.id,),
+        ).fetchone()["authorization_consumed_at"]
+    assert consumed_at
     assert store.get_turn(turn.id).status is TurnStatus.QUEUED
     assert "secret provider output" not in first.result_json
     assert "dws chat" not in first.result_json
@@ -931,3 +1041,39 @@ def test_close_is_bounded_and_idempotent_without_heartbeat_thread_leak(tmp_path:
         thread.is_alive() and thread.name.startswith("workbench-heartbeat-")
         for thread in threading.enumerate()
     )
+
+
+def test_close_during_blocked_start_stops_late_handle_once(tmp_path: Path):
+    store = _store(tmp_path)
+    _, turn = _queued(store)
+    runtime = FakeRuntime(block_start=True)
+    executor = WorkbenchExecutor(store, RuntimeRegistry([runtime]), workspace=tmp_path)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(executor.run_once)
+        assert runtime.start_entered.wait(2)
+        assert executor.close() is False
+        assert store.get_turn(turn.id).status is TurnStatus.STOPPED
+        runtime.release_start.set()
+        assert running.result(3) == [turn.id]
+    assert runtime.stop_calls == 1
+    assert store.get_turn(turn.id).status is TurnStatus.STOPPED
+    assert executor.close() is True
+
+
+def test_concurrent_run_once_respects_global_two_worker_capacity(tmp_path: Path):
+    store = _store(tmp_path)
+    turns = [_queued(store)[1] for _ in range(4)]
+    runtime = FakeRuntime(block=True)
+    executor = WorkbenchExecutor(store, RuntimeRegistry([runtime]), workspace=tmp_path)
+    with ThreadPoolExecutor(max_workers=2) as callers:
+        first = callers.submit(executor.run_once)
+        assert runtime.wait_entered.wait(2)
+        second = callers.submit(executor.run_once)
+        time.sleep(0.1)
+        statuses = [store.get_turn(turn.id).status for turn in turns]
+        assert statuses.count(TurnStatus.RUNNING) == 2
+        assert statuses.count(TurnStatus.QUEUED) == 2
+        assert second.result(2) == []
+        runtime.release_wait.set()
+        assert len(first.result(3)) == 2
+    executor.close()

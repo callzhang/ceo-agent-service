@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,6 +50,8 @@ class _RunState:
     stop_dispatched: bool = False
     confirmation_created: bool = False
     lease_lost: bool = False
+    shutdown_requested: bool = False
+    quiesced: threading.Event = field(default_factory=threading.Event)
     heartbeat_stop: threading.Event = field(default_factory=threading.Event)
     lock: threading.RLock = field(default_factory=threading.RLock)
 
@@ -101,6 +104,9 @@ class WorkbenchExecutor:
         self._confirmation_states: dict[str, _ConfirmationExecutionState] = {}
         self._task_locks: dict[str, threading.Lock] = {}
         self._map_lock = threading.RLock()
+        self._schedule_lock = threading.Lock()
+        self._reserved_turns = 0
+        self._reserved_turn_ids: set[str] = set()
         self._closed = False
 
     def recover(self, *, now=None) -> int:
@@ -114,16 +120,24 @@ class WorkbenchExecutor:
             if self._closed:
                 raise RuntimeError("workbench executor is closed")
         claimed: list[WorkbenchTurn] = []
-        for _ in range(max_turns):
-            # Store timestamps have one-second precision; one extra second prevents
-            # the persisted lease from becoming equal to "now" between heartbeats.
-            turn = self.store.claim_next_turn(
-                owner=self.owner, lease_seconds=self.lease_seconds + 1
-            )
-            if turn is None:
-                break
-            claimed.append(turn)
-        futures = [self._pool.submit(self._execute_turn, turn) for turn in claimed]
+        futures = []
+        with self._schedule_lock:
+            capacity = min(max_turns, _MAX_CLAIMS - self._reserved_turns)
+            for _ in range(capacity):
+                turn = self.store.claim_next_turn(
+                    owner=self.owner, lease_seconds=self.lease_seconds + 1
+                )
+                if turn is None:
+                    break
+                self._reserved_turns += 1
+                self._reserved_turn_ids.add(turn.id)
+                claimed.append(turn)
+                try:
+                    futures.append(self._pool.submit(self._execute_turn_reserved, turn))
+                except Exception:
+                    self._reserved_turns -= 1
+                    self._reserved_turn_ids.discard(turn.id)
+                    self._fail_claimed(turn.id, "executor_submit_failed")
         for future in futures:
             future.result()
         return [turn.id for turn in claimed]
@@ -140,6 +154,10 @@ class WorkbenchExecutor:
         with self._map_lock:
             if self._closed:
                 raise RuntimeError("workbench executor is closed")
+            existing = self.store.get_confirmation(confirmation_id)
+            proposer = self._states.get(existing.turn_id) if existing else None
+        if proposer is not None and not proposer.quiesced.wait(timeout=0.1):
+            return existing
         claimed = self.store.claim_confirmation_execution(
             confirmation_id,
             owner=self.owner,
@@ -171,11 +189,25 @@ class WorkbenchExecutor:
                 action_index=action_index,
                 classifier=self.classifier,
             )
+            if (
+                authorization.capability != claimed.canonical_capability
+                or authorization.operation != claimed.canonical_operation
+                or json.dumps(
+                    authorization.target_identifiers,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                != claimed.canonical_targets_json
+            ):
+                raise ValueError("confirmation authorization changed")
             receipt = execute_reviewed_write(
                 argv,
                 authorization_id=claimed.id,
                 action_index=action_index,
                 authorization=authorization,
+                authorization_consumer=lambda reviewed: self.store.consume_confirmation_authorization(
+                    claimed.id, owner=self.owner, authorization=reviewed
+                ),
                 classifier=self.classifier,
                 process_runner=self.write_runner,
             )
@@ -219,19 +251,40 @@ class WorkbenchExecutor:
             resume_context="The user cancelled the reviewed external action. Continue without executing it.",
         )
 
-    def close(self) -> None:
+    def close(self) -> bool:
         with self._map_lock:
             if self._closed:
-                return
+                active = bool(self._states or self._confirmation_states)
+                with self._schedule_lock:
+                    return self._reserved_turns == 0 and not active
             self._closed = True
             states = tuple(self._states.values())
             confirmation_states = tuple(self._confirmation_states.values())
+        with self._schedule_lock:
+            reserved_turn_ids = tuple(self._reserved_turn_ids)
+        for turn_id in reserved_turn_ids:
+            try:
+                self.store.request_stop(turn_id)
+            except ValueError:
+                pass
         for state in states:
             state.heartbeat_stop.set()
+            state.shutdown_requested = True
+            try:
+                self.store.request_stop(state.turn_id)
+            except ValueError:
+                pass
             self._stop_state_once(state)
         for state in confirmation_states:
             state.heartbeat_stop.set()
         self._pool.shutdown(wait=False, cancel_futures=True)
+        deadline = time.monotonic() + 0.5
+        for state in states:
+            state.quiesced.wait(timeout=max(0.0, deadline - time.monotonic()))
+        with self._map_lock:
+            active = bool(self._states or self._confirmation_states)
+        with self._schedule_lock:
+            return self._reserved_turns == 0 and not active
 
     def _start_confirmation_heartbeat(
         self, confirmation_id: str
@@ -303,6 +356,14 @@ class WorkbenchExecutor:
             )
             with self._map_lock:
                 self._states[turn.id] = state
+                closed_before_start = self._closed
+            if closed_before_start:
+                state.shutdown_requested = True
+                self.store.request_stop(turn.id)
+                state.quiesced.set()
+                with self._map_lock:
+                    self._states.pop(turn.id, None)
+                return
             heartbeat = threading.Thread(
                 target=self._heartbeat,
                 args=(state,),
@@ -312,8 +373,11 @@ class WorkbenchExecutor:
             heartbeat.start()
             try:
                 prompt = turn.user_text
-                if turn.resume_context:
-                    prompt = f"{prompt}\n\nResume context: {turn.resume_context}"
+                resume_context = self.store.resume_context_for_executor(
+                    turn.id, owner=self.owner
+                )
+                if resume_context:
+                    prompt = f"{prompt}\n\nResume context: {resume_context}"
                 attachment_paths, image_paths = self._validated_inputs(turn.id, runtime)
                 request = RuntimeRequest(
                     turn_id=turn.id,
@@ -328,9 +392,13 @@ class WorkbenchExecutor:
                 )
                 with state.lock:
                     state.handle = handle
+                with self._map_lock:
+                    closed = self._closed
                 current = self.store.get_turn(turn.id)
                 if (
-                    state.lease_lost
+                    closed
+                    or state.shutdown_requested
+                    or state.lease_lost
                     or (current is not None and current.stop_requested)
                     or state.confirmation_created
                 ):
@@ -343,8 +411,17 @@ class WorkbenchExecutor:
             finally:
                 state.heartbeat_stop.set()
                 heartbeat.join(timeout=max(1.0, self.heartbeat_interval_seconds * 2))
+                state.quiesced.set()
                 with self._map_lock:
                     self._states.pop(turn.id, None)
+
+    def _execute_turn_reserved(self, turn: WorkbenchTurn) -> None:
+        try:
+            self._execute_turn(turn)
+        finally:
+            with self._schedule_lock:
+                self._reserved_turns -= 1
+                self._reserved_turn_ids.discard(turn.id)
 
     def _heartbeat(self, state: _RunState) -> None:
         while not state.heartbeat_stop.wait(self.heartbeat_interval_seconds):
@@ -354,8 +431,13 @@ class WorkbenchExecutor:
                     owner=self.owner,
                     lease_seconds=self.lease_seconds + 1,
                 )
-            except ValueError:
-                current = self.store.get_turn(state.turn_id)
+            except Exception:
+                state.lease_lost = True
+                try:
+                    current = self.store.get_turn(state.turn_id)
+                except Exception:
+                    self._stop_state_once(state)
+                    return
                 if (
                     current is not None
                     and current.status is TurnStatus.WAITING_CONFIRMATION
@@ -367,13 +449,13 @@ class WorkbenchExecutor:
                     TurnStatus.FAILED,
                 }:
                     return
-                state.lease_lost = True
                 self._stop_state_once(state)
                 return
 
     def _on_event(self, state: _RunState, event: RuntimeEvent) -> None:
         if not isinstance(event, RuntimeEvent):
             raise ValueError("malformed runtime event")
+        stop_after = False
         with state.lock:
             if state.lease_lost or state.confirmation_created:
                 return
@@ -394,21 +476,24 @@ class WorkbenchExecutor:
                     raise
                 else:
                     state.confirmation_created = True
-                return
-            try:
-                self.store.append_event(
-                    state.turn_id,
-                    sequence=state.next_sequence,
-                    event_type=event.event_type,
-                    payload=payload,
-                    owner=self.owner,
-                )
-            except ValueError:
-                current = self.store.get_turn(state.turn_id)
-                if current is not None and current.status is TurnStatus.STOPPED:
-                    return
-                raise
-            state.next_sequence += 1
+                    stop_after = True
+            else:
+                try:
+                    self.store.append_event(
+                        state.turn_id,
+                        sequence=state.next_sequence,
+                        event_type=event.event_type,
+                        payload=payload,
+                        owner=self.owner,
+                    )
+                except ValueError:
+                    current = self.store.get_turn(state.turn_id)
+                    if current is not None and current.status is TurnStatus.STOPPED:
+                        return
+                    raise
+                state.next_sequence += 1
+        if stop_after:
+            self._stop_state_once(state)
 
     def _create_confirmation(self, state: _RunState, payload: dict[str, Any]) -> None:
         if (
@@ -421,19 +506,31 @@ class WorkbenchExecutor:
             isinstance(item, str) for item in argv
         ):
             raise ValueError("invalid confirmation proposal")
-        review_write_authorization(
+        confirmation_id = str(uuid4())
+        authorization = review_write_authorization(
             argv,
-            authorization_id=str(uuid4()),
+            authorization_id=confirmation_id,
             action_index=0,
             classifier=self.classifier,
         )
+        if not authorization.target_identifiers:
+            raise ValueError("reviewed write has no canonical target")
+        target = ", ".join(authorization.target_identifiers)
+        assert_no_credentials(target)
         self.store.create_confirmation(
             state.turn_id,
             action_kind="reviewed_cli",
-            target=self._safe_display(payload.get("target")),
-            summary=self._safe_display(payload.get("summary")),
+            target=safe_observability_error(target, limit=500),
+            summary="[Untrusted agent description] "
+            + self._safe_display(payload.get("summary")),
             risk=self._safe_display(payload.get("risk")),
             arguments_json={"argv": argv, "action_index": 0},
+            confirmation_id=confirmation_id,
+            canonical_capability=authorization.capability,
+            canonical_operation=authorization.operation,
+            canonical_targets=authorization.target_identifiers,
+            canonical_operation_digest=authorization.operation_digest,
+            canonical_arguments_digest=authorization.arguments_digest,
             owner=self.owner,
         )
 

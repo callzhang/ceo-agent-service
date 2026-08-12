@@ -287,6 +287,17 @@ class WorkbenchStore(AutoReplyStore):
             ).fetchone()
             return None if row is None else self._turn_from_row(row)
 
+    def resume_context_for_executor(self, turn_id: str, *, owner: str) -> str:
+        owner = owner.strip()
+        if not owner:
+            raise ValueError("owner must be non-empty")
+        _, now_text = _utc_store_time()
+        with self._connect() as db:
+            row = self._require_executor_lease(
+                db, turn_id, owner=owner, now_text=now_text
+            )
+            return str(row["resume_context"] or "")
+
     def recover_expired_turns(
         self, *, now: str | datetime | None = None
     ) -> int:
@@ -538,6 +549,12 @@ class WorkbenchStore(AutoReplyStore):
         summary: str,
         risk: str,
         arguments_json: dict[str, Any] | str,
+        confirmation_id: str = "",
+        canonical_capability: str = "",
+        canonical_operation: str = "",
+        canonical_targets: tuple[str, ...] = (),
+        canonical_operation_digest: str = "",
+        canonical_arguments_digest: str = "",
         owner: str = "",
         now: str | datetime | None = None,
     ) -> WorkbenchConfirmation:
@@ -554,14 +571,29 @@ class WorkbenchStore(AutoReplyStore):
             self._require_executor_lease(
                 db, turn_id, owner=owner, now_text=now_text
             )
-            confirmation_id = str(uuid4())
+            confirmation_id = confirmation_id or str(uuid4())
+            canonical_targets_text = json.dumps(
+                canonical_targets, ensure_ascii=False, separators=(",", ":")
+            )
             db.execute(
                 """
                 insert into workbench_confirmations (
-                    id, turn_id, action_kind, target, summary, risk, arguments_json, status
-                ) values (?, ?, ?, ?, ?, ?, ?, 'pending')
+                    id, turn_id, action_kind, target, summary, risk, arguments_json,
+                    canonical_capability, canonical_operation, canonical_targets_json,
+                    canonical_operation_digest, canonical_arguments_digest, status
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
-                (confirmation_id, turn_id, *values, arguments_text),
+                (
+                    confirmation_id,
+                    turn_id,
+                    *values,
+                    arguments_text,
+                    canonical_capability,
+                    canonical_operation,
+                    canonical_targets_text,
+                    canonical_operation_digest,
+                    canonical_arguments_digest,
+                ),
             )
             self._append_control_event(
                 db,
@@ -584,6 +616,45 @@ class WorkbenchStore(AutoReplyStore):
             return self._confirmation_from_row(
                 self._require_confirmation(db, confirmation_id), redact_arguments=True
             )
+
+    def consume_confirmation_authorization(
+        self, confirmation_id: str, *, owner: str, authorization: Any
+    ) -> None:
+        _, now_text = _utc_store_time()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._require_confirmation(db, confirmation_id)
+            expected = (
+                row["canonical_capability"],
+                row["canonical_operation"],
+                row["canonical_operation_digest"],
+                tuple(json.loads(row["canonical_targets_json"])),
+                row["canonical_arguments_digest"],
+            )
+            actual = (
+                authorization.capability,
+                authorization.operation,
+                authorization.operation_digest,
+                authorization.target_identifiers,
+                authorization.arguments_digest,
+            )
+            if (
+                row["status"] != ConfirmationStatus.CONFIRMED.value
+                or row["execution_owner"] != owner
+                or row["execution_lease_expires_at"] <= now_text
+                or row["authorization_consumed_at"]
+                or expected != actual
+            ):
+                raise ValueError("reviewed write authorization cannot be consumed")
+            if db.execute(
+                """
+                update workbench_confirmations set authorization_consumed_at=?
+                where id=? and status='confirmed' and execution_owner=?
+                  and authorization_consumed_at='' and execution_lease_expires_at>?
+                """,
+                (now_text, confirmation_id, owner, now_text),
+            ).rowcount != 1:
+                raise ValueError("reviewed write authorization cannot be consumed")
 
     def list_confirmations(self, task_id: str) -> list[WorkbenchConfirmation]:
         with self._connect() as db:

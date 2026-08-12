@@ -140,12 +140,21 @@ def test_explicit_reviewed_write_authorization_is_exact_and_does_not_touch_envir
     before = dict(os.environ)
     calls: list[list[str]] = []
     monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    consumed = False
+
+    def consume(reviewed):
+        nonlocal consumed
+        if consumed:
+            raise AgentReadOnlyViolationError("reviewed_write_authorization_consumed")
+        assert reviewed == authorization
+        consumed = True
 
     receipt = agent_cli.execute_reviewed_write(
         argv,
         authorization=authorization,
         authorization_id="confirmation-1",
         action_index=0,
+        authorization_consumer=consume,
         classifier=_write_classifier(),
         process_runner=lambda command, **_: (
             calls.append(command)
@@ -157,6 +166,49 @@ def test_explicit_reviewed_write_authorization_is_exact_and_does_not_touch_envir
     assert receipt["authorization_id"] == "confirmation-1"
     assert receipt["action_index"] == 0
     assert dict(os.environ) == before
+
+    with pytest.raises(
+        AgentReadOnlyViolationError, match="reviewed_write_authorization_consumed"
+    ):
+        agent_cli.execute_reviewed_write(
+            argv,
+            authorization=authorization,
+            authorization_id="confirmation-1",
+            action_index=0,
+            authorization_consumer=consume,
+            classifier=_write_classifier(),
+            process_runner=lambda command, **_: subprocess.CompletedProcess(
+                command, 0, "", ""
+            ),
+        )
+    assert len(calls) == 1
+
+
+def test_explicit_authorization_requires_a_consuming_boundary_before_runner(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    argv = [
+        "dws", "chat", "message", "send", "--user", "user-1", "--text",
+        "hello", "--yes",
+    ]
+    authorization = agent_cli.review_write_authorization(
+        argv, "confirmation-1", 0, classifier=_write_classifier()
+    )
+    calls = []
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="reviewed_write_authorization_consumer_required",
+    ):
+        agent_cli.execute_reviewed_write(
+            argv,
+            authorization=authorization,
+            authorization_id="confirmation-1",
+            action_index=0,
+            classifier=_write_classifier(),
+            process_runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+    assert calls == []
 
 
 @pytest.mark.parametrize("argv", ("dws", ["dws", "bad\0argument"]))

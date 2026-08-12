@@ -45,7 +45,7 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-13.3"
+STORE_SCHEMA_VERSION = "2026-08-13.4"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "workbench_tasks",
@@ -1470,6 +1470,10 @@ class AutoReplyStore:
                 create unique index if not exists idx_workbench_one_active_turn
                     on workbench_turns(task_id)
                     where status in ('queued', 'running', 'waiting_confirmation');
+                create index if not exists idx_workbench_turns_queue
+                    on workbench_turns(status, created_at, id);
+                create index if not exists idx_workbench_turns_recovery
+                    on workbench_turns(status, lease_expires_at);
                 create table if not exists workbench_events (
                     id integer primary key autoincrement,
                     turn_id text not null,
@@ -1506,6 +1510,11 @@ class AutoReplyStore:
                     target text not null,
                     summary text not null,
                     risk text not null,
+                    canonical_capability text not null default '',
+                    canonical_operation text not null default '',
+                    canonical_targets_json text not null default '[]',
+                    canonical_operation_digest text not null default '',
+                    canonical_arguments_digest text not null default '',
                     arguments_json text not null,
                     status text not null check(status in (
                         'pending', 'confirmed', 'cancelled', 'executed', 'failed'
@@ -1516,6 +1525,7 @@ class AutoReplyStore:
                     execution_owner text not null default '',
                     execution_lease_expires_at text not null default '',
                     execution_started_at text not null default '',
+                    authorization_consumed_at text not null default '',
                     foreign key(turn_id) references workbench_turns(id)
                 );
                 """
@@ -1539,12 +1549,31 @@ class AutoReplyStore:
                 "execution_owner",
                 "execution_lease_expires_at",
                 "execution_started_at",
+                "canonical_capability",
+                "canonical_operation",
+                "canonical_targets_json",
+                "canonical_operation_digest",
+                "canonical_arguments_digest",
+                "authorization_consumed_at",
             ):
                 if column not in workbench_confirmation_columns:
+                    default = "'[]'" if column == "canonical_targets_json" else "''"
                     db.execute(
                         "alter table workbench_confirmations add column "
-                        f"{column} text not null default ''"
+                        f"{column} text not null default {default}"
                     )
+            db.execute(
+                "create index if not exists idx_workbench_turns_queue "
+                "on workbench_turns(status, created_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_turns_recovery "
+                "on workbench_turns(status, lease_expires_at)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_confirmations_recovery "
+                "on workbench_confirmations(status, execution_lease_expires_at, turn_id)"
+            )
             reply_task_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(reply_tasks)").fetchall()

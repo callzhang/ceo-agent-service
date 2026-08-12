@@ -92,6 +92,7 @@ def execute_reviewed_write(
     authorization_id: str | None = None,
     action_index: int | None = None,
     authorization: ReviewedWriteAuthorization | None = None,
+    authorization_consumer: Callable[[ReviewedWriteAuthorization], object] | None = None,
     classifier: NativeCliMetadataClassifier | None = None,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, object]:
@@ -101,6 +102,7 @@ def execute_reviewed_write(
         authorization_id=authorization_id,
         action_index=action_index,
         reviewed_authorization=authorization,
+        authorization_consumer=authorization_consumer,
         classifier=classifier,
         process_runner=process_runner,
     )
@@ -285,6 +287,7 @@ def _execute_reviewed(
     authorization_id: str | None = None,
     action_index: int | None = None,
     reviewed_authorization: ReviewedWriteAuthorization | None = None,
+    authorization_consumer: Callable[[ReviewedWriteAuthorization], object] | None = None,
 ) -> dict[str, object]:
     argv = _validate_reviewed_argv(argv)
     reviewed = classifier or NativeCliMetadataClassifier()
@@ -329,6 +332,10 @@ def _execute_reviewed(
                 raise AgentReadOnlyViolationError(
                     "reviewed_write_authorization_mismatch"
                 )
+            if authorization_consumer is None:
+                raise AgentReadOnlyViolationError(
+                    "reviewed_write_authorization_consumer_required"
+                )
             authorization = actual
         else:
             authorization = _recovery_write_authorization(
@@ -344,6 +351,8 @@ def _execute_reviewed(
             code="agent_cli_start_unavailable",
             retryable=True,
         )
+    if isinstance(authorization, ReviewedWriteAuthorization):
+        authorization_consumer(authorization)
     reviewed_argv = [executable, *argv[1:]]
     try:
         process = (

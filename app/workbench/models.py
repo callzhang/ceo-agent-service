@@ -37,7 +37,6 @@ class WorkbenchTurn(StrictModel):
     final_text: str = ""
     error_code: str = ""
     error_detail: str = ""
-    resume_context: str = ""
     started_at: str = ""
     completed_at: str = ""
     created_at: str
@@ -97,6 +96,9 @@ class WorkbenchConfirmation(StrictModel):
     target: str
     summary: str
     risk: str
+    canonical_capability: str = ""
+    canonical_operation: str = ""
+    canonical_targets_json: str = "[]"
     arguments_json: str
     status: ConfirmationStatus
     result_json: str = ""

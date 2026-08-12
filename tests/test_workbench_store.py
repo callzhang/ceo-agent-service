@@ -67,7 +67,7 @@ def test_store_migrates_resume_context_without_losing_existing_turns(tmp_path: P
     migrated = WorkbenchStore(db_path)
 
     assert migrated.get_turn(turn.id).user_text == "Compare regions"
-    assert migrated.get_turn(turn.id).resume_context == ""
+    assert "resume_context" not in migrated.get_turn(turn.id).model_dump()
     with migrated._connect() as db:
         columns = {
             row["name"]
@@ -83,10 +83,17 @@ def test_store_migrates_confirmation_execution_claim_without_losing_data(
     store = WorkbenchStore(db_path)
     _, _, confirmation = _waiting_confirmation(store)
     with store._connect() as db:
+        db.execute("drop index idx_workbench_confirmations_recovery")
         for column in (
             "execution_owner",
             "execution_lease_expires_at",
             "execution_started_at",
+            "canonical_capability",
+            "canonical_operation",
+            "canonical_targets_json",
+            "canonical_operation_digest",
+            "canonical_arguments_digest",
+            "authorization_consumed_at",
         ):
             db.execute(f"alter table workbench_confirmations drop column {column}")
         db.execute(
@@ -105,12 +112,42 @@ def test_store_migrates_confirmation_execution_claim_without_losing_data(
     assert row["execution_owner"] == ""
     assert row["execution_lease_expires_at"] == ""
     assert row["execution_started_at"] == ""
+    assert row["canonical_targets_json"] == "[]"
+    assert row["authorization_consumed_at"] == ""
 
 
 def test_store_has_no_public_confirmation_decision_bypass(tmp_path: Path):
     store = _store(tmp_path)
     assert not hasattr(store, "decide_confirmation")
     assert not hasattr(store, "get_confirmation_for_executor")
+
+
+def test_public_turn_excludes_private_resume_context(tmp_path: Path):
+    store, _, turn_id = _running_turn(tmp_path)
+    with store._connect() as db:
+        db.execute(
+            "update workbench_turns set resume_context='private receipt' where id=?",
+            (turn_id,),
+        )
+    public = store.get_turn(turn_id)
+    assert "resume_context" not in public.model_dump()
+    assert store.resume_context_for_executor(turn_id, owner="worker-1") == "private receipt"
+
+
+def test_workbench_query_indexes_exist(tmp_path: Path):
+    store = _store(tmp_path)
+    with store._connect() as db:
+        indexes = {
+            row["name"]
+            for row in db.execute(
+                "select name from sqlite_master where type='index'"
+            ).fetchall()
+        }
+    assert {
+        "idx_workbench_turns_queue",
+        "idx_workbench_turns_recovery",
+        "idx_workbench_confirmations_recovery",
+    } <= indexes
 
 
 def test_create_task_and_idempotent_turn_request(tmp_path: Path):
