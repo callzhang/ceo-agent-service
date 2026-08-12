@@ -112,6 +112,15 @@ def test_describe_native_command_rejects_generic_local_commands():
     assert describe_native_command(
         {"type": "command_execution", "argv": ["rm", "/tmp/material"]}
     ) is None
+    assert describe_native_command(
+        {"type": "command_execution", "argv": ["sed", "-i", "", "/tmp/material"]}
+    ) is None
+    assert describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": ["sed", "-n", "1w /tmp/consumer-escape", "/tmp/material"],
+        }
+    ) is None
 
 
 def test_dws_download_read_requires_fresh_temp_destination(tmp_path, monkeypatch):
@@ -151,14 +160,24 @@ def test_dws_download_read_requires_fresh_temp_destination(tmp_path, monkeypatch
             "argv": ["dws", "doc", "download", "--output", str(destination)],
         }
     ) is None
-    assert describe_native_command(
-        {"type": "command_execution", "argv": ["sed", "-i", "", "/tmp/material"]}
-    ) is None
-    assert describe_native_command(
-        {
-            "type": "command_execution",
-            "argv": ["sed", "-n", "1w /tmp/consumer-escape", "/tmp/material"],
-        }
+
+
+@pytest.mark.parametrize(
+    "command_path",
+    ("doc export", "mail message export", "sheet export", "markdown fetch"),
+)
+def test_dws_other_local_output_verbs_remain_rejected(
+    tmp_path, monkeypatch, command_path
+):
+    monkeypatch.setattr(native_cli_metadata, "MATERIAL_OUTPUT_ROOT", tmp_path)
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={("dws", command_path): EffectKind.READ_ONLY}
+    )
+    argv = ["dws", *command_path.split(), "--output", str(tmp_path / "fresh.bin")]
+
+    assert classifier.classify({"type": "command_execution", "argv": argv}) is None
+    assert classifier.classify(
+        {"type": "command_execution", "argv": argv[:-2]}
     ) is None
 
 

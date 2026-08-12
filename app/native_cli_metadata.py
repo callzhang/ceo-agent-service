@@ -29,6 +29,20 @@ _LOCAL_OUTPUT_FLAGS = frozenset(
         "--target-file",
     }
 )
+_LOCAL_OUTPUT_VERBS = frozenset(
+    {"copy", "download", "download-media", "export", "fetch", "install", "save"}
+)
+_REJECTED_LOCAL_OUTPUT_COMMANDS = frozenset(
+    {("dws", "skill get"), ("dws", "skill install")}
+)
+_ALLOWED_MATERIAL_DOWNLOAD_COMMANDS = frozenset(
+    {
+        ("dws", "chat message download-media"),
+        ("dws", "doc download"),
+        ("dws", "drive download"),
+        ("dws", "oa attachment download"),
+    }
+)
 
 
 def service_read_command_contract() -> tuple[str, ...]:
@@ -646,10 +660,20 @@ def _safe_read_local_output(command_path: str, argv: tuple[str, ...]) -> bool:
             index += 2
             continue
         index += 1
-    is_download = any("download" in part.casefold() for part in command_path.split())
-    if is_download and not destinations:
+    cli = Path(argv[0]).name
+    command_key = (cli, command_path)
+    has_output_verb = any(
+        part.casefold() in _LOCAL_OUTPUT_VERBS for part in command_path.split()
+    )
+    if (
+        command_key in _REJECTED_LOCAL_OUTPUT_COMMANDS
+        or has_output_verb
+        and command_key not in _ALLOWED_MATERIAL_DOWNLOAD_COMMANDS
+    ):
         return False
-    return all(_safe_material_destination(value) for value in destinations)
+    if command_key in _ALLOWED_MATERIAL_DOWNLOAD_COMMANDS:
+        return len(destinations) == 1 and _safe_material_destination(destinations[0])
+    return not destinations
 
 
 def _safe_material_destination(value: str) -> bool:
