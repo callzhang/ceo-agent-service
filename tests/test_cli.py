@@ -5644,7 +5644,7 @@ def test_run_service_keeps_terminal_user_rejected_wechat_delivery(tmp_path):
     )
 
     delivery = store.get_wechat_delivery_by_id(delivery_id)
-    assert delivery.status == "failed"
+    assert delivery.status == "skipped"
     assert delivery.error == "user_rejected"
     assert calls[-1] == ("wait",)
 

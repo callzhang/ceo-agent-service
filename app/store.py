@@ -7347,6 +7347,35 @@ class AutoReplyStore:
                 )
             return total
 
+    def normalize_user_rejected_wechat_deliveries(self) -> int:
+        """Convert legacy user-rejected deliveries to terminal skipped state."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select id
+                from wechat_deliveries
+                where status='failed' and error='user_rejected'
+                order by id
+                """
+            ).fetchall()
+            for row in rows:
+                delivery_id = int(row["id"])
+                db.execute(
+                    """
+                    update wechat_deliveries
+                    set status='skipped', updated_at=current_timestamp
+                    where id=? and status='failed' and error='user_rejected'
+                    """,
+                    (delivery_id,),
+                )
+                self._sync_wechat_delivery_reply_attempt(
+                    db,
+                    delivery_id=delivery_id,
+                    delivery_status="skipped",
+                    error="user_rejected",
+                )
+            return len(rows)
+
     @staticmethod
     def _wechat_delivery_source_statuses(status: str, error: str) -> tuple[str, ...]:
         if status == "sending":
@@ -7378,6 +7407,8 @@ class AutoReplyStore:
         if status == "sent":
             return "sent", reason
         if status == "superseded":
+            return "skipped", reason or status
+        if status == "skipped":
             return "skipped", reason or status
         if status == "failed" and reason == "user_rejected":
             return "skipped", reason

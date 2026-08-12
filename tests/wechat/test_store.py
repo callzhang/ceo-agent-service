@@ -306,6 +306,33 @@ def test_new_generation_does_not_replace_started_or_uncertain_delivery(tmp_path)
             store.rotate_reply_task_execution_generation(task.id)
 
 
+def test_normalize_user_rejected_wechat_deliveries_is_terminal_and_idempotent(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-12 00:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please do not send this.",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1,
+        account_id="acct-1",
+        target_type="direct",
+        target_id="user-1",
+        conversation_id="cid-1",
+        reply_text="This will not be sent.",
+    )
+    store.set_wechat_delivery_status(delivery_id, "failed", error="user_rejected")
+
+    assert store.normalize_user_rejected_wechat_deliveries() == 1
+    assert store.get_wechat_delivery_by_id(delivery_id).status == "skipped"
+    assert store.normalize_user_rejected_wechat_deliveries() == 0
+
+
 def test_stale_wechat_delivery_cannot_record_completion_after_rotation(tmp_path):
     store = _store(tmp_path)
     store.enqueue_reply_task(
