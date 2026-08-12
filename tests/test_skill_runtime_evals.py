@@ -11,8 +11,10 @@ from evals.skill_runtime.run import (
     EvalCase,
     EvalValidationError,
     build_live_command,
+    load_fixtures,
     load_cases,
     main,
+    replay_fixture,
     run_scripted,
 )
 from tests.support.native_codex_read_fixture import (
@@ -21,6 +23,7 @@ from tests.support.native_codex_read_fixture import (
 
 
 CASES_PATH = Path("evals/skill_runtime/cases.jsonl")
+FIXTURES_PATH = Path("evals/skill_runtime/fixtures.jsonl")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "evals" / "skill_runtime" / "run.py"
 EXPECTED_OUTCOMES = {"proposal", "no_action", "needs_human", "failed"}
@@ -35,6 +38,46 @@ def test_every_skill_runtime_eval_declares_skill_outcome_and_assertions():
         assert case.expected_business_skills
         assert case.expected_outcome in EXPECTED_OUTCOMES
         assert case.required_assertions
+
+
+def test_recorded_protocol_fixtures_are_separate_complete_and_read_only():
+    cases = load_cases(CASES_PATH)
+    fixtures = load_fixtures(FIXTURES_PATH)
+
+    assert {fixture.case_id for fixture in fixtures} == {
+        case.case_id for case in cases
+    }
+    for fixture in fixtures:
+        assert fixture.scenario_sha256
+        assert fixture.skill_receipts
+        assert fixture.consumer_events
+        assert fixture.audit_events
+        assert fixture.consumer_result
+        assert fixture.audit_result
+        assert all(
+            event.tool in {"read_skill", "execute_reviewed_read"}
+            for event in (*fixture.consumer_events, *fixture.audit_events)
+        )
+
+
+def test_fixture_loader_applies_sanitization_to_recorded_protocol(tmp_path: Path):
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+    unsafe = fixture.model_copy(
+        update={
+            "consumer_result": {
+                **fixture.consumer_result,
+                "summary": "session-id = 1234567890abcdef",
+            }
+        }
+    )
+    path = tmp_path / "unsafe-fixture.jsonl"
+    path.write_text(
+        json.dumps(unsafe.model_dump(mode="json")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(EvalValidationError, match="sanitization"):
+        load_fixtures(path)
 
 
 def test_corpus_is_sanitized_and_covers_all_required_regressions():
@@ -64,7 +107,30 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
         "expected_business_skills": ["ceo-message-triage"],
         "forbidden_business_skills": [],
         "expected_outcome": "no_action",
-        "required_assertions": ["no_external_write"],
+        "acceptable_audit_outcomes": ["needs_human"],
+        "required_assertions": [
+            {
+                "assertion_id": "no_external_write",
+                "source": "consumer_result",
+                "path": ["proposal"],
+                "operator": "equals",
+                "expected": None,
+            },
+            {
+                "assertion_id": "consumer_evidence_read",
+                "source": "consumer_evidence",
+                "path": [0, "result"],
+                "operator": "contains",
+                "expected": "stdout",
+            },
+            {
+                "assertion_id": "audit_evidence_read",
+                "source": "audit_evidence",
+                "path": [0, "result"],
+                "operator": "contains",
+                "expected": "stdout",
+            },
+        ],
     }
 
     extra = tmp_path / "extra.jsonl"
@@ -81,10 +147,18 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
         load_cases(duplicate)
 
     for label, unsafe in (
-        ("user identifier", "user_id=839201"),
+        ("user identifier", "user id: 839201"),
+        ("user hex identifier", "user-id = deadbeef"),
+        ("session identifier", "session_id: 1234567890abcdef"),
+        ("message identifier", "message-id=90210"),
+        ("conversation identifier", "conversation id: abc123"),
+        ("task identifier", "task_id = 42"),
+        ("attempt identifier", "attempt-id: 7f8e9d"),
         ("token", "token=abcdefghijklmnopqrstuvwxyz0123456789"),
-        ("session identifier", "session_id=1234567890abcdef"),
         ("signed link", "https://example.test/file?signature=opaque"),
+        ("schemeless signed link", "files.example.test/file?expires=1900000000"),
+        ("relative signed reference", "/file/report?auth=opaque"),
+        ("opaque identifier", "01J9ZQ7M4N8K2T6V3X5C7B9D1F"),
     ):
         unsafe_path = tmp_path / f"unsafe-{label.replace(' ', '-')}.jsonl"
         unsafe_path.write_text(
@@ -95,24 +169,160 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
             load_cases(unsafe_path)
 
 
+@pytest.mark.parametrize(
+    "benign",
+    [
+        "The review date is 2026-08-12.",
+        "The corpus contains 10 cases and 24 checks.",
+        "Version 123 is the current generalized fixture.",
+        "The participant completed the documented reconciliation workflow.",
+    ],
+)
+def test_sanitizer_accepts_benign_dates_counts_and_prose(tmp_path: Path, benign: str):
+    case = load_cases(CASES_PATH)[0]
+    path = tmp_path / "benign.jsonl"
+    path.write_text(
+        json.dumps({**case.model_dump(mode="json"), "context": benign}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert load_cases(path)[0].context == benign
+
+
 def test_scripted_runner_passes_corpus_and_detects_expectation_mutation():
     cases = load_cases(CASES_PATH)
+    fixtures = load_fixtures(FIXTURES_PATH)
 
-    passing = run_scripted(cases)
+    passing = run_scripted(cases, fixtures)
     assert passing.ok
     assert len(passing.results) == len(cases)
     assert all(result.ok for result in passing.results)
 
     mutated = list(cases)
     mutated[0] = EvalCase.model_validate(
-        {
-            **mutated[0].model_dump(mode="json"),
-            "required_assertions": ["full_mail_thread_read"],
+        {**mutated[0].model_dump(mode="json"), "trigger": "A different trigger."}
+    )
+    failing = run_scripted(tuple(mutated), fixtures)
+    assert not failing.ok
+    assert "scenario digest" in " ".join(failing.results[0].errors)
+
+
+def test_recorded_replay_rejects_context_and_skill_digest_mutations():
+    case = load_cases(CASES_PATH)[0]
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+    changed_context = EvalCase.model_validate(
+        {**case.model_dump(mode="json"), "context": "A different context."}
+    )
+    assert not replay_fixture(changed_context, fixture).ok
+
+    receipt = fixture.skill_receipts[0]
+    changed_fixture = fixture.model_copy(
+        update={
+            "skill_receipts": (
+                receipt.model_copy(update={"sha256": "0" * 64}),
+                *fixture.skill_receipts[1:],
+            )
         }
     )
-    failing = run_scripted(tuple(mutated))
-    assert not failing.ok
-    assert failing.results[0].missing_assertions == ("full_mail_thread_read",)
+    result = replay_fixture(case, changed_fixture)
+    assert not result.ok
+    assert "Skill digest" in " ".join(result.errors)
+
+
+def test_recorded_replay_parses_nested_results_and_effect_metadata():
+    case = load_cases(CASES_PATH)[0]
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+
+    assert replay_fixture(case, fixture).ok
+
+    malformed = fixture.model_copy(
+        update={"consumer_result": {**fixture.consumer_result, "proposal": None}}
+    )
+    result = replay_fixture(case, malformed)
+    assert not result.ok
+    assert "Consumer result" in " ".join(result.errors)
+
+
+def test_protocol_evaluation_requires_reads_assertions_and_acceptable_audit():
+    case = load_cases(CASES_PATH)[0]
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+
+    without_evidence = fixture.model_copy(
+        update={
+            "consumer_events": tuple(
+                event
+                for event in fixture.consumer_events
+                if event.tool != "execute_reviewed_read"
+            )
+        }
+    )
+    missing = replay_fixture(case, without_evidence)
+    assert not missing.ok
+    assert missing.missing_assertions
+    assert "evidence read" in " ".join(missing.errors)
+
+    forbidden_skill = case.forbidden_business_skills[0]
+    forbidden_path = REPO_ROOT / "skills" / forbidden_skill / "SKILL.md"
+    forbidden_event = fixture.consumer_events[0].model_copy(
+        update={
+            "result": {
+                "name": forbidden_skill,
+                "path": str(forbidden_path),
+                "sha256": __import__("hashlib").sha256(
+                    forbidden_path.read_bytes()
+                ).hexdigest(),
+            }
+        }
+    )
+    with_forbidden = fixture.model_copy(
+        update={"consumer_events": (*fixture.consumer_events, forbidden_event)}
+    )
+    forbidden = replay_fixture(case, with_forbidden)
+    assert not forbidden.ok
+    assert forbidden.forbidden_skills == (forbidden_skill,)
+
+    rejected_audit = fixture.model_copy(
+        update={
+            "audit_result": {
+                "outcome": "failed",
+                "summary": "Dry-run review rejected the proposal.",
+                "proposal_revision": 0,
+                "side_effect_state": "none",
+                "feedback": None,
+                "external_result": None,
+                "reconciliation": [],
+                "error": {
+                    "code": "review_failed",
+                    "retryable": False,
+                    "authorization_required": False,
+                },
+            }
+        }
+    )
+    rejected = replay_fixture(case, rejected_audit)
+    assert not rejected.ok
+    assert "Audit dry-run outcome" in " ".join(rejected.errors)
+
+
+def test_recorded_replay_evaluates_every_required_assertion():
+    fixture_by_id = {
+        fixture.case_id: fixture for fixture in load_fixtures(FIXTURES_PATH)
+    }
+    for case in load_cases(CASES_PATH):
+        fixture = fixture_by_id[case.case_id]
+        for index, assertion in enumerate(case.required_assertions):
+            changed_assertions = list(case.required_assertions)
+            changed_assertions[index] = assertion.model_copy(
+                update={"expected": "__forced_mismatch__"}
+            )
+            changed_case = case.model_copy(
+                update={"required_assertions": tuple(changed_assertions)}
+            )
+
+            result = replay_fixture(changed_case, fixture)
+
+            assert not result.ok
+            assert assertion.assertion_id in result.missing_assertions
 
 
 def test_default_cli_passes_without_invoking_live_runner(monkeypatch, capsys):
@@ -124,7 +334,7 @@ def test_default_cli_passes_without_invoking_live_runner(monkeypatch, capsys):
     assert main([]) == 0
     output = capsys.readouterr().out
     assert "10/10 passed" in output
-    assert '"mode": "scripted"' in output
+    assert '"mode": "recorded_replay"' in output
 
 
 def test_cli_exits_nonzero_when_a_scripted_expectation_mismatches(
@@ -165,7 +375,7 @@ def test_script_path_cli_runs_from_repo_root_and_unrelated_cwd(tmp_path: Path):
             check=False,
         )
         assert completed.returncode == 0, completed.stderr
-        assert "scripted: 10/10 passed" in completed.stdout
+        assert "recorded replay: 10/10 passed" in completed.stdout
         assert '"total": 10' in completed.stdout
 
 
@@ -192,7 +402,7 @@ def test_script_path_cli_returns_nonzero_for_mutated_corpus(tmp_path: Path):
     )
 
     assert completed.returncode == 1, completed.stderr
-    assert "scripted: 0/1 passed" in completed.stdout
+    assert "recorded replay: 0/1 passed" in completed.stdout
     assert '"ok": false' in completed.stdout
 
 

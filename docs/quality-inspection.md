@@ -170,32 +170,40 @@ Scheduler / hourly heartbeat
 ## Skill runtime 回归语料
 
 `evals/skill_runtime/cases.jsonl` 保存脱敏、泛化的 Consumer/Audit 业务回归场景。
-默认运行只做确定性检查：严格校验每行结构、唯一 `case_id`、业务 Skill、结果类型、
-断言和脱敏约束，然后把每个场景交给独立的脚本化 observation contract。脚本化
-observation 不从该行的 `expected_*` 字段生成，因此修改预期 Skill、结果或断言会使
-命令以非零状态退出。
+`evals/skill_runtime/fixtures.jsonl` 独立保存每个场景已记录的 Consumer/Audit 协议：
+实际 Skill 读取、只读证据事件、Consumer 嵌套结果和 Audit dry-run 结果。fixture 用
+规范化 trigger/context 摘要以及当时安装的 Skill 路径和 SHA-256 摘要绑定；场景内容或
+Skill 内容变化后，旧 fixture 必须失效。
+
+默认运行是确定性的已记录协议回放。它严格校验两份 JSONL 的结构、唯一 ID 和脱敏约束，
+用生产 Consumer/Audit wire parser 重新解析嵌套结果，用实际 action/effect metadata
+检查 proposal，再逐项对照语料中的 Skill、结果和机器可读断言。运行时不会根据
+`case_id` 路由业务策略，也不会从 `expected_*` 或断言字段合成 observation。
 
 ```sh
-.venv/bin/python -m evals.skill_runtime.run
+python evals/skill_runtime/run.py
 ```
 
 命令同时输出逐场景的人类可读状态和完整 JSON。它不调用模型、网络或外部系统，适合
-单元测试和提交前回归；它证明的是语料结构与已登记静态契约一致，不是模型当前一定会
-作出同样判断。
+单元测试和提交前回归；它证明的是当前语料、已记录协议、安装 Skill 和运行时契约仍然
+一致，不证明模型此刻会重新作出相同判断。
 
 需要补充当前本机模型的语义证据时，可以显式选择 live 模式：
 
 ```sh
-.venv/bin/python -m evals.skill_runtime.run --live
+python evals/skill_runtime/run.py --live
 ```
 
 live 模式对每个场景分别启动真实本地 `codex exec` Consumer 和 Audit dry-run，向两者暴露
-完整的内置业务 Skill 清单，并记录实际 `read_skill` 路径与摘要、Consumer 严格结果和
-Audit 严格结果。两个进程都忽略用户配置与
-规则，使用 ephemeral、read-only sandbox，关闭 plugins、apps、内置工具和 web，只暴露
-只读 fixture MCP 的 `read_skill` 与 `execute_reviewed_read`；Audit 不能执行或重放外部写入。
-live 结果是可选的模型语义证据，不进入普通单元测试，也不替代真实业务读回、队列对账或
-`quality-check`。
+完整的内置业务 Skill 清单，并记录实际 Skill 读取、`execute_reviewed_read` 证据事件、
+Consumer 严格结果和 Audit 严格结果。runner 要求 Consumer 和 Audit 都读取预期 Skill、
+不读取禁止 Skill，并对每条机器可读断言使用本次结果或事件求值；需要执行的 proposal
+还必须得到该场景允许的 Audit dry-run 结论。
+
+两个进程都忽略用户配置与规则，使用 ephemeral、read-only sandbox，关闭 plugins、apps、
+内置工具和 web，只暴露只读 fixture MCP 的 `read_skill` 与
+`execute_reviewed_read`。Audit 不能执行或重放外部写入。live 是可选的新鲜模型语义证据，
+不进入普通单元测试，也不替代真实业务读回、队列对账或 `quality-check`。
 
 这套语料不实现或证明增量 cursor、72 小时滚动窗口、错误聚合、外部投递状态或服务健康。
 这些能力仍属于下方目标演进，只有对应持久化实现和边界测试完成后才能在巡检报告中声称
