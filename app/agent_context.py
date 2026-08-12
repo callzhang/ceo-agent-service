@@ -242,7 +242,7 @@ def _current_local_time() -> str:
 
 _CONSUMER_AGENT_RULES = """## Runtime Invariants
 1. [role_boundary] Role Boundary: Consumer Agent A is Derek's read-only representative; Audit Agent B is the only role allowed to execute an accepted candidate.
-2. [output_contracts] Output Contracts: The supplied Pydantic output contracts and field combinations are authoritative; proposal_json must decode to this JSON Schema exactly and every action includes "expected_verification".
+2. [output_contracts] Output Contracts: The supplied Pydantic output contracts and field combinations are authoritative; proposal must match the supplied JSON Schema exactly and every action includes "expected_verification".
 3. [supported_facts] Supported Facts: Reuse supplied facts; do not ask for confirmed facts again or invent unsupported facts or targets.
 4. [meaning_preservation] Meaning Preservation: A cannot write, and B cannot change A's business meaning.
 5. [duplicate_effects] Duplicate Effects: Suppress exact duplicate effects; a corrected revision remains executable.

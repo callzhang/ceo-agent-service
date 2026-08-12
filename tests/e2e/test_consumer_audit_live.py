@@ -232,6 +232,8 @@ class CalendarRunnerContractExecutor:
             json.dumps({"type": "thread.started", "thread_id": session}),
             *(json.dumps(record) for record in records),
         ]
+
+
         stdout = "\n".join(lines)
         for line in lines:
             on_stdout_line(line)
@@ -372,6 +374,103 @@ class CalendarRunnerContractExecutor:
         ]
 
 
+class SilentMaterialCalendarExecutor(CalendarRunnerContractExecutor):
+    material_url = "https://alidocs.dingtalk.com/i/nodes/material-1"
+
+    def _event_records(self, role: str) -> list[dict[str, object]]:
+        return list(
+            _reviewed_records(
+                f"{role}-event-read",
+                ["dws", "calendar", "event", "get", "--id", "event-1", "--format", "json"],
+                stdout=json.dumps(
+                    {
+                        "event_id": "event-1",
+                        "title": "Silent portfolio review",
+                        "organizer": {"open_dingtalk_id": "inviter-1"},
+                        "linked_materials": [self.material_url],
+                        "self_response": "needs_action",
+                        "conflicting_accepted_events": [],
+                        "requested_principal_input": None,
+                    }
+                ),
+            )
+        )
+
+    def _material_records(self, role: str) -> list[dict[str, object]]:
+        return list(
+            _reviewed_records(
+                f"{role}-material-read",
+                ["dws", "doc", "read", "--node", self.material_url, "--format", "json"],
+                stdout=json.dumps(
+                    {"content": "Attend and review the launch decision evidence."}
+                ),
+            )
+        )
+
+    def _consumer_records(self, prompt: str) -> list[dict[str, object]]:
+        _json_section(prompt, "Raw material references and exact read commands\n")
+        proposal = {
+            "objective": "Process the linked material and accept the invitation.",
+            "actions": [
+                {
+                    "description": "Accept after reviewing the linked brief.",
+                    "capability": "agent_cli.dws",
+                    "operation": "calendar event respond",
+                    "target": {"event_id": "event-1"},
+                    "payload": {
+                        "argv": [
+                            "dws", "calendar", "event", "respond",
+                            "--id", "event-1", "--status", "accepted", "--yes",
+                        ],
+                    },
+                    "expected_verification": "Read event-1 and verify accepted.",
+                }
+            ],
+            "sourced_facts": [
+                {
+                    "assertion": "The linked decision brief was read.",
+                    "references": [self.material_url],
+                }
+            ],
+            "authored_judgment": "The material provides the work context for attendance.",
+        }
+        return [
+            *self._skill_records("consumer"),
+            *self._event_records("consumer"),
+            *self._material_records("consumer"),
+            _consumer_result_record(proposal),
+        ]
+
+    def _audit_records(self, prompt: str) -> list[dict[str, object]]:
+        self.handed_off_skills = _json_section(
+            prompt, "Verified Skills read by Consumer A\n"
+        )
+        candidate = _json_section(prompt, "Candidate revision\n")
+        action = candidate["proposal"]["actions"][0]
+        assert candidate["proposal"]["objective"] == (
+            "Process the linked material and accept the invitation."
+        )
+        return [
+            *self._skill_records("audit"),
+            *self._event_records("audit"),
+            *self._material_records("audit"),
+            *_reviewed_records(
+                "audit-calendar-write",
+                action["payload"]["argv"],
+                write=True,
+                stdout=json.dumps({"success": True, "event_id": "event-1"}),
+            ),
+            *_reviewed_records(
+                "audit-calendar-verify",
+                ["dws", "calendar", "event", "get", "--id", "event-1", "--format", "json"],
+                stdout=json.dumps(
+                    {"event_id": "event-1", "self_response": "accepted"}
+                ),
+            ),
+            _audit_result_record(candidate["operation_id"]),
+        ]
+
+
 def _persisted_skill_receipts(run) -> dict[str, tuple[str, str]]:
     receipts = {}
     for event in run.tool_events:
@@ -472,7 +571,15 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     )
     result = orchestrator.process(task, context, refresh_context=lambda: context)
 
-    assert result.status == "executed"
+    assert result.status == "executed", (
+        result.summary,
+        [
+            (run.status, run.structured_error_json)
+            for run in store.list_agent_runs_for_task_generation(
+                task.id, task.execution_generation
+            )
+        ],
+    )
     assert result.final_role is AgentRole.AUDIT
     assert result.audit_result is not None
     assert result.audit_result.outcome.value == "executed"
@@ -541,6 +648,119 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     write_index = audit_event_operations.index("chat message send")
     assert audit_event_operations[:write_index].count("read_skill") == len(
         expected_receipts
+    )
+
+
+def test_deterministic_silent_meeting_reads_material_then_accepts(
+    tmp_path: Path,
+    monkeypatch,
+):
+    skills_root = tmp_path / "installed-skills"
+    repository_root = Path(__file__).resolve().parents[2]
+    skill_contents = {
+        "ceo-calendar-invite": (
+            repository_root / "skills" / "ceo-calendar-invite" / "SKILL.md"
+        ).read_text(encoding="utf-8"),
+        "dingtalk-shared": SHARED_SKILL,
+        "dingtalk-calendar": CALENDAR_SKILL,
+        "dingtalk-chat": CHAT_SKILL,
+    }
+    skill_paths = {}
+    for name, content in skill_contents.items():
+        path = skills_root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(content, encoding="utf-8")
+        skill_paths[name] = path.resolve()
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (skills_root,))
+
+    store = AutoReplyStore(tmp_path / "silent-material.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Calendar source group",
+        single_chat=False,
+        trigger_message_id="msg-material",
+        trigger_create_time="2026-08-11 10:00:00",
+        trigger_sender="Inviter",
+        trigger_text="Silent meeting invitation event-1 with linked material",
+        execution_generation="silent-material-contract",
+    )
+    task = store.get_reply_task_for_message("cid-1", "msg-material")
+    assert task is not None
+    context = AgentTaskContext(
+        task_id=task.id,
+        channel="dingtalk",
+        conversation_id="cid-1",
+        conversation_title="Calendar source group",
+        single_chat=False,
+        trigger_message_id="msg-material",
+        trigger_sender="Inviter",
+        trigger_text="Silent meeting invitation event-1 with linked material",
+        trigger_create_time="2026-08-11 10:00:00",
+        messages=(),
+        materials=(
+            MaterialReference(
+                kind="dingtalk_calendar",
+                reference=json.dumps({"event_id": "event-1"}),
+                source_message_id="msg-material",
+                read_commands=(
+                    "dws calendar event get --id event-1 --format json",
+                ),
+            ),
+        ),
+        prior_receipts=(),
+        trigger_raw_payload={"eventId": "event-1"},
+    )
+    executor = SilentMaterialCalendarExecutor(skill_paths)
+    result = AgentOrchestrator(
+        store=store,
+        consumer=ConsumerAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+            owner="silent-material-consumer",
+            codex_session_exists=lambda _session_id: True,
+        ),
+        audit=AuditAgentRunner(
+            store=store,
+            workspace=tmp_path,
+            executor=executor,
+            owner="silent-material-audit",
+        ),
+    ).process(task, context, refresh_context=lambda: context)
+
+    assert result.status == "executed", (
+        result.summary,
+        [
+            (run.status, run.structured_error_json)
+            for run in store.list_agent_runs_for_task_generation(
+                task.id, task.execution_generation
+            )
+        ],
+    )
+    runs = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation
+    )
+    assert [run.status for run in runs] == ["completed", "completed"]
+    operations = [
+        event["item"]["metadata"]["operation"]
+        for run in runs
+        for event in run.tool_events
+        if event.get("type") == "item.completed"
+        and isinstance(event.get("item"), dict)
+        and isinstance(event["item"].get("metadata"), dict)
+    ]
+    assert operations.count("doc read") == 2
+    assert "calendar event respond" in operations
+    assert operations[-1] == "calendar event get"
+    audit_operations = [
+        event["item"]["metadata"]["operation"]
+        for event in runs[1].tool_events
+        if event.get("type") == "item.completed"
+        and isinstance(event.get("item"), dict)
+        and isinstance(event["item"].get("metadata"), dict)
+    ]
+    assert audit_operations.index("doc read") < audit_operations.index(
+        "calendar event respond"
     )
 
 

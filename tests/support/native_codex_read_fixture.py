@@ -34,7 +34,9 @@ def isolate_read_only_fixture_command(
         "-c",
         'web_search="disabled"',
         "-c",
-        'approval_policy="never"',
+        'approval_policy="untrusted"',
+        "-c",
+        'approvals_reviewer="auto_review"',
         "-c",
         f"mcp_servers.agent_cli.command={json.dumps(server_command)}",
         "-c",
@@ -59,7 +61,8 @@ def assert_isolated_read_only_fixture_command(command: list[str]) -> None:
     assert "features.apps=false" in command
     assert "tools.enabled_tools=[]" in command
     assert 'web_search="disabled"' in command
-    assert 'approval_policy="never"' in command
+    assert 'approval_policy="untrusted"' in command
+    assert 'approvals_reviewer="auto_review"' in command
     assert configured_transport_server_names(command) == ("agent_cli",)
     mcp_options = [
         command[index + 1]

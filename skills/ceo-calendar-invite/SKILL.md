@@ -30,7 +30,7 @@ Use the supplied exact event command first. Read the title, time, organizer, att
 | `no_principal_input_needed` | `decline` | `no` | Propose decline. |
 | `missing_attendance_value` | `clarify_inviter` | `yes` | Ask what decision or input is required. |
 | `missing_description_but_clear_title` | `accept` | `no` | Do not clarify only for the description. |
-| `silent_meeting_with_material` | `process_material` | `no` | Process the material, then accept or respond as appropriate. |
+| `silent_meeting_with_material` | `process_material_and_accept` | `no` | Process the material and produce the requested review outcome, then propose acceptance. |
 | `silent_meeting_without_material` | `clarify_exact_material` | `yes` | Ask for the referenced material itself. |
 
 ## Clarify

@@ -47,6 +47,14 @@ MAIL_GET = [
     "dws", "mail", "message", "get", "--email", "principal@example.test",
     "--id", "mail-1", "--format", "json",
 ]
+MAIL_GET_2 = [
+    "dws", "mail", "message", "get", "--email", "principal@example.test",
+    "--id", "mail-2", "--format", "json",
+]
+MAIL_GET_3 = [
+    "dws", "mail", "message", "get", "--email", "principal@example.test",
+    "--id", "mail-3", "--format", "json",
+]
 MAIL_SENT = [
     "dws", "mail", "message", "list", "--email", "principal@example.test",
     "--folder-id", "1", "--limit", "20", "--format", "json",
@@ -141,7 +149,7 @@ def _native_consumer(
         and record["item"].get("type") == "agent_message"
     ]
     assert messages, process.stdout
-    result = parse_consumer_agent_wire_result(messages[-1])
+    result = parse_consumer_agent_wire_result(process.stdout)
     events = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     skill_events = [event for event in events if event["tool"] == "read_skill"]
     assert {
@@ -319,20 +327,42 @@ def test_native_complete_mail_thread_suppresses_duplicate_reply(tmp_path: Path):
         skill_paths=_skill_paths("ceo-mail-review", "dingtalk-shared", "dingtalk-mail"),
         operation_responses=[
             (MAILBOX_LIST, {"mailboxes": [{"email": "principal@example.test"}]}),
-            (MAIL_SEARCH, {"messages": [{"messageId": "mail-1"}]}),
-            (MAIL_GET, {
-                "messageId": "mail-1",
-                "threadId": "thread-1",
-                "body": "Please approve.",
-            }),
-            (MAIL_SENT, {"messages": [{
-                "threadId": "thread-1",
-                "body": "Approved subject to the standard terms.",
-            }]}),
+            (MAIL_SEARCH, {"messages": [
+                {"messageId": "mail-1", "threadId": "thread-1"},
+                {"messageId": "mail-2", "threadId": "thread-1"},
+                {"messageId": "mail-3", "threadId": "thread-1"},
+            ]}),
+                (MAIL_GET, {
+                    "messageId": "mail-1",
+                    "threadId": "thread-1",
+                    "direction": "inbound",
+                    "from": "requester@example.test",
+                    "body": "Please approve the original standard terms.",
+                }),
+                (MAIL_GET_2, {
+                    "messageId": "mail-2",
+                    "threadId": "thread-1",
+                    "direction": "inbound",
+                    "from": "legal@example.test",
+                    "body": "Legal changed the liability cap to five million.",
+                }),
+                (MAIL_GET_3, {
+                    "messageId": "mail-3",
+                    "threadId": "thread-1",
+                    "direction": "inbound",
+                    "from": "requester@example.test",
+                    "body": "Please use the five-million cap in the final review.",
+                }),
+                (MAIL_SENT, {"messages": [{
+                    "threadId": "thread-1",
+                    "body": "Approved subject to the five-million liability cap.",
+                }]}),
         ],
     )
 
-    assert MAIL_GET in _read_argv(events) and MAIL_SENT in _read_argv(events)
+    reads = _read_argv(events)
+    assert all(command in reads for command in (MAIL_GET, MAIL_GET_2, MAIL_GET_3))
+    assert MAIL_SENT in reads
     assert result.outcome.value == "no_action"
     assert result.proposal is None
 

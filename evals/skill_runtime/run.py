@@ -47,7 +47,11 @@ from app.agent_wire_contracts import (
 )
 from app.audit_rules import render_audit_rules
 from app.audit_agent import _expected_effect_action
-from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES
+from app.business_skills import (
+    BUNDLED_BUSINESS_SKILL_NAMES,
+    BusinessSkillCatalogEntry,
+    render_business_skill_protocol,
+)
 from app.codex_runner import CodexRunner
 from app.consumer_agent import (
     audit_developer_instructions,
@@ -842,17 +846,20 @@ def build_live_command(
     workspace: Path,
     config_path: Path,
     log_path: Path,
+    skill_protocol: str = "",
 ) -> list[str]:
     if role not in {"consumer", "audit"}:
         raise ValueError(f"unsupported live role: {role}")
     rules_role = AgentRole.CONSUMER if role == "consumer" else AgentRole.AUDIT
     rules = render_audit_rules(rules_role)
     instructions = (
-        consumer_developer_instructions(rules)
+        consumer_developer_instructions(rules, skill_protocol=skill_protocol)
         if role == "consumer"
         else audit_developer_instructions(rules, allow_write=False)
-        + "\n\n## Eval dry-run\nReview only. Never execute an external write."
     )
+    if role == "audit" and skill_protocol:
+        instructions += f"\n\n{skill_protocol}"
+    instructions += "\n\n## Eval dry-run\nReview only. Never execute an external write."
     command = CodexRunner(workspace=workspace).build_command(
         prompt="",
         session_id=None,
@@ -956,17 +963,27 @@ def _run_live_case(
             ),
             encoding="utf-8",
         )
-        available_business = "\n".join(str(path) for path in business_skill_paths)
         available_operations = "\n".join(str(path) for path in operation_paths)
+        business_protocol = render_business_skill_protocol(
+            tuple(
+                BusinessSkillCatalogEntry(name=path.parent.name, skill_path=path)
+                for path in business_skill_paths
+            )
+        )
         consumer_prompt = (
             f"Generalized eval trigger:\n{case.trigger}\n\n"
             f"Generalized eval context:\n{case.context}\n\n"
-            f"Available business Skill paths:\n{available_business}\n\n"
+            f"{business_protocol}\n\n"
             f"Available operation Skill paths:\n{available_operations or '(none)'}\n\n"
             f"Available exact reviewed read command:\n{json.dumps(read_argv)}\n\n"
             "Read the applicable business Skill and every supplied operation Skill, "
             "then read the evidence. Perform no external writes. Return "
-            "only the strict Consumer result with machine-readable action payload."
+            "only the strict Consumer result with machine-readable action payload. "
+            "For a proposed synthetic action, use capability `agent_cli`, operation "
+            "`execute_reviewed_write`, and payload.argv beginning with "
+            f"[\"fixture-write\", \"{case.case_id}\"]; include the business intent "
+            "in a payload field named `intent`, using the exact decision token from "
+            "the applicable business Skill rather than paraphrasing it."
         )
         consumer_raw = _execute_live_command(
             build_live_command(
@@ -975,6 +992,11 @@ def _run_live_case(
                 workspace=ROOT,
                 config_path=config_path,
                 log_path=consumer_log,
+                skill_protocol=(
+                    business_protocol
+                    + "\n\n## Required operation Skill paths\n"
+                    + (available_operations or "(none)")
+                ),
             ),
             consumer_prompt,
         )
@@ -1022,6 +1044,11 @@ def _run_live_case(
                 workspace=ROOT,
                 config_path=config_path,
                 log_path=audit_log,
+                skill_protocol=(
+                    business_protocol
+                    + "\n\n## Required operation Skill paths\n"
+                    + (available_operations or "(none)")
+                ),
             ),
             audit_prompt,
         )
@@ -1168,7 +1195,11 @@ def _render_live_audit_prompt(
         context.render(current_time="2000-01-01 00:00:00 +0000")
         + "\n\n## Eval dry-run\n"
         "Reread every exact verified Consumer Skill receipt and the supplied evidence. "
-        "Review only, execute nothing, and return only the strict Audit result."
+        "Review only and execute nothing. If the candidate passes review and would "
+        "otherwise execute, return outcome=needs_human, side_effect_state=none, "
+        "error_code=dry_run_execution_suppressed, error_retryable=false, "
+        "error_authorization_required=false, proposal_revision=0, and null feedback "
+        "and external_result with empty reconciliation. Return only the strict Audit result."
     )
 
 

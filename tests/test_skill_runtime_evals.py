@@ -127,7 +127,9 @@ def test_every_skill_runtime_eval_declares_skill_outcome_and_assertions():
 def test_non_proposal_case_schema_requires_audit_not_applicable(
     terminal_outcome: str,
 ):
-    base = load_cases(CASES_PATH)[5]
+    base = next(
+        case for case in load_cases(CASES_PATH) if case.expected_outcome == "no_action"
+    )
     terminal = _case_for_terminal_outcome(base, terminal_outcome)
 
     assert EvalCase.model_validate(terminal.model_dump(mode="json"))
@@ -305,6 +307,7 @@ def test_corpus_is_sanitized_and_covers_all_required_regressions():
     assert {case.case_id for case in cases} == {
         "calendar-vague-invite-clarify-inviter",
         "calendar-clear-context-accept",
+        "calendar-silent-material-process-and-accept",
         "document-readable-reference-read",
         "document-image-inspect-before-judgment",
         "mail-truncated-card-resolve-thread",
@@ -617,6 +620,7 @@ def test_calendar_live_probe_reads_business_and_explicit_operation_skill(
         if event.tool == "execute_reviewed_read"
     )
     prompts: list[str] = []
+    commands: list[list[str]] = []
     configured_skill_paths: list[set[str]] = []
 
     def wire_result(result: dict[str, object]) -> str:
@@ -647,6 +651,7 @@ def test_calendar_live_probe_reads_business_and_explicit_operation_skill(
 
     def execute(command: list[str], prompt: str) -> str:
         prompts.append(prompt)
+        commands.append(command)
         args_option = next(
             item for item in command if item.startswith("mcp_servers.agent_cli.args=")
         )
@@ -673,7 +678,10 @@ def test_calendar_live_probe_reads_business_and_explicit_operation_skill(
     assert result.audit_result["side_effect_state"] == "none"
     assert len(prompts) == 2
     assert all(expected_paths.issubset(paths) for paths in configured_skill_paths)
-    assert all(all(path in prompt for path in expected_paths) for prompt in prompts)
+    assert all(
+        all(path in "\n".join(command) for path in expected_paths)
+        for command in commands
+    )
     assert [event["result"]["name"] for event in result.consumer_events[:2]] == [
         "ceo-calendar-invite",
         "dingtalk-calendar",
@@ -682,6 +690,13 @@ def test_calendar_live_probe_reads_business_and_explicit_operation_skill(
         "ceo-calendar-invite",
         "dingtalk-calendar",
     ]
+
+
+def test_live_consumer_prompt_makes_skill_read_a_protocol_precondition():
+    source = Path("evals/skill_runtime/run.py").read_text(encoding="utf-8")
+
+    assert "render_business_skill_protocol" in source
+    assert "Available business Skill paths" not in source
 
 
 def test_multi_case_live_suite_binds_operation_skill_only_to_declared_case(
@@ -904,7 +919,7 @@ def test_default_cli_passes_without_invoking_live_runner(monkeypatch, capsys):
 
     assert main([]) == 0
     output = capsys.readouterr().out
-    assert "10/10 passed" in output
+    assert "11/11 passed" in output
     assert '"mode": "recorded_replay"' in output
 
 
@@ -946,8 +961,8 @@ def test_script_path_cli_runs_from_repo_root_and_unrelated_cwd(tmp_path: Path):
             check=False,
         )
         assert completed.returncode == 0, completed.stderr
-        assert "recorded replay: 10/10 passed" in completed.stdout
-        assert '"total": 10' in completed.stdout
+        assert "recorded replay: 11/11 passed" in completed.stdout
+        assert '"total": 11' in completed.stdout
 
 
 def test_script_path_cli_returns_nonzero_for_mutated_corpus(tmp_path: Path):
@@ -990,7 +1005,8 @@ def test_live_command_is_isolated_and_read_only(role: str, tmp_path: Path):
 
     assert command[:2] == ["codex", "exec"]
     assert_isolated_read_only_fixture_command(command)
-    assert 'approval_policy="never"' in command
+    assert 'approval_policy="untrusted"' in command
+    assert 'approvals_reviewer="auto_review"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     if role == "audit":
         assert any("dry-run" in item for item in command)

@@ -188,24 +188,25 @@ class ScriptedConsumer:
 class ReceiptScriptedConsumer(ScriptedConsumer):
     def __init__(self, store, receipt, *results):
         super().__init__(store, *results)
-        self.receipt = receipt
-        self.tool_events = (
+        self.receipts = receipt if isinstance(receipt, tuple) else (receipt,)
+        self.tool_events = tuple(
             {
                 "type": "item.completed",
                 "item": {
                     "type": "mcp_tool_call",
-                    "id": "skill-read",
+                    "id": f"skill-read-{index}",
                     "server": "agent_cli",
                     "tool": "read_skill",
                     "status": "completed",
                     "metadata": {
                         "effect": "read_only",
-                        "skill_name": self.receipt.name,
-                        "skill_path": self.receipt.path,
-                        "skill_sha256": self.receipt.sha256,
+                        "skill_name": item.name,
+                        "skill_path": item.path,
+                        "skill_sha256": item.sha256,
                     },
                 },
-            },
+            }
+            for index, item in enumerate(self.receipts)
         )
 
 
@@ -686,6 +687,33 @@ def test_audit_receives_exact_parent_consumer_skill_on_initial_and_normal_retry(
         (receipt,),
         (receipt,),
     ]
+
+
+def test_cross_domain_consumer_receipts_reach_audit_together(store):
+    task = _task(store)
+    receipts = (
+        LoadedSkillReceipt(
+            name="ceo-calendar-invite",
+            path="/Users/derek/.agents/skills/ceo-calendar-invite/SKILL.md",
+            sha256="a" * 64,
+        ),
+        LoadedSkillReceipt(
+            name="ceo-document-review",
+            path="/Users/derek/.agents/skills/ceo-document-review/SKILL.md",
+            sha256="b" * 64,
+        ),
+    )
+    consumer = ReceiptScriptedConsumer(
+        store,
+        receipts,
+        _consumer_result("proposal", "cross-domain candidate"),
+    )
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
+
+    assert result.status == "executed"
+    assert audit.calls[0]["context"].consumer_skills == receipts
 
 
 @pytest.mark.parametrize(

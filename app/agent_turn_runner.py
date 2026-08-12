@@ -200,7 +200,8 @@ class AgentTurnProcess(Generic[ResultT]):
         suppressed_session_replay_call_ids: set[str] = set()
         observed_session_id = ""
         session_transcript_end = 0
-        recovery_event_start = len(run.tool_events)
+        turn_event_start = len(run.tool_events)
+        recovery_event_start = turn_event_start
         completed_before_recovery = (
             _action_completion_accounting(
                 [],
@@ -241,7 +242,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 and required_skill_receipts
             ):
                 current_run = self.store.get_agent_run(run.id)
-                persisted_events = current_run.tool_events if current_run else ()
+                persisted_events = (
+                    current_run.tool_events[turn_event_start:]
+                    if current_run
+                    else ()
+                )
                 observed = {
                     (receipt.name, receipt.path, receipt.sha256)
                     for receipt in loaded_skill_receipts(persisted_events)
@@ -569,6 +574,8 @@ class AgentTurnProcess(Generic[ResultT]):
                 result,
                 persisted,
                 expected_effect_actions=expected_effect_actions,
+                required_skill_receipts=required_skill_receipts,
+                turn_event_start=turn_event_start,
             )
         if recovery_phase == "reconcile":
             self.store.persist_unknown_agent_run_result(
@@ -783,6 +790,10 @@ class AgentTurnProcess(Generic[ResultT]):
         }
         if call.effect is EffectKind.EFFECTFUL:
             metadata["operation_id"] = operation_id
+        if call.server == "agent_cli" and call.tool == "read_skill":
+            requested_skill_path = _requested_skill_path(item.get("arguments"))
+            if requested_skill_path:
+                metadata["requested_skill_path"] = requested_skill_path
         if controlled_receipt_failed and validated_receipt is not None:
             receipt_error = validated_receipt.get("error")
             if isinstance(receipt_error, dict):
@@ -918,8 +929,42 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted: AgentRun,
         *,
         expected_effect_actions: tuple[dict[str, object], ...],
+        required_skill_receipts: tuple[LoadedSkillReceipt, ...],
+        turn_event_start: int,
     ) -> None:
         outcome = getattr(result, "outcome")
+        turn_events = persisted.tool_events[turn_event_start:]
+        observed_receipts = loaded_skill_receipts(turn_events)
+        observed_by_identity = {
+            (receipt.name, receipt.path): receipt.sha256
+            for receipt in observed_receipts
+        }
+        missing_receipts = tuple(
+            receipt
+            for receipt in required_skill_receipts
+            if (receipt.name, receipt.path) not in observed_by_identity
+        )
+        mismatched_receipts = tuple(
+            receipt
+            for receipt in required_skill_receipts
+            if observed_by_identity.get((receipt.name, receipt.path))
+            not in {None, receipt.sha256}
+        )
+        attempted_paths = _attempted_skill_paths(turn_events)
+        unreadable_receipts = tuple(
+            receipt for receipt in missing_receipts if receipt.path in attempted_paths
+        )
+        absent_receipts = tuple(
+            receipt for receipt in missing_receipts if receipt.path not in attempted_paths
+        )
+        if absent_receipts or (
+            unreadable_receipts and outcome is not AuditOutcome.REVISION_REQUIRED
+        ):
+            self._fail_running(run, "audit_skill_reread_missing")
+            raise AgentReadOnlyViolationError("audit_skill_reread_missing")
+        if mismatched_receipts and outcome is not AuditOutcome.REVISION_REQUIRED:
+            self._fail_running(run, "audit_skill_reread_mismatch")
+            raise AgentReadOnlyViolationError("audit_skill_reread_mismatch")
         if getattr(result, "proposal_revision") != run.proposal_revision:
             self._fail_running(run, "audit_proposal_revision_mismatch")
             raise RuntimeError("audit_proposal_revision_mismatch")
@@ -1938,6 +1983,40 @@ def _json_digest(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _requested_skill_path(arguments: object) -> str:
+    if not isinstance(arguments, dict) or set(arguments) != {"path"}:
+        return ""
+    path = arguments.get("path")
+    if not isinstance(path, str) or not path or not Path(path).is_absolute():
+        return ""
+    try:
+        return str(Path(path).resolve(strict=False))
+    except (OSError, RuntimeError):
+        return ""
+
+
+def _attempted_skill_paths(
+    events: tuple[dict[str, object], ...] | list[dict[str, object]],
+) -> frozenset[str]:
+    paths: set[str] = set()
+    for event in events:
+        if event.get("type") != "item.failed":
+            continue
+        item = event.get("item")
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        if not isinstance(metadata, dict):
+            continue
+        if (
+            metadata.get("reviewed_server") != "agent_cli"
+            or metadata.get("reviewed_tool") != "read_skill"
+        ):
+            continue
+        path = metadata.get("requested_skill_path")
+        if isinstance(path, str) and path:
+            paths.add(path)
+    return frozenset(paths)
 
 
 def _contains_sensitive_value(value: object, *, depth: int = 0) -> bool:

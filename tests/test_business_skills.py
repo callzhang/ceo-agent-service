@@ -10,7 +10,9 @@ from app.business_skills import (
     BusinessSkillInstallTargetError,
     BusinessSkillValidationError,
     install_bundled_business_skills,
+    installed_business_skill_catalog,
     load_bundled_business_skills,
+    render_business_skill_protocol,
 )
 
 
@@ -33,6 +35,23 @@ def test_bundled_business_skill_inventory_is_exact_and_valid():
     assert tuple(skill.name for skill in skills) == EXPECTED_NAMES
     assert all(skill.description.strip() for skill in skills)
     assert all(skill.managed_by == "ceo-agent-service" for skill in skills)
+
+
+def test_installed_business_skill_catalog_and_protocol_are_explicit(
+    tmp_path: Path,
+):
+    target_root = tmp_path / ".agents" / "skills"
+    install_bundled_business_skills(target_root)
+
+    catalog = installed_business_skill_catalog(target_root)
+    protocol = render_business_skill_protocol(catalog)
+
+    assert tuple(item.name for item in catalog) == EXPECTED_NAMES
+    assert all(item.skill_path.is_absolute() for item in catalog)
+    assert all(str(item.skill_path) in protocol for item in catalog)
+    assert "PROTOCOL PRECONDITION" in protocol
+    assert "at least one CEO business Skill" in protocol
+    assert "Do not return an outcome before completing this read" in protocol
 
 
 def test_business_skill_loader_rejects_mismatched_frontmatter_name(

@@ -97,6 +97,10 @@ def serve(config_path: Path, log_path: Path) -> None:
                         {
                             "name": "read_skill",
                             "description": "Read one exact available Skill with a receipt.",
+                            "annotations": {
+                                "readOnlyHint": True,
+                                "destructiveHint": False,
+                            },
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {"path": {"type": "string"}},
@@ -106,6 +110,10 @@ def serve(config_path: Path, log_path: Path) -> None:
                         {
                             "name": "execute_reviewed_read",
                             "description": "Run one exact available read operation.",
+                            "annotations": {
+                                "readOnlyHint": True,
+                                "destructiveHint": False,
+                            },
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {

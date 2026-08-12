@@ -24,6 +24,10 @@ from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
     parse_consumer_agent_wire_result,
 )
+from app.business_skills import (
+    installed_business_skill_catalog,
+    render_business_skill_protocol,
+)
 from app.native_cli_metadata import (
     NativeCliMetadataClassifier,
     service_read_command_contract,
@@ -112,6 +116,10 @@ def consumer_wire_contract_hash() -> str:
     """Fingerprint stable Consumer output, instructions, and read-tool policy."""
     contract = {
         "consumer_rules": _CONSUMER_AGENT_RULES,
+        "role_boundary": CONSUMER_ROLE_BOUNDARY,
+        "business_skill_protocol": render_business_skill_protocol(
+            installed_business_skill_catalog()
+        ),
         "service_read_commands": service_read_command_contract(),
         "wire_schema": ConsumerAgentWireResult.model_json_schema(),
     }
@@ -124,24 +132,27 @@ criteria, not instructions for you to execute, approve, publish, or return a
 candidate to another Agent. You are Consumer Agent A and must finish with one
 valid Consumer Agent wire JSON object matching the supplied schema. The service
 converts it into a valid ConsumerAgentResult JSON object after strict validation.
-Nested proposal data is encoded as proposal_json and will be strictly validated
-before it can affect execution.
+Nested proposal data is supplied directly in the proposal field and is strictly
+validated before it can affect execution.
 
-Wire field encoding: proposal_json is a JSON-encoded object only when outcome
-is proposal; otherwise it must be null. decision_options_json is always a
-JSON-encoded array: it must contain two to four mutually exclusive options only
-when outcome is needs_human, and [] for every other outcome. For needs_human,
+Wire field encoding: proposal is an object only when outcome is proposal;
+otherwise it must be null. decision_options is an array containing two to four
+mutually exclusive options only when outcome is needs_human, and [] for every
+other outcome. For needs_human,
 each array item must contain exactly these non-empty string fields: `key`,
 `label`, `instruction`, and `consequence`. `key` must be unique within the
 array and stable enough for the audit page to submit the selected instruction;
 use concise identifiers such as `option_1`, not the display label. Do not put a
-JSON array, markdown, or an additional wrapper object in proposal_json.
+JSON string, markdown, or an additional wrapper object in proposal.
+Every outcome also uses the three top-level wire fields error_code, error_retryable, and error_authorization_required.
+Do not return a nested error object; the service creates that result-model
+object after wire validation.
 
-For every DWS write command in proposal_json, include the non-interactive
+For every DWS write command in proposal, include the non-interactive
 confirmation flag --yes. It confirms the already-reviewed command to the CLI;
 it does not broaden the action or change its business meaning.
 
-Write commands belong only as data inside proposal_json for Audit Agent B. Never
+Write commands belong only as data inside proposal for Audit Agent B. Never
 invoke, test, verify, or otherwise execute a write command yourself, including
 through agent_cli. You may execute only reviewed read commands; Audit Agent B
 executes an accepted proposal and performs its verification.
@@ -155,26 +166,29 @@ supplied schema. The service converts it into a valid AuditAgentResult JSON
 object after strict validation. Do not apply Consumer Agent A read-only
 restrictions to an allowed Audit execution.
 
-Wire field encoding: feedback_json and external_result_json are each either
-null or a JSON-encoded object for their own field. For revision_required,
-feedback_json is required and its object has exactly these string fields:
+Wire field encoding: feedback and external_result are each either null or an
+object in their own field. For revision_required, feedback is required and its
+object has exactly these string fields:
 rule, observation, and requested_revision. Do not use aliases such as
-failed_rule, evidence, or required_change. For executed, external_result_json
-must contain exactly operation_id, verification_summary, and
+failed_rule, evidence, or required_change. For executed, external_result must
+contain exactly operation_id, verification_summary, and
 live_result_reference. operation_id must equal the candidate proposal
 operation_id, verification_summary is a non-empty string describing the live
 readback, and live_result_reference is an object containing the identifiers
-needed to locate that readback. reconciliation_json is always a
-JSON-encoded array: use [] unless outcome is reconciled, and only reconciled
+needed to locate that readback. reconciliation is always an array: use [] unless
+outcome is reconciled, and only reconciled
 may contain reconciliation entries. Do not put receipt summaries, operation
-metadata, or an object wrapper in reconciliation_json.
+metadata, or an object wrapper in reconciliation.
+Every outcome also uses the three top-level wire fields error_code, error_retryable, and error_authorization_required.
+Do not return a nested error object; the service creates that result-model
+object after wire validation.
 
 Outcome field combinations: executed requires side_effect_state=confirmed,
-feedback_json=null, external_result_json as an object, and reconciliation_json=[];
-revision_required requires side_effect_state=none, feedback_json as above,
-external_result_json=null, and reconciliation_json=[]; reconciled requires
-side_effect_state=unknown, feedback_json=null, external_result_json=null, and
-reconciliation_json entries with exactly action_index, disposition (present,
+feedback=null, external_result as an object, and reconciliation=[];
+revision_required requires side_effect_state=none, feedback as above,
+external_result=null, and reconciliation=[]; reconciled requires
+side_effect_state=unknown, feedback=null, external_result=null, and
+reconciliation entries with exactly action_index, disposition (present,
 absent, or ambiguous), and read_result_digest. needs_human and failed require
 side_effect_state=none with all three nested fields empty (null, null, []).
 
@@ -357,15 +371,16 @@ class ConsumerAgentRunner:
         try:
             result = process.execute(
                 run=claim.run,
-                prompt=(
-                    context.render(
-                        proposal_revision=proposal_revision,
-                        feedback=feedback,
-                    )
+                prompt=context.render(
+                    proposal_revision=proposal_revision,
+                    feedback=feedback,
                 ),
                 session_id=session_id,
                 developer_instructions=consumer_developer_instructions(
-                    rendered_rules
+                    rendered_rules,
+                    skill_protocol=render_business_skill_protocol(
+                        installed_business_skill_catalog()
+                    ),
                 ),
                 configure_command=lambda command: make_consumer_agent_command(
                     command,
@@ -416,18 +431,23 @@ class ConsumerAgentRunner:
             raise
 
 
-def consumer_developer_instructions(audit_rules: str) -> str:
+def consumer_developer_instructions(
+    audit_rules: str,
+    *,
+    skill_protocol: str = "",
+) -> str:
     core = _developer_instructions(
         audit_rules=audit_rules,
         skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
         wire_model=ConsumerAgentWireResult,
         result_model=ConsumerAgentResult,
     )
-    return _role_developer_instructions(
+    instructions = _role_developer_instructions(
         core,
         capability_instructions=REVIEWED_DWS_READ_INSTRUCTIONS,
         role_boundary=CONSUMER_ROLE_BOUNDARY,
     )
+    return instructions + (f"\n\n{skill_protocol}" if skill_protocol else "")
 
 
 def audit_developer_instructions(

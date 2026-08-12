@@ -15,6 +15,7 @@ from app.agent_context import (
 )
 from app.agent_contracts import (
     AuditAgentResult,
+    AuditOutcome,
     AuditReconciliation,
     ConsumerProposal,
     ProposedAction,
@@ -171,7 +172,7 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
     assert "RECOVERY MODE OVERRIDES NORMAL AUDIT EXECUTION" in prompt
     assert "The only valid outcome for this turn is reconciled" in prompt
     assert "Do not return executed" in prompt
-    assert "reconciliation_json must be a JSON-encoded array" in prompt
+    assert "reconciliation_json" not in prompt
     assert "Do not wrap the array in an operation_id/entries object" in prompt
     assert "read_result_digest" in prompt
     assert "unknown readback command is an evidence task" in prompt
@@ -193,7 +194,7 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
     assert '"side_effect_state"' in instructions
     assert '"read_result_digest"' in instructions
     assert '"title":"AuditAgentWireResult"' in instructions
-    assert "external_result_json\nmust contain exactly" in instructions
+    assert "external_result must\ncontain exactly" in instructions
     assert 'dws schema --cli-path "<product> <command>" --compact --format json' in instructions
     assert "discovery is not an unavailable-tool result" in instructions
     assert (
@@ -204,14 +205,16 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
         "operation_id must equal the candidate proposal\noperation_id"
         in instructions
     )
-    assert "reconciliation_json is always a\nJSON-encoded array" in instructions
-    assert "use [] unless outcome is reconciled" in instructions
-    assert "object wrapper in reconciliation_json" in instructions
+    assert "reconciliation is always an array" in instructions
+    assert "use [] unless\noutcome is reconciled" in instructions
+    assert "object wrapper in reconciliation" in instructions
     assert "exactly these string fields:\nrule, observation, and requested_revision" in instructions
     assert "failed_rule, evidence, or required_change" in instructions
     assert "reconciled requires\nside_effect_state=unknown" in instructions
     assert "action_index, disposition (present,\nabsent, or ambiguous), and read_result_digest" in instructions
     assert "reconciled outcome is reserved for unknown-outcome recovery" in instructions
+    assert "error_code, error_retryable, and error_authorization_required" in instructions
+    assert "Do not return a nested error object" in instructions
     assert "return revision_required and ask\nConsumer Agent A to return no_action" in instructions
     assert "Never execute a DWS write command without --yes" in instructions
     assert "missing command syntax is a read-only evidence task" in instructions
@@ -620,6 +623,38 @@ def _skill_read_jsonl(path: Path, content: str) -> tuple[str, str]:
     return json.dumps({"type": "item.completed", "item": item}), digest
 
 
+def _failed_skill_read_jsonl(path: Path) -> str:
+    item = {
+        "type": "mcp_tool_call",
+        "id": "skill-read-failed",
+        "server": "agent_cli",
+        "tool": "read_skill",
+        "arguments": {"path": str(path)},
+        "status": "failed",
+        "result": {
+            "content": [{"type": "text", "text": "Skill could not be read."}],
+            "isError": True,
+        },
+    }
+    return json.dumps({"type": "item.completed", "item": item})
+
+
+def _started_skill_read_jsonl(path: Path) -> str:
+    return json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "type": "mcp_tool_call",
+                "id": "skill-read-started",
+                "server": "agent_cli",
+                "tool": "read_skill",
+                "arguments": {"path": str(path)},
+                "status": "in_progress",
+            },
+        }
+    )
+
+
 def _revision_required_jsonl(observation: str) -> str:
     result = {
         "outcome": "revision_required",
@@ -765,6 +800,102 @@ def test_scripted_audit_voluntarily_requires_revision_for_changed_skill_sha(
     assert store.get_agent_run(result.run_id).side_effect_state == "none"
 
 
+def test_audit_runtime_requires_skill_reread_even_for_revision_result(setup):
+    store, task, audit_context, parent = setup
+
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="audit_skill_reread_missing",
+    ):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(
+                _revision_required_jsonl("Read the verified Skill first."),
+                inject_skill_receipt=False,
+            ),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+
+def test_audit_retry_cannot_reuse_prior_turn_skill_receipt(setup):
+    store, task, audit_context, parent = setup
+    skill_path = Path(audit_context.consumer_skills[0].path)
+    old_receipt, _digest = _skill_read_jsonl(
+        skill_path,
+        skill_path.read_text(encoding="utf-8"),
+    )
+
+    with pytest.raises(ResultParseError):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(old_receipt),
+            owner="audit-owner-first",
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="audit_skill_reread_missing",
+    ):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(
+                _revision_required_jsonl("Read the Skill in this turn."),
+                inject_skill_receipt=False,
+            ),
+            owner="audit-owner-retry",
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+
+def test_audit_failed_skill_reread_can_return_revision_required(setup):
+    store, task, audit_context, parent = setup
+    skill_path = Path(audit_context.consumer_skills[0].path)
+    stream = "\n".join(
+        (
+            _failed_skill_read_jsonl(skill_path),
+            _revision_required_jsonl("The required Skill is unreadable."),
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream),
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert result.result.outcome is AuditOutcome.REVISION_REQUIRED
+    persisted = store.get_agent_run(result.run_id)
+    assert persisted is not None
+    assert any(
+        event["type"] == "item.failed"
+        and event["item"]["metadata"].get("requested_skill_path")
+        == str(skill_path.resolve())
+        for event in persisted.tool_events
+    )
+
+
+def test_audit_started_skill_reread_is_not_an_attempted_failure(setup):
+    store, task, audit_context, parent = setup
+    skill_path = Path(audit_context.consumer_skills[0].path)
+    stream = "\n".join(
+        (
+            _started_skill_read_jsonl(skill_path),
+            _revision_required_jsonl("The Skill call never returned."),
+        )
+    )
+
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="audit_skill_reread_missing",
+    ):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(stream),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+
 def test_audit_runtime_blocks_write_before_exact_skill_reread(setup):
     store, task, audit_context, parent = setup
 
@@ -832,6 +963,11 @@ def test_audit_instructions_require_dynamic_skill_reread_before_execution():
         "the candidate."
     ) in instructions
     assert instructions.count("[dynamic-skill]") == 1
+    assert "feedback_json" not in instructions
+    assert "external_result_json" not in instructions
+    assert "reconciliation_json" not in instructions
+    assert "feedback is required" in instructions
+    assert "external_result must\ncontain exactly" in instructions
 
 
 def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):

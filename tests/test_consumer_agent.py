@@ -289,6 +289,12 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert '"sourced_facts"' in instructions
     assert '"authored_judgment"' in instructions
     assert '"expected_verification"' in instructions
+    assert "proposal_json" not in instructions
+    assert "decision_options_json" not in instructions
+    assert "proposal is" in instructions
+    assert "decision_options is" in instructions
+    assert "error_code, error_retryable, and error_authorization_required" in instructions
+    assert "Do not return a nested error object" in instructions
 
 
 @pytest.mark.parametrize(
@@ -467,6 +473,11 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     assert any("## Pydantic Wire Contract" in option for option in command)
     assert any("ConsumerAgentWireResult" in option for option in command)
     assert "## Runtime Invariants" in executor.prompts[0]
+    assert "## Installed CEO business Skill catalog" not in executor.prompts[0]
+    assert any("## Installed CEO business Skill catalog" in option for option in command)
+    assert any("PROTOCOL PRECONDITION" in option for option in command)
+    assert any("ceo-message-triage" in option for option in command)
+    assert any("ceo-work-tracking" in option for option in command)
     assert any(
         "call `agent_cli.execute_reviewed_read`" in option
         for option in command
@@ -486,7 +497,8 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         and "valid ConsumerAgentResult JSON" in option
         for option in command
     )
-    assert "proposal_json must decode to this JSON Schema exactly" in executor.prompts[0]
+    assert "proposal_json" not in executor.prompts[0]
+    assert "proposal must match the supplied JSON Schema exactly" in executor.prompts[0]
     assert '"expected_verification"' in executor.prompts[0]
     assert any(
         "each array item must contain exactly these non-empty string fields" in option

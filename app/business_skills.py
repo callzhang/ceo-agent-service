@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import shutil
@@ -72,6 +73,12 @@ class InstalledBusinessSkill:
     install_path: Path
 
 
+@dataclass(frozen=True)
+class BusinessSkillCatalogEntry:
+    name: str
+    skill_path: Path
+
+
 @dataclass
 class _SwapState:
     staged_dir: Path
@@ -84,6 +91,42 @@ class _SwapState:
 
 def bundled_business_skills_root() -> Path:
     return Path(__file__).resolve().parents[1] / "skills"
+
+
+def installed_business_skill_catalog(
+    target_root: Path | None = None,
+) -> tuple[BusinessSkillCatalogEntry, ...]:
+    root = (
+        Path.home() / ".agents" / "skills"
+        if target_root is None
+        else Path(target_root).expanduser()
+    ).resolve()
+    return tuple(
+        BusinessSkillCatalogEntry(
+            name=name,
+            skill_path=(root / name / "SKILL.md").resolve(),
+        )
+        for name in BUNDLED_BUSINESS_SKILL_NAMES
+    )
+
+
+def render_business_skill_protocol(
+    catalog: tuple[BusinessSkillCatalogEntry, ...],
+) -> str:
+    inventory = [
+        {"name": item.name, "path": str(item.skill_path)} for item in catalog
+    ]
+    return (
+        "## Installed CEO business Skill catalog\n"
+        + json.dumps(inventory, ensure_ascii=False, sort_keys=True)
+        + "\n\n## Required Skill protocol\n"
+        "PROTOCOL PRECONDITION: before returning any Consumer outcome, call "
+        "`agent_cli.read_skill` for at least one CEO business Skill from the exact "
+        "catalog above. Choose the applicable Skill yourself from the full context; "
+        "the service does not route the domain. Read every additional business or "
+        "operation Skill needed for the judgment. Do not return an outcome before "
+        "completing this read."
+    )
 
 
 def load_bundled_business_skills() -> tuple[BundledBusinessSkill, ...]:

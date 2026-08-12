@@ -77,6 +77,10 @@ Producer 只根据消息来源、会话类型、明确的 @、稳定卡片类型
 Skill。Consumer A 根据完整上下文使用 Codex 原生 Skill discovery，按需读取业务 Skill 和操作
 Skill。
 
+每个 Consumer 回合的 developer instructions 都携带七个已安装业务 Skill 的精确名称和路径，并把
+至少一次业务 Skill 读取定义为返回任何业务结论之前的协议前置条件。目录只声明可用能力，不替 Agent
+选择领域；选择仍由 A 根据完整上下文完成。目录或 wire contract 变化时会轮换旧的对话 session。
+
 Service 也不读取正文后替 Agent 解释业务材料。它只传递 trigger、上下文、原始 process/task ID、
 链接、本地受控材料引用和可执行的精确读取命令。文档、文件夹、图片、表格、日历、听记和 OA
 材料是否相关、是否需要继续展开以及它们支持什么结论，都由 A 判断；B 在执行前独立复核。

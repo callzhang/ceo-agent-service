@@ -130,7 +130,8 @@ def test_native_read_fixture_command_ignores_user_config_and_exposes_only_reads(
     assert "features.apps=false" in isolated
     assert "tools.enabled_tools=[]" in isolated
     assert 'web_search="disabled"' in isolated
-    assert 'approval_policy="never"' in isolated
+    assert 'approval_policy="untrusted"' in isolated
+    assert 'approvals_reviewer="auto_review"' in isolated
     assert (
         'mcp_servers.agent_cli.enabled_tools=["read_skill","execute_reviewed_read"]'
         in isolated

@@ -22,7 +22,7 @@ def _skill_text() -> str:
         ("no_principal_input_needed", "decline", "no"),
         ("missing_attendance_value", "clarify_inviter", "yes"),
         ("missing_description_but_clear_title", "accept", "no"),
-        ("silent_meeting_with_material", "process_material", "no"),
+        ("silent_meeting_with_material", "process_material_and_accept", "no"),
         ("silent_meeting_without_material", "clarify_exact_material", "yes"),
     ],
 )

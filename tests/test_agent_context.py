@@ -48,6 +48,7 @@ def test_consumer_core_prompt_contains_only_runtime_invariants():
         context_facts=None,
         size_limit=2_500,
     )
+    assert "proposal_json" not in text
 
 
 def test_audit_core_prompt_contains_only_runtime_invariants():
