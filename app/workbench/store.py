@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -17,11 +18,6 @@ from app.workbench.models import (
 )
 
 
-_ACTIVE_TURN_STATUSES = {
-    TurnStatus.QUEUED,
-    TurnStatus.RUNNING,
-    TurnStatus.WAITING_CONFIRMATION,
-}
 _TURN_TRANSITIONS = {
     TurnStatus.QUEUED: {TurnStatus.RUNNING, TurnStatus.STOPPED},
     TurnStatus.RUNNING: {
@@ -44,8 +40,8 @@ _TURN_TRANSITIONS = {
 def _json_object_text(value: dict[str, Any] | str, *, field: str) -> str:
     if isinstance(value, str):
         try:
-            value = json.loads(value)
-        except json.JSONDecodeError as exc:
+            value = json.loads(value, parse_constant=_reject_json_constant)
+        except (json.JSONDecodeError, ValueError) as exc:
             raise ValueError(f"{field} must be a JSON object") from exc
     if not isinstance(value, dict):
         raise ValueError(f"{field} must be a JSON object")
@@ -55,9 +51,14 @@ def _json_object_text(value: dict[str, Any] | str, *, field: str) -> str:
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
+            allow_nan=False,
         )
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field} must be a JSON object") from exc
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON value: {value}")
 
 
 class WorkbenchStore(AutoReplyStore):
@@ -142,35 +143,61 @@ class WorkbenchStore(AutoReplyStore):
             raise ValueError("filename must be non-empty")
         if not media_type:
             raise ValueError("media_type must be non-empty")
-        with self._connect() as db:
-            self._require_task(db, task_id)
         attachment_id = str(uuid4())
         directory = self.path.parent / "workbench" / "attachments" / task_id
         directory.mkdir(parents=True, exist_ok=True)
         storage_path = directory / attachment_id
-        storage_path.write_bytes(content)
-        with self._connect() as db:
-            db.execute(
-                """
-                insert into workbench_attachments (
-                    id, task_id, filename, media_type, size_bytes, storage_path
-                ) values (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    attachment_id,
-                    task_id,
-                    filename,
-                    media_type,
-                    len(content),
-                    str(storage_path),
-                ),
-            )
-            row = db.execute(
-                "select * from workbench_attachments where id=?", (attachment_id,)
-            ).fetchone()
-            if row is None:
-                raise RuntimeError("attachment insert did not create a row")
-            return self._attachment_from_row(row)
+        temp_path = directory / f".{attachment_id}.{uuid4().hex}.tmp"
+        try:
+            with temp_path.open("xb") as file:
+                file.write(content)
+                file.flush()
+                os.fsync(file.fileno())
+            with self._connect() as db:
+                db.execute("begin immediate")
+                self._require_task(db, task_id)
+                db.execute(
+                    """
+                    insert into workbench_attachments (
+                        id, task_id, filename, media_type, size_bytes, storage_path
+                    ) values (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        attachment_id,
+                        task_id,
+                        filename,
+                        media_type,
+                        len(content),
+                        str(storage_path),
+                    ),
+                )
+                row = db.execute(
+                    "select * from workbench_attachments where id=?", (attachment_id,)
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("attachment insert did not create a row")
+                attachment = self._attachment_from_row(row)
+            try:
+                os.replace(temp_path, storage_path)
+            except OSError:
+                with self._connect() as db:
+                    db.execute("begin immediate")
+                    if db.execute(
+                        """
+                        delete from workbench_attachments
+                        where id=? and storage_path=?
+                        """,
+                        (attachment_id, str(storage_path)),
+                    ).rowcount != 1:
+                        raise RuntimeError("attachment metadata cleanup failed")
+                raise
+            return attachment
+        except Exception:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
 
     def list_attachments(self, task_id: str) -> list[WorkbenchAttachment]:
         with self._connect() as db:
@@ -358,6 +385,8 @@ class WorkbenchStore(AutoReplyStore):
             db.execute("begin immediate")
             row = self._require_turn(db, turn_id)
             status = TurnStatus(row["status"])
+            if status is TurnStatus.STOPPED:
+                return self._turn_from_row(row)
             if TurnStatus.STOPPED not in _TURN_TRANSITIONS[status]:
                 raise ValueError("invalid turn transition")
             if status is TurnStatus.RUNNING and owner:
@@ -391,13 +420,18 @@ class WorkbenchStore(AutoReplyStore):
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
             db.execute("begin immediate")
-            row = self._require_turn(db, turn_id)
-            if TurnStatus(row["status"]) is TurnStatus.RUNNING:
-                self._require_executor_lease(
-                    db, turn_id, owner=owner, now_text=now_text
-                )
-            if TurnStatus(row["status"]) not in _ACTIVE_TURN_STATUSES:
-                raise ValueError("cannot append an event to a terminal turn")
+            self._require_executor_lease(db, turn_id, owner=owner, now_text=now_text)
+            expected_sequence = int(
+                db.execute(
+                    """
+                    select coalesce(max(sequence), 0) + 1
+                    from workbench_events where turn_id=?
+                    """,
+                    (turn_id,),
+                ).fetchone()[0]
+            )
+            if sequence != expected_sequence:
+                raise ValueError("event sequence must be next")
             try:
                 cursor = db.execute(
                     """
@@ -431,19 +465,29 @@ class WorkbenchStore(AutoReplyStore):
             return [self._event_from_row(row) for row in rows]
 
     def set_provider_session(
-        self, task_id: str, provider_session_ref: str
+        self,
+        turn_id: str,
+        provider_session_ref: str,
+        *,
+        owner: str,
+        now: str | datetime | None = None,
     ) -> WorkbenchTask:
+        _, now_text = _utc_store_time(now)
         with self._connect() as db:
+            db.execute("begin immediate")
+            turn = self._require_executor_lease(
+                db, turn_id, owner=owner, now_text=now_text
+            )
             if db.execute(
                 """
                 update workbench_tasks
-                set provider_session_ref=?, updated_at=current_timestamp
+                set provider_session_ref=?, updated_at=?
                 where id=?
                 """,
-                (provider_session_ref.strip(), task_id),
+                (provider_session_ref.strip(), now_text, turn["task_id"]),
             ).rowcount != 1:
                 raise ValueError("workbench task does not exist")
-            return self._task_from_row(self._require_task(db, task_id))
+            return self._task_from_row(self._require_task(db, turn["task_id"]))
 
     def create_confirmation(
         self,
@@ -521,7 +565,10 @@ class WorkbenchStore(AutoReplyStore):
                 raise ValueError("workbench confirmation does not exist")
             if row["task_id"] != task_id:
                 raise ValueError("confirmation does not belong to task")
-            if ConfirmationStatus(row["status"]) is not ConfirmationStatus.PENDING:
+            confirmation_status = ConfirmationStatus(row["status"])
+            if confirmation_status is not ConfirmationStatus.PENDING:
+                if confirmation_status is decision:
+                    return self._confirmation_from_row(row, redact_arguments=True)
                 raise ValueError("confirmation has already been decided")
             turn = self._require_turn(db, row["turn_id"])
             if TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION:
@@ -564,9 +611,16 @@ class WorkbenchStore(AutoReplyStore):
             ]
 
     def get_confirmation_for_executor(
-        self, task_id: str, confirmation_id: str
+        self,
+        task_id: str,
+        confirmation_id: str,
+        *,
+        owner: str,
+        now: str | datetime | None = None,
     ) -> WorkbenchConfirmation:
+        _, now_text = _utc_store_time(now)
         with self._connect() as db:
+            db.execute("begin immediate")
             row = db.execute(
                 """
                 select confirmations.*, turns.task_id
@@ -580,6 +634,11 @@ class WorkbenchStore(AutoReplyStore):
                 raise ValueError("workbench confirmation does not exist")
             if row["task_id"] != task_id:
                 raise ValueError("confirmation does not belong to task")
+            if ConfirmationStatus(row["status"]) is not ConfirmationStatus.CONFIRMED:
+                raise ValueError("confirmation is not confirmed")
+            self._require_executor_lease(
+                db, row["turn_id"], owner=owner, now_text=now_text
+            )
             return self._confirmation_from_row(row)
 
     def complete_turn(
@@ -738,9 +797,13 @@ class WorkbenchStore(AutoReplyStore):
     @staticmethod
     def _event_from_row(row: sqlite3.Row) -> WorkbenchEvent:
         try:
-            payload = json.loads(row["payload_json"])
-        except json.JSONDecodeError as exc:
+            payload = json.loads(
+                row["payload_json"], parse_constant=_reject_json_constant
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
             raise ValueError("stored event payload is malformed") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("stored event payload is malformed")
         return WorkbenchEvent.model_validate(
             {
                 "id": row["id"],
