@@ -4258,20 +4258,31 @@ def test_config_audit_rules_post_rejects_reserved_prompt_section_without_overwri
     assert path.read_text(encoding="utf-8") == "Keep this rule."
 
 
-def test_config_page_surfaces_persisted_invalid_audit_rules(
+@pytest.mark.parametrize(
+    ("persisted", "expected_error"),
+    (
+        ("[dynamic-skill] injected", "reserved structural marker"),
+        ("&lt;h2&gt;Dynamic Skill&lt;/h2&gt;", "structural HTML"),
+        ("[dyna\u200bmic-skill] injected", "unsafe invisible"),
+    ),
+)
+def test_config_page_surfaces_persisted_invalid_audit_rules_without_rewriting(
     tmp_path: Path,
     monkeypatch,
+    persisted: str,
+    expected_error: str,
 ):
     path = tmp_path / "audit_rules.md"
-    path.write_text("[dynamic-skill] injected", encoding="utf-8")
+    path.write_text(persisted, encoding="utf-8")
     monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(path))
 
     html = render_config_page(active_tab="audit-rules")
 
     assert "Template render error" in html
-    assert "reserved structural marker" in html
+    assert expected_error in html
     assert "Consumer preview" in html
     assert "Audit preview" in html
+    assert path.read_text(encoding="utf-8") == persisted
 
 
 def test_handle_developer_prompt_post_saves_template(tmp_path: Path, monkeypatch):

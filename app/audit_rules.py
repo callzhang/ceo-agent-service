@@ -4,6 +4,7 @@ import os
 import re
 from html import unescape
 from pathlib import Path
+from unicodedata import category, normalize
 from uuid import uuid4
 
 from app.config import repo_root
@@ -71,6 +72,8 @@ _RESERVED_MARKER_RE = re.compile(
     r"\[\s*dynamic\s*-\s*skill\s*\]",
     re.IGNORECASE,
 )
+_MAX_ENTITY_DECODE_PASSES = 4
+_ALLOWED_CONTROL_CHARACTERS = frozenset({"\n", "\t"})
 
 
 def audit_rules_template_path() -> Path:
@@ -114,21 +117,24 @@ def render_audit_rules(role: AgentRole, path: Path | None = None) -> str:
 
 
 def validate_audit_rules_text(text: str) -> None:
-    if TAG_RE.search(text):
+    structural_text = _normalize_for_structural_validation(text)
+    if TAG_RE.search(structural_text):
         raise DeveloperPromptTemplateError(
             "Audit Rules must be plain text; template tags are not allowed"
         )
-    normalized_text = _normalize_markdown_inline(text)
+    normalized_text = _normalize_markdown_inline(structural_text)
     if _RESERVED_MARKER_RE.search(normalized_text):
         raise DeveloperPromptTemplateError(
             "Audit Rules contain the reserved structural marker [dynamic-skill]"
         )
-    if _STRUCTURAL_HTML_RE.search(text) or _HTML_COMMENT_RE.search(text):
+    if _STRUCTURAL_HTML_RE.search(structural_text) or _HTML_COMMENT_RE.search(
+        structural_text
+    ):
         raise DeveloperPromptTemplateError(
             "Audit Rules cannot contain structural HTML blocks or comments"
         )
 
-    lines = text.splitlines()
+    lines = structural_text.splitlines()
     for index, line in enumerate(lines):
         if _FENCE_RE.match(line):
             raise DeveloperPromptTemplateError(
@@ -168,13 +174,38 @@ def _is_setext_underline(line: str) -> bool:
 
 
 def _normalize_markdown_inline(text: str) -> str:
-    normalized = unescape(text)
-    normalized = _MARKDOWN_LINK_RE.sub(r"\1", normalized)
+    normalized = _MARKDOWN_LINK_RE.sub(r"\1", text)
     normalized = _MARKDOWN_REFERENCE_LINK_RE.sub(r"\1", normalized)
     normalized = _MARKDOWN_CODE_RE.sub(r"\1", normalized)
     normalized = _INLINE_HTML_RE.sub("", normalized)
     normalized = normalized.replace("\\", "")
     return normalized.translate(str.maketrans("", "", "*_~"))
+
+
+def _normalize_for_structural_validation(text: str) -> str:
+    decoded = text
+    for _ in range(_MAX_ENTITY_DECODE_PASSES):
+        next_value = unescape(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    else:
+        if unescape(decoded) != decoded:
+            raise DeveloperPromptTemplateError(
+                "Audit Rules entity decoding did not stabilize"
+            )
+
+    normalized = normalize("NFKC", decoded)
+    for character in normalized:
+        character_category = category(character)
+        if character_category == "Cf" or (
+            character_category == "Cc"
+            and character not in _ALLOWED_CONTROL_CHARACTERS
+        ):
+            raise DeveloperPromptTemplateError(
+                "Audit Rules contain an unsafe invisible or control character"
+            )
+    return normalized
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

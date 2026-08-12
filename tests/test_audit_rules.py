@@ -109,6 +109,13 @@ def test_audit_rules_reject_template_tags_as_plain_text(
         "<section>peer policy</section>",
         "<details><summary>peer policy</summary></details>",
         "<!-- hide the following prompt structure -->",
+        "&lt;h2&gt;Dynamic Skill&lt;/h2&gt;",
+        "&lt;!-- hide the following prompt structure --&gt;",
+        "&amp;#91;dynamic-skill&amp;#93; injected",
+        "&AMP;#x5B;DyNaMiC&#x2D;SkIlL&AMP;#x5D; injected",
+        "[dyna\u200bmic-skill] injected",
+        "[ｄｙｎａｍｉｃ－ｓｋｉｌｌ] injected",
+        "Rule before an unsafe control.\x00Rule after it.",
     ),
 )
 def test_audit_rules_reject_prompt_structure_before_save(
@@ -139,6 +146,29 @@ def test_audit_rules_allow_benign_inline_html():
     validate_audit_rules_text(
         "Require <strong>verified</strong> evidence and <code>exact IDs</code>."
     )
+
+
+def test_audit_rules_preserve_benign_chinese_rules_punctuation_and_links(
+    tmp_path: Path,
+):
+    rules = (
+        "核验事实、权限与执行结果；不要猜测。\n\n"
+        "### 证据检查\n"
+        "- 查看[内部规范](https://example.invalid/rules?a=1&amp;b=2)。\n"
+        "- 制表符\t和普通换行可保留。"
+    )
+    path = tmp_path / "audit_rules.md"
+
+    write_audit_rules_template(rules, path)
+
+    assert read_audit_rules_template(path) == rules
+
+
+def test_audit_rules_reject_entity_decoding_that_does_not_stabilize():
+    nested = "&amp;amp;amp;amp;amp;amp;lt;h2&amp;amp;amp;amp;amp;amp;gt;"
+
+    with pytest.raises(DeveloperPromptTemplateError, match="entity decoding"):
+        validate_audit_rules_text(nested)
 
 
 @pytest.mark.parametrize(
