@@ -51,12 +51,11 @@ class FailingExecutor(CapturingExecutor):
 def _wire_result(result: dict[str, object]) -> dict[str, object]:
     error = result["error"]
     assert isinstance(error, dict)
-    proposal = result["proposal"]
     return {
         "outcome": result["outcome"],
         "summary": result["summary"],
-        "proposal_json": json.dumps(proposal) if proposal is not None else None,
-        "decision_options_json": json.dumps(result.get("decision_options", [])),
+        "proposal": result["proposal"],
+        "decision_options": result.get("decision_options", []),
         "error_code": error["code"],
         "error_retryable": error["retryable"],
         "error_authorization_required": error["authorization_required"],
@@ -172,7 +171,8 @@ def test_consumer_instructions_keep_writes_as_proposal_data():
     instructions = consumer_developer_instructions("AUDIT-RULE-SENTINEL")
 
     assert "AUDIT-RULE-SENTINEL" in instructions
-    assert '"proposal_json"' in instructions
+    assert '"proposal"' in instructions
+    assert '"decision_options"' in instructions
 
 
 def test_consumer_instructions_require_dynamic_business_and_operation_skill_reads():

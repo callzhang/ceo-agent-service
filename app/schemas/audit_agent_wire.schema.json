@@ -1,422 +1,528 @@
 {
   "$defs": {
-    "AuditOutcome": {
-      "enum": [
-        "executed",
-        "revision_required",
-        "needs_human",
-        "failed",
-        "unknown",
-        "reconciled"
-      ],
-      "title": "AuditOutcome",
-      "type": "string"
-    },
-    "SideEffectState": {
-      "enum": [
-        "none",
-        "confirmed",
-        "unknown"
-      ],
-      "title": "SideEffectState",
-      "type": "string"
-    }
-  },
-  "additionalProperties": false,
-  "anyOf": [
-    {
+    "AuditExternalResult": {
+      "additionalProperties": false,
       "properties": {
-        "outcome": {
-          "const": "executed"
-        },
-        "side_effect_state": {
-          "const": "confirmed"
-        },
-        "feedback_json": {
-          "type": "null"
-        },
-        "external_result_json": {
-          "contentMediaType": "application/json",
-          "contentSchema": {
-            "$id": "urn:ceo-agent:audit-external-result",
-            "additionalProperties": false,
-            "properties": {
-              "operation_id": {
-                "minLength": 1,
-                "title": "Operation Id",
-                "type": "string"
-              },
-              "verification_summary": {
-                "minLength": 1,
-                "title": "Verification Summary",
-                "type": "string"
-              },
-              "live_result_reference": {
-                "additionalProperties": {},
-                "title": "Live Result Reference",
-                "type": "object"
-              }
-            },
-            "required": [
-              "operation_id",
-              "verification_summary",
-              "live_result_reference"
-            ],
-            "title": "AuditExternalResult",
-            "type": "object"
-          },
+        "operation_id": {
           "minLength": 1,
+          "title": "Operation Id",
           "type": "string"
         },
-        "reconciliation_json": {
-          "contentMediaType": "application/json",
-          "contentSchema": {
-            "$id": "urn:ceo-agent:empty-array",
-            "maxItems": 0,
-            "type": "array"
-          },
+        "verification_summary": {
           "minLength": 1,
-          "type": "string"
-        }
-      }
-    },
-    {
-      "properties": {
-        "outcome": {
-          "const": "revision_required"
-        },
-        "side_effect_state": {
-          "const": "none"
-        },
-        "feedback_json": {
-          "contentMediaType": "application/json",
-          "contentSchema": {
-            "$id": "urn:ceo-agent:audit-feedback",
-            "additionalProperties": false,
-            "properties": {
-              "rule": {
-                "minLength": 1,
-                "title": "Rule",
-                "type": "string"
-              },
-              "observation": {
-                "minLength": 1,
-                "title": "Observation",
-                "type": "string"
-              },
-              "requested_revision": {
-                "minLength": 1,
-                "title": "Requested Revision",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule",
-              "observation",
-              "requested_revision"
-            ],
-            "title": "AuditFeedback",
-            "type": "object"
-          },
-          "minLength": 1,
+          "title": "Verification Summary",
           "type": "string"
         },
-        "external_result_json": {
-          "type": "null"
-        },
-        "reconciliation_json": {
-          "contentMediaType": "application/json",
-          "contentSchema": {
-            "$id": "urn:ceo-agent:empty-array",
-            "maxItems": 0,
-            "type": "array"
+        "live_result_reference": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
           },
-          "minLength": 1,
-          "type": "string"
-        }
-      }
-    },
-    {
-      "properties": {
-        "outcome": {
-          "const": "unknown"
-        },
-        "side_effect_state": {
-          "const": "unknown"
-        },
-        "feedback_json": {
-          "type": "null"
-        },
-        "external_result_json": {
-          "type": "null"
-        },
-        "reconciliation_json": {
-          "contentMediaType": "application/json",
-          "contentSchema": {
-            "$id": "urn:ceo-agent:empty-array",
-            "maxItems": 0,
-            "type": "array"
-          },
-          "minLength": 1,
-          "type": "string"
-        }
-      }
-    },
-    {
-      "properties": {
-        "outcome": {
-          "const": "reconciled"
-        },
-        "side_effect_state": {
-          "const": "unknown"
-        },
-        "feedback_json": {
-          "type": "null"
-        },
-        "external_result_json": {
-          "type": "null"
-        },
-        "reconciliation_json": {
-          "contentMediaType": "application/json",
-          "contentSchema": {
-            "$id": "urn:ceo-agent:audit-reconciliation",
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "action_index": {
-                  "minimum": 0,
-                  "title": "Action Index",
-                  "type": "integer"
-                },
-                "disposition": {
-                  "enum": [
-                    "present",
-                    "absent",
-                    "ambiguous"
-                  ],
-                  "title": "ReconciliationDisposition",
-                  "type": "string"
-                },
-                "read_result_digest": {
-                  "minLength": 1,
-                  "title": "Read Result Digest",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "action_index",
-                "disposition",
-                "read_result_digest"
-              ],
-              "title": "AuditReconciliation",
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "minLength": 1,
-          "type": "string"
-        }
-      }
-    },
-    {
-      "properties": {
-        "outcome": {
-          "enum": [
-            "needs_human",
-            "failed"
-          ]
-        },
-        "side_effect_state": {
-          "const": "none"
-        },
-        "feedback_json": {
-          "type": "null"
-        },
-        "external_result_json": {
-          "type": "null"
-        },
-        "reconciliation_json": {
-          "contentMediaType": "application/json",
-          "contentSchema": {
-            "$id": "urn:ceo-agent:empty-array",
-            "maxItems": 0,
-            "type": "array"
-          },
-          "minLength": 1,
-          "type": "string"
-        }
-      }
-    }
-  ],
-  "description": "Strict-output transport form for Audit B dynamic result fields.",
-  "properties": {
-    "outcome": {
-      "$ref": "#/$defs/AuditOutcome"
-    },
-    "summary": {
-      "minLength": 1,
-      "title": "Summary",
-      "type": "string"
-    },
-    "proposal_revision": {
-      "minimum": 0,
-      "title": "Proposal Revision",
-      "type": "integer"
-    },
-    "side_effect_state": {
-      "$ref": "#/$defs/SideEffectState"
-    },
-    "feedback_json": {
-      "anyOf": [
-        {
-          "minLength": 1,
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "contentMediaType": "application/json",
-      "contentSchema": {
-        "$id": "urn:ceo-agent:audit-feedback",
-        "additionalProperties": false,
-        "properties": {
-          "rule": {
-            "minLength": 1,
-            "title": "Rule",
-            "type": "string"
-          },
-          "observation": {
-            "minLength": 1,
-            "title": "Observation",
-            "type": "string"
-          },
-          "requested_revision": {
-            "minLength": 1,
-            "title": "Requested Revision",
-            "type": "string"
-          }
-        },
-        "required": [
-          "rule",
-          "observation",
-          "requested_revision"
-        ],
-        "title": "AuditFeedback",
-        "type": "object"
-      },
-      "description": "JSON-encoded AuditFeedback, or null outside revision_required.",
-      "title": "Feedback Json"
-    },
-    "external_result_json": {
-      "anyOf": [
-        {
-          "minLength": 1,
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "contentMediaType": "application/json",
-      "contentSchema": {
-        "$id": "urn:ceo-agent:audit-external-result",
-        "additionalProperties": false,
-        "properties": {
-          "operation_id": {
-            "minLength": 1,
-            "title": "Operation Id",
-            "type": "string"
-          },
-          "verification_summary": {
-            "minLength": 1,
-            "title": "Verification Summary",
-            "type": "string"
-          },
-          "live_result_reference": {
-            "additionalProperties": {},
-            "title": "Live Result Reference",
-            "type": "object"
-          }
-        },
-        "required": [
-          "operation_id",
-          "verification_summary",
-          "live_result_reference"
-        ],
-        "title": "AuditExternalResult",
-        "type": "object"
-      },
-      "description": "JSON-encoded AuditExternalResult, or null outside executed.",
-      "title": "External Result Json"
-    },
-    "reconciliation_json": {
-      "contentMediaType": "application/json",
-      "contentSchema": {
-        "$id": "urn:ceo-agent:audit-reconciliation",
-        "items": {
-          "additionalProperties": false,
-          "properties": {
-            "action_index": {
-              "minimum": 0,
-              "title": "Action Index",
-              "type": "integer"
-            },
-            "disposition": {
-              "enum": [
-                "present",
-                "absent",
-                "ambiguous"
-              ],
-              "title": "ReconciliationDisposition",
-              "type": "string"
-            },
-            "read_result_digest": {
-              "minLength": 1,
-              "title": "Read Result Digest",
-              "type": "string"
-            }
-          },
-          "required": [
-            "action_index",
-            "disposition",
-            "read_result_digest"
-          ],
-          "title": "AuditReconciliation",
+          "title": "Live Result Reference",
           "type": "object"
-        },
-        "type": "array"
+        }
       },
-      "description": "JSON-encoded array of AuditReconciliation entries.",
-      "minLength": 1,
-      "title": "Reconciliation Json",
+      "required": [
+        "operation_id",
+        "verification_summary",
+        "live_result_reference"
+      ],
+      "title": "AuditExternalResult",
+      "type": "object"
+    },
+    "AuditFeedback": {
+      "additionalProperties": false,
+      "properties": {
+        "rule": {
+          "minLength": 1,
+          "title": "Rule",
+          "type": "string"
+        },
+        "observation": {
+          "minLength": 1,
+          "title": "Observation",
+          "type": "string"
+        },
+        "requested_revision": {
+          "minLength": 1,
+          "title": "Requested Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "observation",
+        "requested_revision"
+      ],
+      "title": "AuditFeedback",
+      "type": "object"
+    },
+    "AuditReconciliation": {
+      "additionalProperties": false,
+      "properties": {
+        "action_index": {
+          "minimum": 0,
+          "title": "Action Index",
+          "type": "integer"
+        },
+        "disposition": {
+          "$ref": "#/$defs/ReconciliationDisposition"
+        },
+        "read_result_digest": {
+          "minLength": 1,
+          "title": "Read Result Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_index",
+        "disposition",
+        "read_result_digest"
+      ],
+      "title": "AuditReconciliation",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "ReconciliationDisposition": {
+      "enum": [
+        "present",
+        "absent",
+        "ambiguous"
+      ],
+      "title": "ReconciliationDisposition",
       "type": "string"
     },
-    "error_code": {
-      "title": "Error Code",
-      "type": "string"
+    "_AuditExecutedWire": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "error_code": {
+          "title": "Error Code",
+          "type": "string"
+        },
+        "error_retryable": {
+          "title": "Error Retryable",
+          "type": "boolean"
+        },
+        "error_authorization_required": {
+          "title": "Error Authorization Required",
+          "type": "boolean"
+        },
+        "proposal_revision": {
+          "minimum": 0,
+          "title": "Proposal Revision",
+          "type": "integer"
+        },
+        "outcome": {
+          "const": "executed",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "side_effect_state": {
+          "const": "confirmed",
+          "title": "Side Effect State",
+          "type": "string"
+        },
+        "feedback": {
+          "title": "Feedback",
+          "type": "null"
+        },
+        "external_result": {
+          "$ref": "#/$defs/AuditExternalResult"
+        },
+        "reconciliation": {
+          "items": {
+            "$ref": "#/$defs/AuditReconciliation"
+          },
+          "maxItems": 0,
+          "title": "Reconciliation",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "error_code",
+        "error_retryable",
+        "error_authorization_required",
+        "proposal_revision",
+        "outcome",
+        "side_effect_state",
+        "feedback",
+        "external_result",
+        "reconciliation"
+      ],
+      "title": "_AuditExecutedWire",
+      "type": "object"
     },
-    "error_retryable": {
-      "title": "Error Retryable",
-      "type": "boolean"
+    "_AuditFailedWire": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "error_code": {
+          "title": "Error Code",
+          "type": "string"
+        },
+        "error_retryable": {
+          "title": "Error Retryable",
+          "type": "boolean"
+        },
+        "error_authorization_required": {
+          "title": "Error Authorization Required",
+          "type": "boolean"
+        },
+        "proposal_revision": {
+          "minimum": 0,
+          "title": "Proposal Revision",
+          "type": "integer"
+        },
+        "outcome": {
+          "const": "failed",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "side_effect_state": {
+          "const": "none",
+          "title": "Side Effect State",
+          "type": "string"
+        },
+        "feedback": {
+          "title": "Feedback",
+          "type": "null"
+        },
+        "external_result": {
+          "title": "External Result",
+          "type": "null"
+        },
+        "reconciliation": {
+          "items": {
+            "$ref": "#/$defs/AuditReconciliation"
+          },
+          "maxItems": 0,
+          "title": "Reconciliation",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "error_code",
+        "error_retryable",
+        "error_authorization_required",
+        "proposal_revision",
+        "outcome",
+        "side_effect_state",
+        "feedback",
+        "external_result",
+        "reconciliation"
+      ],
+      "title": "_AuditFailedWire",
+      "type": "object"
     },
-    "error_authorization_required": {
-      "title": "Error Authorization Required",
-      "type": "boolean"
+    "_AuditNeedsHumanWire": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "error_code": {
+          "title": "Error Code",
+          "type": "string"
+        },
+        "error_retryable": {
+          "title": "Error Retryable",
+          "type": "boolean"
+        },
+        "error_authorization_required": {
+          "title": "Error Authorization Required",
+          "type": "boolean"
+        },
+        "proposal_revision": {
+          "minimum": 0,
+          "title": "Proposal Revision",
+          "type": "integer"
+        },
+        "outcome": {
+          "const": "needs_human",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "side_effect_state": {
+          "const": "none",
+          "title": "Side Effect State",
+          "type": "string"
+        },
+        "feedback": {
+          "title": "Feedback",
+          "type": "null"
+        },
+        "external_result": {
+          "title": "External Result",
+          "type": "null"
+        },
+        "reconciliation": {
+          "items": {
+            "$ref": "#/$defs/AuditReconciliation"
+          },
+          "maxItems": 0,
+          "title": "Reconciliation",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "error_code",
+        "error_retryable",
+        "error_authorization_required",
+        "proposal_revision",
+        "outcome",
+        "side_effect_state",
+        "feedback",
+        "external_result",
+        "reconciliation"
+      ],
+      "title": "_AuditNeedsHumanWire",
+      "type": "object"
+    },
+    "_AuditReconciledWire": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "error_code": {
+          "title": "Error Code",
+          "type": "string"
+        },
+        "error_retryable": {
+          "title": "Error Retryable",
+          "type": "boolean"
+        },
+        "error_authorization_required": {
+          "title": "Error Authorization Required",
+          "type": "boolean"
+        },
+        "proposal_revision": {
+          "minimum": 0,
+          "title": "Proposal Revision",
+          "type": "integer"
+        },
+        "outcome": {
+          "const": "reconciled",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "side_effect_state": {
+          "const": "unknown",
+          "title": "Side Effect State",
+          "type": "string"
+        },
+        "feedback": {
+          "title": "Feedback",
+          "type": "null"
+        },
+        "external_result": {
+          "title": "External Result",
+          "type": "null"
+        },
+        "reconciliation": {
+          "items": {
+            "$ref": "#/$defs/AuditReconciliation"
+          },
+          "title": "Reconciliation",
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "summary",
+        "error_code",
+        "error_retryable",
+        "error_authorization_required",
+        "proposal_revision",
+        "outcome",
+        "side_effect_state",
+        "feedback",
+        "external_result",
+        "reconciliation"
+      ],
+      "title": "_AuditReconciledWire",
+      "type": "object"
+    },
+    "_AuditRevisionRequiredWire": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "error_code": {
+          "title": "Error Code",
+          "type": "string"
+        },
+        "error_retryable": {
+          "title": "Error Retryable",
+          "type": "boolean"
+        },
+        "error_authorization_required": {
+          "title": "Error Authorization Required",
+          "type": "boolean"
+        },
+        "proposal_revision": {
+          "minimum": 0,
+          "title": "Proposal Revision",
+          "type": "integer"
+        },
+        "outcome": {
+          "const": "revision_required",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "side_effect_state": {
+          "const": "none",
+          "title": "Side Effect State",
+          "type": "string"
+        },
+        "feedback": {
+          "$ref": "#/$defs/AuditFeedback"
+        },
+        "external_result": {
+          "title": "External Result",
+          "type": "null"
+        },
+        "reconciliation": {
+          "items": {
+            "$ref": "#/$defs/AuditReconciliation"
+          },
+          "maxItems": 0,
+          "title": "Reconciliation",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "error_code",
+        "error_retryable",
+        "error_authorization_required",
+        "proposal_revision",
+        "outcome",
+        "side_effect_state",
+        "feedback",
+        "external_result",
+        "reconciliation"
+      ],
+      "title": "_AuditRevisionRequiredWire",
+      "type": "object"
+    },
+    "_AuditUnknownWire": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "error_code": {
+          "title": "Error Code",
+          "type": "string"
+        },
+        "error_retryable": {
+          "title": "Error Retryable",
+          "type": "boolean"
+        },
+        "error_authorization_required": {
+          "title": "Error Authorization Required",
+          "type": "boolean"
+        },
+        "proposal_revision": {
+          "minimum": 0,
+          "title": "Proposal Revision",
+          "type": "integer"
+        },
+        "outcome": {
+          "const": "unknown",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "side_effect_state": {
+          "const": "unknown",
+          "title": "Side Effect State",
+          "type": "string"
+        },
+        "feedback": {
+          "title": "Feedback",
+          "type": "null"
+        },
+        "external_result": {
+          "title": "External Result",
+          "type": "null"
+        },
+        "reconciliation": {
+          "items": {
+            "$ref": "#/$defs/AuditReconciliation"
+          },
+          "maxItems": 0,
+          "title": "Reconciliation",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "error_code",
+        "error_retryable",
+        "error_authorization_required",
+        "proposal_revision",
+        "outcome",
+        "side_effect_state",
+        "feedback",
+        "external_result",
+        "reconciliation"
+      ],
+      "title": "_AuditUnknownWire",
+      "type": "object"
     }
   },
-  "required": [
-    "outcome",
-    "summary",
-    "proposal_revision",
-    "side_effect_state",
-    "feedback_json",
-    "external_result_json",
-    "reconciliation_json",
-    "error_code",
-    "error_retryable",
-    "error_authorization_required"
+  "description": "Strict discriminated transport contract for Audit Agent B.",
+  "discriminator": {
+    "mapping": {
+      "executed": "#/$defs/_AuditExecutedWire",
+      "failed": "#/$defs/_AuditFailedWire",
+      "needs_human": "#/$defs/_AuditNeedsHumanWire",
+      "reconciled": "#/$defs/_AuditReconciledWire",
+      "revision_required": "#/$defs/_AuditRevisionRequiredWire",
+      "unknown": "#/$defs/_AuditUnknownWire"
+    },
+    "propertyName": "outcome"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/_AuditExecutedWire"
+    },
+    {
+      "$ref": "#/$defs/_AuditRevisionRequiredWire"
+    },
+    {
+      "$ref": "#/$defs/_AuditNeedsHumanWire"
+    },
+    {
+      "$ref": "#/$defs/_AuditFailedWire"
+    },
+    {
+      "$ref": "#/$defs/_AuditUnknownWire"
+    },
+    {
+      "$ref": "#/$defs/_AuditReconciledWire"
+    }
   ],
-  "title": "AuditAgentWireResult",
-  "type": "object"
+  "title": "AuditAgentWireResult"
 }

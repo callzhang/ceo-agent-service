@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from html import unescape
 from pathlib import Path
 from uuid import uuid4
 
@@ -52,6 +53,20 @@ _ATX_HEADING_RE = re.compile(
     r"^[ \t]{0,3}(?P<level>#{1,6})(?:[ \t]+(?P<title>.*?))?[ \t]*$"
 )
 _FENCE_RE = re.compile(r"^[ \t]{0,3}(?:`{3,}|~{3,})")
+_MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]]+)]\([^)]*\)")
+_MARKDOWN_REFERENCE_LINK_RE = re.compile(r"!?\[([^\]]+)]\[[^\]]*]")
+_MARKDOWN_CODE_RE = re.compile(r"`+([^`]+?)`+")
+_INLINE_HTML_RE = re.compile(r"<[^>]+>")
+_STRUCTURAL_HTML_RE = re.compile(
+    r"<\s*/?\s*(?:address|article|aside|base|basefont|blockquote|body|caption|center|"
+    r"col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|"
+    r"footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|"
+    r"main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|"
+    r"section|style|summary|table|tbody|td|template|textarea|tfoot|th|thead|title|"
+    r"tr|track|ul)\b",
+    re.IGNORECASE,
+)
+_HTML_COMMENT_RE = re.compile(r"<!--|-->")
 _RESERVED_MARKER_RE = re.compile(
     r"\[\s*dynamic\s*-\s*skill\s*\]",
     re.IGNORECASE,
@@ -103,9 +118,14 @@ def validate_audit_rules_text(text: str) -> None:
         raise DeveloperPromptTemplateError(
             "Audit Rules must be plain text; template tags are not allowed"
         )
-    if _RESERVED_MARKER_RE.search(text):
+    normalized_text = _normalize_markdown_inline(text)
+    if _RESERVED_MARKER_RE.search(normalized_text):
         raise DeveloperPromptTemplateError(
             "Audit Rules contain the reserved structural marker [dynamic-skill]"
+        )
+    if _STRUCTURAL_HTML_RE.search(text) or _HTML_COMMENT_RE.search(text):
+        raise DeveloperPromptTemplateError(
+            "Audit Rules cannot contain structural HTML blocks or comments"
         )
 
     lines = text.splitlines()
@@ -131,7 +151,7 @@ def _normalize_atx_title(title: str) -> str:
 
 
 def _validate_heading(title: str, level: int) -> None:
-    normalized = " ".join(title.casefold().split())
+    normalized = " ".join(_normalize_markdown_inline(title).casefold().split())
     if normalized in _NORMALIZED_RESERVED_CORE_SECTION_TITLES:
         raise DeveloperPromptTemplateError(
             f"Audit Rules contain reserved core heading: {title}"
@@ -145,6 +165,16 @@ def _validate_heading(title: str, level: int) -> None:
 def _is_setext_underline(line: str) -> bool:
     stripped = line.strip()
     return bool(stripped) and set(stripped) in ({"="}, {"-"})
+
+
+def _normalize_markdown_inline(text: str) -> str:
+    normalized = unescape(text)
+    normalized = _MARKDOWN_LINK_RE.sub(r"\1", normalized)
+    normalized = _MARKDOWN_REFERENCE_LINK_RE.sub(r"\1", normalized)
+    normalized = _MARKDOWN_CODE_RE.sub(r"\1", normalized)
+    normalized = _INLINE_HTML_RE.sub("", normalized)
+    normalized = normalized.replace("\\", "")
+    return normalized.translate(str.maketrans("", "", "*_~"))
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

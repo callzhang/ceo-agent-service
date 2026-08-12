@@ -44,7 +44,10 @@ AUDIT_DYNAMIC_SKILL_SENTENCE = (
     "applicable to the candidate, requires the corresponding verified Consumer A "
     "receipt for each applicable Skill, rereads each exact receipt path with "
     "`agent_cli.read_skill`, verifies its sha256, and returns revision_required if "
-    "any applicable receipt is absent, unreadable, changed, or mismatched."
+    "any applicable receipt is absent, unreadable, changed, or mismatched. For an "
+    "already-unknown effect only, B may perform strictly read-only evidence "
+    "reconciliation without a receipt when no business Skill is needed to decide "
+    "whether the effect happened; B must not execute or retry the candidate."
 )
 CONSUMER_DYNAMIC_SKILL_BODY = (
     f"{DYNAMIC_SKILL_MARKER} {CONSUMER_DYNAMIC_SKILL_SENTENCE}"

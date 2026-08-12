@@ -783,12 +783,14 @@ def _agent_result_event(result) -> dict[str, object]:
         payload = {
             "outcome": result.outcome.value,
             "summary": result.summary,
-            "proposal_json": (
-                result.proposal.model_dump_json() if result.proposal is not None else None
+            "proposal": (
+                result.proposal.model_dump(mode="json")
+                if result.proposal is not None
+                else None
             ),
-            "decision_options_json": json.dumps(
-                [option.model_dump() for option in result.decision_options]
-            ),
+            "decision_options": [
+                option.model_dump(mode="json") for option in result.decision_options
+            ],
             "error_code": error.code,
             "error_retryable": error.retryable,
             "error_authorization_required": error.authorization_required,
@@ -800,17 +802,19 @@ def _agent_result_event(result) -> dict[str, object]:
             "summary": result.summary,
             "proposal_revision": result.proposal_revision,
             "side_effect_state": result.side_effect_state.value,
-            "feedback_json": (
-                result.feedback.model_dump_json() if result.feedback is not None else None
+            "feedback": (
+                result.feedback.model_dump(mode="json")
+                if result.feedback is not None
+                else None
             ),
-            "external_result_json": (
-                result.external_result.model_dump_json()
+            "external_result": (
+                result.external_result.model_dump(mode="json")
                 if result.external_result is not None
                 else None
             ),
-            "reconciliation_json": json.dumps(
-                [item.model_dump(mode="json") for item in result.reconciliation]
-            ),
+            "reconciliation": [
+                item.model_dump(mode="json") for item in result.reconciliation
+            ],
             "error_code": error.code,
             "error_retryable": error.retryable,
             "error_authorization_required": error.authorization_required,
@@ -2923,7 +2927,7 @@ def test_worker_requeues_absent_direct_mcp_recovery_without_write(tmp_path: Path
     assert requeued is not None and requeued.status == "pending"
     assert requeued.execution_generation != task.execution_generation
     assert attempt is not None and attempt.send_status == "failed"
-    assert attempt.send_error == "audit_recovery_candidate_invalid"
+    assert attempt.send_error == "audit_skill_receipts_missing"
 
 
 def _worker(

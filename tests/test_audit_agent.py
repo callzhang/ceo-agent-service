@@ -129,7 +129,7 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
         McpToolEffectRegistry.default(),
     )
 
-    assert "reconciliation_json must be a JSON-encoded array" in prompt
+    assert "reconciliation must be an array" in prompt
     assert "Do not wrap the array in an operation_id/entries object" in prompt
     assert "read_result_digest" in prompt
     assert "unknown readback command is an evidence task" in prompt
@@ -144,8 +144,8 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
 
     assert "## Pydantic Wire Contract" in instructions
     assert "## Pydantic Result Contract" in instructions
-    assert '"external_result_json"' in instructions
-    assert '"reconciliation_json"' in instructions
+    assert '"external_result"' in instructions
+    assert '"reconciliation"' in instructions
     assert '"side_effect_state"' in instructions
     assert '"read_result_digest"' in instructions
     assert '"title":"AuditAgentWireResult"' in instructions
@@ -166,17 +166,9 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
         "summary": result["summary"],
         "proposal_revision": result["proposal_revision"],
         "side_effect_state": result["side_effect_state"],
-        "feedback_json": (
-            json.dumps(result["feedback"])
-            if result["feedback"] is not None
-            else None
-        ),
-        "external_result_json": (
-            json.dumps(result["external_result"])
-            if result["external_result"] is not None
-            else None
-        ),
-        "reconciliation_json": json.dumps(result["reconciliation"]),
+        "feedback": result["feedback"],
+        "external_result": result["external_result"],
+        "reconciliation": result["reconciliation"],
         "error_code": error["code"],
         "error_retryable": error["retryable"],
         "error_authorization_required": error["authorization_required"],
@@ -727,7 +719,10 @@ def test_audit_instructions_require_dynamic_skill_reread_before_execution():
         "verified Consumer A receipt for each applicable Skill, rereads each exact "
         "receipt path with `agent_cli.read_skill`, verifies its sha256, and returns "
         "revision_required if any applicable receipt is absent, unreadable, changed, "
-        "or mismatched."
+        "or mismatched. For an already-unknown effect only, B may perform strictly "
+        "read-only evidence reconciliation without a receipt when no business Skill "
+        "is needed to decide whether the effect happened; B must not execute or retry "
+        "the candidate."
     ) in instructions
     assert instructions.count("[dynamic-skill]") == 1
 
@@ -1307,6 +1302,97 @@ def _seed_crashed_audit_write(setup):
         "group": "cid-agent"
     }
     return store, task, audit_context, run
+
+
+def test_recovery_reconciliation_without_skill_receipts_stays_strictly_read_only(
+    setup,
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "reconciled",
+            operation_id=run.operation_id,
+            session="receipt-free-reconciliation",
+            include_write=False,
+            reconciliation=[
+                {
+                    "action_index": 0,
+                    "disposition": "present",
+                    "read_result_digest": "recovery-read-digest",
+                }
+            ],
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(
+        task,
+        replace(audit_context, consumer_skills=()),
+        run=run,
+    )
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome.value == "reconciled"
+    assert persisted is not None and persisted.status == "unknown"
+    assert len(executor.commands) == 1
+    assert "execute_reviewed_write" not in " ".join(executor.commands[0])
+    assert all(
+        event["item"]["metadata"].get("effect") != "effectful"
+        for event in persisted.tool_events[1:]
+        if event.get("type") == "item.started"
+    )
+
+
+def test_execute_recovery_without_skill_receipts_defers_before_model_or_write(
+    setup,
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    reconcile = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(
+            _audit_result_jsonl(
+                "reconciled",
+                operation_id=run.operation_id,
+                session="reconcile-before-missing-receipt",
+                include_write=False,
+                reconciliation=[
+                    {
+                        "action_index": 0,
+                        "disposition": "absent",
+                        "read_result_digest": "recovery-read-digest",
+                    }
+                ],
+            )
+        ),
+    )
+    reconcile.recover(task, audit_context, run=run)
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.status == "unknown"
+    executor = CapturingExecutor(
+        _audit_jsonl(run.operation_id, session="must-not-execute")
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).execute_recovery(
+        task,
+        replace(audit_context, consumer_skills=()),
+        run=persisted,
+    )
+
+    failed = store.get_agent_run(run.id)
+    requeued = store.get_reply_task(task.id)
+    assert result.result.error.code == "audit_skill_receipts_missing"
+    assert failed is not None and failed.status == "failed"
+    assert failed.side_effect_state == "none"
+    assert requeued is not None and requeued.status == "pending"
+    assert executor.commands == []
 
 
 def _with_unresolved_image(context: AuditTurnContext) -> AuditTurnContext:

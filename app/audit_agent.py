@@ -90,8 +90,13 @@ class AuditAgentRunner:
             raise RuntimeError("agent_run_unavailable")
         if image_failure := self._image_dependency_failure(claim.run, context):
             return image_failure
-        if not context.consumer_skills:
-            return self._return_missing_skill_receipts(claim.run)
+        if skill_failure := self._skill_receipt_gate(
+            task,
+            context,
+            run=claim.run,
+            recovery_phase="",
+        ):
+            return skill_failure
         invalid_actions = _invalid_operation_contracts(context, self.effects)
         if invalid_actions:
             return self._return_invalid_candidate(
@@ -133,6 +138,13 @@ class AuditAgentRunner:
             raise RuntimeError("agent_run_unavailable")
         try:
             self._image_dependency_failure(claim.run, context)
+            if skill_failure := self._skill_receipt_gate(
+                task,
+                context,
+                run=claim.run,
+                recovery_phase="reconcile",
+            ):
+                return skill_failure
             database_absence = _database_delivery_absence_reconciliation(
                 self.store,
                 task,
@@ -180,6 +192,13 @@ class AuditAgentRunner:
             raise RuntimeError("agent_run_unavailable")
         try:
             self._image_dependency_failure(claim.run, context)
+            if skill_failure := self._skill_receipt_gate(
+                task,
+                context,
+                run=claim.run,
+                recovery_phase="execute",
+            ):
+                return skill_failure
             if _database_delivery_absence_reconciliation(
                 self.store,
                 task,
@@ -343,6 +362,32 @@ class AuditAgentRunner:
             transcript_start_line=completed.transcript_end_line,
             transcript_end_line=completed.transcript_end_line,
         )
+
+    def _skill_receipt_gate(
+        self,
+        task: ReplyTask,
+        context: AuditTurnContext,
+        *,
+        run: AgentRun,
+        recovery_phase: str,
+    ) -> AgentTurnRunResult[AuditAgentResult] | None:
+        if context.consumer_skills:
+            return None
+        if recovery_phase == "reconcile":
+            return None
+        if recovery_phase == "execute":
+            return self._requeue_for_consumer(
+                task,
+                run,
+                code="audit_skill_receipts_missing",
+                summary=(
+                    "Recovery cannot execute an absent action without verified "
+                    "Consumer Skill receipts; the task was returned to Consumer A."
+                ),
+            )
+        if recovery_phase:
+            raise ValueError("invalid audit recovery phase")
+        return self._return_missing_skill_receipts(run)
 
     def _execute_claimed(
         self,
@@ -742,7 +787,7 @@ def _recovery_prompt(
         "the old action happened, absent only when it proves the action did not "
         "happen, and ambiguous when human judgment is required. Return outcome "
         "reconciled with side_effect_state unknown and no external_result. "
-        "reconciliation_json must be a JSON-encoded array whose entries contain "
+        "reconciliation must be an array whose entries contain "
         "exactly action_index, disposition, and read_result_digest. Do not wrap the "
         "array in an operation_id/entries object. An unknown readback command is an "
         "evidence task, not a reason to fail or escalate. "

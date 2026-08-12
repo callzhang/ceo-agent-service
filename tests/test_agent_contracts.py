@@ -75,8 +75,8 @@ def _consumer_wire_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "outcome": "no_action",
         "summary": "Nothing to do.",
-        "proposal_json": None,
-        "decision_options_json": "[]",
+        "proposal": None,
+        "decision_options": [],
         "error_code": "",
         "error_retryable": False,
         "error_authorization_required": False,
@@ -91,9 +91,9 @@ def _audit_wire_payload(**overrides: object) -> dict[str, object]:
         "summary": "The dependency failed.",
         "proposal_revision": 0,
         "side_effect_state": "none",
-        "feedback_json": None,
-        "external_result_json": None,
-        "reconciliation_json": "[]",
+        "feedback": None,
+        "external_result": None,
+        "reconciliation": [],
         "error_code": "dependency_failed",
         "error_retryable": True,
         "error_authorization_required": False,
@@ -102,23 +102,13 @@ def _audit_wire_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
-def _validate_wire_content_schema(
+def _validate_wire_schema(
     model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
     payload: dict[str, object],
 ) -> None:
     schema = model.model_json_schema()
+    Draft202012Validator.check_schema(schema)
     Draft202012Validator(schema).validate(payload)
-    matching = [
-        branch
-        for branch in schema["anyOf"]
-        if Draft202012Validator(branch).is_valid(payload)
-    ]
-    assert len(matching) == 1
-    for field, field_schema in matching[0]["properties"].items():
-        if "contentSchema" not in field_schema or not isinstance(payload.get(field), str):
-            continue
-        decoded = json.loads(payload[field])
-        Draft202012Validator(field_schema["contentSchema"]).validate(decoded)
 
 
 def _audit_payload(**overrides: object) -> dict[str, object]:
@@ -147,7 +137,7 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
             ConsumerAgentWireResult,
             _consumer_wire_payload(
                 outcome="proposal",
-                proposal_json=json.dumps(_proposal()),
+                proposal=_proposal(),
             ),
         ),
         (ConsumerAgentWireResult, _consumer_wire_payload(outcome="no_action")),
@@ -155,7 +145,7 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
             ConsumerAgentWireResult,
             _consumer_wire_payload(
                 outcome="needs_human",
-                decision_options_json=json.dumps(_decision_options()),
+                decision_options=_decision_options(),
             ),
         ),
         (ConsumerAgentWireResult, _consumer_wire_payload(outcome="failed")),
@@ -164,26 +154,22 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
             _audit_wire_payload(
                 outcome="executed",
                 side_effect_state="confirmed",
-                external_result_json=json.dumps(
-                    {
-                        "operation_id": "op-1",
-                        "verification_summary": "The effect was read back.",
-                        "live_result_reference": {"receipt_id": "receipt-1"},
-                    }
-                ),
+                external_result={
+                    "operation_id": "op-1",
+                    "verification_summary": "The effect was read back.",
+                    "live_result_reference": {"receipt_id": "receipt-1"},
+                },
             ),
         ),
         (
             AuditAgentWireResult,
             _audit_wire_payload(
                 outcome="revision_required",
-                feedback_json=json.dumps(
-                    {
-                        "rule": "Use verified Skill receipts.",
-                        "observation": "A receipt is missing.",
-                        "requested_revision": "Read the Skill and replace the candidate.",
-                    }
-                ),
+                feedback={
+                    "rule": "Use verified Skill receipts.",
+                    "observation": "A receipt is missing.",
+                    "requested_revision": "Read the Skill and replace the candidate.",
+                },
             ),
         ),
         (AuditAgentWireResult, _audit_wire_payload(outcome="needs_human")),
@@ -197,22 +183,41 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
             _audit_wire_payload(
                 outcome="reconciled",
                 side_effect_state="unknown",
-                reconciliation_json=json.dumps(
-                    [
-                        {
-                            "action_index": 0,
-                            "disposition": "present",
-                            "read_result_digest": "digest-1",
-                        }
-                    ]
-                ),
+                reconciliation=[
+                    {
+                        "action_index": 0,
+                        "disposition": "present",
+                        "read_result_digest": "digest-1",
+                    }
+                ],
             ),
         ),
     ),
 )
 def test_generated_wire_schema_acceptance_always_converts(model, payload):
-    _validate_wire_content_schema(model, payload)
+    _validate_wire_schema(model, payload)
     assert model.model_validate(payload).to_result() is not None
+
+
+@pytest.mark.parametrize(
+    "model",
+    (ConsumerAgentWireResult, AuditAgentWireResult),
+)
+def test_wire_schema_is_discriminated_and_contains_only_nested_fields(model):
+    schema = model.model_json_schema()
+    serialized = json.dumps(schema, ensure_ascii=False)
+
+    assert schema["discriminator"]["propertyName"] == "outcome"
+    assert schema["oneOf"]
+    assert "contentSchema" not in serialized
+    for legacy_field in (
+        "proposal_json",
+        "decision_options_json",
+        "feedback_json",
+        "external_result_json",
+        "reconciliation_json",
+    ):
+        assert legacy_field not in serialized
 
 
 @pytest.mark.parametrize(
@@ -220,14 +225,29 @@ def test_generated_wire_schema_acceptance_always_converts(model, payload):
     (
         (
             ConsumerAgentWireResult,
-            _consumer_wire_payload(outcome="proposal", proposal_json=None),
+            _consumer_wire_payload(outcome="proposal", proposal=None),
         ),
         (
             ConsumerAgentWireResult,
             _consumer_wire_payload(
                 outcome="proposal",
+                proposal=_proposal(),
                 proposal_json=json.dumps(_proposal()),
-                decision_options_json=json.dumps(_decision_options()),
+            ),
+        ),
+        (
+            ConsumerAgentWireResult,
+            _consumer_wire_payload(
+                outcome="proposal",
+                proposal=json.dumps(_proposal()),
+            ),
+        ),
+        (
+            ConsumerAgentWireResult,
+            _consumer_wire_payload(
+                outcome="proposal",
+                proposal=_proposal(),
+                decision_options=_decision_options(),
             ),
         ),
         (
@@ -238,19 +258,19 @@ def test_generated_wire_schema_acceptance_always_converts(model, payload):
             ConsumerAgentWireResult,
             _consumer_wire_payload(
                 outcome="needs_human",
-                decision_options_json=json.dumps([{"key": "A"}]),
+                decision_options=[{"key": "A"}],
             ),
         ),
         (
             ConsumerAgentWireResult,
-            _consumer_wire_payload(outcome="no_action", proposal_json="{}"),
+            _consumer_wire_payload(outcome="no_action", proposal={}),
         ),
         (
             AuditAgentWireResult,
             _audit_wire_payload(
                 outcome="executed",
                 side_effect_state="none",
-                external_result_json="{}",
+                external_result={},
             ),
         ),
         (
@@ -258,12 +278,26 @@ def test_generated_wire_schema_acceptance_always_converts(model, payload):
             _audit_wire_payload(
                 outcome="executed",
                 side_effect_state="confirmed",
-                external_result_json=None,
+                external_result=None,
             ),
         ),
         (
             AuditAgentWireResult,
-            _audit_wire_payload(outcome="revision_required", feedback_json=None),
+            _audit_wire_payload(
+                outcome="executed",
+                side_effect_state="confirmed",
+                external_result=json.dumps(
+                    {
+                        "operation_id": "op-1",
+                        "verification_summary": "Read back.",
+                        "live_result_reference": {"id": "one"},
+                    }
+                ),
+            ),
+        ),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(outcome="revision_required", feedback=None),
         ),
         (
             AuditAgentWireResult,
@@ -283,7 +317,7 @@ def test_generated_wire_schema_acceptance_always_converts(model, payload):
             AuditAgentWireResult,
             _audit_wire_payload(
                 outcome="needs_human",
-                reconciliation_json='[{"action_index": 0}]',
+                reconciliation=[{"action_index": 0}],
             ),
         ),
     ),
@@ -292,8 +326,8 @@ def test_invalid_wire_combinations_fail_generated_schema_and_local_model(
     model,
     payload,
 ):
-    with pytest.raises((JsonSchemaValidationError, json.JSONDecodeError, AssertionError)):
-        _validate_wire_content_schema(model, payload)
+    with pytest.raises(JsonSchemaValidationError):
+        _validate_wire_schema(model, payload)
     with pytest.raises(ValidationError):
         model.model_validate(payload)
 
@@ -408,8 +442,8 @@ def test_needs_human_requires_actionable_options_and_wire_preserves_them():
         {
             "outcome": "needs_human",
             "summary": "A management decision is required.",
-            "proposal_json": None,
-            "decision_options_json": json.dumps(options),
+            "proposal": None,
+            "decision_options": options,
             "error_code": "decision_required",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -696,13 +730,13 @@ def test_parse_typed_agent_result_ignores_later_hook_turn_result():
     assert result.summary == "Notify the applicant."
 
 
-def test_consumer_wire_result_decodes_dynamic_proposal_fields():
+def test_consumer_wire_result_preserves_nested_proposal_fields():
     result = ConsumerAgentWireResult.model_validate(
         {
             "outcome": "proposal",
             "summary": "Prepare the notice.",
-            "proposal_json": json.dumps(_proposal()),
-            "decision_options_json": "[]",
+            "proposal": _proposal(),
+            "decision_options": [],
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -713,16 +747,16 @@ def test_consumer_wire_result_decodes_dynamic_proposal_fields():
     assert result.proposal.actions[0].target == {"conversation_reference": "cid-1"}
 
 
-def test_audit_wire_result_decodes_nested_result_fields():
+def test_audit_wire_result_preserves_nested_result_fields():
     result = AuditAgentWireResult.model_validate(
         {
             "outcome": "needs_human",
             "summary": "A decision is required.",
             "proposal_revision": 0,
             "side_effect_state": "none",
-            "feedback_json": None,
-            "external_result_json": None,
-            "reconciliation_json": "[]",
+            "feedback": None,
+            "external_result": None,
+            "reconciliation": [],
             "error_code": "decision_required",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -733,22 +767,20 @@ def test_audit_wire_result_decodes_nested_result_fields():
     assert result.error.code == "decision_required"
 
 
-def test_audit_wire_result_decodes_revision_feedback_fields():
+def test_audit_wire_result_preserves_revision_feedback_fields():
     result = AuditAgentWireResult.model_validate(
         {
             "outcome": "revision_required",
             "summary": "The command needs confirmation.",
             "proposal_revision": 0,
             "side_effect_state": "none",
-            "feedback_json": json.dumps(
-                {
-                    "rule": "DWS writes require --yes.",
-                    "observation": "The proposed argv omitted --yes.",
-                    "requested_revision": "Add --yes without changing the action.",
-                }
-            ),
-            "external_result_json": None,
-            "reconciliation_json": "[]",
+            "feedback": {
+                "rule": "DWS writes require --yes.",
+                "observation": "The proposed argv omitted --yes.",
+                "requested_revision": "Add --yes without changing the action.",
+            },
+            "external_result": None,
+            "reconciliation": [],
             "error_code": "dws_write_missing_yes",
             "error_retryable": True,
             "error_authorization_required": False,
