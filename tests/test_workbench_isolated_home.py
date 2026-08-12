@@ -6,11 +6,47 @@ from pathlib import Path
 
 import pytest
 
+import app.workbench.isolated_home as isolated_home_module
 from app.workbench.isolated_home import (
     create_isolated_codex_home,
     reconcile_isolated_codex_homes,
     remove_verified_isolated_home,
 )
+
+
+def _assert_no_sync_artifacts(sessions: Path) -> None:
+    if not sessions.exists():
+        return
+    assert not any(
+        path.name.startswith(".workbench-sync-")
+        for path in sessions.rglob("*")
+    )
+
+
+def _two_session_home(tmp_path: Path):
+    source = _source_home(tmp_path)
+    session_id = "019ff6ad-c139-7411-9169-6220e8b39688"
+    session_dir = source / "sessions" / "2026" / "08" / "13"
+    session_dir.mkdir(parents=True, mode=0o700)
+    first = session_dir / f"rollout-2026-08-13T00-00-00-{session_id}.jsonl"
+    second = session_dir / "second.jsonl"
+    first.write_text("first before\n", encoding="utf-8")
+    second.write_text("second before\n", encoding="utf-8")
+    first.chmod(0o600)
+    second.chmod(0o640)
+    home = create_isolated_codex_home(
+        source,
+        "",
+        root=tmp_path / "isolated-root",
+        provider_session_ref=session_id,
+    )
+    isolated_dir = home.path / first.parent.relative_to(source)
+    isolated_second = isolated_dir / second.name
+    isolated_second.write_bytes(second.read_bytes())
+    isolated_second.chmod(0o600)
+    (isolated_dir / first.name).write_text("first after\n", encoding="utf-8")
+    isolated_second.write_text("second after\n", encoding="utf-8")
+    return source, home, first, second
 
 
 def _source_home(tmp_path: Path) -> Path:
@@ -165,6 +201,194 @@ def test_normal_cleanup_syncs_new_and_updated_session_files(tmp_path: Path):
     assert existing.read_text(encoding="utf-8") == "before\nafter\n"
     assert existing.stat().st_ino != original_inode
     assert (session_dir / "new.jsonl").read_text(encoding="utf-8") == "new\n"
+
+
+def test_session_sync_prevalidates_entire_tree_before_any_destination_change(
+    tmp_path: Path,
+):
+    source, home, first, second = _two_session_home(tmp_path)
+    initial = {
+        first: (
+            first.read_bytes(),
+            first.stat().st_ino,
+            stat.S_IMODE(first.stat().st_mode),
+        ),
+        second: (
+            second.read_bytes(),
+            second.stat().st_ino,
+            stat.S_IMODE(second.stat().st_mode),
+        ),
+    }
+    late_source_dir = home.path / "sessions" / "zz-late"
+    late_source_dir.mkdir(mode=0o700)
+    (late_source_dir / "session.jsonl").write_text("new\n", encoding="utf-8")
+    late_collision = source / "sessions" / "zz-late"
+    late_collision.write_text("not a directory\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        home.cleanup()
+
+    for path, expected in initial.items():
+        actual = (
+            path.read_bytes(),
+            path.stat().st_ino,
+            stat.S_IMODE(path.stat().st_mode),
+        )
+        assert actual == expected
+    assert late_collision.read_text(encoding="utf-8") == "not a directory\n"
+    _assert_no_sync_artifacts(source / "sessions")
+
+
+def test_session_sync_rolls_back_first_file_when_second_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source, home, first, second = _two_session_home(tmp_path)
+    initial = {
+        first: (first.read_bytes(), stat.S_IMODE(first.stat().st_mode)),
+        second: (second.read_bytes(), stat.S_IMODE(second.stat().st_mode)),
+    }
+    real_replace = isolated_home_module.os.replace
+    stage_replacements = 0
+
+    def fail_second_stage(source_name, destination_name, *args, **kwargs):
+        nonlocal stage_replacements
+        if str(source_name).startswith(".workbench-sync-stage-"):
+            stage_replacements += 1
+            if stage_replacements == 2:
+                raise OSError("injected second replacement failure")
+        return real_replace(source_name, destination_name, *args, **kwargs)
+
+    monkeypatch.setattr(isolated_home_module.os, "replace", fail_second_stage)
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        home.cleanup()
+
+    for path, expected in initial.items():
+        assert (path.read_bytes(), stat.S_IMODE(path.stat().st_mode)) == expected
+    _assert_no_sync_artifacts(source / "sessions")
+
+
+def test_session_sync_staging_failure_leaves_every_original_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source, home, first, second = _two_session_home(tmp_path)
+    initial = {
+        first: (
+            first.read_bytes(),
+            first.stat().st_ino,
+            stat.S_IMODE(first.stat().st_mode),
+        ),
+        second: (
+            second.read_bytes(),
+            second.stat().st_ino,
+            stat.S_IMODE(second.stat().st_mode),
+        ),
+    }
+    real_fsync = isolated_home_module.os.fsync
+    regular_file_fsyncs = 0
+
+    def fail_second_staged_file_fsync(fd):
+        nonlocal regular_file_fsyncs
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            regular_file_fsyncs += 1
+            if regular_file_fsyncs == 2:
+                raise OSError("injected staging failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(isolated_home_module.os, "fsync", fail_second_staged_file_fsync)
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        home.cleanup()
+
+    for path, expected in initial.items():
+        actual = (
+            path.read_bytes(),
+            path.stat().st_ino,
+            stat.S_IMODE(path.stat().st_mode),
+        )
+        assert actual == expected
+    _assert_no_sync_artifacts(source / "sessions")
+
+
+def test_session_sync_commits_all_files_and_removes_journal_artifacts(tmp_path: Path):
+    source, home, first, second = _two_session_home(tmp_path)
+
+    home.cleanup()
+
+    assert first.read_text(encoding="utf-8") == "first after\n"
+    assert second.read_text(encoding="utf-8") == "second after\n"
+    assert stat.S_IMODE(first.stat().st_mode) == 0o600
+    assert stat.S_IMODE(second.stat().st_mode) == 0o600
+    _assert_no_sync_artifacts(source / "sessions")
+
+
+def test_session_sync_rolls_back_when_commit_directory_fsync_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source, home, first, second = _two_session_home(tmp_path)
+    initial = {first: first.read_bytes(), second: second.read_bytes()}
+    real_replace = isolated_home_module.os.replace
+    real_fsync = isolated_home_module.os.fsync
+    committed = False
+    failed = False
+
+    def observe_replace(source_name, destination_name, *args, **kwargs):
+        nonlocal committed
+        result = real_replace(source_name, destination_name, *args, **kwargs)
+        if str(source_name).startswith(".workbench-sync-stage-"):
+            committed = True
+        return result
+
+    def fail_first_commit_directory_fsync(fd):
+        nonlocal failed
+        if committed and not failed and stat.S_ISDIR(os.fstat(fd).st_mode):
+            failed = True
+            raise OSError("injected commit fsync failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(isolated_home_module.os, "replace", observe_replace)
+    monkeypatch.setattr(isolated_home_module.os, "fsync", fail_first_commit_directory_fsync)
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        home.cleanup()
+
+    assert first.read_bytes() == initial[first]
+    assert second.read_bytes() == initial[second]
+    _assert_no_sync_artifacts(source / "sessions")
+
+
+def test_session_sync_detects_concurrent_destination_change_and_does_not_overwrite_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source, home, first, second = _two_session_home(tmp_path)
+    first_before = first.read_bytes()
+    real_replace = isolated_home_module.os.replace
+    changed = False
+
+    def change_second_after_first_commit(source_name, destination_name, *args, **kwargs):
+        nonlocal changed
+        result = real_replace(source_name, destination_name, *args, **kwargs)
+        if str(source_name).startswith(".workbench-sync-stage-") and not changed:
+            second.write_text("external concurrent change\n", encoding="utf-8")
+            changed = True
+        return result
+
+    monkeypatch.setattr(
+        isolated_home_module.os,
+        "replace",
+        change_second_after_first_commit,
+    )
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        home.cleanup()
+
+    assert first.read_bytes() == first_before
+    assert second.read_text(encoding="utf-8") == "external concurrent change\n"
+    _assert_no_sync_artifacts(source / "sessions")
 
 
 def test_all_isolated_state_files_are_distinct_and_mutations_do_not_touch_sources(

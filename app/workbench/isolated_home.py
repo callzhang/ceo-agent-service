@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import stat
 import tempfile
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 from app.codex_history import find_codex_session_path
 
@@ -56,7 +59,12 @@ class IsolatedCodexHome:
         sync_error: BaseException | None = None
         try:
             if sync_sessions and self.path.exists():
-                _sync_sessions(self.path, self.source_home)
+                if (
+                    _validated_marker_token(self.path, self.lock_fd)
+                    != self.marker_token
+                ):
+                    raise ValueError(_SAFE_ERROR)
+                _sync_sessions(self.path, self.source_home, lock_root=self.root)
         except BaseException as exc:
             sync_error = exc
         finally:
@@ -441,54 +449,421 @@ def _copy_provider_session(source_home: Path, isolated_home: Path, session: Path
         os.close(destination_fd)
 
 
-def _sync_sessions(isolated_home: Path, source_home: Path) -> None:
+@dataclass(frozen=True)
+class _FileIdentity:
+    device: int
+    inode: int
+    size: int
+    modified_ns: int
+    changed_ns: int
+    mode: int
+
+
+@dataclass
+class _SessionSyncFile:
+    relative: Path
+    source: Path
+    destination: Path
+    source_identity: _FileIdentity
+    destination_identity: _FileIdentity | None
+    stage_name: str = ""
+    backup_name: str = ""
+
+
+@dataclass
+class _SessionSyncPlan:
+    isolated_sessions: Path
+    destination_sessions: Path
+    directories: tuple[Path, ...]
+    directory_identities: dict[Path, tuple[int, int] | None]
+    files: tuple[_SessionSyncFile, ...]
+
+
+def _sync_sessions(
+    isolated_home: Path,
+    source_home: Path,
+    *,
+    lock_root: Path,
+) -> None:
     isolated_sessions = isolated_home / "sessions"
-    if not isolated_sessions.exists():
+    try:
+        isolated_metadata = isolated_sessions.lstat()
+    except FileNotFoundError:
         return
-    _require_owned_directory(isolated_sessions)
-    source_sessions = source_home / "sessions"
-    if source_sessions.exists():
-        _require_owned_directory(source_sessions)
-    else:
-        source_sessions.mkdir(mode=0o700)
-        source_sessions.chmod(0o700)
-    _sync_tree(isolated_sessions, source_sessions)
-
-
-def _sync_tree(source: Path, destination: Path) -> None:
-    destination_fd = os.open(
-        destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    )
-    try:
-        for entry in os.scandir(source):
-            if entry.is_symlink():
-                continue
-            target = destination / entry.name
-            if entry.is_dir(follow_symlinks=False):
-                if target.exists():
-                    _require_owned_directory(target)
-                else:
-                    target.mkdir(mode=0o700)
-                    target.chmod(0o700)
-                _sync_tree(Path(entry.path), target)
-            elif entry.is_file(follow_symlinks=False):
-                _replace_regular_file(Path(entry.path), target, destination_fd)
-    finally:
-        os.close(destination_fd)
-
-
-def _replace_regular_file(source: Path, destination: Path, destination_fd: int) -> None:
-    if destination.is_symlink():
+    if (
+        stat.S_ISLNK(isolated_metadata.st_mode)
+        or not stat.S_ISDIR(isolated_metadata.st_mode)
+        or isolated_metadata.st_uid != os.getuid()
+    ):
         raise ValueError(_SAFE_ERROR)
-    source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
-    temporary_name = f".workbench-sync-{uuid.uuid4().hex}"
-    temporary_fd = -1
+    _require_owned_directory(source_home)
+    with _session_sync_lock(source_home, lock_root):
+        plan = _build_session_sync_plan(isolated_sessions, source_home / "sessions")
+        _execute_session_sync(plan)
+
+
+@contextmanager
+def _session_sync_lock(source_home: Path, lock_root: Path) -> Iterator[None]:
+    metadata = source_home.lstat()
+    lock_key = hashlib.sha256(
+        f"{metadata.st_dev}:{metadata.st_ino}".encode("ascii")
+    ).hexdigest()
+    lock_name = f".session-sync-{lock_key}.lock"
+    root_fd = os.open(lock_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    lock_fd = -1
     try:
-        metadata = os.fstat(source_fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+        lock_fd = os.open(
+            lock_name,
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=root_fd,
+        )
+        lock_metadata = os.fstat(lock_fd)
+        if (
+            not stat.S_ISREG(lock_metadata.st_mode)
+            or lock_metadata.st_uid != os.getuid()
+            or stat.S_IMODE(lock_metadata.st_mode) != 0o600
+        ):
             raise ValueError(_SAFE_ERROR)
-        temporary_fd = os.open(
-            temporary_name,
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        if lock_fd >= 0:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(lock_fd)
+        os.close(root_fd)
+
+
+def _build_session_sync_plan(
+    isolated_sessions: Path,
+    destination_sessions: Path,
+) -> _SessionSyncPlan:
+    directories, source_files = _enumerate_isolated_sessions(isolated_sessions)
+    destination_identities: dict[Path, tuple[int, int] | None] = {}
+    destination_root = destination_sessions.parent
+    _require_owned_directory(destination_root)
+
+    for relative in directories:
+        destination = destination_sessions / relative
+        parent = destination.parent
+        parent_relative = relative.parent if relative != Path(".") else None
+        parent_exists = relative == Path(".") or (
+            parent_relative in destination_identities
+            and destination_identities[parent_relative] is not None
+        )
+        if relative == Path("."):
+            parent_exists = True
+        if parent_exists:
+            _reject_case_conflict(parent, destination.name)
+        identity = _directory_identity_or_missing(destination)
+        if identity is not None and not parent_exists and relative != Path("."):
+            raise ValueError(_SAFE_ERROR)
+        destination_identities[relative] = identity
+
+    planned_files: list[_SessionSyncFile] = []
+    for relative, source, source_identity in source_files:
+        parent_relative = relative.parent
+        destination = destination_sessions / relative
+        if destination_identities.get(parent_relative) is not None:
+            _reject_case_conflict(destination.parent, destination.name)
+            destination_identity = _file_identity_or_missing(destination)
+        else:
+            destination_identity = None
+        planned_files.append(
+            _SessionSyncFile(
+                relative=relative,
+                source=source,
+                destination=destination,
+                source_identity=source_identity,
+                destination_identity=destination_identity,
+            )
+        )
+    return _SessionSyncPlan(
+        isolated_sessions=isolated_sessions,
+        destination_sessions=destination_sessions,
+        directories=tuple(directories),
+        directory_identities=destination_identities,
+        files=tuple(planned_files),
+    )
+
+
+def _enumerate_isolated_sessions(
+    root: Path,
+) -> tuple[list[Path], list[tuple[Path, Path, _FileIdentity]]]:
+    directories = [Path(".")]
+    files: list[tuple[Path, Path, _FileIdentity]] = []
+    case_keys: set[str] = set()
+
+    def visit(directory: Path, relative_directory: Path) -> None:
+        entries = sorted(
+            os.scandir(directory),
+            key=lambda entry: (entry.name.casefold(), entry.name),
+        )
+        for entry in entries:
+            relative = relative_directory / entry.name
+            if (
+                not entry.name
+                or entry.name in {".", ".."}
+                or entry.name.startswith(".workbench-sync-")
+                or relative.is_absolute()
+                or ".." in relative.parts
+            ):
+                raise ValueError(_SAFE_ERROR)
+            case_key = relative.as_posix().casefold()
+            if case_key in case_keys:
+                raise ValueError(_SAFE_ERROR)
+            case_keys.add(case_key)
+            metadata = entry.stat(follow_symlinks=False)
+            if metadata.st_uid != os.getuid() or stat.S_ISLNK(metadata.st_mode):
+                raise ValueError(_SAFE_ERROR)
+            path = Path(entry.path)
+            if stat.S_ISDIR(metadata.st_mode):
+                directories.append(relative)
+                visit(path, relative)
+            elif stat.S_ISREG(metadata.st_mode):
+                files.append((relative, path, _identity_from_stat(metadata)))
+            else:
+                raise ValueError(_SAFE_ERROR)
+
+    visit(root, Path("."))
+    directories.sort(
+        key=lambda value: (
+            len(value.parts),
+            value.as_posix().casefold(),
+            value.as_posix(),
+        )
+    )
+    files.sort(
+        key=lambda value: (
+            value[0].as_posix().casefold(),
+            value[0].as_posix(),
+        )
+    )
+    return directories, files
+
+
+def _execute_session_sync(plan: _SessionSyncPlan) -> None:
+    transaction_id = uuid.uuid4().hex
+    created_directories: list[Path] = []
+    committed: list[_SessionSyncFile] = []
+    success = False
+    try:
+        _create_missing_session_directories(plan, created_directories)
+        for index, entry in enumerate(plan.files):
+            parent_fd = _open_verified_directory(
+                entry.destination.parent,
+                plan.directory_identities[entry.relative.parent],
+            )
+            try:
+                _validate_destination(entry)
+                entry.stage_name = (
+                    f".workbench-sync-stage-{transaction_id}-{index:08d}"
+                )
+                _copy_validated_file_to_new(
+                    entry.source,
+                    entry.source_identity,
+                    parent_fd,
+                    entry.stage_name,
+                    secure_mode=True,
+                )
+            finally:
+                os.close(parent_fd)
+
+        for index, entry in enumerate(plan.files):
+            if entry.destination_identity is None:
+                continue
+            parent_fd = _open_verified_directory(
+                entry.destination.parent,
+                plan.directory_identities[entry.relative.parent],
+            )
+            try:
+                _validate_destination(entry)
+                entry.backup_name = (
+                    f".workbench-sync-backup-{transaction_id}-{index:08d}"
+                )
+                _copy_validated_file_to_new(
+                    entry.destination,
+                    entry.destination_identity,
+                    parent_fd,
+                    entry.backup_name,
+                    secure_mode=False,
+                )
+            finally:
+                os.close(parent_fd)
+
+        _fsync_sync_directories(plan)
+        _validate_sync_plan_before_commit(plan)
+        for entry in plan.files:
+            parent_fd = _open_verified_directory(
+                entry.destination.parent,
+                plan.directory_identities[entry.relative.parent],
+            )
+            try:
+                _validate_source(entry)
+                _validate_destination(entry)
+                os.replace(
+                    entry.stage_name,
+                    entry.destination.name,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                )
+                entry.stage_name = ""
+                committed.append(entry)
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+        success = True
+    except BaseException:
+        _rollback_session_sync(plan, committed)
+        raise
+    finally:
+        _remove_sync_artifacts(plan)
+        if not success:
+            _remove_created_directories(created_directories)
+
+
+def _create_missing_session_directories(
+    plan: _SessionSyncPlan,
+    created: list[Path],
+) -> None:
+    for relative in plan.directories:
+        if plan.directory_identities[relative] is not None:
+            _validate_directory_identity(
+                plan.destination_sessions / relative,
+                plan.directory_identities[relative],
+            )
+            continue
+        destination = plan.destination_sessions / relative
+        parent_relative = relative.parent if relative != Path(".") else None
+        expected_parent = (
+            _directory_identity(plan.destination_sessions.parent)
+            if parent_relative is None
+            else plan.directory_identities[parent_relative]
+        )
+        _validate_directory_identity(destination.parent, expected_parent)
+        _reject_case_conflict(destination.parent, destination.name)
+        os.mkdir(destination, mode=0o700)
+        destination.chmod(0o700)
+        identity = _directory_identity(destination)
+        plan.directory_identities[relative] = identity
+        created.append(destination)
+
+
+def _validate_sync_plan_before_commit(plan: _SessionSyncPlan) -> None:
+    for relative in plan.directories:
+        _validate_directory_identity(
+            plan.destination_sessions / relative,
+            plan.directory_identities[relative],
+        )
+    for entry in plan.files:
+        _validate_source(entry)
+        _validate_destination(entry)
+
+
+def _fsync_sync_directories(plan: _SessionSyncPlan) -> None:
+    for relative in plan.directories:
+        directory_fd = _open_verified_directory(
+            plan.destination_sessions / relative,
+            plan.directory_identities[relative],
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+
+def _rollback_session_sync(
+    plan: _SessionSyncPlan,
+    committed: list[_SessionSyncFile],
+) -> None:
+    rollback_error: BaseException | None = None
+    for entry in reversed(committed):
+        try:
+            parent_fd = _open_verified_directory(
+                entry.destination.parent,
+                plan.directory_identities[entry.relative.parent],
+            )
+            try:
+                if entry.destination_identity is None:
+                    os.unlink(entry.destination.name, dir_fd=parent_fd)
+                else:
+                    os.replace(
+                        entry.backup_name,
+                        entry.destination.name,
+                        src_dir_fd=parent_fd,
+                        dst_dir_fd=parent_fd,
+                    )
+                    entry.backup_name = ""
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+        except BaseException as exc:
+            rollback_error = rollback_error or exc
+    if rollback_error is not None:
+        raise ValueError(_SAFE_ERROR) from rollback_error
+
+
+def _remove_sync_artifacts(plan: _SessionSyncPlan) -> None:
+    touched: set[Path] = set()
+    for entry in plan.files:
+        parent_identity = plan.directory_identities.get(entry.relative.parent)
+        if parent_identity is None:
+            continue
+        try:
+            parent_fd = _open_verified_directory(entry.destination.parent, parent_identity)
+        except (OSError, ValueError):
+            continue
+        try:
+            for name in (entry.stage_name, entry.backup_name):
+                if not name:
+                    continue
+                try:
+                    os.unlink(name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+            touched.add(entry.destination.parent)
+        finally:
+            os.close(parent_fd)
+    for directory in touched:
+        try:
+            directory_fd = os.open(
+                directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+
+
+def _remove_created_directories(created: list[Path]) -> None:
+    for directory in reversed(created):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+
+
+def _copy_validated_file_to_new(
+    source: Path,
+    expected: _FileIdentity,
+    destination_fd: int,
+    destination_name: str,
+    *,
+    secure_mode: bool,
+) -> None:
+    source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    target_fd = -1
+    try:
+        initial = os.fstat(source_fd)
+        if _identity_from_stat(initial) != expected or initial.st_uid != os.getuid():
+            raise ValueError(_SAFE_ERROR)
+        target_fd = os.open(
+            destination_name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
             0o600,
             dir_fd=destination_fd,
@@ -497,27 +872,105 @@ def _replace_regular_file(source: Path, destination: Path, destination_fd: int) 
             chunk = os.read(source_fd, 64 * 1024)
             if not chunk:
                 break
-            _write_all(temporary_fd, chunk)
-        secure_mode = stat.S_IMODE(metadata.st_mode) & 0o700
-        os.fchmod(temporary_fd, secure_mode or 0o600)
-        os.fsync(temporary_fd)
-        os.close(temporary_fd)
-        temporary_fd = -1
-        os.replace(
-            temporary_name,
-            destination.name,
-            src_dir_fd=destination_fd,
-            dst_dir_fd=destination_fd,
-        )
-        os.fsync(destination_fd)
+            _write_all(target_fd, chunk)
+        if _identity_from_stat(os.fstat(source_fd)) != expected:
+            raise ValueError(_SAFE_ERROR)
+        mode = stat.S_IMODE(expected.mode)
+        if secure_mode:
+            mode &= 0o700
+            mode = mode or 0o600
+        os.fchmod(target_fd, mode)
+        os.fsync(target_fd)
     finally:
+        if target_fd >= 0:
+            os.close(target_fd)
         os.close(source_fd)
-        if temporary_fd >= 0:
-            os.close(temporary_fd)
-        try:
-            os.unlink(temporary_name, dir_fd=destination_fd)
-        except FileNotFoundError:
-            pass
+
+
+def _validate_source(entry: _SessionSyncFile) -> None:
+    if _file_identity(entry.source) != entry.source_identity:
+        raise ValueError(_SAFE_ERROR)
+
+
+def _validate_destination(entry: _SessionSyncFile) -> None:
+    _reject_case_conflict(entry.destination.parent, entry.destination.name)
+    if _file_identity_or_missing(entry.destination) != entry.destination_identity:
+        raise ValueError(_SAFE_ERROR)
+
+
+def _reject_case_conflict(parent: Path, name: str) -> None:
+    try:
+        entries = os.listdir(parent)
+    except FileNotFoundError:
+        return
+    folded = name.casefold()
+    if any(existing.casefold() == folded and existing != name for existing in entries):
+        raise ValueError(_SAFE_ERROR)
+
+
+def _file_identity(path: Path) -> _FileIdentity:
+    metadata = path.lstat()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+    ):
+        raise ValueError(_SAFE_ERROR)
+    return _identity_from_stat(metadata)
+
+
+def _file_identity_or_missing(path: Path) -> _FileIdentity | None:
+    try:
+        return _file_identity(path)
+    except FileNotFoundError:
+        return None
+
+
+def _identity_from_stat(metadata: os.stat_result) -> _FileIdentity:
+    return _FileIdentity(
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+        size=metadata.st_size,
+        modified_ns=metadata.st_mtime_ns,
+        changed_ns=metadata.st_ctime_ns,
+        mode=metadata.st_mode,
+    )
+
+
+def _directory_identity(path: Path) -> tuple[int, int]:
+    metadata = path.lstat()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+    ):
+        raise ValueError(_SAFE_ERROR)
+    return metadata.st_dev, metadata.st_ino
+
+
+def _directory_identity_or_missing(path: Path) -> tuple[int, int] | None:
+    try:
+        return _directory_identity(path)
+    except FileNotFoundError:
+        return None
+
+
+def _validate_directory_identity(
+    path: Path,
+    expected: tuple[int, int] | None,
+) -> None:
+    if expected is None or _directory_identity(path) != expected:
+        raise ValueError(_SAFE_ERROR)
+
+
+def _open_verified_directory(path: Path, expected: tuple[int, int] | None) -> int:
+    _validate_directory_identity(path, expected)
+    directory_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    opened = os.fstat(directory_fd)
+    if expected != (opened.st_dev, opened.st_ino) or opened.st_uid != os.getuid():
+        os.close(directory_fd)
+        raise ValueError(_SAFE_ERROR)
+    return directory_fd
 
 
 def _write_new_file(directory_fd: int, name: str, data: bytes, mode: int) -> None:

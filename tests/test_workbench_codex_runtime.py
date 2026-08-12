@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+import app.workbench.isolated_home as isolated_home_module
 from app.process_runner import ProcessRunResult
 from app.workbench.codex_runtime import (
     CodexRuntime,
@@ -417,6 +418,65 @@ def test_successful_runtime_atomically_syncs_resumed_session(
 
     assert result.status == "completed"
     assert source_session.read_text(encoding="utf-8") == "successful mutation\n"
+
+
+def test_runtime_reports_failure_and_rolls_back_all_sessions_when_sync_commit_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.workbench_confirmation]\n"
+        'url = "https://conflicting.example/mcp"\n',
+        encoding="utf-8",
+    )
+    source_session = write_resume_session(codex_home)
+    second_source = source_session.parent / "second.jsonl"
+    second_source.write_text("second original\n", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    real_replace = isolated_home_module.os.replace
+    stage_replacements = 0
+
+    def fail_second_stage(source_name, destination_name, *args, **kwargs):
+        nonlocal stage_replacements
+        if str(source_name).startswith(".workbench-sync-stage-"):
+            stage_replacements += 1
+            if stage_replacements == 2:
+                raise OSError("injected sync commit failure")
+        return real_replace(source_name, destination_name, *args, **kwargs)
+
+    monkeypatch.setattr(isolated_home_module.os, "replace", fail_second_stage)
+
+    def executor(_command: list[str], **kwargs: object) -> ProcessRunResult:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        isolated_home = Path(env["CODEX_HOME"])
+        [isolated_session] = list(
+            (isolated_home / "sessions").rglob(f"*{SESSION_ID}.jsonl")
+        )
+        isolated_session.write_text("first changed\n", encoding="utf-8")
+        isolated_second = isolated_session.parent / second_source.name
+        isolated_second.write_text("second changed\n", encoding="utf-8")
+        on_stdout_line = kwargs["on_stdout_line"]
+        assert callable(on_stdout_line)
+        for record in happy_records():
+            on_stdout_line(json.dumps(record))
+        return ProcessRunResult(returncode=0, stdout="", stderr="")
+
+    runtime = CodexRuntime(workspace=tmp_path, executor=executor)
+
+    result = runtime.wait(
+        runtime.start(
+            request(tmp_path, provider_session_ref=SESSION_ID),
+            on_event=lambda _event: None,
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.error_code == "runtime_failure"
+    assert "injected" not in result.error_detail
+    assert source_session.read_text(encoding="utf-8") == "original session\n"
+    assert second_source.read_text(encoding="utf-8") == "second original\n"
 
 
 def test_runtime_stop_cleans_isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
