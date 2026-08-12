@@ -89,6 +89,7 @@ class WechatDelivery(BaseModel):
     target_id: str
     conversation_id: str = ""
     reply_text: str
+    action_started_at: str = ""
     execution_generation: str = "initial"
     status: Literal[
         "ready_to_send", "sending", "sent", "send_unknown", "failed", "superseded"

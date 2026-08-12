@@ -333,7 +333,9 @@ def _outbound_exists(reader, delivery, *, account=None) -> bool:
     account = account or reader.account
     messages = reader.read_messages(
         account, conversation_id=delivery.conversation_id,
-        conversation_type=delivery.target_type, limit=200,
+        conversation_type=delivery.target_type,
+        since=delivery.action_started_at,
+        limit=200,
     )
     text = (delivery.reply_text or "").strip()
     return any(
