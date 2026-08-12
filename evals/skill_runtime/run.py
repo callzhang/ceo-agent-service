@@ -466,13 +466,16 @@ def _evaluate_protocol(
     consumer_events: tuple[ProtocolEvent, ...],
     audit_events: tuple[ProtocolEvent, ...],
     initial_errors: list[str] | None = None,
+    *,
+    authorized_skill_paths: tuple[Path, ...] | None = None,
+    required_skill_names: tuple[str, ...] = (),
 ) -> CaseResult:
     errors = list(initial_errors or ())
     observed_outcome = str(consumer_result.get("outcome", ""))
     terminal_outcome = observed_outcome != "proposal"
     consumer_skills = _observed_skill_names(consumer_events)
     audit_skills = _observed_skill_names(audit_events)
-    expected = set(case.expected_business_skills)
+    expected = set((*case.expected_business_skills, *required_skill_names))
     forbidden = set(case.forbidden_business_skills)
     missing: set[str] = set()
     observed_forbidden: set[str] = set()
@@ -493,7 +496,13 @@ def _evaluate_protocol(
     if not terminal_outcome:
         observed_event_roles.append(("Audit", audit_events))
     for role, events in observed_event_roles:
-        errors.extend(_validate_observed_skill_events(events, role))
+        errors.extend(
+            _validate_observed_skill_events(
+                events,
+                role,
+                authorized_skill_paths=authorized_skill_paths,
+            )
+        )
         if not any(event.tool == "execute_reviewed_read" for event in events):
             errors.append(f"{role} has no evidence read event")
     if terminal_outcome:
@@ -684,21 +693,35 @@ def _validate_evidence_digests(
 
 
 def _validate_observed_skill_events(
-    events: tuple[ProtocolEvent, ...], role: str
+    events: tuple[ProtocolEvent, ...],
+    role: str,
+    *,
+    authorized_skill_paths: tuple[Path, ...] | None = None,
 ) -> list[str]:
     errors: list[str] = []
+    exact_paths = (
+        {path.parent.name: path for path in authorized_skill_paths}
+        if authorized_skill_paths is not None
+        else None
+    )
     for event in events:
         if event.tool != "read_skill":
             continue
         name = event.result.get("name")
         path_value = event.result.get("path")
         digest = event.result.get("sha256")
-        path = _skill_path(str(path_value))
-        expected_path = _skill_path(f"skills/{name}/SKILL.md")
+        if exact_paths is None:
+            path = _skill_path(str(path_value))
+            expected_path = _skill_path(f"skills/{name}/SKILL.md")
+            argument_path = _skill_path(str(event.arguments.get("path")))
+        else:
+            path = Path(str(path_value)).resolve()
+            expected_path = exact_paths.get(str(name))
+            argument_path = Path(str(event.arguments.get("path"))).resolve()
         if path is None or not path.is_file():
             errors.append(f"{role} Skill read has invalid path for {name}: {path_value}")
             continue
-        if path != expected_path or _skill_path(str(event.arguments.get("path"))) != path:
+        if path != expected_path or argument_path != path:
             errors.append(f"{role} Skill read path does not match Skill name: {name}")
             continue
         if digest != hashlib.sha256(path.read_bytes()).hexdigest():
@@ -847,6 +870,8 @@ def build_live_command(
 def run_live(
     cases: tuple[EvalCase, ...],
     fixtures: tuple[ProtocolFixture, ...] | None = None,
+    *,
+    operation_skill_paths: tuple[Path, ...] = (),
 ) -> tuple[CaseResult, ...]:
     fixture_by_id = {
         fixture.case_id: fixture
@@ -859,13 +884,24 @@ def run_live(
             results.append(_failed_result(case, "live evidence fixture is missing"))
             continue
         try:
-            results.append(_run_live_case(case, fixture))
+            results.append(
+                _run_live_case(
+                    case,
+                    fixture,
+                    operation_skill_paths=operation_skill_paths,
+                )
+            )
         except Exception as exc:
             results.append(_failed_result(case, f"live execution failed: {exc}"))
     return tuple(results)
 
 
-def _run_live_case(case: EvalCase, fixture: ProtocolFixture) -> CaseResult:
+def _run_live_case(
+    case: EvalCase,
+    fixture: ProtocolFixture,
+    *,
+    operation_skill_paths: tuple[Path, ...] = (),
+) -> CaseResult:
     binding_errors: list[str] = []
     if fixture.scenario_sha256 != _scenario_digest(case):
         binding_errors.append("recorded scenario digest does not match trigger and context")
@@ -888,9 +924,12 @@ def _run_live_case(case: EvalCase, fixture: ProtocolFixture) -> CaseResult:
         config_path = work / "fixture.json"
         consumer_log = work / "consumer-events.jsonl"
         audit_log = work / "audit-events.jsonl"
-        skill_paths = [
-            ROOT / "skills" / name / "SKILL.md" for name in BUNDLED_BUSINESS_SKILL_NAMES
+        business_skill_paths = [
+            (ROOT / "skills" / name / "SKILL.md").resolve()
+            for name in BUNDLED_BUSINESS_SKILL_NAMES
         ]
+        operation_paths = _validated_operation_skill_paths(operation_skill_paths)
+        skill_paths = tuple(dict.fromkeys((*business_skill_paths, *operation_paths)))
         config_path.write_text(
             json.dumps(
                 {
@@ -901,13 +940,16 @@ def _run_live_case(case: EvalCase, fixture: ProtocolFixture) -> CaseResult:
             ),
             encoding="utf-8",
         )
-        available = "\n".join(str(path.resolve()) for path in skill_paths)
+        available_business = "\n".join(str(path) for path in business_skill_paths)
+        available_operations = "\n".join(str(path) for path in operation_paths)
         consumer_prompt = (
             f"Generalized eval trigger:\n{case.trigger}\n\n"
             f"Generalized eval context:\n{case.context}\n\n"
-            f"Available business Skill paths:\n{available}\n\n"
+            f"Available business Skill paths:\n{available_business}\n\n"
+            f"Available operation Skill paths:\n{available_operations or '(none)'}\n\n"
             f"Available exact reviewed read command:\n{json.dumps(read_argv)}\n\n"
-            "Read applicable Skills and evidence. Perform no external writes. Return "
+            "Read the applicable business Skill and every supplied operation Skill, "
+            "then read the evidence. Perform no external writes. Return "
             "only the strict Consumer result with machine-readable action payload."
         )
         consumer_raw = _execute_live_command(
@@ -922,7 +964,11 @@ def _run_live_case(case: EvalCase, fixture: ProtocolFixture) -> CaseResult:
         )
         consumer = parse_consumer_agent_wire_result(consumer_raw)
         consumer_events = _read_event_log(consumer_log)
-        consumer_receipts = _verified_live_skill_receipts(consumer_events, role="Consumer")
+        consumer_receipts = _verified_live_skill_receipts(
+            consumer_events,
+            role="Consumer",
+            authorized_skill_paths=skill_paths,
+        )
         if consumer.outcome.value != "proposal":
             return _evaluate_protocol(
                 case,
@@ -930,6 +976,10 @@ def _run_live_case(case: EvalCase, fixture: ProtocolFixture) -> CaseResult:
                 None,
                 consumer_events,
                 (),
+                authorized_skill_paths=skill_paths,
+                required_skill_names=tuple(
+                    path.parent.name for path in operation_paths
+                ),
             )
         if consumer.proposal is None:
             return _evaluate_protocol(
@@ -938,6 +988,10 @@ def _run_live_case(case: EvalCase, fixture: ProtocolFixture) -> CaseResult:
                 None,
                 consumer_events,
                 (),
+                authorized_skill_paths=skill_paths,
+                required_skill_names=tuple(
+                    path.parent.name for path in operation_paths
+                ),
             )
         audit_prompt = _render_live_audit_prompt(
             case,
@@ -957,13 +1011,19 @@ def _run_live_case(case: EvalCase, fixture: ProtocolFixture) -> CaseResult:
         )
         audit = parse_audit_agent_wire_result(audit_raw)
         audit_events = _read_event_log(audit_log)
-        _verified_live_skill_receipts(audit_events, role="Audit")
+        _verified_live_skill_receipts(
+            audit_events,
+            role="Audit",
+            authorized_skill_paths=skill_paths,
+        )
         return _evaluate_protocol(
             case,
             consumer.model_dump(mode="json"),
             audit.model_dump(mode="json"),
             consumer_events,
             audit_events,
+            authorized_skill_paths=skill_paths,
+            required_skill_names=tuple(path.parent.name for path in operation_paths),
         )
 
 
@@ -971,6 +1031,7 @@ def _verified_live_skill_receipts(
     events: tuple[ProtocolEvent, ...],
     *,
     role: str = "Consumer",
+    authorized_skill_paths: tuple[Path, ...] | None = None,
 ) -> tuple[LoadedSkillReceipt, ...]:
     persisted_events: list[dict[str, object]] = []
     read_count = 0
@@ -978,14 +1039,23 @@ def _verified_live_skill_receipts(
         if event.tool != "read_skill":
             continue
         read_count += 1
+        authorized_roots = (
+            tuple(dict.fromkeys(path.parent.parent for path in authorized_skill_paths))
+            if authorized_skill_paths is not None
+            else ((ROOT / "skills").resolve(),)
+        )
         metadata = normalized_read_skill_metadata(
             event.arguments,
             {
                 "structuredContent": event.result,
                 "isError": False,
             },
-            authorized_roots=((ROOT / "skills").resolve(),),
+            authorized_roots=authorized_roots,
         )
+        if metadata is not None and authorized_skill_paths is not None:
+            metadata_path = Path(str(metadata.get("skill_path", ""))).resolve()
+            if metadata_path not in authorized_skill_paths:
+                metadata = None
         if metadata is None:
             raise EvalValidationError(
                 f"live {role} Skill read receipt is invalid or tampered"
@@ -1006,6 +1076,27 @@ def _verified_live_skill_receipts(
     if not receipts or len(receipts) != read_count:
         raise EvalValidationError(f"live {role} Skill receipt is missing")
     return receipts
+
+
+def _validated_operation_skill_paths(paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    resolved: list[Path] = []
+    names = set(BUNDLED_BUSINESS_SKILL_NAMES)
+    for raw_path in paths:
+        try:
+            path = raw_path.expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise EvalValidationError(
+                f"operation Skill path is unavailable: {raw_path}"
+            ) from exc
+        if path.name != "SKILL.md" or not path.is_file():
+            raise EvalValidationError(f"operation Skill path is invalid: {raw_path}")
+        if path.parent.name in names:
+            raise EvalValidationError(
+                f"operation Skill name is duplicated: {path.parent.name}"
+            )
+        names.add(path.parent.name)
+        resolved.append(path)
+    return tuple(resolved)
 
 
 def _render_live_audit_prompt(
@@ -1272,12 +1363,23 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="opt in to isolated native Codex Consumer and dry-run Audit evidence",
     )
+    parser.add_argument(
+        "--operation-skill-path",
+        action="append",
+        type=Path,
+        default=[],
+        help="exact installed operation Skill path exposed to an opt-in live probe",
+    )
     args = parser.parse_args(argv)
     try:
         cases = load_cases(args.cases)
         fixtures = load_fixtures(args.fixtures)
         if args.live:
-            results = run_live(cases, fixtures)
+            results = run_live(
+                cases,
+                fixtures,
+                operation_skill_paths=tuple(args.operation_skill_path),
+            )
             report = SuiteReport("live", all(item.ok for item in results), results)
         else:
             report = run_scripted(cases, fixtures)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -575,6 +576,137 @@ def test_live_skill_receipts_use_production_validation_and_context_formatter():
         _verified_live_skill_receipts((tampered,))
     with pytest.raises(EvalValidationError, match="missing"):
         _verified_live_skill_receipts(())
+
+
+def test_calendar_live_probe_reads_business_and_explicit_operation_skill(
+    monkeypatch, tmp_path: Path
+):
+    case = load_cases(CASES_PATH)[0]
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+    operation_skill = (
+        tmp_path / ".agents" / "skills" / "dingtalk-calendar" / "SKILL.md"
+    )
+    operation_skill.parent.mkdir(parents=True)
+    operation_skill.write_text(
+        "# DingTalk calendar\n\nRead calendar state without writing.\n",
+        encoding="utf-8",
+    )
+    business_skill = REPO_ROOT / "skills" / "ceo-calendar-invite" / "SKILL.md"
+
+    def skill_event(path: Path) -> ProtocolEvent:
+        content = path.read_text(encoding="utf-8")
+        return ProtocolEvent.model_validate(
+            {
+                "tool": "read_skill",
+                "arguments": {"path": str(path)},
+                "result": {
+                    "name": path.parent.name,
+                    "path": str(path),
+                    "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    "content": content,
+                },
+            }
+        )
+
+    skill_events = (skill_event(business_skill), skill_event(operation_skill))
+    evidence = next(
+        event
+        for event in fixture.consumer_events
+        if event.tool == "execute_reviewed_read"
+    )
+    prompts: list[str] = []
+    configured_skill_paths: list[set[str]] = []
+
+    def wire_result(result: dict[str, object]) -> str:
+        error = result["error"]
+        assert isinstance(error, dict)
+        flattened = {
+            **{key: value for key, value in result.items() if key != "error"},
+            "error_code": error["code"],
+            "error_retryable": error["retryable"],
+            "error_authorization_required": error["authorization_required"],
+        }
+        return json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": json.dumps(flattened),
+                },
+            }
+        )
+
+    outputs = iter(
+        (
+            wire_result(fixture.consumer_result),
+            wire_result(fixture.audit_result),
+        )
+    )
+
+    def execute(command: list[str], prompt: str) -> str:
+        prompts.append(prompt)
+        args_option = next(
+            item for item in command if item.startswith("mcp_servers.agent_cli.args=")
+        )
+        server_args = json.loads(args_option.split("=", 1)[1])
+        config = json.loads(Path(server_args[-2]).read_text(encoding="utf-8"))
+        configured_skill_paths.append(set(config["skill_paths"]))
+        return next(outputs)
+
+    monkeypatch.setattr("evals.skill_runtime.run._execute_live_command", execute)
+    monkeypatch.setattr(
+        "evals.skill_runtime.run._read_event_log",
+        lambda _path: (*skill_events, evidence),
+    )
+
+    result = _run_live_case(
+        case,
+        fixture,
+        operation_skill_paths=(operation_skill,),
+    )
+
+    expected_paths = {str(business_skill.resolve()), str(operation_skill.resolve())}
+    assert result.ok
+    assert result.audit_result is not None
+    assert result.audit_result["side_effect_state"] == "none"
+    assert len(prompts) == 2
+    assert all(expected_paths.issubset(paths) for paths in configured_skill_paths)
+    assert all(all(path in prompt for path in expected_paths) for prompt in prompts)
+    assert [event["result"]["name"] for event in result.consumer_events[:2]] == [
+        "ceo-calendar-invite",
+        "dingtalk-calendar",
+    ]
+    assert [event["result"]["name"] for event in result.audit_events[:2]] == [
+        "ceo-calendar-invite",
+        "dingtalk-calendar",
+    ]
+
+
+def test_live_operation_skill_receipt_requires_exact_explicit_path(tmp_path: Path):
+    allowed = tmp_path / "allowed" / "dingtalk-calendar" / "SKILL.md"
+    other = tmp_path / "other" / "dingtalk-calendar" / "SKILL.md"
+    for path in (allowed, other):
+        path.parent.mkdir(parents=True)
+        path.write_text("# Calendar\n", encoding="utf-8")
+    content = other.read_text(encoding="utf-8")
+    event = ProtocolEvent.model_validate(
+        {
+            "tool": "read_skill",
+            "arguments": {"path": str(other)},
+            "result": {
+                "name": "dingtalk-calendar",
+                "path": str(other),
+                "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                "content": content,
+            },
+        }
+    )
+
+    with pytest.raises(EvalValidationError, match="invalid or tampered"):
+        _verified_live_skill_receipts(
+            (event,),
+            authorized_skill_paths=(allowed,),
+        )
 
 
 @pytest.mark.parametrize("terminal_outcome", ["no_action", "needs_human", "failed"])
