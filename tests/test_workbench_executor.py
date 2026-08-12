@@ -543,19 +543,27 @@ def test_writer_failure_is_sanitized_and_requeued_for_agent_report(
     _, turn, confirmation = _pending_confirmation(store)
     monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
     runtime = FakeRuntime()
+    writer_calls = 0
+
+    def failed_writer(*_args, **_kwargs):
+        nonlocal writer_calls
+        writer_calls += 1
+        raise OSError("secret-token")
+
     executor = WorkbenchExecutor(
         store,
         RuntimeRegistry([runtime]),
         workspace=tmp_path,
         classifier=_write_classifier(),
-        write_runner=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            OSError("secret-token")
-        ),
+        write_runner=failed_writer,
     )
 
     result = executor.confirm(confirmation.id)
+    repeated = executor.confirm(confirmation.id)
 
     assert result.status is ConfirmationStatus.FAILED
+    assert repeated == result
+    assert writer_calls == 1
     assert "secret-token" not in result.result_json
     assert store.get_turn(turn.id).status is TurnStatus.QUEUED
     assert "failed" in store.get_turn(turn.id).error_detail.lower()

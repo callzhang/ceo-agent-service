@@ -669,7 +669,11 @@ class WorkbenchStore(AutoReplyStore):
                 return self._confirmation_from_row(
                     self._require_confirmation(db, confirmation_id)
                 )
-            if status in {ConfirmationStatus.CONFIRMED, ConfirmationStatus.EXECUTED}:
+            if status in {
+                ConfirmationStatus.CONFIRMED,
+                ConfirmationStatus.EXECUTED,
+                ConfirmationStatus.FAILED,
+            }:
                 return None
             raise ValueError("confirmation has already been decided")
 
