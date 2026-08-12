@@ -592,7 +592,7 @@ def _is_direct_chat_send(action: object) -> bool:
     target_keys = set(descriptor.target_identifiers)
     if isinstance(target, dict):
         target_keys.update(str(key).replace("_", "-") for key in target)
-    return "open-dingtalk-id" in target_keys or (
+    return bool({"open-dingtalk-id", "user"} & target_keys) or (
         descriptor.command_path == "chat +send-to-group" and "group" in target_keys
     )
 

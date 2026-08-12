@@ -177,6 +177,10 @@ DWS 只读调用可以对明确的临时网络、限流和服务准备错误做�
 `sender_open_dingtalk_id` 对应 `--open-dingtalk-id`。已知 open-DingTalk ID 被放入 `--user`
 时，Audit 会返回修订请求且不执行写入。
 
+单聊写入的未知结果优先查询本地送达账本。受控 `--user` 与
+`--open-dingtalk-id` 都是直接收件人标识；账本确认该 trigger 没有送达记录时，服务旋转到
+新的 Consumer generation，而不让旧候选进入无法证明结果的外部读对账循环。
+
 结构化 JSON 命令允许标准进度输出，但最终结果必须是完整合法 JSON。截断或损坏的写操作
 结果不会被修补为成功。
 
