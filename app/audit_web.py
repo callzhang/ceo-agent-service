@@ -126,6 +126,7 @@ from app.store import (
     FeedbackEvent,
     OperationLog,
     ReplyAttempt,
+    REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     ReplyError,
     ServiceBugfixCandidate,
     SentTodoRecord,
@@ -8497,25 +8498,21 @@ def _attempt_detail_body(
     resolved_by_later = later_attempt is not None and _attempt_is_terminal(
         later_attempt
     )
-    blocked_task_closed = (
-        later_attempt is None
-        and attempt.send_status.strip().lower() == "blocked"
-        and attention is None
-        and reply_task is not None
-        and reply_task.status == "done"
+    closed_after_review = (
+        attempt.permission_action.strip() == REPLY_ATTEMPT_CLOSED_AFTER_REVIEW
     )
     send_status = (
         f"已完成（后续记录 #{later_attempt.id}）"
         if resolved_by_later
-        else "历史结案（受阻操作未执行）"
-        if blocked_task_closed
+        else "已核验结案（未自动执行）"
+        if closed_after_review
         else attempt.send_status
     )
     send_error = (
         "历史错误已由后续处理解决"
         if resolved_by_later and attempt.send_error.strip()
         else "受阻原因见下方“Codex reason”；该外部操作未执行。"
-        if blocked_task_closed and attempt.send_error.strip()
+        if closed_after_review
         else attempt.send_error
     )
     fields = [
@@ -8553,13 +8550,13 @@ def _attempt_detail_body(
             later_attempt,
             agent_runs,
             attention,
-            blocked_task_closed=blocked_task_closed,
+            closed_after_review=closed_after_review,
         ),
         fields=fields,
         pills_html=_attempt_action_pills(
             attempt,
             later_attempt=later_attempt,
-            historical_closed=blocked_task_closed,
+            closed_after_review=closed_after_review,
         ),
         trigger_title="Trigger",
         trigger_text=_trigger_text(attempt),
@@ -9188,7 +9185,7 @@ def _attempt_action_pills(
     *,
     later_attempt: ReplyAttempt | None = None,
     recovery_state: str = "",
-    historical_closed: bool = False,
+    closed_after_review: bool = False,
 ) -> str:
     if later_attempt is not None:
         return (
@@ -9201,8 +9198,8 @@ def _attempt_action_pills(
         attempt.send_status.strip().lower() == "calendar"
         and attempt.calendar_response_status.strip()
     )
-    if historical_closed:
-        actions = [("◌ 历史结案", "skipped")]
+    if closed_after_review:
+        actions = [("◌ 已核验结案", "skipped")]
     elif calendar_only:
         actions = []
     elif recovery_state:
@@ -9683,7 +9680,7 @@ def _attempt_status_card(
     agent_runs: list[AgentRun] | None = None,
     attention: HistoryAttention | None = None,
     *,
-    blocked_task_closed: bool = False,
+    closed_after_review: bool = False,
 ) -> str:
     active_attempt = later_attempt or attempt
     subject = next(
@@ -9726,6 +9723,8 @@ def _attempt_status_card(
         )
     elif active_attempt.send_status == "sent":
         message = "这条回复已发送，无需你操作。"
+    elif closed_after_review:
+        message = "该事项已核验结案；外部动作未自动执行，具体原因见下方审计说明。"
     elif active_attempt.send_status == "skipped":
         message = "这条事项已判定无需回复，无需你操作。"
     elif active_attempt.send_status == "pending_reconciliation":
@@ -9749,8 +9748,6 @@ def _attempt_status_card(
         message = "这条事项等待你的决策。请阅读下方已核验的事实，再提交具体处理指令。"
     elif active_attempt.send_status == "failed":
         message = "这次处理没有完成。可使用“重新处理”重新读取材料并执行当前规则。"
-    elif blocked_task_closed:
-        message = "该外部操作因下方说明所示条件未执行；相关任务已结束，无需你操作。"
     else:
         return ""
     result_detail = (

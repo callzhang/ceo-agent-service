@@ -70,6 +70,7 @@ violation 或必需数据源不可检查。
 巡检只看这个键上 `updated_at` 最新的 attempt：
 
 - 较早的 `blocked` / `dry_run` 后来已有 `sent` 或 `skipped`，旧行不再报警。
+- 最新 `blocked` 如果同一 trigger 的任务已 `done`，且不存在未知副作用或活动恢复，维护循环会将它结案为 `skipped`，并保留审计说明。该状态表示外部动作没有被自动重放，不表示动作成功。
 - 最新 `failed` / `blocked` 但同一 trigger 仍有 `pending` 或 `processing` 的
   `reply_task`，记为 `attention`，表示恢复正在进行。
 - 最新 `failed` / `blocked` 没有活动恢复任务，才是 violation。

@@ -2384,6 +2384,8 @@ def run_task_maintenance_loop(
             "resolve_recovered_errors",
             lambda: (
                 store.resolve_errors_recovered_by_reply_attempts()
+                + store.resolve_errors_recovered_by_completed_reply_tasks()
+                + store.resolve_closed_blocked_reply_attempts()
                 + store.resolve_unattributed_errors_after_quiet_period()
             ),
         )
@@ -2721,6 +2723,8 @@ def _resolve_recovered_errors_on_service_start(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
     return (
         store.resolve_errors_recovered_by_reply_attempts()
+        + store.resolve_errors_recovered_by_completed_reply_tasks()
+        + store.resolve_closed_blocked_reply_attempts()
         + store.resolve_unattributed_errors_after_quiet_period()
     )
 

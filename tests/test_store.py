@@ -13,7 +13,12 @@ import time
 import pytest
 
 import app.store as store_module
-from app.store import AgentRole, AgentRunLeaseLostError, AutoReplyStore
+from app.store import (
+    REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
+    AgentRole,
+    AgentRunLeaseLostError,
+    AutoReplyStore,
+)
 
 
 def _claim_audit_run(
@@ -5794,6 +5799,76 @@ def test_resolve_errors_recovered_by_reply_attempts_keeps_unrelated_errors_open(
     assert store.resolve_errors_recovered_by_reply_attempts() == 0
     [error] = store.list_errors()
     assert error.resolved_at == ""
+
+
+def test_completed_reply_task_resolves_trigger_error_and_closed_blocked_attempt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Management",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-12 12:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please handle this.",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+    store.record_error("cid-1", "msg-1", "reply_task", "temporary failure")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Management",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="Please handle this.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="blocked",
+    )
+    store.update_reply_attempt(attempt_id, send_error="external material unavailable")
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    assert store.resolve_errors_recovered_by_completed_reply_tasks() == 1
+    assert store.resolve_closed_blocked_reply_attempts() == 1
+
+    [error] = store.list_errors()
+    attempt = store.get_reply_attempt(attempt_id)
+    assert error.resolution == "recovered by completed reply task"
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == ""
+    assert attempt.permission_action == REPLY_ATTEMPT_CLOSED_AFTER_REVIEW
+
+
+def test_closed_blocked_attempt_keeps_active_or_unknown_work_open(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Management",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-12 12:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please handle this.",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Management",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="Please handle this.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="blocked",
+    )
+
+    assert store.resolve_closed_blocked_reply_attempts() == 0
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
 
 
 def test_resolve_unattributed_errors_after_quiet_period_keeps_history(tmp_path: Path):

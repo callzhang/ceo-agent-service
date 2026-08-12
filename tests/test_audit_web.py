@@ -4796,15 +4796,16 @@ def test_render_attempt_detail_marks_closed_blocked_work_as_historical(tmp_path:
         attempt_id,
         send_status="blocked",
         send_error="DINGTEAM_OKR_NOT_AUTHENTICATED",
+        permission_action="closed_after_review",
     )
 
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "历史结案（受阻操作未执行）" in html
+    assert "已核验结案（未自动执行）" in html
     assert "受阻原因见下方“Codex reason”；该外部操作未执行。" in html
-    assert "相关任务已结束，无需你操作。" in html
-    assert "◌ 历史结案" in html
+    assert "该事项已核验结案；外部动作未自动执行" in html
+    assert "◌ 已核验结案" in html
     assert "DINGTEAM_OKR_NOT_AUTHENTICATED" not in html
 
 

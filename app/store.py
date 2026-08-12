@@ -46,6 +46,7 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
+REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-08-12.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
@@ -14364,6 +14365,92 @@ class AutoReplyStore:
                   )
                 """,
                 terminal_statuses,
+            )
+            return cursor.rowcount
+
+    def resolve_errors_recovered_by_completed_reply_tasks(self) -> int:
+        """Close a trigger error once its own task completed after the error.
+
+        A completed task is durable evidence that the current generation
+        reached a terminal workflow state.  This is intentionally narrower
+        than a time-based observation: it does not infer message delivery or
+        an external write, and it keeps errors open while any linked agent run
+        still has an unknown side effect.
+        """
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors as error_event
+                set resolved_at=current_timestamp,
+                    resolution='recovered by completed reply task'
+                where coalesce(error_event.resolved_at, '')=''
+                  and coalesce(error_event.conversation_id, '')<>''
+                  and coalesce(error_event.message_id, '')<>''
+                  and exists (
+                    select 1
+                    from reply_tasks task
+                    where task.conversation_id=error_event.conversation_id
+                      and task.trigger_message_id=error_event.message_id
+                      and lower(task.status)='done'
+                      and datetime(task.updated_at) >= datetime(error_event.created_at)
+                      and not exists (
+                        select 1
+                        from agent_runs run
+                        where run.reply_task_id=task.id
+                          and (
+                            lower(run.status)='unknown'
+                            or lower(run.side_effect_state)='unknown'
+                          )
+                      )
+                  )
+                """
+            )
+            return cursor.rowcount
+
+    def resolve_closed_blocked_reply_attempts(self) -> int:
+        """Close latest blocked attempts that have no remaining recovery work.
+
+        The task completion proves the workflow has reached a terminal state;
+        it does not turn a skipped external action into a successful one.  The
+        original business explanation remains in the immutable audit summary.
+        """
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_attempts as attempt
+                set send_status='skipped',
+                    send_error='',
+                    permission_action=?,
+                    permission_reason='关联任务已完成；没有待恢复或未知副作用。详见审计说明。',
+                    updated_at=current_timestamp
+                where lower(attempt.send_status)='blocked'
+                  and trim(coalesce(attempt.permission_action, ''))=''
+                  and attempt.id=(
+                    select max(latest.id)
+                    from reply_attempts latest
+                    where latest.channel=attempt.channel
+                      and latest.conversation_id=attempt.conversation_id
+                      and latest.trigger_message_id=attempt.trigger_message_id
+                  )
+                  and exists (
+                    select 1
+                    from reply_tasks task
+                    where task.channel=attempt.channel
+                      and task.conversation_id=attempt.conversation_id
+                      and task.trigger_message_id=attempt.trigger_message_id
+                      and lower(task.status)='done'
+                      and not exists (
+                        select 1
+                        from agent_runs run
+                        where run.reply_task_id=task.id
+                          and (
+                            lower(run.status)='unknown'
+                            or lower(run.side_effect_state)='unknown'
+                          )
+                      )
+                  )
+                """,
+                (REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,),
             )
             return cursor.rowcount
 
