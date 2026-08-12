@@ -61,8 +61,9 @@ def loaded_skill_receipts(
 ) -> tuple[LoadedSkillReceipt, ...]:
     """Build trusted context evidence for Audit B from its exact Consumer parent.
 
-    Audit B remains the configured execution authority and must reread these paths;
-    the service does not use receipts as a global proxy or write gate for MCP tools.
+    Audit B remains the configured execution authority and must reread these paths.
+    The runtime verifies the exact reread receipts before Audit B starts a write;
+    receipts do not replace operation-specific review or external readback.
     """
     receipts: dict[str, LoadedSkillReceipt] = {}
     for event in events:

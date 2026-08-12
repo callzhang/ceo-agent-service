@@ -1,14 +1,17 @@
+import errno
+import fcntl
 import json
 import hashlib
 import sqlite3
 import threading
+import time
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -37,6 +40,18 @@ FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
+CODEX_SESSION_LOCK_RETRY_ATTEMPTS = 3
+CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
+SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
+SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
+CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
+STORE_SCHEMA_VERSION_KEY = "store_schema_version"
+STORE_SCHEMA_VERSION = "2026-08-12.1"
+STORE_SCHEMA_REQUIRED_TABLES = ("agent_run_events",)
+STORE_SCHEMA_REMOVED_TABLES = (
+    "universal_plan_executions",
+    "universal_action_executions",
+)
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
 _INITIALIZED_STORE_PATHS: set[Path] = set()
@@ -624,6 +639,11 @@ def _json_object_text(value: object, *, field: str) -> str:
     return text
 
 
+def _is_sqlite_lock_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "locked" in message or "busy" in message
+
+
 class AutoReplyStore:
     def __init__(
         self,
@@ -647,9 +667,63 @@ class AutoReplyStore:
         with _INITIALIZE_LOCK:
             if path_key in _INITIALIZED_STORE_PATHS:
                 return
-            self._initialize()
-            self.backfill_oa_audit_metadata()
-            _INITIALIZED_STORE_PATHS.add(path_key)
+            with self._schema_initialize_lock():
+                if path_key in _INITIALIZED_STORE_PATHS:
+                    return
+                if self._schema_is_current_after_lock_retry():
+                    _INITIALIZED_STORE_PATHS.add(path_key)
+                    return
+                self._initialize()
+                self.backfill_oa_audit_metadata()
+                self.set_service_state(STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION)
+                _INITIALIZED_STORE_PATHS.add(path_key)
+
+    def _schema_is_current_after_lock_retry(self) -> bool:
+        for attempt in range(SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS):
+            try:
+                return self._schema_is_current()
+            except sqlite3.OperationalError as exc:
+                if not _is_sqlite_lock_error(exc):
+                    raise
+                if attempt + 1 >= SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS:
+                    raise
+                time.sleep(SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS)
+        raise RuntimeError("schema check retry loop exhausted")
+
+    @contextmanager
+    def _schema_initialize_lock(self) -> Iterator[None]:
+        """Serialize schema work across the worker and audit-web processes."""
+        lock_path = self.path.with_name(f".{self.path.name}.initialize.lock")
+        with lock_path.open("a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _schema_is_current(self) -> bool:
+        try:
+            with self._connect() as db:
+                row = db.execute(
+                    "select value from service_state where key=?",
+                    (STORE_SCHEMA_VERSION_KEY,),
+                ).fetchone()
+                if row is None or str(row["value"] or "") != STORE_SCHEMA_VERSION:
+                    return False
+                present_tables = {
+                    str(item["name"])
+                    for item in db.execute(
+                        "select name from sqlite_master where type='table'"
+                    )
+                }
+        except sqlite3.OperationalError as exc:
+            if _is_sqlite_lock_error(exc):
+                raise
+            return False
+        return (
+            set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
+            and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
+        )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -1584,6 +1658,16 @@ class AutoReplyStore:
                     except sqlite3.OperationalError as exc:
                         if "duplicate column name" not in str(exc):
                             raise
+            error_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(errors)").fetchall()
+            }
+            for column, definition in (
+                ("resolved_at", "text not null default ''"),
+                ("resolution", "text not null default ''"),
+            ):
+                if column not in error_columns:
+                    db.execute(f"alter table errors add column {column} {definition}")
             db.execute(
                 """
                 update reply_attempts
@@ -2857,6 +2941,37 @@ class AutoReplyStore:
             ).fetchone()
             return self._agent_run_from_row(row, db=db) if row is not None else None
 
+    def next_agent_run_turn_attempt(
+        self,
+        reply_task_id: int,
+        execution_generation: str,
+        *,
+        role: AgentRole,
+        proposal_revision: int,
+    ) -> int:
+        """Return the next persisted attempt number for one Agent role/revision."""
+        role = AgentRole(role)
+        if not execution_generation.strip():
+            raise ValueError("execution_generation must be non-empty")
+        if proposal_revision < 0:
+            raise ValueError("proposal_revision must not be negative")
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select coalesce(max(turn_attempt), -1) + 1 as next_turn_attempt
+                from agent_runs
+                where reply_task_id=? and execution_generation=? and role=?
+                  and proposal_revision=?
+                """,
+                (
+                    reply_task_id,
+                    execution_generation,
+                    role.value,
+                    proposal_revision,
+                ),
+            ).fetchone()
+            return int(row["next_turn_attempt"])
+
     def list_agent_runs_for_task_generation(
         self,
         reply_task_id: int,
@@ -3259,8 +3374,6 @@ class AutoReplyStore:
             raise ValueError("Consumer operation_id must be empty")
         if role is AgentRole.AUDIT and not operation_id:
             raise ValueError("Audit operation_id must be non-empty")
-        if role is AgentRole.CONSUMER and turn_attempt != 0:
-            raise ValueError("Consumer turn_attempt must be zero")
         if (
             role is AgentRole.CONSUMER
             and proposal_revision == 0
@@ -3299,7 +3412,6 @@ class AutoReplyStore:
                     select id from agent_runs
                     where id=? and role='consumer' and reply_task_id=?
                       and execution_generation=? and proposal_revision=?
-                      and turn_attempt=0
                     """,
                     (
                         parent_agent_run_id,
@@ -3440,7 +3552,11 @@ class AutoReplyStore:
                     "select * from agent_runs where id=?",
                     (row["id"],),
                 ).fetchone()
-            if not claimed and row["status"] == "failed":
+            if (
+                not claimed
+                and role is AgentRole.AUDIT
+                and row["status"] == "failed"
+            ):
                 try:
                     structured_error = json.loads(row["structured_error_json"])
                 except json.JSONDecodeError:
@@ -5432,6 +5548,86 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
+    def recover_effectful_audit_runs_after_service_restart(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        """Resume interrupted Audit effects through reconciliation, never replay."""
+        if limit <= 0:
+            return []
+        error_json = json.dumps(
+            {
+                "code": "service_restart_effect_requires_reconciliation",
+                "retryable": False,
+            },
+            separators=(",", ":"),
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and runs.role='audit'
+                        and runs.status='running'
+                        and runs.side_effect_state<>'none'
+                  )
+                order by tasks.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                task_id = int(row["id"])
+                generation = str(row["execution_generation"])
+                db.execute(
+                    """
+                    update agent_runs
+                    set status='unknown', structured_error_json=?,
+                        side_effect_state='unknown', lease_owner='',
+                        lease_expires_at='', updated_at=current_timestamp
+                    where reply_task_id=? and execution_generation=?
+                      and role='audit' and status='running'
+                      and side_effect_state<>'none'
+                    """,
+                    (error_json, task_id, generation),
+                )
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', locked_at=null, available_at='',
+                        error='service_restart_effect_reconciliation',
+                        updated_at=current_timestamp
+                    where id=? and status='processing' and execution_generation=?
+                      and exists (
+                          select 1 from agent_runs
+                          where reply_task_id=reply_tasks.id
+                            and execution_generation=reply_tasks.execution_generation
+                            and role='audit' and status='unknown'
+                      )
+                    """,
+                    (task_id, generation),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                db.execute(
+                    "delete from codex_session_locks where conversation_id=?",
+                    (row["conversation_id"],),
+                )
+                updated = db.execute(
+                    "select * from reply_tasks where id=?", (task_id,)
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
     def discard_unstarted_service_tasks(
         self,
         task_ids: list[int] | tuple[int, ...],
@@ -5541,12 +5737,7 @@ class AutoReplyStore:
         *,
         limit: int = 100,
     ) -> list[AgentRun]:
-        """Make interrupted Audit reconciliation eligible on the next worker pass.
-
-        A service restart terminates the only worker process. An unknown Audit run
-        has not reached a new external action; retaining its old lease only delays
-        the mandatory read-only reconciliation until the former lease expires.
-        """
+        """Make interrupted Audit reconciliation eligible on the next worker pass."""
         if limit <= 0:
             return []
         with self._connect() as db:
@@ -5839,6 +6030,65 @@ class AutoReplyStore:
             ).fetchone()
             if updated is None:
                 raise RuntimeError("recovered reply task was not persisted")
+            return self._reply_task_from_row(updated)
+
+    def retry_failed_pre_agent_reply_task(
+        self,
+        task_id: int,
+        *,
+        reason: str,
+    ) -> ReplyTask:
+        """Reopen a failed task only when no agent turn or delivery was recorded."""
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("retry reason must be non-empty")
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            task = db.execute(
+                """
+                select id, execution_generation, conversation_id, trigger_message_id
+                from reply_tasks
+                where id=? and status='failed'
+                """,
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                raise ValueError("failed reply task was not found")
+            agent_run = db.execute(
+                """
+                select 1 from agent_runs
+                where reply_task_id=? and execution_generation=?
+                limit 1
+                """,
+                (task_id, task["execution_generation"]),
+            ).fetchone()
+            if agent_run is not None:
+                raise ValueError("failed reply task already has an agent run")
+            sent_reply = db.execute(
+                """
+                select 1 from sent_replies
+                where conversation_id=? and trigger_message_id=?
+                limit 1
+                """,
+                (task["conversation_id"], task["trigger_message_id"]),
+            ).fetchone()
+            if sent_reply is not None:
+                raise ValueError("failed reply task already has a sent reply")
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending', attempts=0, locked_at=null,
+                    available_at='', error=?, updated_at=?
+                where id=? and status='failed' and execution_generation=?
+                """,
+                (reason, now_text, task_id, task["execution_generation"]),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            updated = db.execute(
+                "select * from reply_tasks where id=?", (task_id,)
+            ).fetchone()
+            if updated is None:
+                raise RuntimeError("recovered pre-agent reply task was not persisted")
             return self._reply_task_from_row(updated)
 
     def requeue_failed_unknown_audit_reconciliation(
@@ -6558,6 +6808,7 @@ class AutoReplyStore:
             id=row["id"], task_id=row["reply_task_id"], account_id=row["account_id"],
             target_type=row["target_type"], target_id=row["target_id"],
             conversation_id=row["conversation_id"], reply_text=row["reply_text"],
+            action_started_at=row["action_started_at"],
             execution_generation=row["execution_generation"],
             status=row["status"], evidence=json.loads(row["evidence_json"]),
             error=row["error"],
@@ -6583,6 +6834,7 @@ class AutoReplyStore:
                 id=row["id"], task_id=row["reply_task_id"], account_id=row["account_id"],
                 target_type=row["target_type"], target_id=row["target_id"],
                 conversation_id=row["conversation_id"], reply_text=row["reply_text"],
+                action_started_at=row["action_started_at"],
                 execution_generation=row["execution_generation"],
                 status=row["status"], evidence=json.loads(row["evidence_json"]),
                 error=row["error"],
@@ -6782,6 +7034,7 @@ class AutoReplyStore:
             account_id=row["account_id"], target_type=row["target_type"],
             target_id=row["target_id"], conversation_id=row["conversation_id"],
             reply_text=row["reply_text"],
+            action_started_at=row["action_started_at"],
             execution_generation=row["execution_generation"],
             status=row["status"], evidence=json.loads(row["evidence_json"]),
             error=row["error"],
@@ -6810,6 +7063,7 @@ class AutoReplyStore:
             account_id=row["account_id"], target_type=row["target_type"],
             target_id=row["target_id"], conversation_id=row["conversation_id"],
             reply_text=row["reply_text"],
+            action_started_at=row["action_started_at"],
             execution_generation=row["execution_generation"],
             status=row["status"], evidence=json.loads(row["evidence_json"]),
             error=row["error"],
@@ -8198,41 +8452,59 @@ class AutoReplyStore:
             raise ValueError("missing conversation_id")
         if not owner.strip():
             raise ValueError("missing lock owner")
-        with self._connect() as db:
-            db.execute(
-                """
-                delete from codex_session_locks
-                where conversation_id=?
-                  and datetime(locked_at) <= datetime('now', ?)
-                """,
-                (
-                    conversation_id,
-                    f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",
-                ),
-            )
-            cursor = db.execute(
-                """
-                insert or ignore into codex_session_locks (conversation_id, owner)
-                values (?, ?)
-                """,
-                (conversation_id, owner),
-            )
-            return cursor.rowcount == 1
+        def acquire() -> bool:
+            with self._connect() as db:
+                db.execute(
+                    """
+                    delete from codex_session_locks
+                    where conversation_id=?
+                      and datetime(locked_at) <= datetime('now', ?)
+                    """,
+                    (
+                        conversation_id,
+                        f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",
+                    ),
+                )
+                cursor = db.execute(
+                    """
+                    insert or ignore into codex_session_locks (conversation_id, owner)
+                    values (?, ?)
+                    """,
+                    (conversation_id, owner),
+                )
+                if cursor.rowcount == 1:
+                    return True
+                row = db.execute(
+                    "select owner from codex_session_locks where conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                return row is not None and str(row["owner"]) == owner
+
+        return self._retry_codex_session_lock_operation(acquire)
 
     def release_codex_session_lock(self, conversation_id: str, owner: str) -> bool:
         if not conversation_id.strip():
             raise ValueError("missing conversation_id")
         if not owner.strip():
             raise ValueError("missing lock owner")
-        with self._connect() as db:
-            cursor = db.execute(
-                """
-                delete from codex_session_locks
-                where conversation_id=? and owner=?
-                """,
-                (conversation_id, owner),
-            )
-            return cursor.rowcount == 1
+        def release() -> bool:
+            with self._connect() as db:
+                cursor = db.execute(
+                    """
+                    delete from codex_session_locks
+                    where conversation_id=? and owner=?
+                    """,
+                    (conversation_id, owner),
+                )
+                if cursor.rowcount == 1:
+                    return True
+                row = db.execute(
+                    "select 1 from codex_session_locks where conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                return row is None
+
+        return self._retry_codex_session_lock_operation(release)
 
     def renew_codex_session_lock(
         self,
@@ -8249,16 +8521,30 @@ class AutoReplyStore:
         stale_before = (
             now_value - timedelta(seconds=CODEX_SESSION_LOCK_STALE_SECONDS)
         ).strftime("%Y-%m-%d %H:%M:%S")
-        with self._connect() as db:
-            cursor = db.execute(
-                """
-                update codex_session_locks
-                set locked_at=?
-                where conversation_id=? and owner=? and locked_at>?
-                """,
-                (now_text, conversation_id, owner, stale_before),
-            )
-            return cursor.rowcount == 1
+        def renew() -> bool:
+            with self._connect() as db:
+                cursor = db.execute(
+                    """
+                    update codex_session_locks
+                    set locked_at=?
+                    where conversation_id=? and owner=? and locked_at>?
+                    """,
+                    (now_text, conversation_id, owner, stale_before),
+                )
+                return cursor.rowcount == 1
+
+        return self._retry_codex_session_lock_operation(renew)
+
+    @staticmethod
+    def _retry_codex_session_lock_operation(operation: Callable[[], bool]) -> bool:
+        for attempt in range(CODEX_SESSION_LOCK_RETRY_ATTEMPTS):
+            try:
+                return operation()
+            except OSError as exc:
+                if exc.errno != errno.EDEADLK or attempt + 1 == CODEX_SESSION_LOCK_RETRY_ATTEMPTS:
+                    raise
+                time.sleep(CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+        raise AssertionError("unreachable codex session lock retry state")
 
     def codex_session_lock(self, conversation_id: str, owner: str) -> CodexSessionLock:
         return CodexSessionLock(self, conversation_id, owner)
@@ -13787,7 +14073,7 @@ class AutoReplyStore:
                 set resolved_at=current_timestamp, resolution=?
                 where id in ({placeholders}) and resolved_at=''
                 """,
-                (resolution, *normalized_ids),
+                (resolution.strip(), *normalized_ids),
             )
         return cursor.rowcount
 
@@ -14049,6 +14335,72 @@ class AutoReplyStore:
                 """,
                 (key, value),
             )
+
+    def active_codex_capacity_pause(self, *, now: datetime) -> str:
+        """Return the shared retry timestamp while a Codex capacity pause is active."""
+        raw = self.get_service_state(CODEX_CAPACITY_PAUSE_STATE_KEY)
+        if not raw:
+            return ""
+        try:
+            value = json.loads(raw)
+            retry_at = str(value.get("retry_at") or "")
+            retry_time = datetime.fromisoformat(retry_at)
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            return ""
+        if retry_time.tzinfo is None:
+            retry_time = retry_time.replace(tzinfo=timezone.utc)
+        current = now.astimezone(timezone.utc)
+        return retry_at if retry_time.astimezone(timezone.utc) > current else ""
+
+    def open_codex_capacity_pause(self, *, retry_at: str, now: datetime) -> bool:
+        """Persist one shared capacity incident and report whether it is new."""
+        retry_time = datetime.fromisoformat(retry_at)
+        if retry_time.tzinfo is None:
+            retry_time = retry_time.replace(tzinfo=timezone.utc)
+        current = now.astimezone(timezone.utc)
+        if retry_time.astimezone(timezone.utc) <= current:
+            raise ValueError("codex capacity retry_at must be in the future")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select value from service_state where key=?",
+                (CODEX_CAPACITY_PAUSE_STATE_KEY,),
+            ).fetchone()
+            active = False
+            if row is not None:
+                try:
+                    previous = json.loads(row["value"])
+                    previous_at = datetime.fromisoformat(
+                        str(previous.get("retry_at") or "")
+                    )
+                    if previous_at.tzinfo is None:
+                        previous_at = previous_at.replace(tzinfo=timezone.utc)
+                    active = previous_at.astimezone(timezone.utc) > current
+                except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                    active = False
+            if active:
+                return False
+            db.execute(
+                """
+                insert into service_state (key, value, updated_at)
+                values (?, ?, current_timestamp)
+                on conflict(key) do update set
+                    value=excluded.value,
+                    updated_at=current_timestamp
+                """,
+                (
+                    CODEX_CAPACITY_PAUSE_STATE_KEY,
+                    json.dumps(
+                        {
+                            "reason_code": "workspace_credits_exhausted",
+                            "retry_at": retry_at,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            return True
 
     def claim_channel_login_request(
         self,

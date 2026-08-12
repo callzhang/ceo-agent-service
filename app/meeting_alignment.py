@@ -5,7 +5,11 @@ from typing import Any, Callable, Protocol
 
 from pydantic import ValidationError
 
-from app.config import principal_display_name
+from app.config import codex_capacity_retry_duration, principal_display_name
+from app.codex_capacity import (
+    CODEX_CAPACITY_EXHAUSTED_MESSAGE,
+    is_codex_capacity_exhausted,
+)
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.external_retry import is_external_dependency_error
 from app.meeting_alignment_agent import (
@@ -397,7 +401,12 @@ def consume_meeting_alignment_jobs(
         raise ValueError("meeting max attempts must be positive")
 
     processed_ids: set[int] = set()
-    jobs = store.claim_meeting_alignment_jobs(limit=limit, now=now.isoformat())
+    capacity_paused = bool(store.active_codex_capacity_pause(now=now))
+    jobs = (
+        []
+        if capacity_paused
+        else store.claim_meeting_alignment_jobs(limit=limit, now=now.isoformat())
+    )
     for job in jobs:
         processed_ids.add(job.id)
         _analyze_meeting_job(
@@ -652,6 +661,33 @@ def _analyze_meeting_job(
         )
         return
     except RuntimeError as exc:
+        if is_codex_capacity_exhausted(exc):
+            retry_at = now + codex_capacity_retry_duration()
+            opened_capacity_pause = store.open_codex_capacity_pause(
+                retry_at=retry_at.isoformat(), now=now
+            )
+            error = _error_json(
+                "codex_capacity_pause", CODEX_CAPACITY_EXHAUSTED_MESSAGE
+            )
+            _record_agent_run(
+                store,
+                runner,
+                job_id=job.id,
+                decision=None,
+                status="retry",
+                error=error,
+            )
+            store.update_meeting_alignment_job(
+                job.id,
+                status="retry",
+                available_at=retry_at.isoformat(),
+                error=error,
+            )
+            if opened_capacity_pause:
+                store.record_error(
+                    "", "", "codex_capacity_pause", CODEX_CAPACITY_EXHAUSTED_MESSAGE
+                )
+            return
         error = _error_json("meeting_agent", str(exc))
         _record_agent_run(
             store,

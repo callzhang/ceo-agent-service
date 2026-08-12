@@ -56,11 +56,6 @@
     },
     {
       "server": "agent_cli",
-      "tool": "read_spreadsheet",
-      "effect": "read_only"
-    },
-    {
-      "server": "agent_cli",
       "tool": "execute_reviewed_write",
       "effect": "effectful"
     },

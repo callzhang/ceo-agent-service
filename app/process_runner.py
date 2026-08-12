@@ -1,25 +1,15 @@
 import codecs
-import fcntl
 import os
 import selectors
 import signal
 import subprocess
-import threading
 import time
-from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable
 
 PROCESS_TOTAL_TIMEOUT_REASON_PREFIX = "process timed out after "
 PROCESS_IDLE_TIMEOUT_REASON_PREFIX = "process produced no output for "
 PROCESS_TIMEOUT_REASON_SUFFIX = " seconds"
-CODEX_EXECUTION_LOCK_PATH = Path(
-    os.getenv("CEO_CODEX_EXECUTION_LOCK_PATH", "/tmp/ceo-agent-service-codex.lock")
-)
-_CODEX_EXECUTION_THREAD_LOCK = threading.Lock()
-
-
 @dataclass(frozen=True)
 class ProcessRunResult:
     returncode: int
@@ -31,26 +21,6 @@ class ProcessRunResult:
 
 
 def run_process_with_idle_timeout(
-    command: list[str],
-    *,
-    prompt: str,
-    env: dict[str, str] | None,
-    total_timeout_seconds: float,
-    idle_timeout_seconds: float,
-    on_stdout_line: Callable[[str], None] | None = None,
-) -> ProcessRunResult:
-    with _codex_execution_slot(command):
-        return _run_process_with_idle_timeout(
-            command,
-            prompt=prompt,
-            env=env,
-            total_timeout_seconds=total_timeout_seconds,
-            idle_timeout_seconds=idle_timeout_seconds,
-            on_stdout_line=on_stdout_line,
-        )
-
-
-def _run_process_with_idle_timeout(
     command: list[str],
     *,
     prompt: str,
@@ -152,25 +122,6 @@ def _run_process_with_idle_timeout(
         timeout_kind=timeout_kind,
         timeout_reason=timeout_reason,
     )
-
-
-def _is_codex_command(command: list[str]) -> bool:
-    return bool(command) and Path(command[0]).name == "codex"
-
-
-@contextmanager
-def _codex_execution_slot(command: list[str]):
-    if not _is_codex_command(command):
-        yield
-        return
-    with _CODEX_EXECUTION_THREAD_LOCK:
-        lock_fd = os.open(CODEX_EXECUTION_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            os.close(lock_fd)
 
 
 def _emit_stdout_lines(

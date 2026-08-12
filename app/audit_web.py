@@ -34,6 +34,7 @@ from app.audit_rules import (
     write_audit_rules_template,
 )
 from app.codex_decision import audit_summary_explains_no_documents
+from app.codex_capacity import is_codex_provider_recovery_code
 from app.codex_history import (
     RenderedCodexEvent,
     extract_codex_audit_events_from_session,
@@ -45,6 +46,7 @@ from app.config import (
     batch_seconds,
     broadcast_mention_aliases,
     consumer_poll_interval_seconds,
+    consumer_worker_count,
     corpus_dir,
     document_extraction_ids,
     embedding_api_key,
@@ -91,6 +93,7 @@ from app.developer_prompt import (
     configurable_prompt_variable_pairs,
     DeveloperPromptTemplateError,
     developer_prompt_template_path,
+    developer_prompt_upgrade_status,
     prompt_variable_env_key,
     read_developer_prompt_template,
     read_user_prompt_template,
@@ -1952,7 +1955,7 @@ def _service_component_snapshots() -> list[dict[str, str]]:
         {"name": "audit-web", "role": "UI/API", "cadence": "always on"},
         {"name": "database-backup", "role": "sqlite backup", "cadence": "periodic"},
         {"name": "producer", "role": "DingTalk message scan", "cadence": f"{producer_interval_seconds()}s"},
-        {"name": "consumer", "role": "reply task execution", "cadence": f"{consumer_poll_interval_seconds()}s"},
+        {"name": "consumer pool", "role": f"reply task execution x{consumer_worker_count()}", "cadence": f"{consumer_poll_interval_seconds()}s"},
         {"name": "meeting-producer", "role": "AI minutes scan", "cadence": f"{meeting_producer_interval_seconds()}s"},
         {"name": "meeting-consumer", "role": "meeting alignment", "cadence": f"{meeting_consumer_poll_interval_seconds()}s"},
         {"name": "task-maintenance", "role": "task agent scans/OKR review", "cadence": f"{task_work_item_interval_seconds()}s"},
@@ -2849,6 +2852,11 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "consumer 检查 pending reply task 的间隔秒数。",
         ),
         (
+            "CEO_CONSUMER_WORKERS",
+            str(consumer_worker_count()),
+            "单个 launchd 服务内并发的 reply consumer 线程数；同一会话仍由 SQLite 会话锁串行执行。",
+        ),
+        (
             "CEO_MEETING_PRODUCER_INTERVAL_SECONDS",
             str(meeting_producer_interval_seconds()),
             "meeting producer 扫描 dws minutes 的间隔秒数。",
@@ -3022,6 +3030,7 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_FORBIDDEN_PATH_PREFIXES",
         "CEO_PRODUCER_INTERVAL_SECONDS",
         "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
+        "CEO_CONSUMER_WORKERS",
         "CEO_MEETING_PRODUCER_INTERVAL_SECONDS",
         "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS",
         "CEO_MEETING_SETTLE_SECONDS",
@@ -3415,7 +3424,7 @@ def _history_chart_payload(
             if (
                 task is not None
                 and task.status == "pending"
-                and task.error == "codex_provider_unavailable"
+                and is_codex_provider_recovery_code(task.error)
             ):
                 event_label = "⏳ Provider recovery"
             elif task is not None and task.status == "done":
@@ -6853,13 +6862,20 @@ def _render_developer_prompt_editor_content(*, saved: bool = False) -> str:
             "</p>"
         )
     saved_html = "<p class=\"muted\">Saved.</p>" if saved else ""
+    upgrade_html = (
+        '<p class="attempt-warning">This customized prompt was preserved during '
+        "the Skill-first upgrade. Review it against the current bundled prompt "
+        "before adopting new runtime behavior.</p>"
+        if developer_prompt_upgrade_status(template_path) == "customized"
+        else ""
+    )
     return (
         "<section class=\"card\">"
         "<div class=\"grid\">"
         "<div class=\"muted\">template path</div>"
         f"<div>{escape(str(template_path))}</div>"
         "</div>"
-        f"{saved_html}{error_html}"
+        f"{saved_html}{upgrade_html}{error_html}"
         "<form method=\"post\" action=\"/config?tab=developer\">"
         "<label for=\"template\">Template</label>"
         f"<textarea id=\"template\" name=\"template\" style=\"min-height:520px\">{escape(body_template)}</textarea>"

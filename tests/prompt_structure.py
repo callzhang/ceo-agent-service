@@ -25,6 +25,9 @@ PERMITTED_CORE_SECTIONS = {
     "Pydantic Wire Contract",
     "Pydantic Result Contract",
     "Pydantic Wire/Result Contract",
+    "Capability Instructions",
+    "Shared Agent Rules",
+    "Role Boundary",
     "Context Facts",
 }
 SKILL_INSTRUCTION_MARKER = "[dynamic-skill]"
@@ -52,6 +55,7 @@ def validate_prompt_structure(
     audit_rules: str | None,
     context_facts: str | None,
     size_limit: int,
+    require_runtime_safety_sections: bool = False,
 ) -> None:
     if audit_rules is not None:
         validate_audit_rules_text(audit_rules)
@@ -63,6 +67,15 @@ def validate_prompt_structure(
         "Dynamic Skill",
         *(section_title for section_title, _model in contract_models),
     }
+    safety_sections = {
+        "Capability Instructions",
+        "Role Boundary",
+        "Shared Agent Rules",
+    }
+    if require_runtime_safety_sections:
+        expected_sections.update(safety_sections)
+    else:
+        assert not set(sections).intersection(safety_sections)
     if audit_rules is not None:
         expected_sections.add("Audit Rules")
     if context_facts is not None:

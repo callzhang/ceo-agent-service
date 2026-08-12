@@ -1720,6 +1720,67 @@ def test_process_work_items_command_keeps_codex_transport_failure_pending_after_
     assert row["available_at"] > ""
 
 
+def test_process_work_items_pauses_after_codex_capacity_exhaustion(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-capacity"
+        last_audit_tool_events = []
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def decide(self, *, prompt, session_id=None):
+            raise ExternalDependencyError(
+                "codex task agent",
+                RuntimeError("Your workspace is out of credits."),
+                dependency="codex",
+            )
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "reply_attempt", "ref": "1"},
+            "summary": "同步关键项目状态。",
+            "project_name": "容量暂停项目",
+            "context": {
+                "sender": "Mina",
+                "participants": [],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "测试群",
+            },
+        }
+    )
+    for source_ref in ("1", "2"):
+        store.enqueue_work_summary_input(
+            item.source.type.value,
+            source_ref,
+            item.model_dump_json(),
+        )
+
+    assert process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
+    ) == 0
+    assert capsys.readouterr().out == "process-work-items processed=0\n"
+
+    with AutoReplyStore(db_path)._connect() as db:
+        rows = db.execute(
+            "select status, error from work_summary_inputs order by id"
+        ).fetchall()
+    assert [(row["status"], row["error"]) for row in rows] == [
+        ("pending", "codex_provider_capacity_exhausted"),
+        ("pending", ""),
+    ]
+    assert store.active_codex_capacity_pause(now=datetime.now().astimezone()) > ""
+    assert [error.kind for error in store.list_errors()] == ["codex_capacity_pause"]
+
+
 def test_process_work_items_command_keeps_typed_external_failure_pending_after_limit(
     tmp_path,
     monkeypatch,
@@ -2661,6 +2722,7 @@ def test_scan_task_sources_command_scans_local_and_minutes(
 def test_parser_supports_single_service_command(monkeypatch):
     monkeypatch.setenv("CEO_PRODUCER_INTERVAL_SECONDS", "60")
     monkeypatch.setenv("CEO_CONSUMER_POLL_INTERVAL_SECONDS", "10")
+    monkeypatch.setenv("CEO_CONSUMER_WORKERS", "2")
     parser = build_parser()
 
     args = parser.parse_args(
@@ -2674,6 +2736,8 @@ def test_parser_supports_single_service_command(monkeypatch):
             "61",
             "--consumer-poll-interval-seconds",
             "11",
+            "--consumer-workers",
+            "3",
             "--task-work-item-interval-seconds",
             "31",
             "--task-daily-interval-seconds",
@@ -2688,6 +2752,7 @@ def test_parser_supports_single_service_command(monkeypatch):
     assert args.port == 8765
     assert args.producer_interval_seconds == 61
     assert args.consumer_poll_interval_seconds == 11
+    assert args.consumer_workers == 3
     assert args.task_work_item_interval_seconds == 31
     assert args.task_daily_interval_seconds == 3600
     assert args.task_follow_up_interval_seconds == 900
@@ -5379,7 +5444,9 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("database-backup", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-producer", True),
         ("producer", 60, 4, True),
-        ("start", "ceo-agent-service-consumer", True),
+        ("start", "ceo-agent-service-consumer-1", True),
+        ("consumer", 10, 4, True),
+        ("start", "ceo-agent-service-consumer-2", True),
         ("consumer", 10, 4, True),
         ("start", "ceo-agent-service-meeting-producer", True),
         ("meeting-producer", 60, 600, True),
@@ -5396,14 +5463,15 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     assert failures == [
         ("database-backup", "stop database-backup"),
         ("producer", "stop producer"),
-        ("consumer", "stop consumer"),
+        ("consumer-1", "stop consumer"),
+        ("consumer-2", "stop consumer"),
         ("meeting-producer", "stop meeting-producer"),
         ("meeting-consumer", "stop meeting-consumer"),
         ("task-maintenance", "stop task-maintenance"),
         ("follow-up-delivery", "stop follow-up-delivery"),
         ("oa-pending-scan", "stop oa-pending-scan"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1, 1, 1, 1]
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):

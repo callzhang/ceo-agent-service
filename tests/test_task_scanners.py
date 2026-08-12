@@ -485,6 +485,52 @@ def test_scan_ai_minutes_preserves_seen_cursor_when_pagination_fails(tmp_path):
     assert saved["last_error"] == "page request failed"
 
 
+def test_scan_ai_minutes_keeps_completed_pages_when_a_later_page_fails(tmp_path):
+    class PartialDws:
+        def list_minutes_page(self, *, limit, cursor):
+            if not cursor:
+                return {
+                    "items": [{"taskUuid": "minutes-1", "title": "第一页"}],
+                    "has_more": True,
+                    "next_token": "token-2",
+                }
+            raise RuntimeError("cursor expired")
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    count = scan_ai_minutes(
+        store,
+        PartialDws(),
+        enqueue_existing_on_first_scan=True,
+    )
+
+    assert count == 1
+    state = store.get_daily_scan_state("ai_minutes")
+    assert state is not None
+    assert state["last_error"] == ""
+    assert json.loads(state["cursor_json"])["pagination_deferred"] is True
+
+
+def test_scan_ai_minutes_records_empty_completed_page_before_cursor_failure(tmp_path):
+    class EmptyFirstPageDws:
+        def list_minutes_page(self, *, limit, cursor):
+            if not cursor:
+                return {
+                    "items": [],
+                    "has_more": True,
+                    "next_token": "token-2",
+                }
+            raise RuntimeError("cursor expired")
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_ai_minutes(store, EmptyFirstPageDws()) == 0
+    state = store.get_daily_scan_state("ai_minutes")
+    assert state is not None
+    assert state["last_error"] == ""
+    assert json.loads(state["cursor_json"])["pagination_deferred"] is True
+
+
 def test_scan_ai_minutes_baselines_existing_items_on_first_scan(tmp_path):
     class FakeDws:
         def __init__(self):

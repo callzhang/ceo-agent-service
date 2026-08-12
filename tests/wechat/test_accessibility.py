@@ -311,6 +311,28 @@ def test_recovery_scans_extended_read_only_history_for_unknown_delivery(store):
     assert reader.requested_limit == 200
 
 
+def test_recovery_scans_from_the_persisted_action_start(store):
+    delivery = _seed_delivery(store)
+    store.mark_wechat_delivery_sending(delivery.id, now="2026-07-17T10:05:00+08:00")
+    store.set_wechat_delivery_status(
+        delivery.id, "send_unknown", error="sender_execution_interrupted",
+    )
+
+    class Reader:
+        account = object()
+        requested_since = None
+
+        def read_messages(self, *_args, **kwargs):
+            self.requested_since = kwargs["since"]
+            return [SimpleNamespace(direction="outbound", text="收到")]
+
+    reader = Reader()
+    recovered = reconcile_incomplete_deliveries(store, reader)
+
+    assert recovered[0].status == "sent"
+    assert reader.requested_since == "2026-07-17T10:05:00+08:00"
+
+
 def test_open_target_waits_for_async_composer_after_session_click():
     row = object()
     composer = object()

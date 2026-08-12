@@ -138,6 +138,58 @@ def test_quality_gate_excludes_explicitly_resolved_global_error(tmp_path):
     ]
 
 
+def test_quality_gate_reports_active_codex_capacity_pause_as_attention(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.open_codex_capacity_pause(
+        retry_at=(NOW + timedelta(minutes=30)).isoformat(), now=NOW
+    )
+    store.record_error(
+        None,
+        None,
+        "codex_capacity_pause",
+        "Codex workspace credits are exhausted; work is paused until the next capacity check",
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert [(issue.source, issue.code, issue.count) for issue in report.attention] == [
+        ("codex_capacity", "paused", 1)
+    ]
+
+
+def test_quality_gate_marks_overdue_pending_reply_as_attention_during_capacity_pause(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    stale = (NOW - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    _insert_reply_task(store, updated_at=stale)
+    store.open_codex_capacity_pause(
+        retry_at=(NOW + timedelta(minutes=30)).isoformat(), now=NOW
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert ("reply_tasks", "capacity_paused", 1) in {
+        (issue.source, issue.code, issue.count) for issue in report.attention
+    }
+
+
+def test_quality_gate_reports_deferred_minutes_pagination_as_attention(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.set_daily_scan_state(
+        "ai_minutes",
+        last_success_at=NOW.isoformat(),
+        cursor_json='{"pagination_deferred": true}',
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert ("daily_scan_state", "pagination_deferred", 1) in {
+        (issue.source, issue.code, issue.count) for issue in report.attention
+    }
+
+
 def test_quality_gate_keeps_future_follow_up_as_attention_not_failure(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     future = (NOW + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
@@ -402,6 +454,28 @@ def test_quality_check_command_writes_state_and_returns_nonzero_for_violation(tm
         )
 
     assert quality_check_command(WorkerSettings(db_path=db_path), state_file=state_path) == 2
+
+
+def test_quality_required_channels_skips_inactive_optional_channel(tmp_path):
+    from app.cli import _quality_required_channels
+
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into reply_tasks (
+                channel, conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, status
+            ) values ('lark', 'lark-group', 'Lark', 0, 'msg-lark',
+                '2026-08-12 10:00:00', 'Derek', 'check', 'pending')"""
+        )
+
+    assert _quality_required_channels(store.path) == {"dingtalk", "lark"}
+
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where channel='lark'")
+
+    assert _quality_required_channels(store.path) == {"dingtalk"}
 
 
 def test_quality_gate_fails_when_a_live_channel_is_not_ready(tmp_path):

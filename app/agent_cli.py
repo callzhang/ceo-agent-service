@@ -491,24 +491,6 @@ def read_skill_tool(path: str) -> dict[str, str]:
 
 
 @server.tool(
-    name="read_spreadsheet",
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
-    ),
-)
-def read_spreadsheet_tool(path: str) -> dict[str, object]:
-    """Read a downloaded Excel workbook through the bounded read-only parser.
-
-    Use this for temporary .xlsx or .xlsm material. It returns a limited sheet
-    preview and never executes workbook code or arbitrary Python.
-    """
-    return read_spreadsheet(path)
-
-
-@server.tool(
     name="execute_reviewed_read",
     annotations=ToolAnnotations(
         readOnlyHint=True,
@@ -518,11 +500,13 @@ def read_spreadsheet_tool(path: str) -> dict[str, object]:
     ),
 )
 def execute_reviewed_read_tool(argv: list[str]) -> dict[str, object]:
-    """Run one exact reviewed read-only command and return an audit receipt.
+    """Run one reviewed DWS, Lark, or local read command and return a receipt.
 
     Use the provided argv for live enterprise evidence such as a message,
-    calendar event, document, file, approval, person, mail, or meeting. This
-    cannot perform writes, shell composition, or interactive authentication.
+    calendar event, document, file, approval, person, mail, or meeting. DWS
+    and Lark use published effect metadata. Local commands use the principal's
+    `ceo_agent.local_read_policy` blacklist, so Python is available unless the
+    principal has explicitly blocked it.
     """
     return execute_reviewed_read(argv)
 

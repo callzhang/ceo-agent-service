@@ -1,5 +1,7 @@
+import errno
 import json
 import importlib.util
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from multiprocessing import get_context
 from pathlib import Path
@@ -281,6 +283,47 @@ def test_store_initializes_same_path_once_per_process(tmp_path: Path, monkeypatc
     assert calls == [db_path]
 
 
+def test_store_skips_schema_work_when_another_process_finished_it(
+    tmp_path: Path, monkeypatch
+):
+    db_path = tmp_path / "worker.sqlite3"
+    AutoReplyStore(db_path)
+
+
+def test_store_rechecks_schema_after_transient_database_lock(tmp_path, monkeypatch):
+    db_path = tmp_path / "worker.sqlite3"
+    AutoReplyStore(db_path)
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    original_schema_check = AutoReplyStore._schema_is_current
+    checks = 0
+
+    def flaky_schema_check(self: AutoReplyStore) -> bool:
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return original_schema_check(self)
+
+    def unexpected_initialize(_self: AutoReplyStore) -> None:
+        raise AssertionError("transient database lock must not trigger migration")
+
+    monkeypatch.setattr(AutoReplyStore, "_schema_is_current", flaky_schema_check)
+    monkeypatch.setattr(AutoReplyStore, "_initialize", unexpected_initialize)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _seconds: None)
+
+    AutoReplyStore(db_path)
+
+    assert checks == 2
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    def unexpected_initialize(_self: AutoReplyStore) -> None:
+        raise AssertionError("schema work should not repeat after another process")
+
+    monkeypatch.setattr(AutoReplyStore, "_initialize", unexpected_initialize)
+
+    AutoReplyStore(db_path)
+
+
 def test_store_migrates_existing_follow_up_drafts_without_nonconstant_defaults(
     tmp_path: Path,
 ):
@@ -382,6 +425,82 @@ def test_codex_session_lock_is_exclusive(tmp_path):
 
     store.release_codex_session_lock("cid-1", "okr:1")
     assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is True
+
+
+def test_codex_session_lock_retries_resource_deadlock(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    original_connect = store._connect
+    attempts = 0
+
+    @contextmanager
+    def flaky_connect():
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise OSError(errno.EDEADLK, "Resource deadlock avoided")
+        with original_connect() as db:
+            yield db
+
+    monkeypatch.setattr(store, "_connect", flaky_connect)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _seconds: None)
+
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is True
+    assert attempts == 3
+
+
+def test_retry_failed_pre_agent_reply_task_requires_no_run_or_sent_reply(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Alex",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    claimed = store.claim_reply_task(task_id)
+    assert claimed is not None
+    store.fail_reply_task(
+        task_id,
+        "pre_agent_lock_failure",
+        expected_execution_generation=claimed.execution_generation,
+    )
+
+    recovered = store.retry_failed_pre_agent_reply_task(
+        task_id,
+        reason="operator_retry_after_lock_recovery",
+    )
+
+    assert recovered.status == "pending"
+    assert recovered.attempts == 0
+    assert recovered.error == "operator_retry_after_lock_recovery"
+
+    claimed = store.claim_reply_task(task_id)
+    assert claimed is not None
+    store.fail_reply_task(
+        task_id,
+        "second_failure",
+        expected_execution_generation=claimed.execution_generation,
+    )
+    run = store.claim_agent_run(
+        task_id,
+        claimed.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="test-run",
+    ).run
+
+    with pytest.raises(ValueError, match="already has an agent run"):
+        store.retry_failed_pre_agent_reply_task(
+            task_id,
+            reason="must_not_retry",
+        )
+    assert run.id > 0
 
 
 def test_codex_session_lock_replaces_stale_lock(tmp_path):
@@ -2454,7 +2573,7 @@ def test_failed_agent_run_rejects_conflicting_terminal_rewrite(tmp_path: Path):
         )
 
 
-def test_retry_failed_reply_task_reopens_same_retryable_no_effect_run(
+def test_retry_failed_reply_task_creates_a_new_retryable_consumer_turn(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2493,7 +2612,7 @@ def test_retry_failed_reply_task_reopens_same_retryable_no_effect_run(
     assert recovered.error == "operator_retry_after_runtime_fix"
     retry_claim = store.claim_reply_task(task_id)
     assert retry_claim is not None
-    reclaimed = store.claim_agent_run(
+    same_turn = store.claim_agent_run(
         task_id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -2503,8 +2622,26 @@ def test_retry_failed_reply_task_reopens_same_retryable_no_effect_run(
         operation_id="",
         owner="worker-2",
     )
-    assert reclaimed.claimed is True
-    assert reclaimed.run.id == claim.run.id
+    assert same_turn.claimed is False
+    next_turn = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=store.next_agent_run_turn_attempt(
+            task_id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+        ),
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-2",
+    )
+    assert next_turn.claimed is True
+    assert next_turn.run.id != claim.run.id
+    assert next_turn.run.turn_attempt == 1
+    assert store.get_agent_run(claim.run.id).status == "failed"
 
 
 @pytest.mark.parametrize(
@@ -5399,6 +5536,34 @@ def test_service_state_round_trip(tmp_path: Path):
     assert loaded.get_service_state("dws_upgrade_checked_date") == "2026-05-25"
 
 
+def test_codex_capacity_pause_is_shared_and_expires(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    now = datetime.fromisoformat("2026-08-12T10:00:00+00:00")
+    retry_at = "2026-08-12T10:30:00+00:00"
+
+    assert store.open_codex_capacity_pause(retry_at=retry_at, now=now) is True
+    assert store.open_codex_capacity_pause(retry_at=retry_at, now=now) is False
+    assert store.active_codex_capacity_pause(now=now) == retry_at
+    assert (
+        store.active_codex_capacity_pause(
+            now=datetime.fromisoformat("2026-08-12T10:30:00+00:00")
+        )
+        == ""
+    )
+
+
+def test_resolve_errors_keeps_history_with_a_resolution(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error(None, None, "consumer", "temporary failure")
+    [error] = store.list_errors()
+
+    assert store.resolve_errors([error.id], resolution="recovered by queue retry") == 1
+    resolved = store.list_errors()[0]
+
+    assert resolved.resolved_at
+    assert resolved.resolution == "recovered by queue retry"
+
+
 def test_missing_service_state_returns_none(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
@@ -6305,6 +6470,48 @@ def test_service_restart_releases_unknown_audit_reconciliation_lease(
     assert persisted.lease_expires_at == ""
     assert persisted.reconciliation_next_attempt_at == ""
     assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+
+
+def test_service_restart_requeues_running_effectful_audit_for_reconciliation(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(store, task.id, task.execution_generation, owner="stopped-worker").run
+    started = {
+        "type": "item.started",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    completed = {
+        "type": "item.completed",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    store.append_agent_run_event(run.id, started, owner="stopped-worker")
+    store.append_agent_run_event(run.id, completed, owner="stopped-worker")
+
+    recovered = store.recover_effectful_audit_runs_after_service_restart()
+
+    assert [item.id for item in recovered] == [task.id]
+    recovered_task = store.get_reply_task(task.id)
+    recovered_run = store.get_agent_run(run.id)
+    assert recovered_task is not None and recovered_task.status == "pending"
+    assert recovered_task.execution_generation == task.execution_generation
+    assert recovered_task.error == "service_restart_effect_reconciliation"
+    assert recovered_run is not None and recovered_run.status == "unknown"
+    assert recovered_run.side_effect_state == "unknown"
+    assert json.loads(recovered_run.structured_error_json)["code"] == (
+        "service_restart_effect_requires_reconciliation"
+    )
 
 
 def test_service_restart_resumes_completed_turn_without_replaying_it(

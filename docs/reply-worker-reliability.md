@@ -49,6 +49,14 @@ Consumer turn 全程只读；如果 Codex 在同一 Consumer turn 中报告新�
 同一时刻只允许一个 A turn 更新该 session。服务使用短期可续租的 transcript 锁保证 JSONL
 顺序；后续消息仍保留在 SQLite 队列，不因锁存在而丢失。
 
+若 A 在没有外部副作用时失败，恢复会为同一 proposal revision 写入一个新的递增 turn
+attempt。旧 turn 仍保留失败状态、session 标识和审计事件，绝不清空后复用；这样新的 Codex
+session 不会与旧 session 标识冲突，同时历史页面可以准确显示每次恢复的进度。
+
+本地材料读取遵从安装用户 `config.toml` 的命令黑名单，而不是按文件格式建立白名单。Python
+解析是允许的，只要调用经过 `agent_cli.execute_reviewed_read` 且命令不在黑名单中。若 Agent
+绕过受控读取入口，失败记录保留具体安全码，方便区分直接 shell、未审核命令和黑名单拒绝。
+
 ### Audit Agent B
 
 每个候选 revision 使用一个新的 B session，避免前一候选的审计结论污染新候选。B 读取
@@ -187,9 +195,13 @@ DWS 只读调用可以对明确的临时网络、限流和服务准备错误做�
 ## `no_action`、`needs_human` 与失败
 
 - `no_action`：当前 trigger 不需要外部动作。
-- `needs_human`：必须由 Derek 作出的不可约管理判断。Consumer 必须同时给出 2 至 4 个互斥方案；审计页把每项的执行指令和后果显示为可点击选择。选择后仍进入正常的 Consumer/Audit、外部回读和自动发布流程，不绕过审批边界。
+- `needs_human`：必须由 Derek 作出的不可约管理判断。Consumer 必须同时给出 2 至 4 个互斥方案；每项都包含唯一、稳定的 `key`，以及展示用 label、执行指令和后果。审计页用 `key` 提交所选指令，避免显示文案变化破坏选择。选择后仍进入正常的 Consumer/Audit、外部回读和自动发布流程，不绕过审批边界。
 - 可重试失败：依赖、网络或进程问题，保留在持久队列等待恢复。
 - 不可重试失败：明确缺少权限、目标不存在或当前规则禁止执行，并记录具体原因。
+
+微信 Accessibility 投递在按下发送后没有可见确认时，状态保持为 `send_unknown`。恢复流程只读
+查询同一会话，并从持久化的 `action_started_at` 开始查找完全匹配的出站内容；找到后才收敛为
+`sent`，找不到时不得重发或伪造终态。
 
 每个 Consumer/Audit turn 都会收到明确的当前本地执行时间，同时保留 trigger 和上下文消息的
 原始时间。Agent 必须结合经过时长与最新会话判断动作是否仍服务于原始意图。即时协调、澄清、
@@ -197,12 +209,14 @@ DWS 只读调用可以对明确的临时网络、限流和服务准备错误做�
 `revision_required`，不能因为“尚未重复发送”就执行迟到消息。这个判断由 Agent 按通用 Audit
 Rules 完成，service 不按午餐、会议等业务关键词代替 Agent 决策。
 
-Codex 明确返回额度、配额或 usage limit 时，服务将其归类为 `codex_provider_unavailable`：不在
-同一 turn 内连续重试，不消耗任务重试预算，并保留为延后执行的 pending 任务。审计图以“等待
-Provider 恢复”显示这类任务。退避到期后，下一次持久队列执行会重新领取同一个无副作用 run
-并真实调用 Codex；如果 Provider 仍不可用，则只执行这一次并再次延期，不能只刷新
-`available_at` 而不启动 Agent。重领旧 run 时必须 resume 该 run 自己已记录的 Codex session；
-同一对话后来产生的新 session 不能覆盖旧 run 的审计身份。只有当前仍处于终态的失败才使用红色。
+Codex 明确返回 workspace credits、配额或 usage limit 时，服务将其归类为
+`codex_provider_capacity_exhausted`，而不是普通的 `codex_provider_unavailable`。首次发现会写入一个
+持久化的共享暂停记录，并把当前任务延后到 `CEO_CODEX_CAPACITY_RETRY_DELAY`（默认 30 分钟）后；
+回复、工作汇总和会议分析在暂停期内都不启动新的 Codex 进程，因此不会产生同一容量故障的错误风暴。
+发送回读和已开始的外部动作核验不受暂停影响。暂停期满后下一次持久队列执行才重新领取一个无副作用
+run 并真实调用 Codex；如果仍耗尽额度，只重新打开一次新的暂停期。重领旧 run 时必须 resume 该 run
+自己已记录的 Codex session；同一对话后来产生的新 session 不能覆盖旧 run 的审计身份。普通网络或
+provider 传输故障仍使用原有的一至十五分钟指数退避。只有当前没有恢复路径的失败才使用红色。
 
 服务启动恢复分三类：没有任何 Agent run 的 processing task 回到 pending；仍在运行且已证明没有
 副作用的 turn 会创建新 generation；而最新 turn 已经 `completed`、不存在 `running/unknown` 的
@@ -316,12 +330,12 @@ from remaining a red service failure for the rest of the repair window.
 
 ### Consumer/Audit structured output
 
-Consumer A and Audit B do not use Codex native `--output-schema`; that upstream
-mode rejects the root-discriminated schema before the Agent can run. Each role's
-prompt embeds a `Pydantic Wire Contract` generated directly from its current model.
-Codex returns real nested objects and arrays, and the service validates the response
-strictly with that Pydantic model before accepting any result. There are no
-`*_json` transport fields or compatibility fallback to the former wire shape.
+Consumer A and Audit B do not pass Codex native `--output-schema` because that
+transport constraint can prevent dynamically loaded reviewed MCP tools from running.
+Their wire schemas keep dynamic nested proposal and receipt data in JSON strings;
+the service decodes and validates the final result against the full Pydantic business
+contracts before any action can be accepted. The service does not fall back to the
+former result shape when the wire schema is violated.
 
 For an executed Audit result, nested `external_result` has one strict shape:
 `operation_id` must match the reviewed proposal, `verification_summary` describes
@@ -383,10 +397,13 @@ execution claims the unknown run, the same formal deferral transition records
 next attempt without invoking an Agent or external effect.
 
 Audit validates the mechanical command contract before starting an execution.
-A DWS write without `--yes` is returned to Consumer A as a revision instead of
-being attempted. If an older persisted candidate reaches unknown-outcome recovery
-with that invalid command, the service rotates to a new Consumer generation; it
-does not ask the user to choose and does not replay the old command.
+For native DWS/Lark commands, the exact argv is authoritative: metadata derives
+the canonical command path and target from it, while Consumer's operation label
+is descriptive only. A DWS write without `--yes` is returned to Consumer A as a
+revision instead of being attempted. If an older persisted candidate reaches
+unknown-outcome recovery with that invalid command, the service rotates to a new
+Consumer generation; it does not ask the user to choose and does not replay the
+old command.
 
 Only the first Codex turn started for a Consumer or Audit invocation is part of
 that business run. Plugin stop hooks may open later turns for tasks such as

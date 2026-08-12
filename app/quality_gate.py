@@ -127,7 +127,14 @@ def scan_hourly_quality(
 
         violations: list[QualityIssue] = []
         attention: list[QualityIssue] = []
-        _check_reply_tasks(db, checked_now, violations, attention)
+        capacity_paused = _has_active_codex_capacity_pause(db, checked_now)
+        _check_reply_tasks(
+            db,
+            checked_now,
+            violations,
+            attention,
+            capacity_paused=capacity_paused,
+        )
         _check_reply_attempts(db, checked_now, violations, attention)
         _check_agent_runs(db, checked_now, violations, attention)
         _check_work_items(db, checked_now, violations, attention)
@@ -137,6 +144,7 @@ def scan_hourly_quality(
         _check_external_delivery_queues(db, checked_now, violations, attention)
         _check_feedback(db, violations)
         _check_scan_health(db, violations, attention)
+        _check_codex_capacity_pause(db, checked_now, attention)
         _check_recent_errors(db, checked_now, violations)
     return QualityGateReport(
         checked_at=now_text,
@@ -255,6 +263,8 @@ def _check_reply_tasks(
     now: datetime,
     violations: list[QualityIssue],
     attention: list[QualityIssue],
+    *,
+    capacity_paused: bool = False,
 ) -> None:
     _add(violations, source="reply_tasks", code="failed", count=_count(
         db, "select count(*) from reply_tasks where lower(status)='failed'"
@@ -264,14 +274,26 @@ def _check_reply_tasks(
         "select count(*) from reply_tasks where lower(status)='processing' and datetime(updated_at) < datetime(?)",
         (_cutoff(now, REPLY_PROCESSING_STALE_SECONDS),),
     ), severity="error", detail="reply task exceeded the worker recovery lease")
-    _add(violations, source="reply_tasks", code="pending_overdue", count=_count(
+    pending_overdue = _count(
         db,
         """select count(*) from reply_tasks
            where lower(status)='pending'
              and (available_at='' or datetime(available_at) <= datetime(?))
              and datetime(updated_at) < datetime(?)""",
         (now.strftime("%Y-%m-%d %H:%M:%S"), _cutoff(now, PENDING_STALE_SECONDS)),
-    ), severity="error", detail="reply task was due but was not claimed")
+    )
+    _add(
+        attention if capacity_paused else violations,
+        source="reply_tasks",
+        code="capacity_paused" if capacity_paused else "pending_overdue",
+        count=pending_overdue,
+        severity="info" if capacity_paused else "error",
+        detail=(
+            "reply work is intentionally held by the shared Codex capacity pause"
+            if capacity_paused
+            else "reply task was due but was not claimed"
+        ),
+    )
     _add(attention, source="reply_tasks", code="active", count=_count(
         db, "select count(*) from reply_tasks where lower(status) in ('pending','processing')"
     ), severity="info", detail="reply work is currently queued or processing")
@@ -560,6 +582,12 @@ def _check_scan_health(
     _add(violations, source="daily_scan_state", code="last_error", count=_count(
         db, "select count(*) from daily_scan_state where trim(last_error) != ''"
     ), severity="error", detail="source scanner reports an unresolved error")
+    _add(attention, source="daily_scan_state", code="pagination_deferred", count=_count(
+        db,
+        """select count(*) from daily_scan_state
+           where scanner_name='ai_minutes'
+             and coalesce(json_extract(cursor_json, '$.pagination_deferred'), 0) = 1""",
+    ), severity="info", detail="AI minutes first page completed; a later page will retry")
     _add(attention, source="daily_scan_state", code="oa_detail_read", count=_count(
         db,
         """select count(*) from daily_scan_state
@@ -595,7 +623,8 @@ def _check_recent_errors(
         """select count(*)
            from errors error_event
            where datetime(error_event.created_at) >= datetime(?)
-             and coalesce(error_event.resolved_at, '')=''
+             and coalesce(error_event.resolved_at, '') = ''
+             and error_event.kind <> 'codex_capacity_pause'
              and not exists (
                 select 1
                 from reply_attempts recovery
@@ -611,3 +640,39 @@ def _check_recent_errors(
             *RECOVERED_REPLY_ATTEMPT_STATUSES,
         ),
     ), severity="error", detail="a service error was recorded within the four-hour repair window")
+
+
+def _check_codex_capacity_pause(
+    db: sqlite3.Connection,
+    now: datetime,
+    attention: list[QualityIssue],
+) -> None:
+    if not _has_active_codex_capacity_pause(db, now):
+        return
+    _add(
+        attention,
+        source="codex_capacity",
+        code="paused",
+        count=1,
+        severity="info",
+        detail="Codex workspace capacity is paused until the recorded retry time",
+    )
+
+
+def _has_active_codex_capacity_pause(
+    db: sqlite3.Connection,
+    now: datetime,
+) -> bool:
+    row = db.execute(
+        "select value from service_state where key='codex_capacity_pause'"
+    ).fetchone()
+    if row is None:
+        return False
+    try:
+        value = json.loads(str(row["value"] or ""))
+        retry_at = datetime.fromisoformat(str(value.get("retry_at") or ""))
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    return retry_at.astimezone(timezone.utc) > now

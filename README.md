@@ -74,7 +74,7 @@ Service 不解释业务材料，不替 Agent 选择文件或猜测 OA 对象，�
 不把专业规则复制进通用 prompt。Task extraction 与 follow-up 由 `ceo-work-tracking` 作为一个从
 提取、建项、催办、验证到关闭的生命周期处理，不建立第二套回复路径。
 
-当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取仍以临时网络错误失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。
+当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取以临时网络错误或未分类的命令输出失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。明确的登录或授权失败仍保持阻断，避免无效重试。
 
 DWS 可能同时返回通用错误码和更具体的服务端错误码；服务始终按具体服务端错误码分类。日历、消息、通讯录和 AI 听记等只读命令遇到临时 `ERROR`、`RATE_LIMIT_ERROR` 或 `PREPARE_CALL_TOOL_ERROR` 会在当前调用内重试，写操作不使用这条通用重试规则。
 
@@ -82,7 +82,9 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 单个访问失败反馈只允许 A 诊断并提出候选，不授权修改共享部署入口、域名、DNS、路由或基础设施配置。此类变更必须在上下文中已有至少 3 个相互独立的受影响案例，或 Derek 对该项具体变更给出当次明确授权；同一机器或网络上的重复探测只算一个案例。条件不足时保持配置不变并返回 `needs_human`。
 
-一次 reply task generation 对应一个或多个 A/B run：同一 `conversation_id` 的 A run 复用 `conversations.codex_session_id`，每个候选 revision 创建新的 B run。Reply consumer 本身按队列逐条处理消息；会话锁只保护同一 A session 的 JSONL 顺序。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID、transcript 行范围、角色关系、operation ID 和恢复状态。任务终态采用严格 A/B result；服务在收到结果后本地校验 JSON，不使用 Codex CLI 的 `--output-schema` 传输参数。精确重复动作由 trigger、generation 与 revision 共同阻止，人工修订后的新内容不被旧结果拦截。
+一次 reply task generation 对应一个或多个 A/B run：同一 `conversation_id` 的 A run 复用 `conversations.codex_session_id`，每个候选 revision 创建新的 B run。单个 launchd 服务内的 consumer pool 允许不同会话并行处理；SQLite 原子认领和会话锁保证同一 A session 的 JSONL 顺序。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID、transcript 行范围、角色关系、operation ID 和恢复状态。任务终态采用严格 A/B result；服务在收到结果后本地校验 JSON，不使用 Codex CLI 的 `--output-schema` 传输参数。精确重复动作由 trigger、generation 与 revision 共同阻止，人工修订后的新内容不被旧结果拦截。
+
+单一 launchd 服务默认每轮由 2 个 consumer 线程各处理至多 4 条 reply task。该限制提高积压恢复吞吐，不创建额外 launchd job；任务认领是原子的，同一会话仍必须先取得会话锁，所有外部动作仍走 Consumer A 与 Audit B 的审核和回读。
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
@@ -249,6 +251,7 @@ cp .env.example .env
 | `CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS` | 会后对齐队列消费周期，默认 10 秒 |
 | `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | 可选模型覆盖；默认 `gpt-5.5` + `medium`，未设置时继续使用用户的 Codex 认证与 MCP/skills |
+| `CEO_CODEX_CAPACITY_RETRY_DELAY` | Codex 明确返回 workspace credits、quota 或 usage limit 后的全局暂停期；默认 30 分钟，暂停期内不再启动新的 Codex 回复、工作汇总或会议分析，过期后自动恢复 |
 | `CEO_FEISHU_CLI_BINARY` | 飞书 CLI 二进制名，默认 `lark` |
 | `CEO_FEISHU_LIVE_SEND_ENABLED` | 飞书 CLI 真实发送开关，默认 `0`；未显式设为 `1` 时 `send_reply` 只返回 blocked，不会发送 |
 | `data/mcp-doctor-state.json` | MCP doctor 的一次性提醒状态文件；用于避免 `needs_login` / `token_expired` 状态重复弹授权提醒 |
@@ -336,7 +339,7 @@ cd /path/to/ceo-agent-service
   --dingtalk-kb-workspace '<workspace-id-or-url>'
 ```
 
-普通运行时不需要预先同步整个外部知识库。消息中出现钉钉在线文档、OA、日程、图片或文件材料时，worker 只把原始引用和精确读取命令交给 Consumer A；A 决定读取、展开和核对哪些材料，Audit B 在外部写入前独立复核。下载到临时材料目录的 `.xlsx` / `.xlsm` 文件由 `agent_cli.read_spreadsheet` 以服务自带的只读 Python 解析，限制文件、行列和预览大小，不把文件分析降级为人工决定。`agent_cli` 的每个受控工具都公开用途说明，确保 Agent 能按材料类型检索到日程、文档、文件等读取能力。受控重跑会启动新 Agent 会话，使新工具和新规则生效，不会恢复已失败会话中的旧工具调用；可重试但没有任何受控工具进展的 Consumer 回合也会清除旧会话后再试。读不到但能向对话参与者补齐的关键材料时，A 提出具体追问候选；不能猜测，也不要求 Derek 在“继续”与“追问”之间选择。
+普通运行时不需要预先同步整个外部知识库。消息中出现钉钉在线文档、OA、日程、图片或文件材料时，worker 只把原始引用和精确读取命令交给 Consumer A；A 决定读取、展开和核对哪些材料，Audit B 在外部写入前独立复核。下载的本地材料通过 `agent_cli.execute_reviewed_read` 读取：DWS 和 Lark 使用发布的 effect 元数据；Python、表格解析器和其他本地命令由主人的 `~/.codex/config.toml` 中 `[ceo_agent.local_read_policy]` 黑名单控制。没有策略或策略无效时，本地命令会拒绝执行。该策略显式列出禁止的命令和危险参数，而不按 Excel 文件类型做权限判断。`agent_cli` 的每个受控工具都公开用途说明，确保 Agent 能按材料类型检索到日程、文档、文件等读取能力。受控重跑会启动新 Agent 会话，使新工具和新规则生效，不会恢复已失败会话中的旧工具调用；可重试但没有任何受控工具进展的 Consumer 回合也会清除旧会话后再试。读不到但能向对话参与者补齐的关键材料时，A 提出具体追问候选；不能猜测，也不要求 Derek 在“继续”与“追问”之间选择。
 
 ### 5. 数据准备：CEO 人格蒸馏
 
@@ -500,7 +503,7 @@ scripts/install-auto-reply-agents.sh
 
 - `com.ceo-agent-service.main`：唯一 launchd job，托管队列 worker 与本地审计页面。
 - producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。
-- consumer loop：按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。
+- consumer pool：单一 launchd 服务内按 `CEO_CONSUMER_WORKERS` 启动 2 条受限 consumer 线程；每条按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。同一会话仍串行。
 - meeting producer loop：读取 AI 听记与日历参会证据，只为 Derek 参会且明确结束至少 `CEO_MEETING_SETTLE_SECONDS` 的会议建队列；没有匹配日程的临时通话，仅在完整转写恰好证明 Derek 和另一位唯一员工时按 1:1 放行；没有触发条件的会议保持安静。
 - meeting consumer loop：独立分析并投递；多人会议由 Agent 使用 DWS 查找并选择有明确业务承接关系的团队群，议题相似、参会人重合或近期活跃本身不构成投递证据。多人会议默认发群；内容涉及个人隐私、个人薪酬绩效或对特定个人的严厉负面反馈、不适合群聊时改为私信。只有群发现完整成功且没有可发送群时，才默认私信日历中唯一的会议创建人；创建人身份由发送层通过 DWS 唯一验证。DWS 读取或网络失败、群元数据不完整、创建人缺失或不唯一时保持可恢复重试，不猜测收件人。发送正文固定以 `【会议跟进】会议标题（会议时间）` 开头，便于收件人识别来源会议；真实 @ 默认限于参会人，非参会人只有会议转写明确说到是他的任务、由他负责、交给他确认或跟进时才 @。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
 - `replay-recent-meetings` 会重新读取日历和听记证据，并只重开没有任何发送回执的 `no_action` 或 `failed` 会议任务；已发送或存在发送回执的任务保持终态，避免重复外发。

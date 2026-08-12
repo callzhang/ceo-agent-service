@@ -47,7 +47,7 @@ violation 或必需数据源不可检查。
 | 外部投递队列 | `work_todo_dingtalk_links`、`wechat_deliveries`、`memory_write_events` 的失败或未知发送 | 这些队列的活动状态 |
 | `feedback_events` | 未记录 `resolved_at` 的反馈 | 无 |
 | `daily_scan_state` / `wechat_read_state` | scanner 仍有 `last_error`；微信 reader 不可用且存在待处理微信回复 | 无待处理微信工作时的 reader 未就绪 |
-| `errors` | 最近 4 小时新建且未解决的服务错误 | 无 |
+| `errors` | 最近 4 小时新建、未解决且没有活动恢复路径的服务错误 | Codex 容量暂停期间的一条共享容量事件 |
 
 当前时间窗口是有意区分的：`errors` 为最近 4 小时，最新 `dry_run` 为最近 24 小时，
 其余队列按当前所有未终态记录扫描。超时值来自 `app/quality_gate.py`，不要在 heartbeat
@@ -100,8 +100,9 @@ attempt 开始。Attention 中同一 reply trigger 只保留一条 `Reply task` 
 
 ## 外部依赖边界
 
-`quality-check` 默认附加实时 channel gate。DingTalk 和 Codex 始终检查；Lark 只在未完成
-任务实际引用飞书材料时检查。任一被要求的 gate 不是 `ready` 都作为
+`quality-check` 默认检查 DingTalk，以及当前有 active task 或最近 72 小时 failed/blocked
+attempt 的可选通道。没有任何待处理或待恢复工作引用的 Lark 未配置状态仅保留在
+`channel-doctor`，不会把小时质量门禁标红；一旦 Lark 工作进入队列，Lark gate 立即成为
 `channel:<name>/not_ready` violation。离线诊断可以显式使用 `--no-verify-channels`，但该
 结果不能作为线上健康证明。
 

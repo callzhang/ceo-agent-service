@@ -7,6 +7,7 @@ import pytest
 import app.consumer_agent as consumer_agent
 from app.agent_context import AgentTaskContext, _CONSUMER_AGENT_RULES
 from app.agent_contracts import ConsumerAgentResult
+from app.agent_turn_runner import _agent_cli_receipt
 from app.consumer_agent import (
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
@@ -18,11 +19,147 @@ from app.agent_result import EffectKind, ResultParseError
 from app.developer_prompt import DeveloperPromptTemplateError
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
+    LocalReadCommandPolicy,
     NativeCliMetadataClassifier,
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 from tests.prompt_structure import validate_prompt_structure
+
+
+def test_agent_cli_receipt_accepts_json_encoded_mcp_result() -> None:
+    receipt = {
+        "cli": "dws",
+        "operation": "chat message list",
+        "operation_digest": "digest",
+        "target_identifiers": {"conversation": "cid-1"},
+        "result_digest": "result-digest",
+    }
+
+    assert _agent_cli_receipt(json.dumps({"structuredContent": receipt})) == receipt
+    wrapped = "Wall time: 0.01 seconds\nOutput:\n" + json.dumps(
+        {"structuredContent": receipt}
+    )
+    assert _agent_cli_receipt(wrapped) == receipt
+
+
+def test_consumer_records_specific_missing_agent_cli_receipt(
+    store, task, context
+):
+    argv = ["dws", "chat", "message", "list", "--conversation-id", "cid-1"]
+    item = {
+        "type": "mcp_tool_call",
+        "id": "missing-receipt",
+        "server": "agent_cli",
+        "tool": "execute_reviewed_read",
+        "arguments": {"argv": argv},
+    }
+    stream = "\n".join(
+        (
+            json.dumps({"type": "item.started", "item": item}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {**item, "status": "completed", "result": {}},
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="agent_cli_receipt_missing"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(stream),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    assert json.loads(run.structured_error_json)["code"] == "agent_cli_receipt_missing"
+
+
+def test_consumer_records_agent_cli_tool_error_instead_of_missing_receipt(
+    store, task, context
+):
+    argv = ["dws", "schema", "--compact", "--format", "json"]
+    item = {
+        "type": "mcp_tool_call",
+        "id": "rejected-command",
+        "server": "agent_cli",
+        "tool": "execute_reviewed_read",
+        "arguments": {"argv": argv},
+    }
+    tool_error = "Error executing tool execute_reviewed_read: agent_cli_command_unreviewed"
+    stream = "\n".join(
+        (
+            json.dumps({"type": "item.started", "item": item}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        **item,
+                        "status": "completed",
+                        "result": "Wall time: 0.01 seconds\nOutput:\n"
+                        + json.dumps([{"type": "text", "text": tool_error}]),
+                    },
+                }
+            ),
+            _result_jsonl(),
+        )
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    assert result.result.outcome == "no_action"
+    assert run.structured_error_json == ""
+    assert run.tool_events[-1]["item"]["metadata"]["failure_code"] == (
+        "agent_cli_command_unreviewed"
+    )
+
+
+def test_consumer_can_continue_after_rejected_read_command(store, task, context):
+    item = {
+        "type": "mcp_tool_call",
+        "id": "rejected-read",
+        "server": "agent_cli",
+        "tool": "execute_reviewed_read",
+        "arguments": {"argv": ["dws", "chat", "+messages-send-status"]},
+    }
+    tool_error = "Error executing tool execute_reviewed_read: agent_cli_command_invalid"
+    stream = "\n".join(
+        (
+            json.dumps({"type": "item.started", "item": item}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        **item,
+                        "status": "completed",
+                        "result": "Wall time: 0.01 seconds\nOutput:\n"
+                        + json.dumps([{"type": "text", "text": tool_error}]),
+                    },
+                }
+            ),
+            _result_jsonl(),
+        )
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.outcome == "no_action"
+    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    assert run.structured_error_json == ""
+    assert run.tool_events[-1]["item"]["metadata"]["failure_code"] == (
+        "agent_cli_command_invalid"
+    )
 
 
 class CapturingExecutor:
@@ -86,7 +223,8 @@ def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative
         dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
         audit_rules=audit_rules,
         context_facts=context_facts,
-        size_limit=12_000,
+        size_limit=32_000,
+        require_runtime_safety_sections=True,
     )
     assert audit_rules in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
@@ -184,7 +322,11 @@ def test_consumer_instructions_require_dynamic_business_and_operation_skill_read
         "applicable business and operation Skill with `agent_cli.read_skill` before "
         "forming the candidate."
     ) in instructions
-    assert instructions.count("agent_cli.read_skill") == 1
+    assert "inspect the installed Skill catalog" in instructions
+    assert "most specific applicable business Skill" in instructions
+    assert "load the operation Skill named by that business Skill" in instructions
+    assert "Do not ask the service to classify the domain" in instructions
+    assert "dws schema --cli-path" in instructions
 
 
 def test_consumer_instructions_do_not_enumerate_specialist_workflows():
@@ -307,22 +449,48 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     assert 'sandbox_mode="read-only"' not in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert "tools.enabled_tools=[]" in command
+    # Result parsing remains strict in the service, but output-schema is not
+    # sent to Codex because it conflicts with dynamically loaded MCP tools.
     assert "--output-schema" not in command
     assert 'approval_policy="never"' in command
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command
-    assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_spreadsheet"]' in command
+    assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill"]' in command
     assert "execute_reviewed_write" not in " ".join(command)
     assert store.get_agent_run(result.run_id).role.value == "consumer"
     assert not any(
         "Output JSON Schema (validated locally):" in option for option in command
     )
     assert any("agent_cli.read_skill" in option for option in command)
-    instructions = consumer_developer_instructions("Verify every supported fact.")
-    assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
     assert any("## Pydantic Wire Contract" in option for option in command)
     assert any("ConsumerAgentWireResult" in option for option in command)
     assert "## Runtime Invariants" in executor.prompts[0]
+    assert any(
+        "call `agent_cli.execute_reviewed_read`" in option
+        for option in command
+    )
+    assert any("Python is valid for parsing" in option for option in command)
+    assert any(
+        "dingtalk-chat/SKILL.md" in option
+        and "not a reason to return `needs_human`" in option
+        for option in command
+    )
+    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
+    assert "referenced skill, document,\nconfiguration" in instructions
+    assert "normal Agent work" in instructions
+    assert any(
+        "Authoritative Consumer role boundary" in option
+        and "valid ConsumerAgentResult JSON" in option
+        for option in command
+    )
+    assert "proposal_json must decode to this JSON Schema exactly" in executor.prompts[0]
+    assert '"expected_verification"' in executor.prompts[0]
+    assert any(
+        "each array item must contain exactly these non-empty string fields" in option
+        and "`key`" in option
+        and "use concise identifiers such as `option_1`" in option
+        for option in command
+    )
 
 
 def test_consumer_rotates_session_when_wire_contract_changes(store, task, context):
@@ -582,7 +750,7 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
         )
     )
 
-    with pytest.raises(RuntimeError, match="codex_provider_unavailable"):
+    with pytest.raises(RuntimeError, match="codex_provider_capacity_exhausted"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
@@ -597,11 +765,11 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
         turn_attempt=0,
     )
     assert run is not None
-    assert '"code":"codex_provider_unavailable"' in run.structured_error_json
+    assert '"code":"codex_provider_capacity_exhausted"' in run.structured_error_json
     assert '"retryable":true' in run.structured_error_json
 
 
-def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advances(
+def test_retryable_consumer_turn_uses_the_current_conversation_session(
     store, task, context
 ):
     provider_failure = "\n".join(
@@ -616,7 +784,7 @@ def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advan
             json.dumps({"type": "turn.failed"}),
         )
     )
-    with pytest.raises(RuntimeError, match="codex_provider_unavailable"):
+    with pytest.raises(RuntimeError, match="codex_provider_capacity_exhausted"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
@@ -632,7 +800,7 @@ def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advan
     store.set_codex_session_contract_hash(
         task.conversation_id, consumer_wire_contract_hash()
     )
-    executor = CapturingExecutor(_result_jsonl(session="session-old"))
+    executor = CapturingExecutor(_result_jsonl(session="session-new"))
 
     ConsumerAgentRunner(
         store=store,
@@ -642,11 +810,27 @@ def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advan
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     assert executor.commands[0][:3] == ["codex", "exec", "resume"]
-    assert executor.commands[0][-2:] == ["session-old", "-"]
+    assert executor.commands[0][-2:] == ["session-new", "-"]
     assert store.get_codex_session_id(task.conversation_id) == "session-new"
+    failed = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    recovered = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=1,
+    )
+    assert failed is not None and failed.status == "failed"
+    assert recovered is not None and recovered.status == "completed"
 
 
-def test_old_run_parse_failure_does_not_clear_newer_conversation_session(
+def test_retry_turn_parse_failure_clears_only_its_current_conversation_session(
     store, task, context
 ):
     provider_failure = "\n".join(
@@ -661,7 +845,7 @@ def test_old_run_parse_failure_does_not_clear_newer_conversation_session(
             json.dumps({"type": "turn.failed"}),
         )
     )
-    with pytest.raises(RuntimeError, match="codex_provider_unavailable"):
+    with pytest.raises(RuntimeError, match="codex_provider_capacity_exhausted"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
@@ -687,7 +871,56 @@ def test_old_run_parse_failure_does_not_clear_newer_conversation_session(
             codex_session_exists=lambda _: True,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert store.get_codex_session_id(task.conversation_id) == "session-new"
+    assert store.get_codex_session_id(task.conversation_id) is None
+    failed = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    retry = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=1,
+    )
+    assert failed is not None and failed.codex_session_id == "session-old"
+    assert retry is not None and retry.codex_session_id == ""
+
+
+def test_retry_after_failed_session_creates_a_new_turn_and_session(store, task, context):
+    first = CapturingExecutor(json.dumps({"type": "thread.started", "thread_id": "session-old"}))
+    with pytest.raises(ResultParseError, match="no valid typed result"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=first,
+            codex_session_exists=lambda _: True,
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert store.get_codex_session_id(task.conversation_id) is None
+    recovered = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(_result_jsonl(session="session-fresh")),
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    failed = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    retry = store.get_agent_run(recovered.run_id)
+    assert failed is not None and failed.status == "failed"
+    assert failed.codex_session_id == "session-old"
+    assert retry is not None and retry.turn_attempt == 1
+    assert retry.codex_session_id == "session-fresh"
+    assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
 
 
 def test_consumer_preserves_codex_cli_authentication_failure(store, task, context):
@@ -888,6 +1121,25 @@ def test_consumer_reports_session_lock_release_failure(
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
+def test_consumer_rejects_schema_artifact_drift(
+    store,
+    task,
+    context,
+    tmp_path,
+    monkeypatch,
+):
+    schema_path = tmp_path / "consumer.schema.json"
+    schema_path.write_text('{"type":"object"}', encoding="utf-8")
+    monkeypatch.setattr("app.consumer_agent.SCHEMA_PATH", schema_path)
+
+    with pytest.raises(ValueError, match="schema does not match"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(_result_jsonl()),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+
 def test_consumer_rejects_malformed_nested_output_locally(
     store,
     task,
@@ -1063,7 +1315,13 @@ def test_consumer_allows_reviewed_direct_native_read(store, task, context):
     ]
 
 
-def test_consumer_persists_reviewed_local_read_receipt(store, task, context):
+def test_consumer_persists_reviewed_local_read_receipt(
+    store, task, context, monkeypatch
+):
+    monkeypatch.setattr(
+        "app.native_cli_metadata.load_local_read_command_policy",
+        lambda: LocalReadCommandPolicy(frozenset(), {}),
+    )
     argv = ["sed", "-n", "1p", "/tmp/public-material"]
     descriptor = NativeCliMetadataClassifier(reviewed_effects={}).classify(
         {"type": "command_execution", "argv": argv}
@@ -1144,15 +1402,25 @@ def test_consumer_rejects_direct_native_write(store, task, context):
             ),
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert '"code":"agent_write_forbidden"' in run.structured_error_json
 
-def test_consumer_rejects_unreviewed_direct_shell_command(store, task, context):
+
+def test_consumer_rejects_blacklisted_direct_shell_command(store, task, context):
     shell = json.dumps(
         {
             "type": "item.started",
             "item": {
                 "type": "command_execution",
                 "id": "shell-1",
-                "command": "date",
+                    "command": "rm /tmp/material",
             },
         }
     )
@@ -1166,3 +1434,26 @@ def test_consumer_rejects_unreviewed_direct_shell_command(store, task, context):
             workspace=Path("/workspace"),
             executor=CapturingExecutor(shell + "\n" + _result_jsonl()),
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+
+def test_consumer_accepts_principal_policy_local_read_command(store, task, context):
+    shell = json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "type": "command_execution",
+                "id": "shell-1",
+                "command": "date",
+            },
+        }
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(shell + "\n" + _result_jsonl()),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run(result.run_id)
+    assert run is not None
+    assert run.tool_events[0]["item"]["metadata"]["effect"] == "read_only"

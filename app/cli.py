@@ -17,10 +17,11 @@ from app.codex_decision import CodexDecisionRunner
 from app.database_backup import (
     BACKUP_CHECK_INTERVAL_SECONDS,
     backup_database_if_due,
-    prune_database_backups,
 )
 from app.config import (
+    codex_capacity_retry_duration,
     consumer_poll_interval_seconds,
+    consumer_worker_count,
     embedding_api_key,
     embedding_base_url,
     embedding_enabled,
@@ -103,6 +104,10 @@ from app.worker import (
     _is_codex_provider_recovery_wait_reason,
     _is_terminal_codex_auth_failure,
     _normalize_codex_stop_error_reason,
+)
+from app.codex_capacity import (
+    CODEX_CAPACITY_EXHAUSTED_MESSAGE,
+    is_codex_capacity_exhausted,
 )
 from app.weekly_okr_report import (
     DEFAULT_SCHEDULE_HOUR,
@@ -191,6 +196,7 @@ class WorkerSettings(BaseModel):
     meeting_producer_interval_seconds: PositiveInt = 60
     meeting_consumer_poll_interval_seconds: PositiveInt = 10
     meeting_settle_seconds: PositiveInt = 600
+    consumer_workers: PositiveInt = 2
     max_batches: NonNegativeInt | None = None
 
 
@@ -566,6 +572,12 @@ def build_parser() -> argparse.ArgumentParser:
                 default=consumer_poll_interval_seconds(),
             )
             subparser.add_argument(
+                "--consumer-workers",
+                type=_positive_int,
+                default=consumer_worker_count(),
+                help="bounded in-process reply consumer threads; the same conversation remains session-locked",
+            )
+            subparser.add_argument(
                 "--task-work-item-interval-seconds",
                 type=_positive_int,
                 default=task_work_item_interval_seconds(),
@@ -762,6 +774,7 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         meeting_producer_interval_seconds=meeting_producer_interval_seconds(),
         meeting_consumer_poll_interval_seconds=meeting_consumer_poll_interval_seconds(),
         meeting_settle_seconds=meeting_settle_seconds(),
+        consumer_workers=getattr(args, "consumer_workers", consumer_worker_count()),
         max_batches=args.max_batches,
     )
 
@@ -973,6 +986,8 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         )
     processed = 0
     for _ in range(limit):
+        if store.active_codex_capacity_pause(now=datetime.now(timezone.utc)):
+            break
         claimed = store.claim_work_summary_inputs(limit=1)
         if not claimed:
             break
@@ -983,19 +998,34 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         except Exception as exc:
             raw_error = str(exc)
             error = _normalize_codex_stop_error_reason(raw_error)
+            capacity_exhausted = is_codex_capacity_exhausted(error)
+            opened_capacity_pause = False
+            if capacity_exhausted:
+                now = datetime.now(timezone.utc)
+                opened_capacity_pause = store.open_codex_capacity_pause(
+                    retry_at=(now + codex_capacity_retry_duration()).isoformat(),
+                    now=now,
+                )
             if _should_retry_work_summary_input(exc, work_input.attempts):
                 store.schedule_work_summary_input_retry(
                     work_input.id,
                     error,
                     available_at=_work_summary_retry_available_at(
-                        work_input.attempts
+                        work_input.attempts,
+                        capacity_exhausted=capacity_exhausted,
                     ),
                 )
             elif _should_discard_work_summary_input(error):
                 store.mark_work_summary_input_discarded(work_input.id, error)
             else:
                 store.mark_work_summary_input_failed(work_input.id, error)
-            store.record_error(None, None, "task_agent", error)
+            if not capacity_exhausted or opened_capacity_pause:
+                store.record_error(
+                    None,
+                    None,
+                    "codex_capacity_pause" if capacity_exhausted else "task_agent",
+                    CODEX_CAPACITY_EXHAUSTED_MESSAGE if capacity_exhausted else error,
+                )
     print(f"process-work-items processed={processed}", flush=True)
     return processed
 
@@ -1023,7 +1053,13 @@ def _should_discard_work_summary_input(error: str) -> bool:
     )
 
 
-def _work_summary_retry_available_at(attempts: int) -> str:
+def _work_summary_retry_available_at(
+    attempts: int, *, capacity_exhausted: bool = False
+) -> str:
+    if capacity_exhausted:
+        return (
+            datetime.now(timezone.utc) + codex_capacity_retry_duration()
+        ).strftime("%Y-%m-%d %H:%M:%S")
     delay_seconds = min(
         WORK_SUMMARY_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempts - 1, 0)),
         WORK_SUMMARY_RETRY_MAX_DELAY_SECONDS,
@@ -1571,6 +1607,32 @@ def quality_check_command(
     write_hourly_quality_state(report, state_file)
     print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True), flush=True)
     return 0 if report.ok else 2
+
+
+def _quality_required_channels(db_path: Path) -> set[str]:
+    """Return channels whose readiness can block current recovery work.
+
+    DingTalk is the primary control plane and is always checked. Optional
+    channels are checked only while they have active work or a recent failed
+    attempt that needs recovery. Channel Doctor still exposes all integrations.
+    """
+    import sqlite3
+
+    channels = {"dingtalk"}
+    with sqlite3.connect(str(db_path)) as db:
+        rows = db.execute(
+            """
+            select distinct lower(channel) from reply_tasks
+            where lower(status) in ('pending', 'processing') and trim(channel) != ''
+            union
+            select distinct lower(channel) from reply_attempts
+            where lower(send_status) in ('failed', 'blocked')
+              and datetime(updated_at) >= datetime('now', '-72 hours')
+              and trim(channel) != ''
+            """
+        ).fetchall()
+    channels.update(str(row[0]) for row in rows if row[0])
+    return channels
 
 
 def _record_service_failure(
@@ -2533,15 +2595,6 @@ def run_service(
             ),
         ),
         (
-            "consumer",
-            lambda: run_consumer_loop(
-                create_worker(settings),
-                consumer_poll_interval_seconds,
-                max_tasks=settings.max_batches,
-                network_ready=dependency_gate.ready,
-            ),
-        ),
-        (
             "meeting-producer",
             lambda: run_meeting_producer_loop(
                 settings,
@@ -2577,6 +2630,19 @@ def run_service(
             ),
         ),
     )
+    consumer_components = tuple(
+        (
+            f"consumer-{index + 1}",
+            lambda: run_consumer_loop(
+                create_worker(settings),
+                consumer_poll_interval_seconds,
+                max_tasks=settings.max_batches,
+                network_ready=dependency_gate.ready,
+            ),
+        )
+        for index in range(settings.consumer_workers)
+    )
+    components = components[:2] + consumer_components + components[2:]
     if settings.oa_pending_scan_enabled:
         components += (
             (
@@ -2647,6 +2713,7 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
     recovered_tasks = (
         store.recover_orphaned_processing_reply_tasks()
         + store.recover_no_effect_agent_runs_after_service_restart()
+        + store.recover_effectful_audit_runs_after_service_restart()
         + store.resume_completed_agent_turns_after_service_restart()
     )
     released_reconciliations = (

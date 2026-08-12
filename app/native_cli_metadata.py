@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shlex
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -14,51 +16,10 @@ from app.history import safe_observability_error
 from app.leak_check import contains_credential
 
 
-_LOCAL_READ_ONLY_COMMANDS = frozenset(
-    {
-        "basename",
-        "cat",
-        "cut",
-        "dirname",
-        "du",
-        "file",
-        "find",
-        "grep",
-        "head",
-        "jq",
-        "ls",
-        "pwd",
-        "readlink",
-        "rg",
-        "sed",
-        "sort",
-        "stat",
-        "tail",
-        "tr",
-        "uniq",
-        "unzip",
-        "wc",
-    }
-)
 _SHELL_CONNECTORS = frozenset({"&&", "||", "|", ";"})
-_FIND_EFFECTFUL_ACTIONS = frozenset(
-    {
-        "-delete",
-        "-exec",
-        "-execdir",
-        "-fls",
-        "-fprint",
-        "-fprint0",
-        "-fprintf",
-        "-ok",
-        "-okdir",
-    }
-)
-_SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset(
-    {
-        "read-oa-approval-detail",
-    }
-)
+CODEX_CONFIG_PATH_ENV = "CEO_AGENT_CODEX_CONFIG_PATH"
+LOCAL_READ_POLICY_TABLE = ("ceo_agent", "local_read_policy")
+_SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset({"read-oa-approval-detail"})
 
 
 def service_read_command_contract() -> tuple[str, ...]:
@@ -85,6 +46,74 @@ class NativeCliCommand:
     effect: EffectKind | None
     command_digest: str
     target_identifiers: dict[str, str]
+
+
+@dataclass(frozen=True)
+class LocalReadCommandPolicy:
+    """The principal-owned blacklist for local Consumer read commands."""
+
+    blocked_commands: frozenset[str]
+    blocked_argument_prefixes: dict[str, tuple[str, ...]]
+
+    def allows(self, argv: tuple[str, ...]) -> bool:
+        executable = Path(argv[0]).name.casefold()
+        if executable in self.blocked_commands:
+            return False
+        return not any(
+            argument.startswith(prefix)
+            for prefix in self.blocked_argument_prefixes.get(executable, ())
+            for argument in argv[1:]
+        )
+
+
+def load_local_read_command_policy(
+    path: Path | None = None,
+) -> LocalReadCommandPolicy | None:
+    """Load the local command blacklist from the principal's Codex config."""
+    config_path = path or _local_read_policy_config_path()
+    try:
+        payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    current: object = payload
+    for key in LOCAL_READ_POLICY_TABLE:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    if not isinstance(current, dict):
+        return None
+    raw_commands = current.get("blocked_commands")
+    raw_prefixes = current.get("blocked_argument_prefixes", {})
+    if (
+        not isinstance(raw_commands, list)
+        or not all(_valid_policy_token(item) for item in raw_commands)
+        or not isinstance(raw_prefixes, dict)
+    ):
+        return None
+    prefixes: dict[str, tuple[str, ...]] = {}
+    for command, values in raw_prefixes.items():
+        if (
+            not _valid_policy_token(command)
+            or not isinstance(values, list)
+            or not all(_valid_policy_token(value) for value in values)
+        ):
+            return None
+        prefixes[command.casefold()] = tuple(values)
+    return LocalReadCommandPolicy(
+        blocked_commands=frozenset(item.casefold() for item in raw_commands),
+        blocked_argument_prefixes=prefixes,
+    )
+
+
+def _local_read_policy_config_path() -> Path:
+    configured = os.environ.get(CODEX_CONFIG_PATH_ENV, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser() / "config.toml"
+
+
+def _valid_policy_token(value: object) -> bool:
+    return isinstance(value, str) and bool(value) and "/" not in value
 
 
 @lru_cache(maxsize=1)
@@ -277,6 +306,13 @@ class NativeCliMetadataClassifier:
         return None
 
     def _classify_dws(self, argv: tuple[str, ...]) -> NativeCliCommand | None:
+        # Runtime Schema is DWS's own local command-contract reader. Skills use
+        # it to choose and validate later commands, so it is read-only even
+        # though it is not listed as one business command in the schema output.
+        if len(argv) > 1 and argv[1] == "schema":
+            return _classified_native_command(
+                "dws", "schema", argv, EffectKind.READ_ONLY
+            )
         for command_path in _command_path_candidates(argv[1:]):
             try:
                 process = run_bounded_process(
@@ -408,7 +444,7 @@ def _classify_local_read_only_command(
         command_path=command_path,
         effect=EffectKind.READ_ONLY,
         command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
-        target_identifiers={},
+        target_identifiers=_local_read_target_identifiers(segments),
     )
 
 
@@ -428,6 +464,20 @@ def _service_read_only_descriptor(
         command_digest=hashlib.sha256(shlex.join(argv).encode("utf-8")).hexdigest(),
         target_identifiers={"instance-id": argv[5]},
     )
+
+
+def _local_read_target_identifiers(
+    segments: tuple[tuple[str, ...], ...],
+) -> dict[str, str]:
+    """Keep stable identifiers from a reviewed local read for readback matching."""
+    identifiers: dict[str, str] = {}
+    for segment in segments:
+        for key, value in _argv_target_identifiers(segment).items():
+            prior = identifiers.get(key)
+            if prior is not None and prior != value:
+                return {}
+            identifiers[key] = value
+    return identifiers
 
 
 def _local_read_only_segments(
@@ -499,60 +549,15 @@ def _is_local_read_only_segment(argv: tuple[str, ...]) -> bool:
     if _is_service_read_only_python_command(argv):
         return True
     executable = Path(argv[0]).name
-    if executable not in _LOCAL_READ_ONLY_COMMANDS:
+    # DWS and Lark use installed metadata rather than the local command policy.
+    if executable in {"dws", "lark-cli"}:
         return False
-    options = argv[1:]
-    if executable == "unzip":
-        return (
-            len(options) >= 2
-            and options[0] == "-p"
-            and all(not option.startswith("-") for option in options[1:])
-        )
-    if executable == "sed" and any(
-        option == "-i"
-        or option.startswith("-i.")
-        or option == "--in-place"
-        or option.startswith("--in-place=")
-        for option in options
-    ):
-        return False
-    if executable in {"rg", "grep"} and any(
-        option == "--pre"
-        or option.startswith("--pre=")
-        or option == "--generate"
-        or option.startswith("--generate=")
-        for option in options
-    ):
-        return False
-    if executable == "find" and any(
-        option in _FIND_EFFECTFUL_ACTIONS for option in options
-    ):
-        return False
-    if executable == "sort" and any(
-        option == "-o"
-        or option.startswith("--output=")
-        or option == "--output"
-        for option in options
-    ):
-        return False
-    if executable == "tail" and any(
-        option == "-f"
-        or option.startswith("-f")
-        or option == "--follow"
-        or option.startswith("--follow=")
-        for option in options
-    ):
-        return False
-    return True
+    policy = load_local_read_command_policy()
+    return policy is not None and policy.allows(argv)
 
 
 def _is_service_read_only_python_command(argv: tuple[str, ...]) -> bool:
-    """Allow only explicitly registered service-owned read subcommands.
-
-    Python itself is never a general read-only executable.  This narrow form is
-    used when an Agent must read an OA process through the service-owned adapter
-    rather than the DWS adapter whose response schema is currently unreliable.
-    """
+    """Recognize the service's fixed OA adapter before local policy applies."""
     if len(argv) != 6:
         return False
     executable, module_flag, module, command, instance_flag, process_id = argv

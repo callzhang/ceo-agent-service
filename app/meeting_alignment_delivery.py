@@ -67,8 +67,11 @@ def meeting_delivery_conversation_id(result: MeetingDeliveryResult) -> str:
 def meeting_followup_message(
     decision: MeetingAlignmentDecision,
     source: MeetingSource,
+    *,
+    final_message: str | None = None,
 ) -> str:
-    return f"{_meeting_followup_header(source)}\n\n{decision.final_message.strip()}"
+    content = final_message if final_message is not None else decision.final_message
+    return f"{_meeting_followup_header(source)}\n\n{content.strip()}"
 
 
 class MeetingDeliveryDws(Protocol):
@@ -163,20 +166,28 @@ def deliver_meeting_alignment(
         dws,
         recent_messages,
     )
+    final_message = _normalize_leading_mention_roster(
+        decision.final_message,
+        resolved_mentions,
+    )
     mention_ids = [mention.open_dingtalk_id for mention in resolved_mentions]
     mention_display_names = []
     for mention in resolved_mentions:
-        embedded_name = _embedded_mention_name(decision.final_message, mention)
+        embedded_name = _embedded_mention_name(final_message, mention)
         if embedded_name is None:
             raise MeetingDeliveryRetry(
                 f"resolved mention {mention.mention_name!r} must be embedded in final_message"
             )
         mention_display_names.append(embedded_name)
-    if _starts_with_mention_roster(decision.final_message, resolved_mentions):
+    if _starts_with_mention_roster(final_message, resolved_mentions):
         raise MeetingDeliveryRetry(
             "meeting final_message must embed mentions in context, not start with a mention roster"
         )
-    message_text = meeting_followup_message(decision, source)
+    message_text = meeting_followup_message(
+        decision,
+        source,
+        final_message=final_message,
+    )
     try:
         if target_kind == "group":
             send_result = dws.send_message(
@@ -387,6 +398,26 @@ def _starts_with_mention_roster(
     text: str,
     mentions: list[ResolvedMention],
 ) -> bool:
+    return len(_leading_resolved_mentions(text, mentions)[0]) >= 2
+
+
+def _normalize_leading_mention_roster(
+    text: str,
+    mentions: list[ResolvedMention],
+) -> str:
+    """Turn a bare leading mention roster into a sentence without dropping mentions."""
+    leading_mentions, remainder = _leading_resolved_mentions(text, mentions)
+    body = remainder.strip()
+    if len(leading_mentions) < 2 or not body:
+        return text
+    roster = "、".join(f"@{name}" for name in leading_mentions)
+    return f"请 {roster} 关注以下事项：\n\n{body}"
+
+
+def _leading_resolved_mentions(
+    text: str,
+    mentions: list[ResolvedMention],
+) -> tuple[list[str], str]:
     candidate_names = {
         candidate.removeprefix("@").strip()
         for mention in mentions
@@ -394,7 +425,7 @@ def _starts_with_mention_roster(
         if candidate.removeprefix("@").strip()
     }
     remaining = text.lstrip()
-    leading_mentions = 0
+    leading_mentions: list[str] = []
     while remaining.startswith("@"):
         matched_name = next(
             (
@@ -413,11 +444,9 @@ def _starts_with_mention_roster(
         )
         if matched_name is None:
             break
-        leading_mentions += 1
-        if leading_mentions >= 2:
-            return True
+        leading_mentions.append(matched_name)
         remaining = remaining[len(matched_name) + 1 :].lstrip()
-    return False
+    return leading_mentions, remaining
 
 
 def _resolve_profile(

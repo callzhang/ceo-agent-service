@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -100,6 +101,35 @@ def test_read_prompt_templates_seed_missing_configured_files(tmp_path, monkeypat
     assert "agent_cli.read_skill" in developer_template
     assert "<code: app.user_prompt_blocks:current_message_block()>" in user_template
     assert "CEO Agent Prompt" not in user_template
+
+
+def test_unmodified_legacy_developer_prompt_is_upgraded(tmp_path, monkeypatch):
+    developer_path = tmp_path / "data" / "prompts" / "developer_prompt.md"
+    developer_path.parent.mkdir(parents=True)
+    legacy = "legacy default"
+    developer_path.write_text(legacy, encoding="utf-8")
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(developer_path))
+    monkeypatch.setattr(
+        "app.developer_prompt.LEGACY_UNCUSTOMIZED_DEVELOPER_PROMPT_SHA256S",
+        {_sha256_for_test(legacy)},
+    )
+
+    assert read_developer_prompt_template() == SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_customized_developer_prompt_is_preserved(tmp_path, monkeypatch):
+    developer_path = tmp_path / "data" / "prompts" / "developer_prompt.md"
+    developer_path.parent.mkdir(parents=True)
+    developer_path.write_text("custom instructions", encoding="utf-8")
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(developer_path))
+
+    assert read_developer_prompt_template() == "custom instructions"
+
+
+def _sha256_for_test(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def test_default_developer_prompt_assigns_execution_to_audit_role():

@@ -37,6 +37,7 @@ from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_com
 
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
+SCHEMA_PATH = SERVICE_ROOT / "app" / "schemas" / "consumer_agent_result.schema.json"
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_DYNAMIC_SKILL_SENTENCE = (
     "Consumer Agent A independently selects and reads every applicable business and "
@@ -61,6 +62,47 @@ AUDIT_DYNAMIC_SKILL_BODY = (
 CORE_DYNAMIC_SKILL_BODY = (
     f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
 )
+SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
+REVIEWED_DWS_READ_INSTRUCTIONS = """
+Before making a domain judgment, inspect the installed Skill catalog or native
+Skills list and call `agent_cli.read_skill` for the most specific applicable business Skill.
+Then load the operation Skill named by that business Skill before proposing a
+concrete CLI or MCP action. Do not ask the service to classify the domain for you.
+
+For live DingTalk, Lark, or local file evidence, call `agent_cli.execute_reviewed_read`
+with the exact reviewed read command. This
+lets the Agent use the principal's local CLI credential store and makes a
+reviewed local read command independently repeatable by Audit B. Unknown shell
+commands and every write command remain forbidden for Consumer Agent A.
+
+Before composing a DWS command that was not supplied as an exact read command,
+query its local runtime contract with `dws schema --cli-path "<product> <command>"
+--compact --format json` through `agent_cli.execute_reviewed_read`. Copy the
+returned command path and flags exactly; do not invent shortcut names or flag
+aliases. A rejected read has no external effect: inspect its error, then use the
+runtime contract or the installed skill to correct it in the same turn.
+
+For a downloaded local material file, call `agent_cli.execute_reviewed_read`
+with a direct read command. Python is valid for parsing a workbook or another
+format when it is not denied by the principal's local command policy. Do not
+return `needs_human` merely because a material requires a local parser.
+
+Before proposing a DingTalk message send, read
+`/Users/derek/.agents/skills/dws/multi/dingtalk-chat/SKILL.md` with
+`agent_cli.read_skill` and use its documented command shape. Unknown send
+syntax is an evidence-reading task, not a reason to return `needs_human`.
+
+Requests to inspect, evaluate, or improve a referenced skill, document,
+configuration, or other readable material are normal Agent work. Read the
+material, complete the requested analysis, and propose the resulting reply or
+safe follow-up yourself. Do not return `needs_human` merely because the work
+requires tool use, research, or technical judgment. Reserve `needs_human` for
+an actual unresolved management choice or an ambiguous irreversible target.
+When returning needs_human, first finish every available read and safe
+follow-up. Then offer two to four materially different, actionable choices.
+Do not offer "investigate", "ask me", or an option that merely repeats the
+ambiguity.
+""".strip()
 
 
 def consumer_wire_contract_hash() -> str:
@@ -73,6 +115,76 @@ def consumer_wire_contract_hash() -> str:
     encoded = json.dumps(contract, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()
 
+CONSUMER_ROLE_BOUNDARY = """
+Authoritative Consumer role boundary: configurable Audit Rules are review
+criteria, not instructions for you to execute, approve, publish, or return a
+candidate to another Agent. You are Consumer Agent A and must finish with one
+valid Consumer Agent wire JSON object matching the supplied schema. The service
+converts it into a valid ConsumerAgentResult JSON object after strict validation.
+Nested proposal data is encoded as proposal_json and will be strictly validated
+before it can affect execution.
+
+Wire field encoding: proposal_json is a JSON-encoded object only when outcome
+is proposal; otherwise it must be null. decision_options_json is always a
+JSON-encoded array: it must contain two to four mutually exclusive options only
+when outcome is needs_human, and [] for every other outcome. For needs_human,
+each array item must contain exactly these non-empty string fields: `key`,
+`label`, `instruction`, and `consequence`. `key` must be unique within the
+array and stable enough for the audit page to submit the selected instruction;
+use concise identifiers such as `option_1`, not the display label. Do not put a
+JSON array, markdown, or an additional wrapper object in proposal_json.
+
+For every DWS write command in proposal_json, include the non-interactive
+confirmation flag --yes. It confirms the already-reviewed command to the CLI;
+it does not broaden the action or change its business meaning.
+
+Write commands belong only as data inside proposal_json for Audit Agent B. Never
+invoke, test, verify, or otherwise execute a write command yourself, including
+through agent_cli. You may execute only reviewed read commands; Audit Agent B
+executes an accepted proposal and performs its verification.
+""".strip()
+
+AUDIT_ROLE_BOUNDARY = """
+Authoritative Audit role boundary: configurable Audit Rules are review
+criteria. You are Audit Agent B; follow the supplied turn-specific execution
+permission and finish with one valid Audit Agent wire JSON object matching the
+supplied schema. The service converts it into a valid AuditAgentResult JSON
+object after strict validation. Do not apply Consumer Agent A read-only
+restrictions to an allowed Audit execution.
+
+Wire field encoding: feedback_json and external_result_json are each either
+null or a JSON-encoded object for their own field. For revision_required,
+feedback_json is required and its object has exactly these string fields:
+rule, observation, and requested_revision. Do not use aliases such as
+failed_rule, evidence, or required_change. For executed, external_result_json
+must contain exactly operation_id, verification_summary, and
+live_result_reference. operation_id must equal the candidate proposal
+operation_id, verification_summary is a non-empty string describing the live
+readback, and live_result_reference is an object containing the identifiers
+needed to locate that readback. reconciliation_json is always a
+JSON-encoded array: use [] unless outcome is reconciled, and only reconciled
+may contain reconciliation entries. Do not put receipt summaries, operation
+metadata, or an object wrapper in reconciliation_json.
+
+Outcome field combinations: executed requires side_effect_state=confirmed,
+feedback_json=null, external_result_json as an object, and reconciliation_json=[];
+revision_required requires side_effect_state=none, feedback_json as above,
+external_result_json=null, and reconciliation_json=[]; reconciled requires
+side_effect_state=unknown, feedback_json=null, external_result_json=null, and
+reconciliation_json entries with exactly action_index, disposition (present,
+absent, or ambiguous), and read_result_digest. needs_human and failed require
+side_effect_state=none with all three nested fields empty (null, null, []).
+
+The reconciled outcome is reserved for unknown-outcome recovery turns that
+explicitly request read-only reconciliation. During a normal candidate review,
+if live evidence shows that the proposed action already happened, do not execute
+it and do not return reconciled. Instead, return revision_required and ask
+Consumer Agent A to return no_action because the requested effect is already
+present.
+
+Never execute a DWS write command without --yes. Return concrete feedback for
+Consumer Agent A to add the non-interactive confirmation flag before execution.
+""".strip()
 
 
 class ConsumerAgentRunner:
@@ -174,12 +286,21 @@ class ConsumerAgentRunner:
                 conversation_session_id,
             )
             conversation_session_id = None
+        if json.loads(SCHEMA_PATH.read_text(encoding="utf-8")) != (
+            ConsumerAgentResult.model_json_schema()
+        ):
+            raise ValueError("consumer result schema does not match Pydantic model")
         claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
             role=AgentRole.CONSUMER,
             proposal_revision=proposal_revision,
-            turn_attempt=0,
+            turn_attempt=self.store.next_agent_run_turn_attempt(
+                task.id,
+                task.execution_generation,
+                role=AgentRole.CONSUMER,
+                proposal_revision=proposal_revision,
+            ),
             parent_agent_run_id=parent_agent_run_id,
             operation_id="",
             owner=self.owner,
@@ -192,11 +313,7 @@ class ConsumerAgentRunner:
             if conversation_session_id is not None
             else None
         ) or conversation_session_id
-        persist_conversation_session = not (
-            claim.run.codex_session_id
-            and conversation_session_id
-            and claim.run.codex_session_id != conversation_session_id
-        )
+        persist_conversation_session = conversation_session_id is None
         process = AgentTurnProcess[ConsumerAgentResult](
             store=self.store,
             task=task,
@@ -270,7 +387,7 @@ class ConsumerAgentRunner:
             ):
                 persisted = self.store.get_agent_run(claim.run.id)
                 if persisted is not None and not persisted.tool_events:
-                    failed_session_id = persisted.codex_session_id or session_id
+                    failed_session_id = session_id or persisted.codex_session_id
                     if failed_session_id:
                         # A retryable result without any controlled tool event
                         # made no evidence progress. Retry with the current
@@ -297,20 +414,55 @@ class ConsumerAgentRunner:
 
 
 def consumer_developer_instructions(audit_rules: str) -> str:
-    return _developer_instructions(
+    core = _developer_instructions(
         audit_rules=audit_rules,
         skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
         wire_model=ConsumerAgentWireResult,
         result_model=ConsumerAgentResult,
     )
+    return _role_developer_instructions(
+        core,
+        capability_instructions=REVIEWED_DWS_READ_INSTRUCTIONS,
+        role_boundary=CONSUMER_ROLE_BOUNDARY,
+    )
 
 
-def audit_developer_instructions(audit_rules: str) -> str:
-    return _developer_instructions(
+def audit_developer_instructions(
+    audit_rules: str,
+    *,
+    allow_write: bool = True,
+) -> str:
+    core = _developer_instructions(
         audit_rules=audit_rules,
         skill_instruction=AUDIT_DYNAMIC_SKILL_BODY,
         wire_model=AuditAgentWireResult,
         result_model=AuditAgentResult,
+    )
+    return _role_developer_instructions(
+        core,
+        capability_instructions=(
+            "Reread every verified Skill path supplied from Consumer A with "
+            "agent_cli.read_skill and compare the returned sha256 with the supplied "
+            "receipt before review or execution. Also read the operation Skill for "
+            "each proposed capability. A missing, unreadable, changed, or mismatched "
+            "Skill requires revision_required rather than a guess. Use "
+            "agent_cli.execute_reviewed_read for live reads. "
+            "For an unfamiliar DWS command, inspect its runtime contract with "
+            '`dws schema --cli-path "<product> <command>" --compact --format json` '
+            "before review; schema discovery is not an unavailable-tool result, "
+            "and missing command syntax is a read-only evidence task. Execute the "
+            "result only as a reviewed local read command. "
+            + (
+                "Use agent_cli.execute_reviewed_write only for allowed external "
+                "writes. "
+                if allow_write
+                else "External writes are unavailable in this turn. "
+            )
+            + "Do not "
+            "use native shell execution; the turn-specific permission determines "
+            "whether a write is allowed, and unknown outcomes remain read-only."
+        ),
+        role_boundary=AUDIT_ROLE_BOUNDARY,
     )
 
 
@@ -345,3 +497,25 @@ def _schema_json(
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+def _role_developer_instructions(
+    role_instruction: str,
+    *,
+    capability_instructions: str,
+    role_boundary: str,
+) -> str:
+    shared = (
+        SHARED_RULES_PATH.read_text(encoding="utf-8").strip()
+        if SHARED_RULES_PATH.is_file()
+        else ""
+    )
+    instructions = (
+        role_instruction
+        + "\n\n## Capability Instructions\n"
+        + capability_instructions
+    )
+    if shared:
+        quoted_shared = "\n".join(f"> {line}" for line in shared.splitlines())
+        instructions += "\n\n## Shared Agent Rules\n" + quoted_shared
+    return instructions + "\n\n## Role Boundary\n" + role_boundary

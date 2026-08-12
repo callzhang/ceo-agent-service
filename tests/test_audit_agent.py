@@ -46,15 +46,39 @@ from tests.prompt_structure import validate_prompt_structure
 
 
 class CapturingExecutor:
-    def __init__(self, stdout: str, *, returncode: int = 0) -> None:
+    def __init__(
+        self,
+        stdout: str,
+        *,
+        returncode: int = 0,
+        inject_skill_receipt: bool = True,
+    ) -> None:
         self.stdout = stdout
         self.returncode = returncode
+        self.inject_skill_receipt = inject_skill_receipt
         self.commands: list[list[str]] = []
         self.prompts: list[str] = []
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
         self.prompts.append(kwargs["prompt"])
         self.commands.append(command)
+        explicit_skill_read = '"tool": "read_skill"' in self.stdout
+        if self.inject_skill_receipt and not explicit_skill_read:
+            marker = "Verified Skills read by Consumer A\n"
+            if marker in kwargs["prompt"]:
+                receipt_text = kwargs["prompt"].split(marker, 1)[1].split(
+                    "\n\nCandidate revision\n", 1
+                )[0]
+                receipts = json.loads(receipt_text)
+                if receipts:
+                    receipt = receipts[0]
+                    path = Path(receipt["path"])
+                    skill_line, digest = _skill_read_jsonl(
+                        path,
+                        path.read_text(encoding="utf-8"),
+                    )
+                    assert digest == receipt["sha256"]
+                    on_stdout_line(skill_line)
         for line in self.stdout.splitlines():
             on_stdout_line(line)
         return ProcessRunResult(self.returncode, self.stdout, "")
@@ -80,7 +104,12 @@ class ExactReceiptExecutor(CapturingExecutor):
     def __call__(self, command, *, on_stdout_line, **kwargs):
         persisted = self.store.get_agent_run(self.run.id)
         assert persisted is not None
-        metadata = persisted.tool_events[0]["item"]["metadata"]
+        metadata = next(
+            event["item"]["metadata"]
+            for event in persisted.tool_events
+            if event["type"] == "item.started"
+            and event["item"]["metadata"].get("effect") == "effectful"
+        )
         self.store.record_agent_execution_receipt(
             self.run.id,
             receipt_id=f"receipt-{self.run.operation_id}",
@@ -121,7 +150,8 @@ def test_audit_composed_instructions_are_skill_first_and_schema_authoritative(se
         dynamic_skill_body=AUDIT_DYNAMIC_SKILL_BODY,
         audit_rules=audit_rules,
         context_facts=context_facts,
-        size_limit=16_000,
+        size_limit=32_000,
+        require_runtime_safety_sections=True,
     )
     assert audit_rules in instructions
     assert AUDIT_DYNAMIC_SKILL_BODY in instructions
@@ -138,13 +168,19 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
     )
 
     assert "reconciliation must be an array" in prompt
+    assert "RECOVERY MODE OVERRIDES NORMAL AUDIT EXECUTION" in prompt
+    assert "The only valid outcome for this turn is reconciled" in prompt
+    assert "Do not return executed" in prompt
+    assert "reconciliation_json must be a JSON-encoded array" in prompt
     assert "Do not wrap the array in an operation_id/entries object" in prompt
     assert "read_result_digest" in prompt
     assert "unknown readback command is an evidence task" in prompt
-    assert "same stable target identifier" in prompt
-    assert "Do not replace a target-scoped read with a global search" in prompt
+    assert "Exact readback contracts:" in prompt
+    assert "shares a stable identifier from its exact readback contract" in prompt
+    assert "Do not substitute a different target type" in prompt
     assert "Do not start with an unbounded or --page-all read" in prompt
     assert "an incomplete window cannot prove absence" in prompt
+    assert "use the ambiguous disposition" in prompt
 
 
 def test_audit_developer_instructions_define_wire_json_field_shapes():
@@ -157,6 +193,29 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
     assert '"side_effect_state"' in instructions
     assert '"read_result_digest"' in instructions
     assert '"title":"AuditAgentWireResult"' in instructions
+    assert "external_result_json\nmust contain exactly" in instructions
+    assert 'dws schema --cli-path "<product> <command>" --compact --format json' in instructions
+    assert "discovery is not an unavailable-tool result" in instructions
+    assert (
+        "operation_id, verification_summary, and\nlive_result_reference"
+        in instructions
+    )
+    assert (
+        "operation_id must equal the candidate proposal\noperation_id"
+        in instructions
+    )
+    assert "reconciliation_json is always a\nJSON-encoded array" in instructions
+    assert "use [] unless outcome is reconciled" in instructions
+    assert "object wrapper in reconciliation_json" in instructions
+    assert "exactly these string fields:\nrule, observation, and requested_revision" in instructions
+    assert "failed_rule, evidence, or required_change" in instructions
+    assert "reconciled requires\nside_effect_state=unknown" in instructions
+    assert "action_index, disposition (present,\nabsent, or ambiguous), and read_result_digest" in instructions
+    assert "reconciled outcome is reserved for unknown-outcome recovery" in instructions
+    assert "return revision_required and ask\nConsumer Agent A to return no_action" in instructions
+    assert "Never execute a DWS write command without --yes" in instructions
+    assert "missing command syntax is a read-only evidence task" in instructions
+    assert "reviewed local read command" in instructions
 
 
 def test_audit_instructions_require_receipt_sha_comparison_and_fail_closed_review():
@@ -592,7 +651,7 @@ def _revision_required_jsonl(observation: str) -> str:
 
 
 @pytest.fixture
-def setup(tmp_path):
+def setup(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "agent.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-agent", conversation_title="Group", single_chat=False,
@@ -616,6 +675,14 @@ def setup(tmp_path):
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
         operation_id="", owner="parent",
     ).run
+    skill_path = tmp_path / "installed-skills" / "business-review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_content = "# Business review\n"
+    skill_path.write_text(skill_content, encoding="utf-8")
+    monkeypatch.setattr(
+        "app.agent_skill_usage.AGENT_SKILL_ROOTS",
+        (tmp_path / "installed-skills",),
+    )
     audit_context = AuditTurnContext(
         task=context,
         proposal_revision=0,
@@ -625,8 +692,8 @@ def setup(tmp_path):
         consumer_skills=(
             LoadedSkillReceipt(
                 "business-review",
-                "/installed/business-review/SKILL.md",
-                "a" * 64,
+                str(skill_path),
+                hashlib.sha256(skill_content.encode("utf-8")).hexdigest(),
             ),
         ),
     )
@@ -696,6 +763,38 @@ def test_scripted_audit_voluntarily_requires_revision_for_changed_skill_sha(
     assert result.result.feedback is not None
     assert "changed" in result.result.feedback.observation
     assert store.get_agent_run(result.run_id).side_effect_state == "none"
+
+
+def test_audit_runtime_blocks_write_before_exact_skill_reread(setup):
+    store, task, audit_context, parent = setup
+
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="audit_skill_reread_missing",
+    ):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(
+                _audit_jsonl("operation-1", session="missing-skill-reread"),
+                inject_skill_receipt=False,
+            ),
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert run.side_effect_state == "none"
+    assert not any(
+        event.get("type") == "item.started"
+        and event.get("item", {}).get("metadata", {}).get("effect") == "effectful"
+        for event in run.tool_events
+    )
 
 
 def test_audit_protocol_rejects_applicable_candidate_without_consumer_skill_receipt(
@@ -781,10 +880,34 @@ def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):
     assert executor.commands == []
 
 
-def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
+def test_audit_starts_fresh_and_does_not_replace_conversation_session(
+    setup, tmp_path, monkeypatch
+):
     store, task, audit_context, parent = setup
     store.upsert_conversation(task.conversation_id, "Group", False, "session-a")
-    executor = CapturingExecutor(_audit_jsonl("operation-1", session="session-b"))
+    skill_path = tmp_path / "skills" / "business-review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_content = "# Business review\n"
+    skill_path.write_text(skill_content, encoding="utf-8")
+    monkeypatch.setattr(
+        "app.agent_skill_usage.AGENT_SKILL_ROOTS",
+        (tmp_path / "skills",),
+    )
+    skill_event, skill_digest = _skill_read_jsonl(skill_path, skill_content)
+    audit_context = replace(
+        audit_context,
+        consumer_skills=(
+            LoadedSkillReceipt(
+                "business-review",
+                str(skill_path),
+                skill_digest,
+            ),
+        ),
+    )
+    execution = _audit_jsonl("operation-1", session="session-b").splitlines()
+    executor = CapturingExecutor(
+        "\n".join((execution[0], skill_event, *execution[1:]))
+    )
 
     result = AuditAgentRunner(store=store, workspace=Path("/workspace"), executor=executor).run(
         task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id,
@@ -793,6 +916,8 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     command = executor.commands[0]
     assert command[:2] == ["codex", "exec"]
     assert "resume" not in command
+    # The service validates the final wire result after Codex returns; avoid
+    # constraining dynamically loaded reviewed MCP tools in the transport.
     assert "--output-schema" not in command
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command
@@ -800,7 +925,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert 'approval_policy="untrusted"' in command
     assert 'approvals_reviewer="auto_review"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
-    assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill", "read_spreadsheet"]' in command
+    assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill"]' in command
     assert 'web_search="disabled"' not in command
     assert any("## Pydantic Wire Contract" in option for option in command)
     assert any("AuditAgentWireResult" in option for option in command)
@@ -812,17 +937,30 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert run.codex_session_id == "session-b"
     assert run.operation_id == "operation-1"
     assert run.side_effect_state == "confirmed"
-    assert [event["type"] for event in run.tool_events] == [
-        "item.started",
-        "item.completed",
-        "item.started",
-        "item.completed",
+    skill_reads = [
+        event["item"]["metadata"]
+        for event in run.tool_events
+        if event["item"].get("metadata", {}).get("skill_path")
     ]
-    assert run.tool_events[1]["item"]["status"] == "completed"
-    assert run.tool_events[1]["item"]["metadata"]["operation"] == (
-        "chat message send"
-    )
-    assert run.tool_events[1]["item"]["metadata"]["target_identifiers"] == {
+    assert len(skill_reads) == 1
+    assert {
+        key: skill_reads[0][key]
+        for key in ("skill_name", "skill_path", "skill_sha256")
+    } == {
+        "skill_name": "business-review",
+        "skill_path": str(skill_path),
+        "skill_sha256": skill_digest,
+    }
+    completed_writes = [
+        event["item"]
+        for event in run.tool_events
+        if event["type"] == "item.completed"
+        and event["item"].get("metadata", {}).get("operation")
+        == "chat message send"
+    ]
+    assert len(completed_writes) == 1
+    assert completed_writes[0]["status"] == "completed"
+    assert completed_writes[0]["metadata"]["target_identifiers"] == {
         "group": "cid-agent"
     }
 
@@ -957,7 +1095,7 @@ def test_audit_recovers_session_only_dingtalk_receipt_but_requires_readback(
     )
     assert run is not None and run.status == "unknown"
     assert [event["type"] for event in run.tool_events] == [
-        "item.started", "item.completed"
+        "item.completed", "item.started", "item.completed"
     ]
     assert store.has_sent_reply_for_trigger(
         task.conversation_id, task.trigger_message_id
@@ -1078,7 +1216,7 @@ def test_dry_run_audit_command_exposes_only_reviewed_read_tools(setup):
     assert result.result.error.code == "dry_run_execution_suppressed"
     assert result.result.side_effect_state.value == "none"
     assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_spreadsheet"]'
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill"]'
         in command
     )
     assert "execute_reviewed_write" not in command
@@ -1634,7 +1772,15 @@ def _seed_crashed_audit_write(setup):
         session="audit-session-recovery",
         include_verification=False,
     ).splitlines()
-    executor = CapturingExecutor("\n".join(initial_lines[:2]), returncode=1)
+    skill_path = Path(audit_context.consumer_skills[0].path)
+    skill_event, _digest = _skill_read_jsonl(
+        skill_path,
+        skill_path.read_text(encoding="utf-8"),
+    )
+    executor = CapturingExecutor(
+        "\n".join((initial_lines[0], skill_event, initial_lines[1])),
+        returncode=1,
+    )
     with pytest.raises(RuntimeError, match="codex_process_failed"):
         AuditAgentRunner(
             store=store,
@@ -1652,8 +1798,8 @@ def _seed_crashed_audit_write(setup):
     assert run.status == "unknown"
     assert run.side_effect_state == "unknown"
     assert run.codex_session_id == "audit-session-recovery"
-    assert len(run.tool_events) == 1
-    persisted_item = run.tool_events[0]["item"]
+    assert len(run.tool_events) == 2
+    persisted_item = run.tool_events[1]["item"]
     assert "arguments" not in persisted_item and "result" not in persisted_item
     assert persisted_item["metadata"]["operation_id"] == "operation-1"
     assert persisted_item["metadata"]["target_identifiers"] == {
@@ -1699,7 +1845,7 @@ def test_recovery_reconciliation_without_skill_receipts_stays_strictly_read_only
     assert "execute_reviewed_write" not in " ".join(executor.commands[0])
     assert all(
         event["item"]["metadata"].get("effect") != "effectful"
-        for event in persisted.tool_events[1:]
+        for event in persisted.tool_events[2:]
         if event.get("type") == "item.started"
     )
 
@@ -1892,6 +2038,7 @@ def test_crash_after_write_uses_fresh_read_only_recovery_and_confirms_without_re
         for event in persisted.tool_events
         if event["type"] == "item.completed"
         and event["item"]["metadata"]["effect"] == "read_only"
+        and event["item"]["metadata"].get("operation") != "read_skill"
     ]
     assert read_events[0]["item"]["metadata"]["result_digest"] == (
         "recovery-read-digest"
@@ -2953,8 +3100,9 @@ def test_unregistered_controlled_write_cannot_confirm_without_readback(setup):
         "execute_reviewed_write",
     )
     registry = McpToolEffectRegistry(
-        {
-            ("agent_cli", "execute_reviewed_read"): EffectKind.READ_ONLY,
+            {
+                ("agent_cli", "read_skill"): EffectKind.READ_ONLY,
+                ("agent_cli", "execute_reviewed_read"): EffectKind.READ_ONLY,
             ("agent_cli", "execute_reviewed_write"): EffectKind.EFFECTFUL,
         },
         readbacks={
@@ -3315,7 +3463,13 @@ def test_pre_903_no_readback_start_binds_before_exact_receipt(setup):
 
     persisted = store.get_agent_run(run.id)
     assert persisted is not None
-    assert persisted.tool_events[0]["item"]["metadata"]["action_index"] == 0
+    effect_start = next(
+        event
+        for event in persisted.tool_events
+        if event["type"] == "item.started"
+        and event["item"]["metadata"].get("effect") == "effectful"
+    )
+    assert effect_start["item"]["metadata"]["action_index"] == 0
     assert persisted.effect_receipt_count == 1
 
 
@@ -3363,7 +3517,7 @@ def test_definitely_absent_recovery_reads_before_executing_same_revision_once(se
             event["type"] == "item.started"
             and event["item"]["metadata"]["effect"] == "effectful"
         )
-        for event in persisted.tool_events[1:]
+        for event in persisted.tool_events[2:]
     )
 
     result = runner.execute_recovery(task, audit_context, run=persisted)
@@ -3375,11 +3529,11 @@ def test_definitely_absent_recovery_reads_before_executing_same_revision_once(se
     assert all(run.codex_session_id not in command for command in executor.commands)
     assert all("resume" not in command for command in executor.commands)
     assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_spreadsheet"]'
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill"]'
         in executor.commands[0]
     )
     assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill", "read_spreadsheet"]'
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill"]'
         in executor.commands[1]
     )
     assert "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST" in " ".join(executor.commands[1])
@@ -3779,7 +3933,7 @@ def test_audit_two_starts_with_one_completion_remains_unknown(setup):
     assert run.side_effect_state == "unknown"
 
 
-def test_audit_rejects_different_operation_for_same_target_and_payload(setup):
+def test_audit_derives_native_operation_from_exact_argv(setup):
     store, task, audit_context, parent = setup
     action = audit_context.proposal.actions[0].model_copy(
         update={"operation": "oa approval comment"}
@@ -3798,9 +3952,30 @@ def test_audit_rejects_different_operation_for_same_target_and_payload(setup):
         parent_agent_run_id=parent.id,
     )
 
+    assert result.result.outcome.value == "executed"
+    assert len(executor.commands) == 1
+
+
+def test_audit_rejects_native_command_with_wrong_controlled_capability(setup):
+    store, task, audit_context, parent = setup
+    action = audit_context.proposal.actions[0].model_copy(
+        update={"capability": "agent_cli.lark-cli"}
+    )
+    proposal = audit_context.proposal.model_copy(update={"actions": (action,)})
+
+    executor = CapturingExecutor(_audit_jsonl("operation-1", session="session-b"))
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(
+        task,
+        replace(audit_context, proposal=proposal),
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+    )
+
     assert result.result.outcome.value == "revision_required"
-    assert result.result.feedback is not None
-    assert "operation label" in result.result.feedback.requested_revision
     assert executor.commands == []
 
 

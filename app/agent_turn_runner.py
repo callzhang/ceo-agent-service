@@ -25,7 +25,11 @@ from app.agent_result import (
     ResultParseError,
     SideEffectState,
 )
-from app.agent_skill_usage import normalized_read_skill_metadata
+from app.agent_skill_usage import (
+    LoadedSkillReceipt,
+    loaded_skill_receipts,
+    normalized_read_skill_metadata,
+)
 from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
     LEASE_SECONDS,
@@ -47,6 +51,10 @@ from app.codex_history import (
     extract_codex_mcp_tool_results_from_session,
 )
 from app.codex_runner import CodexRunner, _codex_home
+from app.codex_capacity import (
+    CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+    codex_provider_failure_code,
+)
 from app.leak_check import contains_credential
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -90,6 +98,12 @@ def _process_failure_code(process: ProcessRunResult) -> str:
     code = classify_codex_process_failure(process.stdout, process.stderr)
     if code == CODEX_PROVIDER_AUTH_FAILED:
         return f"{code}: native Codex CLI authentication is unavailable"
+    if code == CODEX_PROVIDER_UNAVAILABLE:
+        provider_code = codex_provider_failure_code(
+            f"{process.stdout}\n{process.stderr}"
+        )
+        if provider_code == CODEX_PROVIDER_CAPACITY_EXHAUSTED:
+            return provider_code
     return code
 
 
@@ -97,7 +111,7 @@ def _agent_process_error_code(exc: Exception) -> str:
     code = str(exc).strip()
     if code.startswith(CODEX_PROVIDER_AUTH_FAILED):
         return code
-    if code == CODEX_PROVIDER_UNAVAILABLE:
+    if code in {CODEX_PROVIDER_UNAVAILABLE, CODEX_PROVIDER_CAPACITY_EXHAUSTED}:
         return code
     if isinstance(exc, ResultParseError):
         if code == "no valid typed result JSON found in Codex JSONL":
@@ -166,6 +180,7 @@ class AgentTurnProcess(Generic[ResultT]):
         recovery_authorizations: dict[str, int] | None = None,
         allow_effectful_tools: bool = False,
         image_paths: list[Path] | None = None,
+        required_skill_receipts: tuple[LoadedSkillReceipt, ...] = (),
     ) -> AgentTurnRunResult[ResultT]:
         if recovery_phase not in {"", "reconcile", "execute"}:
             raise ValueError("invalid recovery phase")
@@ -217,6 +232,25 @@ class AgentTurnProcess(Generic[ResultT]):
             metadata = item.get("metadata") if isinstance(item, dict) else None
             effect = metadata.get("effect") if isinstance(metadata, dict) else None
             call_id = str(item.get("id") or item.get("call_id") or "") if isinstance(item, dict) else ""
+            if (
+                event.get("type") == "item.started"
+                and effect == EffectKind.EFFECTFUL.value
+                and required_skill_receipts
+            ):
+                current_run = self.store.get_agent_run(run.id)
+                persisted_events = current_run.tool_events if current_run else ()
+                observed = {
+                    (receipt.name, receipt.path, receipt.sha256)
+                    for receipt in loaded_skill_receipts(persisted_events)
+                }
+                required = {
+                    (receipt.name, receipt.path, receipt.sha256)
+                    for receipt in required_skill_receipts
+                }
+                if not required.issubset(observed):
+                    raise AgentReadOnlyViolationError(
+                        "audit_skill_reread_missing"
+                    )
             if event.get("type") == "item.completed" and call_id:
                 completed_effect_call_ids.add(call_id)
             if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
@@ -464,11 +498,12 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
                 raise
             result = cast(ResultT, fallback)
-        except AgentReadOnlyViolationError:
+        except AgentReadOnlyViolationError as exc:
+            code = str(exc).strip() or "agent_read_only_violation"
             if recover_unknown:
-                self._defer_unknown(run, "agent_read_only_violation")
+                self._defer_unknown(run, code)
             else:
-                self._fail_running(run, "agent_read_only_violation")
+                self._fail_running(run, code)
             raise
         except Exception as exc:
             provider_recovery = _agent_process_error_code(exc)
@@ -485,7 +520,10 @@ class AgentTurnProcess(Generic[ResultT]):
                 self._defer_unknown(run, code)
             else:
                 self._fail_running(run, code)
-            if provider_recovery == CODEX_PROVIDER_UNAVAILABLE:
+            if provider_recovery in {
+                CODEX_PROVIDER_UNAVAILABLE,
+                CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+            }:
                 raise RuntimeError(code) from exc
             raise
         transcript_end = (
@@ -655,6 +693,12 @@ class AgentTurnProcess(Generic[ResultT]):
                 {"type": "command_execution", "argv": argv}
             )
             if descriptor is None:
+                if read_only and call.tool == "execute_reviewed_read":
+                    if payload.get("type") != "item.completed":
+                        return None
+                    failure_code = _agent_cli_tool_error(item.get("result"))
+                    if failure_code:
+                        return _failed_agent_cli_read_event(item, failure_code)
                 raise AgentReadOnlyViolationError("agent_cli_command_invalid")
             capability = f"agent_cli.{descriptor.cli}"
             operation = descriptor.command_path
@@ -666,17 +710,30 @@ class AgentTurnProcess(Generic[ResultT]):
                     item.get("result"),
                     allow_error=True,
                 )
-                if (
-                    receipt is None
-                    or receipt.get("operation") != descriptor.command_path
-                    or receipt.get("operation_digest") != operation_digest
-                    or receipt.get("target_identifiers") != target_identifiers
-                    or (
-                        authorization_id
-                        and receipt.get("authorization_id") != authorization_id
+                if receipt is None:
+                    failure_code = _agent_cli_tool_error(item.get("result"))
+                    if (
+                        read_only
+                        and call.tool == "execute_reviewed_read"
+                        and failure_code
+                    ):
+                        return _failed_agent_cli_read_event(item, failure_code)
+                    raise AgentReadOnlyViolationError(
+                        failure_code or "agent_cli_receipt_missing"
                     )
+                if receipt.get("operation") != descriptor.command_path:
+                    raise AgentReadOnlyViolationError("agent_cli_receipt_operation_mismatch")
+                if receipt.get("operation_digest") != operation_digest:
+                    raise AgentReadOnlyViolationError("agent_cli_receipt_digest_mismatch")
+                if receipt.get("target_identifiers") != target_identifiers:
+                    raise AgentReadOnlyViolationError("agent_cli_receipt_target_mismatch")
+                if (
+                    authorization_id
+                    and receipt.get("authorization_id") != authorization_id
                 ):
-                    raise AgentReadOnlyViolationError("agent_cli_receipt_invalid")
+                    raise AgentReadOnlyViolationError(
+                        "agent_cli_receipt_authorization_mismatch"
+                    )
                 validated_receipt = receipt
                 controlled_receipt_failed = (
                     "error" in receipt or item.get("status") != "completed"
@@ -1285,6 +1342,33 @@ def _session_id(payload: dict[str, object]) -> str:
 def _agent_cli_receipt(
     value: object, *, allow_error: bool = False
 ) -> dict[str, object] | None:
+    if isinstance(value, str):
+        try:
+            encoded_size = len(value.encode("utf-8"))
+        except (UnicodeError, MemoryError):
+            return None
+        if encoded_size > 64 * 1024:
+            return None
+        encoded = value.strip()
+        if not encoded.startswith(("{", "[")):
+            marker = "\nOutput:\n"
+            if marker not in encoded:
+                return None
+            _timing, encoded = encoded.rsplit(marker, 1)
+            encoded = encoded.strip()
+        try:
+            decoded = json.loads(encoded)
+        except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
+            return None
+        return _agent_cli_receipt(decoded, allow_error=allow_error)
+    if isinstance(value, list):
+        for block in value:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            receipt = _agent_cli_receipt(block.get("text"), allow_error=allow_error)
+            if receipt is not None:
+                return receipt
+        return None
     receipt = _controlled_cli_receipt(value)
     if receipt is not None or not isinstance(value, dict):
         return receipt
@@ -1321,6 +1405,71 @@ def _agent_cli_receipt(
         ):
             return candidate
     return None
+
+
+def _agent_cli_tool_error(value: object) -> str:
+    if isinstance(value, str):
+        if len(value.encode("utf-8")) > 64 * 1024:
+            return ""
+        text = value.strip()
+        marker = "\nOutput:\n"
+        if not text.startswith(("{", "[")) and marker in text:
+            _timing, text = text.rsplit(marker, 1)
+            text = text.strip()
+        if text.startswith(("{", "[")):
+            try:
+                return _agent_cli_tool_error(json.loads(text))
+            except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
+                return ""
+        prefix = "Error executing tool "
+        if not text.startswith(prefix) or ": " not in text:
+            return ""
+        code = text.rsplit(": ", 1)[-1].strip()
+        return code if code.replace("_", "").isalnum() else ""
+    if isinstance(value, list):
+        for block in value:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            code = _agent_cli_tool_error(block.get("text"))
+            if code:
+                return code
+    if isinstance(value, dict):
+        for key in ("structuredContent", "structured_content"):
+            code = _agent_cli_tool_error(value.get(key))
+            if code:
+                return code
+        content = value.get("content")
+        if isinstance(content, list):
+            return _agent_cli_tool_error(content)
+    return ""
+
+
+def _failed_agent_cli_read_event(
+    item: dict[str, object], failure_code: str
+) -> dict[str, object]:
+    arguments = item.get("arguments")
+    argv = arguments.get("argv") if isinstance(arguments, dict) else None
+    return {
+        "type": "item.failed",
+        "item": {
+            "type": "mcp_tool_call",
+            "id": str(item.get("id") or item.get("call_id") or ""),
+            "server": "agent_cli",
+            "tool": "execute_reviewed_read",
+            "status": "failed",
+            "metadata": {
+                "effect": EffectKind.READ_ONLY.value,
+                "capability": "agent_cli",
+                "operation": "",
+                "reviewed_server": "agent_cli",
+                "reviewed_tool": "execute_reviewed_read",
+                "operation_digest": "",
+                "target_identifiers": {},
+                "arguments_digest": _json_digest({"argv": argv}),
+                "failure_code": failure_code,
+            },
+        },
+    }
 
 
 def _matching_effect_metadata(

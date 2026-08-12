@@ -15,11 +15,33 @@ from app.native_cli_metadata import describe_native_command
 from app.dws_client import DwsClient
 
 
-def test_classifier_accepts_pptx_stdout_extraction_pipeline_as_local_read():
-    command = (
-        "unzip -p /tmp/deck.pptx 'ppt/slides/slide*.xml' "
-        "| sed -E 's/<[^>]+>/ /g' | tr -s '[:space:]' ' ' | head -c 3000"
+@pytest.fixture(autouse=True)
+def _principal_local_read_policy(tmp_path, monkeypatch):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        "\n".join(
+            [
+                "[ceo_agent.local_read_policy]",
+                'blocked_commands = ["bash", "sh", "zsh", "rm", "unzip"]',
+                "[ceo_agent.local_read_policy.blocked_argument_prefixes]",
+                'sed = ["-i", "--in-place"]',
+                'find = ["-delete", "-exec", "-execdir", "-fls", "-fprint", "-fprint0", "-fprintf", "-ok", "-okdir"]',
+                'grep = ["--pre", "--generate"]',
+                'rg = ["--pre", "--generate"]',
+                'sort = ["-o", "--output"]',
+                'tail = ["-f", "--follow"]',
+                'python = ["-m"]',
+                'python3 = ["-m"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
     )
+    monkeypatch.setenv("CEO_AGENT_CODEX_CONFIG_PATH", str(config))
+
+
+def test_classifier_accepts_unblocked_local_read_pipeline():
+    command = "cat /tmp/material.txt | sed -n '1,10p' | head -c 3000"
 
     descriptor = NativeCliMetadataClassifier(reviewed_effects={}).classify(
         {"type": "command_execution", "command": command}
@@ -41,7 +63,24 @@ def test_describe_native_command_accepts_reviewed_local_read():
     assert descriptor.effect is EffectKind.READ_ONLY
 
 
-def test_describe_native_command_accepts_service_owned_oa_detail_read():
+def test_describe_native_command_allows_python_read_code_when_not_blacklisted():
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                "python3",
+                "-c",
+                "print('read material')",
+            ],
+        }
+    )
+
+    assert descriptor is not None
+    assert descriptor.cli == "local-shell"
+    assert descriptor.effect is EffectKind.READ_ONLY
+
+
+def test_describe_native_command_allows_service_owned_oa_detail_read():
     descriptor = describe_native_command(
         {
             "type": "command_execution",
@@ -57,18 +96,29 @@ def test_describe_native_command_accepts_service_owned_oa_detail_read():
     )
 
     assert descriptor is not None
-    assert descriptor.cli == "local-shell"
     assert descriptor.effect is EffectKind.READ_ONLY
     assert descriptor.command_path == "app.cli read-oa-approval-detail"
     assert descriptor.target_identifiers == {"instance-id": "proc-1"}
 
 
-def test_describe_native_command_rejects_other_service_python_commands():
+def test_describe_native_command_keeps_stable_targets_from_local_read_pipeline():
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "command": "cat /tmp/material.txt | grep --instance-id proc-1",
+        }
+    )
+
+    assert descriptor is not None
+    assert descriptor.target_identifiers == {"instance-id": "proc-1"}
+
+
+def test_describe_native_command_rejects_blacklisted_python_module_execution():
     descriptor = describe_native_command(
         {
             "type": "command_execution",
             "argv": [
-                ".venv/bin/python",
+                "python3",
                 "-m",
                 "app.cli",
                 "send-attempt",
@@ -79,6 +129,15 @@ def test_describe_native_command_rejects_other_service_python_commands():
     )
 
     assert descriptor is None
+
+
+def test_describe_native_command_rejects_blacklisted_command_and_argument():
+    assert describe_native_command(
+        {"type": "command_execution", "argv": ["rm", "/tmp/material"]}
+    ) is None
+    assert describe_native_command(
+        {"type": "command_execution", "argv": ["sed", "-i", "", "/tmp/material"]}
+    ) is None
 
 
 def test_dws_direct_message_targets_preserve_user_and_idempotency_identity():
@@ -264,6 +323,29 @@ def test_agent_cli_allows_incomplete_dws_help_as_read_only(monkeypatch):
 
     assert launched == [["/bin/dws", "chat", "message", "--help"]]
     assert receipt["operation"] == "chat message"
+    assert "error" not in receipt
+
+
+def test_agent_cli_allows_dws_schema_contract_read(monkeypatch):
+    argv = [
+        "dws", "schema", "--cli-path", "oa +approval-get",
+        "--compact", "--format", "json",
+    ]
+    monkeypatch.setattr("app.agent_cli.shutil.which", lambda _: "/bin/dws")
+    launched = []
+
+    def process_runner(*args, **_kwargs):
+        launched.append(args[0])
+        return subprocess.CompletedProcess(args[0], 0, "{}", "")
+
+    receipt = execute_reviewed_read(
+        argv,
+        classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+        process_runner=process_runner,
+    )
+
+    assert launched == [["/bin/dws", *argv[1:]]]
+    assert receipt["operation"] == "schema"
     assert "error" not in receipt
 
 

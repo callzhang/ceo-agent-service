@@ -222,6 +222,13 @@ def consumer_poll_interval_seconds() -> int:
     return env_int("CEO_CONSUMER_POLL_INTERVAL_SECONDS", 10)
 
 
+def consumer_worker_count() -> int:
+    count = env_int("CEO_CONSUMER_WORKERS", 2)
+    if not 1 <= count <= 4:
+        raise ValueError("CEO_CONSUMER_WORKERS must be between 1 and 4")
+    return count
+
+
 def meeting_producer_interval_seconds() -> int:
     return env_int("CEO_MEETING_PRODUCER_INTERVAL_SECONDS", 60)
 
@@ -299,6 +306,10 @@ def message_recovery_interval() -> timedelta:
 
 def fast_path_unread_backoff_duration() -> timedelta:
     return env_duration("FAST_PATH_UNREAD_BACKOFF", timedelta(minutes=5))
+
+
+def codex_capacity_retry_duration() -> timedelta:
+    return env_duration("CEO_CODEX_CAPACITY_RETRY_DELAY", timedelta(minutes=30))
 
 
 def single_chat_read_recovery_window() -> timedelta:

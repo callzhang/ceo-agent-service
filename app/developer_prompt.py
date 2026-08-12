@@ -1,5 +1,6 @@
 import importlib
 import importlib.util
+import hashlib
 import os
 import re
 import sys
@@ -36,6 +37,9 @@ CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS = {
     "forbidden_reply_text_terms": "",
     "oa_approval_rules": "management/OA/钉钉审批审阅原则.md",
 }
+LEGACY_UNCUSTOMIZED_DEVELOPER_PROMPT_SHA256S = {
+    "832b1ac0a1fb01c8a86366e3b9f191b69e496b53e424c69cdaeb9b3203b06241",
+}
 
 
 class DeveloperPromptTemplateError(ValueError):
@@ -67,10 +71,61 @@ def _ensure_template_file(template_path: Path, seed_path: Path) -> None:
     template_path.write_text(seed_path.read_text(encoding="utf-8"), encoding="utf-8")
 
 
+def _developer_prompt_seed_marker(template_path: Path) -> Path:
+    return template_path.with_name(".developer_prompt.seed.sha256")
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _ensure_developer_prompt_file(template_path: Path) -> None:
+    seed_text = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
+    if template_path.resolve() == SEED_DEVELOPER_PROMPT_TEMPLATE.resolve():
+        return
+    seed_digest = _sha256_text(seed_text)
+    marker_path = _developer_prompt_seed_marker(template_path)
+    if not template_path.exists():
+        template_path.parent.mkdir(parents=True, exist_ok=True)
+        template_path.write_text(seed_text, encoding="utf-8")
+        marker_path.write_text(seed_digest + "\n", encoding="ascii")
+        return
+    current_text = template_path.read_text(encoding="utf-8")
+    current_digest = _sha256_text(current_text)
+    previous_seed = (
+        marker_path.read_text(encoding="ascii").strip()
+        if marker_path.is_file()
+        else ""
+    )
+    unmodified = current_digest == previous_seed or (
+        not previous_seed
+        and current_digest in LEGACY_UNCUSTOMIZED_DEVELOPER_PROMPT_SHA256S
+    )
+    if unmodified and current_digest != seed_digest:
+        template_path.write_text(seed_text, encoding="utf-8")
+        current_digest = seed_digest
+    if current_digest == seed_digest:
+        marker_path.write_text(seed_digest + "\n", encoding="ascii")
+
+
+def developer_prompt_upgrade_status(path: Path | None = None) -> str:
+    template_path = path or developer_prompt_template_path()
+    if not template_path.is_file():
+        return "missing"
+    seed_digest = _sha256_text(
+        SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
+    )
+    return (
+        "current"
+        if _sha256_text(template_path.read_text(encoding="utf-8")) == seed_digest
+        else "customized"
+    )
+
+
 def read_developer_prompt_template(path: Path | None = None) -> str:
     template_path = path or developer_prompt_template_path()
     if path is None:
-        _ensure_template_file(template_path, SEED_DEVELOPER_PROMPT_TEMPLATE)
+        _ensure_developer_prompt_file(template_path)
     return template_path.read_text(encoding="utf-8")
 
 

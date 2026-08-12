@@ -1,3 +1,4 @@
+import errno
 from datetime import datetime
 from datetime import timedelta
 from dataclasses import dataclass
@@ -5111,6 +5112,38 @@ def test_consume_once_retries_execution_generation_mismatch(
     ]
 
 
+def test_consume_once_defers_pre_agent_resource_deadlock_without_terminal_failure(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    worker.produce_once()
+
+    def fail_before_agent_run(*_args, **_kwargs):
+        raise OSError(errno.EDEADLK, "Resource deadlock avoided")
+
+    monkeypatch.setattr(worker, "_process_queued_task", fail_before_agent_run)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+    assert task.error == worker_module.RESOURCE_DEADLOCK_WAIT_ERROR
+    assert task.available_at == "2026-05-13 17:01:00"
+    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
+    assert "reply_task_resource_deadlock_wait" in [
+        error.kind for error in worker.store.list_errors(limit=10)
+    ]
+
+
 def test_pre_run_exception_does_not_link_an_older_failed_agent_run(
     tmp_path: Path, monkeypatch
 ):
@@ -5792,6 +5825,39 @@ def test_consume_once_codex_provider_transport_failure_waits_for_recovery(
         notification["title"] == "CEO task waiting for Codex provider recovery: Friday"
         for notification in notifications
     )
+
+
+def test_consume_once_codex_capacity_exhaustion_pauses_without_browser_notice(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+        scripted_runner=FailingTaskRunner(
+            "Your workspace is out of credits. Ask your workspace owner to refill."
+        ),
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.error == "codex_provider_capacity_exhausted"
+    assert worker.store.active_codex_capacity_pause(now=fixed_worker_now()) > ""
+    assert [error.kind for error in worker.store.list_errors(limit=10)] == [
+        "codex_capacity_pause"
+    ]
+    assert notifications == []
 
 
 def test_consume_once_external_dependency_honors_attempt_limit(
@@ -14713,7 +14779,7 @@ def test_provider_capacity_failure_stays_pending_after_retry_limit(
         explicit_agent_result(
             ScriptOutcome.FAILED,
             "Codex provider capacity is temporarily unavailable.",
-            code="codex_provider_unavailable",
+            code="codex_provider_capacity_exhausted",
             retryable=True,
         ),
     )
@@ -14724,9 +14790,39 @@ def test_provider_capacity_failure_stays_pending_after_retry_limit(
     task = worker.store.get_reply_task(1)
     assert task is not None
     assert task.status == "pending"
-    assert task.error == "codex_provider_unavailable"
+    assert task.error == "codex_provider_capacity_exhausted"
     assert task.available_at > ""
     assert task.attempts == 0
+    assert worker.store.active_codex_capacity_pause(now=fixed_worker_now()) > ""
+
+
+def test_codex_capacity_pause_skips_claiming_pending_reply_tasks(
+    tmp_path: Path, monkeypatch
+):
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-capacity",
+        trigger_create_time="2026-05-13 10:00:00",
+        trigger_sender="周俊杰",
+        trigger_text="请处理这个事项",
+        trigger_message_json="{}",
+    )
+    now = fixed_worker_now()
+    retry_at = (now + timedelta(minutes=30)).isoformat()
+    assert worker.store.open_codex_capacity_pause(retry_at=retry_at, now=now)
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="processing") == 0
 
 
 def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
