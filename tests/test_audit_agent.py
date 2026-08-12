@@ -101,8 +101,9 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
     assert "Do not wrap the array in an operation_id/entries object" in prompt
     assert "read_result_digest" in prompt
     assert "unknown readback command is an evidence task" in prompt
-    assert "same stable target identifier" in prompt
-    assert "Do not replace a target-scoped read with a global search" in prompt
+    assert "Exact readback contracts:" in prompt
+    assert "shares a stable identifier from its exact readback contract" in prompt
+    assert "Do not substitute a different target type" in prompt
     assert "Do not start with an unbounded or --page-all read" in prompt
     assert "an incomplete window cannot prove absence" in prompt
     assert "use the ambiguous disposition" in prompt

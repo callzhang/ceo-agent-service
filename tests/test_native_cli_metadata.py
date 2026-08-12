@@ -96,6 +96,19 @@ def test_describe_native_command_allows_service_owned_oa_detail_read():
 
     assert descriptor is not None
     assert descriptor.effect is EffectKind.READ_ONLY
+    assert descriptor.target_identifiers == {"instance-id": "proc-1"}
+
+
+def test_describe_native_command_keeps_stable_targets_from_local_read_pipeline():
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "command": "cat /tmp/material.txt | grep --instance-id proc-1",
+        }
+    )
+
+    assert descriptor is not None
+    assert descriptor.target_identifiers == {"instance-id": "proc-1"}
 
 
 def test_describe_native_command_rejects_blacklisted_python_module_execution():

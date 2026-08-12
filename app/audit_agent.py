@@ -649,6 +649,19 @@ def _recovery_prompt(
             write_tool=str(action.get("reviewed_tool") or ""),
         )
     ]
+    readback_contracts = json.dumps(
+        [
+            {
+                "action_index": index,
+                "operation": action.get("operation", ""),
+                "target_identifiers": action.get("target_identifiers", {}),
+            }
+            for index, action in enumerate(actions)
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     guidance = ""
     if unavailable:
         guidance = (
@@ -662,6 +675,7 @@ def _recovery_prompt(
         "revision_required, failed, or needs_human. The only valid outcome for "
         "this turn is reconciled.\n\n"
         f"{context.render()}\n\nUnknown outcome recovery: {identity}{guidance}\n"
+        f"Exact readback contracts: {readback_contracts}\n"
         "For every unresolved action that has a configured readback, return one "
         "reconciliation entry with its action_index, a disposition of present, "
         "absent, or ambiguous, and the exact result_digest from the matching live "
@@ -674,10 +688,11 @@ def _recovery_prompt(
         "array in an operation_id/entries object. Before any DWS read, load the "
         "operation-specific installed skill with agent_cli.read_skill; an unknown "
         "readback command is an evidence task, not a reason to fail or escalate. "
-        "Use a target-scoped read with the same stable target identifier as the "
-        "original action, such as group/conversation, user/open-dingtalk-id, "
-        "instance-id/task-id, or uuid. Do not replace a target-scoped read with a "
-        "global search; global results cannot prove the outcome for one recipient. "
+        "Use a target-scoped read that shares a stable identifier from its exact "
+        "readback contract, such as group/conversation, user/open-dingtalk-id, "
+        "instance-id/task-id, or uuid. Do not substitute a different target type "
+        "or replace a target-scoped read with a global search; neither can prove "
+        "the outcome for one recipient. "
         "Start with the smallest recent target-scoped window that can verify the "
         "exact action. Do not start with an unbounded or --page-all read. Fetch "
         "older pages only when the recent window cannot decide, and treat every "

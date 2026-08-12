@@ -436,8 +436,22 @@ def _classify_local_read_only_command(
         command_path=command_path,
         effect=EffectKind.READ_ONLY,
         command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
-        target_identifiers={},
+        target_identifiers=_local_read_target_identifiers(segments),
     )
+
+
+def _local_read_target_identifiers(
+    segments: tuple[tuple[str, ...], ...],
+) -> dict[str, str]:
+    """Keep stable identifiers from a reviewed local read for readback matching."""
+    identifiers: dict[str, str] = {}
+    for segment in segments:
+        for key, value in _argv_target_identifiers(segment).items():
+            prior = identifiers.get(key)
+            if prior is not None and prior != value:
+                return {}
+            identifiers[key] = value
+    return identifiers
 
 
 def _local_read_only_segments(
