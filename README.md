@@ -18,7 +18,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **钉钉消息发现**：通过 `dws` 读取未读会话、@ 消息、群聊广播消息、配置机器人私聊消息，并用慢路径补扫防止漏消息。
 - **结构化消息发现**：按会话来源、明确 @ 和稳定平台对象发现 trigger；业务类型和处理方式由 Agent 动态读取 Skill 判断，不使用关键词 router。
 - **本地任务队列**：使用 SQLite 保存 `reply_tasks`、`reply_attempts`、`seen_messages`、`sent_replies`，避免重复处理和重复发送。
-- **Consumer / Audit Agent 执行**：Consumer A 代表管理者，用原生 `codex exec` 读取材料、判断业务并提出精确候选；Audit B 独立审阅、执行和读回外部动作。A 没有任务驱动的写权限，B 是唯一写入者。
+- **Consumer / Audit Agent 执行**：Consumer A 是管理者的 read-oriented representative，用原生 `codex exec` 读取材料、判断业务并提出精确候选；按角色协议不得主动执行外部写操作。Audit B 独立审阅，并且是 service 生命周期中唯一获授权发布 accepted action、执行和读回外部动作的 Agent。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
 - **Skill-first 材料处理**：服务只传递材料引用、原始 ID、链接和精确读取命令；A 动态读取业务 Skill 和操作 Skill，自行决定展开哪些材料，B 按 verified Skill receipt 重读相同 Skill 并在写入前核对实时状态。
 - **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。写入结果未知时只在原 B session 中核对，不能盲目重放。
@@ -87,6 +87,11 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
 所有服务启动的 Codex 通道（包括微信消费）均复用安装用户的 Codex 配置、MCP、插件和 skills。服务不会复制 OAuth 或 token；单个 MCP 的认证失败按实际依赖错误处理，不会触发 Agent 自行登录。
+
+A 和 B 使用同一套安装用户 MCP/plugin/Skill 环境，没有 service-owned MCP allowlist，也没有两阶段
+MCP permission profile。某个继承 MCP 可能同时公开读写工具，service 不承诺能在技术上隐藏其中
+每一个写能力。A/B 边界由角色协议、结构化结果和状态机建立：A 只应读取、判断和提出候选；只有
+B 对 accepted candidate 的执行才会进入正式发布、读回和完成流程。
 
 Agent 必须如实返回动作结果；只有诊断、没有完成用户要求的动作时不能标为 `executed`。可向对话参与者补齐的事实必须变成一个具体澄清消息候选，不得要求 Derek 选择“继续还是追问”。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
 
@@ -451,12 +456,13 @@ CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-mes
 
 CEO reply agent 使用原生 `codex exec`，沿用启动服务的安装用户现有 `~/.codex` 配置、MCP、
 plugins、hooks、Skills 和认证状态。服务不会把 MCP transport、OAuth header、bearer token 或
-其他凭证复制到仓库、`.env` 或第二份 service-owned 配置中。A/B 运行时只叠加各自的角色权限和
-受控 `agent_cli`；这不会替换安装用户的 Codex 配置。
+其他凭证复制到仓库、`.env` 或第二份 service-owned 配置中。A/B 运行时使用不同角色指令和结果
+协议，并可叠加 service 自有的 `agent_cli`；这不会替换安装用户的 Codex 配置，也不构成一套覆盖
+所有继承 MCP 的技术权限隔离。
 
 - CLI 能力：`dws` 和 Feishu/Lark CLI 使用安装用户原有登录态；服务在执行前做 channel gate。
-- MCP/skills：直接来自用户的 Codex 安装。Consumer A 与 Audit B 都可以检索与读取；B 负责
-  独立审阅后的外部执行。
+- MCP/skills：直接来自用户的 Codex 安装。Consumer A 与 Audit B 复用相同环境；A 按协议只做
+  读取、判断和提案，B 负责独立审阅后的 accepted action 执行与发布。
 
 认证仍由 Codex CLI、plugin、MCP 和各 CLI 的原生登录管理。Agent 不执行 login/reset/logout；
 依赖缺失、认证失败、网络失败或工具不可用会按真实错误暴露，不会被改写成空结果或“对方没给材料”。

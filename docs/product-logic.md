@@ -4,6 +4,12 @@ CEO Agent Service 把业务理解交给动态加载 Skill 的 Agent，把发现�
 精确去重留给 service。钉钉是主要对话入口；已配置的 Lark CLI、MCP、plugins 和本地 Skills 复用
 安装用户现有的 Codex 环境。
 
+Consumer A 与 Audit B 使用同一套安装用户 MCP/plugin/Skill 配置和认证状态。系统没有另一份技术
+MCP allowlist，也没有为 A/B 建立两阶段 MCP permission profile；继承的第三方 MCP 可能同时公开
+读写工具。A/B 分工由角色与结果协议定义：A 是用户的 read-oriented representative，只应读取、
+分析并提出候选，不得主动执行外部写操作；B 是审计者，也是 service 生命周期中唯一被授权执行和
+发布 accepted action 的 Agent。只有 B 的执行和读回会被状态机接受为任务完成。
+
 ## 从触发到终态
 
 1. Producer 根据来源、会话类型、明确 @、稳定卡片结构和 unread cursor 发现 trigger。

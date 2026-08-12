@@ -8,9 +8,10 @@
 CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 Derek 处理的消息、
 审批和任务，把业务判断与外部执行拆给两个职责明确的 Agent：
 
-- **Consumer Agent A** 代表 Derek 理解业务、读取证据并提出精确候选，但没有外部写权限。
-- **Audit Agent B** 独立审阅候选，是任务处理链路中唯一可以发送消息、评论、审批或执行
-  其他外部写操作的 Agent。
+- **Consumer Agent A** 是 Derek 的 read-oriented representative：理解业务、读取证据并提出精确
+  候选；按角色和结果协议不得主动执行消息发送、审批等外部写操作。
+- **Audit Agent B** 独立审阅候选，是 service 生命周期中唯一被授权发布 accepted action 的
+  Agent；它执行消息、评论、审批等动作并读回结果。
 - Service 负责触发发现、队列、会话指针、角色编排、严格结果校验、租约恢复和精确重复
   投递保护，不替 Agent 做业务判断。
 
@@ -88,12 +89,16 @@ A 的身份是 Derek 本人，而不是旁观审核员。A 会：
 
 1. 复用同一业务对话的 Codex session，理解此前已经确认的事实。
 2. 动态发现并读取适用的业务 Skill，再读取完成任务所需的操作 Skill。
-3. 使用只读 CLI/MCP 能力按需读取原始消息和材料引用，不依赖 service 预读或解释正文。
+3. 以读取和判断为目的使用安装用户已有的 CLI/MCP，按需读取原始消息和材料引用，不依赖
+   service 预读或解释正文。
 4. 返回结构化候选，其中包含目标、动作、收件人/对象、正文或参数、事实引用和预期验证。
 5. 对不需要动作的触发返回 `no_action`。
 
-A 不能发送消息、评论、审批、修改文档或执行其他外部写操作。该边界固定在运行配置中，
-不能通过 Audit Rules 放宽。
+A 的角色协议禁止主动发送消息、评论、审批、修改文档或执行其他外部写操作；它只能提出候选。
+Service 不为 A/B 建立两套 MCP 权限配置，也不能保证安装用户继承的每个第三方 MCP 都从技术上
+隐藏写工具。因此这里的边界不是“所有写工具在 A 进程中必然不可见”，而是：A 不得调用写工具，
+A 的结果协议不接受其自行执行的外部动作，只有 B 对 accepted candidate 的执行进入正式生命周期。
+Audit Rules 不能把 A 改成执行者。
 
 当缺失事实可以向当前对话参与者获得时，A 必须提出**一个具体澄清问题**作为普通候选，
 由 B 审阅并发送；不得把这种情况转成 `needs_human`，也不得要求 Derek 在“继续处理”和
@@ -144,7 +149,7 @@ Audit Rules 是 A 和 B 共享的可见业务规则：
 - B 使用同一规则独立审计并决定是否执行。
 
 可配置内容包括表达、信息最小化、审批材料要求、特定业务风险和需要升级给 Derek 的判断。
-以下边界不可配置：A 只读、B 独占任务写权限、精确 revision 去重、最多两个内容反馈周期、
+以下边界不可配置：A 只负责读取/判断并提出候选、B 独占 accepted action 的正式执行职责、精确 revision 去重、最多两个内容反馈周期、
 未知结果先读回以及敏感凭证不进入提示词和审计页面。
 
 ## 能力与配置
@@ -152,6 +157,12 @@ Audit Rules 是 A 和 B 共享的可见业务规则：
 所有 Agent 直接继承安装用户的 `~/.codex/config.toml`、已安装 MCP、plugin、hook 和 skills。
 服务不复制 OAuth header、token 或 MCP transport，也不维护第二套 MCP 清单。这样同一套已登录
 的 Memory、Xiaoqing、Exa、Lark 等能力既可在 Codex 桌面端使用，也可在 CEO Agent 任务中使用。
+
+Consumer A 和 Audit B 没有两阶段 MCP permission profile，也没有 service-owned technical MCP
+allowlist。安装用户配置中的 MCP 可能同时公开读写工具；service 不声称能够技术性屏蔽其中每一个
+写能力。A/B 的区别由角色指令、候选/审计 result contract 和 service 状态机定义：A 只应读取、
+分析和提案，B 才被授权执行并发布 accepted action。任何绕过该顺序的 A-side 外部写入都违反协议，
+不能作为 service 的已完成结果。
 
 服务仍保留职责边界：A 生成候选并按共享 Audit Rules 自检；B 独立审阅并执行被接受的外部动作。
 两者都可以使用用户安装的工具和 skills。服务只负责 DWS/Lark channel gate、任务去重、发送回读、
@@ -219,7 +230,7 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 | `app.agent_orchestrator.AgentOrchestrator` | 在 A、B、反馈和未知结果恢复之间推进状态机。 |
 | `app.business_skills` | 清点并安装七个 service-managed 业务 Skill；不参与业务路由。 |
 | `app.agent_skill_usage` | 从已完成的 Codex tool events 生成 verified Skill receipts。 |
-| `app.consumer_agent.ConsumerAgentRunner` | 复用对话 A session，执行只读判断。 |
+| `app.consumer_agent.ConsumerAgentRunner` | 复用对话 A session，按 read-oriented 角色协议读取、判断并提出候选。 |
 | `app.audit_agent.AuditAgentRunner` | 新建 B 审计 session，执行合格候选并处理未知结果。 |
 | `app.agent_contracts` | 严格定义 A proposal 与 B audit result。 |
 | `app.audit_rules` | 保存、校验并分别渲染共享 Audit Rules。 |
