@@ -188,6 +188,20 @@ def test_dws_direct_message_targets_preserve_user_and_idempotency_identity():
     assert status_read_descriptor.target_identifiers == {"uuid": "operation-1"}
 
 
+def test_native_metadata_keeps_long_opaque_conversation_identifier():
+    conversation_id = "cidAbCDefghIJklMNopQRstUVwxYZ0123456789+/==conversation"
+
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": ["dws", "chat", "+chat-messages", "--conversation", conversation_id],
+        }
+    )
+
+    assert descriptor is not None
+    assert descriptor.target_identifiers == {"conversation": conversation_id}
+
+
 @pytest.mark.parametrize(
     "command",
     (

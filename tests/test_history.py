@@ -1,6 +1,13 @@
 import sqlite3
 
+from app.history import safe_observability_error
 from app.store import AutoReplyStore
+
+
+def test_observability_keeps_long_opaque_dingtalk_identifier():
+    conversation_id = "cidAbCDefghIJklMNopQRstUVwxYZ0123456789+/==conversation"
+
+    assert safe_observability_error(conversation_id) == conversation_id
 
 
 def _seed_meeting_run(store: AutoReplyStore, *, status: str = "sent") -> int:

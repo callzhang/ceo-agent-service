@@ -15,10 +15,9 @@ from app.leak_check import assert_no_credentials, contains_credential, redact_cr
         "Authorization: Basic dXNlcjpwYXNzd29yZA==",
         "https://user:password@example.com/private",
         "-----BEGIN PRIVATE KEY-----\nopaque\n-----END PRIVATE KEY-----",
-        "AbCDefghIJklMNopQRstUVwxYZ0123456789+/==",
     ],
 )
-def test_contains_credential_recognizes_common_and_opaque_secret_families(secret: str):
+def test_contains_credential_recognizes_common_secret_families(secret: str):
     assert contains_credential(secret)
 
 
@@ -30,6 +29,9 @@ def test_contains_credential_recognizes_common_and_opaque_secret_families(secret
         "/Users/example/Documents/report-final.md",
         "0123456789abcdef0123456789abcdef01234567",
         "The deployment token budget is 1200 words.",
+        "cidAbCDefghIJklMNopQRstUVwxYZ0123456789+/==conversation",
+        "sha512-AbCDefghIJklMNopQRstUVwxYZ0123456789+/==digest",
+        "AbCDefghIJklMNopQRstUVwxYZ0123456789+/==",
     ],
 )
 def test_contains_credential_keeps_common_benign_text_readable(benign: str):
@@ -43,6 +45,24 @@ def test_assert_no_credentials_checks_nested_string_leaves_and_sensitive_keys():
         assert_no_credentials({"api_token": "opaque"})
 
     assert_no_credentials({"outer": ["safe", {"value": "ordinary text"}]})
+
+
+def test_opaque_entropy_requires_an_explicit_credential_context():
+    opaque = "AbCDefghIJklMNopQRstUVwxYZ0123456789+/=="
+
+    assert not contains_credential(opaque)
+    assert contains_credential(opaque, credential_context=True)
+    assert_no_credentials({"conversation_id": opaque, "digest": opaque})
+    for field_name in (
+        "token",
+        "password",
+        "authorization",
+        "private_key",
+        "access_key",
+        "credentials",
+    ):
+        with pytest.raises(ValueError, match="credential-bearing data is not allowed"):
+            assert_no_credentials({field_name: opaque})
 
 
 def test_redact_credentials_removes_secret_without_changing_benign_text():

@@ -2,58 +2,13 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping, Sequence
-from typing import Any
-
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from app.leak_check import assert_no_credentials, is_sensitive_field_name
+from app.leak_check import assert_no_credential_arguments, assert_no_credentials
 
 
 _INCOMPLETE_DETAILS = "complete reviewed action details are required"
-
-
-def _has_sensitive_argument_name(argv: Sequence[str]) -> bool:
-    for argument in argv:
-        candidate = argument.lstrip("-")
-        name = candidate.split("=", 1)[0].split(":", 1)[0]
-        if is_sensitive_field_name(name):
-            return True
-        for separator in ("=", ":"):
-            if separator in candidate:
-                _, value = candidate.split(separator, 1)
-                if _structured_value_has_sensitive_name(value):
-                    return True
-                break
-        if _structured_value_has_sensitive_name(argument):
-            return True
-    return False
-
-
-def _structured_value_has_sensitive_name(value: str) -> bool:
-    stripped = value.strip()
-    if not stripped or stripped[0] not in "[{":
-        return False
-    try:
-        structured = json.loads(stripped)
-    except (TypeError, ValueError):
-        return False
-    return _mapping_has_sensitive_name(structured)
-
-
-def _mapping_has_sensitive_name(value: Any) -> bool:
-    if isinstance(value, Mapping):
-        return any(
-            is_sensitive_field_name(key)
-            or _mapping_has_sensitive_name(item)
-            for key, item in value.items()
-            if isinstance(key, str)
-        )
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return any(_mapping_has_sensitive_name(item) for item in value)
-    return False
 
 
 def _validate_argv(argv: object) -> list[str]:
@@ -64,11 +19,10 @@ def _validate_argv(argv: object) -> list[str]:
             not isinstance(argument, str) or not argument.strip()
             for argument in argv
         )
-        or _has_sensitive_argument_name(argv)
     ):
         raise ValueError(_INCOMPLETE_DETAILS)
     try:
-        assert_no_credentials(argv)
+        assert_no_credential_arguments(argv)
     except ValueError as exc:
         raise ValueError(_INCOMPLETE_DETAILS) from exc
     return list(argv)

@@ -2,6 +2,7 @@ import inspect
 import json
 import os
 import selectors
+import shutil
 import signal
 import subprocess
 import sys
@@ -12,7 +13,12 @@ from pathlib import Path
 import pytest
 
 from app.process_runner import ProcessRunResult
-from app.workbench.codex_runtime import CodexRuntime, _CancellableProcessExecutor
+from app.workbench.codex_runtime import (
+    CodexRuntime,
+    _CancellableProcessExecutor,
+    _config_without_confirmation_server,
+    _isolated_codex_environment,
+)
 from app.workbench.confirmation_mcp import request_reviewed_action
 from app.workbench.runtime import RuntimeRequest, _runtime_owner
 
@@ -137,6 +143,11 @@ def test_command_uses_safe_confirmation_overlay_and_supported_inputs(tmp_path: P
         image_paths=[image],
     )
     command_text = " ".join(command)
+    server_overlays = [
+        option
+        for option in command
+        if option.startswith("mcp_servers.workbench_confirmation=")
+    ]
 
     assert 'approval_policy="untrusted"' in command
     assert 'approvals_reviewer="auto_review"' in command
@@ -145,11 +156,16 @@ def test_command_uses_safe_confirmation_overlay_and_supported_inputs(tmp_path: P
     assert "--ignore-user-config" not in command
     assert "--ignore-rules" not in command
     assert "workbench_confirmation.request_reviewed_action" in command_text
-    assert "mcp_servers.workbench_confirmation.command=" in command_text
-    assert "mcp_servers.workbench_confirmation.args=" in command_text
-    assert "mcp_servers.workbench_confirmation.enabled_tools=" in command_text
-    assert 'mcp_servers.workbench_confirmation.enabled=true' in command
-    assert 'mcp_servers.workbench_confirmation.disabled_tools=[]' in command
+    assert len(server_overlays) == 1
+    overlay = server_overlays[0]
+    assert 'command = ' in overlay
+    assert 'args = ["-m", "app.workbench.confirmation_mcp"]' in overlay
+    assert 'enabled_tools = ["request_reviewed_action"]' in overlay
+    assert 'enabled = true' in overlay
+    assert all(
+        not option.startswith("mcp_servers.workbench_confirmation.")
+        for option in command
+    )
     assert "-m" in command and "gpt-example" in command
     assert "--image" in command and str(image) in command
 
@@ -162,10 +178,16 @@ def test_confirmation_overlay_overrides_inherited_disable_controls(
     (codex_home / "config.toml").write_text(
         "\n".join(
             [
+                'model_reasoning_effort = "high"',
+                "",
                 "[mcp_servers.workbench_confirmation]",
                 "enabled = false",
                 'command = "conflicting-command"',
                 'disabled_tools = ["request_reviewed_action"]',
+                'url = "https://conflicting.example/mcp"',
+                'bearer_token_env_var = "CONFIRMATION_TOKEN"',
+                'env = { CONFIRMATION_TOKEN = "must-not-survive" }',
+                'transport = "streamable_http"',
             ]
         ),
         encoding="utf-8",
@@ -176,17 +198,130 @@ def test_confirmation_overlay_overrides_inherited_disable_controls(
     command = runtime.build_command(prompt="inspect", provider_session_ref="")
 
     assert "--ignore-user-config" not in command
-    assert 'mcp_servers.workbench_confirmation.enabled=true' in command
-    assert 'mcp_servers.workbench_confirmation.disabled_tools=[]' in command
-    assert (
-        'mcp_servers.workbench_confirmation.enabled_tools=["request_reviewed_action"]'
-        in command
-    )
-    assert any(
-        option.startswith("mcp_servers.workbench_confirmation.command=")
-        and "conflicting-command" not in option
+    [overlay] = [
+        option
         for option in command
+        if option.startswith("mcp_servers.workbench_confirmation=")
+    ]
+    assert 'enabled = true' in overlay
+    assert 'enabled_tools = ["request_reviewed_action"]' in overlay
+    assert "conflicting-command" not in overlay
+    for forbidden in (" url =", " bearer", " env =", " transport =", " disabled_tools ="):
+        assert forbidden not in overlay
+
+
+def test_confirmation_inline_table_is_accepted_by_real_codex_parser(tmp_path: Path):
+    codex = shutil.which("codex")
+    if codex is None:
+        pytest.skip("codex executable is unavailable")
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                'model_reasoning_effort = "high"',
+                "",
+                "[mcp_servers.workbench_confirmation]",
+                'url = "https://conflicting.example/mcp"',
+                'bearer_token_env_var = "CONFLICTING_TOKEN"',
+                'env = { CONFLICTING_TOKEN = "not-a-real-secret" }',
+                "enabled = false",
+            ]
+        ),
+        encoding="utf-8",
     )
+    skills = codex_home / "skills"
+    skills.mkdir()
+    (skills / "marker").write_text("preserved", encoding="utf-8")
+    runtime = CodexRuntime(workspace=tmp_path, codex_bin=codex)
+    command = runtime.build_command(prompt="inspect", provider_session_ref="")
+    [overlay] = [
+        option
+        for option in command
+        if option.startswith("mcp_servers.workbench_confirmation=")
+    ]
+
+    with _isolated_codex_environment(
+        {**os.environ, "CODEX_HOME": str(codex_home)}
+    ) as isolated_env:
+        isolated_home = Path(isolated_env["CODEX_HOME"])
+        assert isolated_home != codex_home
+        assert (isolated_home / "skills").is_symlink()
+        assert 'model_reasoning_effort = "high"' in (
+            isolated_home / "config.toml"
+        ).read_text(encoding="utf-8")
+        parsed = subprocess.run(
+            [codex, "-c", overlay, "mcp", "get", "workbench_confirmation", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            env=isolated_env,
+        )
+
+    assert parsed.returncode == 0, parsed.stderr
+    assert not isolated_home.exists()
+    configuration = json.loads(parsed.stdout)
+    rendered = json.dumps(configuration)
+    assert configuration["enabled"] is True
+    assert configuration["enabled_tools"] == ["request_reviewed_action"]
+    assert configuration["transport"]["type"] == "stdio"
+    assert "conflicting.example" not in rendered
+    assert "CONFLICTING_TOKEN" not in rendered
+
+
+def test_confirmation_config_isolation_preserves_other_tables_and_inline_assignment():
+    source = """model = "gpt-example"
+[mcp_servers]
+workbench_confirmation = { url = "https://conflicting.example/mcp", bearer_token_env_var = "CONFLICTING_TOKEN" }
+[mcp_servers.other]
+command = "other-server"
+"""
+
+    sanitized = _config_without_confirmation_server(source)
+
+    assert 'model = "gpt-example"' in sanitized
+    assert '[mcp_servers.other]' in sanitized
+    assert 'command = "other-server"' in sanitized
+    assert "workbench_confirmation" not in sanitized
+    assert "CONFLICTING_TOKEN" not in sanitized
+
+
+def test_runtime_uses_and_cleans_isolated_codex_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.workbench_confirmation]\n"
+        'url = "https://conflicting.example/mcp"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    observed_home: Path | None = None
+
+    def executor(command: list[str], **kwargs: object) -> ProcessRunResult:
+        nonlocal observed_home
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        observed_home = Path(env["CODEX_HOME"])
+        assert observed_home != codex_home
+        assert "workbench_confirmation" not in (
+            observed_home / "config.toml"
+        ).read_text(encoding="utf-8")
+        on_stdout_line = kwargs["on_stdout_line"]
+        assert callable(on_stdout_line)
+        for record in happy_records():
+            on_stdout_line(json.dumps(record))
+        return ProcessRunResult(returncode=0, stdout="", stderr="")
+
+    runtime = CodexRuntime(workspace=tmp_path, executor=executor)
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=lambda _event: None))
+
+    assert result.status == "completed"
+    assert observed_home is not None
+    assert not observed_home.exists()
 
 
 @pytest.mark.parametrize(
@@ -320,6 +455,20 @@ def test_request_reviewed_action_preserves_valid_argv_exactly():
     assert proposal["argv"] == argv
 
 
+def test_request_reviewed_action_uses_argument_context_for_opaque_values():
+    opaque = "AbCDefghIJklMNopQRstUVwxYZ0123456789+/=="
+
+    proposal = request_reviewed_action(
+        ["tool", "--conversation", opaque], opaque, opaque, opaque
+    )
+
+    assert proposal["argv"][-1] == opaque
+    assert proposal["target"] == opaque
+    for argv in (["tool", "--token", opaque], ["tool", f"--password={opaque}"]):
+        with pytest.raises(ValueError, match="complete reviewed action details are required"):
+            request_reviewed_action(argv, "target", "summary", "risk")
+
+
 def test_delta_and_completed_message_emit_logical_text_once(tmp_path: Path):
     records = [
         {"type": "thread.started", "thread_id": SESSION_ID},
@@ -375,6 +524,30 @@ def test_completed_only_assistant_message_streams_text(tmp_path: Path):
         "Done"
     ]
     assert result.final_text == "Done"
+
+
+def test_long_opaque_identifier_in_assistant_text_is_not_a_credential(tmp_path: Path):
+    conversation_id = "cidAbCDefghIJklMNopQRstUVwxYZ0123456789+/==conversation"
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "answer",
+                "type": "agent_message",
+                "text": conversation_id,
+            },
+        },
+        {"type": "turn.completed"},
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    assert result.status == "completed"
+    assert result.final_text == conversation_id
+    assert any(event.payload.get("text") == conversation_id for event in events)
 
 
 def test_confirmation_completion_emits_only_validated_safe_fields(tmp_path: Path):
@@ -433,11 +606,10 @@ def test_confirmation_completion_emits_only_validated_safe_fields(tmp_path: Path
         {"isError": True},
         {"status": "failed"},
         {"result": {"isError": True}},
-        {"content": [{"result": {"isError": True}}]},
         {"error": {"message": "native failure"}},
     ],
 )
-def test_failed_confirmation_mcp_result_is_rejected_without_native_detail(
+def test_failed_confirmation_mcp_result_emits_no_confirmation_and_turn_continues(
     tmp_path: Path, failure_result: dict[str, object]
 ):
     records = [
@@ -461,14 +633,142 @@ def test_failed_confirmation_mcp_result_is_rejected_without_native_detail(
                 "result": failure_result,
             },
         },
+        {
+            "type": "item.completed",
+            "item": {"id": "answer", "type": "agent_message", "text": "Unable to propose"},
+        },
+        {"type": "turn.completed"},
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    assert result.status == "completed"
+    assert not any(event.event_type == "confirmation_required" for event in events)
+    [completed] = [event for event in events if event.event_type == "tool_completed"]
+    assert completed.payload["status"] == "failed"
+    assert "native" not in result.error_detail
+
+
+@pytest.mark.parametrize(
+    "business_content",
+    [
+        {"task": {"status": "failed"}},
+        {"error": "historical incident"},
+    ],
+)
+def test_mcp_business_content_does_not_masquerade_as_wrapper_failure(
+    tmp_path: Path, business_content: dict[str, object]
+):
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {
+            "type": "item.started",
+            "item": {"id": "read-1", "type": "mcp_tool_call", "tool": "read"},
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "read-1",
+                "type": "mcp_tool_call",
+                "tool": "read",
+                "result": {"isError": False, "structuredContent": business_content},
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {"id": "answer", "type": "agent_message", "text": "Done"},
+        },
+        {"type": "turn.completed"},
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    assert result.status == "completed"
+    [completed] = [event for event in events if event.event_type == "tool_completed"]
+    assert completed.payload["status"] == "completed"
+
+
+def test_failed_ordinary_mcp_is_correlated_and_does_not_abort_successful_turn(
+    tmp_path: Path,
+):
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {"type": "item.started", "item": {"id": "read-1", "type": "mcp_tool_call", "tool": "read"}},
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "read-1",
+                "type": "mcp_tool_call",
+                "tool": "read",
+                "result": {"status": "failed", "error": {"message": "native detail"}},
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "answer",
+                "type": "agent_message",
+                "text": "Recovered",
+            },
+        },
+        {"type": "turn.completed"},
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    started = next(event for event in events if event.event_type == "tool_started")
+    completed = next(event for event in events if event.event_type == "tool_completed")
+    assert result.status == "completed"
+    assert result.final_text == "Recovered"
+    assert completed.payload["status"] == "failed"
+    assert completed.payload["tool_call_id"] == started.payload["tool_call_id"]
+    assert "native detail" not in repr(events)
+
+
+def test_confirmation_structured_content_rejects_extra_business_fields(tmp_path: Path):
+    confirmation = {
+        "kind": "reviewed_cli",
+        "argv": ["tool", "read"],
+        "target": "target",
+        "summary": "summary",
+        "risk": "risk",
+        "executed": False,
+        "task": {"status": "ok"},
+    }
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {
+            "type": "item.started",
+            "item": {
+                "id": "confirm",
+                "type": "mcp_tool_call",
+                "server": "workbench_confirmation",
+                "tool": "request_reviewed_action",
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "confirm",
+                "type": "mcp_tool_call",
+                "server": "workbench_confirmation",
+                "tool": "request_reviewed_action",
+                "result": {"structuredContent": confirmation},
+            },
+        },
     ]
     runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
 
     result = runtime.wait(runtime.start(request(tmp_path), on_event=lambda _event: None))
 
     assert result.status == "failed"
-    assert result.error_code == "provider_tool_failed"
-    assert "native" not in result.error_detail
+    assert result.error_code == "invalid_confirmation"
 
 
 def test_text_dedup_is_scoped_to_native_item_id(tmp_path: Path):
