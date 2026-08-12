@@ -27,11 +27,16 @@ class AuthorizedSkillPath:
     path: Path
 
 
-def resolve_authorized_skill_path(path: str) -> AuthorizedSkillPath:
+def resolve_authorized_skill_path(
+    path: str,
+    *,
+    authorized_roots: tuple[Path, ...] | None = None,
+) -> AuthorizedSkillPath:
     try:
         resolved = Path(path).expanduser().resolve(strict=True)
         roots: list[Path] = []
-        for root in AGENT_SKILL_ROOTS:
+        roots_source = AGENT_SKILL_ROOTS if authorized_roots is None else authorized_roots
+        for root in roots_source:
             try:
                 roots.append(root.expanduser().resolve(strict=True))
             except (OSError, RuntimeError, UnicodeError):
@@ -85,6 +90,8 @@ def loaded_skill_receipts(
 def normalized_read_skill_metadata(
     arguments: object,
     result: object,
+    *,
+    authorized_roots: tuple[Path, ...] | None = None,
 ) -> dict[str, str] | None:
     if not isinstance(arguments, dict) or set(arguments) != {"path"}:
         return None
@@ -92,7 +99,10 @@ def normalized_read_skill_metadata(
     if not isinstance(requested, str) or not requested:
         return None
     try:
-        skill = resolve_authorized_skill_path(requested)
+        skill = resolve_authorized_skill_path(
+            requested,
+            authorized_roots=authorized_roots,
+        )
         receipt = _read_skill_result(result)
         if receipt is None:
             return None

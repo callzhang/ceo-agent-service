@@ -175,6 +175,11 @@ Scheduler / hourly heartbeat
 规范化 trigger/context 摘要以及当时安装的 Skill 路径和 SHA-256 摘要绑定；场景内容或
 Skill 内容变化后，旧 fixture 必须失效。
 
+Consumer 返回 `no_action` 时流程在 Consumer 终止，fixture 的 Audit result 为 `null`、
+Audit events 为空，语料使用 `not_applicable`，不得为了统一形状再启动 Audit。Consumer
+返回 proposal 时才进入 Audit dry-run；Audit 上下文使用生产 Skill receipt 解析与
+`AuditTurnContext` 格式，携带 Consumer 实际读取的精确 path/SHA，并要求 Audit 逐项重读。
+
 默认运行是确定性的已记录协议回放。它严格校验两份 JSONL 的结构、唯一 ID 和脱敏约束，
 用生产 Consumer/Audit wire parser 重新解析嵌套结果，用实际 action/effect metadata
 检查 proposal，再逐项对照语料中的 Skill、结果和机器可读断言。运行时不会根据
@@ -197,9 +202,10 @@ python evals/skill_runtime/run.py --live
 live 模式对每个场景分别启动真实本地 `codex exec` Consumer 和 Audit dry-run，向两者暴露
 完整的内置业务 Skill 清单，并记录实际 Skill 读取、`execute_reviewed_read` 证据事件、
 Consumer 严格结果和 Audit 严格结果。runner 要求 Consumer 和 Audit 都读取预期 Skill、
-不读取禁止 Skill，并对每条机器可读断言使用本次结果或事件求值。每个场景都必须得到
+不读取禁止 Skill，且 Audit 的实际读取必须与 Consumer 的已验证 Skill receipts 完全一致；
+runner 对每条机器可读断言使用本次结果或事件求值。每个 proposal 场景都必须得到
 该行 `acceptable_audit_outcomes` 明确允许的 Audit dry-run 结论；此规则同样适用于
-`no_action`、`needs_human` 和 `failed` Consumer 结果。
+需要 Audit 的 `needs_human` 和 `failed` Consumer 结果。`no_action` 不调用 Audit。
 
 两个进程都忽略用户配置与规则，使用 ephemeral、read-only sandbox，关闭 plugins、apps、
 内置工具和 web，只暴露只读 fixture MCP 的 `read_skill` 与

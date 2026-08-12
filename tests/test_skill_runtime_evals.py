@@ -7,9 +7,14 @@ import sys
 
 import pytest
 
+from app.agent_contracts import ConsumerAgentResult
 from evals.skill_runtime.run import (
     EvalCase,
     EvalValidationError,
+    ProtocolEvent,
+    _render_live_audit_prompt,
+    _run_live_case,
+    _verified_live_skill_receipts,
     build_live_command,
     load_fixtures,
     load_cases,
@@ -110,9 +115,13 @@ def test_recorded_protocol_fixtures_are_separate_complete_and_read_only():
         assert fixture.scenario_sha256
         assert fixture.skill_receipts
         assert fixture.consumer_events
-        assert fixture.audit_events
         assert fixture.consumer_result
-        assert fixture.audit_result
+        if fixture.consumer_result["outcome"] == "no_action":
+            assert fixture.audit_events == ()
+            assert fixture.audit_result is None
+        else:
+            assert fixture.audit_events
+            assert fixture.audit_result
         assert all(
             event.tool in {"read_skill", "execute_reviewed_read"}
             for event in (*fixture.consumer_events, *fixture.audit_events)
@@ -281,7 +290,7 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
         "expected_business_skills": ["ceo-message-triage"],
         "forbidden_business_skills": [],
         "expected_outcome": "no_action",
-        "acceptable_audit_outcomes": ["needs_human"],
+        "acceptable_audit_outcomes": "not_applicable",
         "required_assertions": [
             {
                 "assertion_id": "no_external_write",
@@ -293,13 +302,6 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
             {
                 "assertion_id": "consumer_evidence_read",
                 "source": "consumer_evidence",
-                "path": [0, "result"],
-                "operator": "contains",
-                "expected": "stdout",
-            },
-            {
-                "assertion_id": "audit_evidence_read",
-                "source": "audit_evidence",
                 "path": [0, "result"],
                 "operator": "contains",
                 "expected": "stdout",
@@ -329,6 +331,10 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
         ("conversation identifier", "conversation id: abc123"),
         ("task identifier", "task_id = 42"),
         ("attempt identifier", "attempt-id: 7f8e9d"),
+        ("user id whitespace", "user id 839201"),
+        ("session id whitespace", "session id 1234567890abcdef"),
+        ("message id whitespace", "message id msg90210"),
+        ("conversation id whitespace", "conversation id 442200"),
         ("token", "token=abcdefghijklmnopqrstuvwxyz0123456789"),
         ("signed link", "https://example.test/file?signature=opaque"),
         ("schemeless signed link", "files.example.test/file?expires=1900000000"),
@@ -355,6 +361,9 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
         "Version 123 is the current generalized fixture.",
         "The participant completed the documented reconciliation workflow.",
         "The owner_role is reviewer and the task count is 12.",
+        "The user id is unavailable in this generalized fixture.",
+        "The message id was not supplied by the source.",
+        "The session id remains unknown.",
     ],
 )
 def test_sanitizer_accepts_benign_dates_counts_and_prose(tmp_path: Path, benign: str):
@@ -468,6 +477,114 @@ def test_protocol_evaluation_requires_reads_assertions_and_acceptable_audit():
     assert "Audit outcome" in " ".join(rejected.errors)
 
 
+def test_recorded_proposal_requires_exact_consumer_audit_skill_receipt_parity():
+    case = load_cases(CASES_PATH)[0]
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+    without_audit_skill = fixture.model_copy(
+        update={
+            "audit_events": tuple(
+                event for event in fixture.audit_events if event.tool != "read_skill"
+            )
+        }
+    )
+
+    result = replay_fixture(case, without_audit_skill)
+
+    assert not result.ok
+    assert "exact verified Consumer receipts" in " ".join(result.errors)
+
+
+def test_live_skill_receipts_use_production_validation_and_context_formatter():
+    case = load_cases(CASES_PATH)[0]
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+    skill_path = (REPO_ROOT / fixture.skill_receipts[0].path).resolve()
+    content = skill_path.read_text(encoding="utf-8")
+    receipt = fixture.skill_receipts[0]
+    event = ProtocolEvent.model_validate(
+        {
+            "tool": "read_skill",
+            "arguments": {"path": str(skill_path)},
+            "result": {
+                "name": receipt.name,
+                "path": str(skill_path),
+                "sha256": receipt.sha256,
+                "content": content,
+            },
+        }
+    )
+
+    receipts = _verified_live_skill_receipts((event,))
+    consumer = ConsumerAgentResult.model_validate(fixture.consumer_result)
+    prompt = _render_live_audit_prompt(
+        case,
+        consumer,
+        receipts,
+        list(fixture.consumer_events[1].arguments["argv"]),
+    )
+
+    assert receipts[0].path == str(skill_path)
+    assert "Verified Skills read by Consumer A" in prompt
+    assert str(skill_path) in prompt
+    assert receipt.sha256 in prompt
+
+    tampered = event.model_copy(
+        update={"result": {**event.result, "sha256": "0" * 64}}
+    )
+    with pytest.raises(EvalValidationError, match="tampered"):
+        _verified_live_skill_receipts((tampered,))
+    with pytest.raises(EvalValidationError, match="missing"):
+        _verified_live_skill_receipts(())
+
+
+def test_live_no_action_does_not_invoke_audit(monkeypatch):
+    cases = {case.case_id: case for case in load_cases(CASES_PATH)}
+    fixture = next(
+        item
+        for item in load_fixtures(FIXTURES_PATH)
+        if item.consumer_result["outcome"] == "no_action"
+    )
+    case = cases[fixture.case_id]
+    nested = fixture.consumer_result
+    error = nested["error"]
+    wire = {
+        **{key: value for key, value in nested.items() if key != "error"},
+        "error_code": error["code"],
+        "error_retryable": error["retryable"],
+        "error_authorization_required": error["authorization_required"],
+    }
+    stdout = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": json.dumps(wire),
+            },
+        }
+    )
+    invocations: list[list[str]] = []
+
+    def execute(command: list[str], _prompt: str) -> str:
+        invocations.append(command)
+        return stdout
+
+    monkeypatch.setattr("evals.skill_runtime.run._execute_live_command", execute)
+    monkeypatch.setattr(
+        "evals.skill_runtime.run._read_event_log",
+        lambda _path: fixture.consumer_events,
+    )
+    monkeypatch.setattr(
+        "evals.skill_runtime.run._verified_live_skill_receipts",
+        lambda _events, **_kwargs: (),
+    )
+
+    result = _run_live_case(case, fixture)
+
+    assert result.ok
+    assert result.audit_outcome == "not_applicable"
+    assert result.audit_events == ()
+    assert len(invocations) == 1
+
+
 @pytest.mark.parametrize("audit_outcome", ["failed", "revision_required"])
 def test_every_recorded_case_rejects_unacceptable_audit_outcome(
     audit_outcome: str,
@@ -476,6 +593,8 @@ def test_every_recorded_case_rejects_unacceptable_audit_outcome(
         fixture.case_id: fixture for fixture in load_fixtures(FIXTURES_PATH)
     }
     for case in load_cases(CASES_PATH):
+        if case.expected_outcome == "no_action":
+            continue
         fixture = fixture_by_id[case.case_id]
         rejected_fixture = fixture.model_copy(
             update={"audit_result": _rejected_audit_result(audit_outcome)}
@@ -487,7 +606,27 @@ def test_every_recorded_case_rejects_unacceptable_audit_outcome(
         assert "Audit outcome" in " ".join(result.errors)
 
 
-@pytest.mark.parametrize("consumer_outcome", sorted(EXPECTED_OUTCOMES))
+def test_recorded_no_action_rejects_any_audit_protocol():
+    cases = {case.case_id: case for case in load_cases(CASES_PATH)}
+    for fixture in load_fixtures(FIXTURES_PATH):
+        if fixture.consumer_result["outcome"] != "no_action":
+            continue
+        case = cases[fixture.case_id]
+        audited = fixture.model_copy(
+            update={
+                "audit_events": (fixture.consumer_events[0],),
+                "audit_result": _rejected_audit_result(),
+            }
+        )
+
+        result = replay_fixture(case, audited)
+
+        assert not result.ok
+        assert "no_action must not contain Audit events" in result.errors
+        assert "no_action must not contain an Audit result" in result.errors
+
+
+@pytest.mark.parametrize("consumer_outcome", ["proposal", "needs_human", "failed"])
 def test_audit_outcome_validation_applies_to_every_consumer_outcome(
     consumer_outcome: str,
 ):

@@ -29,11 +29,18 @@ from pydantic import (
     JsonValue,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
+from app.agent_context import AgentTaskContext, AuditTurnContext, MaterialReference
 from app.agent_effects import McpToolEffectRegistry
-from app.agent_contracts import ProposedAction
+from app.agent_contracts import ConsumerAgentResult, ProposedAction
 from app.agent_result import EffectKind
+from app.agent_skill_usage import (
+    LoadedSkillReceipt,
+    loaded_skill_receipts,
+    normalized_read_skill_metadata,
+)
 from app.agent_wire_contracts import (
     parse_audit_agent_wire_result,
     parse_consumer_agent_wire_result,
@@ -63,6 +70,7 @@ AuditOutcome = Literal[
     "unknown",
     "reconciled",
 ]
+AuditExpectation = tuple[AuditOutcome, ...] | Literal["not_applicable"]
 LiveRole = Literal["consumer", "audit"]
 AssertionSource = Literal[
     "consumer_events",
@@ -75,7 +83,10 @@ AssertionSource = Literal[
 AssertionOperator = Literal["equals", "contains", "absent", "count_equals"]
 _ID_LABEL = re.compile(
     r"\b(?:user|open|union|session|message|conversation|task|attempt)[\s_-]*id\b"
-    r"\s*[:=]\s*[a-z0-9][a-z0-9_-]*",
+    r"\s*(?:[:=#-]\s*)?"
+    r"(?:\d+|(?=[a-z0-9_-]*\d)[a-z0-9_-]+|[a-f]{6,}|"
+    r"(?!(?:is|was|remains|unknown|unavailable|missing|not)\b)[a-z]{6,})"
+    r"(?![a-z0-9_-])",
     re.IGNORECASE,
 )
 _CREDENTIAL_LABEL = re.compile(
@@ -142,7 +153,7 @@ class EvalCase(BaseModel):
     expected_business_skills: tuple[str, ...] = Field(min_length=1)
     forbidden_business_skills: tuple[str, ...]
     expected_outcome: Outcome
-    acceptable_audit_outcomes: tuple[AuditOutcome, ...] = Field(min_length=1)
+    acceptable_audit_outcomes: AuditExpectation
     required_assertions: tuple[AssertionSpec, ...] = Field(min_length=1)
 
     @field_validator(
@@ -182,12 +193,31 @@ class EvalCase(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("required assertion IDs must be unique")
         sources = {item.source for item in value}
-        required_evidence = {"consumer_evidence", "audit_evidence"}
+        required_evidence = {"consumer_evidence"}
         if not required_evidence.issubset(sources):
-            raise ValueError(
-                "required assertions must inspect Consumer and Audit evidence"
-            )
+            raise ValueError("required assertions must inspect Consumer evidence")
         return value
+
+    @model_validator(mode="after")
+    def validate_audit_expectation(self) -> "EvalCase":
+        if self.expected_outcome == "no_action":
+            if self.acceptable_audit_outcomes != "not_applicable":
+                raise ValueError("no_action must declare Audit not_applicable")
+            if any(
+                assertion.source.startswith("audit_")
+                for assertion in self.required_assertions
+            ):
+                raise ValueError("no_action cannot declare Audit assertions")
+        elif self.acceptable_audit_outcomes == "not_applicable":
+            raise ValueError("non-no_action cases require acceptable Audit outcomes")
+        elif not self.acceptable_audit_outcomes:
+            raise ValueError("acceptable Audit outcomes cannot be empty")
+        elif not any(
+            assertion.source == "audit_evidence"
+            for assertion in self.required_assertions
+        ):
+            raise ValueError("audited cases must inspect Audit evidence")
+        return self
 
 
 class ProtocolEvent(BaseModel):
@@ -214,8 +244,8 @@ class ProtocolFixture(BaseModel):
     skill_receipts: tuple[SkillReceipt, ...] = Field(min_length=1)
     consumer_events: tuple[ProtocolEvent, ...] = Field(min_length=1)
     consumer_result: dict[str, JsonValue]
-    audit_events: tuple[ProtocolEvent, ...] = Field(min_length=1)
-    audit_result: dict[str, JsonValue]
+    audit_events: tuple[ProtocolEvent, ...]
+    audit_result: dict[str, JsonValue] | None
 
     @field_validator("skill_receipts", "consumer_events", "audit_events", mode="before")
     @classmethod
@@ -239,6 +269,12 @@ class ProtocolFixture(BaseModel):
             raise ValueError("Skill receipt names must be unique")
         return value
 
+    @model_validator(mode="after")
+    def validate_audit_terminal_shape(self) -> "ProtocolFixture":
+        if (self.audit_result is None) != (not self.audit_events):
+            raise ValueError("Audit result and events must both be present or absent")
+        return self
+
 
 @dataclass(frozen=True)
 class CaseResult:
@@ -251,7 +287,7 @@ class CaseResult:
     forbidden_skills: tuple[str, ...]
     missing_assertions: tuple[str, ...]
     consumer_result: dict[str, object]
-    audit_result: dict[str, object]
+    audit_result: dict[str, object] | None
     consumer_events: tuple[dict[str, object], ...]
     audit_events: tuple[dict[str, object], ...]
     errors: tuple[str, ...]
@@ -359,15 +395,17 @@ def replay_fixture(
             errors.append("Consumer nested result does not match parsed wire result")
     except Exception as exc:
         return _failed_result(case, f"Consumer result contract failed: {exc}", errors)
-    try:
-        audit = parse_audit_agent_wire_result(
-            _wire_jsonl(_audit_wire(fixture.audit_result))
-        )
-        audit_dump = audit.model_dump(mode="json")
-        if audit_dump != fixture.audit_result:
-            errors.append("Audit nested result does not match parsed wire result")
-    except Exception as exc:
-        return _failed_result(case, f"Audit result contract failed: {exc}", errors)
+    audit_dump: dict[str, object] | None = None
+    if fixture.audit_result is not None:
+        try:
+            audit = parse_audit_agent_wire_result(
+                _wire_jsonl(_audit_wire(fixture.audit_result))
+            )
+            audit_dump = audit.model_dump(mode="json")
+            if audit_dump != fixture.audit_result:
+                errors.append("Audit nested result does not match parsed wire result")
+        except Exception as exc:
+            return _failed_result(case, f"Audit result contract failed: {exc}", errors)
     return _evaluate_protocol(
         case,
         consumer_dump,
@@ -420,19 +458,24 @@ def _audit_wire(result: dict[str, JsonValue]) -> dict[str, JsonValue]:
 def _evaluate_protocol(
     case: EvalCase,
     consumer_result: dict[str, object],
-    audit_result: dict[str, object],
+    audit_result: dict[str, object] | None,
     consumer_events: tuple[ProtocolEvent, ...],
     audit_events: tuple[ProtocolEvent, ...],
     initial_errors: list[str] | None = None,
 ) -> CaseResult:
     errors = list(initial_errors or ())
+    observed_outcome = str(consumer_result.get("outcome", ""))
+    terminal_no_action = observed_outcome == "no_action"
     consumer_skills = _observed_skill_names(consumer_events)
     audit_skills = _observed_skill_names(audit_events)
     expected = set(case.expected_business_skills)
     forbidden = set(case.forbidden_business_skills)
     missing: set[str] = set()
     observed_forbidden: set[str] = set()
-    for role, observed in (("Consumer", consumer_skills), ("Audit", audit_skills)):
+    observed_roles = [("Consumer", consumer_skills)]
+    if not terminal_no_action:
+        observed_roles.append(("Audit", audit_skills))
+    for role, observed in observed_roles:
         role_set = set(observed)
         role_missing = expected.difference(role_set)
         role_forbidden = forbidden.intersection(role_set)
@@ -442,18 +485,38 @@ def _evaluate_protocol(
             errors.append(f"{role} missing Skill reads: {sorted(role_missing)}")
         if role_forbidden:
             errors.append(f"{role} read forbidden Skills: {sorted(role_forbidden)}")
-    for role, events in (("Consumer", consumer_events), ("Audit", audit_events)):
+    observed_event_roles = [("Consumer", consumer_events)]
+    if not terminal_no_action:
+        observed_event_roles.append(("Audit", audit_events))
+    for role, events in observed_event_roles:
         errors.extend(_validate_observed_skill_events(events, role))
         if not any(event.tool == "execute_reviewed_read" for event in events):
             errors.append(f"{role} has no evidence read event")
-    observed_outcome = str(consumer_result.get("outcome", ""))
-    audit_outcome = str(audit_result.get("outcome", ""))
+    if terminal_no_action:
+        if audit_events:
+            errors.append("no_action must not contain Audit events")
+        if audit_result is not None:
+            errors.append("no_action must not contain an Audit result")
+        audit_outcome = "not_applicable"
+    else:
+        if audit_result is None:
+            errors.append("non-terminal Consumer result requires an Audit result")
+            audit_outcome = "missing"
+        else:
+            audit_outcome = str(audit_result.get("outcome", ""))
+        errors.extend(_validate_skill_receipt_parity(consumer_events, audit_events))
     if observed_outcome != case.expected_outcome:
         errors.append(
             f"Consumer outcome {observed_outcome!r} != {case.expected_outcome!r}"
         )
     errors.extend(_validate_effect_metadata(consumer_result))
-    if audit_outcome not in case.acceptable_audit_outcomes:
+    if terminal_no_action:
+        if case.acceptable_audit_outcomes != "not_applicable":
+            errors.append("no_action case must declare Audit not_applicable")
+    elif (
+        case.acceptable_audit_outcomes == "not_applicable"
+        or audit_outcome not in case.acceptable_audit_outcomes
+    ):
         errors.append(
             f"Audit outcome {audit_outcome!r} is not acceptable for this case"
         )
@@ -667,6 +730,35 @@ def _observed_skill_names(events: tuple[ProtocolEvent, ...]) -> tuple[str, ...]:
     )
 
 
+def _protocol_skill_receipts(
+    events: tuple[ProtocolEvent, ...],
+) -> tuple[tuple[str, str, str], ...]:
+    return tuple(
+        sorted(
+            (
+                str(event.result.get("name", "")),
+                str(event.result.get("path", "")),
+                str(event.result.get("sha256", "")),
+            )
+            for event in events
+            if event.tool == "read_skill"
+        )
+    )
+
+
+def _validate_skill_receipt_parity(
+    consumer_events: tuple[ProtocolEvent, ...],
+    audit_events: tuple[ProtocolEvent, ...],
+) -> list[str]:
+    consumer_receipts = _protocol_skill_receipts(consumer_events)
+    audit_receipts = _protocol_skill_receipts(audit_events)
+    if audit_receipts != consumer_receipts:
+        return [
+            "Audit Skill rereads do not match exact verified Consumer receipts"
+        ]
+    return []
+
+
 def _scenario_digest(case: EvalCase) -> str:
     canonical = json.dumps(
         {"context": case.context, "trigger": case.trigger},
@@ -814,43 +906,54 @@ def _run_live_case(case: EvalCase, fixture: ProtocolFixture) -> CaseResult:
             "Read applicable Skills and evidence. Perform no external writes. Return "
             "only the strict Consumer result with machine-readable action payload."
         )
-        consumer_raw = _last_agent_message(
-            _execute_live_command(
-                build_live_command(
-                    case,
-                    role="consumer",
-                    workspace=ROOT,
-                    config_path=config_path,
-                    log_path=consumer_log,
-                ),
-                consumer_prompt,
-            )
+        consumer_raw = _execute_live_command(
+            build_live_command(
+                case,
+                role="consumer",
+                workspace=ROOT,
+                config_path=config_path,
+                log_path=consumer_log,
+            ),
+            consumer_prompt,
         )
         consumer = parse_consumer_agent_wire_result(consumer_raw)
         consumer_events = _read_event_log(consumer_log)
-        audit_prompt = (
-            f"Generalized eval trigger:\n{case.trigger}\n\n"
-            f"Generalized eval context:\n{case.context}\n\n"
-            f"Consumer strict result:\n{consumer_raw}\n\n"
-            f"Available business Skill paths:\n{available}\n\n"
-            f"Available exact reviewed read command:\n{json.dumps(read_argv)}\n\n"
-            "This is an Audit dry-run. Reread applicable Skills and evidence, review "
-            "the candidate, execute nothing, and return only the strict Audit result."
-        )
-        audit_raw = _last_agent_message(
-            _execute_live_command(
-                build_live_command(
-                    case,
-                    role="audit",
-                    workspace=ROOT,
-                    config_path=config_path,
-                    log_path=audit_log,
-                ),
-                audit_prompt,
+        consumer_receipts = _verified_live_skill_receipts(consumer_events, role="Consumer")
+        if consumer.outcome.value == "no_action":
+            return _evaluate_protocol(
+                case,
+                consumer.model_dump(mode="json"),
+                None,
+                consumer_events,
+                (),
             )
+        if consumer.proposal is None:
+            return _evaluate_protocol(
+                case,
+                consumer.model_dump(mode="json"),
+                None,
+                consumer_events,
+                (),
+            )
+        audit_prompt = _render_live_audit_prompt(
+            case,
+            consumer,
+            consumer_receipts,
+            read_argv,
+        )
+        audit_raw = _execute_live_command(
+            build_live_command(
+                case,
+                role="audit",
+                workspace=ROOT,
+                config_path=config_path,
+                log_path=audit_log,
+            ),
+            audit_prompt,
         )
         audit = parse_audit_agent_wire_result(audit_raw)
         audit_events = _read_event_log(audit_log)
+        _verified_live_skill_receipts(audit_events, role="Audit")
         return _evaluate_protocol(
             case,
             consumer.model_dump(mode="json"),
@@ -858,6 +961,92 @@ def _run_live_case(case: EvalCase, fixture: ProtocolFixture) -> CaseResult:
             consumer_events,
             audit_events,
         )
+
+
+def _verified_live_skill_receipts(
+    events: tuple[ProtocolEvent, ...],
+    *,
+    role: str = "Consumer",
+) -> tuple[LoadedSkillReceipt, ...]:
+    persisted_events: list[dict[str, object]] = []
+    read_count = 0
+    for event in events:
+        if event.tool != "read_skill":
+            continue
+        read_count += 1
+        metadata = normalized_read_skill_metadata(
+            event.arguments,
+            {
+                "structuredContent": event.result,
+                "isError": False,
+            },
+            authorized_roots=((ROOT / "skills").resolve(),),
+        )
+        if metadata is None:
+            raise EvalValidationError(
+                f"live {role} Skill read receipt is invalid or tampered"
+            )
+        persisted_events.append(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "server": "agent_cli",
+                    "tool": "read_skill",
+                    "status": "completed",
+                    "metadata": metadata,
+                },
+            }
+        )
+    receipts = loaded_skill_receipts(persisted_events)
+    if not receipts or len(receipts) != read_count:
+        raise EvalValidationError(f"live {role} Skill receipt is missing")
+    return receipts
+
+
+def _render_live_audit_prompt(
+    case: EvalCase,
+    consumer: ConsumerAgentResult,
+    receipts: tuple[LoadedSkillReceipt, ...],
+    read_argv: list[JsonValue],
+) -> str:
+    if consumer.proposal is None:
+        raise EvalValidationError("Audit context requires a Consumer proposal")
+    task = AgentTaskContext(
+        task_id=0,
+        channel="skill_runtime_eval",
+        conversation_id="generalized_eval",
+        conversation_title="Generalized Skill runtime eval",
+        single_chat=True,
+        trigger_message_id="generalized_trigger",
+        trigger_sender="generalized_sender",
+        trigger_text=f"{case.trigger}\n\n{case.context}",
+        trigger_create_time="2000-01-01 00:00:00 +0000",
+        messages=(),
+        materials=(
+            MaterialReference(
+                kind="skill_runtime_fixture",
+                reference="generalized_fixture",
+                source_message_id="generalized_trigger",
+                read_commands=(json.dumps(read_argv, separators=(",", ":")),),
+            ),
+        ),
+        prior_receipts=(),
+    )
+    context = AuditTurnContext(
+        task=task,
+        proposal_revision=0,
+        operation_id=f"skill-runtime-{case.case_id}",
+        proposal=consumer.proposal,
+        audit_rules="",
+        consumer_skills=receipts,
+    )
+    return (
+        context.render(current_time="2000-01-01 00:00:00 +0000")
+        + "\n\n## Eval dry-run\n"
+        "Reread every exact verified Consumer Skill receipt and the supplied evidence. "
+        "Review only, execute nothing, and return only the strict Audit result."
+    )
 
 
 def _execute_live_command(command: list[str], prompt: str) -> str:
@@ -872,23 +1061,6 @@ def _execute_live_command(command: list[str], prompt: str) -> str:
     if process.returncode != 0:
         raise RuntimeError(f"Codex exec failed: {process.stderr.strip()}")
     return process.stdout
-
-
-def _last_agent_message(stdout: str) -> str:
-    messages: list[str] = []
-    for raw in stdout.splitlines():
-        record = json.loads(raw)
-        item = record.get("item")
-        if (
-            record.get("type") == "item.completed"
-            and isinstance(item, dict)
-            and item.get("type") == "agent_message"
-            and isinstance(item.get("text"), str)
-        ):
-            messages.append(item["text"])
-    if not messages:
-        raise RuntimeError("Codex exec returned no agent result")
-    return messages[-1]
 
 
 def _read_event_log(path: Path) -> tuple[ProtocolEvent, ...]:
