@@ -114,6 +114,38 @@ def test_quality_gate_reports_active_codex_capacity_pause_as_attention(tmp_path)
     ]
 
 
+def test_quality_gate_marks_overdue_pending_reply_as_attention_during_capacity_pause(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    stale = (NOW - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    _insert_reply_task(store, updated_at=stale)
+    store.open_codex_capacity_pause(
+        retry_at=(NOW + timedelta(minutes=30)).isoformat(), now=NOW
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert ("reply_tasks", "capacity_paused", 1) in {
+        (issue.source, issue.code, issue.count) for issue in report.attention
+    }
+
+
+def test_quality_gate_reports_deferred_minutes_pagination_as_attention(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.set_daily_scan_state(
+        "ai_minutes",
+        last_success_at=NOW.isoformat(),
+        cursor_json='{"pagination_deferred": true}',
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert ("daily_scan_state", "pagination_deferred", 1) in {
+        (issue.source, issue.code, issue.count) for issue in report.attention
+    }
+
+
 def test_quality_gate_keeps_future_follow_up_as_attention_not_failure(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     future = (NOW + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")

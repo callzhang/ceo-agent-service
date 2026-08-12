@@ -190,7 +190,8 @@ def scan_ai_minutes(
     max_new_items: int | None = None,
 ) -> int:
     list_minutes = getattr(dws, "list_minutes", None)
-    if list_minutes is None:
+    list_minutes_page = getattr(dws, "list_minutes_page", None)
+    if list_minutes is None and list_minutes_page is None:
         store.set_daily_scan_state(
             AI_MINUTES_SCANNER,
             last_success_at="",
@@ -199,10 +200,12 @@ def scan_ai_minutes(
         )
         return 0
 
-    list_minutes_page = getattr(dws, "list_minutes_page", None)
+    pagination_error = ""
     try:
         if list_minutes_page is not None:
-            minutes_items = _list_all_ai_minutes(list_minutes_page)
+            minutes_items, pagination_error = _list_all_ai_minutes(
+                list_minutes_page
+            )
         else:
             minutes_items = list_minutes()
     except Exception as exc:
@@ -277,7 +280,11 @@ def scan_ai_minutes(
         AI_MINUTES_SCANNER,
         last_success_at=_utc_now(),
         cursor_json=json.dumps(
-            {"seen_ids": sorted(seen_ids)},
+            {
+                "seen_ids": sorted(seen_ids),
+                "pagination_deferred": bool(pagination_error),
+                "pagination_error": pagination_error,
+            },
             sort_keys=True,
         ),
         last_error="",
@@ -604,12 +611,19 @@ def _oa_task_field(task: dict[str, Any], names: tuple[str, ...]) -> str:
     return ""
 
 
-def _list_all_ai_minutes(list_minutes_page) -> list[dict]:
+def _list_all_ai_minutes(
+    list_minutes_page,
+) -> tuple[list[dict], str]:
     items: list[dict] = []
     cursor = ""
     seen_tokens: set[str] = set()
     for _ in range(100):
-        page = list_minutes_page(limit=50, cursor=cursor)
+        try:
+            page = list_minutes_page(limit=50, cursor=cursor)
+        except Exception as exc:
+            if not items:
+                raise
+            return items, str(exc)
         page_items = page.get("items") or []
         items.extend(item for item in page_items if isinstance(item, dict))
         cursor = str(page.get("next_token") or "")
@@ -617,4 +631,4 @@ def _list_all_ai_minutes(list_minutes_page) -> list[dict]:
         if not has_more or not cursor or cursor in seen_tokens:
             break
         seen_tokens.add(cursor)
-    return items
+    return items, ""
