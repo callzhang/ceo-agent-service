@@ -45,6 +45,18 @@ def _deadline_to_iso(value: str) -> str:
     return deadline.isoformat()
 
 
+def _deadline_has_passed(value: str, now: str) -> bool:
+    deadline = _parse_datetime(value)
+    current = _parse_datetime(now)
+    if deadline is None or current is None:
+        return False
+    if deadline.tzinfo is None and current.tzinfo is not None:
+        deadline = deadline.replace(tzinfo=current.tzinfo)
+    elif deadline.tzinfo is not None and current.tzinfo is None:
+        current = current.replace(tzinfo=deadline.tzinfo)
+    return deadline < current
+
+
 def _priority_to_dingtalk(priority: str) -> int:
     priorities = {
         ProjectPriority.P0.value: 40,
@@ -542,6 +554,13 @@ def retry_failed_dingtalk_todo_links(
         else:
             todo = store.get_work_todo(link.work_todo_id)
             if todo is None:
+                continue
+            if _deadline_has_passed(todo.deadline_at, now):
+                store.update_work_todo_dingtalk_link(
+                    link.id,
+                    status="cancelled",
+                    last_error="dingtalk_todo_create_expired_before_external_delivery",
+                )
                 continue
             if _has_completion_evidence(todo.completion_evidence_json):
                 # The internal work is already evidenced as complete. Retrying a
