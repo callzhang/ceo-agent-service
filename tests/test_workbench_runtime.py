@@ -1,6 +1,6 @@
 import gc
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import FrozenInstanceError, asdict
 from pathlib import Path
 from typing import Any
@@ -118,6 +118,48 @@ def test_runtime_event_projects_immutable_payload_as_plain_json():
     assert jsonable_encoder(projection) == projection
     projection["details"]["lines"].append("three")
     assert event.payload_json_value()["details"]["lines"] == ["one", "two"]
+
+
+def test_runtime_event_uses_an_immutable_non_dict_payload_mapping():
+    first = RuntimeEvent(event_type="text_delta", payload={"text": "Hello"})
+    second = RuntimeEvent(event_type="text_delta", payload={"text": "Hello"})
+
+    assert first == second
+    assert not isinstance(first.payload, dict)
+    with pytest.raises(TypeError):
+        first.payload["text"] = "Changed"  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        first.payload.update({"text": "Changed"})  # type: ignore[attr-defined]
+    with pytest.raises(TypeError):
+        dict.__setitem__(first.payload, "text", "Changed")
+    with pytest.raises(TypeError, match="unhashable type: 'RuntimeEvent'"):
+        hash(first)
+
+
+def test_runtime_event_rejects_cyclic_payload_containers():
+    direct_cycle: dict[str, object] = {}
+    direct_cycle["self"] = direct_cycle
+    indirect_mapping: dict[str, object] = {}
+    indirect_list: list[object] = [indirect_mapping]
+    indirect_mapping["items"] = indirect_list
+
+    for payload in (direct_cycle, indirect_mapping):
+        with pytest.raises(ValueError, match="cyclic container"):
+            RuntimeEvent(event_type="text_delta", payload=payload)
+
+
+def test_runtime_event_accepts_repeated_non_cyclic_payload_aliases():
+    alias = {"label": "shared"}
+
+    event = RuntimeEvent(
+        event_type="text_delta",
+        payload={"first": alias, "second": alias},
+    )
+
+    assert event.payload_json_value() == {
+        "first": {"label": "shared"},
+        "second": {"label": "shared"},
+    }
 
 
 class _CustomInteger(int):
@@ -333,7 +375,7 @@ def _native_session_values(value: Any) -> set[str]:
                 if isinstance(item, str):
                     values.add(item)
             values.update(_native_session_values(item))
-    elif isinstance(value, list):
+    elif isinstance(value, Sequence) and not isinstance(value, str):
         for item in value:
             values.update(_native_session_values(item))
     return values
@@ -342,18 +384,20 @@ def _native_session_values(value: Any) -> set[str]:
 def _assert_no_provider_session_reference(
     payload: Mapping[str, Any], native_session_values: set[str]
 ) -> None:
-    for key, value in payload.items():
-        assert _session_key_stem(key) not in _SESSION_REFERENCE_KEY_STEMS
-        if isinstance(value, str):
-            assert value not in native_session_values
-        elif isinstance(value, Mapping):
-            _assert_no_provider_session_reference(value, native_session_values)
-        elif isinstance(value, tuple):
+    def walk(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                assert isinstance(key, str)
+                assert _session_key_stem(key) not in _SESSION_REFERENCE_KEY_STEMS
+                assert all(native_value not in key for native_value in native_session_values)
+                walk(item)
+        elif isinstance(value, str):
+            assert all(native_value not in value for native_value in native_session_values)
+        elif isinstance(value, Sequence):
             for item in value:
-                if isinstance(item, Mapping):
-                    _assert_no_provider_session_reference(item, native_session_values)
-                elif isinstance(item, str):
-                    assert item not in native_session_values
+                walk(item)
+
+    walk(payload)
 
 
 def _assert_normalized_payload_shape(event: RuntimeEvent) -> None:
@@ -381,6 +425,18 @@ def test_provider_session_guard_rejects_nested_native_session_value():
     with pytest.raises(AssertionError):
         _assert_no_provider_session_reference(
             {"details": {"label": "session-native-123"}},
+            {"session-native-123"},
+        )
+
+
+def test_provider_session_guard_rejects_embedded_native_value_at_any_depth():
+    with pytest.raises(AssertionError):
+        _assert_no_provider_session_reference(
+            {
+                "outer": [
+                    ("safe", {"details": ["resuming session-native-123"]}),
+                ]
+            },
             {"session-native-123"},
         )
 

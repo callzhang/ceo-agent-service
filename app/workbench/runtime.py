@@ -42,40 +42,65 @@ _RUNTIME_EVENT_TYPES = frozenset(
 _RUNTIME_RESULT_STATUSES = frozenset({"completed", "stopped", "failed"})
 
 
-class _FrozenJsonMapping(dict[str, Any]):
-    """A dict-compatible immutable mapping so generic encoders retain JSON support."""
+@dataclass(frozen=True, slots=True, eq=False)
+class _FrozenJsonMapping(Mapping[str, Any]):
+    """A tuple-backed immutable mapping for provider-neutral event payloads."""
 
-    def _immutable(self, *args: Any, **kwargs: Any) -> None:
-        raise TypeError("runtime event payload is immutable")
+    _items: tuple[tuple[str, Any], ...]
+    __hash__ = None
 
-    __delitem__ = _immutable
-    __ior__ = _immutable
-    __setitem__ = _immutable
-    clear = _immutable
-    pop = _immutable
-    popitem = _immutable
-    setdefault = _immutable
-    update = _immutable
+    def __getitem__(self, key: str) -> Any:
+        for item_key, value in self._items:
+            if item_key == key:
+                return value
+        raise KeyError(key)
+
+    def __iter__(self):
+        return (key for key, _ in self._items)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return dict(self.items()) == dict(other.items())
 
 
-def _freeze_json_value(value: Any) -> Any:
+def _freeze_json_value(value: Any, active_container_ids: set[int] | None = None) -> Any:
     if value is None or type(value) in (bool, int, str):
         return value
     if type(value) is float:
         if not isfinite(value):
             raise ValueError("runtime event payload must contain only finite JSON-compatible values")
         return value
+    if active_container_ids is None:
+        active_container_ids = set()
     if isinstance(value, Mapping):
-        frozen_items: dict[str, Any] = {}
-        for key, item in value.items():
-            if type(key) is not str:
-                raise ValueError(
-                    "runtime event payload must use string JSON-compatible mapping keys"
-                )
-            frozen_items[key] = _freeze_json_value(item)
-        return _FrozenJsonMapping(frozen_items)
+        container_id = id(value)
+        if container_id in active_container_ids:
+            raise ValueError("runtime event payload must not contain a cyclic container")
+        active_container_ids.add(container_id)
+        try:
+            frozen_items: list[tuple[str, Any]] = []
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise ValueError(
+                        "runtime event payload must use string JSON-compatible mapping keys"
+                    )
+                frozen_items.append((key, _freeze_json_value(item, active_container_ids)))
+            return _FrozenJsonMapping(tuple(frozen_items))
+        finally:
+            active_container_ids.remove(container_id)
     if type(value) in (list, tuple):
-        return tuple(_freeze_json_value(item) for item in value)
+        container_id = id(value)
+        if container_id in active_container_ids:
+            raise ValueError("runtime event payload must not contain a cyclic container")
+        active_container_ids.add(container_id)
+        try:
+            return tuple(_freeze_json_value(item, active_container_ids) for item in value)
+        finally:
+            active_container_ids.remove(container_id)
     raise ValueError("runtime event payload must contain only JSON-compatible values")
 
 
@@ -119,10 +144,16 @@ class RuntimeRequest:
         object.__setattr__(self, "image_paths", tuple(Path(path) for path in self.image_paths))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class RuntimeEvent:
     event_type: RuntimeEventType
     payload: Mapping[str, Any] = field(default_factory=dict)
+    __hash__ = None
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, RuntimeEvent):
+            return NotImplemented
+        return self.event_type == other.event_type and self.payload == other.payload
 
     def __post_init__(self) -> None:
         if self.event_type not in _RUNTIME_EVENT_TYPES:
