@@ -449,33 +449,32 @@ CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-mes
 
 `scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。AI 听记通过当前 `dws` 登录态增量读取。
 
-CEO reply agent 使用原生 `codex exec`，保留用户的 `~/.codex` 配置、MCP、plugins、hooks 和
-skills。无需把 Exa、Memory 或 Xiaoqing 再配置到仓库或 `.env`，也绝不把它们的 OAuth/token
-复制进服务目录。
+CEO reply agent 使用原生 `codex exec`，沿用启动服务的安装用户现有 `~/.codex` 配置、MCP、
+plugins、hooks、Skills 和认证状态。服务不会把 MCP transport、OAuth header、bearer token 或
+其他凭证复制到仓库、`.env` 或第二份 service-owned 配置中。A/B 运行时只叠加各自的角色权限和
+受控 `agent_cli`；这不会替换安装用户的 Codex 配置。
 
 - CLI 能力：`dws` 和 Feishu/Lark CLI 使用安装用户原有登录态；服务在执行前做 channel gate。
 - MCP/skills：直接来自用户的 Codex 安装。Consumer A 与 Audit B 都可以检索与读取；B 负责
   独立审阅后的外部执行。
 
-认证仍由 Codex/MCP 原生登录管理。Agent 不执行 login/reset/logout；工具未授权时保留可恢复错误，
-不会把问题转嫁为“对方没给材料”。
+认证仍由 Codex CLI、plugin、MCP 和各 CLI 的原生登录管理。Agent 不执行 login/reset/logout；
+依赖缺失、认证失败、网络失败或工具不可用会按真实错误暴露，不会被改写成空结果或“对方没给材料”。
 
 Codex CLI 的原生 session JSONL 是运行审计。服务只保存 session ID 和每个 run 的 transcript 起止行，避免复制工具参数、结果和另一套回执状态机。
 
-MCP doctor 检查 `memory_connector`、`exa`、`xiaoqing_interview`，状态只使用
-`ready`、`needs_login`、`missing_config`、`token_expired`、`network_blocked`、
-`tool_not_found` 等明确值。当前阶段 doctor 负责报告 gate 状态，严格 runtime loader
-负责阻止无效配置启动；任务级暂停由 Consumer/Audit 编排切换后统一处理。
-`needs_login` 和 `token_expired` 只记录/提醒一次，不让 agent 自己触发登录循环。
+MCP doctor 可以报告 `memory_connector`、`exa`、`xiaoqing_interview` 等依赖状态，但诊断配置不是
+Direct Agent 的另一套运行清单，也不负责复制或补全用户凭证。`needs_login` 和 `token_expired`
+只记录/提醒，不让 Agent 自己触发登录循环。
 手动检查：
 
 ```bash
 .venv/bin/ceo-agent doctor-mcp --verify-live
 ```
 
-Memory 写入由受限 Codex 子 agent 使用服务清单中的 `memory_connector` transport。
-URL、bearer token 和 header 环境变量必须由 `.env`/launchd 环境提供；doctor 不会
-从个人 Codex OAuth 或个人配置中补全它们。
+Memory 与其他 MCP 一样来自安装用户现有的 Codex 配置和认证。若当前 Codex session 可以调用
+`memory_connector`，service 启动的 Direct Agent 会沿用同一能力；若调用失败，任务记录实际依赖
+错误。Service 不读取、转存、刷新或重新签发 Memory token。
 
 Follow-up 发送仍遵守 live-send 安全边界：默认 dry-run 时只生成/记录草稿；真实发送需要 `CEO_NOT_SEND_MESSAGE=0` 且显式设置 `CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1`。
 
