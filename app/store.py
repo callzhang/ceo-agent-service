@@ -5329,6 +5329,86 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
+    def recover_effectful_audit_runs_after_service_restart(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        """Resume interrupted Audit effects through reconciliation, never replay."""
+        if limit <= 0:
+            return []
+        error_json = json.dumps(
+            {
+                "code": "service_restart_effect_requires_reconciliation",
+                "retryable": False,
+            },
+            separators=(",", ":"),
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and runs.role='audit'
+                        and runs.status='running'
+                        and runs.side_effect_state<>'none'
+                  )
+                order by tasks.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                task_id = int(row["id"])
+                generation = str(row["execution_generation"])
+                db.execute(
+                    """
+                    update agent_runs
+                    set status='unknown', structured_error_json=?,
+                        side_effect_state='unknown', lease_owner='',
+                        lease_expires_at='', updated_at=current_timestamp
+                    where reply_task_id=? and execution_generation=?
+                      and role='audit' and status='running'
+                      and side_effect_state<>'none'
+                    """,
+                    (error_json, task_id, generation),
+                )
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', locked_at=null, available_at='',
+                        error='service_restart_effect_reconciliation',
+                        updated_at=current_timestamp
+                    where id=? and status='processing' and execution_generation=?
+                      and exists (
+                          select 1 from agent_runs
+                          where reply_task_id=reply_tasks.id
+                            and execution_generation=reply_tasks.execution_generation
+                            and role='audit' and status='unknown'
+                      )
+                    """,
+                    (task_id, generation),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                db.execute(
+                    "delete from codex_session_locks where conversation_id=?",
+                    (row["conversation_id"],),
+                )
+                updated = db.execute(
+                    "select * from reply_tasks where id=?", (task_id,)
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
     def resume_completed_agent_turns_after_service_restart(
         self,
         *,

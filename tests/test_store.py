@@ -6222,6 +6222,48 @@ def test_service_restart_keeps_unknown_or_effectful_agent_turns_for_recovery(
     assert store.get_agent_run(run.id).status == "unknown"
 
 
+def test_service_restart_requeues_running_effectful_audit_for_reconciliation(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(store, task.id, task.execution_generation, owner="stopped-worker").run
+    started = {
+        "type": "item.started",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    completed = {
+        "type": "item.completed",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "metadata": {"effect": "effectful"},
+        },
+    }
+    store.append_agent_run_event(run.id, started, owner="stopped-worker")
+    store.append_agent_run_event(run.id, completed, owner="stopped-worker")
+
+    recovered = store.recover_effectful_audit_runs_after_service_restart()
+
+    assert [item.id for item in recovered] == [task.id]
+    recovered_task = store.get_reply_task(task.id)
+    recovered_run = store.get_agent_run(run.id)
+    assert recovered_task is not None and recovered_task.status == "pending"
+    assert recovered_task.execution_generation == task.execution_generation
+    assert recovered_task.error == "service_restart_effect_reconciliation"
+    assert recovered_run is not None and recovered_run.status == "unknown"
+    assert recovered_run.side_effect_state == "unknown"
+    assert json.loads(recovered_run.structured_error_json)["code"] == (
+        "service_restart_effect_requires_reconciliation"
+    )
+
+
 def test_service_restart_resumes_completed_turn_without_replaying_it(
     tmp_path: Path,
 ) -> None:
