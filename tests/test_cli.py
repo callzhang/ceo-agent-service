@@ -2693,6 +2693,7 @@ def test_scan_task_sources_command_scans_local_and_minutes(
 def test_parser_supports_single_service_command(monkeypatch):
     monkeypatch.setenv("CEO_PRODUCER_INTERVAL_SECONDS", "60")
     monkeypatch.setenv("CEO_CONSUMER_POLL_INTERVAL_SECONDS", "10")
+    monkeypatch.setenv("CEO_CONSUMER_WORKERS", "2")
     parser = build_parser()
 
     args = parser.parse_args(
@@ -2706,6 +2707,8 @@ def test_parser_supports_single_service_command(monkeypatch):
             "61",
             "--consumer-poll-interval-seconds",
             "11",
+            "--consumer-workers",
+            "3",
             "--task-work-item-interval-seconds",
             "31",
             "--task-daily-interval-seconds",
@@ -2720,6 +2723,7 @@ def test_parser_supports_single_service_command(monkeypatch):
     assert args.port == 8765
     assert args.producer_interval_seconds == 61
     assert args.consumer_poll_interval_seconds == 11
+    assert args.consumer_workers == 3
     assert args.task_work_item_interval_seconds == 31
     assert args.task_daily_interval_seconds == 3600
     assert args.task_follow_up_interval_seconds == 900
@@ -5331,7 +5335,9 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("database-backup", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-producer", True),
         ("producer", 60, 4, True),
-        ("start", "ceo-agent-service-consumer", True),
+        ("start", "ceo-agent-service-consumer-1", True),
+        ("consumer", 10, 4, True),
+        ("start", "ceo-agent-service-consumer-2", True),
         ("consumer", 10, 4, True),
         ("start", "ceo-agent-service-meeting-producer", True),
         ("meeting-producer", 60, 600, True),
@@ -5348,14 +5354,15 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     assert failures == [
         ("database-backup", "stop database-backup"),
         ("producer", "stop producer"),
-        ("consumer", "stop consumer"),
+        ("consumer-1", "stop consumer"),
+        ("consumer-2", "stop consumer"),
         ("meeting-producer", "stop meeting-producer"),
         ("meeting-consumer", "stop meeting-consumer"),
         ("task-maintenance", "stop task-maintenance"),
         ("follow-up-delivery", "stop follow-up-delivery"),
         ("oa-pending-scan", "stop oa-pending-scan"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1, 1, 1, 1]
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):

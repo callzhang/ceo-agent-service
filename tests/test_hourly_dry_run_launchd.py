@@ -71,6 +71,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert "--port" in command[2]
     assert "CEO_SERVICE_ROOT" in command[2]
     assert 'CEO_MAX_BATCHES="${CEO_MAX_BATCHES:-4}"' in command[2]
+    assert 'CEO_CONSUMER_WORKERS="${CEO_CONSUMER_WORKERS:-2}"' in command[2]
     assert "DWS_DISABLE_KEYCHAIN" not in command[2]
     assert "DWS_KEYCHAIN_DIR" not in command[2]
     assert 'CEO_DING_ROBOT_NAME="${CEO_DING_ROBOT_NAME:-磊哥}"' in command[2]

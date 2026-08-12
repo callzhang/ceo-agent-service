@@ -22,6 +22,7 @@ from app.database_backup import (
 from app.config import (
     codex_capacity_retry_duration,
     consumer_poll_interval_seconds,
+    consumer_worker_count,
     embedding_api_key,
     embedding_base_url,
     embedding_enabled,
@@ -196,6 +197,7 @@ class WorkerSettings(BaseModel):
     meeting_producer_interval_seconds: PositiveInt = 60
     meeting_consumer_poll_interval_seconds: PositiveInt = 10
     meeting_settle_seconds: PositiveInt = 600
+    consumer_workers: PositiveInt = 2
     max_batches: NonNegativeInt | None = None
 
 
@@ -571,6 +573,12 @@ def build_parser() -> argparse.ArgumentParser:
                 default=consumer_poll_interval_seconds(),
             )
             subparser.add_argument(
+                "--consumer-workers",
+                type=_positive_int,
+                default=consumer_worker_count(),
+                help="bounded in-process reply consumer threads; the same conversation remains session-locked",
+            )
+            subparser.add_argument(
                 "--task-work-item-interval-seconds",
                 type=_positive_int,
                 default=task_work_item_interval_seconds(),
@@ -767,6 +775,7 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         meeting_producer_interval_seconds=meeting_producer_interval_seconds(),
         meeting_consumer_poll_interval_seconds=meeting_consumer_poll_interval_seconds(),
         meeting_settle_seconds=meeting_settle_seconds(),
+        consumer_workers=getattr(args, "consumer_workers", consumer_worker_count()),
         max_batches=args.max_batches,
     )
 
@@ -2558,15 +2567,6 @@ def run_service(
             ),
         ),
         (
-            "consumer",
-            lambda: run_consumer_loop(
-                create_worker(settings),
-                consumer_poll_interval_seconds,
-                max_tasks=settings.max_batches,
-                network_ready=dependency_gate.ready,
-            ),
-        ),
-        (
             "meeting-producer",
             lambda: run_meeting_producer_loop(
                 settings,
@@ -2602,6 +2602,19 @@ def run_service(
             ),
         ),
     )
+    consumer_components = tuple(
+        (
+            f"consumer-{index + 1}",
+            lambda: run_consumer_loop(
+                create_worker(settings),
+                consumer_poll_interval_seconds,
+                max_tasks=settings.max_batches,
+                network_ready=dependency_gate.ready,
+            ),
+        )
+        for index in range(settings.consumer_workers)
+    )
+    components = components[:2] + consumer_components + components[2:]
     if settings.oa_pending_scan_enabled:
         components += (
             (

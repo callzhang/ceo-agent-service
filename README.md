@@ -61,9 +61,9 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 单个访问失败反馈只允许 A 诊断并提出候选，不授权修改共享部署入口、域名、DNS、路由或基础设施配置。此类变更必须在上下文中已有至少 3 个相互独立的受影响案例，或 Derek 对该项具体变更给出当次明确授权；同一机器或网络上的重复探测只算一个案例。条件不足时保持配置不变并返回 `needs_human`。
 
-一次 reply task generation 对应一个或多个 A/B run：同一 `conversation_id` 的 A run 复用 `conversations.codex_session_id`，每个候选 revision 创建新的 B run。Reply consumer 本身按队列逐条处理消息；会话锁只保护同一 A session 的 JSONL 顺序。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID、transcript 行范围、角色关系、operation ID 和恢复状态。任务终态采用严格 A/B result；服务在收到结果后本地校验 JSON，不使用 Codex CLI 的 `--output-schema` 传输参数。精确重复动作由 trigger、generation 与 revision 共同阻止，人工修订后的新内容不被旧结果拦截。
+一次 reply task generation 对应一个或多个 A/B run：同一 `conversation_id` 的 A run 复用 `conversations.codex_session_id`，每个候选 revision 创建新的 B run。单个 launchd 服务内的 consumer pool 允许不同会话并行处理；SQLite 原子认领和会话锁保证同一 A session 的 JSONL 顺序。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID、transcript 行范围、角色关系、operation ID 和恢复状态。任务终态采用严格 A/B result；服务在收到结果后本地校验 JSON，不使用 Codex CLI 的 `--output-schema` 传输参数。精确重复动作由 trigger、generation 与 revision 共同阻止，人工修订后的新内容不被旧结果拦截。
 
-单一 launchd 服务默认每次串行处理 4 条 reply task。该值提高积压恢复吞吐，不创建额外 worker，也不并发执行；同一会话仍必须先取得会话锁，所有外部动作仍走 Consumer A 与 Audit B 的审核和回读。
+单一 launchd 服务默认每轮由 2 个 consumer 线程各处理至多 4 条 reply task。该限制提高积压恢复吞吐，不创建额外 launchd job；任务认领是原子的，同一会话仍必须先取得会话锁，所有外部动作仍走 Consumer A 与 Audit B 的审核和回读。
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
@@ -463,7 +463,7 @@ scripts/install-auto-reply-agents.sh
 
 - `com.ceo-agent-service.main`：唯一 launchd job，托管队列 worker 与本地审计页面。
 - producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。
-- consumer loop：按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。
+- consumer pool：单一 launchd 服务内按 `CEO_CONSUMER_WORKERS` 启动 2 条受限 consumer 线程；每条按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。同一会话仍串行。
 - meeting producer loop：读取 AI 听记与日历参会证据，只为 Derek 参会且明确结束至少 `CEO_MEETING_SETTLE_SECONDS` 的会议建队列；没有匹配日程的临时通话，仅在完整转写恰好证明 Derek 和另一位唯一员工时按 1:1 放行；没有触发条件的会议保持安静。
 - meeting consumer loop：独立分析并投递；多人会议由 Agent 使用 DWS 查找并选择有明确业务承接关系的团队群，议题相似、参会人重合或近期活跃本身不构成投递证据。多人会议默认发群；内容涉及个人隐私、个人薪酬绩效或对特定个人的严厉负面反馈、不适合群聊时改为私信。只有群发现完整成功且没有可发送群时，才默认私信日历中唯一的会议创建人；创建人身份由发送层通过 DWS 唯一验证。DWS 读取或网络失败、群元数据不完整、创建人缺失或不唯一时保持可恢复重试，不猜测收件人。发送正文固定以 `【会议跟进】会议标题（会议时间）` 开头，便于收件人识别来源会议；真实 @ 默认限于参会人，非参会人只有会议转写明确说到是他的任务、由他负责、交给他确认或跟进时才 @。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
 - `replay-recent-meetings` 会重新读取日历和听记证据，并只重开没有任何发送回执的 `no_action` 或 `failed` 会议任务；已发送或存在发送回执的任务保持终态，避免重复外发。

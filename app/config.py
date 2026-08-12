@@ -222,6 +222,13 @@ def consumer_poll_interval_seconds() -> int:
     return env_int("CEO_CONSUMER_POLL_INTERVAL_SECONDS", 10)
 
 
+def consumer_worker_count() -> int:
+    count = env_int("CEO_CONSUMER_WORKERS", 2)
+    if not 1 <= count <= 4:
+        raise ValueError("CEO_CONSUMER_WORKERS must be between 1 and 4")
+    return count
+
+
 def meeting_producer_interval_seconds() -> int:
     return env_int("CEO_MEETING_PRODUCER_INTERVAL_SECONDS", 60)
 
