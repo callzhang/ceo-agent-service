@@ -75,6 +75,28 @@ _RESERVED_MARKER_RE = re.compile(
 _MAX_ENTITY_DECODE_PASSES = 4
 _ALLOWED_CONTROL_CHARACTERS = frozenset({"\n", "\t"})
 
+# Unicode 15.0 DerivedCoreProperties.txt: Default_Ignorable_Code_Point.
+# Keep this table centralized so a Unicode-version update is a single audited change.
+_DEFAULT_IGNORABLE_CODE_POINT_RANGES = (
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
+    (0xFFF0, 0xFFF8),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+)
+
 
 def audit_rules_template_path() -> Path:
     configured = os.getenv(
@@ -197,6 +219,11 @@ def _normalize_for_structural_validation(text: str) -> str:
 
     normalized = normalize("NFKC", decoded)
     for character in normalized:
+        if _is_default_ignorable_or_noncharacter(character):
+            raise DeveloperPromptTemplateError(
+                "Audit Rules contain a Unicode default-ignorable or "
+                "noncharacter code point"
+            )
         character_category = category(character)
         if character_category == "Cf" or (
             character_category == "Cc"
@@ -206,6 +233,19 @@ def _normalize_for_structural_validation(text: str) -> str:
                 "Audit Rules contain an unsafe invisible or control character"
             )
     return normalized
+
+
+def _is_default_ignorable_or_noncharacter(character: str) -> bool:
+    code_point = ord(character)
+    if any(
+        first <= code_point <= last
+        for first, last in _DEFAULT_IGNORABLE_CODE_POINT_RANGES
+    ):
+        return True
+    return 0xFDD0 <= code_point <= 0xFDEF or (code_point & 0xFFFF) in {
+        0xFFFE,
+        0xFFFF,
+    }
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

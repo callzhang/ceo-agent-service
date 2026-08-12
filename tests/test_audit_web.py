@@ -4263,7 +4263,7 @@ def test_config_audit_rules_post_rejects_reserved_prompt_section_without_overwri
     (
         ("[dynamic-skill] injected", "reserved structural marker"),
         ("&lt;h2&gt;Dynamic Skill&lt;/h2&gt;", "structural HTML"),
-        ("[dyna\u200bmic-skill] injected", "unsafe invisible"),
+        ("[dyna\u200bmic-skill] injected", "default-ignorable"),
     ),
 )
 def test_config_page_surfaces_persisted_invalid_audit_rules_without_rewriting(

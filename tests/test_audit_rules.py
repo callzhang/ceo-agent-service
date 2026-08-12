@@ -172,6 +172,32 @@ def test_audit_rules_reject_entity_decoding_that_does_not_stabilize():
 
 
 @pytest.mark.parametrize(
+    "character",
+    (
+        pytest.param("\u034f", id="combining-grapheme-joiner"),
+        pytest.param("\ufe0f", id="bmp-variation-selector"),
+        pytest.param("\U000e0100", id="supplementary-variation-selector"),
+        pytest.param("\u200c", id="join-control"),
+        pytest.param("\u200e", id="bidi-mark"),
+        pytest.param("\U000e0001", id="tag-character"),
+        pytest.param("\ufdd0", id="bmp-noncharacter"),
+        pytest.param("\U0010ffff", id="supplementary-noncharacter"),
+    ),
+)
+def test_audit_rules_reject_default_ignorables_and_noncharacters(
+    character: str,
+):
+    with pytest.raises(DeveloperPromptTemplateError, match="default-ignorable"):
+        validate_audit_rules_text(f"verified{character}rule")
+
+
+def test_audit_rules_allow_composed_accents_and_multilingual_text():
+    validate_audit_rules_text(
+        "Café and cafe\u0301 remain readable. 中文规则。नियम सत्यापित करें।"
+    )
+
+
+@pytest.mark.parametrize(
     "persisted",
     (
         "## Context Facts\n{}",
