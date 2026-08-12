@@ -628,6 +628,7 @@ LOG_PAGE_SIZE_OPTIONS = (20, 50, 100)
 TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/css/tabulator.min.css"
 TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"
 DEFAULT_ERROR_LIST_LIMIT = 20
+ERROR_LOG_ACTIVE_WINDOW = timedelta(hours=4)
 HISTORY_CHART_HOURS = 24
 DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
 DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS = 10.0
@@ -6903,6 +6904,14 @@ def _operation_log_field(label: str, value: str) -> str:
 def _operation_log_status(store: AutoReplyStore, log: OperationLog) -> str:
     if log.source_table != "errors":
         return log.status
+    if log.status != "active":
+        return log.status
+    occurred_at = _parse_utc_timestamp(log.occurred_at)
+    if (
+        occurred_at is not None
+        and occurred_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW
+    ):
+        return "historical"
     error = ReplyError(
         id=log.source_id,
         conversation_id=log.conversation_id or None,
@@ -6918,6 +6927,8 @@ def _operation_status_class(status: str) -> str:
     normalized = status.strip().lower()
     if normalized.startswith("resolved") or normalized in {"sent", "done", "completed"}:
         return "status-resolved"
+    if normalized == "historical":
+        return "status-skipped"
     if normalized == "failed":
         return "status-failed"
     return "status-active"
@@ -7721,16 +7732,16 @@ def _require_trusted_json_mutation(request: Request) -> None:
 
 
 def _render_history_busy_page() -> str:
-    return render_page(
-        "CEO Agent Audit",
-        """
-        <section class="panel">
-          <h2>History is temporarily busy</h2>
-          <p>The service is processing background work and the audit database is locked. This page will retry automatically.</p>
-        </section>
-        """,
-        active_nav="history",
-        auto_refresh=True,
+    # This cold-start fallback must be cheap: the full shared page shell is large
+    # enough to delay the audit listener before background history prewarming starts.
+    return (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta http-equiv=\"refresh\" content=\"2\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>CEO Agent Audit</title></head><body>"
+        "<main><h2>History is temporarily busy</h2>"
+        "<p>Loading the latest audit history. This page will retry automatically.</p>"
+        "</main></body></html>"
     )
 
 

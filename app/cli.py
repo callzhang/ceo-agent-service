@@ -2380,6 +2380,10 @@ def run_task_maintenance_loop(
             continue
         run_step("process_work_items", lambda: process_work_items_command(settings))
         run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
+        run_step(
+            "resolve_recovered_errors",
+            store.resolve_errors_recovered_by_reply_attempts,
+        )
         weekly_hour = int(
             os.getenv("CEO_WEEKLY_OKR_REPORT_HOUR", str(DEFAULT_SCHEDULE_HOUR))
         )
@@ -2573,8 +2577,10 @@ def run_service(
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_orphaned_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
+    _normalize_user_rejected_wechat_deliveries_on_service_start(settings)
     _recover_okr_review_requests_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
+    _resolve_recovered_errors_on_service_start(settings)
     doctor_mcp_command(
         settings,
         service_mcp_config=os.getenv("CEO_SERVICE_MCP_CONFIG_PATH", ""),
@@ -2709,6 +2715,14 @@ def _recover_processing_work_summary_inputs_on_service_start(
     return len(recovered_inputs)
 
 
+def _resolve_recovered_errors_on_service_start(settings: WorkerSettings) -> int:
+    return AutoReplyStore(settings.db_path).resolve_errors_recovered_by_reply_attempts()
+
+
+def _normalize_user_rejected_wechat_deliveries_on_service_start(
+    settings: WorkerSettings,
+) -> int:
+    return AutoReplyStore(settings.db_path).normalize_user_rejected_wechat_deliveries()
 def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
     recovered_tasks = (

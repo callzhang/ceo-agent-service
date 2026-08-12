@@ -7468,6 +7468,34 @@ def test_render_log_list_marks_sent_trigger_errors_resolved(tmp_path: Path):
     assert '<span class="pill status-active">active</span>' not in html
 
 
+def test_render_log_list_marks_persisted_error_resolution_resolved(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("cid-1", "msg-1", "reply_task", "temporary failure")
+    [error] = store.list_errors()
+    store.resolve_errors([error.id], resolution="recovered by queue retry")
+
+    html = render_log_list(store)
+
+    assert "resolved: recovered by queue retry" in html
+    assert '<span class="pill status-active">active</span>' not in html
+
+
+def test_render_log_list_marks_old_unresolved_error_historical(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into errors (conversation_id, message_id, kind, detail, created_at)
+               values ('cid-1', 'msg-1', 'reply_task', 'old temporary failure',
+               '2026-01-01 00:00:00')"""
+        )
+
+    html = render_log_list(store)
+
+    assert "historical" in html
+    assert '<span class="pill status-active">active</span>' not in html
+    assert '<span class="pill status-skipped">historical</span>' in html
+
+
 def test_logs_route_renders_logs_and_errors_route_remains_compatible(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)

@@ -14357,6 +14357,40 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def resolve_errors_recovered_by_reply_attempts(self) -> int:
+        """Close errors whose trigger has a later verified terminal outcome."""
+        terminal_statuses = (
+            "calendar",
+            "commented",
+            "completed",
+            "document",
+            "reacted",
+            "sent",
+            "skipped",
+        )
+        placeholders = ",".join("?" for _ in terminal_statuses)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"""
+                update errors as error_event
+                set resolved_at=current_timestamp,
+                    resolution='recovered by later terminal reply attempt'
+                where coalesce(error_event.resolved_at, '')=''
+                  and coalesce(error_event.conversation_id, '')<>''
+                  and coalesce(error_event.message_id, '')<>''
+                  and exists (
+                    select 1
+                    from reply_attempts recovery
+                    where recovery.conversation_id=error_event.conversation_id
+                      and recovery.trigger_message_id=error_event.message_id
+                      and datetime(recovery.updated_at) >= datetime(error_event.created_at)
+                      and lower(recovery.send_status) in ({placeholders})
+                  )
+                """,
+                terminal_statuses,
+            )
+            return cursor.rowcount
+
     def count_sent_replies(self) -> int:
         with self._connect() as db:
             row = db.execute(
@@ -14449,7 +14483,11 @@ class AutoReplyStore:
                     created_at as occurred_at,
                     'Error' as category,
                     kind as action,
-                    case when coalesce(resolved_at, '')='' then 'active' else 'resolved' end as status,
+                    case
+                        when coalesce(resolved_at, '')<>'' then
+                            'resolved: ' || coalesce(nullif(resolution, ''), 'verified recovery')
+                        else 'active'
+                    end as status,
                     coalesce(conversation_id, '') as context,
                     detail as summary,
                     case when coalesce(resolved_at, '')='' then detail

@@ -5756,6 +5756,46 @@ def test_resolve_errors_keeps_history_with_a_resolution(tmp_path: Path):
     assert resolved.resolution == "recovered by queue retry"
 
 
+def test_resolve_errors_recovered_by_later_terminal_reply_attempt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("cid-1", "msg-1", "reply_task", "temporary failure")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Management",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="Please handle this.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="completed",
+    )
+    store.update_reply_attempt(attempt_id, send_status="completed")
+
+    assert store.resolve_errors_recovered_by_reply_attempts() == 1
+    [resolved] = store.list_errors()
+    assert resolved.resolved_at
+    assert resolved.resolution == "recovered by later terminal reply attempt"
+
+
+def test_resolve_errors_recovered_by_reply_attempts_keeps_unrelated_errors_open(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("cid-1", "msg-1", "reply_task", "temporary failure")
+    store.record_reply_attempt(
+        conversation_id="cid-2",
+        conversation_title="Management",
+        trigger_message_id="msg-2",
+        trigger_sender="Mina",
+        trigger_text="Please handle this.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="completed",
+    )
+
+    assert store.resolve_errors_recovered_by_reply_attempts() == 0
+    [error] = store.list_errors()
+    assert error.resolved_at == ""
+
+
 def test_missing_service_state_returns_none(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
