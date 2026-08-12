@@ -19,6 +19,7 @@ def test_local_service_script_runs_single_main_service():
     )
     assert 'export HOME="${CEO_SERVICE_HOME:-${HOME}}"' in content
     assert 'export PYTHONPATH="${PYTHONPATH:-.}"' in content
+    assert "export PYTHONDONTWRITEBYTECODE=1" in content
     assert 'export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"' in content
     assert "DWS_DISABLE_KEYCHAIN" not in content
     assert "DWS_KEYCHAIN_DIR" not in content
@@ -55,6 +56,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     command = plist["ProgramArguments"]
     assert command[:2] == ["/bin/zsh", "-lc"]
     assert "app.service_supervisor" in command[2]
+    assert "export PYTHONDONTWRITEBYTECODE=1" in command[2]
     assert "app.cli service" not in command[2]
     assert "--producer-interval-seconds" not in command[2]
     assert "--consumer-poll-interval-seconds" not in command[2]
@@ -82,6 +84,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     )
     assert "dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}" in command[2]
     env = plist["EnvironmentVariables"]
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
     assert "HOME" not in env
     assert "CODEX_HOME" not in env
     assert "DWS_DISABLE_KEYCHAIN" not in env
