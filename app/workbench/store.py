@@ -618,10 +618,20 @@ class WorkbenchStore(AutoReplyStore):
         self,
         confirmation_id: str,
         *,
+        owner: str,
+        lease_seconds: int = 300,
         now: str | datetime | None = None,
     ) -> WorkbenchConfirmation | None:
         """Claim one external action; exact argv is returned only to the winner."""
-        _, now_text = _utc_store_time(now)
+        owner = owner.strip()
+        if not owner:
+            raise ValueError("owner must be non-empty")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        now_value, now_text = _utc_store_time(now)
+        lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
         with self._connect() as db:
             db.execute("begin immediate")
             row = self._require_confirmation(db, confirmation_id)
@@ -643,10 +653,17 @@ class WorkbenchStore(AutoReplyStore):
                 if db.execute(
                     """
                     update workbench_confirmations
-                    set status='confirmed', decided_at=?
+                    set status='confirmed', decided_at=?, execution_owner=?,
+                        execution_lease_expires_at=?, execution_started_at=?
                     where id=? and status='pending'
                     """,
-                    (now_text, confirmation_id),
+                    (
+                        now_text,
+                        owner,
+                        lease_expires_at,
+                        now_text,
+                        confirmation_id,
+                    ),
                 ).rowcount != 1:
                     return None
                 return self._confirmation_from_row(
@@ -656,10 +673,51 @@ class WorkbenchStore(AutoReplyStore):
                 return None
             raise ValueError("confirmation has already been decided")
 
+    def renew_confirmation_execution_lease(
+        self,
+        confirmation_id: str,
+        *,
+        owner: str,
+        lease_seconds: int = 300,
+        now: str | datetime | None = None,
+    ) -> WorkbenchConfirmation:
+        owner = owner.strip()
+        if not owner:
+            raise ValueError("owner must be non-empty")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        now_value, now_text = _utc_store_time(now)
+        lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._require_confirmation(db, confirmation_id)
+            if (
+                ConfirmationStatus(row["status"]) is not ConfirmationStatus.CONFIRMED
+                or row["result_json"]
+                or row["execution_owner"] != owner
+                or row["execution_lease_expires_at"] <= now_text
+            ):
+                raise ValueError("confirmation execution lease is stale")
+            db.execute(
+                """
+                update workbench_confirmations
+                set execution_lease_expires_at=?
+                where id=? and status='confirmed' and result_json=''
+                  and execution_owner=? and execution_lease_expires_at>?
+                """,
+                (lease_expires_at, confirmation_id, owner, now_text),
+            )
+            return self._confirmation_from_row(
+                self._require_confirmation(db, confirmation_id), redact_arguments=True
+            )
+
     def finish_confirmation_execution(
         self,
         confirmation_id: str,
         *,
+        owner: str,
         status: ConfirmationStatus | str,
         result_json: dict[str, Any] | str,
         resume_context: str,
@@ -675,6 +733,9 @@ class WorkbenchStore(AutoReplyStore):
         resume_context = resume_context.strip()
         if not resume_context:
             raise ValueError("resume_context must be non-empty")
+        owner = owner.strip()
+        if not owner:
+            raise ValueError("owner must be non-empty")
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
             db.execute("begin immediate")
@@ -684,18 +745,42 @@ class WorkbenchStore(AutoReplyStore):
                 return self._confirmation_from_row(row, redact_arguments=True)
             if current is not ConfirmationStatus.CONFIRMED:
                 raise ValueError("confirmation execution is not claimed")
+            if (
+                row["execution_owner"] != owner
+                or not row["execution_lease_expires_at"]
+                or row["execution_lease_expires_at"] <= now_text
+            ):
+                raise ValueError("confirmation execution lease is stale")
             turn = self._require_turn(db, row["turn_id"])
-            if TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION:
-                raise ValueError("confirmation turn is not waiting")
             if db.execute(
                 """
                 update workbench_confirmations
-                set status=?, result_json=?
-                where id=? and status='confirmed'
+                set status=?, result_json=?, execution_owner='',
+                    execution_lease_expires_at=''
+                where id=? and status='confirmed' and result_json=''
+                  and execution_owner=? and execution_lease_expires_at>?
                 """,
-                (target.value, result_text, confirmation_id),
+                (
+                    target.value,
+                    result_text,
+                    confirmation_id,
+                    owner,
+                    now_text,
+                ),
             ).rowcount != 1:
-                raise ValueError("confirmation execution is not claimed")
+                raise ValueError("confirmation execution lease is stale")
+            turn_status = TurnStatus(turn["status"])
+            if turn_status in {
+                TurnStatus.COMPLETED,
+                TurnStatus.STOPPED,
+                TurnStatus.FAILED,
+            }:
+                return self._confirmation_from_row(
+                    self._require_confirmation(db, confirmation_id),
+                    redact_arguments=True,
+                )
+            if turn_status is not TurnStatus.WAITING_CONFIRMATION:
+                raise ValueError("confirmation turn is not waiting")
             self._append_control_event(
                 db,
                 row["turn_id"],
@@ -801,8 +886,14 @@ class WorkbenchStore(AutoReplyStore):
                 from workbench_confirmations as confirmations
                 join workbench_turns as turns on turns.id=confirmations.turn_id
                 where confirmations.status='confirmed' and confirmations.result_json=''
+                  and (
+                    confirmations.execution_owner=''
+                    or confirmations.execution_lease_expires_at=''
+                    or confirmations.execution_lease_expires_at<=?
+                  )
                 order by confirmations.id
-                """
+                """,
+                (now_text,),
             ).fetchall()
             for row in rows:
                 recovery_result = _json_object_text(
@@ -816,7 +907,8 @@ class WorkbenchStore(AutoReplyStore):
                 db.execute(
                     """
                     update workbench_confirmations
-                    set status='failed', result_json=?
+                    set status='failed', result_json=?, execution_owner='',
+                        execution_lease_expires_at=''
                     where id=? and status='confirmed' and result_json=''
                     """,
                     (recovery_result, row["id"]),

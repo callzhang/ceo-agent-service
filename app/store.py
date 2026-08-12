@@ -45,7 +45,7 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-13.2"
+STORE_SCHEMA_VERSION = "2026-08-13.3"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "workbench_tasks",
@@ -1513,6 +1513,9 @@ class AutoReplyStore:
                     result_json text not null default '',
                     created_at text not null default current_timestamp,
                     decided_at text not null default '',
+                    execution_owner text not null default '',
+                    execution_lease_expires_at text not null default '',
+                    execution_started_at text not null default '',
                     foreign key(turn_id) references workbench_turns(id)
                 );
                 """
@@ -1526,6 +1529,22 @@ class AutoReplyStore:
                     "alter table workbench_turns add column "
                     "resume_context text not null default ''"
                 )
+            workbench_confirmation_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(workbench_confirmations)"
+                ).fetchall()
+            }
+            for column in (
+                "execution_owner",
+                "execution_lease_expires_at",
+                "execution_started_at",
+            ):
+                if column not in workbench_confirmation_columns:
+                    db.execute(
+                        "alter table workbench_confirmations add column "
+                        f"{column} text not null default ''"
+                    )
             reply_task_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(reply_tasks)").fetchall()

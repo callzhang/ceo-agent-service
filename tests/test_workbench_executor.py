@@ -573,7 +573,12 @@ def test_writer_failure_is_sanitized_and_requeued_for_agent_report(
 def test_restart_reconciles_confirmed_without_result_without_execution(tmp_path: Path):
     store = _store(tmp_path)
     _, turn, confirmation = _pending_confirmation(store)
-    claim = store.claim_confirmation_execution(confirmation.id)
+    claim = store.claim_confirmation_execution(
+        confirmation.id,
+        owner="crashed-executor",
+        lease_seconds=1,
+        now="2026-08-13T00:00:00Z",
+    )
     assert claim is not None
     calls = []
 
@@ -584,7 +589,8 @@ def test_restart_reconciles_confirmed_without_result_without_execution(tmp_path:
         write_runner=lambda *args, **kwargs: calls.append((args, kwargs)),
     )
 
-    assert executor.recover() == 0
+    assert store.get_turn(turn.id).status is TurnStatus.WAITING_CONFIRMATION
+    assert executor.recover(now="2026-08-13T00:00:02Z") == 1
     assert calls == []
     assert store.get_turn(turn.id).status is TurnStatus.FAILED
     confirmation_result = store.list_confirmations(store.get_turn(turn.id).task_id)[0]
@@ -606,7 +612,7 @@ def test_restart_reconciles_confirmed_without_result_without_execution(tmp_path:
         TurnStatus.FAILED,
     ],
 )
-def test_initialization_reconciles_every_resultless_confirmed_state_without_execution(
+def test_explicit_recovery_reconciles_legacy_resultless_confirmed_states_without_execution(
     tmp_path: Path, status: TurnStatus
 ):
     store = _store(tmp_path)
@@ -642,6 +648,11 @@ def test_initialization_reconciles_every_resultless_confirmed_state_without_exec
         workspace=tmp_path,
         write_runner=lambda *args, **kwargs: writer_calls.append((args, kwargs)),
     )
+
+    assert (
+        store.get_confirmation(confirmation.id).status is ConfirmationStatus.CONFIRMED
+    )
+    executor.recover()
 
     confirmation_after = store.get_confirmation(confirmation.id)
     turn_after = store.get_turn(turn.id)
@@ -684,7 +695,176 @@ def test_claim_and_run_once_defend_against_unreconciled_confirmed_action(
 
     assert store.claim_next_turn(owner="other-worker") is None
     assert executor.run_once() == []
-    assert store.get_turn(turn.id).status is TurnStatus.FAILED
+    assert store.get_turn(turn.id).status is TurnStatus.QUEUED
+    assert (
+        store.get_confirmation(confirmation.id).status is ConfirmationStatus.CONFIRMED
+    )
+    executor.close()
+
+
+def test_live_confirmation_claim_survives_other_executor_recovery_and_runs_once(
+    tmp_path: Path, monkeypatch
+):
+    store = _store(tmp_path)
+    _, _, confirmation = _pending_confirmation(store)
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def runner(argv, **_):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        assert release.wait(5)
+        return subprocess.CompletedProcess(argv, 0, "ok", "")
+
+    first = WorkbenchExecutor(
+        WorkbenchStore(store.path),
+        RuntimeRegistry(),
+        workspace=tmp_path,
+        classifier=_write_classifier(),
+        write_runner=runner,
+        confirmation_lease_seconds=5,
+        confirmation_heartbeat_interval_seconds=0.05,
+    )
+    second = WorkbenchExecutor(
+        WorkbenchStore(store.path),
+        RuntimeRegistry(),
+        workspace=tmp_path,
+        classifier=_write_classifier(),
+        write_runner=runner,
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_result = pool.submit(first.confirm, confirmation.id)
+        assert entered.wait(2)
+        duplicate = pool.submit(second.confirm, confirmation.id).result(2)
+        assert duplicate.status is ConfirmationStatus.CONFIRMED
+        assert second.run_once() == []
+        assert second.recover() == 0
+        assert (
+            store.get_confirmation(confirmation.id).status
+            is ConfirmationStatus.CONFIRMED
+        )
+        release.set()
+        assert first_result.result(3).status is ConfirmationStatus.EXECUTED
+    assert calls == 1
+    first.close()
+    second.close()
+
+
+def test_stop_during_blocked_writer_keeps_turn_stopped_and_persists_receipt(
+    tmp_path: Path, monkeypatch
+):
+    store = _store(tmp_path)
+    _, turn, confirmation = _pending_confirmation(store)
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def runner(argv, **_):
+        entered.set()
+        assert release.wait(5)
+        return subprocess.CompletedProcess(argv, 0, "ok", "")
+
+    executor = WorkbenchExecutor(
+        store,
+        RuntimeRegistry(),
+        workspace=tmp_path,
+        classifier=_write_classifier(),
+        write_runner=runner,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(executor.confirm, confirmation.id)
+        assert entered.wait(2)
+        assert executor.stop(turn.id).status is TurnStatus.STOPPED
+        assert (
+            store.get_confirmation(confirmation.id).status
+            is ConfirmationStatus.CONFIRMED
+        )
+        release.set()
+        assert result.result(3).status is ConfirmationStatus.EXECUTED
+    assert store.get_turn(turn.id).status is TurnStatus.STOPPED
+    assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.EXECUTED
+    executor.close()
+
+
+def test_confirmation_heartbeat_prevents_short_lease_recovery(
+    tmp_path: Path, monkeypatch
+):
+    store = _store(tmp_path)
+    _, _, confirmation = _pending_confirmation(store)
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def runner(argv, **_):
+        entered.set()
+        assert release.wait(5)
+        return subprocess.CompletedProcess(argv, 0, "ok", "")
+
+    first = WorkbenchExecutor(
+        store,
+        RuntimeRegistry(),
+        workspace=tmp_path,
+        classifier=_write_classifier(),
+        write_runner=runner,
+        confirmation_lease_seconds=1,
+        confirmation_heartbeat_interval_seconds=0.05,
+    )
+    second = WorkbenchExecutor(
+        WorkbenchStore(store.path), RuntimeRegistry(), workspace=tmp_path
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(first.confirm, confirmation.id)
+        assert entered.wait(2)
+        time.sleep(1.2)
+        assert second.recover() == 0
+        release.set()
+        assert result.result(3).status is ConfirmationStatus.EXECUTED
+    first.close()
+    second.close()
+
+
+def test_lost_confirmation_lease_never_persists_writer_result(
+    tmp_path: Path, monkeypatch
+):
+    class LostClaimStore(WorkbenchStore):
+        def renew_confirmation_execution_lease(self, *args, **kwargs):
+            raise ValueError("confirmation execution lease is stale")
+
+    store = LostClaimStore(tmp_path / "workbench.sqlite3")
+    _, _, confirmation = _pending_confirmation(store)
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def runner(argv, **_):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        assert release.wait(5)
+        return subprocess.CompletedProcess(argv, 0, "ok", "")
+
+    executor = WorkbenchExecutor(
+        store,
+        RuntimeRegistry(),
+        workspace=tmp_path,
+        classifier=_write_classifier(),
+        write_runner=runner,
+        confirmation_lease_seconds=1,
+        confirmation_heartbeat_interval_seconds=0.01,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(executor.confirm, confirmation.id)
+        assert entered.wait(2)
+        time.sleep(0.05)
+        release.set()
+        assert result.result(3).status is ConfirmationStatus.CONFIRMED
+    assert calls == 1
+    assert store.get_confirmation(confirmation.id).result_json == ""
+    assert executor.recover(now="2099-01-01T00:00:00Z") == 1
     assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.FAILED
     executor.close()
 

@@ -53,6 +53,14 @@ class _RunState:
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
+@dataclass
+class _ConfirmationExecutionState:
+    confirmation_id: str
+    heartbeat_stop: threading.Event = field(default_factory=threading.Event)
+    lease_lost: bool = False
+    thread: threading.Thread | None = None
+
+
 class WorkbenchExecutor:
     def __init__(
         self,
@@ -62,17 +70,26 @@ class WorkbenchExecutor:
         workspace: Path,
         lease_seconds: int = 300,
         heartbeat_interval_seconds: float | None = None,
+        confirmation_lease_seconds: int = 300,
+        confirmation_heartbeat_interval_seconds: float | None = None,
         classifier: NativeCliMetadataClassifier | None = None,
         write_runner=None,
     ) -> None:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
+        if confirmation_lease_seconds <= 0:
+            raise ValueError("confirmation_lease_seconds must be positive")
         self.store = store
         self.runtimes = runtimes
         self.workspace = Path(workspace).resolve()
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = heartbeat_interval_seconds or max(
             0.1, min(30.0, lease_seconds / 3)
+        )
+        self.confirmation_lease_seconds = confirmation_lease_seconds
+        self.confirmation_heartbeat_interval_seconds = (
+            confirmation_heartbeat_interval_seconds
+            or max(0.1, min(30.0, confirmation_lease_seconds / 3))
         )
         self.owner = str(uuid4())
         self.classifier = classifier
@@ -81,10 +98,10 @@ class WorkbenchExecutor:
             max_workers=2, thread_name_prefix="workbench-executor"
         )
         self._states: dict[str, _RunState] = {}
+        self._confirmation_states: dict[str, _ConfirmationExecutionState] = {}
         self._task_locks: dict[str, threading.Lock] = {}
         self._map_lock = threading.RLock()
         self._closed = False
-        self.recover()
 
     def recover(self, *, now=None) -> int:
         ambiguous = self.store.reconcile_confirmed_without_result(now=now)
@@ -96,7 +113,6 @@ class WorkbenchExecutor:
         with self._map_lock:
             if self._closed:
                 raise RuntimeError("workbench executor is closed")
-        self.recover()
         claimed: list[WorkbenchTurn] = []
         for _ in range(max_turns):
             # Store timestamps have one-second precision; one extra second prevents
@@ -121,7 +137,14 @@ class WorkbenchExecutor:
         return self.store.get_turn(turn_id) or turn
 
     def confirm(self, confirmation_id: str) -> WorkbenchConfirmation:
-        claimed = self.store.claim_confirmation_execution(confirmation_id)
+        with self._map_lock:
+            if self._closed:
+                raise RuntimeError("workbench executor is closed")
+        claimed = self.store.claim_confirmation_execution(
+            confirmation_id,
+            owner=self.owner,
+            lease_seconds=self.confirmation_lease_seconds + 1,
+        )
         if claimed is None:
             existing = self.store.get_confirmation(confirmation_id)
             if existing is None:
@@ -129,6 +152,9 @@ class WorkbenchExecutor:
             if existing.status is ConfirmationStatus.CANCELLED:
                 raise ValueError("confirmation has already been decided")
             return existing
+        state = self._start_confirmation_heartbeat(claimed.id)
+        failed = True
+        safe_receipt: dict[str, object]
         try:
             arguments = json.loads(claimed.arguments_json)
             if not isinstance(arguments, dict):
@@ -157,14 +183,6 @@ class WorkbenchExecutor:
             safe_receipt = self._safe_receipt(
                 receipt, failed=failed, target_summary=claimed.target
             )
-            return self.store.finish_confirmation_execution(
-                claimed.id,
-                status=(
-                    ConfirmationStatus.FAILED if failed else ConfirmationStatus.EXECUTED
-                ),
-                result_json=safe_receipt,
-                resume_context=self._receipt_resume_context(safe_receipt),
-            )
         except Exception:
             safe_receipt = self._safe_receipt(
                 {
@@ -176,12 +194,24 @@ class WorkbenchExecutor:
                 failed=True,
                 target_summary=claimed.target,
             )
+            failed = True
+        if state.lease_lost:
+            self._stop_confirmation_heartbeat(state)
+            return self._confirmation_after_lost_lease(claimed.id)
+        try:
             return self.store.finish_confirmation_execution(
                 claimed.id,
-                status=ConfirmationStatus.FAILED,
+                owner=self.owner,
+                status=(
+                    ConfirmationStatus.FAILED if failed else ConfirmationStatus.EXECUTED
+                ),
                 result_json=safe_receipt,
                 resume_context=self._receipt_resume_context(safe_receipt),
             )
+        except ValueError:
+            return self._confirmation_after_lost_lease(claimed.id)
+        finally:
+            self._stop_confirmation_heartbeat(state)
 
     def cancel(self, confirmation_id: str) -> WorkbenchConfirmation:
         return self.store.cancel_confirmation_execution(
@@ -195,10 +225,61 @@ class WorkbenchExecutor:
                 return
             self._closed = True
             states = tuple(self._states.values())
+            confirmation_states = tuple(self._confirmation_states.values())
         for state in states:
             state.heartbeat_stop.set()
             self._stop_state_once(state)
+        for state in confirmation_states:
+            state.heartbeat_stop.set()
         self._pool.shutdown(wait=False, cancel_futures=True)
+
+    def _start_confirmation_heartbeat(
+        self, confirmation_id: str
+    ) -> _ConfirmationExecutionState:
+        state = _ConfirmationExecutionState(confirmation_id=confirmation_id)
+        thread = threading.Thread(
+            target=self._confirmation_heartbeat,
+            args=(state,),
+            name=f"workbench-confirmation-heartbeat-{confirmation_id}",
+            daemon=True,
+        )
+        state.thread = thread
+        with self._map_lock:
+            self._confirmation_states[confirmation_id] = state
+            if self._closed:
+                state.heartbeat_stop.set()
+        thread.start()
+        return state
+
+    def _confirmation_heartbeat(self, state: _ConfirmationExecutionState) -> None:
+        while not state.heartbeat_stop.wait(
+            self.confirmation_heartbeat_interval_seconds
+        ):
+            try:
+                self.store.renew_confirmation_execution_lease(
+                    state.confirmation_id,
+                    owner=self.owner,
+                    lease_seconds=self.confirmation_lease_seconds + 1,
+                )
+            except Exception:
+                state.lease_lost = True
+                state.heartbeat_stop.set()
+
+    def _stop_confirmation_heartbeat(self, state: _ConfirmationExecutionState) -> None:
+        state.heartbeat_stop.set()
+        if state.thread is not None:
+            state.thread.join(timeout=0.5)
+        with self._map_lock:
+            if self._confirmation_states.get(state.confirmation_id) is state:
+                self._confirmation_states.pop(state.confirmation_id, None)
+
+    def _confirmation_after_lost_lease(
+        self, confirmation_id: str
+    ) -> WorkbenchConfirmation:
+        existing = self.store.get_confirmation(confirmation_id)
+        if existing is None:
+            raise ValueError("workbench confirmation does not exist")
+        return existing
 
     def _execute_turn(self, turn: WorkbenchTurn) -> None:
         task = self.store.get_task(turn.task_id)

@@ -29,6 +29,26 @@ def _running_turn(tmp_path: Path) -> tuple[WorkbenchStore, str, str]:
     return store, task.id, turn.id
 
 
+def _waiting_confirmation(store: WorkbenchStore):
+    task = store.create_task(title="Analyse sales", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id,
+        user_text="Compare regions",
+        client_request_id=f"request-{task.id}",
+    )
+    assert store.claim_next_turn(owner="seed") is not None
+    confirmation = store.create_confirmation(
+        turn.id,
+        action_kind="reviewed_cli",
+        target="Executive group",
+        summary="Send update",
+        risk="External message",
+        arguments_json={"argv": ["dws", "chat", "message", "send", "--yes"]},
+        owner="seed",
+    )
+    return task, turn.id, confirmation
+
+
 def test_store_migrates_resume_context_without_losing_existing_turns(tmp_path: Path):
     db_path = tmp_path / "workbench.sqlite3"
     store = WorkbenchStore(db_path)
@@ -54,6 +74,37 @@ def test_store_migrates_resume_context_without_losing_existing_turns(tmp_path: P
             for row in db.execute("pragma table_info(workbench_turns)").fetchall()
         }
     assert "resume_context" in columns
+
+
+def test_store_migrates_confirmation_execution_claim_without_losing_data(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "workbench.sqlite3"
+    store = WorkbenchStore(db_path)
+    _, _, confirmation = _waiting_confirmation(store)
+    with store._connect() as db:
+        for column in (
+            "execution_owner",
+            "execution_lease_expires_at",
+            "execution_started_at",
+        ):
+            db.execute(f"alter table workbench_confirmations drop column {column}")
+        db.execute(
+            "update service_state set value='2026-08-13.2' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    migrated = WorkbenchStore(db_path)
+
+    assert migrated.get_confirmation(confirmation.id).status is ConfirmationStatus.PENDING
+    with migrated._connect() as db:
+        row = db.execute(
+            "select * from workbench_confirmations where id=?", (confirmation.id,)
+        ).fetchone()
+    assert row["execution_owner"] == ""
+    assert row["execution_lease_expires_at"] == ""
+    assert row["execution_started_at"] == ""
 
 
 def test_store_has_no_public_confirmation_decision_bypass(tmp_path: Path):
@@ -313,11 +364,117 @@ def test_confirmation_list_redacts_arguments_and_execution_claim_exposes_them_on
         store.list_confirmations(task_id, include_arguments=True)
     assert (
         store.claim_confirmation_execution(
-            confirmation.id, now="2026-08-13T00:00:02Z"
+            confirmation.id,
+            owner="executor-1",
+            lease_seconds=10,
+            now="2026-08-13T00:00:02Z",
         ).arguments_json
         == '{"channel":"email"}'
     )
-    assert store.claim_confirmation_execution(confirmation.id) is None
+    assert (
+        store.claim_confirmation_execution(
+            confirmation.id,
+            owner="executor-2",
+            lease_seconds=10,
+            now="2026-08-13T00:00:03Z",
+        )
+        is None
+    )
+    public = store.get_confirmation(confirmation.id)
+    assert public.arguments_json == ""
+    assert not hasattr(public, "execution_owner")
+    with store._connect() as db:
+        row = db.execute(
+            "select * from workbench_confirmations where id=?", (confirmation.id,)
+        ).fetchone()
+    assert row["execution_owner"] == "executor-1"
+    assert row["execution_started_at"] == "2026-08-13 00:00:02"
+    assert row["execution_lease_expires_at"] == "2026-08-13 00:00:12"
+
+
+def test_claim_owner_can_finish_receipt_after_turn_is_stopped(tmp_path: Path):
+    store, _, turn_id = _running_turn(tmp_path)
+    confirmation = store.create_confirmation(
+        turn_id,
+        action_kind="reviewed_cli",
+        target="Executive group",
+        summary="Send update",
+        risk="External message",
+        arguments_json={"argv": ["dws", "chat", "message", "send", "--yes"]},
+        owner="worker-1",
+        now="2026-08-13T00:00:01Z",
+    )
+    assert store.claim_confirmation_execution(
+        confirmation.id,
+        owner="executor-1",
+        lease_seconds=10,
+        now="2026-08-13T00:00:02Z",
+    )
+
+    assert store.request_stop(
+        turn_id, now="2026-08-13T00:00:03Z"
+    ).status is TurnStatus.STOPPED
+    result = store.finish_confirmation_execution(
+        confirmation.id,
+        owner="executor-1",
+        status=ConfirmationStatus.EXECUTED,
+        result_json={"status": "executed", "receipt_digest": "a" * 64},
+        resume_context='{"status":"executed"}',
+        now="2026-08-13T00:00:04Z",
+    )
+
+    assert result.status is ConfirmationStatus.EXECUTED
+    assert store.get_turn(turn_id).status is TurnStatus.STOPPED
+    with store._connect() as db:
+        row = db.execute(
+            "select * from workbench_confirmations where id=?", (confirmation.id,)
+        ).fetchone()
+    assert row["execution_owner"] == ""
+    assert row["execution_lease_expires_at"] == ""
+
+
+def test_reconcile_confirmation_claims_only_when_abandoned(tmp_path: Path):
+    store = _store(tmp_path)
+    _, live_turn, live = _waiting_confirmation(store)
+    assert store.claim_confirmation_execution(
+        live.id,
+        owner="live-executor",
+        lease_seconds=10,
+        now="2026-08-13T00:00:00Z",
+    )
+
+    assert store.reconcile_confirmed_without_result(now="2026-08-13T00:00:05Z") == 0
+    assert store.get_confirmation(live.id).status is ConfirmationStatus.CONFIRMED
+    assert store.get_turn(live_turn).status is TurnStatus.WAITING_CONFIRMATION
+    assert store.reconcile_confirmed_without_result(now="2026-08-13T00:00:11Z") == 1
+    assert store.get_confirmation(live.id).status is ConfirmationStatus.FAILED
+    assert store.get_turn(live_turn).status is TurnStatus.FAILED
+
+
+def test_confirmation_receipt_rejects_non_owner_and_expired_claim(tmp_path: Path):
+    store = _store(tmp_path)
+    _, _, confirmation = _waiting_confirmation(store)
+    assert store.claim_confirmation_execution(
+        confirmation.id,
+        owner="executor-1",
+        lease_seconds=10,
+        now="2026-08-13T00:00:00Z",
+    )
+
+    for owner, now in (
+        ("executor-2", "2026-08-13T00:00:01Z"),
+        ("executor-1", "2026-08-13T00:00:11Z"),
+    ):
+        with pytest.raises(ValueError, match="execution lease is stale"):
+            store.finish_confirmation_execution(
+                confirmation.id,
+                owner=owner,
+                status=ConfirmationStatus.EXECUTED,
+                result_json={"status": "executed"},
+                resume_context='{"status":"executed"}',
+                now=now,
+            )
+    assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.CONFIRMED
 
 
 def test_recovered_stale_worker_cannot_append_events(tmp_path: Path):
