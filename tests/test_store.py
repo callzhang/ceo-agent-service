@@ -463,6 +463,24 @@ def test_store_skips_schema_work_when_another_process_finished_it(
     AutoReplyStore(db_path)
 
 
+def test_store_repairs_missing_required_table_despite_current_schema_version(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        db.execute("drop table follow_up_send_attempts")
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    AutoReplyStore(db_path)
+
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "select 1 from sqlite_master "
+            "where type='table' and name='follow_up_send_attempts'"
+        ).fetchone() == (1,)
+
+
 def test_store_rechecks_schema_after_transient_database_lock(tmp_path, monkeypatch):
     db_path = tmp_path / "worker.sqlite3"
     AutoReplyStore(db_path)

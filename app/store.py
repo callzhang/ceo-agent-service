@@ -47,7 +47,10 @@ SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-08-12.1"
-STORE_SCHEMA_REQUIRED_TABLES = ("agent_run_events",)
+STORE_SCHEMA_REQUIRED_TABLES = (
+    "agent_run_events",
+    "follow_up_send_attempts",
+)
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
     "universal_action_executions",
