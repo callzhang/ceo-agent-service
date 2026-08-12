@@ -9,6 +9,7 @@ import pytest
 from app.workbench.isolated_home import (
     create_isolated_codex_home,
     reconcile_isolated_codex_homes,
+    remove_verified_isolated_home,
 )
 
 
@@ -28,6 +29,16 @@ def _source_home(tmp_path: Path) -> Path:
     skill.chmod(0o600)
     skill_alias = skills / "latest"
     skill_alias.symlink_to(skill)
+    rules = source / "rules"
+    rules.mkdir(mode=0o700)
+    rule = rules / "default.rules"
+    rule.write_text("allow = true\n", encoding="utf-8")
+    rule.chmod(0o600)
+    plugins = source / "plugins"
+    plugins.mkdir(mode=0o700)
+    plugin = plugins / "tool.sh"
+    plugin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    plugin.chmod(0o700)
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "do-not-copy").write_text("outside", encoding="utf-8")
@@ -135,6 +146,7 @@ def test_normal_cleanup_syncs_new_and_updated_session_files(tmp_path: Path):
     existing = session_dir / f"rollout-2026-08-13T00-00-00-{session_id}.jsonl"
     existing.write_text("before\n", encoding="utf-8")
     existing.chmod(0o600)
+    original_inode = existing.stat().st_ino
     root = tmp_path / "isolated-root"
     home = create_isolated_codex_home(
         source,
@@ -151,4 +163,74 @@ def test_normal_cleanup_syncs_new_and_updated_session_files(tmp_path: Path):
     home.cleanup()
 
     assert existing.read_text(encoding="utf-8") == "before\nafter\n"
+    assert existing.stat().st_ino != original_inode
     assert (session_dir / "new.jsonl").read_text(encoding="utf-8") == "new\n"
+
+
+def test_all_isolated_state_files_are_distinct_and_mutations_do_not_touch_sources(
+    tmp_path: Path,
+):
+    source = _source_home(tmp_path)
+    session_id = "019ff6ad-c139-7411-9169-6220e8b39688"
+    session_dir = source / "sessions" / "2026" / "08" / "13"
+    session_dir.mkdir(parents=True, mode=0o700)
+    session = session_dir / f"rollout-2026-08-13T00-00-00-{session_id}.jsonl"
+    session.write_text("original session\n", encoding="utf-8")
+    session.chmod(0o600)
+    root = tmp_path / "isolated-root"
+    home = create_isolated_codex_home(
+        source,
+        "model = 'safe'\n",
+        root=root,
+        provider_session_ref=session_id,
+    )
+    relative_paths = (
+        Path("config.toml"),
+        Path("auth.json"),
+        Path("skills/SKILL.md"),
+        Path("rules/default.rules"),
+        Path("plugins/tool.sh"),
+        session.relative_to(source),
+    )
+    original_state = {
+        relative: (
+            (source / relative).read_bytes(),
+            stat.S_IMODE((source / relative).stat().st_mode),
+        )
+        for relative in relative_paths
+    }
+
+    for index, relative in enumerate(relative_paths):
+        original = source / relative
+        isolated = home.path / relative
+        assert (isolated.stat().st_dev, isolated.stat().st_ino) != (
+            original.stat().st_dev,
+            original.stat().st_ino,
+        )
+        expected_mode = (
+            0o700 if stat.S_IMODE(original.stat().st_mode) & 0o111 else 0o600
+        )
+        assert stat.S_IMODE(isolated.stat().st_mode) == expected_mode
+        if index % 3 == 0:
+            isolated.write_bytes(b"")
+        elif index % 3 == 1:
+            isolated.chmod(0o400)
+        else:
+            isolated.unlink()
+
+    for relative, (content, mode) in original_state.items():
+        original = source / relative
+        assert original.read_bytes() == content
+        assert stat.S_IMODE(original.stat().st_mode) == mode
+
+    assert remove_verified_isolated_home(
+        home.path,
+        home.marker_token,
+        home.lock_fd,
+        root=root,
+    )
+    fcntl.flock(home.lock_fd, fcntl.LOCK_UN)
+    os.close(home.lock_fd)
+    home.lock_fd = -1
+
+    assert session.read_text(encoding="utf-8") == "original session\n"

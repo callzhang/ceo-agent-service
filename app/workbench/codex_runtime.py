@@ -196,10 +196,11 @@ def _isolated_codex_environment(
 
     isolated_env = dict(env)
     isolated_env["CODEX_HOME"] = str(isolated_home.path)
+    process_environment = _CodexProcessEnvironment(isolated_env, isolated_home)
     try:
-        yield _CodexProcessEnvironment(isolated_env, isolated_home)
+        yield process_environment
     finally:
-        isolated_home.cleanup()
+        isolated_home.cleanup(sync_sessions=process_environment.sync_sessions)
 
 
 class _CodexProcessEnvironment(dict[str, str]):
@@ -210,6 +211,7 @@ class _CodexProcessEnvironment(dict[str, str]):
     ):
         super().__init__(values)
         self.isolated_home = isolated_home
+        self.sync_sessions = False
 
 
 class _AdapterFailure(ValueError):
@@ -987,8 +989,15 @@ class CodexRuntime:
                     idle_timeout_seconds=self.idle_timeout_seconds,
                     on_stdout_line=owner.normalizer.accept_line,
                 )
-            with owner.lock:
-                stopped = owner.stop_requested
+                with owner.lock:
+                    stopped = owner.stop_requested
+                process_env.sync_sessions = bool(
+                    not stopped
+                    and process_result.returncode == 0
+                    and not process_result.timed_out
+                    and owner.normalizer.terminal_status == "completed"
+                    and owner.normalizer.provider_session_ref
+                )
             if stopped:
                 result = RuntimeResult(status="stopped")
             elif process_result.timed_out:

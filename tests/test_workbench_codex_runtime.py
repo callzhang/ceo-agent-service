@@ -87,6 +87,15 @@ def happy_records() -> list[dict[str, object]]:
     ]
 
 
+def write_resume_session(codex_home: Path, content: str = "original session\n") -> Path:
+    session_dir = codex_home / "sessions" / "2026" / "08" / "13"
+    session_dir.mkdir(parents=True, mode=0o700)
+    session = session_dir / f"rollout-2026-08-13T00-00-00-{SESSION_ID}.jsonl"
+    session.write_text(content, encoding="utf-8")
+    session.chmod(0o600)
+    return session
+
+
 def test_codex_runtime_streams_text_tools_and_session(tmp_path: Path):
     executor = FakeProcessExecutor(happy_records())
     events = []
@@ -338,6 +347,7 @@ def test_runtime_failure_cleans_isolated_home_without_exposing_config(
         f'env = {{ PRIVATE_VALUE = "{credential}" }}\n',
         encoding="utf-8",
     )
+    source_session = write_resume_session(codex_home)
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     observed_home: Path | None = None
 
@@ -346,17 +356,67 @@ def test_runtime_failure_cleans_isolated_home_without_exposing_config(
         env = kwargs["env"]
         assert isinstance(env, dict)
         observed_home = Path(env["CODEX_HOME"])
+        [isolated_session] = list(
+            (observed_home / "sessions").rglob(f"*{SESSION_ID}.jsonl")
+        )
+        isolated_session.write_text("failed mutation\n", encoding="utf-8")
         raise RuntimeError("native failure")
 
     runtime = CodexRuntime(workspace=tmp_path, executor=executor)
 
-    result = runtime.wait(runtime.start(request(tmp_path), on_event=lambda _event: None))
+    result = runtime.wait(
+        runtime.start(
+            request(tmp_path, provider_session_ref=SESSION_ID),
+            on_event=lambda _event: None,
+        )
+    )
 
     assert result.status == "failed"
     assert result.error_code == "runtime_failure"
     assert credential not in result.error_detail
     assert observed_home is not None
     assert not observed_home.exists()
+    assert source_session.read_text(encoding="utf-8") == "original session\n"
+
+
+def test_successful_runtime_atomically_syncs_resumed_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.workbench_confirmation]\n"
+        'url = "https://conflicting.example/mcp"\n',
+        encoding="utf-8",
+    )
+    source_session = write_resume_session(codex_home)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    def executor(_command: list[str], **kwargs: object) -> ProcessRunResult:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        isolated_home = Path(env["CODEX_HOME"])
+        [isolated_session] = list(
+            (isolated_home / "sessions").rglob(f"*{SESSION_ID}.jsonl")
+        )
+        isolated_session.write_text("successful mutation\n", encoding="utf-8")
+        on_stdout_line = kwargs["on_stdout_line"]
+        assert callable(on_stdout_line)
+        for record in happy_records():
+            on_stdout_line(json.dumps(record))
+        return ProcessRunResult(returncode=0, stdout="", stderr="")
+
+    runtime = CodexRuntime(workspace=tmp_path, executor=executor)
+
+    result = runtime.wait(
+        runtime.start(
+            request(tmp_path, provider_session_ref=SESSION_ID),
+            on_event=lambda _event: None,
+        )
+    )
+
+    assert result.status == "completed"
+    assert source_session.read_text(encoding="utf-8") == "successful mutation\n"
 
 
 def test_runtime_stop_cleans_isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -367,6 +427,7 @@ def test_runtime_stop_cleans_isolated_home(tmp_path: Path, monkeypatch: pytest.M
         'url = "https://conflicting.example/mcp"\n',
         encoding="utf-8",
     )
+    source_session = write_resume_session(codex_home)
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
     class IsolatedBlockingExecutor(BlockingExecutor):
@@ -376,11 +437,18 @@ def test_runtime_stop_cleans_isolated_home(tmp_path: Path, monkeypatch: pytest.M
             env = kwargs["env"]
             assert isinstance(env, dict)
             self.observed_home = Path(env["CODEX_HOME"])
+            [isolated_session] = list(
+                (self.observed_home / "sessions").rglob(f"*{SESSION_ID}.jsonl")
+            )
+            isolated_session.write_text("stopped mutation\n", encoding="utf-8")
             return super().__call__(command, **kwargs)
 
     executor = IsolatedBlockingExecutor()
     runtime = CodexRuntime(workspace=tmp_path, executor=executor)
-    handle = runtime.start(request(tmp_path), on_event=lambda _event: None)
+    handle = runtime.start(
+        request(tmp_path, provider_session_ref=SESSION_ID),
+        on_event=lambda _event: None,
+    )
     assert executor.started.wait(timeout=1)
 
     runtime.stop(handle)
@@ -389,6 +457,7 @@ def test_runtime_stop_cleans_isolated_home(tmp_path: Path, monkeypatch: pytest.M
     assert result.status == "stopped"
     assert executor.observed_home is not None
     assert not executor.observed_home.exists()
+    assert source_session.read_text(encoding="utf-8") == "original session\n"
 
 
 @pytest.mark.parametrize(
@@ -1550,6 +1619,7 @@ def test_watchdog_removes_isolated_home_when_runtime_parent_abruptly_exits(
         f'env = {{ PRIVATE_VALUE = "{credential}" }}\n',
         encoding="utf-8",
     )
+    source_session = write_resume_session(codex_home)
     child_pid_path = tmp_path / "abrupt-child.pid"
     isolated_home_path = tmp_path / "isolated-home.path"
     parent_script = tmp_path / "abrupt_runtime_parent.py"
@@ -1563,8 +1633,11 @@ def test_watchdog_removes_isolated_home_when_runtime_parent_abruptly_exits(
                 "base_env = os.environ.copy()",
                 "base_env['CODEX_HOME'] = sys.argv[1]",
                 "executor = _CancellableProcessExecutor(cwd=Path(sys.argv[2]))",
-                "with _isolated_codex_environment(base_env) as process_env:",
+                "with _isolated_codex_environment(",
+                "        base_env, provider_session_ref=sys.argv[5]) as process_env:",
                 "    executor.set_isolated_home(process_env.isolated_home)",
+                "    [session] = list((Path(process_env['CODEX_HOME']) / 'sessions').rglob('*' + sys.argv[5] + '.jsonl'))",
+                "    session.write_text('crash mutation\\n')",
                 "    original = executor._start_watchdog",
                 "    def observed(process):",
                 "        Path(sys.argv[3]).write_text(str(process.pid))",
@@ -1589,6 +1662,7 @@ def test_watchdog_removes_isolated_home_when_runtime_parent_abruptly_exits(
             str(tmp_path),
             str(child_pid_path),
             str(isolated_home_path),
+            SESSION_ID,
         ],
         env=env,
         stdout=subprocess.PIPE,
@@ -1610,6 +1684,7 @@ def test_watchdog_removes_isolated_home_when_runtime_parent_abruptly_exits(
         assert not isolated_home.exists()
         assert credential not in stdout
         assert credential not in stderr
+        assert source_session.read_text(encoding="utf-8") == "original session\n"
     finally:
         _kill_test_child_if_alive(child_pid)
 

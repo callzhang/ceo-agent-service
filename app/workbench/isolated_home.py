@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import errno
 import fcntl
 import json
 import os
@@ -51,12 +50,12 @@ class IsolatedCodexHome:
     source_home: Path
     root: Path
 
-    def cleanup(self) -> None:
+    def cleanup(self, *, sync_sessions: bool = True) -> None:
         if self.lock_fd < 0:
             return
         sync_error: BaseException | None = None
         try:
-            if self.path.exists():
+            if sync_sessions and self.path.exists():
                 _sync_sessions(self.path, self.source_home)
         except BaseException as exc:
             sync_error = exc
@@ -366,27 +365,12 @@ def _materialize_safe_symlink(
 def _copy_regular_file(source: Path, destination: Path, destination_fd: int) -> None:
     source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
     try:
-        metadata = os.fstat(source_fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+        initial_metadata = os.fstat(source_fd)
+        if (
+            not stat.S_ISREG(initial_metadata.st_mode)
+            or initial_metadata.st_uid != os.getuid()
+        ):
             raise ValueError(_SAFE_ERROR)
-        source_parent_fd = os.open(
-            source.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        )
-        try:
-            try:
-                os.link(
-                    source.name,
-                    destination.name,
-                    src_dir_fd=source_parent_fd,
-                    dst_dir_fd=destination_fd,
-                    follow_symlinks=False,
-                )
-                return
-            except OSError as exc:
-                if exc.errno != errno.EXDEV:
-                    raise
-        finally:
-            os.close(source_parent_fd)
         target_fd = os.open(
             destination.name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -399,10 +383,33 @@ def _copy_regular_file(source: Path, destination: Path, destination_fd: int) -> 
                 if not chunk:
                     break
                 _write_all(target_fd, chunk)
-            secure_mode = stat.S_IMODE(metadata.st_mode) & 0o700
-            os.fchmod(target_fd, secure_mode or 0o600)
+            final_metadata = os.fstat(source_fd)
+            source_identity = (
+                initial_metadata.st_dev,
+                initial_metadata.st_ino,
+                initial_metadata.st_size,
+                initial_metadata.st_mtime_ns,
+                initial_metadata.st_ctime_ns,
+            )
+            final_identity = (
+                final_metadata.st_dev,
+                final_metadata.st_ino,
+                final_metadata.st_size,
+                final_metadata.st_mtime_ns,
+                final_metadata.st_ctime_ns,
+            )
+            if final_identity != source_identity:
+                raise ValueError(_SAFE_ERROR)
+            copied_mode = (
+                0o700
+                if stat.S_IMODE(initial_metadata.st_mode) & 0o111
+                else 0o600
+            )
+            os.fchmod(target_fd, copied_mode)
+            os.fsync(target_fd)
         finally:
             os.close(target_fd)
+        os.fsync(destination_fd)
     finally:
         os.close(source_fd)
 
@@ -493,6 +500,7 @@ def _replace_regular_file(source: Path, destination: Path, destination_fd: int) 
             _write_all(temporary_fd, chunk)
         secure_mode = stat.S_IMODE(metadata.st_mode) & 0o700
         os.fchmod(temporary_fd, secure_mode or 0o600)
+        os.fsync(temporary_fd)
         os.close(temporary_fd)
         temporary_fd = -1
         os.replace(
@@ -501,6 +509,7 @@ def _replace_regular_file(source: Path, destination: Path, destination_fd: int) 
             src_dir_fd=destination_fd,
             dst_dir_fd=destination_fd,
         )
+        os.fsync(destination_fd)
     finally:
         os.close(source_fd)
         if temporary_fd >= 0:
@@ -521,6 +530,7 @@ def _write_new_file(directory_fd: int, name: str, data: bytes, mode: int) -> Non
     try:
         _write_all(fd, data)
         os.fchmod(fd, mode)
+        os.fsync(fd)
     finally:
         os.close(fd)
 
