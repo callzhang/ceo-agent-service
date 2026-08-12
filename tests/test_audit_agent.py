@@ -720,6 +720,59 @@ def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):
     assert executor.commands == []
 
 
+def test_audit_returns_single_chat_open_id_passed_as_user_to_consumer(setup):
+    store, task, audit_context, parent = setup
+    single_chat_task = task.model_copy(update={"single_chat": True})
+    single_chat_context = replace(
+        audit_context,
+        task=replace(
+            audit_context.task,
+            single_chat=True,
+            trigger_sender_open_dingtalk_id="open-dingtalk-1",
+        ),
+        proposal=ConsumerProposal.model_validate(
+            {
+                "objective": "Reply to the sender",
+                "actions": [
+                    {
+                        "description": "Send the verified reply",
+                        "capability": "agent_cli.dws",
+                        "operation": "chat +messages-send",
+                        "target": {"user": "open-dingtalk-1"},
+                        "payload": {
+                            "argv": [
+                                "dws", "chat", "+messages-send", "--as", "user",
+                                "--user", "open-dingtalk-1", "--text", "done", "--yes",
+                            ]
+                        },
+                        "expected_verification": "Message exists",
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "The trigger identifies the direct recipient.",
+            }
+        ),
+    )
+    executor = CapturingExecutor("")
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(
+        single_chat_task,
+        single_chat_context,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+    )
+
+    assert result.result.outcome.value == "revision_required"
+    assert result.result.feedback is not None
+    assert "open-DingTalk ID as a user ID" in result.result.feedback.observation
+    assert "--open-dingtalk-id" in result.result.feedback.requested_revision
+    assert executor.commands == []
+
+
 def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     store, task, audit_context, parent = setup
     store.upsert_conversation(task.conversation_id, "Group", False, "session-a")

@@ -171,6 +171,12 @@ DWS 只读调用可以对明确的临时网络、限流和服务准备错误做�
 消除 CLI 的交互确认等待，不改变已经由 Consumer 候选和 Audit 审阅限定的目标、内容或权限。
 缺少该参数的调用会在进程启动前被拒绝，避免服务任务因无终端交互而长时间占用租约。
 
+写命令返回结构化失败时，回执保留渠道给出的错误码和经脱敏的错误摘要，不把它改写成
+`reconciliation_read_failed`。这只说明写入未获确认，不授权盲目重放；Audit 仍须先做只读
+回查。单聊候选还必须按身份类型传参：`sender_user_id` 对应 `--user`，
+`sender_open_dingtalk_id` 对应 `--open-dingtalk-id`。已知 open-DingTalk ID 被放入 `--user`
+时，Audit 会返回修订请求且不执行写入。
+
 结构化 JSON 命令允许标准进度输出，但最终结果必须是完整合法 JSON。截断或损坏的写操作
 结果不会被修补为成功。
 
@@ -372,6 +378,10 @@ revision instead of being attempted. If an older persisted candidate reaches
 unknown-outcome recovery with that invalid command, the service rotates to a new
 Consumer generation; it does not ask the user to choose and does not replay the
 old command.
+
+机械审查同样检查单聊接收人字段类型。它只拦截已知 `sender_open_dingtalk_id` 被错误地作为
+`--user` 传入的候选，反馈要求保持业务接收人和内容不变、改用 `--open-dingtalk-id`。这避免
+把可自动修正的 CLI 参数问题展示成用户决策或无理由失败。
 
 Only the first Codex turn started for a Consumer or Audit invocation is part of
 that business run. Plugin stop hooks may open later turns for tasks such as

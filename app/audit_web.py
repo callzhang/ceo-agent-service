@@ -2199,10 +2199,10 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
     }
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dict[str, str]]:
     specs = [
-        ("Work item", "work_summary_inputs", "status", "source_type", "source_ref", "updated_at", "error"),
-        ("Follow-up", "follow_up_drafts", "status", "owner_name", "question_text", "updated_at", "suppressed_reason"),
-        ("Meeting", "meeting_alignment_jobs", "status", "title", "target_title", "updated_at", "error"),
-        ("OKR", "okr_review_requests", "status", "conversation_title", "trigger_text", "updated_at", "error"),
+        ("Work item", "work_summary_inputs", "status", "source_type", "source_ref", "updated_at", "error", ("pending", "processing", "failed")),
+        ("Follow-up", "follow_up_drafts", "status", "owner_name", "question_text", "updated_at", "suppressed_reason", ("failed",)),
+        ("Meeting", "meeting_alignment_jobs", "status", "title", "target_title", "updated_at", "error", ("pending", "processing", "failed")),
+        ("OKR", "okr_review_requests", "status", "conversation_title", "trigger_text", "updated_at", "error", ("pending", "processing", "failed")),
     ]
     rows: list[dict[str, str]] = []
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
@@ -2246,15 +2246,16 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                         "error": str(row["error"] or ""),
                     }
                 )
-        for category, table, status_column, context_column, summary_column, updated_column, error_column in specs:
+        for category, table, status_column, context_column, summary_column, updated_column, error_column, statuses in specs:
             if not _sqlite_table_exists(db, table):
                 continue
+            status_placeholders = ",".join("?" for _ in statuses)
             sql = f"""
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
                        {error_column} as error
                 from {table}
-                where lower({status_column}) in ('pending','processing','failed','draft','approved','waiting')
+                where lower({status_column}) in ({status_placeholders})
                 order by
                     case lower({status_column})
                         when 'failed' then 0
@@ -2265,7 +2266,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                     id desc
                 limit ?
             """
-            for row in db.execute(sql, (limit,)).fetchall():
+            for row in db.execute(sql, (*statuses, limit)).fetchall():
                 rows.append(
                     {
                         "category": category,

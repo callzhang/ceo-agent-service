@@ -5265,6 +5265,28 @@ def test_worker_attention_collapses_reply_attempt_into_matching_reply_task(
     ]
 
 
+def test_worker_attention_excludes_healthy_follow_up_drafts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = store.create_work_project(
+        title="Client delivery",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=0,
+        owner_name="Alex",
+        question_text="Any update?",
+        status="draft",
+    )
+
+    payload = build_worker_status_payload(store)
+
+    assert all(row["category"] != "Follow-up" for row in payload["attention_rows"])
+
+
 def test_worker_status_uses_wechat_delivery_outcome_not_raw_failed_status(
     tmp_path: Path,
 ):
