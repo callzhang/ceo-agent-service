@@ -33,7 +33,10 @@ def is_codex_capacity_exhausted(value: object) -> bool:
 
 
 def is_codex_provider_recovery_code(value: object) -> bool:
-    return str(value).strip() in {
+    code = str(value).strip()
+    return code in {
         CODEX_PROVIDER_UNAVAILABLE,
         CODEX_PROVIDER_CAPACITY_EXHAUSTED,
-    }
+    } or code.startswith(
+        (f"{CODEX_PROVIDER_UNAVAILABLE}:", f"{CODEX_PROVIDER_CAPACITY_EXHAUSTED}:")
+    )

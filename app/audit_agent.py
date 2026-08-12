@@ -657,6 +657,10 @@ def _recovery_prompt(
             "persisted receipt already confirms them, return needs_human."
         )
     return (
+        "RECOVERY MODE OVERRIDES NORMAL AUDIT EXECUTION: this is a strictly "
+        "read-only reconciliation turn. Do not return executed, "
+        "revision_required, failed, or needs_human. The only valid outcome for "
+        "this turn is reconciled.\n\n"
         f"{context.render()}\n\nUnknown outcome recovery: {identity}{guidance}\n"
         "For every unresolved action that has a configured readback, return one "
         "reconciliation entry with its action_index, a disposition of present, "
@@ -679,5 +683,7 @@ def _recovery_prompt(
         "older pages only when the recent window cannot decide, and treat every "
         "partial result according to its completeness: an incomplete window cannot "
         "prove absence. "
-        "Do not write."
+        "Do not write. Return reconciled even when a disposition is ambiguous; "
+        "use the ambiguous disposition to preserve the uncertainty for the "
+        "service rather than changing the outcome."
     )
