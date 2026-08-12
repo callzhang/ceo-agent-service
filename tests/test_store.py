@@ -217,6 +217,51 @@ def test_finalize_orchestration_inherits_oa_identity_from_reply_task(
     assert attempt.oa_action == "review"
 
 
+def test_finalize_pre_run_failure_inherits_oa_identity_from_reply_task(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    oa_url = (
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    )
+    store.enqueue_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id="oa-pending:proc-1:revision-1",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="吴柯欣提交的录用申请",
+        oa_url=oa_url,
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+
+    attempt_id = store.finalize_reply_task_without_run(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        task_status="failed",
+        task_error="worker_start_failed",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="worker_start_failed",
+        audit_summary="worker_start_failed",
+        send_status="failed",
+        send_error="worker_start_failed",
+        channel="dingtalk",
+    )
+
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == "task-1"
+    assert attempt.oa_url == oa_url
+    assert attempt.oa_action == "review"
+
+
 def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     tmp_path: Path,
 ):

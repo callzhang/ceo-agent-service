@@ -8632,6 +8632,61 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     assert latest.send_status == "skipped"
 
 
+def test_recovered_oa_attempt_inherits_identity_and_hides_old_failure(
+    tmp_path: Path, monkeypatch
+):
+    oa_url = "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    trigger = message(
+        f"[Ding]吴柯欣提醒您审批录用申请 {oa_url}",
+        single_chat=True,
+    )
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        dry_run=False,
+    )
+    failed_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="吴柯欣",
+        trigger_text=trigger.content,
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        codex_reason="Resource deadlock avoided",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_url=oa_url,
+        oa_action="review",
+        send_status="failed",
+    )
+
+    script_no_action(worker)
+    worker.rerun_message(
+        conversation(single_chat=True),
+        "msg-1",
+        force_new_decision=True,
+        oa_url=oa_url,
+    )
+
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.id != failed_id
+    assert latest.send_status == "skipped"
+    assert latest.oa_process_instance_id == "proc-1"
+    assert latest.oa_task_id == "task-1"
+    assert latest.oa_action == "review"
+    assert worker.store.list_history_items(
+        send_statuses=("failed",), object_types=("approval",)
+    ) == []
+    recovered = worker.store.list_history_items(
+        send_statuses=("skipped",), object_types=("approval",)
+    )
+    assert [item.source_id for item in recovered] == [latest.id]
+
+
 def test_single_chat_oa_follow_up_reuses_recent_review_target(
     tmp_path: Path, monkeypatch
 ):

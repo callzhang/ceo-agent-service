@@ -9803,7 +9803,7 @@ class AutoReplyStore:
                     trigger_sender, trigger_text, action, sensitivity_kind,
                     codex_reason, audit_summary, oa_process_instance_id,
                     oa_task_id, oa_url, oa_action, send_status, send_error, channel
-                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
