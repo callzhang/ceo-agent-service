@@ -31,15 +31,14 @@ supervisor 同时管理 worker 和 audit-web。任一子进程异常退出时，
 launchd 和本地启动脚本都设置 `PYTHONDONTWRITEBYTECODE=1`。worker 与审计 Web 会并发
 导入同一份代码；禁止写入 `.pyc` 缓存可避免缓存文件锁把一次正常启动误判为服务失败。
 
-### Codex 执行串行化
+### Codex 会话隔离
 
-worker 内部有多个发现和恢复线程，audit-web 也支持人工重跑。它们都可能启动 Codex，但
-Codex 使用同一安装用户的本地运行目录，不能假定并发启动安全。因此服务在
-`app.process_runner` 对可执行文件名为 `codex` 的进程使用同一个进程内互斥锁和一个
-跨子进程文件锁；其他 DWS 或系统命令不受影响。
+同一 `conversation_id` 的 Consumer A 先取得持久会话锁，再通过原子任务认领启动 Codex；
+不同会话可以在同一个 launchd 服务内并行执行。Audit B 的每个 revision 使用独立 session。
+服务不再用全局进程锁串行化所有 Codex 调用，否则一个长会话会让无关会话已认领却无法运行。
 
-锁覆盖 worker 与同一 supervisor 托管的 audit-web，保持单一 launchd job。等待锁的时间
-不计入单次 Codex 的模型运行超时；任务仍由持久队列恢复，避免把启动竞争误记为业务失败。
+跨 worker、审计页面和服务重启的竞争由 SQLite 会话锁、Agent run lease 和结果回读处理；
+同一会话顺序不依赖共享的进程级锁。
 
 ## 权威处理流
 

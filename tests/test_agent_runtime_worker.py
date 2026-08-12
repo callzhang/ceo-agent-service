@@ -548,7 +548,12 @@ class ScriptedTaskOrchestrator:
             task.execution_generation,
             role=AgentRole.CONSUMER,
             proposal_revision=0,
-            turn_attempt=0,
+            turn_attempt=self.store.next_agent_run_turn_attempt(
+                task.id,
+                task.execution_generation,
+                role=AgentRole.CONSUMER,
+                proposal_revision=0,
+            ),
             parent_agent_run_id=None,
             operation_id="",
             owner=self.owner,
@@ -2274,7 +2279,7 @@ def test_orchestration_outcome_maps_to_task_and_attempt(
         assert "permission_missing" in attempt.send_error
 
 
-def test_retryable_failure_reuses_generation_and_session_then_succeeds(
+def test_retryable_failure_reuses_generation_and_session_with_new_turn_then_succeeds(
     tmp_path: Path,
 ):
     trigger = _message("请读取材料后完成回复")
@@ -2316,14 +2321,22 @@ def test_retryable_failure_reuses_generation_and_session_then_succeeds(
         "g1",
     ]
     assert runner.resume_session_ids == ["session-retry"]
-    run = worker.store.get_agent_run_for_turn(
+    failed_run = worker.store.get_agent_run_for_turn(
         task_id,
         "g1",
         role=AgentRole.CONSUMER,
         proposal_revision=0,
         turn_attempt=0,
     )
-    assert run is not None and run.status == "completed"
+    completed_run = worker.store.get_agent_run_for_turn(
+        task_id,
+        "g1",
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=1,
+    )
+    assert failed_run is not None and failed_run.status == "failed"
+    assert completed_run is not None and completed_run.status == "completed"
     assert worker.store.get_reply_task(task_id).status == "done"
 
 
@@ -2734,6 +2747,22 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
 
     assert runner.resume_session_ids == ["session-retry-after-restart"]
     assert [generation for _task, generation, _context in runner.calls] == ["g1"]
+    failed_run = worker.store.get_agent_run_for_turn(
+        task_id,
+        "g1",
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    completed_run = worker.store.get_agent_run_for_turn(
+        task_id,
+        "g1",
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=1,
+    )
+    assert failed_run is not None and failed_run.status == "failed"
+    assert completed_run is not None and completed_run.status == "completed"
     assert worker.store.get_reply_task(task_id).status == "done"
 
 

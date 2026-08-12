@@ -44,6 +44,11 @@ CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-08-12.1"
+STORE_SCHEMA_REQUIRED_TABLES = ("agent_run_events",)
+STORE_SCHEMA_REMOVED_TABLES = (
+    "universal_plan_executions",
+    "universal_action_executions",
+)
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
 _INITIALIZED_STORE_PATHS: set[Path] = set()
@@ -682,9 +687,20 @@ class AutoReplyStore:
                     "select value from service_state where key=?",
                     (STORE_SCHEMA_VERSION_KEY,),
                 ).fetchone()
+                if row is None or str(row["value"] or "") != STORE_SCHEMA_VERSION:
+                    return False
+                present_tables = {
+                    str(item["name"])
+                    for item in db.execute(
+                        "select name from sqlite_master where type='table'"
+                    )
+                }
         except sqlite3.OperationalError:
             return False
-        return row is not None and str(row["value"] or "") == STORE_SCHEMA_VERSION
+        return (
+            set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
+            and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
+        )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

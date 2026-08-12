@@ -196,13 +196,16 @@ def test_process_runner_without_callback_preserves_existing_result_shape():
     assert result.stderr == ""
 
 
-def test_process_runner_serializes_codex_processes(tmp_path):
+def test_process_runner_allows_independent_codex_processes_to_overlap(tmp_path):
     events = tmp_path / "events.log"
     codex = tmp_path / "codex"
     codex.write_text(
         "#!/bin/sh\n"
         "printf 'start\\n' >> \"$EVENTS\"\n"
-        "sleep 0.15\n"
+        "while [ \"$(wc -l < \"$EVENTS\")\" -lt 2 ]; do\n"
+        "  printf '.\\n'\n"
+        "  sleep 0.01\n"
+        "done\n"
         "printf 'end\\n' >> \"$EVENTS\"\n",
         encoding="utf-8",
     )
@@ -217,8 +220,8 @@ def test_process_runner_serializes_codex_processes(tmp_path):
                 [str(codex)],
                 prompt="",
                 env={"EVENTS": str(events), "PATH": "/bin:/usr/bin"},
-                total_timeout_seconds=5,
-                idle_timeout_seconds=5,
+                total_timeout_seconds=1,
+                idle_timeout_seconds=1,
             )
         )
 
@@ -229,9 +232,4 @@ def test_process_runner_serializes_codex_processes(tmp_path):
         thread.join()
 
     assert [result.returncode for result in results] == [0, 0]
-    assert events.read_text(encoding="utf-8").splitlines() == [
-        "start",
-        "end",
-        "start",
-        "end",
-    ]
+    assert events.read_text(encoding="utf-8").splitlines()[:2] == ["start", "start"]
