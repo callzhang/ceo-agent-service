@@ -45,8 +45,16 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-12.1"
-STORE_SCHEMA_REQUIRED_TABLES = ("agent_run_events",)
+STORE_SCHEMA_VERSION = "2026-08-13.1"
+STORE_SCHEMA_REQUIRED_TABLES = (
+    "agent_run_events",
+    "workbench_tasks",
+    "workbench_turns",
+    "workbench_events",
+    "workbench_attachments",
+    "workbench_artifacts",
+    "workbench_confirmations",
+)
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
     "universal_action_executions",
@@ -1426,6 +1434,85 @@ class AutoReplyStore:
                     cursor_json text not null default '{}',
                     last_error text not null default '',
                     updated_at text not null default current_timestamp
+                );
+                create table if not exists workbench_tasks (
+                    id text primary key,
+                    title text not null,
+                    runtime_kind text not null,
+                    provider_session_ref text not null default '',
+                    archived_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
+                create table if not exists workbench_turns (
+                    id text primary key,
+                    task_id text not null,
+                    client_request_id text not null unique,
+                    user_text text not null,
+                    status text not null check(status in (
+                        'queued', 'running', 'waiting_confirmation',
+                        'completed', 'stopped', 'failed'
+                    )),
+                    stop_requested integer not null default 0
+                        check(stop_requested in (0, 1)),
+                    final_text text not null default '',
+                    error_code text not null default '',
+                    error_detail text not null default '',
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    started_at text not null default '',
+                    completed_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(task_id) references workbench_tasks(id)
+                );
+                create unique index if not exists idx_workbench_one_active_turn
+                    on workbench_turns(task_id)
+                    where status in ('queued', 'running', 'waiting_confirmation');
+                create table if not exists workbench_events (
+                    id integer primary key autoincrement,
+                    turn_id text not null,
+                    sequence integer not null,
+                    event_type text not null,
+                    payload_json text not null,
+                    created_at text not null default current_timestamp,
+                    unique(turn_id, sequence),
+                    foreign key(turn_id) references workbench_turns(id)
+                );
+                create table if not exists workbench_attachments (
+                    id text primary key,
+                    task_id text not null,
+                    filename text not null,
+                    media_type text not null,
+                    size_bytes integer not null check(size_bytes >= 0),
+                    storage_path text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(task_id) references workbench_tasks(id)
+                );
+                create table if not exists workbench_artifacts (
+                    id text primary key,
+                    turn_id text not null,
+                    label text not null,
+                    path text not null,
+                    media_type text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(turn_id) references workbench_turns(id)
+                );
+                create table if not exists workbench_confirmations (
+                    id text primary key,
+                    turn_id text not null,
+                    action_kind text not null,
+                    target text not null,
+                    summary text not null,
+                    risk text not null,
+                    arguments_json text not null,
+                    status text not null check(status in (
+                        'pending', 'confirmed', 'cancelled', 'executed', 'failed'
+                    )),
+                    result_json text not null default '',
+                    created_at text not null default current_timestamp,
+                    decided_at text not null default '',
+                    foreign key(turn_id) references workbench_turns(id)
                 );
                 """
             )
