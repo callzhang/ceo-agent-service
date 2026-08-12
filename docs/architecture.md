@@ -28,6 +28,9 @@ supervisor 同时管理 worker 和 audit-web。任一子进程异常退出时，
 子进程并退出，由同一个 launchd job 拉起完整服务。不要安装第二个 audit-web plist，也不要
 恢复双 launchd 模型。
 
+launchd 和本地启动脚本都设置 `PYTHONDONTWRITEBYTECODE=1`。worker 与审计 Web 会并发
+导入同一份代码；禁止写入 `.pyc` 缓存可避免缓存文件锁把一次正常启动误判为服务失败。
+
 ### Codex 执行串行化
 
 worker 内部有多个发现和恢复线程，audit-web 也支持人工重跑。它们都可能启动 Codex，但

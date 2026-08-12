@@ -7,6 +7,7 @@ cd "${repo_root}"
 export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 export HOME="${CEO_SERVICE_HOME:-${HOME}}"
 export PYTHONPATH="${PYTHONPATH:-.}"
+export PYTHONDONTWRITEBYTECODE=1
 export CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
 export CEO_CODEX_MODEL="${CEO_CODEX_MODEL:-gpt-5.5}"
 export CEO_CODEX_MODEL_REASONING_EFFORT="${CEO_CODEX_MODEL_REASONING_EFFORT:-medium}"
