@@ -585,17 +585,21 @@ class AgentTurnProcess(Generic[ResultT]):
                     item.get("result"),
                     allow_error=True,
                 )
+                if receipt is None:
+                    raise AgentReadOnlyViolationError("agent_cli_receipt_missing")
+                if receipt.get("operation") != descriptor.command_path:
+                    raise AgentReadOnlyViolationError("agent_cli_receipt_operation_mismatch")
+                if receipt.get("operation_digest") != operation_digest:
+                    raise AgentReadOnlyViolationError("agent_cli_receipt_digest_mismatch")
+                if receipt.get("target_identifiers") != target_identifiers:
+                    raise AgentReadOnlyViolationError("agent_cli_receipt_target_mismatch")
                 if (
-                    receipt is None
-                    or receipt.get("operation") != descriptor.command_path
-                    or receipt.get("operation_digest") != operation_digest
-                    or receipt.get("target_identifiers") != target_identifiers
-                    or (
-                        authorization_id
-                        and receipt.get("authorization_id") != authorization_id
-                    )
+                    authorization_id
+                    and receipt.get("authorization_id") != authorization_id
                 ):
-                    raise AgentReadOnlyViolationError("agent_cli_receipt_invalid")
+                    raise AgentReadOnlyViolationError(
+                        "agent_cli_receipt_authorization_mismatch"
+                    )
                 validated_receipt = receipt
                 controlled_receipt_failed = (
                     "error" in receipt or item.get("status") != "completed"

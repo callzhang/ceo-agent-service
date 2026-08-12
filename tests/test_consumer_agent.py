@@ -33,6 +33,40 @@ def test_agent_cli_receipt_accepts_json_encoded_mcp_result() -> None:
     assert _agent_cli_receipt(json.dumps({"structuredContent": receipt})) == receipt
 
 
+def test_consumer_records_specific_missing_agent_cli_receipt(
+    store, task, context
+):
+    argv = ["dws", "chat", "message", "list", "--conversation-id", "cid-1"]
+    item = {
+        "type": "mcp_tool_call",
+        "id": "missing-receipt",
+        "server": "agent_cli",
+        "tool": "execute_reviewed_read",
+        "arguments": {"argv": argv},
+    }
+    stream = "\n".join(
+        (
+            json.dumps({"type": "item.started", "item": item}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {**item, "status": "completed", "result": {}},
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="agent_cli_receipt_missing"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(stream),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    assert json.loads(run.structured_error_json)["code"] == "agent_cli_receipt_missing"
+
+
 class CapturingExecutor:
     def __init__(self, stdout: str) -> None:
         self.stdout = stdout
