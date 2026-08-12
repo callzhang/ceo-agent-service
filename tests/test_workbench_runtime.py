@@ -1,10 +1,11 @@
 import json
 from collections.abc import Iterable, Mapping
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi.encoders import jsonable_encoder
 
 from app.workbench.runtime import (
     AgentRuntime,
@@ -14,6 +15,7 @@ from app.workbench.runtime import (
     RuntimeRegistry,
     RuntimeRequest,
     RuntimeResult,
+    _runtime_owner,
 )
 
 
@@ -131,14 +133,19 @@ def test_registry_rejects_duplicate_runtime_kind():
         RuntimeRegistry([FixtureRuntime(), FixtureRuntime()])
 
 
-def test_runtime_handle_keeps_owner_private_from_public_representation():
-    owner = object()
-    handle = RuntimeHandle(run_id="run-1", _owner=owner)
+def test_runtime_handle_keeps_owner_private_from_serialization():
+    owner = {"secret": "must not serialize"}
+    handle = RuntimeHandle.create(run_id="run-1", owner=owner)
 
     assert handle.run_id == "run-1"
+    assert _runtime_owner(handle) is owner
     assert not hasattr(handle, "owner")
     assert "owner" not in repr(handle)
     assert not hasattr(handle, "to_dict")
+    assert asdict(handle) == {"run_id": "run-1"}
+    assert jsonable_encoder(handle) == {"run_id": "run-1"}
+    with pytest.raises(FrozenInstanceError):
+        handle.run_id = "run-2"  # type: ignore[misc]
 
 
 def _read_jsonl(provider: str) -> Iterable[dict[str, Any]]:

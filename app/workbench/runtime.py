@@ -6,8 +6,10 @@ from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import RLock
 from types import MappingProxyType
 from typing import Any, Literal, Protocol
+from weakref import WeakKeyDictionary
 
 
 RuntimeEventType = Literal[
@@ -113,10 +115,29 @@ class RuntimeResult:
             raise ValueError(f"unsupported runtime result status: {self.status}")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True)
 class RuntimeHandle:
     run_id: str
-    _owner: object = field(repr=False, compare=False, hash=False)
+
+    @classmethod
+    def create(cls, *, run_id: str, owner: object) -> RuntimeHandle:
+        handle = cls(run_id=run_id)
+        with _RUNTIME_OWNER_LOCK:
+            _RUNTIME_OWNERS[handle] = owner
+        return handle
+
+
+_RUNTIME_OWNER_LOCK = RLock()
+_RUNTIME_OWNERS: WeakKeyDictionary[RuntimeHandle, object] = WeakKeyDictionary()
+
+
+def _runtime_owner(handle: RuntimeHandle) -> object:
+    """Return the process owner held privately for an active runtime handle."""
+    with _RUNTIME_OWNER_LOCK:
+        try:
+            return _RUNTIME_OWNERS[handle]
+        except KeyError as exc:
+            raise ValueError("runtime handle owner is unavailable") from exc
 
 
 class AgentRuntime(Protocol):
