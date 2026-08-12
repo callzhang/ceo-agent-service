@@ -19,6 +19,7 @@ from app.agent_context import (
     MaterialReference,
     PriorReceipt,
 )
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
 from app.audit_agent import AuditAgentRunner
 from app.channel_gate import (
@@ -71,6 +72,7 @@ from app.notification import (
     send_browser_notification,
     send_macos_notification,
 )
+from app.native_cli_metadata import describe_native_command
 from app.leak_check import contains_forbidden_leak, redact_forbidden_leak_markers
 from app.oa_approval import extract_oa_url
 from app.org_cache import (
@@ -1484,6 +1486,7 @@ class DingTalkAutoReplyWorker:
         self._pass_channel_results = {}
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
+        self._backfill_confirmed_direct_reply_ledgers(limit=limit)
         self._recover_due_unknown_agent_reply_tasks(limit=limit)
         self._recover_stale_agent_reply_tasks()
         if self.store.active_codex_capacity_pause(now=self._now()):
@@ -2100,6 +2103,11 @@ class DingTalkAutoReplyWorker:
         run = self.store.get_agent_run(result.final_run_id)
         if run is None:
             raise RuntimeError("orchestration final run was not persisted")
+        sent_reply = self._confirmed_direct_reply_ledger_entry(
+            task,
+            result.consumer_result,
+            result.audit_result,
+        )
         attempt_id = self.store.finalize_orchestrated_reply_task(
             task_id=task.id,
             expected_execution_generation=task.execution_generation,
@@ -2129,6 +2137,8 @@ class DingTalkAutoReplyWorker:
                 provider_recovery or authorization_wait or active_recovery_wait
             )
             and task_status == "pending",
+            sent_reply_text=sent_reply[0] if sent_reply is not None else "",
+            sent_reply_result_json=sent_reply[1] if sent_reply is not None else "",
             **self._orchestration_oa_metadata(task, result),
         )
         if send_status == "needs_human" or task_status == "failed":
@@ -2141,6 +2151,131 @@ class DingTalkAutoReplyWorker:
         elif task_status == "done":
             self._dismiss_problem_notification(task)
         return task_status == "done"
+
+    def _backfill_confirmed_direct_reply_ledgers(self, *, limit: int) -> int:
+        """Repair only ledger omissions proven by persisted Audit readback."""
+        repaired = 0
+        # Older confirmed audits include OA and group operations that have no
+        # direct-message ledger contract.  Scan past them, but bound actual
+        # writes to the worker batch size.
+        candidate_limit = max(limit * 100, 100)
+        for audit_run in self.store.list_confirmed_audit_runs_missing_sent_reply(
+            limit=candidate_limit,
+        ):
+            task = self.store.get_reply_task(audit_run.reply_task_id)
+            consumer_run = (
+                self.store.get_agent_run(audit_run.parent_agent_run_id)
+                if audit_run.parent_agent_run_id is not None
+                else None
+            )
+            if task is None or consumer_run is None:
+                continue
+            try:
+                consumer_result = ConsumerAgentResult.model_validate_json(
+                    consumer_run.final_result_json
+                )
+                audit_result = AuditAgentResult.model_validate_json(
+                    audit_run.final_result_json
+                )
+            except (TypeError, ValueError):
+                continue
+            entry = self._confirmed_direct_reply_ledger_entry(
+                task,
+                consumer_result,
+                audit_result,
+            )
+            if entry is None:
+                continue
+            if self.store.record_confirmed_sent_reply_if_absent(
+                audit_run_id=audit_run.id,
+                reply_text=entry[0],
+                send_result_json=entry[1],
+            ):
+                repaired += 1
+                if repaired >= limit:
+                    break
+        if repaired:
+            logger.info("backfilled %s confirmed direct delivery ledger row(s)", repaired)
+        return repaired
+
+    @staticmethod
+    def _confirmed_direct_reply_ledger_entry(
+        task: ReplyTask,
+        consumer_result: ConsumerAgentResult | None,
+        audit_result: AuditAgentResult | None,
+    ) -> tuple[str, str] | None:
+        """Return a ledger entry only for a live-confirmed, single direct reply."""
+        if consumer_result is None or audit_result is None:
+            return None
+        proposal = consumer_result.proposal
+        external_result = audit_result.external_result
+        if proposal is None or external_result is None:
+            return None
+        if (
+            audit_result.outcome.value != "executed"
+            or audit_result.side_effect_state.value != "confirmed"
+        ):
+            return None
+        reference = external_result.live_result_reference
+        conversation_id = reference.get("conversation_id")
+        message_id = reference.get("message_id")
+        if (
+            not isinstance(conversation_id, str)
+            or conversation_id != task.conversation_id
+            or not isinstance(message_id, str)
+            or not message_id.strip()
+            or len(proposal.actions) != 1
+        ):
+            return None
+        action = proposal.actions[0]
+        if action.capability != "agent_cli.dws":
+            return None
+        descriptor = describe_native_command(
+            {"type": "command_execution", **action.payload}
+        )
+        if (
+            descriptor is None
+            or descriptor.cli != "dws"
+            or descriptor.command_path not in {
+                "chat message send",
+                "chat +messages-send",
+            }
+        ):
+            return None
+        target_keys = set(descriptor.target_identifiers)
+        target_keys.update(str(key).replace("_", "-") for key in action.target)
+        if not {"open-dingtalk-id", "user"} & target_keys:
+            return None
+        argv = action.payload.get("argv")
+        if not isinstance(argv, (list, tuple)):
+            return None
+        reply_text = ""
+        for index, value in enumerate(argv):
+            if not isinstance(value, str):
+                return None
+            if value == "--text" and index + 1 < len(argv):
+                candidate = argv[index + 1]
+                if isinstance(candidate, str):
+                    reply_text = candidate
+                break
+            if value.startswith("--text="):
+                reply_text = value.partition("=")[2]
+                break
+        if not reply_text.strip():
+            return None
+        return (
+            reply_text,
+            json.dumps(
+                {
+                    "source": "agent_audit_readback",
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "verification_summary": external_result.verification_summary,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        )
 
     @staticmethod
     def _orchestration_oa_metadata(

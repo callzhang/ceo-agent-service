@@ -89,6 +89,69 @@ def _enqueue_universal_reply_task(
     return store.claim_reply_tasks(limit=1)[0].id
 
 
+def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-confirmed-direct",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-confirmed-direct",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please reply",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    audit = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="audit",
+    ).run
+    audit = store.complete_agent_run(
+        audit.id,
+        {"outcome": "executed", "summary": "Readback verified."},
+        owner="audit",
+        side_effect_state="confirmed",
+    )
+
+    store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=audit.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="Readback verified.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="Readback verified.",
+        send_status="completed",
+        send_error="",
+        channel="dingtalk",
+        sent_reply_text="Verified direct reply",
+        sent_reply_result_json='{"source":"test"}',
+    )
+
+    sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+
+    assert sent is not None
+    assert sent.reply_text == "Verified direct reply"
+    assert store.record_confirmed_sent_reply_if_absent(
+        audit_run_id=audit.id,
+        reply_text="Verified direct reply",
+        send_result_json='{"source":"test"}',
+    ) is False
+
+
 def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     tmp_path: Path,
 ):
