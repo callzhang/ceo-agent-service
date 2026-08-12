@@ -120,6 +120,11 @@ def _pending_confirmation(store: WorkbenchStore):
         canonical_arguments_digest=authorization.arguments_digest,
         owner="seed",
     )
+    store.mark_confirmation_proposer_quiesced(
+        turn.id,
+        owner="seed",
+        proposer_run_id=store.execution_run_id_for_executor(turn.id, owner="seed"),
+    )
     return task, turn, confirmation
 
 
@@ -502,6 +507,16 @@ def test_confirmation_uses_canonical_target_and_waits_for_runtime_quiescence(
             or subprocess.CompletedProcess(argv, 0, "ok", "")
         ),
     )
+    other = WorkbenchExecutor(
+        WorkbenchStore(store.path),
+        RuntimeRegistry(),
+        workspace=tmp_path,
+        classifier=_write_classifier(),
+        write_runner=lambda argv, **_: (
+            writer_calls.append(argv)
+            or subprocess.CompletedProcess(argv, 0, "ok", "")
+        ),
+    )
     event = RuntimeEvent(
         "confirmation_required",
         {
@@ -524,13 +539,150 @@ def test_confirmation_uses_canonical_target_and_waits_for_runtime_quiescence(
         assert confirmation.target == "group=executive-group"
         assert confirmation.canonical_operation == "chat message send"
         assert runtime.stop_calls == 1
-        in_progress = executor.confirm(confirmation.id)
+        in_progress = other.confirm(confirmation.id)
         assert in_progress.status is ConfirmationStatus.PENDING
+        assert in_progress.decision_requested == "confirm"
         assert writer_calls == []
+        with pytest.raises(ValueError, match="conflicting decision intent"):
+            other.cancel(confirmation.id)
+        assert other.run_once() == []
         runtime.release_wait.set()
         assert running.result(3) == [turn.id]
-    assert executor.confirm(confirmation.id).status is ConfirmationStatus.EXECUTED
+    assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.EXECUTED
     assert len(writer_calls) == 1
+    executor.close()
+    other.close()
+
+
+def test_cancel_intent_waits_for_quiescence_then_requeues_without_second_click(
+    tmp_path: Path,
+):
+    class AsyncRuntime(FakeRuntime):
+        def wait(self, handle):
+            self.wait_entered.set()
+            assert self.release_wait.wait(5)
+            _release_runtime_owner(handle)
+            return self.result
+
+        def stop(self, handle):
+            self.stop_calls += 1
+
+    store = _store(tmp_path)
+    task, turn = _queued(store)
+    runtime = AsyncRuntime()
+    executor = WorkbenchExecutor(
+        store, RuntimeRegistry([runtime]), workspace=tmp_path, classifier=_write_classifier()
+    )
+    other = WorkbenchExecutor(
+        WorkbenchStore(store.path), RuntimeRegistry(), workspace=tmp_path
+    )
+    event = RuntimeEvent(
+        "confirmation_required",
+        {
+            "kind": "reviewed_cli",
+            "argv": [
+                "dws", "chat", "message", "send", "--group", "executive-group",
+                "--text", "hello", "--yes",
+            ],
+            "target": "Test group",
+            "summary": "Send update",
+            "risk": "No risk",
+            "executed": False,
+        },
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(executor.run_once)
+        assert runtime.wait_entered.wait(2)
+        runtime.on_event(event)
+        confirmation = store.list_confirmations(task.id)[0]
+        assert confirmation.risk == "[Untrusted agent risk] No risk"
+        pending = other.cancel(confirmation.id)
+        assert pending.status is ConfirmationStatus.PENDING
+        assert pending.decision_requested == "cancel"
+        assert store.get_turn(turn.id).status is TurnStatus.WAITING_CONFIRMATION
+        runtime.release_wait.set()
+        assert running.result(3) == [turn.id]
+    assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.CANCELLED
+    assert store.get_turn(turn.id).status is TurnStatus.QUEUED
+    executor.close()
+    other.close()
+
+
+def test_unquiesced_crashed_proposer_recovery_fails_closed(tmp_path: Path):
+    store = _store(tmp_path)
+    task, turn = _queued(store)
+    store.claim_next_turn(
+        owner="crashed",
+        execution_run_id="run-crashed",
+        lease_seconds=1,
+        now="2026-08-13T00:00:00Z",
+    )
+    confirmation = store.create_confirmation(
+        turn.id,
+        action_kind="reviewed_cli",
+        target="group=executive-group",
+        summary="[Untrusted agent description] Send update",
+        risk="[Untrusted agent risk] No risk",
+        arguments_json={"argv": ["dws", "chat", "message", "send", "--yes"]},
+        owner="crashed",
+        now="2026-08-13T00:00:00Z",
+    )
+    calls = []
+    executor = WorkbenchExecutor(
+        WorkbenchStore(store.path),
+        RuntimeRegistry(),
+        workspace=tmp_path,
+        write_runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    assert executor.confirm(confirmation.id).decision_requested == "confirm"
+    assert executor.recover(now="2026-08-13T00:00:02Z") == 1
+    assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.FAILED
+    assert store.get_turn(turn.id).status is TurnStatus.FAILED
+    assert calls == []
+    assert store.get_task(task.id) is not None
+    executor.close()
+
+
+def test_other_executor_picks_persisted_quiesced_confirm_intent(
+    tmp_path: Path, monkeypatch
+):
+    store = _store(tmp_path)
+    _, turn, confirmation = _pending_confirmation(store)
+    run_id = store.execution_run_id_for_executor(turn.id, owner="seed")
+    with store._connect() as db:
+        db.execute(
+            """
+            update workbench_confirmations
+            set proposer_quiesced_at='', decision_requested='confirm',
+                decision_requested_at=current_timestamp
+            where id=?
+            """,
+            (confirmation.id,),
+        )
+        db.execute(
+            "update workbench_turns set runtime_quiesced_run_id='' where id=?",
+            (turn.id,),
+        )
+    store.mark_confirmation_proposer_quiesced(
+        turn.id, owner="seed", proposer_run_id=run_id
+    )
+    calls = []
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    executor = WorkbenchExecutor(
+        WorkbenchStore(store.path),
+        RuntimeRegistry([FakeRuntime()]),
+        workspace=tmp_path,
+        classifier=_write_classifier(),
+        write_runner=lambda argv, **_: (
+            calls.append(argv) or subprocess.CompletedProcess(argv, 0, "ok", "")
+        ),
+    )
+
+    assert executor.run_once() == [turn.id]
+    assert len(calls) == 1
+    assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.EXECUTED
+    assert store.get_turn(turn.id).status is TurnStatus.COMPLETED
     executor.close()
 
 

@@ -45,7 +45,7 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-13.4"
+STORE_SCHEMA_VERSION = "2026-08-13.5"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "workbench_tasks",
@@ -1461,6 +1461,8 @@ class AutoReplyStore:
                     resume_context text not null default '',
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
+                    execution_run_id text not null default '',
+                    runtime_quiesced_run_id text not null default '',
                     started_at text not null default '',
                     completed_at text not null default '',
                     created_at text not null default current_timestamp,
@@ -1526,6 +1528,13 @@ class AutoReplyStore:
                     execution_lease_expires_at text not null default '',
                     execution_started_at text not null default '',
                     authorization_consumed_at text not null default '',
+                    proposer_run_id text not null default '',
+                    proposer_owner text not null default '',
+                    proposer_lease_expires_at text not null default '',
+                    proposer_quiesced_at text not null default '',
+                    decision_requested text not null default ''
+                        check(decision_requested in ('', 'confirm', 'cancel')),
+                    decision_requested_at text not null default '',
                     foreign key(turn_id) references workbench_turns(id)
                 );
                 """
@@ -1539,6 +1548,12 @@ class AutoReplyStore:
                     "alter table workbench_turns add column "
                     "resume_context text not null default ''"
                 )
+            for column in ("execution_run_id", "runtime_quiesced_run_id"):
+                if column not in workbench_turn_columns:
+                    db.execute(
+                        "alter table workbench_turns add column "
+                        f"{column} text not null default ''"
+                    )
             workbench_confirmation_columns = {
                 row["name"]
                 for row in db.execute(
@@ -1555,6 +1570,12 @@ class AutoReplyStore:
                 "canonical_operation_digest",
                 "canonical_arguments_digest",
                 "authorization_consumed_at",
+                "proposer_run_id",
+                "proposer_owner",
+                "proposer_lease_expires_at",
+                "proposer_quiesced_at",
+                "decision_requested",
+                "decision_requested_at",
             ):
                 if column not in workbench_confirmation_columns:
                     default = "'[]'" if column == "canonical_targets_json" else "''"
@@ -1565,6 +1586,10 @@ class AutoReplyStore:
             db.execute(
                 "create index if not exists idx_workbench_turns_queue "
                 "on workbench_turns(status, created_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_confirmations_turn_status "
+                "on workbench_confirmations(turn_id, status, result_json, created_at, id)"
             )
             db.execute(
                 "create index if not exists idx_workbench_turns_recovery "

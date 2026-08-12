@@ -46,6 +46,11 @@ def _waiting_confirmation(store: WorkbenchStore):
         arguments_json={"argv": ["dws", "chat", "message", "send", "--yes"]},
         owner="seed",
     )
+    store.mark_confirmation_proposer_quiesced(
+        turn.id,
+        owner="seed",
+        proposer_run_id=store.execution_run_id_for_executor(turn.id, owner="seed"),
+    )
     return task, turn.id, confirmation
 
 
@@ -94,8 +99,16 @@ def test_store_migrates_confirmation_execution_claim_without_losing_data(
             "canonical_operation_digest",
             "canonical_arguments_digest",
             "authorization_consumed_at",
+            "proposer_run_id",
+            "proposer_owner",
+            "proposer_lease_expires_at",
+            "proposer_quiesced_at",
+            "decision_requested",
+            "decision_requested_at",
         ):
             db.execute(f"alter table workbench_confirmations drop column {column}")
+        for column in ("execution_run_id", "runtime_quiesced_run_id"):
+            db.execute(f"alter table workbench_turns drop column {column}")
         db.execute(
             "update service_state set value='2026-08-13.2' where key=?",
             (store_module.STORE_SCHEMA_VERSION_KEY,),
@@ -114,6 +127,14 @@ def test_store_migrates_confirmation_execution_claim_without_losing_data(
     assert row["execution_started_at"] == ""
     assert row["canonical_targets_json"] == "[]"
     assert row["authorization_consumed_at"] == ""
+    assert row["proposer_run_id"] == ""
+    assert row["decision_requested"] == ""
+    with migrated._connect() as db:
+        turn_columns = {
+            item["name"]
+            for item in db.execute("pragma table_info(workbench_turns)").fetchall()
+        }
+    assert {"execution_run_id", "runtime_quiesced_run_id"} <= turn_columns
 
 
 def test_store_has_no_public_confirmation_decision_bypass(tmp_path: Path):
@@ -147,7 +168,54 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
         "idx_workbench_turns_queue",
         "idx_workbench_turns_recovery",
         "idx_workbench_confirmations_recovery",
+        "idx_workbench_confirmations_turn_status",
     } <= indexes
+    with store._connect() as db:
+        plan = " ".join(
+            row["detail"]
+            for row in db.execute(
+                """
+                explain query plan select id from workbench_confirmations
+                where turn_id=? and status=? and result_json=''
+                order by created_at, id
+                """,
+                ("turn-id", "confirmed"),
+            ).fetchall()
+        )
+    assert "idx_workbench_confirmations_turn_status" in plan
+
+
+def test_stale_prior_run_quiescence_cannot_unlock_confirmation(tmp_path: Path):
+    store = _store(tmp_path)
+    _, turn_id, confirmation = _waiting_confirmation(store)
+    old_run = store.execution_run_id_for_executor(turn_id, owner="seed")
+    with store._connect() as db:
+        db.execute(
+            """
+            update workbench_confirmations
+            set proposer_quiesced_at='', decision_requested='confirm'
+            where id=?
+            """,
+            (confirmation.id,),
+        )
+        db.execute(
+            """
+            update workbench_turns
+            set execution_run_id='new-run', runtime_quiesced_run_id=''
+            where id=?
+            """,
+            (turn_id,),
+        )
+
+    with pytest.raises(ValueError, match="proposer run is stale"):
+        store.mark_confirmation_proposer_quiesced(
+            turn_id,
+            owner="seed",
+            proposer_run_id=old_run,
+        )
+    assert store.claim_confirmation_execution(
+        confirmation.id, owner="executor", lease_seconds=10
+    ) is None
 
 
 def test_create_task_and_idempotent_turn_request(tmp_path: Path):
@@ -395,6 +463,11 @@ def test_confirmation_list_redacts_arguments_and_execution_claim_exposes_them_on
         owner="worker-1",
         now="2026-08-13T00:00:01Z",
     )
+    store.mark_confirmation_proposer_quiesced(
+        turn_id,
+        owner="worker-1",
+        proposer_run_id=store.execution_run_id_for_executor(turn_id, owner="worker-1"),
+    )
 
     assert store.list_confirmations(task_id)[0].arguments_json == ""
     with pytest.raises(TypeError):
@@ -441,12 +514,22 @@ def test_claim_owner_can_finish_receipt_after_turn_is_stopped(tmp_path: Path):
         owner="worker-1",
         now="2026-08-13T00:00:01Z",
     )
+    store.mark_confirmation_proposer_quiesced(
+        turn_id,
+        owner="worker-1",
+        proposer_run_id=store.execution_run_id_for_executor(turn_id, owner="worker-1"),
+    )
     assert store.claim_confirmation_execution(
         confirmation.id,
         owner="executor-1",
         lease_seconds=10,
         now="2026-08-13T00:00:02Z",
     )
+    with store._connect() as db:
+        db.execute(
+            "update workbench_confirmations set authorization_consumed_at=? where id=?",
+            ("2026-08-13 00:00:02", confirmation.id),
+        )
 
     assert store.request_stop(
         turn_id, now="2026-08-13T00:00:03Z"

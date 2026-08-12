@@ -110,8 +110,9 @@ class WorkbenchExecutor:
         self._closed = False
 
     def recover(self, *, now=None) -> int:
+        proposer_failures = self.store.reconcile_unquiesced_proposers(now=now)
         ambiguous = self.store.reconcile_confirmed_without_result(now=now)
-        return ambiguous + self.store.recover_expired_turns(now=now)
+        return proposer_failures + ambiguous + self.store.recover_expired_turns(now=now)
 
     def run_once(self, *, max_turns: int = _MAX_CLAIMS) -> list[str]:
         if max_turns < 1 or max_turns > _MAX_CLAIMS:
@@ -119,13 +120,21 @@ class WorkbenchExecutor:
         with self._map_lock:
             if self._closed:
                 raise RuntimeError("workbench executor is closed")
+        for confirmation_id, intent in self.store.requested_quiesced_confirmation_ids():
+            if intent == "confirm":
+                self.confirm(confirmation_id)
+            elif intent == "cancel":
+                self.cancel(confirmation_id)
         claimed: list[WorkbenchTurn] = []
         futures = []
         with self._schedule_lock:
             capacity = min(max_turns, _MAX_CLAIMS - self._reserved_turns)
             for _ in range(capacity):
+                execution_run_id = str(uuid4())
                 turn = self.store.claim_next_turn(
-                    owner=self.owner, lease_seconds=self.lease_seconds + 1
+                    owner=self.owner,
+                    execution_run_id=execution_run_id,
+                    lease_seconds=self.lease_seconds + 1,
                 )
                 if turn is None:
                     break
@@ -154,10 +163,6 @@ class WorkbenchExecutor:
         with self._map_lock:
             if self._closed:
                 raise RuntimeError("workbench executor is closed")
-            existing = self.store.get_confirmation(confirmation_id)
-            proposer = self._states.get(existing.turn_id) if existing else None
-        if proposer is not None and not proposer.quiesced.wait(timeout=0.1):
-            return existing
         claimed = self.store.claim_confirmation_execution(
             confirmation_id,
             owner=self.owner,
@@ -411,9 +416,29 @@ class WorkbenchExecutor:
             finally:
                 state.heartbeat_stop.set()
                 heartbeat.join(timeout=max(1.0, self.heartbeat_interval_seconds * 2))
-                state.quiesced.set()
+                if heartbeat.is_alive():
+                    state.lease_lost = True
                 with self._map_lock:
                     self._states.pop(turn.id, None)
+                try:
+                    if state.confirmation_created and not state.lease_lost:
+                        decision = self.store.mark_confirmation_proposer_quiesced(
+                            turn.id,
+                            owner=self.owner,
+                            proposer_run_id=self.store.execution_run_id_for_executor(
+                                turn.id, owner=self.owner
+                            ),
+                        )
+                        if decision is not None:
+                            confirmation_id, intent = decision
+                            if intent == "confirm":
+                                self.confirm(confirmation_id)
+                            elif intent == "cancel":
+                                self.cancel(confirmation_id)
+                except Exception:
+                    state.lease_lost = True
+                finally:
+                    state.quiesced.set()
 
     def _execute_turn_reserved(self, turn: WorkbenchTurn) -> None:
         try:
@@ -432,23 +457,38 @@ class WorkbenchExecutor:
                     lease_seconds=self.lease_seconds + 1,
                 )
             except Exception:
-                state.lease_lost = True
                 try:
                     current = self.store.get_turn(state.turn_id)
                 except Exception:
+                    state.lease_lost = True
                     self._stop_state_once(state)
                     return
                 if (
                     current is not None
                     and current.status is TurnStatus.WAITING_CONFIRMATION
+                    and state.confirmation_created
                 ):
-                    return
+                    try:
+                        self.store.renew_confirmation_proposer(
+                            state.turn_id,
+                            owner=self.owner,
+                            proposer_run_id=self.store.execution_run_id_for_executor(
+                                state.turn_id, owner=self.owner
+                            ),
+                            lease_seconds=self.lease_seconds + 1,
+                        )
+                    except Exception:
+                        state.lease_lost = True
+                        self._stop_state_once(state)
+                        return
+                    continue
                 if current is not None and current.status in {
                     TurnStatus.COMPLETED,
                     TurnStatus.STOPPED,
                     TurnStatus.FAILED,
                 }:
                     return
+                state.lease_lost = True
                 self._stop_state_once(state)
                 return
 
@@ -523,7 +563,7 @@ class WorkbenchExecutor:
             target=safe_observability_error(target, limit=500),
             summary="[Untrusted agent description] "
             + self._safe_display(payload.get("summary")),
-            risk=self._safe_display(payload.get("risk")),
+            risk="[Untrusted agent risk] " + self._safe_display(payload.get("risk")),
             arguments_json={"argv": argv, "action_index": 0},
             confirmation_id=confirmation_id,
             canonical_capability=authorization.capability,

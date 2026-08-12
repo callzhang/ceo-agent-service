@@ -101,6 +101,8 @@ class WorkbenchConfirmation(StrictModel):
     canonical_targets_json: str = "[]"
     arguments_json: str
     status: ConfirmationStatus
+    decision_requested: str = ""
+    decision_requested_at: str = ""
     result_json: str = ""
     created_at: str
     decided_at: str = ""

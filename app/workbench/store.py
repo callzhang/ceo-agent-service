@@ -298,6 +298,25 @@ class WorkbenchStore(AutoReplyStore):
             )
             return str(row["resume_context"] or "")
 
+    def execution_run_id_for_executor(self, turn_id: str, *, owner: str) -> str:
+        owner = owner.strip()
+        if not owner:
+            raise ValueError("owner must be non-empty")
+        with self._connect() as db:
+            turn = self._require_turn(db, turn_id)
+            if turn["lease_owner"] != owner:
+                confirmation = db.execute(
+                    """
+                    select 1 from workbench_confirmations
+                    where turn_id=? and proposer_owner=?
+                      and proposer_run_id=? limit 1
+                    """,
+                    (turn_id, owner, turn["execution_run_id"]),
+                ).fetchone()
+                if confirmation is None:
+                    raise ValueError("executor does not own runtime run")
+            return str(turn["execution_run_id"] or "")
+
     def recover_expired_turns(
         self, *, now: str | datetime | None = None
     ) -> int:
@@ -310,6 +329,7 @@ class WorkbenchStore(AutoReplyStore):
         self,
         *,
         owner: str,
+        execution_run_id: str = "",
         lease_seconds: int = 300,
         now: str | datetime | None = None,
     ) -> WorkbenchTurn | None:
@@ -318,6 +338,7 @@ class WorkbenchStore(AutoReplyStore):
             raise ValueError("owner must be non-empty")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
+        execution_run_id = execution_run_id.strip() or str(uuid4())
         now_value, now_text = _utc_store_time(now)
         lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
             "%Y-%m-%d %H:%M:%S"
@@ -348,11 +369,19 @@ class WorkbenchStore(AutoReplyStore):
                 """
                 update workbench_turns
                 set status='running', lease_owner=?, lease_expires_at=?,
+                    execution_run_id=?, runtime_quiesced_run_id='',
                     started_at=case when started_at='' then ? else started_at end,
                     updated_at=?
                 where id=? and status='queued'
                 """,
-                (owner, lease_expires_at, now_text, now_text, row["id"]),
+                (
+                    owner,
+                    lease_expires_at,
+                    execution_run_id,
+                    now_text,
+                    now_text,
+                    row["id"],
+                ),
             ).rowcount != 1:
                 return None
             return self._turn_from_row(self._require_turn(db, row["id"]))
@@ -575,13 +604,17 @@ class WorkbenchStore(AutoReplyStore):
             canonical_targets_text = json.dumps(
                 canonical_targets, ensure_ascii=False, separators=(",", ":")
             )
+            proposer_run_id = str(turn["execution_run_id"] or "")
+            if not proposer_run_id:
+                raise ValueError("confirmation proposer run is missing")
             db.execute(
                 """
                 insert into workbench_confirmations (
                     id, turn_id, action_kind, target, summary, risk, arguments_json,
                     canonical_capability, canonical_operation, canonical_targets_json,
-                    canonical_operation_digest, canonical_arguments_digest, status
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                    canonical_operation_digest, canonical_arguments_digest, status,
+                    proposer_run_id, proposer_owner, proposer_lease_expires_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
                 """,
                 (
                     confirmation_id,
@@ -593,6 +626,9 @@ class WorkbenchStore(AutoReplyStore):
                     canonical_targets_text,
                     canonical_operation_digest,
                     canonical_arguments_digest,
+                    proposer_run_id,
+                    owner,
+                    turn["lease_expires_at"],
                 ),
             )
             self._append_control_event(
@@ -656,6 +692,128 @@ class WorkbenchStore(AutoReplyStore):
             ).rowcount != 1:
                 raise ValueError("reviewed write authorization cannot be consumed")
 
+    def renew_confirmation_proposer(
+        self,
+        turn_id: str,
+        *,
+        owner: str,
+        proposer_run_id: str,
+        lease_seconds: int,
+    ) -> None:
+        now_value, now_text = _utc_store_time()
+        expires = (now_value + timedelta(seconds=lease_seconds)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            if db.execute(
+                """
+                update workbench_confirmations
+                set proposer_lease_expires_at=?
+                where turn_id=? and status='pending' and proposer_owner=?
+                  and proposer_run_id=? and proposer_quiesced_at=''
+                  and proposer_lease_expires_at>?
+                """,
+                (expires, turn_id, owner, proposer_run_id, now_text),
+            ).rowcount != 1:
+                raise ValueError("confirmation proposer lease is stale")
+
+    def mark_confirmation_proposer_quiesced(
+        self, turn_id: str, *, owner: str, proposer_run_id: str
+    ) -> tuple[str, str] | None:
+        _, now_text = _utc_store_time()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                """
+                select * from workbench_confirmations
+                where turn_id=? and status='pending' and proposer_owner=?
+                  and proposer_run_id=? and proposer_quiesced_at=''
+                  and proposer_lease_expires_at>?
+                order by created_at desc, id desc limit 1
+                """,
+                (turn_id, owner, proposer_run_id, now_text),
+            ).fetchone()
+            if row is None:
+                return None
+            turn = self._require_turn(db, turn_id)
+            if (
+                TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION
+                or turn["execution_run_id"] != proposer_run_id
+            ):
+                raise ValueError("confirmation proposer run is stale")
+            db.execute(
+                "update workbench_confirmations set proposer_quiesced_at=? where id=?",
+                (now_text, row["id"]),
+            )
+            db.execute(
+                "update workbench_turns set runtime_quiesced_run_id=? where id=?",
+                (proposer_run_id, turn_id),
+            )
+            return row["id"], str(row["decision_requested"] or "")
+
+    def reconcile_unquiesced_proposers(
+        self, *, now: str | datetime | None = None
+    ) -> int:
+        _, now_text = _utc_store_time(now)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select * from workbench_confirmations
+                where status='pending' and proposer_run_id<>''
+                  and proposer_quiesced_at='' and proposer_lease_expires_at<=?
+                order by id
+                """,
+                (now_text,),
+            ).fetchall()
+            for row in rows:
+                db.execute(
+                    """
+                    update workbench_confirmations
+                    set status='failed', result_json=?
+                    where id=? and status='pending' and proposer_quiesced_at=''
+                    """,
+                    (
+                        _json_object_text(
+                            {
+                                "code": "confirmation_proposer_not_quiesced",
+                                "retryable": False,
+                                "status": "failed",
+                            },
+                            field="result_json",
+                        ),
+                        row["id"],
+                    ),
+                )
+                turn = self._require_turn(db, row["turn_id"])
+                status = TurnStatus(turn["status"])
+                if status in {
+                    TurnStatus.QUEUED,
+                    TurnStatus.RUNNING,
+                    TurnStatus.WAITING_CONFIRMATION,
+                }:
+                    self._append_control_event(
+                        db,
+                        row["turn_id"],
+                        event_type="turn_failed",
+                        payload={
+                            "code": "confirmation_proposer_not_quiesced",
+                            "status": TurnStatus.FAILED.value,
+                        },
+                    )
+                    self._transition_turn(
+                        db,
+                        row["turn_id"],
+                        current=status,
+                        target=TurnStatus.FAILED,
+                        now_text=now_text,
+                        error_code="confirmation_proposer_not_quiesced",
+                        error_detail="Confirmation proposer did not quiesce safely.",
+                        clear_lease=True,
+                    )
+            return len(rows)
+
     def list_confirmations(self, task_id: str) -> list[WorkbenchConfirmation]:
         with self._connect() as db:
             self._require_task(db, task_id)
@@ -685,6 +843,23 @@ class WorkbenchStore(AutoReplyStore):
                 else self._confirmation_from_row(row, redact_arguments=True)
             )
 
+    def requested_quiesced_confirmation_ids(
+        self, *, limit: int = 2
+    ) -> tuple[tuple[str, str], ...]:
+        if limit < 1 or limit > 2:
+            raise ValueError("limit must be between 1 and 2")
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select id, decision_requested from workbench_confirmations
+                where status='pending' and decision_requested<>''
+                  and proposer_quiesced_at<>''
+                order by decision_requested_at, id limit ?
+                """,
+                (limit,),
+            ).fetchall()
+        return tuple((row["id"], row["decision_requested"]) for row in rows)
+
     def claim_confirmation_execution(
         self,
         confirmation_id: str,
@@ -708,9 +883,27 @@ class WorkbenchStore(AutoReplyStore):
             row = self._require_confirmation(db, confirmation_id)
             status = ConfirmationStatus(row["status"])
             if status is ConfirmationStatus.PENDING:
+                requested = str(row["decision_requested"] or "")
+                if requested and requested != "confirm":
+                    raise ValueError("confirmation has conflicting decision intent")
+                if not requested:
+                    db.execute(
+                        """
+                        update workbench_confirmations
+                        set decision_requested='confirm', decision_requested_at=?
+                        where id=? and status='pending' and decision_requested=''
+                        """,
+                        (now_text, confirmation_id),
+                    )
+                    row = self._require_confirmation(db, confirmation_id)
                 turn = self._require_turn(db, row["turn_id"])
                 if TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION:
                     raise ValueError("confirmation turn is not waiting")
+                if (
+                    not row["proposer_quiesced_at"]
+                    or turn["runtime_quiesced_run_id"] != row["proposer_run_id"]
+                ):
+                    return None
                 unresolved = db.execute(
                     """
                     select 1 from workbench_confirmations
@@ -826,6 +1019,10 @@ class WorkbenchStore(AutoReplyStore):
                 or row["execution_lease_expires_at"] <= now_text
             ):
                 raise ValueError("confirmation execution lease is stale")
+            if target is ConfirmationStatus.EXECUTED and not row[
+                "authorization_consumed_at"
+            ]:
+                raise ValueError("confirmation authorization was not consumed")
             turn = self._require_turn(db, row["turn_id"])
             if db.execute(
                 """
@@ -913,9 +1110,27 @@ class WorkbenchStore(AutoReplyStore):
                 return self._confirmation_from_row(row, redact_arguments=True)
             if current is not ConfirmationStatus.PENDING:
                 raise ValueError("confirmation has already been decided")
+            requested = str(row["decision_requested"] or "")
+            if requested and requested != "cancel":
+                raise ValueError("confirmation has conflicting decision intent")
+            if not requested:
+                db.execute(
+                    """
+                    update workbench_confirmations
+                    set decision_requested='cancel', decision_requested_at=?
+                    where id=? and status='pending' and decision_requested=''
+                    """,
+                    (now_text, confirmation_id),
+                )
+                row = self._require_confirmation(db, confirmation_id)
             turn = self._require_turn(db, row["turn_id"])
             if TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION:
                 raise ValueError("confirmation turn is not waiting")
+            if (
+                not row["proposer_quiesced_at"]
+                or turn["runtime_quiesced_run_id"] != row["proposer_run_id"]
+            ):
+                return self._confirmation_from_row(row, redact_arguments=True)
             db.execute(
                 """
                 update workbench_confirmations
