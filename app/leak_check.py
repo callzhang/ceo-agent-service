@@ -129,12 +129,22 @@ def assert_no_credentials(
 
 def assert_no_credential_arguments(argv: Sequence[str]) -> None:
     """Validate CLI arguments with flag names providing credential context."""
-    credential_value_follows = False
+    header_value_follows = False
     for argument in argv:
-        if credential_value_follows:
-            assert_no_credentials(argument, credential_context=True)
-            credential_value_follows = False
+        if header_value_follows:
+            _assert_no_credential_header(argument)
+            header_value_follows = False
         assert_no_credentials(argument)
+        if argument in {"-H", "--header", "--proxy-header"}:
+            header_value_follows = True
+            continue
+        if argument.startswith("-H") and len(argument) > 2:
+            _assert_no_credential_header(argument[2:])
+            continue
+        for header_prefix in ("--header=", "--proxy-header="):
+            if argument.startswith(header_prefix):
+                _assert_no_credential_header(argument[len(header_prefix) :])
+                break
         candidate = argument.lstrip("-") if argument.startswith("-") else ""
         if candidate:
             name, separator, value = candidate.partition("=")
@@ -143,8 +153,6 @@ def assert_no_credential_arguments(argv: Sequence[str]) -> None:
             if is_sensitive_field_name(name):
                 if separator:
                     assert_no_credentials(value, credential_context=True)
-                else:
-                    credential_value_follows = True
                 raise ValueError(_CREDENTIAL_BOUNDARY_ERROR)
         structured_candidates = [argument]
         for separator in ("=", ":"):
@@ -160,6 +168,38 @@ def assert_no_credential_arguments(argv: Sequence[str]) -> None:
             except (TypeError, ValueError):
                 continue
             assert_no_credentials(structured)
+
+
+def _assert_no_credential_header(header: str) -> None:
+    assert_no_credentials(header)
+    name, separator, value = header.partition(":")
+    if not separator or not is_sensitive_header_name(name):
+        return
+    assert_no_credentials(value, credential_context=True)
+    # Header names declare credential semantics even for short or malformed
+    # values that generic format and entropy checks cannot classify.
+    raise ValueError(_CREDENTIAL_BOUNDARY_ERROR)
+
+
+def is_sensitive_header_name(value: str) -> bool:
+    trimmed = value.strip()
+    segments = tuple(
+        segment for segment in re.split(r"[^a-z0-9]+", trimmed.casefold()) if segment
+    )
+    normalized = "".join(
+        character for character in trimmed.casefold() if character.isalnum()
+    )
+    return (
+        is_sensitive_field_name(trimmed)
+        or normalized in {"authorization", "proxyauthorization", "key", "xkey"}
+        or normalized.endswith("auth")
+        or normalized.endswith(("appkey", "clientkey", "subscriptionkey"))
+        or any(
+            segment
+            in {"auth", "credential", "credentials", "password", "secret", "token"}
+            for segment in segments
+        )
+    )
 
 
 def redact_credentials(

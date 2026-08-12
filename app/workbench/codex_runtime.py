@@ -8,12 +8,10 @@ import json
 import os
 import re
 import selectors
-import shutil
 import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import tomllib
@@ -28,6 +26,7 @@ from app.codex_runner import CodexRunner
 from app.leak_check import assert_no_credentials, contains_credential, is_sensitive_field_name
 from app.process_runner import ProcessRunResult
 from app.workbench.confirmation_mcp import _validate_argv
+from app.workbench.isolated_home import IsolatedCodexHome, create_isolated_codex_home
 from app.workbench.runtime import (
     RuntimeCapabilities,
     RuntimeEvent,
@@ -161,7 +160,11 @@ def _config_without_confirmation_server(source: str) -> str:
 
 
 @contextlib.contextmanager
-def _isolated_codex_environment(base_env: Mapping[str, str]):
+def _isolated_codex_environment(
+    base_env: Mapping[str, str],
+    *,
+    provider_session_ref: str = "",
+):
     """Isolate a conflicting MCP definition while retaining user-owned Codex state."""
     env = dict(base_env)
     codex_home = Path(env.get("CODEX_HOME", "~/.codex")).expanduser()
@@ -179,36 +182,34 @@ def _isolated_codex_environment(base_env: Mapping[str, str]):
         raise ValueError("Codex configuration could not be isolated safely") from exc
 
     if sanitized is None:
-        yield env
+        yield _CodexProcessEnvironment(env)
         return
 
-    isolated_home: Path | None = None
     try:
-        # Sessions must remain in the authenticated home so newly returned refs
-        # continue to be resumable after this short-lived overlay disappears.
-        (codex_home / "sessions").mkdir(mode=0o700, exist_ok=True)
-        isolated_home = Path(tempfile.mkdtemp(prefix="workbench-codex-home-"))
-        for entry in codex_home.iterdir():
-            if entry.name == "config.toml":
-                continue
-            (isolated_home / entry.name).symlink_to(
-                entry, target_is_directory=entry.is_dir()
-            )
-        isolated_config = isolated_home / "config.toml"
-        isolated_config.write_text(sanitized, encoding="utf-8")
-        isolated_config.chmod(0o600)
-    except (OSError, UnicodeError) as exc:
-        if isolated_home is not None:
-            shutil.rmtree(isolated_home, ignore_errors=True)
+        isolated_home = create_isolated_codex_home(
+            codex_home,
+            sanitized,
+            provider_session_ref=provider_session_ref,
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
         raise ValueError("Codex configuration could not be isolated safely") from exc
 
-    assert isolated_home is not None
     isolated_env = dict(env)
-    isolated_env["CODEX_HOME"] = str(isolated_home)
+    isolated_env["CODEX_HOME"] = str(isolated_home.path)
     try:
-        yield isolated_env
+        yield _CodexProcessEnvironment(isolated_env, isolated_home)
     finally:
-        shutil.rmtree(isolated_home, ignore_errors=True)
+        isolated_home.cleanup()
+
+
+class _CodexProcessEnvironment(dict[str, str]):
+    def __init__(
+        self,
+        values: Mapping[str, str],
+        isolated_home: IsolatedCodexHome | None = None,
+    ):
+        super().__init__(values)
+        self.isolated_home = isolated_home
 
 
 class _AdapterFailure(ValueError):
@@ -577,6 +578,13 @@ class _CancellableProcessExecutor:
         self._owned_pgid: int | None = None
         self._watchdog_write_fd: int | None = None
         self._stop_requested = False
+        self._isolated_home: IsolatedCodexHome | None = None
+
+    def set_isolated_home(self, isolated_home: IsolatedCodexHome) -> None:
+        with self._lock:
+            if self._process is not None:
+                raise RuntimeError("process cleanup ownership was attached too late")
+            self._isolated_home = isolated_home
 
     def stop(self) -> None:
         with self._lock:
@@ -640,6 +648,20 @@ class _CancellableProcessExecutor:
         line_buffer = ""
         parent_read_fd, parent_write_fd = os.pipe()
         identity = str(uuid.uuid4())
+        with self._lock:
+            isolated_home = self._isolated_home
+        cleanup_options: list[str] = []
+        inherited_fds = [parent_read_fd]
+        if isolated_home is not None and isolated_home.lock_fd >= 0:
+            cleanup_options = [
+                "--cleanup-home",
+                str(isolated_home.path),
+                "--cleanup-marker",
+                isolated_home.marker_token,
+                "--cleanup-lock-fd",
+                str(isolated_home.lock_fd),
+            ]
+            inherited_fds.append(isolated_home.lock_fd)
         wrapped_command = [
             sys.executable,
             str(Path(__file__).with_name("process_watchdog.py")),
@@ -647,6 +669,7 @@ class _CancellableProcessExecutor:
             str(parent_read_fd),
             "--identity",
             identity,
+            *cleanup_options,
             "--",
             *command,
         ]
@@ -659,7 +682,7 @@ class _CancellableProcessExecutor:
                 env=env,
                 cwd=self._cwd,
                 start_new_session=True,
-                pass_fds=(parent_read_fd,),
+                pass_fds=tuple(inherited_fds),
             )
         except BaseException:
             _close_fd(parent_read_fd)
@@ -948,7 +971,14 @@ class CodexRuntime:
                 workspace=owner.request.workspace,
                 codex_bin=self.codex_bin,
             ).build_env(preserve_local_cli_auth=True)
-            with _isolated_codex_environment(base_env) as process_env:
+            with _isolated_codex_environment(
+                base_env,
+                provider_session_ref=owner.request.provider_session_ref,
+            ) as process_env:
+                if process_env.isolated_home is not None:
+                    attach_cleanup = getattr(owner.executor, "set_isolated_home", None)
+                    if callable(attach_cleanup):
+                        attach_cleanup(process_env.isolated_home)
                 process_result = owner.executor(
                     owner.command,
                     prompt=owner.request.prompt,

@@ -246,7 +246,10 @@ def test_confirmation_inline_table_is_accepted_by_real_codex_parser(tmp_path: Pa
     ) as isolated_env:
         isolated_home = Path(isolated_env["CODEX_HOME"])
         assert isolated_home != codex_home
-        assert (isolated_home / "skills").is_symlink()
+        assert not (isolated_home / "skills").is_symlink()
+        assert (isolated_home / "skills" / "marker").read_text(
+            encoding="utf-8"
+        ) == "preserved"
         assert 'model_reasoning_effort = "high"' in (
             isolated_home / "config.toml"
         ).read_text(encoding="utf-8")
@@ -322,6 +325,70 @@ def test_runtime_uses_and_cleans_isolated_codex_configuration(
     assert result.status == "completed"
     assert observed_home is not None
     assert not observed_home.exists()
+
+
+def test_runtime_failure_cleans_isolated_home_without_exposing_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    credential = "private-config-material"
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.workbench_confirmation]\n"
+        f'env = {{ PRIVATE_VALUE = "{credential}" }}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    observed_home: Path | None = None
+
+    def executor(_command: list[str], **kwargs: object) -> ProcessRunResult:
+        nonlocal observed_home
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        observed_home = Path(env["CODEX_HOME"])
+        raise RuntimeError("native failure")
+
+    runtime = CodexRuntime(workspace=tmp_path, executor=executor)
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=lambda _event: None))
+
+    assert result.status == "failed"
+    assert result.error_code == "runtime_failure"
+    assert credential not in result.error_detail
+    assert observed_home is not None
+    assert not observed_home.exists()
+
+
+def test_runtime_stop_cleans_isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.workbench_confirmation]\n"
+        'url = "https://conflicting.example/mcp"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    class IsolatedBlockingExecutor(BlockingExecutor):
+        observed_home: Path | None = None
+
+        def __call__(self, command: list[str], **kwargs: object) -> ProcessRunResult:
+            env = kwargs["env"]
+            assert isinstance(env, dict)
+            self.observed_home = Path(env["CODEX_HOME"])
+            return super().__call__(command, **kwargs)
+
+    executor = IsolatedBlockingExecutor()
+    runtime = CodexRuntime(workspace=tmp_path, executor=executor)
+    handle = runtime.start(request(tmp_path), on_event=lambda _event: None)
+    assert executor.started.wait(timeout=1)
+
+    runtime.stop(handle)
+    result = runtime.wait(handle)
+
+    assert result.status == "stopped"
+    assert executor.observed_home is not None
+    assert not executor.observed_home.exists()
 
 
 @pytest.mark.parametrize(
@@ -467,6 +534,31 @@ def test_request_reviewed_action_uses_argument_context_for_opaque_values():
     for argv in (["tool", "--token", opaque], ["tool", f"--password={opaque}"]):
         with pytest.raises(ValueError, match="complete reviewed action details are required"):
             request_reviewed_action(argv, "target", "summary", "risk")
+
+
+def test_request_reviewed_action_preserves_benign_header_arguments_exactly():
+    argv = [
+        "curl",
+        "--header",
+        "Content-Type: application/json",
+        "-HX-Correlation-ID: cidAbCDefghIJklMNopQRstUVwxYZ0123456789+/==",
+    ]
+
+    proposal = request_reviewed_action(argv, "target", "summary", "risk")
+
+    assert proposal["argv"] == argv
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["curl", "-H", "Authorization: AbCDefghIJklMNopQRstUVwxYZ0123456789+/=="],
+        ["curl", "--header=X-API-Key: AbCDefghIJklMNopQRstUVwxYZ0123456789+/=="],
+    ],
+)
+def test_request_reviewed_action_rejects_sensitive_header_arguments(argv: list[str]):
+    with pytest.raises(ValueError, match="^complete reviewed action details are required$"):
+        request_reviewed_action(argv, "target", "summary", "risk")
 
 
 def test_delta_and_completed_message_emit_logical_text_once(tmp_path: Path):
@@ -1442,6 +1534,82 @@ def test_watchdog_kills_owned_group_when_runtime_parent_dies(tmp_path: Path):
 
     try:
         assert _wait_for_pid_exit(child_pid, timeout=4)
+    finally:
+        _kill_test_child_if_alive(child_pid)
+
+
+def test_watchdog_removes_isolated_home_when_runtime_parent_abruptly_exits(
+    tmp_path: Path,
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    credential = "credential-material-must-not-appear"
+    (codex_home / "config.toml").write_text(
+        'model_provider = "private"\n'
+        "[mcp_servers.workbench_confirmation]\n"
+        f'env = {{ PRIVATE_VALUE = "{credential}" }}\n',
+        encoding="utf-8",
+    )
+    child_pid_path = tmp_path / "abrupt-child.pid"
+    isolated_home_path = tmp_path / "isolated-home.path"
+    parent_script = tmp_path / "abrupt_runtime_parent.py"
+    parent_script.write_text(
+        "\n".join(
+            [
+                "import os, sys",
+                "from pathlib import Path",
+                "from app.workbench.codex_runtime import (",
+                "    _CancellableProcessExecutor, _isolated_codex_environment)",
+                "base_env = os.environ.copy()",
+                "base_env['CODEX_HOME'] = sys.argv[1]",
+                "executor = _CancellableProcessExecutor(cwd=Path(sys.argv[2]))",
+                "with _isolated_codex_environment(base_env) as process_env:",
+                "    executor.set_isolated_home(process_env.isolated_home)",
+                "    original = executor._start_watchdog",
+                "    def observed(process):",
+                "        Path(sys.argv[3]).write_text(str(process.pid))",
+                "        Path(sys.argv[4]).write_text(process_env['CODEX_HOME'])",
+                "        original(process)",
+                "        os._exit(23)",
+                "    executor._start_watchdog = observed",
+                "    executor([sys.executable, '-c', 'import time; time.sleep(30)'], ",
+                "        prompt='', env=process_env, total_timeout_seconds=30, ",
+                "        idle_timeout_seconds=30, on_stdout_line=lambda line: None)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+    parent = subprocess.Popen(
+        [
+            sys.executable,
+            str(parent_script),
+            str(codex_home),
+            str(tmp_path),
+            str(child_pid_path),
+            str(isolated_home_path),
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout, stderr = parent.communicate(timeout=5)
+
+    assert parent.returncode == 23
+    assert child_pid_path.exists()
+    assert isolated_home_path.exists()
+    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+    isolated_home = Path(isolated_home_path.read_text(encoding="utf-8"))
+    try:
+        assert _wait_for_pid_exit(child_pid, timeout=5)
+        deadline = time.monotonic() + 5
+        while isolated_home.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not isolated_home.exists()
+        assert credential not in stdout
+        assert credential not in stderr
     finally:
         _kill_test_child_if_alive(child_pid)
 

@@ -1,6 +1,11 @@
 import pytest
 
-from app.leak_check import assert_no_credentials, contains_credential, redact_credentials
+from app.leak_check import (
+    assert_no_credential_arguments,
+    assert_no_credentials,
+    contains_credential,
+    redact_credentials,
+)
 
 
 @pytest.mark.parametrize(
@@ -73,3 +78,32 @@ def test_redact_credentials_removes_secret_without_changing_benign_text():
 
     assert secret not in redacted
     assert "summary remains readable" in redacted
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["curl", "-H", "Authorization: AbCDefghIJklMNopQRstUVwxYZ0123456789+/=="],
+        ["curl", "--header=X-API-Key: AbCDefghIJklMNopQRstUVwxYZ0123456789+/=="],
+        ["curl", "-HProxy-Authorization: opaque-scheme AbCDefghIJklMNopQRstUVwxYZ0123456789+/=="],
+        ["curl", "--header", "Authorization: Bearer credentialvalue1234"],
+        ["curl", "--header", "Authorization: Basic dXNlcjpwYXNzd29yZA=="],
+        ["curl", "--header", "X-Secret-Key: AbCDefghIJklMNopQRstUVwxYZ0123456789+/=="],
+        ["curl", "--header", "Ocp-Apim-Subscription-Key: AbCDefghIJklMNopQRstUVwxYZ0123456789+/=="],
+    ],
+)
+def test_header_argument_forms_reject_sensitive_values_without_disclosure(argv: list[str]):
+    with pytest.raises(ValueError, match="^credential-bearing data is not allowed$"):
+        assert_no_credential_arguments(argv)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["curl", "-H", "Content-Type: application/json"],
+        ["curl", "--header=Accept: application/json"],
+        ["curl", "-HX-Correlation-ID: cidAbCDefghIJklMNopQRstUVwxYZ0123456789+/=="],
+    ],
+)
+def test_header_argument_forms_allow_benign_headers_and_identifiers(argv: list[str]):
+    assert_no_credential_arguments(argv)
