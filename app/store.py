@@ -1807,6 +1807,12 @@ class AutoReplyStore:
                     on work_updates(created_at, id)
                 """
             )
+            db.execute(
+                """
+                create index if not exists idx_work_summary_inputs_updated
+                    on work_summary_inputs(updated_at desc, id desc)
+                """
+            )
             org_user_profile_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
@@ -9635,7 +9641,8 @@ class AutoReplyStore:
                 """
                 select agent_runs.status as run_status,
                        agent_runs.execution_generation as run_generation,
-                       reply_tasks.execution_generation as task_generation
+                       reply_tasks.execution_generation as task_generation,
+                       reply_tasks.oa_url as task_oa_url
                 from agent_runs
                 join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.id=? and reply_tasks.id=?
@@ -9649,6 +9656,15 @@ class AutoReplyStore:
                 or row["run_status"] not in {"completed", "failed", "unknown"}
             ):
                 raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
+            persisted_oa_url = oa_url.strip() or str(row["task_oa_url"] or "").strip()
+            task_process_id, task_oa_task_id = self._oa_identifiers_from_url(
+                persisted_oa_url
+            )
+            persisted_process_id = oa_process_instance_id.strip() or task_process_id
+            persisted_task_id = oa_task_id.strip() or task_oa_task_id
+            persisted_oa_action = oa_action.strip() or (
+                "review" if persisted_process_id else ""
+            )
             cursor = db.execute(
                 """
                 insert into reply_attempts (
@@ -9675,10 +9691,10 @@ class AutoReplyStore:
                     codex_transcript_end_line,
                     audit_tool_events_json,
                     audit_summary,
-                    oa_process_instance_id,
-                    oa_task_id,
-                    oa_url,
-                    oa_action,
+                    persisted_process_id,
+                    persisted_task_id,
+                    persisted_oa_url,
+                    persisted_oa_action,
                     oa_remark,
                     oa_action_result_json,
                     send_status,
@@ -9764,7 +9780,7 @@ class AutoReplyStore:
             db.execute("begin immediate")
             task = db.execute(
                 """
-                select execution_generation, status
+                select execution_generation, status, oa_url
                 from reply_tasks
                 where id=?
                 """,
@@ -9776,13 +9792,18 @@ class AutoReplyStore:
                 or task["execution_generation"] != expected_execution_generation
             ):
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            persisted_oa_url = str(task["oa_url"] or "").strip()
+            process_instance_id, oa_task_id = self._oa_identifiers_from_url(
+                persisted_oa_url
+            )
             cursor = db.execute(
                 """
                 insert into reply_attempts (
                     conversation_id, conversation_title, trigger_message_id,
                     trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, audit_summary, send_status, send_error, channel
-                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?)
+                    codex_reason, audit_summary, oa_process_instance_id,
+                    oa_task_id, oa_url, oa_action, send_status, send_error, channel
+                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -9792,6 +9813,10 @@ class AutoReplyStore:
                     trigger_text,
                     codex_reason,
                     audit_summary,
+                    process_instance_id,
+                    oa_task_id,
+                    persisted_oa_url,
+                    "review" if process_instance_id else "",
                     send_status,
                     send_error,
                     channel,

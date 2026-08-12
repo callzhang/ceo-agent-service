@@ -1875,8 +1875,12 @@ def build_worker_status_payload(
     launchd_label: str = "com.ceo-agent-service.main",
 ) -> dict[str, object]:
     service = _launchd_service_status(launchd_label)
-    queues = _queue_status_snapshots(store)
-    attention_rows = _queue_attention_rows(store)
+    # The worker performs short SQLite writes in parallel.  Render every
+    # database section from one read-only snapshot so the status endpoint does
+    # not repeatedly contend for the writer lock or mix queue generations.
+    with store.read_snapshot():
+        queues = _queue_status_snapshots(store)
+        attention_rows = _queue_attention_rows(store)
     return {
         "service": service,
         "components": _service_component_snapshots(),
