@@ -617,13 +617,15 @@ def _list_all_ai_minutes(
     items: list[dict] = []
     cursor = ""
     seen_tokens: set[str] = set()
+    completed_pages = 0
     for _ in range(100):
         try:
             page = list_minutes_page(limit=50, cursor=cursor)
         except Exception as exc:
-            if not items:
+            if not completed_pages:
                 raise
             return items, str(exc)
+        completed_pages += 1
         page_items = page.get("items") or []
         items.extend(item for item in page_items if isinstance(item, dict))
         cursor = str(page.get("next_token") or "")
