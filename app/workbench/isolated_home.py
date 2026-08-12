@@ -10,10 +10,12 @@ import json
 import os
 import re
 import secrets
+import select
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -880,6 +882,10 @@ def _create_session_sync_transaction(
     sync_state: _SessionSyncState,
     transaction_id: str,
     *,
+    before_intent_checkpoint_fd: int = -1,
+    before_intent_checkpoint_delay_seconds: float = 0.0,
+    intent_checkpoint_fd: int = -1,
+    intent_checkpoint_delay_seconds: float = 0.0,
     helper_checkpoint_fd: int = -1,
     helper_checkpoint_delay_seconds: float = 0.0,
 ) -> _SessionSyncTransaction:
@@ -897,17 +903,28 @@ def _create_session_sync_transaction(
         sort_keys=True,
         separators=(",", ":"),
     ).encode("ascii")
-    _write_new_file(sync_state.state_fd, intent_name, intent, 0o600)
-    os.fsync(sync_state.state_fd)
+    pipe_fds: list[int] = []
     try:
         acknowledgement_read, acknowledgement_write = os.pipe()
+        pipe_fds.extend((acknowledgement_read, acknowledgement_write))
+        readiness_read, readiness_write = os.pipe()
+        pipe_fds.extend((readiness_read, readiness_write))
+        go_read, go_write = os.pipe()
+        pipe_fds.extend((go_read, go_write))
     except OSError as exc:
-        _remove_verified_transaction_intent(
-            sync_state.state_fd, intent_name, intent
-        )
+        for fd in pipe_fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         raise ValueError(_SAFE_ERROR) from exc
     helper: subprocess.Popen[bytes] | None = None
-    pass_fds = [sync_state.state_fd, acknowledgement_write]
+    pass_fds = [
+        sync_state.state_fd,
+        acknowledgement_write,
+        readiness_write,
+        go_read,
+    ]
     command = [
         sys.executable,
         str(Path(__file__).with_name("session_transaction_creator.py")),
@@ -915,6 +932,10 @@ def _create_session_sync_transaction(
         str(sync_state.state_fd),
         "--ack-fd",
         str(acknowledgement_write),
+        "--ready-fd",
+        str(readiness_write),
+        "--go-fd",
+        str(go_read),
         "--transaction-id",
         transaction_id,
         "--nonce",
@@ -939,23 +960,66 @@ def _create_session_sync_transaction(
             start_new_session=True,
         )
     except BaseException:
-        os.close(acknowledgement_read)
-        os.close(acknowledgement_write)
-        _remove_verified_transaction_intent(
-            sync_state.state_fd, intent_name, intent
-        )
+        for fd in pipe_fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         raise ValueError(_SAFE_ERROR)
-    os.close(acknowledgement_write)
+    for fd in (acknowledgement_write, readiness_write, go_read):
+        os.close(fd)
     try:
+        ready, _, _ = select.select(
+            [readiness_read], [], [], _SYNC_CREATOR_TIMEOUT_SECONDS
+        )
+        if not ready:
+            raise ValueError(_SAFE_ERROR)
+        readiness = os.read(readiness_read, 513)
+        response = json.loads(readiness.decode("ascii"))
+        if response != {"ok": True}:
+            raise ValueError(_SAFE_ERROR)
+        if before_intent_checkpoint_fd >= 0:
+            _write_all(before_intent_checkpoint_fd, b"waiting")
+        if before_intent_checkpoint_delay_seconds:
+            time.sleep(
+                min(max(before_intent_checkpoint_delay_seconds, 0.0), 2.0)
+            )
+        _write_all(go_write, b"P")
+        published, _, _ = select.select(
+            [readiness_read], [], [], _SYNC_CREATOR_TIMEOUT_SECONDS
+        )
+        if not published:
+            raise ValueError(_SAFE_ERROR)
+        publication = os.read(readiness_read, 513)
+        response = json.loads(publication.decode("ascii"))
+        if (
+            not isinstance(response, dict)
+            or set(response) != {"device", "inode", "ok"}
+            or response["ok"] is not True
+            or type(response["device"]) is not int
+            or type(response["inode"]) is not int
+            or response["device"] < 0
+            or response["inode"] <= 0
+        ):
+            raise ValueError(_SAFE_ERROR)
+        intent_identity = (response["device"], response["inode"])
+        _validate_transaction_intent_at(
+            sync_state.state_fd,
+            intent_name,
+            intent,
+            intent_identity,
+        )
+        if intent_checkpoint_fd >= 0:
+            _write_all(intent_checkpoint_fd, b"intent")
+        if intent_checkpoint_delay_seconds:
+            time.sleep(min(max(intent_checkpoint_delay_seconds, 0.0), 2.0))
+        _write_all(go_write, b"G")
+        os.close(go_write)
+        go_write = -1
         try:
             return_code = helper.wait(timeout=_SYNC_CREATOR_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
-            helper.terminate()
-            try:
-                helper.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                helper.kill()
-                helper.wait(timeout=2)
+            _stop_transaction_creator(helper)
             raise ValueError(_SAFE_ERROR)
         acknowledgement = bytearray()
         while len(acknowledgement) <= 512:
@@ -980,13 +1044,27 @@ def _create_session_sync_transaction(
         ):
             raise ValueError(_SAFE_ERROR)
         expected_identity = (response["device"], response["inode"])
-    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+    except BaseException as exc:
+        if go_write >= 0:
+            try:
+                os.close(go_write)
+            except OSError:
+                pass
+            go_write = -1
+        _stop_transaction_creator(helper)
         _remove_verified_transaction_intent(
-            sync_state.state_fd, intent_name, intent
+            sync_state.state_fd,
+            intent_name,
+            intent,
+            expected_identity=locals().get("intent_identity"),
         )
         raise ValueError(_SAFE_ERROR) from exc
     finally:
-        os.close(acknowledgement_read)
+        for fd in (acknowledgement_read, readiness_read):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     transaction_fd = os.open(
         name,
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
@@ -1017,6 +1095,8 @@ def _remove_verified_transaction_intent(
     state_fd: int,
     name: str,
     expected: bytes,
+    *,
+    expected_identity: tuple[int, int] | None = None,
 ) -> None:
     try:
         intent_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=state_fd)
@@ -1028,6 +1108,8 @@ def _remove_verified_transaction_intent(
                 or metadata.st_uid != os.getuid()
                 or stat.S_IMODE(metadata.st_mode) != 0o600
                 or data != expected
+                or expected_identity is None
+                or (metadata.st_dev, metadata.st_ino) != expected_identity
             ):
                 return
         finally:
@@ -1036,6 +1118,43 @@ def _remove_verified_transaction_intent(
         os.fsync(state_fd)
     except (FileNotFoundError, OSError):
         pass
+
+
+def _validate_transaction_intent_at(
+    state_fd: int,
+    name: str,
+    expected: bytes,
+    expected_identity: tuple[int, int],
+) -> None:
+    intent_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=state_fd)
+    try:
+        metadata = os.fstat(intent_fd)
+        data = os.read(intent_fd, 513)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or (metadata.st_dev, metadata.st_ino) != expected_identity
+            or data != expected
+        ):
+            raise ValueError(_SAFE_ERROR)
+    finally:
+        os.close(intent_fd)
+
+
+def _stop_transaction_creator(helper: subprocess.Popen[bytes]) -> None:
+    if helper.poll() is not None:
+        return
+    try:
+        helper.wait(timeout=2)
+        return
+    except subprocess.TimeoutExpired:
+        helper.terminate()
+    try:
+        helper.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        helper.kill()
+        helper.wait(timeout=2)
 
 
 class _InvalidSessionJournal(ValueError):

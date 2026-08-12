@@ -938,6 +938,88 @@ def test_transaction_creator_survives_parent_sigkill_and_is_reconciled(
             process.wait(timeout=5)
 
 
+@pytest.mark.parametrize(
+    ("checkpoint_kind", "expected_checkpoint"),
+    (("before_intent", b"waiting"), ("after_intent", b"intent")),
+)
+def test_transaction_creator_cleans_handoff_when_parent_is_killed(
+    tmp_path: Path,
+    checkpoint_kind: str,
+    expected_checkpoint: bytes,
+):
+    source = _source_home(tmp_path)
+    root = tmp_path / "isolated-root"
+    transaction_id = uuid.uuid4().hex
+    checkpoint_read, checkpoint_write = os.pipe()
+    script = "\n".join(
+        (
+            "import sys",
+            "from pathlib import Path",
+            "import app.workbench.isolated_home as module",
+            "source, root = Path(sys.argv[1]), Path(sys.argv[2])",
+            "kind, checkpoint_fd = sys.argv[4], int(sys.argv[5])",
+            "kwargs = ({'before_intent_checkpoint_fd': checkpoint_fd, "
+            "'before_intent_checkpoint_delay_seconds': 0.75} if kind == "
+            "'before_intent' else {'intent_checkpoint_fd': checkpoint_fd, "
+            "'intent_checkpoint_delay_seconds': 0.75})",
+            "with module._session_sync_lock(source, root) as state:",
+            "    transaction = module._create_session_sync_transaction(",
+            "        state, sys.argv[3], **kwargs)",
+            "    module.os.close(transaction.fd)",
+        )
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(source),
+            str(root),
+            transaction_id,
+            checkpoint_kind,
+            str(checkpoint_write),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        pass_fds=(checkpoint_write,),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    os.close(checkpoint_write)
+    try:
+        ready, _, _ = select.select([checkpoint_read], [], [], 8)
+        assert ready
+        assert os.read(checkpoint_read, len(expected_checkpoint)) == expected_checkpoint
+        state_root = source / ".workbench-session-sync"
+        matching_at_checkpoint = [
+            path for path in state_root.iterdir() if transaction_id in path.name
+        ]
+        if checkpoint_kind == "before_intent":
+            assert not matching_at_checkpoint
+        else:
+            assert [path.name for path in matching_at_checkpoint] == [
+                f".transaction-creation-{transaction_id}.json"
+            ]
+        process.send_signal(signal.SIGKILL)
+        assert process.wait(timeout=5) < 0
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            matching = [path for path in state_root.iterdir() if transaction_id in path.name]
+            if not matching:
+                break
+            time.sleep(0.02)
+        assert not [path for path in state_root.iterdir() if transaction_id in path.name]
+
+        with isolated_home_module._session_sync_lock(source, root):
+            pass
+
+        assert not [path for path in state_root.iterdir() if transaction_id in path.name]
+    finally:
+        os.close(checkpoint_read)
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
 def test_transaction_creator_preserves_preexisting_exact_name(tmp_path: Path):
     source = _source_home(tmp_path)
     root = tmp_path / "isolated-root"
@@ -957,6 +1039,29 @@ def test_transaction_creator_preserves_preexisting_exact_name(tmp_path: Path):
         assert not any(
             child.name.startswith(".transaction-creation-")
             for child in external.parent.iterdir()
+        )
+
+
+def test_transaction_creator_preserves_mismatched_foreign_intent(tmp_path: Path):
+    source = _source_home(tmp_path)
+    root = tmp_path / "isolated-root"
+    transaction_id = uuid.uuid4().hex
+    with isolated_home_module._session_sync_lock(source, root) as sync_state:
+        state_root = source / ".workbench-session-sync"
+        foreign = state_root / f".transaction-creation-{transaction_id}.json"
+        foreign.write_text("foreign intent\n", encoding="utf-8")
+        foreign.chmod(0o600)
+
+        with pytest.raises(ValueError, match="could not be isolated safely"):
+            isolated_home_module._create_session_sync_transaction(
+                sync_state, transaction_id
+            )
+
+        assert foreign.read_text(encoding="utf-8") == "foreign intent\n"
+        assert not any(
+            path.name.startswith(".transaction-creation-prepared-")
+            and transaction_id in path.name
+            for path in state_root.iterdir()
         )
 
 
