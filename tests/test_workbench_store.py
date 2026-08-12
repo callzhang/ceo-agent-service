@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.workbench.models import TurnStatus
+from app.workbench.models import ConfirmationStatus, TurnStatus
 from app.workbench.store import WorkbenchStore
 
 
@@ -196,14 +196,18 @@ def test_transition_to_waiting_confirmation_releases_worker_lease(tmp_path: Path
     )
     store.claim_next_turn(owner="worker-1", now="2026-08-13T00:00:00Z")
 
-    waiting = store.complete_turn(
+    store.create_confirmation(
         turn.id,
-        status=TurnStatus.WAITING_CONFIRMATION,
+        action_kind="send_message",
+        target="sales@example.com",
+        summary="Send the regional comparison",
+        risk="external communication",
+        arguments_json={"channel": "email"},
         owner="worker-1",
         now="2026-08-13T00:00:01Z",
     )
 
-    assert waiting.status is TurnStatus.WAITING_CONFIRMATION
+    assert store.get_turn(turn.id).status is TurnStatus.WAITING_CONFIRMATION
     with sqlite3.connect(store.path) as db:
         assert db.execute(
             "select lease_owner from workbench_turns where id=?", (turn.id,)
@@ -783,6 +787,210 @@ def test_independent_stores_allow_one_next_sequence_insert(tmp_path: Path):
     assert [result[0] for result in results].count("ok") == 1
     assert [result[0] for result in results].count("error") == 1
     assert [event.sequence for event in first.events_after(turn_id)] == [1]
+
+
+def test_expired_stop_requested_turn_becomes_stopped_on_both_recovery_paths(
+    tmp_path: Path,
+):
+    store, _, first_turn_id = _running_turn(tmp_path)
+    store.request_stop(first_turn_id, now="2026-08-13T00:00:01Z")
+
+    assert store.recover_expired_turns(now="2026-08-13T00:00:11Z") == 1
+    assert store.get_turn(first_turn_id).status is TurnStatus.STOPPED
+    assert [event.event_type for event in store.events_after(first_turn_id)] == [
+        "turn_completed"
+    ]
+    assert store.claim_next_turn(owner="worker-2", now="2026-08-13T00:00:12Z") is None
+
+    task = store.create_task(title="Analyse marketing", runtime_kind="codex")
+    second_turn = store.create_turn(
+        task.id,
+        user_text="Compare campaigns",
+        client_request_id="request-2",
+    )
+    store.claim_next_turn(
+        owner="worker-1", lease_seconds=1, now="2026-08-13T00:01:00Z"
+    )
+    store.request_stop(second_turn.id, now="2026-08-13T00:01:01Z")
+
+    assert store.claim_next_turn(owner="worker-2", now="2026-08-13T00:01:02Z") is None
+    assert store.get_turn(second_turn.id).status is TurnStatus.STOPPED
+    assert [event.event_type for event in store.events_after(second_turn.id)] == [
+        "turn_completed"
+    ]
+
+
+def test_waiting_confirmation_terminalization_resolves_pending_confirmations(
+    tmp_path: Path,
+):
+    store, task_id, turn_id = _running_turn(tmp_path)
+    confirmation = store.create_confirmation(
+        turn_id,
+        action_kind="send_message",
+        target="sales@example.com",
+        summary="Send the regional comparison",
+        risk="external communication",
+        arguments_json={"channel": "email"},
+        owner="worker-1",
+        now="2026-08-13T00:00:01Z",
+    )
+    stopped = store.request_stop(turn_id, now="2026-08-13T00:00:02Z")
+
+    assert stopped.status is TurnStatus.STOPPED
+    listed = store.list_confirmations(task_id)
+    assert listed[0].id == confirmation.id
+    assert listed[0].status is ConfirmationStatus.CANCELLED
+    assert listed[0].arguments_json == ""
+
+    next_turn = store.create_turn(
+        task_id,
+        user_text="Compare products",
+        client_request_id="request-2",
+    )
+    store.claim_next_turn(owner="worker-1", now="2026-08-13T00:00:03Z")
+    failed_confirmation = store.create_confirmation(
+        next_turn.id,
+        action_kind="send_message",
+        target="sales@example.com",
+        summary="Send the product comparison",
+        risk="external communication",
+        arguments_json={"channel": "email"},
+        owner="worker-1",
+        now="2026-08-13T00:00:03Z",
+    )
+    failed = store.complete_turn(
+        next_turn.id,
+        status=TurnStatus.FAILED,
+        error_code="provider_error",
+        now="2026-08-13T00:00:04Z",
+    )
+
+    assert failed.status is TurnStatus.FAILED
+    statuses = {item.id: item.status for item in store.list_confirmations(task_id)}
+    assert statuses[failed_confirmation.id] is ConfirmationStatus.FAILED
+    assert ConfirmationStatus.PENDING not in statuses.values()
+
+
+def test_generic_completion_rejects_reserved_confirmation_transitions(tmp_path: Path):
+    store, task_id, turn_id = _running_turn(tmp_path)
+
+    with pytest.raises(ValueError, match="reserved"):
+        store.complete_turn(
+            turn_id,
+            status=TurnStatus.WAITING_CONFIRMATION,
+            owner="worker-1",
+            now="2026-08-13T00:00:01Z",
+        )
+
+    store.create_confirmation(
+        turn_id,
+        action_kind="send_message",
+        target="sales@example.com",
+        summary="Send the regional comparison",
+        risk="external communication",
+        arguments_json={"channel": "email"},
+        owner="worker-1",
+        now="2026-08-13T00:00:01Z",
+    )
+    with pytest.raises(ValueError, match="reserved"):
+        store.complete_turn(
+            turn_id,
+            status=TurnStatus.QUEUED,
+            now="2026-08-13T00:00:02Z",
+        )
+    assert store.get_turn(turn_id).status is TurnStatus.WAITING_CONFIRMATION
+    assert store.list_confirmations(task_id)[0].status is ConfirmationStatus.PENDING
+
+
+def test_attachment_symlink_components_are_rejected(tmp_path: Path):
+    store = _store(tmp_path)
+    task = store.create_task(title="Analyse sales", runtime_kind="codex")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    workbench = tmp_path / "workbench"
+    workbench.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        store.save_attachment(
+            task.id,
+            filename="report.txt",
+            media_type="text/plain",
+            content=b"private",
+        )
+    assert list(outside.iterdir()) == []
+
+    workbench.unlink()
+    attachments = workbench / "attachments"
+    attachments.mkdir(parents=True)
+    task_directory = attachments / task.id
+    task_directory.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        store.save_attachment(
+            task.id,
+            filename="report.txt",
+            media_type="text/plain",
+            content=b"private",
+        )
+    assert list(outside.iterdir()) == []
+
+
+def test_reconciliation_waits_for_active_attachment_upload(tmp_path: Path, monkeypatch):
+    first = _store(tmp_path)
+    task = first.create_task(title="Analyse sales", runtime_kind="codex")
+    temp_ready = threading.Event()
+    release_upload = threading.Event()
+    reconciliation_attempted = threading.Event()
+    upload_done = threading.Event()
+    reconciliation_done = threading.Event()
+    upload_errors: list[Exception] = []
+
+    def hold_upload(_temp_path):
+        temp_ready.set()
+        assert release_upload.wait(timeout=5)
+
+    first._after_attachment_temp_created = hold_upload
+    original_lock = WorkbenchStore._attachment_lock
+
+    def observe_lock(self, *, create_workbench: bool):
+        if not create_workbench:
+            reconciliation_attempted.set()
+        return original_lock(self, create_workbench=create_workbench)
+
+    monkeypatch.setattr(WorkbenchStore, "_attachment_lock", observe_lock)
+
+    def upload():
+        try:
+            first.save_attachment(
+                task.id,
+                filename="report.txt",
+                media_type="text/plain",
+                content=b"private",
+            )
+        except Exception as exc:  # pragma: no cover - assertion below reports it
+            upload_errors.append(exc)
+        finally:
+            upload_done.set()
+
+    def reconcile():
+        WorkbenchStore(first.path)
+        reconciliation_done.set()
+
+    upload_thread = threading.Thread(target=upload)
+    upload_thread.start()
+    assert temp_ready.wait(timeout=5)
+    assert list((tmp_path / "workbench" / "attachments" / task.id).glob("*.tmp"))
+    reconcile_thread = threading.Thread(target=reconcile)
+    reconcile_thread.start()
+    assert reconciliation_attempted.wait(timeout=5)
+    assert not reconciliation_done.is_set()
+
+    release_upload.set()
+    upload_thread.join(timeout=5)
+    reconcile_thread.join(timeout=5)
+    assert upload_done.is_set()
+    assert reconciliation_done.is_set()
+    assert upload_errors == []
+    assert len(first.list_attachments(task.id)) == 1
 
 
 def test_attachment_filename_cannot_escape_generated_task_directory(tmp_path: Path):

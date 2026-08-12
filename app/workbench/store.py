@@ -1,6 +1,10 @@
 import json
 import os
 import sqlite3
+import fcntl
+import stat
+from contextlib import contextmanager
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -156,65 +160,56 @@ class WorkbenchStore(AutoReplyStore):
         with self._connect() as db:
             self._require_task(db, task_id)
         attachment_id = str(uuid4())
-        root = (self.path.parent / "workbench" / "attachments").resolve()
-        directory = (root / task_id).resolve()
-        if directory.parent != root:
-            raise ValueError("attachment directory must remain under the attachment root")
-        directory.mkdir(parents=True, exist_ok=True)
-        storage_path = directory / attachment_id
-        temp_path = directory / f".{attachment_id}.{uuid4().hex}.tmp"
-        try:
-            with temp_path.open("xb") as file:
-                file.write(content)
-                file.flush()
-                os.fsync(file.fileno())
-            db = self._open_connection()
+        with self._attachment_lock(create_workbench=True):
+            directory = self._attachment_task_directory(task_id, create=True)
+            if directory is None:
+                raise RuntimeError("attachment directory was not created")
+            storage_path = directory / attachment_id
+            temp_path = directory / f".{attachment_id}.{uuid4().hex}.tmp"
             try:
-                db.execute("begin immediate")
-                self._require_task(db, task_id)
-                db.execute(
-                    """
-                    insert into workbench_attachments (
-                        id, task_id, filename, media_type, size_bytes, storage_path
-                    ) values (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        attachment_id,
-                        task_id,
-                        filename,
-                        media_type,
-                        len(content),
-                        str(storage_path),
-                    ),
-                )
-                row = db.execute(
-                    "select * from workbench_attachments where id=?", (attachment_id,)
-                ).fetchone()
-                if row is None:
-                    raise RuntimeError("attachment insert did not create a row")
-                attachment = self._attachment_from_row(row)
-                os.replace(temp_path, storage_path)
-                with storage_path.open("rb") as file:
-                    os.fsync(file.fileno())
-                self._fsync_directory(directory)
-                self._commit_attachment_metadata(db)
+                self._write_attachment_temp(temp_path, content)
+                self._after_attachment_temp_created(temp_path)
+                db = self._open_connection()
+                try:
+                    db.execute("begin immediate")
+                    self._require_task(db, task_id)
+                    db.execute(
+                        """
+                        insert into workbench_attachments (
+                            id, task_id, filename, media_type, size_bytes, storage_path
+                        ) values (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            attachment_id,
+                            task_id,
+                            filename,
+                            media_type,
+                            len(content),
+                            str(storage_path),
+                        ),
+                    )
+                    row = db.execute(
+                        "select * from workbench_attachments where id=?",
+                        (attachment_id,),
+                    ).fetchone()
+                    if row is None:
+                        raise RuntimeError("attachment insert did not create a row")
+                    attachment = self._attachment_from_row(row)
+                    os.replace(temp_path, storage_path)
+                    self._fsync_attachment_file(storage_path)
+                    self._fsync_directory(directory)
+                    self._commit_attachment_metadata(db)
+                except Exception:
+                    if db.in_transaction:
+                        db.rollback()
+                    raise
+                finally:
+                    db.close()
+                return attachment
             except Exception:
-                if db.in_transaction:
-                    db.rollback()
+                self._safe_attachment_unlink(temp_path, directory)
+                self._safe_attachment_unlink(storage_path, directory)
                 raise
-            finally:
-                db.close()
-            return attachment
-        except Exception:
-            try:
-                temp_path.unlink()
-            except FileNotFoundError:
-                pass
-            try:
-                storage_path.unlink()
-            except FileNotFoundError:
-                pass
-            raise
 
     def list_attachments(self, task_id: str) -> list[WorkbenchAttachment]:
         with self._connect() as db:
@@ -298,14 +293,7 @@ class WorkbenchStore(AutoReplyStore):
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
             db.execute("begin immediate")
-            return db.execute(
-                """
-                update workbench_turns
-                set status='queued', lease_owner='', lease_expires_at='', updated_at=?
-                where status='running' and lease_expires_at<=?
-                """,
-                (now_text, now_text),
-            ).rowcount
+            return self._recover_expired_turns_in_transaction(db, now_text=now_text)
 
     def claim_next_turn(
         self,
@@ -325,14 +313,7 @@ class WorkbenchStore(AutoReplyStore):
         )
         with self._connect() as db:
             db.execute("begin immediate")
-            db.execute(
-                """
-                update workbench_turns
-                set status='queued', lease_owner='', lease_expires_at='', updated_at=?
-                where status='running' and lease_expires_at<=?
-                """,
-                (now_text, now_text),
-            )
+            self._recover_expired_turns_in_transaction(db, now_text=now_text)
             row = db.execute(
                 """
                 select workbench_turns.*
@@ -424,6 +405,13 @@ class WorkbenchStore(AutoReplyStore):
                 event_type="turn_completed",
                 payload={"status": TurnStatus.STOPPED.value},
             )
+            if status is TurnStatus.WAITING_CONFIRMATION:
+                self._resolve_pending_confirmations(
+                    db,
+                    turn_id,
+                    status=ConfirmationStatus.CANCELLED,
+                    now_text=now_text,
+                )
             self._transition_turn(
                 db,
                 turn_id,
@@ -718,6 +706,11 @@ class WorkbenchStore(AutoReplyStore):
             db.execute("begin immediate")
             row = self._require_turn(db, turn_id)
             current = TurnStatus(row["status"])
+            if (current, target_status) in {
+                (TurnStatus.RUNNING, TurnStatus.WAITING_CONFIRMATION),
+                (TurnStatus.WAITING_CONFIRMATION, TurnStatus.QUEUED),
+            }:
+                raise ValueError("reserved confirmation transition")
             if target_status not in _TURN_TRANSITIONS[current]:
                 raise ValueError("invalid turn transition")
             if current is TurnStatus.RUNNING:
@@ -732,6 +725,17 @@ class WorkbenchStore(AutoReplyStore):
             if event_payload is not None and not terminal:
                 raise ValueError("event_payload requires a terminal turn status")
             if terminal:
+                if current is TurnStatus.WAITING_CONFIRMATION:
+                    self._resolve_pending_confirmations(
+                        db,
+                        turn_id,
+                        status=(
+                            ConfirmationStatus.CANCELLED
+                            if target_status is TurnStatus.STOPPED
+                            else ConfirmationStatus.FAILED
+                        ),
+                        now_text=now_text,
+                    )
                 self._append_control_event(
                     db,
                     turn_id,
@@ -759,6 +763,61 @@ class WorkbenchStore(AutoReplyStore):
             )
             return self._turn_from_row(self._require_turn(db, turn_id))
 
+    def _recover_expired_turns_in_transaction(
+        self, db: sqlite3.Connection, *, now_text: str
+    ) -> int:
+        rows = db.execute(
+            """
+            select * from workbench_turns
+            where status='running' and lease_expires_at<=?
+            order by id
+            """,
+            (now_text,),
+        ).fetchall()
+        for row in rows:
+            if row["stop_requested"]:
+                self._append_control_event(
+                    db,
+                    row["id"],
+                    event_type="turn_completed",
+                    payload={"status": TurnStatus.STOPPED.value},
+                )
+                self._transition_turn(
+                    db,
+                    row["id"],
+                    current=TurnStatus.RUNNING,
+                    target=TurnStatus.STOPPED,
+                    now_text=now_text,
+                    clear_lease=True,
+                )
+                continue
+            db.execute(
+                """
+                update workbench_turns
+                set status='queued', lease_owner='', lease_expires_at='', updated_at=?
+                where id=? and status='running' and lease_expires_at<=?
+                """,
+                (now_text, row["id"], now_text),
+            )
+        return len(rows)
+
+    @staticmethod
+    def _resolve_pending_confirmations(
+        db: sqlite3.Connection,
+        turn_id: str,
+        *,
+        status: ConfirmationStatus,
+        now_text: str,
+    ) -> None:
+        db.execute(
+            """
+            update workbench_confirmations
+            set status=?, result_json='', decided_at=?
+            where turn_id=? and status='pending'
+            """,
+            (status.value, now_text, turn_id),
+        )
+
     @staticmethod
     def _canonical_uuid(value: str, *, field: str) -> str:
         try:
@@ -771,6 +830,88 @@ class WorkbenchStore(AutoReplyStore):
         db.commit()
 
     @staticmethod
+    def _managed_directory(path: Path, *, create: bool) -> bool:
+        try:
+            metadata = os.lstat(path)
+        except FileNotFoundError:
+            if not create:
+                return False
+            try:
+                os.mkdir(path, 0o700)
+            except FileExistsError:
+                pass
+            metadata = os.lstat(path)
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"managed attachment component is a symlink: {path}")
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError(f"managed attachment component is not a directory: {path}")
+        return True
+
+    @contextmanager
+    def _attachment_lock(self, *, create_workbench: bool) -> Iterator[Path | None]:
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise RuntimeError("attachment locking requires O_NOFOLLOW")
+        workbench = self.path.parent / "workbench"
+        if not self._managed_directory(workbench, create=create_workbench):
+            yield None
+            return
+        lock_path = workbench / ".attachments.lock"
+        try:
+            lock_metadata = os.lstat(lock_path)
+        except FileNotFoundError:
+            lock_metadata = None
+        if lock_metadata is not None and not stat.S_ISREG(lock_metadata.st_mode):
+            raise ValueError("attachment lock must be a regular file")
+        try:
+            descriptor = os.open(
+                lock_path,
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+                0o600,
+            )
+        except OSError as exc:
+            raise ValueError("attachment lock must not be a symlink") from exc
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError("attachment lock must be a regular file")
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield workbench
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    def _attachment_task_directory(
+        self, task_id: str, *, create: bool
+    ) -> Path | None:
+        workbench = self.path.parent / "workbench"
+        if not self._managed_directory(workbench, create=create):
+            return None
+        root = workbench / "attachments"
+        if not self._managed_directory(root, create=create):
+            return None
+        directory = root / task_id
+        if not self._managed_directory(directory, create=create):
+            return None
+        return directory
+
+    @staticmethod
+    def _write_attachment_temp(path: Path, content: bytes) -> None:
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise RuntimeError("attachment writes require O_NOFOLLOW")
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+
+    @staticmethod
+    def _after_attachment_temp_created(_path: Path) -> None:
+        return None
+
+    @staticmethod
     def _fsync_directory(directory: Path) -> None:
         descriptor = os.open(directory, os.O_RDONLY)
         try:
@@ -778,58 +919,104 @@ class WorkbenchStore(AutoReplyStore):
         finally:
             os.close(descriptor)
 
+    @staticmethod
+    def _fsync_attachment_file(path: Path) -> None:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def _safe_attachment_unlink(self, path: Path, directory: Path) -> None:
+        try:
+            if not self._managed_directory(directory, create=False):
+                return
+            if path.parent != directory:
+                return
+            metadata = os.lstat(path)
+            if not stat.S_ISREG(metadata.st_mode):
+                return
+            os.unlink(path)
+        except FileNotFoundError:
+            return
+
     def _reconcile_attachments(self) -> None:
         """Keep only generated attachment files that have matching metadata rows."""
-        root = (self.path.parent / "workbench" / "attachments").resolve()
-        if not root.is_dir():
-            return
-        referenced_paths: set[Path] = set()
-        with self._connect() as db:
-            db.execute("begin immediate")
-            rows = db.execute(
-                "select id, task_id, storage_path from workbench_attachments"
-            ).fetchall()
-            for row in rows:
+        with self._attachment_lock(create_workbench=False) as workbench:
+            if workbench is None:
+                return
+            root = workbench / "attachments"
+            if not self._managed_directory(root, create=False):
+                return
+            referenced_paths: set[Path] = set()
+            with self._connect() as db:
+                db.execute("begin immediate")
+                rows = db.execute(
+                    "select id, task_id, storage_path from workbench_attachments"
+                ).fetchall()
+                for row in rows:
+                    try:
+                        task_id = self._canonical_uuid(row["task_id"], field="task_id")
+                        attachment_id = self._canonical_uuid(row["id"], field="id")
+                    except ValueError:
+                        db.execute(
+                            "delete from workbench_attachments where id=?", (row["id"],)
+                        )
+                        continue
+                    directory = root / task_id
+                    if not self._managed_directory(directory, create=False):
+                        db.execute(
+                            "delete from workbench_attachments where id=?", (row["id"],)
+                        )
+                        continue
+                    expected_path = directory / attachment_id
+                    try:
+                        metadata = os.lstat(expected_path)
+                    except FileNotFoundError:
+                        metadata = None
+                    if (
+                        str(expected_path) != str(row["storage_path"])
+                        or metadata is None
+                        or not stat.S_ISREG(metadata.st_mode)
+                    ):
+                        db.execute(
+                            "delete from workbench_attachments where id=?", (row["id"],)
+                        )
+                        continue
+                    referenced_paths.add(expected_path)
+            for directory in root.iterdir():
                 try:
-                    task_id = self._canonical_uuid(row["task_id"], field="task_id")
-                    attachment_id = self._canonical_uuid(row["id"], field="id")
-                except ValueError:
-                    db.execute("delete from workbench_attachments where id=?", (row["id"],))
+                    metadata = os.lstat(directory)
+                except FileNotFoundError:
                     continue
-                expected_path = (root / task_id / attachment_id).resolve()
-                if (
-                    expected_path.parent != (root / task_id).resolve()
-                    or str(expected_path) != str(row["storage_path"])
-                    or not expected_path.is_file()
-                    or expected_path.is_symlink()
-                ):
-                    db.execute("delete from workbench_attachments where id=?", (row["id"],))
-                    continue
-                referenced_paths.add(expected_path)
-        for directory in root.iterdir():
-            if directory.is_symlink() or not directory.is_dir():
-                continue
-            try:
-                task_id = self._canonical_uuid(directory.name, field="task_id")
-            except ValueError:
-                continue
-            if task_id != directory.name:
-                continue
-            for path in directory.iterdir():
-                if path.is_symlink() or not path.is_file():
-                    continue
-                resolved_path = path.resolve()
-                if resolved_path.parent != directory.resolve():
-                    continue
-                if path.name.startswith(".") and path.name.endswith(".tmp"):
-                    path.unlink()
+                if stat.S_ISLNK(metadata.st_mode):
+                    raise ValueError(
+                        f"managed attachment component is a symlink: {directory}"
+                    )
+                if not stat.S_ISDIR(metadata.st_mode):
                     continue
                 try:
-                    attachment_id = self._canonical_uuid(path.name, field="id")
+                    task_id = self._canonical_uuid(directory.name, field="task_id")
                 except ValueError:
                     continue
-                if attachment_id == path.name and resolved_path not in referenced_paths:
-                    path.unlink()
+                if task_id != directory.name:
+                    continue
+                for path in directory.iterdir():
+                    try:
+                        metadata = os.lstat(path)
+                    except FileNotFoundError:
+                        continue
+                    if not stat.S_ISREG(metadata.st_mode):
+                        continue
+                    if path.name.startswith(".") and path.name.endswith(".tmp"):
+                        os.unlink(path)
+                        continue
+                    try:
+                        attachment_id = self._canonical_uuid(path.name, field="id")
+                    except ValueError:
+                        continue
+                    if attachment_id == path.name and path not in referenced_paths:
+                        os.unlink(path)
 
     def _append_control_event(
         self,
