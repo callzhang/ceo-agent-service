@@ -17,6 +17,7 @@ from app.codex_decision import CodexDecisionRunner
 from app.database_backup import (
     BACKUP_CHECK_INTERVAL_SECONDS,
     backup_database_if_due,
+    prune_database_backups,
 )
 from app.config import (
     codex_capacity_retry_duration,

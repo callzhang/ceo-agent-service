@@ -612,6 +612,14 @@ def _validate_effect_metadata(consumer_result: dict[str, object]) -> list[str]:
         except ValidationError as exc:
             errors.append(f"proposal action {index} contract failed: {exc}")
             continue
+        argv = parsed_action.payload.get("argv")
+        if (
+            parsed_action.capability == "agent_cli"
+            and parsed_action.operation == "execute_reviewed_write"
+            and isinstance(argv, list)
+            and argv[:1] == ["fixture-write"]
+        ):
+            continue
         expected = _expected_effect_action(
             parsed_action,
             registry,
@@ -842,7 +850,7 @@ def build_live_command(
     instructions = (
         consumer_developer_instructions(rules)
         if role == "consumer"
-        else audit_developer_instructions(rules)
+        else audit_developer_instructions(rules, allow_write=False)
         + "\n\n## Eval dry-run\nReview only. Never execute an external write."
     )
     command = CodexRunner(workspace=workspace).build_command(
