@@ -1,254 +1,102 @@
 # Product Logic
 
-The service treats DingTalk as the primary conversation surface and keeps
-retrieval, generation, audit, and feedback local.
+CEO Agent Service 把业务理解交给动态加载 Skill 的 Agent，把发现、持久队列、角色边界、恢复和
+精确去重留给 service。钉钉是主要对话入口；已配置的 Lark CLI、MCP、plugins 和本地 Skills 复用
+安装用户现有的 Codex 环境。
 
-## Input
+## 从触发到终态
 
-Each worker pass asks `dws` for unread conversations. For each conversation it
-reads:
+1. Producer 根据来源、会话类型、明确 @、稳定卡片结构和 unread cursor 发现 trigger。
+2. Service 保存精确 source revision，并向 Consumer A 传递上下文和材料引用，不解释业务正文。
+3. A 通过原生 Skill discovery 选择并读取一个或多个 CEO 业务 Skill。
+4. A 再读取需要的操作 Skill，按其命令读取证据，提出一个精确候选或返回终态。
+5. Service 从已完成的 `agent_cli.read_skill` tool event 提取路径与 SHA-256 receipt。
+6. Audit B 根据 receipts 重读同一组业务/操作 Skill，核对实时事实和 Audit Rules。
+7. B 接受候选后执行并读回；不接受时把具体反馈发回同一对话的 A session 生成新 revision。
+8. Service 在现有 task/run/attempt/receipt 状态中记录结果并推进恢复。
 
-- recent context before the unread cursor
-- unread messages after the cursor
-- linked DingTalk documents when a message contains an Alidocs URL
+系统没有按关键词选择业务处理器的 router，也没有把文档正文预读后塞入 prompt 的 service-side
+业务解释层。Service 可以验证材料来源、文件类型、大小、路径和完整性，但“哪个材料相关、应展开
+哪一层、材料说明了什么”由 Agent 决定。系统也不维护单独的 Skill audit DB；详细 Skill 调用以
+Codex session JSONL 为准，SQLite 只保存恢复所需 receipt 和状态指针。
 
-Direct chats are treated as addressed to the configured principal. Group chats
-must explicitly mention the principal before they become candidates.
+## 七个业务 Skill
 
-## Decision
+- `ceo-message-triage`：判断回复、reaction、具体追问或 `no_action`。
+- `ceo-calendar-invite`：根据日程目的、参与价值、冲突和所需输入决定接受、拒绝或向邀请人追问。
+- `ceo-document-review`：读取钉钉/Lark 文档、文件夹、图片、附件和表格并形成可验证结论。
+- `ceo-meeting-work`：处理听记、静默会、会议材料、总结、分歧和行动项。
+- `ceo-mail-review`：读取完整线程后回复邮件，避免脱离上下文处理单封邮件。
+- `ceo-personnel-communication`：判断人事信息的接收人、可见性、最小披露和沟通方式。
+- `ceo-work-tracking`：贯通任务提取、项目/TODO、跟进、完成验证和关闭。
 
-The worker sends one batch of unread messages to Codex. Codex decides whether
-the batch needs one response, no response, clarification, human handoff, or an
-error stop.
+这些 Skill 不复制 DWS/Lark 命令目录。A 根据业务 Skill 的指引继续加载 `dingtalk-chat`、
+`dingtalk-calendar`、`dingtalk-doc`、`dingtalk-minutes`、`dingtalk-mail`、`dingtalk-todo` 或对应
+Lark Skill。B 必须读取 A 已使用的同一组 Skill 后才能执行。
 
-The batch may contain multiple direct-chat messages. These messages are a single
-conversation turn, not independent tickets. Codex should decide whether the
-latest unread batch as a whole requires a response and should cover every
-important item in one reply when needed.
+## 专业流程委派
 
-## Retrieval
+OA、候选人面试和 OKR 不重新写进 CEO 通用 Skill：
 
-Before answering substantive questions, Codex is instructed to:
+- OA 加载 `dingtalk-oa-approval`，由 Agent 通过 live DWS 读取 process/task ID 对应详情和当前任务；
+  service 不按申请人或标题猜测审批对象，也不预读正文替 Agent 决策。
+- 面试加载现有 `xiaoqing_interview` 或安装环境中的面试专业 Skill，CEO 人事 Skill 只负责受众和
+  隐私边界。
+- OKR 加载 `dingtang-okr-review`，沿用其证据、评分和结果格式，不在通用 prompt 中复制规则。
 
-1. Read `graphify-out/GRAPH_REPORT.md`.
-2. Use `graphify query`, `graphify explain`, or `graphify path` to find related
-   workspace knowledge.
-3. Use `rg` and file reads to verify evidence.
-4. Read DingTalk documents through `dws doc read` when document links appear.
+专业 Skill 仍遵循相同 A/B 边界、Audit Rules、revision 去重和外部读回。
 
-Replies must not expose local file paths, source citations, session ids, or
-tool output details.
+## 会话与澄清
 
-## Privacy
+每个业务 `conversation_id` 复用一个 Consumer A session，新消息使用 `codex exec resume` 追加。
+已确认的事实必须复用，不能重复追问。材料缺失但对话参与者可以回答时，A 生成一个具体澄清候选，
+由 B 审阅后发回来源会话；不得让 Derek 在“继续处理”和“先追问”之间作无意义选择。
+`needs_human` 只用于无法通过读取或交流消除、确实需要 Derek 作管理判断的情况。
 
-The decision schema classifies each message as:
+## Task Extraction 与 Follow-up
 
-- `general`
-- `internal_personnel`
-- `external_candidate`
+任务提取和 follow-up 是一个完整闭环，而不是两套功能：
 
-Internal personnel discussions are sensitive and must be refused unless the
-operator has explicitly configured permission rules for that deployment.
-External candidate discussions may be answered when the relevant role and
-department context are available.
+```text
+source evidence
+  -> extract actionable work
+  -> associate/create project and TODO
+  -> establish owner, due time, and completion evidence
+  -> follow up on the unresolved gap
+  -> read owner reply or external TODO state
+  -> close only with explicit evidence
+```
 
-## Handoff
+`ceo-work-tracking` 负责整个业务判断。Service 只保存项目、TODO、revision、lease、发送状态和外部 ID。
+Follow-up 候选继续走 A/B 执行链；完全相同且已送达的 revision 不再发送，经过反馈改正的 revision
+仍可执行。外部结果未知时只读 reconciliation，不能盲目重发。
 
-If the sender asks for the real human, rejects the automated response, or asks
-the agent to claim a real-world action that only the human can perform, the
-decision should be `handoff_to_human`.
+## 会议、邮件与人员沟通
 
-Handoff sends a short acknowledgement in DingTalk and uses DING to notify the
-operator. If DING is unavailable, it falls back to the local Chrome notification
-bridge so the acknowledgement is not marked failed just because the operator
-alert channel is exhausted. The handoff remains active until the worker observes
-a real manual reply from the operator in the same conversation. Live runs send a
-local pause notification when new unread messages arrive during active handoff;
-dry-run checks suppress that pause notification because they intentionally do not
-mark messages as seen.
+- 会议输出只在有待办、分歧、需解释的管理观点或明确后续动作时发送。每个真实 @ 必须放在对应
+  任务或信息旁，不在开头罗列一排参与人。
+- 邮件必须先读取完整 thread。已授权回复通过邮件操作 Skill 发送，并核对返回的 message identity
+  与成功状态。
+- 人事信息先判断原材料可见性、Derek 与接收人的关系、内容是否新增评价以及披露是否最小。
+  公开且明确的事实通知可以自动执行；需要个性化管理判断时形成候选；非公开人事结论按 Audit
+  Rules 处理。
 
-## Audit
+## 终态与恢复
 
-Every attempt is stored locally, including:
+- `executed`：B 已执行且外部系统读回确认。
+- `no_action`：当前 trigger 不需要外部动作。
+- `revision_required`：B 的反馈已返回 A，等待新 revision。
+- `needs_human`：需要 Derek 的不可约判断。
+- `failed`：当前 run 失败并记录是否可重试。
+- `unknown`：外部动作可能发生，必须在原 B session 中先只读核对。
 
-- trigger message
-- action
-- draft and final reply
-- send status and send error
-- audit summary
-- documents and tool events used for review
-- Codex session id and transcript line range when available
-- reviewer feedback and corrected reply
+诊断不等于完成。要求执行的任务只有在外部结果可核对后才能标记 `executed`。同一 source
+revision 的同一动作不会发送两次；不同正文或参数的新 revision 不受旧动作限制。
 
-The audit summary is a concise explanation of evidence and applied rules. It is
-not hidden chain of thought.
+## 安装者与其他使用者
 
-## Meeting Alignment
-
-Meeting follow-up is an independent producer/consumer pipeline inside the same
-`com.ceo-agent-service.main` process. There is no separate cron job or launchd
-plist. The producer combines AI Minutes metadata with one uniquely matching
-calendar event, so a job is eligible only when Derek attended and the meeting
-has explicitly ended for at least ten minutes.
-
-The agent remains silent unless it finds a material viewpoint disagreement or a
-need for `Derek 的观点输出解读`. An aligned disagreement requires explicit
-agreement, commitment, or consistent restatement by the relevant sides. For an
-unresolved disagreement the output includes the parties' views and reasons plus
-one or more minimum-sufficient tradeoff questions whose answers can directly
-produce alignment. A disagreement that becomes aligned still produces the one
-meeting follow-up; final alignment does not convert it to `no_action`. Derek's
-explanation may use historical cases and the work profile only to clarify a view
-that was actually expressed in the meeting. Work-profile source identifiers must
-remain exact so the service can audit them.
-
-The service persists a discovery activation timestamp. Before startup recovery,
-all pre-activation jobs with no send evidence are baselined to terminal
-`no_action`, including work that an older process had already claimed. This
-prevents deployment-time recovery from analyzing or sending historical meetings.
-
-Recordings shorter than ten minutes are excluded before calendar matching and
-queue creation. Actual candidate interviews are excluded by the agent after it
-reads the full meeting source; recruiting planning or hiring-requirement
-discussions are not interviews. The bounded `replay-recent-meetings` command can
-explicitly reopen selected unsent historical `no_action` jobs without changing
-the activation watermark or reopening confirmed sends.
-
-For multi-party delivery, the agent must use live DingTalk evidence to select a
-group that clearly owns the business, decision, or follow-up action. Topic
-similarity, participant overlap, or recent activity alone is not enough. The
-delivery layer verifies that the selected first-ranked candidate is a sendable
-group, but it does not require the group-member set to equal the participant
-set. Multi-party meetings default to group delivery. The agent instead selects
-the uniquely identified calendar creator for direct delivery when the content
-is private or when a complete group search finds no sendable owning group. The
-message is limited to what that recipient needs. A DWS read or network failure,
-incomplete group metadata, or a missing or ambiguous creator keeps the job
-retryable and cannot authorize direct delivery. A 1:1 meeting sends directly to the other participant. When an ad-hoc call has no matching
-calendar event, it is treated as 1:1 only when the complete transcript contains
-exactly Derek and one uniquely resolved employee; otherwise it remains
-unqueued. No DING or reaction is added by this workflow.
-
-Real mentions default to meeting participants. Non-participants can be mentioned
-only when the meeting transcript explicitly says the task is theirs, assigns
-them ownership, or asks them to confirm or follow up. Otherwise their name may
-appear in the message body as context, but the delivery layer will not resolve
-it into a DingTalk @ mention. When the generated body already contains a
-resolved `@Name`, the DingTalk adapter replaces that occurrence with the real
-structured mention at the same position. Meeting messages place each mention
-inside the specific task, question, or information that concerns that person;
-they do not start with a separate mention roster. A resolved mention missing
-from the body is rejected for regeneration instead of being prepended.
-
-Every sent meeting follow-up starts with a deterministic source header:
-`【会议跟进】<meeting title>（<meeting time>）`. The header is added by the
-delivery executor, so the sent message, stored final message, and local
-notification preview all identify the same source meeting.
-
-After delivery is confirmed as `sent`, the workflow reuses the reply agent's
-local/Chrome notification bridge. The notification contains the DingTalk
-`openConversationId`, so clicking it opens the group or direct conversation.
-Ambiguous sends do not notify until status reconciliation confirms success.
-Meeting attempt details reuse the reply-agent audit view: the page emphasizes
-the Codex tool-use timeline, including document, memory, search, and DingTalk
-calls, instead of leading with raw source or decision payloads.
-
-The queue persists analysis before delivery. `no_action` is terminal;
-`ready_to_send` is persisted before any external send; `sent` records delivery.
-Retryable failures use `retry` plus `available_at`; invalid persisted source or
-delivery evidence and queue invariant violations use `failed`. Codex decision
-schema and historical-source protocol violations are treated as retryable
-model-output failures before the bounded attempt limit. An ambiguous send with
-an `openTaskId` is reconciled by status lookup only, with bounded backoff and no
-resend. In dry-run mode the consumer may analyze a job but does not claim
-`ready_to_send` delivery.
-
-Every Codex invocation appends an immutable `meeting_alignment_run`. The History
-page merges these runs with reply attempts in one globally chronological feed,
-including common search, status filters, pagination, event chart, detail view,
-and Codex-session related history.
-
-## Task Summary
-
-The task summary system is project-centered, not inbox-centered. It records
-company management items, business projects, important operating matters, and
-action items that need owner attention. Obvious one-off conversations should not
-be promoted into durable projects.
-
-Each processed conversation can enqueue a compact Work Item with:
-
-- `summary`
-- `project_name`
-- source conversation or document metadata
-- owner hints
-- timestamps
-
-The task agent owns fact extraction. It receives BM25 project candidates built
-from the Work Item summary and project name, then decides whether to update an
-existing `work_project` or create a new one. If retrieval finds no stable
-candidate, or candidates are present but the agent judges them mismatched, the
-prompt allows the agent to recover context through DWS conversation reads or
-Memory Connector. New projects should use `memory_recall` for historical
-background before creation. If a stable project name still cannot be recovered,
-the agent should generate a clarification follow-up instead of creating a vague
-project.
-
-`work_projects` store:
-
-- title and category
-- `background`
-- owner, status, priority, risk level, source conversation
-- `next_step`
-- `facts`: a list of `description`, `source`, `created`, and `updated`
-
-Supported categories are `management`, `strategy`, `projects`, `marketing`,
-`research`, `dev`, `product`, `recruiting`, `sales`, `finance`, `admin`, `HR`,
-and `other`.
-
-TODOs live under projects. Due dates and priority are inferred from the concrete
-context and OKR pressure rather than copied mechanically. P0/P1/P2 work should
-normally become same-day, three-day, or same-week follow-up pressure when the
-source material does not give a clearer deadline.
-
-The `/tasks` audit UI is project-first. The list page shows the active project
-queue, project status, category filtering, Priority/Risk sorting, TODO checklist
-preview, open TODO ratio, real-time full-text search over project and TODO
-context, and paginated navigation. Each project links to `/tasks/{project_id}`,
-where the detail page shows project background, facts, all TODOs with DDL and
-owner, project updates, and follow-up records.
-
-Completion can be inferred automatically from later messages, meetings, or
-documents when the evidence is explicit. If an item is due and still open, the
-task follow-up path sends the drafted question when live sending is enabled. It
-uses the originating group only when that group conversation is known; otherwise
-it sends a direct message to the resolved owner. Risk annotations on the draft
-are audit context only and do not create a separate approval gate. Drafts more
-than seven days past due are skipped instead of sent, because their context is
-too stale for a useful reminder. Owner replies then enter the existing CEO reply
-path, so follow-up does not need a separate reply engine.
-
-## Safety Defaults
-
-- `CEO_NOT_SEND_MESSAGE=1` by default. `CEO_DRY_RUN` remains a compatibility
-  alias for older scripts.
-- Runtime state lives under `data/` and is ignored by Git.
-- Live sends require explicit opt-in.
-- Task follow-up commands are send-capable commands and therefore use the same
-  live-send guard as normal reply delivery.
-- Local task source scanning is limited to the configured `CEO_WORKSPACE` path.
-- DingTalk media/calendar placeholders and DingTalk internal link-only cards are
-  skipped before Codex, except approval/OA links.
-- OA approval cards and reminders are routed to the OA handler. The handler uses
-  the unified structured Codex runner with `dingtalk-oa-approval` injected,
-  records the Codex session, tool events, approval URL, approval action,
-  approval remark, and action result on the existing reply attempt audit row,
-  and does not create a separate OA audit page.
-- When a later attempt handles the same OA trigger, the older attempt detail
-  presents the later OA result in its primary status area and links to that
-  attempt. The older row's stored status remains unchanged as audit evidence.
-- The OA handler may use authorized DingTalk OA API detail reads when DWS does
-  not return complete approval detail. Secrets and signed URLs must not be
-  written to logs, SQLite, audit summaries, reports, or DingTalk replies.
-- See `docs/message-routing-rules.md` for the full message-type inventory,
-  implemented regexes, candidate regexes, and message types that should remain
-  agent-reviewed.
+每位安装者部署自己的 service、SQLite、workspace、Codex/DWS/Lark 登录和可选反馈服务。安装流程
+把七个受管业务 Skill 写入该用户的 `~/.agents/skills`；不会写入 `~/.codex/skills`，也不会覆盖
+同名的用户自有 Skill。普通同事、HR、审批申请人和项目 owner 不安装服务，只在原工作会话中与
+Agent 交互。详细步骤见 [README](../README.md) 和
+[agent installation runbook](agent-installation-runbook.md)。

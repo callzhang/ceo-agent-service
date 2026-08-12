@@ -16,11 +16,11 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 ## 核心能力
 
 - **钉钉消息发现**：通过 `dws` 读取未读会话、@ 消息、群聊广播消息、配置机器人私聊消息，并用慢路径补扫防止漏消息。
-- **消息路由**：区分群聊、私聊、文档、图片、日程、会议权限、OA 审批和系统通知。
+- **结构化消息发现**：按会话来源、明确 @ 和稳定平台对象发现 trigger；业务类型和处理方式由 Agent 动态读取 Skill 判断，不使用关键词 router。
 - **本地任务队列**：使用 SQLite 保存 `reply_tasks`、`reply_attempts`、`seen_messages`、`sent_replies`，避免重复处理和重复发送。
 - **Consumer / Audit Agent 执行**：Consumer A 代表管理者，用原生 `codex exec` 读取材料、判断业务并提出精确候选；Audit B 独立审阅、执行和读回外部动作。A 没有任务驱动的写权限，B 是唯一写入者。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
-- **材料与工具上下文**：服务传递材料引用、原始 ID、链接和精确读取命令；A 自行决定读取哪些钉钉文档、文件、OA 材料和本地 workspace 资料，B 在写入前独立核对实时状态。
+- **Skill-first 材料处理**：服务只传递材料引用、原始 ID、链接和精确读取命令；A 动态读取业务 Skill 和操作 Skill，自行决定展开哪些材料，B 按 verified Skill receipt 重读相同 Skill 并在写入前核对实时状态。
 - **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。写入结果未知时只在原 B session 中核对，不能盲目重放。
 - **人工接管**：对需要本人处理的消息发送 handoff，并暂停该会话的自动回复直到检测到真人回复。
 - **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
@@ -46,12 +46,33 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 
 1. **DingTalk Inputs**：群聊、私聊、配置机器人私聊、在线文档、文件、图片、OA、日程、会议权限请求。
 2. **Producer 消息发现层**：快路径每分钟看未读；慢路径每小时补扫近期单聊和群聊。
-3. **Producer Routing 路由判断层**：群聊必须 @ 触发；私聊不需要 @；系统通知跳过；OA/日程/会议权限进入专门 handler。
+3. **Producer 结构过滤层**：群聊必须 @ 触发；私聊不需要 @；只过滤可由平台结构证明的系统回执和重复 source revision，不按业务关键词路由。
 4. **SQLite Queue 状态层**：保存待处理任务、处理尝试、已读消息、已发送回复。
 5. **Channel Gate 层**：用 CLI status 和 authenticated probe 确认通道可用；只有明确 `needs_login` 才协调一次登录流程。
-6. **Consumer Agent A 层**：同一对话复用一个原生 Codex session；每条新消息通过 `codex exec resume` 追加到该 session，并形成独立只读判断 run。
-7. **Audit Agent B 层**：每个 A 候选 revision 启动一个新的审计 session。B 接受后执行并读回；业务含义变化通过结构化反馈回到 A。
+6. **Consumer Agent A 层**：同一对话复用一个原生 Codex session；A 动态发现并读取业务 Skill，再读取操作 Skill、材料并形成精确候选。
+7. **Audit Agent B 层**：service 从 A 的 completed tool events 生成 verified Skill receipts；B 重读同一组 Skill，接受后执行并读回，业务含义变化通过结构化反馈回到 A。
 8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd、fail-closed 质量巡检和结果未知写操作的只读核对。
+
+完整处理流是：
+
+```text
+trigger/context/material references
+  -> Consumer A discovers and reads business Skill(s)
+  -> A reads operation Skill(s) and proposes an exact action
+  -> service derives verified Skill receipts from existing tool events
+  -> Audit B rereads the same business Skill(s) and operation Skill(s)
+  -> B reviews, executes, and reads back
+  -> service persists the existing run/attempt/receipt state
+```
+
+Service 不解释业务材料，不替 Agent 选择文件或猜测 OA 对象，也不维护平行 Skill audit DB。详细工具
+轨迹使用 Codex session JSONL；SQLite 只保存现有恢复状态和 receipt 指针。
+
+七个随服务安装、按需加载的业务 Skill 是 `ceo-message-triage`、`ceo-calendar-invite`、
+`ceo-document-review`、`ceo-meeting-work`、`ceo-mail-review`、
+`ceo-personnel-communication` 和 `ceo-work-tracking`。OA、面试和 OKR 继续委派给现有专业 Skill，
+不把专业规则复制进通用 prompt。Task extraction 与 follow-up 由 `ceo-work-tracking` 作为一个从
+提取、建项、催办、验证到关闭的生命周期处理，不建立第二套回复路径。
 
 当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取仍以临时网络错误失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。
 
@@ -158,10 +179,22 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 scripts/bootstrap-local-components.sh --format json
 ```
 
-该脚本会安装 `terminal-notifier`，并检查 Codex CLI 与 Nvwa skill。DWS 和 Lark 已拆成 Tutorial
+该脚本会安装 `terminal-notifier`，检查 Codex CLI 与 Nvwa skill，并把七个 CEO 业务 Skill 安装到
+当前用户的 `~/.agents/skills`。它不会向 `~/.codex/skills` 安装用户 Skill，也不会覆盖同名的用户自有
+Skill。只修复业务 Skill 时可运行：
+
+```bash
+scripts/bootstrap-local-components.sh --component ceo-business-skills --format json
+```
+
+DWS 和 Lark 已拆成 Tutorial
 中的独立配置步骤：页面先检查 CLI 和登录状态；缺少 CLI 时点击对应按钮自动安装，未配置时再打开一次
 CLI 自带的授权流程。DWS 的内部安装来源通过 `DWS_INSTALLER_PATH` 或 `DWS_INSTALL_COMMAND` 提供；
 Lark 可通过 `LARK_CLI_INSTALL_COMMAND` 覆盖默认 npm 安装命令。
+
+每个安装者应部署自己的一套 service，使用自己的 Codex、DWS/Lark 登录、SQLite、workspace 和可选
+反馈服务。其他同事、HR、审批申请人和项目 owner 不需要安装代码，只需在原工作会话中与 Agent
+交互。安装程序只管理带 `managed_by: ceo-agent-service` 标记的七个 Skill，升级时保留其他用户 Skill。
 
 不要让使用者逐条复制终端命令完成安装。agent 应该自己执行命令、检查输出、编辑本机配置，只在需要用户完成
 登录授权、扫码确认、macOS 权限点击、安装来源确认或 live-send 决策时打断用户。

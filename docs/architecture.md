@@ -38,43 +38,59 @@ Codex 使用同一安装用户的本地运行目录，不能假定并发启动�
 锁覆盖 worker 与同一 supervisor 托管的 audit-web，保持单一 launchd job。等待锁的时间
 不计入单次 Codex 的模型运行超时；任务仍由持久队列恢复，避免把启动竞争误记为业务失败。
 
-## 权威处理流
+## Skill-first 权威处理流
 
 ```text
-External trigger
-      |
-      v
-Producer + channel gate
-      |
-      v
-reply_tasks (exact source revision)
-      |
-      v
-Consumer Agent A (read-only, conversation session)
-      |
-      +--> proposal ------+
-      +--> no_action      |
-      +--> needs_human    |
-      +--> failed         |
-                         v
-                 Audit Agent B
-                 (fresh review session)
-                         |
-                         +--> execute + verify
-                         +--> revision_required -> A
-                         +--> needs_human
-                         +--> failed
-                         +--> unknown -> same B session read-back
+trigger/context/material references
+  -> Consumer A discovers and reads business Skill(s)
+  -> A reads operation Skill(s) and proposes an exact action
+  -> service derives verified Skill receipts from existing tool events
+  -> Audit B rereads the same business Skill(s) and operation Skill(s)
+  -> B reviews, executes, and reads back
+  -> service persists the existing run/attempt/receipt state
 ```
+
+Producer 只根据消息来源、会话类型、明确的 @、稳定卡片类型和去重标识决定是否创建任务。
+系统**没有关键词业务路由器**：service 不通过项目名、人员名、百分比或业务词判断该加载哪个
+Skill。Consumer A 根据完整上下文使用 Codex 原生 Skill discovery，按需读取业务 Skill 和操作
+Skill。
+
+Service 也不读取正文后替 Agent 解释业务材料。它只传递 trigger、上下文、原始 process/task ID、
+链接、本地受控材料引用和可执行的精确读取命令。文档、文件夹、图片、表格、日历、听记和 OA
+材料是否相关、是否需要继续展开以及它们支持什么结论，都由 A 判断；B 在执行前独立复核。
+
+Skill 使用证明来自现有 Codex tool events：只有已完成的 `agent_cli.read_skill` 调用才会生成包含
+Skill 路径和 SHA-256 的 verified receipt。B 必须按 receipt 重读同一份 Skill。SQLite 继续保存
+既有 task/run/attempt/effect receipt 状态；系统**不建立平行的 Skill 审计数据库**，详细工具轨迹
+仍以 Codex session JSONL 为准。
+
+### 动态 Skill 分层
+
+七个 CEO 业务 Skill 安装到 `~/.agents/skills`，按任务动态加载：
+
+| 业务 Skill | 负责的业务判断 | 常见操作 Skill |
+| --- | --- | --- |
+| `ceo-message-triage` | 回复、反应、追问、无需动作 | `dingtalk-chat` |
+| `ceo-calendar-invite` | 日程邀请是否接受、拒绝或追问 | `dingtalk-calendar` |
+| `ceo-document-review` | 文档、文件、图片、表格的审阅路径 | `dingtalk-doc`、`dingtalk-drive`、Lark 文档 Skill |
+| `ceo-meeting-work` | 听记、静默会、会议总结与行动项 | `dingtalk-minutes`、`dingtalk-chat` |
+| `ceo-mail-review` | 完整邮件线程审阅和回复 | `dingtalk-mail` |
+| `ceo-personnel-communication` | 人事信息的受众、可见性和最小披露 | 候选人/通讯录操作 Skill |
+| `ceo-work-tracking` | 任务提取、项目/TODO、跟进和关闭 | `dingtalk-todo`、`dingtalk-chat` |
+
+业务 Skill 说明“如何判断”，操作 Skill 说明“如何读取或执行”。OA、面试和 OKR 已有成熟的专业
+Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则：分别加载
+`dingtalk-oa-approval`、`xiaoqing_interview`/现有面试 Skill、`dingtang-okr-review`。
 
 ### Consumer Agent A
 
 A 的身份是 Derek 本人，而不是旁观审核员。A 会：
 
 1. 复用同一业务对话的 Codex session，理解此前已经确认的事实。
-2. 使用服务提供的只读 CLI/MCP 能力读取原始消息、文档、审批、日历、记忆和检索结果。
-3. 返回结构化候选，其中包含目标、动作、收件人/对象、正文或参数、事实引用和预期验证。
-4. 对不需要动作的触发返回 `no_action`。
+2. 动态发现并读取适用的业务 Skill，再读取完成任务所需的操作 Skill。
+3. 使用只读 CLI/MCP 能力按需读取原始消息和材料引用，不依赖 service 预读或解释正文。
+4. 返回结构化候选，其中包含目标、动作、收件人/对象、正文或参数、事实引用和预期验证。
+5. 对不需要动作的触发返回 `no_action`。
 
 A 不能发送消息、评论、审批、修改文档或执行其他外部写操作。该边界固定在运行配置中，
 不能通过 Audit Rules 放宽。
@@ -88,11 +104,12 @@ Derek 作出的管理判断。
 
 B 不是 Derek 的第二个写作分身，而是独立审计与执行者。B 会：
 
-1. 重新读取执行前的实时事实和 Audit Rules。
-2. 检查 A 的候选是否有事实依据、目标准确、内容最小、权限合适且符合当前规则。
-3. 候选合格时按原样执行，并从外部系统读回结果。
-4. 业务含义需要变化时返回具体反馈，由 A 生成新 revision；B 不自行改写候选。
-5. 外部结果未知时不直接重放，而是在原 B session 内先做只读读回。
+1. 根据 verified Skill receipts 重读 A 使用过的业务 Skill 和操作 Skill。
+2. 重新读取执行前的实时事实和 Audit Rules。
+3. 检查 A 的候选是否有事实依据、目标准确、内容最小、权限合适且符合当前规则。
+4. 候选合格时按原样执行，并从外部系统读回结果。
+5. 业务含义需要变化时返回具体反馈，由 A 生成新 revision；B 不自行改写候选。
+6. 外部结果未知时不直接重放，而是在原 B session 内先做只读读回。
 
 每个候选 revision 使用一个新的 B session。只有同一个候选的未知结果恢复会复用原 B
 session，以保留该次执行的工具上下文和操作身份。
@@ -108,6 +125,14 @@ session，以保留该次执行的工具上下文和操作身份。
 
 同一对话在任一时刻只允许一个 A turn 写入会话 JSONL。会话锁只保护本地 transcript 的
 一致性，不代表业务消息被丢弃；新任务保留在持久队列中等待该 turn 完成。
+
+### 任务提取与 follow-up 是一个生命周期
+
+`ceo-work-tracking` 把同一事项从识别到关闭作为一个流程：从对话、会议或材料中提取可执行事项，
+关联或创建项目和 TODO，确定 owner、截止时间和验证条件，到期时生成针对缺口的 follow-up，读取
+后续回复或外部 TODO 状态，最后以明确完成证据关闭。Follow-up 不是第二套路由或回复引擎；它产生的
+消息仍进入同一个 A/B 审阅、执行、读回和去重流程。修订后的 follow-up 是新 revision，不能被旧
+正文的去重结果拦截。
 
 ## Audit Rules
 
@@ -192,6 +217,8 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 | --- | --- |
 | `app.worker.DingTalkAutoReplyWorker` | 领取任务、构造上下文、调用编排器并映射终态。 |
 | `app.agent_orchestrator.AgentOrchestrator` | 在 A、B、反馈和未知结果恢复之间推进状态机。 |
+| `app.business_skills` | 清点并安装七个 service-managed 业务 Skill；不参与业务路由。 |
+| `app.agent_skill_usage` | 从已完成的 Codex tool events 生成 verified Skill receipts。 |
 | `app.consumer_agent.ConsumerAgentRunner` | 复用对话 A session，执行只读判断。 |
 | `app.audit_agent.AuditAgentRunner` | 新建 B 审计 session，执行合格候选并处理未知结果。 |
 | `app.agent_contracts` | 严格定义 A proposal 与 B audit result。 |
