@@ -126,6 +126,7 @@ from app.store import (
     FeedbackEvent,
     OperationLog,
     ReplyAttempt,
+    REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     ReplyError,
     ServiceBugfixCandidate,
     SentTodoRecord,
@@ -629,6 +630,9 @@ TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/cs
 TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"
 DEFAULT_ERROR_LIST_LIMIT = 20
 ERROR_LOG_ACTIVE_WINDOW = timedelta(hours=4)
+RECOVERED_REPLY_ATTEMPT_STATUSES = frozenset(
+    {"calendar", "commented", "completed", "document", "reacted", "sent", "skipped"}
+)
 HISTORY_CHART_HOURS = 24
 DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
 DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS = 10.0
@@ -636,6 +640,7 @@ HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
     "💬 Skipped": "#a8a8aa",
     "↻ Recovered": "#00a889",
+    "◌ Historical": "#a8a8aa",
     "⏳ Provider recovery": "#c37d0d",
     "💬 Blocked": "#c37d0d",
     "💬 Processing": "#3772cf",
@@ -3510,6 +3515,7 @@ def _history_chart_payload(
     bucket_values: dict[str, list[int]] = {}
     label_indexes = {label: index for index, label in enumerate(labels)}
     task_cache: dict[tuple[str, str, str], object | None] = {}
+    latest_attempt_cache: dict[tuple[str, str], ReplyAttempt | None] = {}
     for attempt in attempts:
         created_at = _parse_utc_timestamp(attempt.created_at)
         if created_at is None:
@@ -3524,7 +3530,21 @@ def _history_chart_payload(
         if bucket_index is None:
             continue
         event_label = _history_event_label(attempt)
-        if attempt.send_status == "failed":
+        if attempt.send_status in {"failed", "blocked", "needs_human"}:
+            trigger_key = (attempt.conversation_id, attempt.trigger_message_id)
+            latest_attempt = latest_attempt_cache.get(trigger_key)
+            if trigger_key not in latest_attempt_cache:
+                latest_attempt = store.get_latest_reply_attempt_for_trigger(*trigger_key)
+                latest_attempt_cache[trigger_key] = latest_attempt
+            if (
+                latest_attempt is not None
+                and latest_attempt.id != attempt.id
+                and latest_attempt.send_status in RECOVERED_REPLY_ATTEMPT_STATUSES
+            ):
+                event_label = "↻ Recovered"
+            elif created_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW:
+                event_label = "◌ Historical"
+        if attempt.send_status == "failed" and event_label == "💬 Failed":
             task_key = (
                 attempt.channel,
                 attempt.conversation_id,
@@ -6328,6 +6348,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             later_attempt,
             agent_runs,
             attention,
+            reply_task,
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
@@ -6902,11 +6923,28 @@ def _operation_log_field(label: str, value: str) -> str:
 
 
 def _operation_log_status(store: AutoReplyStore, log: OperationLog) -> str:
-    if log.source_table != "errors":
-        return log.status
-    if log.status != "active":
-        return log.status
     occurred_at = _parse_utc_timestamp(log.occurred_at)
+    if log.source_table == "reply_attempts":
+        if log.status in {"failed", "blocked", "needs_human"}:
+            latest = store.get_latest_reply_attempt_for_trigger(
+                log.conversation_id,
+                log.message_id,
+            )
+            if (
+                latest is not None
+                and latest.id != log.source_id
+                and latest.send_status in RECOVERED_REPLY_ATTEMPT_STATUSES
+            ):
+                return "recovered by later attempt"
+        if (
+            occurred_at is not None
+            and occurred_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW
+            and log.status in {"failed", "blocked", "needs_human"}
+        ):
+            return "historical"
+        return log.status
+    if log.source_table != "errors" or log.status != "active":
+        return log.status
     if (
         occurred_at is not None
         and occurred_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW
@@ -6925,13 +6963,17 @@ def _operation_log_status(store: AutoReplyStore, log: OperationLog) -> str:
 
 def _operation_status_class(status: str) -> str:
     normalized = status.strip().lower()
-    if normalized.startswith("resolved") or normalized in {"sent", "done", "completed"}:
+    if normalized.startswith(("resolved", "recovered")) or normalized in {"sent", "done", "completed"}:
         return "status-resolved"
-    if normalized == "historical":
+    if normalized in {"historical", "skipped", "discarded", "cancelled", "no_action"}:
         return "status-skipped"
-    if normalized == "failed":
+    if normalized in {"pending", "processing", "pending_reconciliation", "dry_run"}:
+        return "status-processing"
+    if normalized == "needs_human":
+        return "status-needs-human"
+    if normalized in {"failed", "blocked"}:
         return "status-failed"
-    return "status-active"
+    return "status-action"
 
 
 def _config_tabs(active_tab: str, *, tab_href_prefix: str = "/config?tab=") -> str:
@@ -8450,19 +8492,27 @@ def _attempt_detail_body(
     later_attempt: ReplyAttempt | None = None,
     agent_runs: list[AgentRun] | None = None,
     attention: HistoryAttention | None = None,
+    reply_task: ReplyTask | None = None,
 ) -> str:
     agent_runs = agent_runs or []
     resolved_by_later = later_attempt is not None and _attempt_is_terminal(
         later_attempt
     )
+    closed_after_review = (
+        attempt.permission_action.strip() == REPLY_ATTEMPT_CLOSED_AFTER_REVIEW
+    )
     send_status = (
         f"已完成（后续记录 #{later_attempt.id}）"
         if resolved_by_later
+        else "已核验结案（未自动执行）"
+        if closed_after_review
         else attempt.send_status
     )
     send_error = (
         "历史错误已由后续处理解决"
         if resolved_by_later and attempt.send_error.strip()
+        else "受阻原因见下方“Codex reason”；该外部操作未执行。"
+        if closed_after_review
         else attempt.send_error
     )
     fields = [
@@ -8500,9 +8550,14 @@ def _attempt_detail_body(
             later_attempt,
             agent_runs,
             attention,
+            closed_after_review=closed_after_review,
         ),
         fields=fields,
-        pills_html=_attempt_action_pills(attempt, later_attempt=later_attempt),
+        pills_html=_attempt_action_pills(
+            attempt,
+            later_attempt=later_attempt,
+            closed_after_review=closed_after_review,
+        ),
         trigger_title="Trigger",
         trigger_text=_trigger_text(attempt),
         reason_title="Codex reason",
@@ -9130,6 +9185,7 @@ def _attempt_action_pills(
     *,
     later_attempt: ReplyAttempt | None = None,
     recovery_state: str = "",
+    closed_after_review: bool = False,
 ) -> str:
     if later_attempt is not None:
         return (
@@ -9142,7 +9198,9 @@ def _attempt_action_pills(
         attempt.send_status.strip().lower() == "calendar"
         and attempt.calendar_response_status.strip()
     )
-    if calendar_only:
+    if closed_after_review:
+        actions = [("◌ 已核验结案", "skipped")]
+    elif calendar_only:
         actions = []
     elif recovery_state:
         actions = [_recovery_action(recovery_state)]
@@ -9621,6 +9679,8 @@ def _attempt_status_card(
     later_attempt: ReplyAttempt | None,
     agent_runs: list[AgentRun] | None = None,
     attention: HistoryAttention | None = None,
+    *,
+    closed_after_review: bool = False,
 ) -> str:
     active_attempt = later_attempt or attempt
     subject = next(
@@ -9663,6 +9723,8 @@ def _attempt_status_card(
         )
     elif active_attempt.send_status == "sent":
         message = "这条回复已发送，无需你操作。"
+    elif closed_after_review:
+        message = "该事项已核验结案；外部动作未自动执行，具体原因见下方审计说明。"
     elif active_attempt.send_status == "skipped":
         message = "这条事项已判定无需回复，无需你操作。"
     elif active_attempt.send_status == "pending_reconciliation":

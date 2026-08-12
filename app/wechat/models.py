@@ -92,7 +92,13 @@ class WechatDelivery(BaseModel):
     action_started_at: str = ""
     execution_generation: str = "initial"
     status: Literal[
-        "ready_to_send", "sending", "sent", "send_unknown", "failed", "superseded"
+        "ready_to_send",
+        "sending",
+        "sent",
+        "send_unknown",
+        "failed",
+        "skipped",
+        "superseded",
     ] = "ready_to_send"
     evidence: dict[str, str] = Field(default_factory=dict)
     error: str = ""

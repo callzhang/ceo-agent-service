@@ -45,6 +45,8 @@ CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
 SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
+ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
+REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-08-12.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
@@ -7345,6 +7347,35 @@ class AutoReplyStore:
                 )
             return total
 
+    def normalize_user_rejected_wechat_deliveries(self) -> int:
+        """Convert legacy user-rejected deliveries to terminal skipped state."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select id
+                from wechat_deliveries
+                where status='failed' and error='user_rejected'
+                order by id
+                """
+            ).fetchall()
+            for row in rows:
+                delivery_id = int(row["id"])
+                db.execute(
+                    """
+                    update wechat_deliveries
+                    set status='skipped', updated_at=current_timestamp
+                    where id=? and status='failed' and error='user_rejected'
+                    """,
+                    (delivery_id,),
+                )
+                self._sync_wechat_delivery_reply_attempt(
+                    db,
+                    delivery_id=delivery_id,
+                    delivery_status="skipped",
+                    error="user_rejected",
+                )
+            return len(rows)
+
     @staticmethod
     def _wechat_delivery_source_statuses(status: str, error: str) -> tuple[str, ...]:
         if status == "sending":
@@ -7376,6 +7407,8 @@ class AutoReplyStore:
         if status == "sent":
             return "sent", reason
         if status == "superseded":
+            return "skipped", reason or status
+        if status == "skipped":
             return "skipped", reason or status
         if status == "failed" and reason == "user_rejected":
             return "skipped", reason
@@ -14282,31 +14315,6 @@ class AutoReplyStore:
                 (conversation_id, message_id, kind, detail),
             )
 
-    def resolve_errors(
-        self,
-        error_ids: list[int] | tuple[int, ...],
-        *,
-        resolution: str,
-    ) -> int:
-        normalized_ids = tuple(dict.fromkeys(int(error_id) for error_id in error_ids))
-        if not normalized_ids:
-            return 0
-        if any(error_id <= 0 for error_id in normalized_ids):
-            raise ValueError("error ids must be positive")
-        if not resolution.strip():
-            raise ValueError("error resolution must be non-empty")
-        placeholders = ",".join("?" for _ in normalized_ids)
-        with self._connect() as db:
-            cursor = db.execute(
-                f"""
-                update errors
-                set resolved_at=current_timestamp, resolution=?
-                where id in ({placeholders}) and resolved_at=''
-                """,
-                (resolution.strip(), *normalized_ids),
-            )
-        return cursor.rowcount
-
     def list_errors(
         self, limit: int | None = None, offset: int = 0
     ) -> list[ReplyError]:
@@ -14388,6 +14396,222 @@ class AutoReplyStore:
                   )
                 """,
                 terminal_statuses,
+            )
+            return cursor.rowcount
+
+    def resolve_errors_recovered_by_completed_reply_tasks(self) -> int:
+        """Close a trigger error once its own task completed after the error.
+
+        A completed task is durable evidence that the current generation
+        reached a terminal workflow state.  This is intentionally narrower
+        than a time-based observation: it does not infer message delivery or
+        an external write, and it keeps errors open while any linked agent run
+        still has an unknown side effect.
+        """
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors as error_event
+                set resolved_at=current_timestamp,
+                    resolution='recovered by completed reply task'
+                where coalesce(error_event.resolved_at, '')=''
+                  and coalesce(error_event.conversation_id, '')<>''
+                  and coalesce(error_event.message_id, '')<>''
+                  and exists (
+                    select 1
+                    from reply_tasks task
+                    where task.conversation_id=error_event.conversation_id
+                      and task.trigger_message_id=error_event.message_id
+                      and lower(task.status)='done'
+                      and datetime(task.updated_at) >= datetime(error_event.created_at)
+                      and not exists (
+                        select 1
+                        from agent_runs run
+                        where run.reply_task_id=task.id
+                          and (
+                            lower(run.status)='unknown'
+                            or lower(run.side_effect_state)='unknown'
+                          )
+                      )
+                  )
+                """
+            )
+            return cursor.rowcount
+
+    def resolve_closed_blocked_reply_attempts(self) -> int:
+        """Close latest blocked attempts that have no remaining recovery work.
+
+        The task completion proves the workflow has reached a terminal state;
+        it does not turn a skipped external action into a successful one.  The
+        original business explanation remains in the immutable audit summary.
+        """
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_attempts as attempt
+                set send_status='skipped',
+                    send_error='',
+                    permission_action=?,
+                    permission_reason='关联任务已完成；没有待恢复或未知副作用。详见审计说明。',
+                    updated_at=current_timestamp
+                where lower(attempt.send_status)='blocked'
+                  and trim(coalesce(attempt.permission_action, ''))=''
+                  and attempt.id=(
+                    select max(latest.id)
+                    from reply_attempts latest
+                    where latest.channel=attempt.channel
+                      and latest.conversation_id=attempt.conversation_id
+                      and latest.trigger_message_id=attempt.trigger_message_id
+                  )
+                  and exists (
+                    select 1
+                    from reply_tasks task
+                    where task.channel=attempt.channel
+                      and task.conversation_id=attempt.conversation_id
+                      and task.trigger_message_id=attempt.trigger_message_id
+                      and lower(task.status)='done'
+                      and not exists (
+                        select 1
+                        from agent_runs run
+                        where run.reply_task_id=task.id
+                          and (
+                            lower(run.status)='unknown'
+                            or lower(run.side_effect_state)='unknown'
+                          )
+                      )
+                  )
+                """,
+                (REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,),
+            )
+            return cursor.rowcount
+
+    def resolve_unattributed_errors_after_quiet_period(
+        self,
+        *,
+        now: datetime | None = None,
+        quiet_period_seconds: int = ERROR_RECOVERY_QUIET_PERIOD_SECONDS,
+    ) -> int:
+        """Close service incidents after a clean observation window.
+
+        These records have no trigger message identity, so a later reply cannot
+        prove recovery. They are retained, but another open error of the same
+        component within the observation window keeps them active.
+        """
+        if quiet_period_seconds <= 0:
+            raise ValueError("quiet period must be positive")
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        cutoff_text = (observed_at - timedelta(seconds=quiet_period_seconds)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors as incident
+                set resolved_at=current_timestamp,
+                    resolution='no recurrence during the four-hour healthy observation window'
+                where coalesce(incident.resolved_at, '')=''
+                  and trim(coalesce(incident.message_id, ''))=''
+                  and datetime(incident.created_at) < datetime(?)
+                  and not exists (
+                    select 1
+                    from errors newer
+                    where newer.kind=incident.kind
+                      and coalesce(newer.resolved_at, '')=''
+                      and datetime(newer.created_at) >= datetime(?)
+                  )
+                """,
+                (cutoff_text, cutoff_text),
+            )
+            return cursor.rowcount
+
+    def resolve_inactive_trigger_errors_after_quiet_period(
+        self,
+        *,
+        now: datetime | None = None,
+        quiet_period_seconds: int = ERROR_RECOVERY_QUIET_PERIOD_SECONDS,
+    ) -> int:
+        """Close historical trigger incidents once no recovery work remains.
+
+        This is incident convergence, not a delivery claim. A trigger error is
+        eligible only after the observation window has passed without a newer
+        error for that trigger, with no active task, unresolved latest attempt,
+        or linked agent run whose side effect is unknown.
+        """
+        if quiet_period_seconds <= 0:
+            raise ValueError("quiet period must be positive")
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        cutoff_text = (observed_at - timedelta(seconds=quiet_period_seconds)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        unresolved_attempt_statuses = (
+            "blocked",
+            "dry_run",
+            "failed",
+            "needs_human",
+            "pending",
+            "pending_reconciliation",
+            "processing",
+        )
+        task_statuses = ("failed", "pending", "processing")
+        attempt_placeholders = ",".join("?" for _ in unresolved_attempt_statuses)
+        task_placeholders = ",".join("?" for _ in task_statuses)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"""
+                update errors as incident
+                set resolved_at=current_timestamp,
+                    resolution='no active workflow during the four-hour healthy observation window'
+                where coalesce(incident.resolved_at, '')=''
+                  and trim(coalesce(incident.conversation_id, ''))<>''
+                  and trim(coalesce(incident.message_id, ''))<>''
+                  and datetime(incident.created_at) < datetime(?)
+                  and not exists (
+                    select 1
+                    from errors newer
+                    where newer.conversation_id=incident.conversation_id
+                      and newer.message_id=incident.message_id
+                      and coalesce(newer.resolved_at, '')=''
+                      and datetime(newer.created_at) >= datetime(?)
+                  )
+                  and not exists (
+                    select 1
+                    from reply_tasks task
+                    where task.conversation_id=incident.conversation_id
+                      and task.trigger_message_id=incident.message_id
+                      and lower(task.status) in ({task_placeholders})
+                  )
+                  and not exists (
+                    select 1
+                    from reply_attempts attempt
+                    where attempt.conversation_id=incident.conversation_id
+                      and attempt.trigger_message_id=incident.message_id
+                      and attempt.id=(
+                        select max(latest.id)
+                        from reply_attempts latest
+                        where latest.channel=attempt.channel
+                          and latest.conversation_id=attempt.conversation_id
+                          and latest.trigger_message_id=attempt.trigger_message_id
+                      )
+                      and lower(attempt.send_status) in ({attempt_placeholders})
+                  )
+                  and not exists (
+                    select 1
+                    from reply_tasks task
+                    join agent_runs run on run.reply_task_id=task.id
+                    where task.conversation_id=incident.conversation_id
+                      and task.trigger_message_id=incident.message_id
+                      and (
+                        lower(run.status)='unknown'
+                        or lower(run.side_effect_state)='unknown'
+                      )
+                  )
+                """,
+                (
+                    cutoff_text,
+                    cutoff_text,
+                    *task_statuses,
+                    *unresolved_attempt_statuses,
+                ),
             )
             return cursor.rowcount
 

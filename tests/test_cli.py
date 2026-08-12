@@ -4984,7 +4984,21 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
     store = SimpleNamespace(
         record_error=lambda *args: calls.append(("error", *args)),
-        resolve_errors_recovered_by_reply_attempts=lambda: calls.append("resolve"),
+        resolve_errors_recovered_by_reply_attempts=lambda: (
+            calls.append("resolve") or 0
+        ),
+        resolve_errors_recovered_by_completed_reply_tasks=lambda: (
+            calls.append("resolve-completed-task") or 0
+        ),
+        resolve_closed_blocked_reply_attempts=lambda: (
+            calls.append("resolve-blocked") or 0
+        ),
+        resolve_unattributed_errors_after_quiet_period=lambda: (
+            calls.append("resolve-service") or 0
+        ),
+        resolve_inactive_trigger_errors_after_quiet_period=lambda: (
+            calls.append("resolve-inactive-trigger") or 0
+        ),
     )
     monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
     monkeypatch.setattr(
@@ -5032,6 +5046,10 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",
         "resolve",
+        "resolve-completed-task",
+        "resolve-blocked",
+        "resolve-service",
+        "resolve-inactive-trigger",
         "scan",
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",
@@ -5626,7 +5644,7 @@ def test_run_service_keeps_terminal_user_rejected_wechat_delivery(tmp_path):
     )
 
     delivery = store.get_wechat_delivery_by_id(delivery_id)
-    assert delivery.status == "failed"
+    assert delivery.status == "skipped"
     assert delivery.error == "user_rejected"
     assert calls[-1] == ("wait",)
 
