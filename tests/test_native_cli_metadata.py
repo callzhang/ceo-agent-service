@@ -267,6 +267,29 @@ def test_agent_cli_allows_incomplete_dws_help_as_read_only(monkeypatch):
     assert "error" not in receipt
 
 
+def test_agent_cli_allows_dws_schema_contract_read(monkeypatch):
+    argv = [
+        "dws", "schema", "--cli-path", "oa +approval-get",
+        "--compact", "--format", "json",
+    ]
+    monkeypatch.setattr("app.agent_cli.shutil.which", lambda _: "/bin/dws")
+    launched = []
+
+    def process_runner(*args, **_kwargs):
+        launched.append(args[0])
+        return subprocess.CompletedProcess(args[0], 0, "{}", "")
+
+    receipt = execute_reviewed_read(
+        argv,
+        classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+        process_runner=process_runner,
+    )
+
+    assert launched == [["/bin/dws", *argv[1:]]]
+    assert receipt["operation"] == "schema"
+    assert "error" not in receipt
+
+
 def test_agent_cli_help_cannot_use_write_capability():
     with pytest.raises(AgentReadOnlyViolationError, match="effect_mismatch"):
         execute_reviewed_write(

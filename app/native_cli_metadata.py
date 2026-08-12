@@ -301,6 +301,13 @@ class NativeCliMetadataClassifier:
         return None
 
     def _classify_dws(self, argv: tuple[str, ...]) -> NativeCliCommand | None:
+        # Runtime Schema is DWS's own local command-contract reader. Skills use
+        # it to choose and validate later commands, so it is read-only even
+        # though it is not listed as one business command in the schema output.
+        if len(argv) > 1 and argv[1] == "schema":
+            return _classified_native_command(
+                "dws", "schema", argv, EffectKind.READ_ONLY
+            )
         for command_path in _command_path_candidates(argv[1:]):
             try:
                 process = run_bounded_process(

@@ -586,7 +586,10 @@ class AgentTurnProcess(Generic[ResultT]):
                     allow_error=True,
                 )
                 if receipt is None:
-                    raise AgentReadOnlyViolationError("agent_cli_receipt_missing")
+                    failure_code = _agent_cli_tool_error(item.get("result"))
+                    raise AgentReadOnlyViolationError(
+                        failure_code or "agent_cli_receipt_missing"
+                    )
                 if receipt.get("operation") != descriptor.command_path:
                     raise AgentReadOnlyViolationError("agent_cli_receipt_operation_mismatch")
                 if receipt.get("operation_digest") != operation_digest:
@@ -1021,6 +1024,14 @@ def _agent_cli_receipt(
         except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
             return None
         return _agent_cli_receipt(decoded, allow_error=allow_error)
+    if isinstance(value, list):
+        for block in value:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            receipt = _agent_cli_receipt(block.get("text"), allow_error=allow_error)
+            if receipt is not None:
+                return receipt
+        return None
     receipt = _controlled_cli_receipt(value)
     if receipt is not None or not isinstance(value, dict):
         return receipt
@@ -1057,6 +1068,43 @@ def _agent_cli_receipt(
         ):
             return candidate
     return None
+
+
+def _agent_cli_tool_error(value: object) -> str:
+    if isinstance(value, str):
+        if len(value.encode("utf-8")) > 64 * 1024:
+            return ""
+        text = value.strip()
+        marker = "\nOutput:\n"
+        if not text.startswith(("{", "[")) and marker in text:
+            _timing, text = text.rsplit(marker, 1)
+            text = text.strip()
+        if text.startswith(("{", "[")):
+            try:
+                return _agent_cli_tool_error(json.loads(text))
+            except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
+                return ""
+        prefix = "Error executing tool "
+        if not text.startswith(prefix) or ": " not in text:
+            return ""
+        code = text.rsplit(": ", 1)[-1].strip()
+        return code if code.replace("_", "").isalnum() else ""
+    if isinstance(value, list):
+        for block in value:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            code = _agent_cli_tool_error(block.get("text"))
+            if code:
+                return code
+    if isinstance(value, dict):
+        for key in ("structuredContent", "structured_content"):
+            code = _agent_cli_tool_error(value.get(key))
+            if code:
+                return code
+        content = value.get("content")
+        if isinstance(content, list):
+            return _agent_cli_tool_error(content)
+    return ""
 
 
 def _matching_effect_metadata(

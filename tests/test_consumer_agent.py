@@ -71,6 +71,46 @@ def test_consumer_records_specific_missing_agent_cli_receipt(
     assert json.loads(run.structured_error_json)["code"] == "agent_cli_receipt_missing"
 
 
+def test_consumer_records_agent_cli_tool_error_instead_of_missing_receipt(
+    store, task, context
+):
+    argv = ["dws", "schema", "--compact", "--format", "json"]
+    item = {
+        "type": "mcp_tool_call",
+        "id": "rejected-command",
+        "server": "agent_cli",
+        "tool": "execute_reviewed_read",
+        "arguments": {"argv": argv},
+    }
+    tool_error = "Error executing tool execute_reviewed_read: agent_cli_command_unreviewed"
+    stream = "\n".join(
+        (
+            json.dumps({"type": "item.started", "item": item}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        **item,
+                        "status": "completed",
+                        "result": "Wall time: 0.01 seconds\nOutput:\n"
+                        + json.dumps([{"type": "text", "text": tool_error}]),
+                    },
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="agent_cli_command_unreviewed"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(stream),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    assert json.loads(run.structured_error_json)["code"] == "agent_cli_command_unreviewed"
+
+
 class CapturingExecutor:
     def __init__(self, stdout: str) -> None:
         self.stdout = stdout
