@@ -479,12 +479,12 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     assert len(executor.commands) == 2
     assert all("--output-schema" not in command for command in executor.commands)
     assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_spreadsheet"]'
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_text_file", "read_spreadsheet"]'
         in executor.commands[0]
     )
     assert "execute_reviewed_write" not in " ".join(executor.commands[0])
     assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill", "read_spreadsheet"]'
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "execute_reviewed_write", "read_skill", "read_text_file", "read_spreadsheet"]'
         in executor.commands[1]
     )
     assert "Raw material references and exact read commands" in executor.prompts[0]

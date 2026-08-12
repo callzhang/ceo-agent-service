@@ -15,52 +15,22 @@ from app.native_cli_metadata import describe_native_command
 from app.dws_client import DwsClient
 
 
-@pytest.fixture(autouse=True)
-def _principal_local_read_policy(tmp_path, monkeypatch):
-    config = tmp_path / "config.toml"
-    config.write_text(
-        "\n".join(
-            [
-                "[ceo_agent.local_read_policy]",
-                'blocked_commands = ["bash", "sh", "zsh", "rm", "unzip"]',
-                "[ceo_agent.local_read_policy.blocked_argument_prefixes]",
-                'sed = ["-i", "--in-place"]',
-                'find = ["-delete", "-exec", "-execdir", "-fls", "-fprint", "-fprint0", "-fprintf", "-ok", "-okdir"]',
-                'grep = ["--pre", "--generate"]',
-                'rg = ["--pre", "--generate"]',
-                'sort = ["-o", "--output"]',
-                'tail = ["-f", "--follow"]',
-                'python = ["-m"]',
-                'python3 = ["-m"]',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CEO_AGENT_CODEX_CONFIG_PATH", str(config))
-
-
-def test_classifier_accepts_unblocked_local_read_pipeline():
+def test_classifier_rejects_generic_local_read_pipeline():
     command = "cat /tmp/material.txt | sed -n '1,10p' | head -c 3000"
 
     descriptor = NativeCliMetadataClassifier(reviewed_effects={}).classify(
         {"type": "command_execution", "command": command}
     )
 
-    assert descriptor is not None
-    assert descriptor.effect is EffectKind.READ_ONLY
-    assert descriptor.cli == "local-shell"
+    assert descriptor is None
 
 
-def test_describe_native_command_accepts_reviewed_local_read():
+def test_describe_native_command_rejects_generic_local_read():
     descriptor = describe_native_command(
         {"type": "command_execution", "argv": ["sed", "-n", "1p", "/tmp/file"]}
     )
 
-    assert descriptor is not None
-    assert descriptor.cli == "local-shell"
-    assert descriptor.command_path == "sed"
-    assert descriptor.effect is EffectKind.READ_ONLY
+    assert descriptor is None
 
 
 def test_describe_native_command_rejects_arbitrary_python_even_when_not_blacklisted():
@@ -108,7 +78,7 @@ def test_describe_native_command_allows_service_owned_oa_detail_read():
     assert descriptor.target_identifiers == {"instance-id": "proc-1"}
 
 
-def test_describe_native_command_keeps_stable_targets_from_local_read_pipeline():
+def test_describe_native_command_rejects_local_pipeline_with_identifiers():
     descriptor = describe_native_command(
         {
             "type": "command_execution",
@@ -116,11 +86,10 @@ def test_describe_native_command_keeps_stable_targets_from_local_read_pipeline()
         }
     )
 
-    assert descriptor is not None
-    assert descriptor.target_identifiers == {"instance-id": "proc-1"}
+    assert descriptor is None
 
 
-def test_describe_native_command_rejects_blacklisted_python_module_execution():
+def test_describe_native_command_rejects_python_module_execution():
     descriptor = describe_native_command(
         {
             "type": "command_execution",
@@ -138,7 +107,7 @@ def test_describe_native_command_rejects_blacklisted_python_module_execution():
     assert descriptor is None
 
 
-def test_describe_native_command_rejects_blacklisted_command_and_argument():
+def test_describe_native_command_rejects_generic_local_commands():
     assert describe_native_command(
         {"type": "command_execution", "argv": ["rm", "/tmp/material"]}
     ) is None
@@ -294,7 +263,7 @@ def test_agent_cli_allows_native_command_to_run_for_fifteen_minutes(monkeypatch)
     assert observed_timeout == CLI_TIMEOUT_SECONDS
 
 
-def test_agent_cli_executes_reviewed_local_read_with_original_binary(monkeypatch):
+def test_agent_cli_rejects_generic_local_read_without_launching(monkeypatch):
     argv = ["sed", "-n", "1p", "/tmp/public-key.pub"]
     monkeypatch.setattr(
         "app.agent_cli.shutil.which",
@@ -306,17 +275,17 @@ def test_agent_cli_executes_reviewed_local_read_with_original_binary(monkeypatch
         launched.append(args[0])
         return subprocess.CompletedProcess(args[0], 0, "verified material\n", "")
 
-    receipt = execute_reviewed_read(
-        argv,
-        classifier=NativeCliMetadataClassifier(reviewed_effects={}),
-        process_runner=process_runner,
-    )
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="agent_cli_command_unreviewed",
+    ):
+        execute_reviewed_read(
+            argv,
+            classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+            process_runner=process_runner,
+        )
 
-    assert launched == [["/usr/bin/sed", *argv[1:]]]
-    assert receipt["cli"] == "local-shell"
-    assert receipt["operation"] == "sed"
-    assert receipt["stdout"] == "verified material\n"
-    assert "error" not in receipt
+    assert launched == []
 
 
 def test_agent_cli_allows_incomplete_dws_help_as_read_only(monkeypatch):

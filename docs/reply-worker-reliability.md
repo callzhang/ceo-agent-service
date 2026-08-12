@@ -53,9 +53,9 @@ Consumer turn 全程只读；如果 Codex 在同一 Consumer turn 中报告新�
 attempt。旧 turn 仍保留失败状态、session 标识和审计事件，绝不清空后复用；这样新的 Codex
 session 不会与旧 session 标识冲突，同时历史页面可以准确显示每次恢复的进度。
 
-本地材料读取遵从安装用户 `config.toml` 的命令黑名单，而不是按文件格式建立白名单。Python
-解析是允许的，只要调用经过 `agent_cli.execute_reviewed_read` 且命令不在黑名单中。若 Agent
-绕过受控读取入口，失败记录保留具体安全码，方便区分直接 shell、未审核命令和黑名单拒绝。
+本地材料必须通过 `agent_cli.read_text_file` 或 `agent_cli.read_spreadsheet`
+读取；普通本地 shell、任意 Python 和未知程序都不执行。若 Agent 绕过受控读取入口，
+失败记录保留具体安全码，方便区分直接 shell 与未审核命令。
 
 ### Audit Agent B
 
@@ -443,11 +443,11 @@ the bridge's external-action boundary. The click may then focus an existing audi
 window and navigate it to the exact attempt detail; it does not issue a `GET`
 that fails with 405 or opens a duplicate browser window.
 
-Consumer and Audit Agents use the same `agent_cli.execute_reviewed_read` path
-for classified local read-only commands such as `sed`, `find`, and `rg`. The
-classifier continues to reject writes, redirection, and unknown shell commands;
-Audit can repeat a local evidence read before publishing exact file-derived
-content instead of trusting a value copied only into Consumer's proposal.
+Consumer and Audit Agents use dedicated `agent_cli.read_text_file` and
+`agent_cli.read_spreadsheet` tools for downloaded local evidence. Generic local
+shell execution is rejected; Audit can repeat the same bounded material read
+before publishing exact file-derived content instead of trusting a value copied
+only into Consumer's proposal.
 Reviewed DWS and Lark reads use the principal's existing local CLI credential
 store. Agents never start a separate login flow or copy credentials into prompts,
 receipts, or service configuration.

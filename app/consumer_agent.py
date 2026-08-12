@@ -82,10 +82,10 @@ returned command path and flags exactly; do not invent shortcut names or flag
 aliases. A rejected read has no external effect: inspect its error, then use the
 runtime contract or the installed skill to correct it in the same turn.
 
-For a downloaded local material file, call `agent_cli.execute_reviewed_read`
-with a direct read command. Python is valid for parsing a workbook or another
-format when it is not denied by the principal's local command policy. Do not
-return `needs_human` merely because a material requires a local parser.
+For a downloaded local material file, use `agent_cli.read_text_file` for UTF-8
+text or `agent_cli.read_spreadsheet` for xlsx content. Arbitrary local shell and
+Python execution are forbidden. Do not return `needs_human` merely because a
+supported material requires one of these dedicated readers.
 
 Before proposing a DingTalk message send, read
 `/Users/derek/.agents/skills/dws/multi/dingtalk-chat/SKILL.md` with

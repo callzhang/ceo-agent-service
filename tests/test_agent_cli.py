@@ -14,11 +14,35 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
 
     assert set(descriptions) == {
         "read_skill",
+        "read_text_file",
+        "read_spreadsheet",
         "execute_reviewed_read",
         "execute_reviewed_write",
     }
     assert all(description.strip() for description in descriptions.values())
     assert "calendar event" in descriptions["execute_reviewed_read"]
+
+
+def test_read_text_file_reads_bounded_temp_material(tmp_path: Path):
+    material = tmp_path / "material.md"
+    material.write_text("# Verified material", encoding="utf-8")
+
+    result = agent_cli.read_text_file(str(material))
+
+    assert result["content"] == "# Verified material"
+    assert result["path"] == str(material.resolve())
+    assert result["sha256"]
+
+
+def test_read_text_file_rejects_non_utf8_material(tmp_path: Path):
+    material = tmp_path / "material.bin"
+    material.write_bytes(b"\xff\xfe")
+
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="text_material_invalid_utf8",
+    ):
+        agent_cli.read_text_file(str(material))
 
 
 def test_read_skill_allows_markdown_referenced_by_an_installed_skill(
@@ -119,15 +143,9 @@ def test_read_skill_rejects_files_outside_an_installed_skill(
         agent_cli.read_skill(str(target))
 
 
-def test_execute_reviewed_read_rejects_arbitrary_python_even_when_policy_allows_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_execute_reviewed_read_rejects_arbitrary_python(
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "[ceo_agent.local_read_policy]\nblocked_commands = [\"rm\"]\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CEO_AGENT_CODEX_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/bin/python3")
 
     with pytest.raises(

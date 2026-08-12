@@ -35,6 +35,7 @@ from app.native_cli_metadata import (
 
 MAX_CLI_OUTPUT_BYTES = MAX_PROCESS_OUTPUT_BYTES
 MAX_SKILL_BYTES = 256 * 1024
+MAX_TEXT_MATERIAL_BYTES = 512 * 1024
 MAX_SPREADSHEET_BYTES = 20 * 1024 * 1024
 MAX_SPREADSHEET_ROWS = 200
 MAX_SPREADSHEET_COLUMNS = 64
@@ -46,6 +47,7 @@ SPREADSHEET_MATERIAL_ROOTS = (
     Path("/tmp").resolve(),
     Path(tempfile.gettempdir()).resolve(),
 )
+TEXT_MATERIAL_ROOTS = SPREADSHEET_MATERIAL_ROOTS
 
 
 def _process_failure_receipt(
@@ -203,6 +205,33 @@ def read_spreadsheet(
             raise AgentReadOnlyViolationError("spreadsheet_file_invalid") from exc
         except ElementTree.ParseError as exc:
             raise AgentReadOnlyViolationError("spreadsheet_xml_invalid") from exc
+
+
+def read_text_file(path: str) -> dict[str, object]:
+    """Read one bounded UTF-8 material file without granting shell access."""
+    material_path = Path(path).expanduser().resolve(strict=True)
+    if not any(material_path.is_relative_to(root) for root in TEXT_MATERIAL_ROOTS):
+        raise AgentReadOnlyViolationError("text_material_path_forbidden")
+    flags = os.O_RDONLY | os.O_NONBLOCK
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    with os.fdopen(os.open(material_path, flags), "rb") as material_file:
+        file_stat = os.fstat(material_file.fileno())
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise AgentReadOnlyViolationError("text_material_file_not_regular")
+        if file_stat.st_size > MAX_TEXT_MATERIAL_BYTES:
+            raise AgentReadOnlyViolationError("text_material_file_too_large")
+        content_bytes = material_file.read(MAX_TEXT_MATERIAL_BYTES + 1)
+    if len(content_bytes) > MAX_TEXT_MATERIAL_BYTES:
+        raise AgentReadOnlyViolationError("text_material_file_too_large")
+    try:
+        content = content_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AgentReadOnlyViolationError("text_material_invalid_utf8") from exc
+    return {
+        "content": content,
+        "path": str(material_path),
+        "sha256": hashlib.sha256(content_bytes).hexdigest(),
+    }
 
 
 def _read_xlsx_workbook(
@@ -466,8 +495,8 @@ def _execute_reviewed(
 server = FastMCP(
     "agent_cli",
     instructions=(
-        "Read installed Agent skills and run DWS, Lark, or local read-only "
-        "commands only after reviewing installed effect metadata."
+        "Read installed Agent skills and local materials with dedicated readers, "
+        "and run DWS or Lark commands only after reviewing effect metadata."
     ),
 )
 
@@ -491,6 +520,38 @@ def read_skill_tool(path: str) -> dict[str, str]:
 
 
 @server.tool(
+    name="read_text_file",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+def read_text_file_tool(path: str) -> dict[str, object]:
+    """Read a downloaded UTF-8 text material from the service temp directory."""
+    return read_text_file(path)
+
+
+@server.tool(
+    name="read_spreadsheet",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+def read_spreadsheet_tool(
+    path: str,
+    max_rows: int = MAX_SPREADSHEET_ROWS,
+    max_columns: int = MAX_SPREADSHEET_COLUMNS,
+) -> dict[str, object]:
+    """Read a bounded preview of a downloaded xlsx workbook without shell access."""
+    return read_spreadsheet(path, max_rows=max_rows, max_columns=max_columns)
+
+
+@server.tool(
     name="execute_reviewed_read",
     annotations=ToolAnnotations(
         readOnlyHint=True,
@@ -500,13 +561,12 @@ def read_skill_tool(path: str) -> dict[str, str]:
     ),
 )
 def execute_reviewed_read_tool(argv: list[str]) -> dict[str, object]:
-    """Run one reviewed DWS, Lark, or local read command and return a receipt.
+    """Run one reviewed DWS, Lark, or fixed service read and return a receipt.
 
     Use the provided argv for live enterprise evidence such as a message,
     calendar event, document, file, approval, person, mail, or meeting. DWS
-    and Lark use published effect metadata. Local commands use the principal's
-    `ceo_agent.local_read_policy` blacklist, so Python is available unless the
-    principal has explicitly blocked it.
+    and Lark use published effect metadata. Arbitrary local executables are
+    forbidden; use the dedicated text and spreadsheet readers for local files.
     """
     return execute_reviewed_read(argv)
 

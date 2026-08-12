@@ -19,7 +19,6 @@ from app.agent_result import EffectKind, ResultParseError
 from app.developer_prompt import DeveloperPromptTemplateError
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
-    LocalReadCommandPolicy,
     NativeCliMetadataClassifier,
 )
 from app.process_runner import ProcessRunResult
@@ -456,7 +455,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command
     assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_spreadsheet"]'
+        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_text_file", "read_spreadsheet"]'
         in command
     )
     assert "execute_reviewed_write" not in " ".join(command)
@@ -472,7 +471,8 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         "call `agent_cli.execute_reviewed_read`" in option
         for option in command
     )
-    assert any("Python is valid for parsing" in option for option in command)
+    assert any("agent_cli.read_text_file" in option for option in command)
+    assert any("Arbitrary local shell and" in option for option in command)
     assert any(
         "dingtalk-chat/SKILL.md" in option
         and "not a reason to return `needs_human`" in option
@@ -1318,26 +1318,8 @@ def test_consumer_allows_reviewed_direct_native_read(store, task, context):
     ]
 
 
-def test_consumer_persists_reviewed_local_read_receipt(
-    store, task, context, monkeypatch
-):
-    monkeypatch.setattr(
-        "app.native_cli_metadata.load_local_read_command_policy",
-        lambda: LocalReadCommandPolicy(frozenset(), {}),
-    )
+def test_consumer_rejects_generic_local_read_tool_call(store, task, context):
     argv = ["sed", "-n", "1p", "/tmp/public-material"]
-    descriptor = NativeCliMetadataClassifier(reviewed_effects={}).classify(
-        {"type": "command_execution", "argv": argv}
-    )
-    assert descriptor is not None
-    receipt = {
-        "cli": descriptor.cli,
-        "operation": descriptor.command_path,
-        "operation_digest": descriptor.command_digest,
-        "target_identifiers": descriptor.target_identifiers,
-        "result_digest": "local-read-digest",
-        "stdout": "verified material\n",
-    }
     item = {
         "type": "mcp_tool_call",
         "id": "local-read-1",
@@ -1354,7 +1336,7 @@ def test_consumer_persists_reviewed_local_read_receipt(
                     "item": {
                         **item,
                         "status": "completed",
-                        "result": {"structuredContent": receipt},
+                        "result": {"structuredContent": {}},
                     },
                 }
             ),
@@ -1362,19 +1344,16 @@ def test_consumer_persists_reviewed_local_read_receipt(
         )
     )
 
-    result = ConsumerAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=CapturingExecutor(stream),
-        native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
-    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
-    run = store.get_agent_run(result.run_id)
-    assert run is not None
-    assert [event["item"]["metadata"]["capability"] for event in run.tool_events] == [
-        "agent_cli.local-shell",
-        "agent_cli.local-shell",
-    ]
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="agent_cli_command_invalid",
+    ):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(stream),
+            native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
 def test_consumer_rejects_direct_native_write(store, task, context):
@@ -1416,7 +1395,7 @@ def test_consumer_rejects_direct_native_write(store, task, context):
     assert '"code":"agent_write_forbidden"' in run.structured_error_json
 
 
-def test_consumer_rejects_blacklisted_direct_shell_command(store, task, context):
+def test_consumer_rejects_direct_shell_command(store, task, context):
     shell = json.dumps(
         {
             "type": "item.started",
@@ -1439,7 +1418,7 @@ def test_consumer_rejects_blacklisted_direct_shell_command(store, task, context)
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
-def test_consumer_accepts_principal_policy_local_read_command(store, task, context):
+def test_consumer_rejects_direct_generic_local_read_command(store, task, context):
     shell = json.dumps(
         {
             "type": "item.started",
@@ -1451,12 +1430,12 @@ def test_consumer_accepts_principal_policy_local_read_command(store, task, conte
         }
     )
 
-    result = ConsumerAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=CapturingExecutor(shell + "\n" + _result_jsonl()),
-    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
-    run = store.get_agent_run(result.run_id)
-    assert run is not None
-    assert run.tool_events[0]["item"]["metadata"]["effect"] == "read_only"
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="agent_shell_execution_forbidden",
+    ):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(shell + "\n" + _result_jsonl()),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
