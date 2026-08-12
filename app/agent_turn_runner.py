@@ -574,6 +574,12 @@ class AgentTurnProcess(Generic[ResultT]):
                 {"type": "command_execution", "argv": argv}
             )
             if descriptor is None:
+                if read_only and call.tool == "execute_reviewed_read":
+                    if payload.get("type") != "item.completed":
+                        return None
+                    failure_code = _agent_cli_tool_error(item.get("result"))
+                    if failure_code:
+                        return _failed_agent_cli_read_event(item, failure_code)
                 raise AgentReadOnlyViolationError("agent_cli_command_invalid")
             capability = f"agent_cli.{descriptor.cli}"
             operation = descriptor.command_path
@@ -587,6 +593,12 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
                 if receipt is None:
                     failure_code = _agent_cli_tool_error(item.get("result"))
+                    if (
+                        read_only
+                        and call.tool == "execute_reviewed_read"
+                        and failure_code
+                    ):
+                        return _failed_agent_cli_read_event(item, failure_code)
                     raise AgentReadOnlyViolationError(
                         failure_code or "agent_cli_receipt_missing"
                     )
@@ -1105,6 +1117,34 @@ def _agent_cli_tool_error(value: object) -> str:
         if isinstance(content, list):
             return _agent_cli_tool_error(content)
     return ""
+
+
+def _failed_agent_cli_read_event(
+    item: dict[str, object], failure_code: str
+) -> dict[str, object]:
+    arguments = item.get("arguments")
+    argv = arguments.get("argv") if isinstance(arguments, dict) else None
+    return {
+        "type": "item.failed",
+        "item": {
+            "type": "mcp_tool_call",
+            "id": str(item.get("id") or item.get("call_id") or ""),
+            "server": "agent_cli",
+            "tool": "execute_reviewed_read",
+            "status": "failed",
+            "metadata": {
+                "effect": EffectKind.READ_ONLY.value,
+                "capability": "agent_cli",
+                "operation": "",
+                "reviewed_server": "agent_cli",
+                "reviewed_tool": "execute_reviewed_read",
+                "operation_digest": "",
+                "target_identifiers": {},
+                "arguments_digest": _json_digest({"argv": argv}),
+                "failure_code": failure_code,
+            },
+        },
+    }
 
 
 def _matching_effect_metadata(

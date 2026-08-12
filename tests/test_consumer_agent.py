@@ -97,18 +97,63 @@ def test_consumer_records_agent_cli_tool_error_instead_of_missing_receipt(
                     },
                 }
             ),
+            _result_jsonl(),
         )
     )
 
-    with pytest.raises(RuntimeError, match="agent_cli_command_unreviewed"):
-        ConsumerAgentRunner(
-            store=store,
-            workspace=Path("/workspace"),
-            executor=CapturingExecutor(stream),
-        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
-    assert json.loads(run.structured_error_json)["code"] == "agent_cli_command_unreviewed"
+    assert result.result.outcome == "no_action"
+    assert run.structured_error_json == ""
+    assert run.tool_events[-1]["item"]["metadata"]["failure_code"] == (
+        "agent_cli_command_unreviewed"
+    )
+
+
+def test_consumer_can_continue_after_rejected_read_command(store, task, context):
+    item = {
+        "type": "mcp_tool_call",
+        "id": "rejected-read",
+        "server": "agent_cli",
+        "tool": "execute_reviewed_read",
+        "arguments": {"argv": ["dws", "chat", "+messages-send-status"]},
+    }
+    tool_error = "Error executing tool execute_reviewed_read: agent_cli_command_invalid"
+    stream = "\n".join(
+        (
+            json.dumps({"type": "item.started", "item": item}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        **item,
+                        "status": "completed",
+                        "result": "Wall time: 0.01 seconds\nOutput:\n"
+                        + json.dumps([{"type": "text", "text": tool_error}]),
+                    },
+                }
+            ),
+            _result_jsonl(),
+        )
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.outcome == "no_action"
+    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    assert run.structured_error_json == ""
+    assert run.tool_events[-1]["item"]["metadata"]["failure_code"] == (
+        "agent_cli_command_invalid"
+    )
 
 
 class CapturingExecutor:
@@ -223,6 +268,7 @@ def test_consumer_instructions_require_dynamic_business_and_operation_skill_read
     assert "most specific applicable business Skill" in instructions
     assert "load the operation Skill named by that business Skill" in instructions
     assert "Do not ask the service to classify the domain" in instructions
+    assert "dws schema --cli-path" in instructions
 
 
 def _failed_reviewed_read_jsonl() -> str:

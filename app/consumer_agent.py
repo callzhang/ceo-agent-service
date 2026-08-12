@@ -38,6 +38,13 @@ lets the Agent use the principal's local CLI credential store and makes a
 reviewed local read command independently repeatable by Audit B. Unknown shell
 commands and every write command remain forbidden for Consumer Agent A.
 
+Before composing a DWS command that was not supplied as an exact read command,
+query its local runtime contract with `dws schema --cli-path "<product> <command>"
+--compact --format json` through `agent_cli.execute_reviewed_read`. Copy the
+returned command path and flags exactly; do not invent shortcut names or flag
+aliases. A rejected read has no external effect: inspect its error, then use the
+runtime contract or the installed skill to correct it in the same turn.
+
 For a downloaded local material file, call `agent_cli.execute_reviewed_read`
 with a direct read command. Python is valid for parsing a workbook or another
 format when it is not denied by the principal's local command policy. Do not
@@ -380,10 +387,11 @@ def audit_developer_instructions(role_instruction: str) -> str:
             "When exact candidate content comes from a local file, independently "
             "verify it with the same reviewed local read command before execution. "
             "Before using a DWS command, read the operation-specific installed "
-            "skill with agent_cli.read_skill. In a reconciliation turn, missing "
-            "command syntax is a read-only evidence task: load the skill, run the "
-            "minimal matching readback, and return its digest rather than failing "
-            "or escalating. "
+            "skill with agent_cli.read_skill and query its local runtime contract "
+            "with dws schema before composing the command. Copy the returned path "
+            "and flags exactly. In a reconciliation turn, missing command syntax "
+            "is a read-only evidence task: load the skill, run the minimal matching "
+            "readback, and return its digest rather than failing or escalating. "
             "Do not use exec_command or another native shell tool: Audit B actions "
             "must flow through the reviewed capability so they are checked and "
             "receipted. The turn-specific execution permission determines whether "
