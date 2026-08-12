@@ -11,6 +11,21 @@ def _store(tmp_path: Path) -> WorkbenchStore:
     return WorkbenchStore(tmp_path / "workbench.sqlite3")
 
 
+def _running_turn(tmp_path: Path) -> tuple[WorkbenchStore, str, str]:
+    store = _store(tmp_path)
+    task = store.create_task(title="Analyse sales", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id,
+        user_text="Compare regions",
+        client_request_id="request-1",
+    )
+    claimed = store.claim_next_turn(
+        owner="worker-1", lease_seconds=10, now="2026-08-13T00:00:00Z"
+    )
+    assert claimed is not None
+    return store, task.id, turn.id
+
+
 def test_create_task_and_idempotent_turn_request(tmp_path: Path):
     store = _store(tmp_path)
 
@@ -187,6 +202,93 @@ def test_running_transition_requires_claiming_a_lease(tmp_path: Path):
 
     with pytest.raises(ValueError, match="running turns must be claimed"):
         store.complete_turn(turn.id, status=TurnStatus.RUNNING)
+
+
+def test_running_turn_executor_mutations_require_an_owner(tmp_path: Path):
+    store, _, turn_id = _running_turn(tmp_path)
+
+    with pytest.raises(ValueError, match="owner must be non-empty"):
+        store.append_event(
+            turn_id,
+            sequence=1,
+            event_type="text_delta",
+            payload={"text": "North"},
+        )
+
+    store, _, turn_id = _running_turn(tmp_path / "confirmation")
+    with pytest.raises(ValueError, match="owner must be non-empty"):
+        store.create_confirmation(
+            turn_id,
+            action_kind="send_message",
+            target="sales@example.com",
+            summary="Send the regional comparison",
+            risk="external communication",
+            arguments_json={"channel": "email"},
+        )
+
+    store, _, turn_id = _running_turn(tmp_path / "complete")
+    with pytest.raises(ValueError, match="owner must be non-empty"):
+        store.complete_turn(turn_id, status=TurnStatus.COMPLETED)
+
+
+def test_running_turn_executor_mutations_reject_mismatched_and_expired_owners(
+    tmp_path: Path,
+):
+    store, _, turn_id = _running_turn(tmp_path)
+
+    with pytest.raises(ValueError, match="turn lease is stale"):
+        store.append_event(
+            turn_id,
+            sequence=1,
+            event_type="text_delta",
+            payload={"text": "North"},
+            owner="worker-2",
+            now="2026-08-13T00:00:01Z",
+        )
+    with pytest.raises(ValueError, match="turn lease is stale"):
+        store.create_confirmation(
+            turn_id,
+            action_kind="send_message",
+            target="sales@example.com",
+            summary="Send the regional comparison",
+            risk="external communication",
+            arguments_json={"channel": "email"},
+            owner="worker-1",
+            now="2026-08-13T00:00:11Z",
+        )
+    with pytest.raises(ValueError, match="turn lease is stale"):
+        store.complete_turn(
+            turn_id,
+            status=TurnStatus.COMPLETED,
+            owner="worker-1",
+            now="2026-08-13T00:00:11Z",
+        )
+
+
+def test_confirmation_list_redacts_arguments_and_executor_lookup_exposes_them(
+    tmp_path: Path,
+):
+    store, task_id, turn_id = _running_turn(tmp_path)
+    confirmation = store.create_confirmation(
+        turn_id,
+        action_kind="send_message",
+        target="sales@example.com",
+        summary="Send the regional comparison",
+        risk="external communication",
+        arguments_json={"channel": "email"},
+        owner="worker-1",
+        now="2026-08-13T00:00:01Z",
+    )
+
+    assert store.list_confirmations(task_id)[0].arguments_json == ""
+    with pytest.raises(TypeError):
+        store.list_confirmations(task_id, include_arguments=True)
+    assert store.get_confirmation_for_executor(
+        task_id, confirmation.id
+    ).arguments_json == '{"channel":"email"}'
+    assert store.decide_confirmation(
+        task_id, confirmation.id, decision="confirmed"
+    ).arguments_json == ""
 
 
 def test_attachment_filename_cannot_escape_generated_task_directory(tmp_path: Path):

@@ -392,8 +392,10 @@ class WorkbenchStore(AutoReplyStore):
         with self._connect() as db:
             db.execute("begin immediate")
             row = self._require_turn(db, turn_id)
-            if owner:
-                self._require_lease(db, turn_id, owner=owner, now_text=now_text)
+            if TurnStatus(row["status"]) is TurnStatus.RUNNING:
+                self._require_executor_lease(
+                    db, turn_id, owner=owner, now_text=now_text
+                )
             if TurnStatus(row["status"]) not in _ACTIVE_TURN_STATUSES:
                 raise ValueError("cannot append an event to a terminal turn")
             try:
@@ -465,8 +467,9 @@ class WorkbenchStore(AutoReplyStore):
             turn = self._require_turn(db, turn_id)
             if TurnStatus(turn["status"]) is not TurnStatus.RUNNING:
                 raise ValueError("confirmation requires a running turn")
-            if owner:
-                self._require_lease(db, turn_id, owner=owner, now_text=now_text)
+            self._require_executor_lease(
+                db, turn_id, owner=owner, now_text=now_text
+            )
             confirmation_id = str(uuid4())
             db.execute(
                 """
@@ -485,7 +488,7 @@ class WorkbenchStore(AutoReplyStore):
                 clear_lease=True,
             )
             return self._confirmation_from_row(
-                self._require_confirmation(db, confirmation_id)
+                self._require_confirmation(db, confirmation_id), redact_arguments=True
             )
 
     def decide_confirmation(
@@ -539,12 +542,10 @@ class WorkbenchStore(AutoReplyStore):
                 now_text=now_text,
             )
             return self._confirmation_from_row(
-                self._require_confirmation(db, confirmation_id)
+                self._require_confirmation(db, confirmation_id), redact_arguments=True
             )
 
-    def list_confirmations(
-        self, task_id: str, *, include_arguments: bool = False
-    ) -> list[WorkbenchConfirmation]:
+    def list_confirmations(self, task_id: str) -> list[WorkbenchConfirmation]:
         with self._connect() as db:
             self._require_task(db, task_id)
             rows = db.execute(
@@ -558,9 +559,28 @@ class WorkbenchStore(AutoReplyStore):
                 (task_id,),
             ).fetchall()
             return [
-                self._confirmation_from_row(row, redact_arguments=not include_arguments)
+                self._confirmation_from_row(row, redact_arguments=True)
                 for row in rows
             ]
+
+    def get_confirmation_for_executor(
+        self, task_id: str, confirmation_id: str
+    ) -> WorkbenchConfirmation:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select confirmations.*, turns.task_id
+                from workbench_confirmations as confirmations
+                join workbench_turns as turns on turns.id=confirmations.turn_id
+                where confirmations.id=?
+                """,
+                (confirmation_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("workbench confirmation does not exist")
+            if row["task_id"] != task_id:
+                raise ValueError("confirmation does not belong to task")
+            return self._confirmation_from_row(row)
 
     def complete_turn(
         self,
@@ -586,8 +606,10 @@ class WorkbenchStore(AutoReplyStore):
             current = TurnStatus(row["status"])
             if target_status not in _TURN_TRANSITIONS[current]:
                 raise ValueError("invalid turn transition")
-            if current is TurnStatus.RUNNING and owner:
-                self._require_lease(db, turn_id, owner=owner, now_text=now_text)
+            if current is TurnStatus.RUNNING:
+                self._require_executor_lease(
+                    db, turn_id, owner=owner, now_text=now_text
+                )
             self._transition_turn(
                 db,
                 turn_id,
@@ -643,6 +665,20 @@ class WorkbenchStore(AutoReplyStore):
         if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
             raise ValueError("turn lease is stale")
         return row
+
+    @classmethod
+    def _require_executor_lease(
+        cls,
+        db: sqlite3.Connection,
+        turn_id: str,
+        *,
+        owner: str,
+        now_text: str,
+    ) -> sqlite3.Row:
+        owner = owner.strip()
+        if not owner:
+            raise ValueError("owner must be non-empty")
+        return cls._require_lease(db, turn_id, owner=owner, now_text=now_text)
 
     @staticmethod
     def _transition_turn(
