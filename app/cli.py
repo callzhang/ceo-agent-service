@@ -2382,7 +2382,10 @@ def run_task_maintenance_loop(
         run_step("process_okr_reviews", lambda: process_okr_reviews_command(settings))
         run_step(
             "resolve_recovered_errors",
-            store.resolve_errors_recovered_by_reply_attempts,
+            lambda: (
+                store.resolve_errors_recovered_by_reply_attempts()
+                + store.resolve_unattributed_errors_after_quiet_period()
+            ),
         )
         weekly_hour = int(
             os.getenv("CEO_WEEKLY_OKR_REPORT_HOUR", str(DEFAULT_SCHEDULE_HOUR))
@@ -2715,7 +2718,11 @@ def _recover_processing_work_summary_inputs_on_service_start(
 
 
 def _resolve_recovered_errors_on_service_start(settings: WorkerSettings) -> int:
-    return AutoReplyStore(settings.db_path).resolve_errors_recovered_by_reply_attempts()
+    store = AutoReplyStore(settings.db_path)
+    return (
+        store.resolve_errors_recovered_by_reply_attempts()
+        + store.resolve_unattributed_errors_after_quiet_period()
+    )
 
 
 def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> int:

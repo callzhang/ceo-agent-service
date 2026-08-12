@@ -5796,6 +5796,36 @@ def test_resolve_errors_recovered_by_reply_attempts_keeps_unrelated_errors_open(
     assert error.resolved_at == ""
 
 
+def test_resolve_unattributed_errors_after_quiet_period_keeps_history(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("", "", "producer_loop_error", "temporary DWS outage")
+    with store._connect() as db:
+        db.execute(
+            "update errors set created_at='2026-08-12 00:00:00' where kind='producer_loop_error'"
+        )
+
+    resolved = store.resolve_unattributed_errors_after_quiet_period(
+        now=datetime.fromisoformat("2026-08-12T05:00:00+00:00")
+    )
+
+    assert resolved == 1
+    [error] = store.list_errors()
+    assert error.resolved_at
+    assert "healthy observation window" in error.resolution
+
+
+def test_resolve_unattributed_errors_after_quiet_period_keeps_trigger_error_open(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("cid-1", "msg-1", "send", "delivery not confirmed")
+    with store._connect() as db:
+        db.execute("update errors set created_at='2026-08-12 00:00:00'")
+
+    assert store.resolve_unattributed_errors_after_quiet_period(
+        now=datetime.fromisoformat("2026-08-12T05:00:00+00:00")
+    ) == 0
+    assert store.list_errors()[0].resolved_at == ""
+
+
 def test_missing_service_state_returns_none(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

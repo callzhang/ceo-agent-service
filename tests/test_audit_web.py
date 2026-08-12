@@ -1171,6 +1171,37 @@ def test_history_chart_marks_failed_reply_recovered_after_task_completion(
     assert "💬 Failed" not in series_names
 
 
+def test_history_chart_marks_failed_attempt_recovered_by_later_attempt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    failed_id = store.record_reply_attempt(
+        conversation_id="cid-recovered-later-attempt",
+        conversation_title="Recovery",
+        trigger_message_id="msg-recovered-later-attempt",
+        trigger_sender="System",
+        trigger_text="Recover after a replacement attempt.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-recovered-later-attempt",
+        conversation_title="Recovery",
+        trigger_message_id="msg-recovered-later-attempt",
+        trigger_sender="System",
+        trigger_text="Recover after a replacement attempt.",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+
+    payload = audit_web_module._history_chart_payload(store)
+    series_names = {series["name"] for series in payload["series"]}
+
+    assert failed_id
+    assert "↻ Recovered" in series_names
+    assert "💬 Failed" not in series_names
+
+
 def test_history_chart_marks_failed_reply_processing_while_task_is_active(
     tmp_path: Path,
 ):
@@ -7494,6 +7525,59 @@ def test_render_log_list_marks_old_unresolved_error_historical(tmp_path: Path):
     assert "historical" in html
     assert '<span class="pill status-active">active</span>' not in html
     assert '<span class="pill status-skipped">historical</span>' in html
+
+
+def test_render_log_list_marks_old_failed_attempt_historical(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="历史群",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="历史读取失败",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set created_at='2026-01-01 00:00:00', updated_at='2026-01-01 00:00:00' where id=?",
+            (attempt_id,),
+        )
+
+    html = render_log_list(store)
+
+    assert '<span class="pill status-skipped">historical</span>' in html
+    assert '<span class="pill status-failed">failed</span>' not in html
+
+
+def test_render_log_list_marks_superseded_failed_attempt_recovered(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    failed_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="恢复群",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="先失败后恢复",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="恢复群",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="先失败后恢复",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+
+    html = render_log_list(store)
+
+    assert failed_id
+    assert '<span class="pill status-resolved">recovered by later attempt</span>' in html
 
 
 def test_logs_route_renders_logs_and_errors_route_remains_compatible(tmp_path: Path):

@@ -45,6 +45,7 @@ CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
 SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
+ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-08-12.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
@@ -14282,31 +14283,6 @@ class AutoReplyStore:
                 (conversation_id, message_id, kind, detail),
             )
 
-    def resolve_errors(
-        self,
-        error_ids: list[int] | tuple[int, ...],
-        *,
-        resolution: str,
-    ) -> int:
-        normalized_ids = tuple(dict.fromkeys(int(error_id) for error_id in error_ids))
-        if not normalized_ids:
-            return 0
-        if any(error_id <= 0 for error_id in normalized_ids):
-            raise ValueError("error ids must be positive")
-        if not resolution.strip():
-            raise ValueError("error resolution must be non-empty")
-        placeholders = ",".join("?" for _ in normalized_ids)
-        with self._connect() as db:
-            cursor = db.execute(
-                f"""
-                update errors
-                set resolved_at=current_timestamp, resolution=?
-                where id in ({placeholders}) and resolved_at=''
-                """,
-                (resolution.strip(), *normalized_ids),
-            )
-        return cursor.rowcount
-
     def list_errors(
         self, limit: int | None = None, offset: int = 0
     ) -> list[ReplyError]:
@@ -14388,6 +14364,45 @@ class AutoReplyStore:
                   )
                 """,
                 terminal_statuses,
+            )
+            return cursor.rowcount
+
+    def resolve_unattributed_errors_after_quiet_period(
+        self,
+        *,
+        now: datetime | None = None,
+        quiet_period_seconds: int = ERROR_RECOVERY_QUIET_PERIOD_SECONDS,
+    ) -> int:
+        """Close service incidents after a clean observation window.
+
+        These records have no trigger message identity, so a later reply cannot
+        prove recovery. They are retained, but another open error of the same
+        component within the observation window keeps them active.
+        """
+        if quiet_period_seconds <= 0:
+            raise ValueError("quiet period must be positive")
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        cutoff_text = (observed_at - timedelta(seconds=quiet_period_seconds)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors as incident
+                set resolved_at=current_timestamp,
+                    resolution='no recurrence during the four-hour healthy observation window'
+                where coalesce(incident.resolved_at, '')=''
+                  and trim(coalesce(incident.message_id, ''))=''
+                  and datetime(incident.created_at) < datetime(?)
+                  and not exists (
+                    select 1
+                    from errors newer
+                    where newer.kind=incident.kind
+                      and coalesce(newer.resolved_at, '')=''
+                      and datetime(newer.created_at) >= datetime(?)
+                  )
+                """,
+                (cutoff_text, cutoff_text),
             )
             return cursor.rowcount
 

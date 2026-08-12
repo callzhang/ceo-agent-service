@@ -629,6 +629,9 @@ TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/cs
 TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"
 DEFAULT_ERROR_LIST_LIMIT = 20
 ERROR_LOG_ACTIVE_WINDOW = timedelta(hours=4)
+RECOVERED_REPLY_ATTEMPT_STATUSES = frozenset(
+    {"calendar", "commented", "completed", "document", "reacted", "sent", "skipped"}
+)
 HISTORY_CHART_HOURS = 24
 DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
 DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS = 10.0
@@ -636,6 +639,7 @@ HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
     "💬 Skipped": "#a8a8aa",
     "↻ Recovered": "#00a889",
+    "◌ Historical": "#a8a8aa",
     "⏳ Provider recovery": "#c37d0d",
     "💬 Blocked": "#c37d0d",
     "💬 Processing": "#3772cf",
@@ -3510,6 +3514,7 @@ def _history_chart_payload(
     bucket_values: dict[str, list[int]] = {}
     label_indexes = {label: index for index, label in enumerate(labels)}
     task_cache: dict[tuple[str, str, str], object | None] = {}
+    latest_attempt_cache: dict[tuple[str, str], ReplyAttempt | None] = {}
     for attempt in attempts:
         created_at = _parse_utc_timestamp(attempt.created_at)
         if created_at is None:
@@ -3524,7 +3529,21 @@ def _history_chart_payload(
         if bucket_index is None:
             continue
         event_label = _history_event_label(attempt)
-        if attempt.send_status == "failed":
+        if attempt.send_status in {"failed", "blocked", "needs_human"}:
+            trigger_key = (attempt.conversation_id, attempt.trigger_message_id)
+            latest_attempt = latest_attempt_cache.get(trigger_key)
+            if trigger_key not in latest_attempt_cache:
+                latest_attempt = store.get_latest_reply_attempt_for_trigger(*trigger_key)
+                latest_attempt_cache[trigger_key] = latest_attempt
+            if (
+                latest_attempt is not None
+                and latest_attempt.id != attempt.id
+                and latest_attempt.send_status in RECOVERED_REPLY_ATTEMPT_STATUSES
+            ):
+                event_label = "↻ Recovered"
+            elif created_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW:
+                event_label = "◌ Historical"
+        if attempt.send_status == "failed" and event_label == "💬 Failed":
             task_key = (
                 attempt.channel,
                 attempt.conversation_id,
@@ -6902,11 +6921,28 @@ def _operation_log_field(label: str, value: str) -> str:
 
 
 def _operation_log_status(store: AutoReplyStore, log: OperationLog) -> str:
-    if log.source_table != "errors":
-        return log.status
-    if log.status != "active":
-        return log.status
     occurred_at = _parse_utc_timestamp(log.occurred_at)
+    if log.source_table == "reply_attempts":
+        if log.status in {"failed", "blocked", "needs_human"}:
+            latest = store.get_latest_reply_attempt_for_trigger(
+                log.conversation_id,
+                log.message_id,
+            )
+            if (
+                latest is not None
+                and latest.id != log.source_id
+                and latest.send_status in RECOVERED_REPLY_ATTEMPT_STATUSES
+            ):
+                return "recovered by later attempt"
+        if (
+            occurred_at is not None
+            and occurred_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW
+            and log.status in {"failed", "blocked", "needs_human"}
+        ):
+            return "historical"
+        return log.status
+    if log.source_table != "errors" or log.status != "active":
+        return log.status
     if (
         occurred_at is not None
         and occurred_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW
@@ -6925,7 +6961,7 @@ def _operation_log_status(store: AutoReplyStore, log: OperationLog) -> str:
 
 def _operation_status_class(status: str) -> str:
     normalized = status.strip().lower()
-    if normalized.startswith("resolved") or normalized in {"sent", "done", "completed"}:
+    if normalized.startswith(("resolved", "recovered")) or normalized in {"sent", "done", "completed"}:
         return "status-resolved"
     if normalized == "historical":
         return "status-skipped"
