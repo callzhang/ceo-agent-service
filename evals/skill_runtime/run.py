@@ -871,8 +871,16 @@ def run_live(
     cases: tuple[EvalCase, ...],
     fixtures: tuple[ProtocolFixture, ...] | None = None,
     *,
-    operation_skill_paths: tuple[Path, ...] = (),
+    operation_skill_paths_by_case: dict[str, tuple[Path, ...]] | None = None,
 ) -> tuple[CaseResult, ...]:
+    skill_paths_by_case = operation_skill_paths_by_case or {}
+    unknown_case_ids = set(skill_paths_by_case).difference(
+        case.case_id for case in cases
+    )
+    if unknown_case_ids:
+        raise EvalValidationError(
+            f"operation Skill binding references unknown cases: {sorted(unknown_case_ids)}"
+        )
     fixture_by_id = {
         fixture.case_id: fixture
         for fixture in (fixtures if fixtures is not None else load_fixtures())
@@ -888,7 +896,7 @@ def run_live(
                 _run_live_case(
                     case,
                     fixture,
-                    operation_skill_paths=operation_skill_paths,
+                    operation_skill_paths=skill_paths_by_case.get(case.case_id, ()),
                 )
             )
         except Exception as exc:
@@ -1097,6 +1105,18 @@ def _validated_operation_skill_paths(paths: tuple[Path, ...]) -> tuple[Path, ...
         names.add(path.parent.name)
         resolved.append(path)
     return tuple(resolved)
+
+
+def _parse_operation_skill_bindings(
+    values: list[str],
+) -> dict[str, tuple[Path, ...]]:
+    bindings: dict[str, list[Path]] = {}
+    for value in values:
+        case_id, separator, raw_path = value.partition("=")
+        if not separator or not _is_slug(case_id) or not raw_path:
+            raise EvalValidationError("operation Skill binding must use CASE_ID=PATH")
+        bindings.setdefault(case_id, []).append(Path(raw_path))
+    return {case_id: tuple(paths) for case_id, paths in bindings.items()}
 
 
 def _render_live_audit_prompt(
@@ -1366,19 +1386,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--operation-skill-path",
         action="append",
-        type=Path,
         default=[],
-        help="exact installed operation Skill path exposed to an opt-in live probe",
+        metavar="CASE_ID=PATH",
+        help="bind one exact installed operation Skill to one opt-in live case",
     )
     args = parser.parse_args(argv)
     try:
         cases = load_cases(args.cases)
         fixtures = load_fixtures(args.fixtures)
         if args.live:
+            operation_skill_paths_by_case = _parse_operation_skill_bindings(
+                args.operation_skill_path
+            )
             results = run_live(
                 cases,
                 fixtures,
-                operation_skill_paths=tuple(args.operation_skill_path),
+                operation_skill_paths_by_case=operation_skill_paths_by_case,
             )
             report = SuiteReport("live", all(item.ok for item in results), results)
         else:

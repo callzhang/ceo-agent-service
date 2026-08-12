@@ -13,6 +13,7 @@ from evals.skill_runtime.run import (
     EvalCase,
     EvalValidationError,
     ProtocolEvent,
+    _parse_operation_skill_bindings,
     _render_live_audit_prompt,
     _run_live_case,
     _verified_live_skill_receipts,
@@ -21,6 +22,7 @@ from evals.skill_runtime.run import (
     load_cases,
     main,
     replay_fixture,
+    run_live,
     run_scripted,
 )
 from tests.support.native_codex_read_fixture import (
@@ -680,6 +682,52 @@ def test_calendar_live_probe_reads_business_and_explicit_operation_skill(
         "ceo-calendar-invite",
         "dingtalk-calendar",
     ]
+
+
+def test_multi_case_live_suite_binds_operation_skill_only_to_declared_case(
+    monkeypatch, tmp_path: Path
+):
+    all_cases = load_cases(CASES_PATH)
+    selected = (
+        next(case for case in all_cases if case.case_id.startswith("calendar-")),
+        next(case for case in all_cases if case.case_id.startswith("mail-")),
+        next(case for case in all_cases if case.case_id.startswith("document-")),
+    )
+    fixture_by_id = {
+        fixture.case_id: fixture for fixture in load_fixtures(FIXTURES_PATH)
+    }
+    operation_skill = tmp_path / "dingtalk-calendar" / "SKILL.md"
+    operation_skill.parent.mkdir(parents=True)
+    operation_skill.write_text("# DingTalk calendar\n", encoding="utf-8")
+    observed: dict[str, tuple[Path, ...]] = {}
+
+    def run_case(case, _fixture, *, operation_skill_paths):
+        observed[case.case_id] = operation_skill_paths
+        return replay_fixture(case, fixture_by_id[case.case_id])
+
+    monkeypatch.setattr("evals.skill_runtime.run._run_live_case", run_case)
+
+    results = run_live(
+        selected,
+        tuple(fixture_by_id[case.case_id] for case in selected),
+        operation_skill_paths_by_case={selected[0].case_id: (operation_skill,)},
+    )
+
+    assert all(result.ok for result in results)
+    assert observed[selected[0].case_id] == (operation_skill,)
+    assert observed[selected[1].case_id] == ()
+    assert observed[selected[2].case_id] == ()
+
+
+def test_operation_skill_cli_binding_parses_case_specific_paths(tmp_path: Path):
+    calendar_skill = tmp_path / "dingtalk-calendar" / "SKILL.md"
+
+    assert _parse_operation_skill_bindings(
+        [f"calendar-clear-context-accept={calendar_skill}"]
+    ) == {"calendar-clear-context-accept": (calendar_skill,)}
+
+    with pytest.raises(EvalValidationError, match="CASE_ID=PATH"):
+        _parse_operation_skill_bindings([str(calendar_skill)])
 
 
 def test_live_operation_skill_receipt_requires_exact_explicit_path(tmp_path: Path):
