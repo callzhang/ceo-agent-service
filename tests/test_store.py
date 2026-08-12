@@ -5901,6 +5901,43 @@ def test_resolve_unattributed_errors_after_quiet_period_keeps_trigger_error_open
     assert store.list_errors()[0].resolved_at == ""
 
 
+def test_resolve_inactive_trigger_errors_after_quiet_period_keeps_history(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("cid-1", "msg-1", "reply_task", "temporary failure")
+    with store._connect() as db:
+        db.execute("update errors set created_at='2026-08-12 00:00:00'")
+
+    resolved = store.resolve_inactive_trigger_errors_after_quiet_period(
+        now=datetime.fromisoformat("2026-08-12T05:00:00+00:00")
+    )
+
+    assert resolved == 1
+    [error] = store.list_errors()
+    assert error.resolved_at
+    assert "no active workflow" in error.resolution
+
+
+def test_resolve_inactive_trigger_errors_keeps_active_recovery_open(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Management",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-12 00:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please handle this.",
+    )
+    store.record_error("cid-1", "msg-1", "reply_task", "temporary failure")
+    with store._connect() as db:
+        db.execute("update errors set created_at='2026-08-12 00:00:00'")
+
+    assert store.resolve_inactive_trigger_errors_after_quiet_period(
+        now=datetime.fromisoformat("2026-08-12T05:00:00+00:00")
+    ) == 0
+    assert store.list_errors()[0].resolved_at == ""
+
+
 def test_missing_service_state_returns_none(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

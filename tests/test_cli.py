@@ -4996,6 +4996,9 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         resolve_unattributed_errors_after_quiet_period=lambda: (
             calls.append("resolve-service") or 0
         ),
+        resolve_inactive_trigger_errors_after_quiet_period=lambda: (
+            calls.append("resolve-inactive-trigger") or 0
+        ),
     )
     monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
     monkeypatch.setattr(
@@ -5046,6 +5049,7 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         "resolve-completed-task",
         "resolve-blocked",
         "resolve-service",
+        "resolve-inactive-trigger",
         "scan",
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",

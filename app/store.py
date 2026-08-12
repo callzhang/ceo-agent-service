@@ -14493,6 +14493,97 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def resolve_inactive_trigger_errors_after_quiet_period(
+        self,
+        *,
+        now: datetime | None = None,
+        quiet_period_seconds: int = ERROR_RECOVERY_QUIET_PERIOD_SECONDS,
+    ) -> int:
+        """Close historical trigger incidents once no recovery work remains.
+
+        This is incident convergence, not a delivery claim. A trigger error is
+        eligible only after the observation window has passed without a newer
+        error for that trigger, with no active task, unresolved latest attempt,
+        or linked agent run whose side effect is unknown.
+        """
+        if quiet_period_seconds <= 0:
+            raise ValueError("quiet period must be positive")
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        cutoff_text = (observed_at - timedelta(seconds=quiet_period_seconds)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        unresolved_attempt_statuses = (
+            "blocked",
+            "dry_run",
+            "failed",
+            "needs_human",
+            "pending",
+            "pending_reconciliation",
+            "processing",
+        )
+        task_statuses = ("failed", "pending", "processing")
+        attempt_placeholders = ",".join("?" for _ in unresolved_attempt_statuses)
+        task_placeholders = ",".join("?" for _ in task_statuses)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"""
+                update errors as incident
+                set resolved_at=current_timestamp,
+                    resolution='no active workflow during the four-hour healthy observation window'
+                where coalesce(incident.resolved_at, '')=''
+                  and trim(coalesce(incident.conversation_id, ''))<>''
+                  and trim(coalesce(incident.message_id, ''))<>''
+                  and datetime(incident.created_at) < datetime(?)
+                  and not exists (
+                    select 1
+                    from errors newer
+                    where newer.conversation_id=incident.conversation_id
+                      and newer.message_id=incident.message_id
+                      and coalesce(newer.resolved_at, '')=''
+                      and datetime(newer.created_at) >= datetime(?)
+                  )
+                  and not exists (
+                    select 1
+                    from reply_tasks task
+                    where task.conversation_id=incident.conversation_id
+                      and task.trigger_message_id=incident.message_id
+                      and lower(task.status) in ({task_placeholders})
+                  )
+                  and not exists (
+                    select 1
+                    from reply_attempts attempt
+                    where attempt.conversation_id=incident.conversation_id
+                      and attempt.trigger_message_id=incident.message_id
+                      and attempt.id=(
+                        select max(latest.id)
+                        from reply_attempts latest
+                        where latest.channel=attempt.channel
+                          and latest.conversation_id=attempt.conversation_id
+                          and latest.trigger_message_id=attempt.trigger_message_id
+                      )
+                      and lower(attempt.send_status) in ({attempt_placeholders})
+                  )
+                  and not exists (
+                    select 1
+                    from reply_tasks task
+                    join agent_runs run on run.reply_task_id=task.id
+                    where task.conversation_id=incident.conversation_id
+                      and task.trigger_message_id=incident.message_id
+                      and (
+                        lower(run.status)='unknown'
+                        or lower(run.side_effect_state)='unknown'
+                      )
+                  )
+                """,
+                (
+                    cutoff_text,
+                    cutoff_text,
+                    *task_statuses,
+                    *unresolved_attempt_statuses,
+                ),
+            )
+            return cursor.rowcount
+
     def count_sent_replies(self) -> int:
         with self._connect() as db:
             row = db.execute(
