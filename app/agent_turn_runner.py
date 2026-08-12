@@ -1009,8 +1009,15 @@ def _agent_cli_receipt(
             return None
         if encoded_size > 64 * 1024:
             return None
+        encoded = value.strip()
+        if not encoded.startswith(("{", "[")):
+            marker = "\nOutput:\n"
+            if marker not in encoded:
+                return None
+            _timing, encoded = encoded.rsplit(marker, 1)
+            encoded = encoded.strip()
         try:
-            decoded = json.loads(value)
+            decoded = json.loads(encoded)
         except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
             return None
         return _agent_cli_receipt(decoded, allow_error=allow_error)

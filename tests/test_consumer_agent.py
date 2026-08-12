@@ -31,6 +31,10 @@ def test_agent_cli_receipt_accepts_json_encoded_mcp_result() -> None:
     }
 
     assert _agent_cli_receipt(json.dumps({"structuredContent": receipt})) == receipt
+    wrapped = "Wall time: 0.01 seconds\nOutput:\n" + json.dumps(
+        {"structuredContent": receipt}
+    )
+    assert _agent_cli_receipt(wrapped) == receipt
 
 
 def test_consumer_records_specific_missing_agent_cli_receipt(
