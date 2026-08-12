@@ -4,9 +4,9 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from app.store import AutoReplyStore, _utc_store_time
+from app.store import SQLITE_BUSY_TIMEOUT_SECONDS, AutoReplyStore, _utc_store_time
 from app.workbench.models import (
     ConfirmationStatus,
     TurnStatus,
@@ -62,6 +62,15 @@ def _reject_json_constant(value: str) -> None:
 
 
 class WorkbenchStore(AutoReplyStore):
+    def __init__(
+        self,
+        path: Path,
+        *,
+        busy_timeout_seconds: int = SQLITE_BUSY_TIMEOUT_SECONDS,
+    ):
+        super().__init__(path, busy_timeout_seconds=busy_timeout_seconds)
+        self._reconcile_attachments()
+
     def create_task(self, *, title: str, runtime_kind: str) -> WorkbenchTask:
         title = title.strip()
         runtime_kind = runtime_kind.strip()
@@ -143,8 +152,14 @@ class WorkbenchStore(AutoReplyStore):
             raise ValueError("filename must be non-empty")
         if not media_type:
             raise ValueError("media_type must be non-empty")
+        task_id = self._canonical_uuid(task_id, field="task_id")
+        with self._connect() as db:
+            self._require_task(db, task_id)
         attachment_id = str(uuid4())
-        directory = self.path.parent / "workbench" / "attachments" / task_id
+        root = (self.path.parent / "workbench" / "attachments").resolve()
+        directory = (root / task_id).resolve()
+        if directory.parent != root:
+            raise ValueError("attachment directory must remain under the attachment root")
         directory.mkdir(parents=True, exist_ok=True)
         storage_path = directory / attachment_id
         temp_path = directory / f".{attachment_id}.{uuid4().hex}.tmp"
@@ -153,7 +168,8 @@ class WorkbenchStore(AutoReplyStore):
                 file.write(content)
                 file.flush()
                 os.fsync(file.fileno())
-            with self._connect() as db:
+            db = self._open_connection()
+            try:
                 db.execute("begin immediate")
                 self._require_task(db, task_id)
                 db.execute(
@@ -177,24 +193,25 @@ class WorkbenchStore(AutoReplyStore):
                 if row is None:
                     raise RuntimeError("attachment insert did not create a row")
                 attachment = self._attachment_from_row(row)
-            try:
                 os.replace(temp_path, storage_path)
-            except OSError:
-                with self._connect() as db:
-                    db.execute("begin immediate")
-                    if db.execute(
-                        """
-                        delete from workbench_attachments
-                        where id=? and storage_path=?
-                        """,
-                        (attachment_id, str(storage_path)),
-                    ).rowcount != 1:
-                        raise RuntimeError("attachment metadata cleanup failed")
+                with storage_path.open("rb") as file:
+                    os.fsync(file.fileno())
+                self._fsync_directory(directory)
+                self._commit_attachment_metadata(db)
+            except Exception:
+                if db.in_transaction:
+                    db.rollback()
                 raise
+            finally:
+                db.close()
             return attachment
         except Exception:
             try:
                 temp_path.unlink()
+            except FileNotFoundError:
+                pass
+            try:
+                storage_path.unlink()
             except FileNotFoundError:
                 pass
             raise
@@ -389,16 +406,34 @@ class WorkbenchStore(AutoReplyStore):
                 return self._turn_from_row(row)
             if TurnStatus.STOPPED not in _TURN_TRANSITIONS[status]:
                 raise ValueError("invalid turn transition")
-            if status is TurnStatus.RUNNING and owner:
-                self._require_lease(db, turn_id, owner=owner, now_text=now_text)
+            if status is TurnStatus.RUNNING:
+                if owner:
+                    self._require_lease(db, turn_id, owner=owner, now_text=now_text)
+                db.execute(
+                    """
+                    update workbench_turns
+                    set stop_requested=1, updated_at=?
+                    where id=? and status='running'
+                    """,
+                    (now_text, turn_id),
+                )
+                return self._turn_from_row(self._require_turn(db, turn_id))
+            self._append_control_event(
+                db,
+                turn_id,
+                event_type="turn_completed",
+                payload={"status": TurnStatus.STOPPED.value},
+            )
+            self._transition_turn(
+                db,
+                turn_id,
+                current=status,
+                target=TurnStatus.STOPPED,
+                now_text=now_text,
+                clear_lease=True,
+            )
             db.execute(
-                """
-                update workbench_turns
-                set status='stopped', stop_requested=1, lease_owner='',
-                    lease_expires_at='', completed_at=?, updated_at=?
-                where id=?
-                """,
-                (now_text, now_text, turn_id),
+                "update workbench_turns set stop_requested=1 where id=?", (turn_id,)
             )
             return self._turn_from_row(self._require_turn(db, turn_id))
 
@@ -523,6 +558,16 @@ class WorkbenchStore(AutoReplyStore):
                 """,
                 (confirmation_id, turn_id, *values, arguments_text),
             )
+            self._append_control_event(
+                db,
+                turn_id,
+                event_type="confirmation_required",
+                payload={
+                    "action_kind": values[0],
+                    "confirmation_id": confirmation_id,
+                    "target": values[1],
+                },
+            )
             self._transition_turn(
                 db,
                 turn_id,
@@ -580,6 +625,15 @@ class WorkbenchStore(AutoReplyStore):
                 where id=? and status='pending'
                 """,
                 (decision.value, now_text, confirmation_id),
+            )
+            self._append_control_event(
+                db,
+                row["turn_id"],
+                event_type="status_changed",
+                payload={
+                    "confirmation_id": confirmation_id,
+                    "status": TurnStatus.QUEUED.value,
+                },
             )
             self._transition_turn(
                 db,
@@ -649,6 +703,7 @@ class WorkbenchStore(AutoReplyStore):
         final_text: str = "",
         error_code: str = "",
         error_detail: str = "",
+        event_payload: dict[str, Any] | str | None = None,
         owner: str = "",
         now: str | datetime | None = None,
     ) -> WorkbenchTurn:
@@ -669,6 +724,28 @@ class WorkbenchStore(AutoReplyStore):
                 self._require_executor_lease(
                     db, turn_id, owner=owner, now_text=now_text
                 )
+            terminal = target_status in {
+                TurnStatus.COMPLETED,
+                TurnStatus.STOPPED,
+                TurnStatus.FAILED,
+            }
+            if event_payload is not None and not terminal:
+                raise ValueError("event_payload requires a terminal turn status")
+            if terminal:
+                self._append_control_event(
+                    db,
+                    turn_id,
+                    event_type=(
+                        "turn_failed"
+                        if target_status is TurnStatus.FAILED
+                        else "turn_completed"
+                    ),
+                    payload=(
+                        {"status": target_status.value}
+                        if event_payload is None
+                        else event_payload
+                    ),
+                )
             self._transition_turn(
                 db,
                 turn_id,
@@ -681,6 +758,110 @@ class WorkbenchStore(AutoReplyStore):
                 clear_lease=True,
             )
             return self._turn_from_row(self._require_turn(db, turn_id))
+
+    @staticmethod
+    def _canonical_uuid(value: str, *, field: str) -> str:
+        try:
+            return str(UUID(value))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError(f"{field} must be a UUID") from exc
+
+    @staticmethod
+    def _commit_attachment_metadata(db: sqlite3.Connection) -> None:
+        db.commit()
+
+    @staticmethod
+    def _fsync_directory(directory: Path) -> None:
+        descriptor = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def _reconcile_attachments(self) -> None:
+        """Keep only generated attachment files that have matching metadata rows."""
+        root = (self.path.parent / "workbench" / "attachments").resolve()
+        if not root.is_dir():
+            return
+        referenced_paths: set[Path] = set()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                "select id, task_id, storage_path from workbench_attachments"
+            ).fetchall()
+            for row in rows:
+                try:
+                    task_id = self._canonical_uuid(row["task_id"], field="task_id")
+                    attachment_id = self._canonical_uuid(row["id"], field="id")
+                except ValueError:
+                    db.execute("delete from workbench_attachments where id=?", (row["id"],))
+                    continue
+                expected_path = (root / task_id / attachment_id).resolve()
+                if (
+                    expected_path.parent != (root / task_id).resolve()
+                    or str(expected_path) != str(row["storage_path"])
+                    or not expected_path.is_file()
+                    or expected_path.is_symlink()
+                ):
+                    db.execute("delete from workbench_attachments where id=?", (row["id"],))
+                    continue
+                referenced_paths.add(expected_path)
+        for directory in root.iterdir():
+            if directory.is_symlink() or not directory.is_dir():
+                continue
+            try:
+                task_id = self._canonical_uuid(directory.name, field="task_id")
+            except ValueError:
+                continue
+            if task_id != directory.name:
+                continue
+            for path in directory.iterdir():
+                if path.is_symlink() or not path.is_file():
+                    continue
+                resolved_path = path.resolve()
+                if resolved_path.parent != directory.resolve():
+                    continue
+                if path.name.startswith(".") and path.name.endswith(".tmp"):
+                    path.unlink()
+                    continue
+                try:
+                    attachment_id = self._canonical_uuid(path.name, field="id")
+                except ValueError:
+                    continue
+                if attachment_id == path.name and resolved_path not in referenced_paths:
+                    path.unlink()
+
+    def _append_control_event(
+        self,
+        db: sqlite3.Connection,
+        turn_id: str,
+        *,
+        event_type: str,
+        payload: dict[str, Any] | str,
+    ) -> WorkbenchEvent:
+        payload_json = _json_object_text(payload, field="payload")
+        sequence = int(
+            db.execute(
+                """
+                select coalesce(max(sequence), 0) + 1
+                from workbench_events where turn_id=?
+                """,
+                (turn_id,),
+            ).fetchone()[0]
+        )
+        cursor = db.execute(
+            """
+            insert into workbench_events (turn_id, sequence, event_type, payload_json)
+            values (?, ?, ?, ?)
+            """,
+            (turn_id, sequence, event_type, payload_json),
+        )
+        row = db.execute(
+            "select * from workbench_events where id=?", (cursor.lastrowid,)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("control event insert did not create a row")
+        return self._event_from_row(row)
 
     @staticmethod
     def _require_task(db: sqlite3.Connection, task_id: str) -> sqlite3.Row:

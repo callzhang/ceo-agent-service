@@ -524,6 +524,179 @@ def test_attachment_db_failure_leaves_no_orphan_file(tmp_path: Path):
     assert list(directory.iterdir()) == []
 
 
+@pytest.mark.parametrize("task_id", ["../escaped", "not-a-task-id"])
+def test_attachment_rejects_untrusted_task_ids_before_filesystem_access(
+    tmp_path: Path, task_id: str
+):
+    store = _store(tmp_path)
+
+    with pytest.raises(ValueError):
+        store.save_attachment(
+            task_id,
+            filename="report.txt",
+            media_type="text/plain",
+            content=b"private",
+        )
+
+    assert not (tmp_path / "workbench").exists()
+
+
+def test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file(
+    tmp_path: Path, monkeypatch
+):
+    store = _store(tmp_path)
+    task = store.create_task(title="Analyse sales", runtime_kind="codex")
+    directory = tmp_path / "workbench" / "attachments" / task.id
+
+    def fail_commit(_db):
+        raise sqlite3.OperationalError("injected commit failure")
+
+    monkeypatch.setattr(
+        store, "_commit_attachment_metadata", fail_commit, raising=False
+    )
+    with pytest.raises(sqlite3.OperationalError, match="injected commit failure"):
+        store.save_attachment(
+            task.id,
+            filename="report.txt",
+            media_type="text/plain",
+            content=b"private",
+        )
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 0
+    assert list(directory.iterdir()) == []
+
+    monkeypatch.delattr(store, "_commit_attachment_metadata", raising=False)
+
+    def fail_replace(*_args):
+        raise OSError("injected replace failure")
+
+    monkeypatch.setattr("app.workbench.store.os.replace", fail_replace)
+    with pytest.raises(OSError, match="injected replace failure"):
+        store.save_attachment(
+            task.id,
+            filename="report.txt",
+            media_type="text/plain",
+            content=b"private",
+        )
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 0
+    assert list(directory.iterdir()) == []
+
+
+def test_attachment_reconciliation_removes_generated_orphans(tmp_path: Path):
+    store = _store(tmp_path)
+    task = store.create_task(title="Analyse sales", runtime_kind="codex")
+    directory = tmp_path / "workbench" / "attachments" / task.id
+    directory.mkdir(parents=True)
+    stale_temp = directory / ".stale.tmp"
+    stale_temp.write_bytes(b"temp")
+    orphan_id = "fdd6195c-07f1-4aa5-902f-39e0468be9da"
+    orphan_file = directory / orphan_id
+    orphan_file.write_bytes(b"orphan")
+    missing_id = "5ff5ff8c-9ef3-4190-8d32-f6a4a6cf1a11"
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """
+            insert into workbench_attachments (
+                id, task_id, filename, media_type, size_bytes, storage_path
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                missing_id,
+                task.id,
+                "missing.txt",
+                "text/plain",
+                0,
+                str(directory / missing_id),
+            ),
+        )
+
+    WorkbenchStore(store.path)
+
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 0
+    assert list(directory.iterdir()) == []
+
+
+def test_confirmation_creation_and_control_events_are_atomic(tmp_path: Path):
+    store, _, turn_id = _running_turn(tmp_path)
+    confirmation = store.create_confirmation(
+        turn_id,
+        action_kind="send_message",
+        target="sales@example.com",
+        summary="Send the regional comparison",
+        risk="external communication",
+        arguments_json={"channel": "email"},
+        owner="worker-1",
+        now="2026-08-13T00:00:01Z",
+    )
+
+    assert store.get_turn(turn_id).status is TurnStatus.WAITING_CONFIRMATION
+    events = [
+        (event.sequence, event.event_type, event.payload)
+        for event in store.events_after(turn_id)
+    ]
+    assert events == [
+        (
+            1,
+            "confirmation_required",
+            {
+                "action_kind": "send_message",
+                "confirmation_id": confirmation.id,
+                "target": "sales@example.com",
+            },
+        )
+    ]
+
+
+def test_stop_and_terminal_completion_append_atomic_control_events(tmp_path: Path):
+    store = _store(tmp_path)
+    task = store.create_task(title="Analyse sales", runtime_kind="codex")
+    queued = store.create_turn(
+        task.id, user_text="Compare regions", client_request_id="request-1"
+    )
+    stopped = store.request_stop(queued.id, now="2026-08-13T00:00:01Z")
+    assert stopped.status is TurnStatus.STOPPED
+    assert [event.event_type for event in store.events_after(queued.id)] == [
+        "turn_completed"
+    ]
+
+    running = store.create_turn(
+        task.id, user_text="Compare products", client_request_id="request-2"
+    )
+    store.claim_next_turn(owner="worker-1", now="2026-08-13T00:00:02Z")
+    stop_requested = store.request_stop(running.id, now="2026-08-13T00:00:03Z")
+    assert stop_requested.status is TurnStatus.RUNNING
+    assert stop_requested.stop_requested is True
+    assert store.events_after(running.id) == []
+    stopped = store.complete_turn(
+        running.id,
+        status=TurnStatus.STOPPED,
+        owner="worker-1",
+        now="2026-08-13T00:00:04Z",
+    )
+    assert stopped.status is TurnStatus.STOPPED
+    assert [event.event_type for event in store.events_after(running.id)] == [
+        "turn_completed"
+    ]
+
+    failing = store.create_turn(
+        task.id, user_text="Compare channels", client_request_id="request-3"
+    )
+    store.claim_next_turn(owner="worker-1", now="2026-08-13T00:00:05Z")
+    failed = store.complete_turn(
+        failing.id,
+        status=TurnStatus.FAILED,
+        error_code="provider_error",
+        owner="worker-1",
+        now="2026-08-13T00:00:06Z",
+    )
+    assert failed.status is TurnStatus.FAILED
+    assert [event.event_type for event in store.events_after(failing.id)] == [
+        "turn_failed"
+    ]
+
+
 def test_independent_store_instances_idempotently_create_one_turn(tmp_path: Path):
     first = _store(tmp_path)
     task = first.create_task(title="Analyse sales", runtime_kind="codex")
@@ -542,6 +715,74 @@ def test_independent_store_instances_idempotently_create_one_turn(tmp_path: Path
         created = list(executor.map(create, (first, second)))
 
     assert created[0] == created[1]
+
+
+def test_independent_stores_allow_one_active_turn_and_one_claim(tmp_path: Path):
+    first = _store(tmp_path)
+    task = first.create_task(title="Analyse sales", runtime_kind="codex")
+    second = _store(tmp_path)
+    barrier = threading.Barrier(2)
+
+    def create(store: WorkbenchStore, client_request_id: str):
+        try:
+            barrier.wait()
+            return "ok", store.create_turn(
+                task.id,
+                user_text="Compare regions",
+                client_request_id=client_request_id,
+            )
+        except ValueError as exc:
+            return "error", str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(create, (first, second), ("request-1", "request-2"))
+        )
+    assert [result[0] for result in results].count("ok") == 1
+    assert [result[0] for result in results].count("error") == 1
+
+    turn = next(result[1] for result in results if result[0] == "ok")
+    barrier = threading.Barrier(2)
+
+    def claim(store: WorkbenchStore, owner: str):
+        barrier.wait()
+        return store.claim_next_turn(owner=owner, now="2026-08-13T00:00:01Z")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        claimed = list(executor.map(claim, (first, second), ("worker-1", "worker-2")))
+    assert sum(item is not None for item in claimed) == 1
+    assert store_turn_id(claimed) == turn.id
+
+
+def store_turn_id(turns) -> str:
+    return next(turn.id for turn in turns if turn is not None)
+
+
+def test_independent_stores_allow_one_next_sequence_insert(tmp_path: Path):
+    first, _, turn_id = _running_turn(tmp_path)
+    second = WorkbenchStore(first.path)
+    barrier = threading.Barrier(2)
+
+    def append(store: WorkbenchStore):
+        try:
+            barrier.wait()
+            return "ok", store.append_event(
+                turn_id,
+                sequence=1,
+                event_type="text_delta",
+                payload={"text": "North"},
+                owner="worker-1",
+                now="2026-08-13T00:00:01Z",
+            )
+        except ValueError as exc:
+            return "error", str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(append, (first, second)))
+
+    assert [result[0] for result in results].count("ok") == 1
+    assert [result[0] for result in results].count("error") == 1
+    assert [event.sequence for event in first.events_after(turn_id)] == [1]
 
 
 def test_attachment_filename_cannot_escape_generated_task_directory(tmp_path: Path):
