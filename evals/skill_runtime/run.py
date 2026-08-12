@@ -13,6 +13,7 @@ import re
 import sys
 import tempfile
 from typing import Literal
+import unicodedata
 from urllib.parse import parse_qsl, urlsplit
 
 
@@ -92,28 +93,14 @@ _SIGNED_QUERY_KEYS = re.compile(
     r"^(?:token|signature|sign|expires|auth|key|api[_-]?key|access[_-]?token)$",
     re.IGNORECASE,
 )
-_SENSITIVE_STRUCTURED_KEYS = frozenset(
-    {
-        "userid",
-        "openid",
-        "unionid",
-        "sessionid",
-        "messageid",
-        "conversationid",
-        "taskid",
-        "attemptid",
-        "token",
-        "accesstoken",
-        "refreshtoken",
-        "authtoken",
-        "idtoken",
-        "signature",
-        "sign",
-        "auth",
-        "authkey",
-        "apikey",
-        "clientsecret",
-    }
+_ID_FIELD_STEMS = frozenset(
+    {"user", "open", "union", "session", "message", "conversation", "task", "attempt"}
+)
+_CREDENTIAL_FIELD_TOKENS = frozenset(
+    {"token", "signature", "sign", "signed", "signing", "auth", "secret"}
+)
+_KEY_CREDENTIAL_QUALIFIERS = frozenset(
+    {"api", "auth", "access", "client", "private", "public", "secret", "signature"}
 )
 _OPAQUE_VALUE_KEYS = frozenset(
     {"caseid", "assertionid", "scenariosha256", "sha256", "resultdigest"}
@@ -943,23 +930,30 @@ def _validate_structured_sanitized(
             f"sanitization failure at {path}:{line_number} ({field}): {issue}"
         )
 
-    def visit(item: object, location: tuple[str, ...], key: str = "") -> None:
+    def visit(
+        item: object,
+        location: tuple[str, ...],
+        key_tokens: tuple[str, ...] = (),
+    ) -> None:
         if isinstance(item, dict):
             for child_key, child in item.items():
-                normalized = _normalize_field_name(str(child_key))
+                tokens = _field_name_tokens(str(child_key))
                 child_location = (*location, str(child_key))
                 if (
-                    normalized in _SENSITIVE_STRUCTURED_KEYS
+                    _is_sensitive_structured_key(tokens)
                     and _has_nonempty_identifier(child)
                 ):
                     fail(f"prohibited identifier field {child_key!r}", child_location)
-                visit(child, child_location, normalized)
+                visit(child, child_location, tokens)
             return
         if isinstance(item, (list, tuple)):
             for index, child in enumerate(item):
-                visit(child, (*location, str(index)), key)
+                visit(child, (*location, str(index)), key_tokens)
             return
-        if not isinstance(item, str) or key in _OPAQUE_VALUE_KEYS:
+        if (
+            not isinstance(item, str)
+            or "".join(key_tokens) in _OPAQUE_VALUE_KEYS
+        ):
             return
         issue = _sanitization_issue(item)
         if issue:
@@ -971,8 +965,30 @@ def _validate_structured_sanitized(
     visit(value, ())
 
 
-def _normalize_field_name(value: str) -> str:
-    return "".join(char for char in value.casefold() if char.isalnum())
+def _field_name_tokens(value: str) -> tuple[str, ...]:
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", normalized)
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", normalized)
+    normalized = re.sub(r"[^A-Za-z0-9]+", " ", normalized)
+    return tuple(part.casefold() for part in normalized.split())
+
+
+def _is_sensitive_structured_key(tokens: tuple[str, ...]) -> bool:
+    if any(
+        left in _ID_FIELD_STEMS and right == "id"
+        for left, right in zip(tokens, tokens[1:])
+    ):
+        return True
+    if any(
+        tokens[index : index + 3] == ("process", "instance", "id")
+        for index in range(max(0, len(tokens) - 2))
+    ):
+        return True
+    if any(token in _CREDENTIAL_FIELD_TOKENS for token in tokens):
+        return True
+    return "key" in tokens and bool(
+        _KEY_CREDENTIAL_QUALIFIERS.intersection(tokens)
+    )
 
 
 def _has_nonempty_identifier(value: object) -> bool:
