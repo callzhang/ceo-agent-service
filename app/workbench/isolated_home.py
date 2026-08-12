@@ -14,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Iterator
+from typing import Callable, Iterator
 
 from app.codex_history import find_codex_session_path
 from app.leak_check import assert_no_credentials
@@ -30,7 +30,7 @@ _SAFE_ERROR = "Codex configuration could not be isolated safely"
 _SYNC_STATE_DIRECTORY = ".workbench-session-sync"
 _SYNC_LOCK_NAME = ".lock"
 _SYNC_JOURNAL_NAME = "journal.json"
-_SYNC_JOURNAL_VERSION = 1
+_SYNC_JOURNAL_VERSION = 2
 _MAX_SYNC_JOURNAL_BYTES = 1024 * 1024
 _MAX_SYNC_JOURNAL_ENTRIES = 4096
 _MAX_SYNC_FILE_BYTES = 256 * 1024 * 1024
@@ -495,6 +495,7 @@ class _SessionSyncPlan:
     destination_sessions: Path
     directories: tuple[Path, ...]
     directory_identities: dict[Path, tuple[int, int] | None]
+    initial_directory_identities: dict[Path, tuple[int, int] | None]
     files: tuple[_SessionSyncFile, ...]
 
 
@@ -641,6 +642,7 @@ def _build_session_sync_plan(
         destination_sessions=destination_sessions,
         directories=tuple(directories),
         directory_identities=destination_identities,
+        initial_directory_identities=dict(destination_identities),
         files=tuple(planned_files),
     )
 
@@ -719,8 +721,32 @@ def _execute_session_sync(
         for relative in plan.directories
         if plan.directory_identities[relative] is None
     )
+    preparing_payload = _session_journal_payload(
+        sync_state,
+        plan,
+        transaction_id=transaction_id,
+        phase="preparing",
+        created_directories=created_relatives,
+    )
+    _write_session_journal(sync_state, preparing_payload)
+
+    def persist_preparing_progress() -> None:
+        _write_session_journal(
+            sync_state,
+            _session_journal_payload(
+                sync_state,
+                plan,
+                transaction_id=transaction_id,
+                phase="preparing",
+                created_directories=created_relatives,
+            ),
+        )
+
     try:
-        _create_missing_session_directories(plan)
+        _create_missing_session_directories(
+            plan,
+            on_created=persist_preparing_progress,
+        )
         for entry in plan.files:
             parent_fd = _open_verified_directory(
                 entry.destination.parent,
@@ -743,6 +769,7 @@ def _execute_session_sync(
                     entry.stage_name,
                     expected=entry.stage_identity,
                 )
+                persist_preparing_progress()
             finally:
                 os.close(parent_fd)
 
@@ -765,6 +792,7 @@ def _execute_session_sync(
                 entry.backup_identity = _file_identity(
                     entry.destination.parent / entry.backup_name
                 )
+                persist_preparing_progress()
             finally:
                 os.close(parent_fd)
 
@@ -831,6 +859,16 @@ def _session_journal_payload(
         "created_directories": [
             relative.as_posix() for relative in created_directories
         ],
+        "directories": [
+            {
+                "relative": relative.as_posix(),
+                "existed": plan.initial_directory_identities[relative] is not None,
+                "initial_identity": _directory_identity_payload(
+                    plan.initial_directory_identities[relative]
+                ),
+            }
+            for relative in plan.directories
+        ],
         "entries": [
             {
                 "relative": entry.relative.as_posix(),
@@ -858,6 +896,14 @@ def _identity_payload(identity: _FileIdentity | None) -> dict[str, int] | None:
         "changed_ns": identity.changed_ns,
         "mode": identity.mode,
     }
+
+
+def _directory_identity_payload(
+    identity: tuple[int, int] | None,
+) -> dict[str, int] | None:
+    if identity is None:
+        return None
+    return {"device": identity[0], "inode": identity[1]}
 
 
 def _write_session_journal(
@@ -907,19 +953,53 @@ def _recover_session_journal(sync_state: _SessionSyncState) -> None:
     try:
         payload = _read_session_journal(sync_state)
     except FileNotFoundError:
-        _remove_orphan_sync_artifacts(sync_state.source_home / "sessions")
         return
     except _InvalidSessionJournal as exc:
         _quarantine_session_journal(sync_state)
         raise ValueError(_SAFE_ERROR) from exc
 
     try:
-        if payload["phase"] == "prepared":
+        _validate_journal_directory_tree(sync_state, payload)
+        if payload["phase"] == "preparing":
+            _recover_preparing_session_sync(sync_state, payload)
+        elif payload["phase"] == "prepared":
             _recover_prepared_session_sync(sync_state, payload)
         else:
             _cleanup_committed_session_sync(sync_state, payload)
     except BaseException as exc:
         raise ValueError(_SAFE_ERROR) from exc
+
+
+def _validate_journal_directory_tree(
+    sync_state: _SessionSyncState,
+    payload: dict[str, object],
+) -> None:
+    sessions = sync_state.source_home / "sessions"
+    directories = payload["directories"]
+    assert isinstance(directories, list)
+    for directory in directories:
+        assert isinstance(directory, dict)
+        destination = sessions / Path(directory["relative"])
+        try:
+            metadata = destination.lstat()
+        except FileNotFoundError:
+            if directory["existed"] or payload["phase"] != "preparing":
+                raise ValueError(_SAFE_ERROR)
+            continue
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+        ):
+            raise ValueError(_SAFE_ERROR)
+        initial_identity = directory["initial_identity"]
+        if initial_identity is not None and (
+            metadata.st_dev,
+            metadata.st_ino,
+        ) != initial_identity:
+            raise ValueError(_SAFE_ERROR)
+        if initial_identity is None and stat.S_IMODE(metadata.st_mode) != 0o700:
+            raise ValueError(_SAFE_ERROR)
 
 
 def _read_session_journal(sync_state: _SessionSyncState) -> dict[str, object]:
@@ -997,6 +1077,7 @@ def _validate_session_journal(
         "source_device",
         "source_inode",
         "created_directories",
+        "directories",
         "entries",
     }
     if not isinstance(payload, dict) or set(payload) != expected_keys:
@@ -1007,7 +1088,7 @@ def _validate_session_journal(
         or payload["version"] != _SYNC_JOURNAL_VERSION
         or not isinstance(transaction_id, str)
         or not _is_canonical_home_id(transaction_id)
-        or payload["phase"] not in {"prepared", "committed"}
+        or payload["phase"] not in {"preparing", "prepared", "committed"}
     ):
         raise _InvalidSessionJournal()
     source_metadata = sync_state.source_home.lstat()
@@ -1020,11 +1101,14 @@ def _validate_session_journal(
         raise _InvalidSessionJournal()
     entries = payload["entries"]
     created = payload["created_directories"]
+    directories = payload["directories"]
     if (
         not isinstance(entries, list)
         or len(entries) > _MAX_SYNC_JOURNAL_ENTRIES
         or not isinstance(created, list)
         or len(created) > _MAX_SYNC_JOURNAL_ENTRIES
+        or not isinstance(directories, list)
+        or len(directories) > _MAX_SYNC_JOURNAL_ENTRIES
     ):
         raise _InvalidSessionJournal()
     previous_key = ""
@@ -1055,13 +1139,25 @@ def _validate_session_journal(
         stage_digest = entry["stage_digest"]
         if (original is not None) != entry["existed"]:
             raise _InvalidSessionJournal()
+        preparing = payload["phase"] == "preparing"
         if (
             (backup is not None and stage is None)
-            or (payload["phase"] == "committed" and stage is None)
-            or (entry["existed"] and stage is not None and backup is None)
-            or stage is None
-            or not isinstance(stage_digest, str)
-            or not _SHA256_DIGEST.fullmatch(stage_digest)
+            or (stage is None) != (stage_digest is None)
+            or (not entry["existed"] and backup is not None)
+            or (
+                stage_digest is not None
+                and (
+                    not isinstance(stage_digest, str)
+                    or not _SHA256_DIGEST.fullmatch(stage_digest)
+                )
+            )
+            or (
+                not preparing
+                and (
+                    stage is None
+                    or (entry["existed"] and backup is None)
+                )
+            )
         ):
             raise _InvalidSessionJournal()
         expected_stage = f".workbench-sync-stage-{transaction_id}-{index:08d}"
@@ -1089,6 +1185,53 @@ def _validate_session_journal(
     )
     if validated_created != expected_created:
         raise _InvalidSessionJournal()
+    validated_directories: list[str] = []
+    absent_directories: list[str] = []
+    for directory in directories:
+        if not isinstance(directory, dict) or set(directory) != {
+            "relative",
+            "existed",
+            "initial_identity",
+        }:
+            raise _InvalidSessionJournal()
+        relative = _validated_journal_relative(
+            directory["relative"], allow_root=True
+        )
+        if type(directory["existed"]) is not bool:
+            raise _InvalidSessionJournal()
+        identity = _directory_identity_from_payload(directory["initial_identity"])
+        if (identity is not None) != directory["existed"]:
+            raise _InvalidSessionJournal()
+        directory["initial_identity"] = identity
+        validated_directories.append(relative)
+        if not directory["existed"]:
+            absent_directories.append(relative)
+    expected_directories = sorted(
+        validated_directories,
+        key=lambda value: (
+            len(PurePosixPath(value).parts),
+            value.casefold(),
+            value,
+        ),
+    )
+    if (
+        validated_directories != expected_directories
+        or len({value.casefold() for value in validated_directories})
+        != len(validated_directories)
+        or absent_directories != validated_created
+    ):
+        raise _InvalidSessionJournal()
+    directory_set = set(validated_directories)
+    for entry in entries:
+        assert isinstance(entry, dict)
+        parent = PurePosixPath(entry["relative"]).parent.as_posix()
+        if parent not in directory_set:
+            raise _InvalidSessionJournal()
+    for relative in validated_directories:
+        if relative == ".":
+            continue
+        if PurePosixPath(relative).parent.as_posix() not in directory_set:
+            raise _InvalidSessionJournal()
     return payload
 
 
@@ -1110,6 +1253,16 @@ def _identity_from_payload(payload: object) -> _FileIdentity | None:
         changed_ns=payload["changed_ns"],
         mode=payload["mode"],
     )
+
+
+def _directory_identity_from_payload(payload: object) -> tuple[int, int] | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict) or set(payload) != {"device", "inode"}:
+        raise _InvalidSessionJournal()
+    if any(type(payload[key]) is not int or payload[key] < 0 for key in payload):
+        raise _InvalidSessionJournal()
+    return payload["device"], payload["inode"]
 
 
 def _validated_journal_relative(value: object, *, allow_root: bool) -> str:
@@ -1137,6 +1290,52 @@ def _validated_journal_relative(value: object, *, allow_root: bool) -> str:
     ):
         raise _InvalidSessionJournal()
     return value
+
+
+def _recover_preparing_session_sync(
+    sync_state: _SessionSyncState,
+    payload: dict[str, object],
+) -> None:
+    sessions = sync_state.source_home / "sessions"
+    entries = payload["entries"]
+    assert isinstance(entries, list)
+    for entry in entries:
+        assert isinstance(entry, dict)
+        relative = Path(entry["relative"])
+        parent_fd = _open_recovery_parent(sessions, relative.parent)
+        if parent_fd is None:
+            continue
+        try:
+            _unlink_preparing_artifact(
+                parent_fd,
+                entry["stage_name"],
+                entry["stage_identity"],
+            )
+            _unlink_preparing_artifact(
+                parent_fd,
+                entry["backup_name"],
+                entry["backup_identity"],
+            )
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    _remove_journal_created_directories(sync_state, payload)
+    _remove_session_journal(sync_state)
+
+
+def _unlink_preparing_artifact(
+    parent_fd: int,
+    name: object,
+    expected_identity: object,
+) -> None:
+    if not isinstance(name, str) or not _SYNC_ARTIFACT.fullmatch(name):
+        raise ValueError(_SAFE_ERROR)
+    actual = _file_identity_at_or_missing(parent_fd, name)
+    if actual is None:
+        return
+    if expected_identity is not None and actual != expected_identity:
+        raise ValueError(_SAFE_ERROR)
+    os.unlink(name, dir_fd=parent_fd)
 
 
 def _recover_prepared_session_sync(
@@ -1319,6 +1518,7 @@ def _prevalidate_prepared_recovery(
             stat.S_ISLNK(metadata.st_mode)
             or not stat.S_ISDIR(metadata.st_mode)
             or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o700
         ):
             raise ValueError(_SAFE_ERROR)
     return external_writers
@@ -1414,6 +1614,7 @@ def _remove_journal_created_directories(
             stat.S_ISLNK(metadata.st_mode)
             or not stat.S_ISDIR(metadata.st_mode)
             or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o700
         ):
             raise ValueError(_SAFE_ERROR)
         try:
@@ -1579,52 +1780,11 @@ def _remove_orphan_journal_temps(sync_state: _SessionSyncState) -> None:
     os.fsync(sync_state.state_fd)
 
 
-def _remove_orphan_sync_artifacts(sessions: Path) -> None:
-    try:
-        metadata = sessions.lstat()
-    except FileNotFoundError:
-        return
-    if (
-        stat.S_ISLNK(metadata.st_mode)
-        or not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-    ):
-        raise ValueError(_SAFE_ERROR)
-    for directory, directory_names, file_names in os.walk(sessions, followlinks=False):
-        directory_path = Path(directory)
-        directory_metadata = directory_path.lstat()
-        if (
-            stat.S_ISLNK(directory_metadata.st_mode)
-            or not stat.S_ISDIR(directory_metadata.st_mode)
-            or directory_metadata.st_uid != os.getuid()
-        ):
-            raise ValueError(_SAFE_ERROR)
-        safe_directories: list[str] = []
-        for name in sorted(directory_names):
-            child_metadata = (directory_path / name).lstat()
-            if stat.S_ISLNK(child_metadata.st_mode):
-                continue
-            if (
-                not stat.S_ISDIR(child_metadata.st_mode)
-                or child_metadata.st_uid != os.getuid()
-            ):
-                raise ValueError(_SAFE_ERROR)
-            safe_directories.append(name)
-        directory_names[:] = safe_directories
-        for name in file_names:
-            if not _SYNC_ARTIFACT.fullmatch(name):
-                continue
-            parent_fd = os.open(
-                directory_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            )
-            try:
-                _unlink_owned_artifact(parent_fd, name)
-                os.fsync(parent_fd)
-            finally:
-                os.close(parent_fd)
-
-
-def _create_missing_session_directories(plan: _SessionSyncPlan) -> None:
+def _create_missing_session_directories(
+    plan: _SessionSyncPlan,
+    *,
+    on_created: Callable[[], None],
+) -> None:
     for relative in plan.directories:
         if plan.directory_identities[relative] is not None:
             _validate_directory_identity(
@@ -1645,6 +1805,7 @@ def _create_missing_session_directories(plan: _SessionSyncPlan) -> None:
         destination.chmod(0o700)
         identity = _directory_identity(destination)
         plan.directory_identities[relative] = identity
+        on_created()
 
 
 def _validate_sync_plan_before_commit(plan: _SessionSyncPlan) -> None:

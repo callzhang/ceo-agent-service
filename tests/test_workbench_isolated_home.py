@@ -97,6 +97,79 @@ def _start_crashing_sync(
     )
 
 
+def _start_preparation_crash(
+    source: Path,
+    root: Path,
+    checkpoint: Path,
+    *,
+    checkpoint_kind: str,
+) -> subprocess.Popen[bytes]:
+    script = "\n".join(
+        (
+            "import os, sys, time",
+            "from pathlib import Path",
+            "import app.workbench.isolated_home as module",
+            "source, root, checkpoint, session_id, kind = "
+            "Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4], sys.argv[5]",
+            "home = module.create_isolated_codex_home("
+            "source, '', root=root, provider_session_ref=session_id)",
+            "isolated = next((home.path / 'sessions').rglob('*' + session_id + '.jsonl'))",
+            "isolated.write_text('first after\\n', encoding='utf-8')",
+            "new_dir = home.path / 'sessions' / 'new-tree' / 'nested'",
+            "new_dir.mkdir(parents=True, mode=0o700)",
+            "(new_dir / 'new.jsonl').write_text('new\\n', encoding='utf-8')",
+            "def stop_here():",
+            "    checkpoint.write_text('ready', encoding='utf-8')",
+            "    while True: time.sleep(1)",
+            "if kind == 'after_intent':",
+            "    original = module._create_missing_session_directories",
+            "    def create_dirs(plan, **kwargs):",
+            "        stop_here()",
+            "    module._create_missing_session_directories = create_dirs",
+            "elif kind == 'first_dir':",
+            "    original = module.os.mkdir",
+            "    fired = [False]",
+            "    def mkdir(path, *args, **kwargs):",
+            "        result = original(path, *args, **kwargs)",
+            "        if not fired[0] and 'new-tree' in str(path):",
+            "            fired[0] = True",
+            "            stop_here()",
+            "        return result",
+            "    module.os.mkdir = mkdir",
+            "else:",
+            "    original = module._copy_validated_file_to_new",
+            "    fired = [False]",
+            "    def copy_file(source_path, expected, destination_fd, "
+            "destination_name, **kwargs):",
+            "        result = original(source_path, expected, destination_fd, "
+            "destination_name, **kwargs)",
+            "        wanted = ('.workbench-sync-stage-' if kind == 'first_stage' "
+            "else '.workbench-sync-backup-')",
+            "        if not fired[0] and str(destination_name).startswith(wanted):",
+            "            fired[0] = True",
+            "            stop_here()",
+            "        return result",
+            "    module._copy_validated_file_to_new = copy_file",
+            "home.cleanup()",
+        )
+    )
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(source),
+            str(root),
+            str(checkpoint),
+            "019ff6ad-c139-7411-9169-6220e8b39688",
+            checkpoint_kind,
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
 def _two_session_home(tmp_path: Path):
     source = _source_home(tmp_path)
     session_id = "019ff6ad-c139-7411-9169-6220e8b39688"
@@ -524,6 +597,70 @@ def test_prepared_journal_recovers_after_sigkill_then_allows_complete_sync(
             process.wait(timeout=5)
 
 
+@pytest.mark.parametrize(
+    "checkpoint_kind",
+    ["after_intent", "first_dir", "first_stage", "first_backup"],
+)
+def test_preparing_journal_recovers_crashes_before_commit_without_partial_state(
+    tmp_path: Path,
+    checkpoint_kind: str,
+):
+    source, initial_home, first, second = _two_session_home(tmp_path)
+    root = initial_home.root
+    initial_home.cleanup(sync_sessions=False)
+    checkpoint = tmp_path / f"{checkpoint_kind}.checkpoint"
+    process = _start_preparation_crash(
+        source,
+        root,
+        checkpoint,
+        checkpoint_kind=checkpoint_kind,
+    )
+    try:
+        _wait_for_path(checkpoint, process)
+        journal = source / ".workbench-session-sync" / "journal.json"
+        preparing = json.loads(journal.read_text(encoding="utf-8"))
+        assert preparing["phase"] == "preparing"
+        assert {entry["relative"] for entry in preparing["directories"]} >= {
+            ".",
+            "new-tree",
+            "new-tree/nested",
+        }
+        process.send_signal(signal.SIGKILL)
+        assert process.wait(timeout=5) < 0
+
+        with isolated_home_module._session_sync_lock(source, root):
+            pass
+
+        assert first.read_text(encoding="utf-8") == "first before\n"
+        assert second.read_text(encoding="utf-8") == "second before\n"
+        assert not (source / "sessions" / "new-tree").exists()
+        assert not journal.exists()
+        _assert_no_sync_artifacts(source / "sessions")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_no_journal_never_deletes_user_file_with_reserved_artifact_name(tmp_path: Path):
+    source = _source_home(tmp_path)
+    sessions = source / "sessions"
+    sessions.mkdir(mode=0o700)
+    reserved = sessions / f".workbench-sync-stage-{uuid.uuid4().hex}-00000000"
+    reserved.write_text("user-owned content\n", encoding="utf-8")
+    reserved.chmod(0o600)
+    root = tmp_path / "isolated-root"
+
+    with isolated_home_module._session_sync_lock(source, root):
+        pass
+
+    home = create_isolated_codex_home(source, "", root=root)
+    home.cleanup(sync_sessions=False)
+    reconcile_isolated_codex_homes(root=root)
+
+    assert reserved.read_text(encoding="utf-8") == "user-owned content\n"
+
+
 def test_committed_journal_after_sigkill_keeps_all_updates_and_only_cleans(
     tmp_path: Path,
 ):
@@ -697,12 +834,13 @@ def test_invalid_symlink_journal_is_quarantined_without_touching_outside(
 
     transaction_id = uuid.uuid4().hex
     invalid_target = {
-        "version": 1,
+        "version": 2,
         "transaction_id": transaction_id,
         "phase": "prepared",
         "source_device": source_metadata.st_dev,
         "source_inode": source_metadata.st_ino,
         "created_directories": [],
+        "directories": [],
         "entries": [
             {
                 "relative": "../../outside-journal",
@@ -710,6 +848,7 @@ def test_invalid_symlink_journal_is_quarantined_without_touching_outside(
                 "original_identity": None,
                 "backup_identity": None,
                 "stage_identity": None,
+                "stage_digest": None,
                 "backup_name": (
                     f".workbench-sync-backup-{transaction_id}-00000000"
                 ),
@@ -748,12 +887,15 @@ def test_invalid_journal_component_is_quarantined_once_without_filesystem_access
     source_metadata = source.stat()
     transaction_id = uuid.uuid4().hex
     payload = {
-        "version": 1,
+        "version": 2,
         "transaction_id": transaction_id,
         "phase": "prepared",
         "source_device": source_metadata.st_dev,
         "source_inode": source_metadata.st_ino,
-        "created_directories": [],
+        "created_directories": ["."],
+        "directories": [
+            {"relative": ".", "existed": False, "initial_identity": None}
+        ],
         "entries": [
             {
                 "relative": relative,
