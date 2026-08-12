@@ -2861,7 +2861,7 @@ def test_audit_two_starts_with_one_completion_remains_unknown(setup):
     assert run.side_effect_state == "unknown"
 
 
-def test_audit_rejects_different_operation_for_same_target_and_payload(setup):
+def test_audit_derives_native_operation_from_exact_argv(setup):
     store, task, audit_context, parent = setup
     action = audit_context.proposal.actions[0].model_copy(
         update={"operation": "oa approval comment"}
@@ -2880,9 +2880,30 @@ def test_audit_rejects_different_operation_for_same_target_and_payload(setup):
         parent_agent_run_id=parent.id,
     )
 
+    assert result.result.outcome.value == "executed"
+    assert len(executor.commands) == 1
+
+
+def test_audit_rejects_native_command_with_wrong_controlled_capability(setup):
+    store, task, audit_context, parent = setup
+    action = audit_context.proposal.actions[0].model_copy(
+        update={"capability": "agent_cli.lark-cli"}
+    )
+    proposal = audit_context.proposal.model_copy(update={"actions": (action,)})
+
+    executor = CapturingExecutor(_audit_jsonl("operation-1", session="session-b"))
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(
+        task,
+        replace(audit_context, proposal=proposal),
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+    )
+
     assert result.result.outcome.value == "revision_required"
-    assert result.result.feedback is not None
-    assert "operation label" in result.result.feedback.requested_revision
     assert executor.commands == []
 
 

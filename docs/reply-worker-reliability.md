@@ -361,10 +361,13 @@ They are never immediately reclaimed in a hot loop, and the delay does not
 authorize replaying an approval, message, or other external action.
 
 Audit validates the mechanical command contract before starting an execution.
-A DWS write without `--yes` is returned to Consumer A as a revision instead of
-being attempted. If an older persisted candidate reaches unknown-outcome recovery
-with that invalid command, the service rotates to a new Consumer generation; it
-does not ask the user to choose and does not replay the old command.
+For native DWS/Lark commands, the exact argv is authoritative: metadata derives
+the canonical command path and target from it, while Consumer's operation label
+is descriptive only. A DWS write without `--yes` is returned to Consumer A as a
+revision instead of being attempted. If an older persisted candidate reaches
+unknown-outcome recovery with that invalid command, the service rotates to a new
+Consumer generation; it does not ask the user to choose and does not replay the
+old command.
 
 Only the first Codex turn started for a Consumer or Audit invocation is part of
 that business run. Plugin stop hooks may open later turns for tasks such as

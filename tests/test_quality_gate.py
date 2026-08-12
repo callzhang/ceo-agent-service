@@ -412,6 +412,28 @@ def test_quality_check_command_writes_state_and_returns_nonzero_for_violation(tm
     assert quality_check_command(WorkerSettings(db_path=db_path), state_file=state_path) == 2
 
 
+def test_quality_required_channels_skips_inactive_optional_channel(tmp_path):
+    from app.cli import _quality_required_channels
+
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into reply_tasks (
+                channel, conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, status
+            ) values ('lark', 'lark-group', 'Lark', 0, 'msg-lark',
+                '2026-08-12 10:00:00', 'Derek', 'check', 'pending')"""
+        )
+
+    assert _quality_required_channels(store.path) == {"dingtalk", "lark"}
+
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where channel='lark'")
+
+    assert _quality_required_channels(store.path) == {"dingtalk"}
+
+
 def test_quality_gate_fails_when_a_live_channel_is_not_ready(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
 

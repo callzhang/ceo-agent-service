@@ -96,9 +96,11 @@ attempt 开始。Attention 中同一 reply trigger 只保留一条 `Reply task` 
 
 ## 外部依赖边界
 
-`quality-check` 默认附加当前 `default_channel_gates()` 的实时检查，即 DingTalk 和
-Lark。任一 gate 不是 `ready` 都作为 `channel:<name>/not_ready` violation。离线诊断
-可以显式使用 `--no-verify-channels`，但该结果不能作为线上健康证明。
+`quality-check` 默认检查 DingTalk，以及当前有 active task 或最近 72 小时 failed/blocked
+attempt 的可选通道。没有任何待处理或待恢复工作引用的 Lark 未配置状态仅保留在
+`channel-doctor`，不会把小时质量门禁标红；一旦 Lark 工作进入队列，Lark gate 立即成为
+`channel:<name>/not_ready` violation。离线诊断可以显式使用 `--no-verify-channels`，但该
+结果不能作为线上健康证明。
 
 微信目前由本地 reader/delivery 状态覆盖，并没有在此命令中执行独立的 token 刷新或
 发送 smoke test。Codex 也不在本命令中执行登录或写入 smoke test；其运行可用性由

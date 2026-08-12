@@ -1597,14 +1597,42 @@ def quality_check_command(
     if verify_channels:
         from app.channel_gate import default_channel_gates
 
+        required_channels = _quality_required_channels(settings.db_path)
         channel_states = {
             name: gate.check().state.value
             for name, gate in default_channel_gates().items()
+            if name in required_channels
         }
         report = add_channel_health(report, channel_states)
     write_hourly_quality_state(report, state_file)
     print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True), flush=True)
     return 0 if report.ok else 2
+
+
+def _quality_required_channels(db_path: Path) -> set[str]:
+    """Return channels whose readiness can block current recovery work.
+
+    DingTalk is the primary control plane and is always checked. Optional
+    channels are checked only while they have active work or a recent failed
+    attempt that needs recovery. Channel Doctor still exposes all integrations.
+    """
+    import sqlite3
+
+    channels = {"dingtalk"}
+    with sqlite3.connect(str(db_path)) as db:
+        rows = db.execute(
+            """
+            select distinct lower(channel) from reply_tasks
+            where lower(status) in ('pending', 'processing') and trim(channel) != ''
+            union
+            select distinct lower(channel) from reply_attempts
+            where lower(send_status) in ('failed', 'blocked')
+              and datetime(updated_at) >= datetime('now', '-72 hours')
+              and trim(channel) != ''
+            """
+        ).fetchall()
+    channels.update(str(row[0]) for row in rows if row[0])
+    return channels
 
 
 def _record_service_failure(
