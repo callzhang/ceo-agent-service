@@ -1,4 +1,5 @@
 import errno
+import fcntl
 import json
 import hashlib
 import sqlite3
@@ -41,6 +42,8 @@ CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
 CODEX_SESSION_LOCK_RETRY_ATTEMPTS = 3
 CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
+STORE_SCHEMA_VERSION_KEY = "store_schema_version"
+STORE_SCHEMA_VERSION = "2026-08-12.1"
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
 _INITIALIZED_STORE_PATHS: set[Path] = set()
@@ -650,9 +653,38 @@ class AutoReplyStore:
         with _INITIALIZE_LOCK:
             if path_key in _INITIALIZED_STORE_PATHS:
                 return
-            self._initialize()
-            self.backfill_oa_audit_metadata()
-            _INITIALIZED_STORE_PATHS.add(path_key)
+            with self._schema_initialize_lock():
+                if path_key in _INITIALIZED_STORE_PATHS:
+                    return
+                if self._schema_is_current():
+                    _INITIALIZED_STORE_PATHS.add(path_key)
+                    return
+                self._initialize()
+                self.backfill_oa_audit_metadata()
+                self.set_service_state(STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION)
+                _INITIALIZED_STORE_PATHS.add(path_key)
+
+    @contextmanager
+    def _schema_initialize_lock(self) -> Iterator[None]:
+        """Serialize schema work across the worker and audit-web processes."""
+        lock_path = self.path.with_name(f".{self.path.name}.initialize.lock")
+        with lock_path.open("a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _schema_is_current(self) -> bool:
+        try:
+            with self._connect() as db:
+                row = db.execute(
+                    "select value from service_state where key=?",
+                    (STORE_SCHEMA_VERSION_KEY,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None and str(row["value"] or "") == STORE_SCHEMA_VERSION
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

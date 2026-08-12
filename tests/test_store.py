@@ -178,6 +178,21 @@ def test_store_initializes_same_path_once_per_process(tmp_path: Path, monkeypatc
     assert calls == [db_path]
 
 
+def test_store_skips_schema_work_when_another_process_finished_it(
+    tmp_path: Path, monkeypatch
+):
+    db_path = tmp_path / "worker.sqlite3"
+    AutoReplyStore(db_path)
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    def unexpected_initialize(_self: AutoReplyStore) -> None:
+        raise AssertionError("schema work should not repeat after another process")
+
+    monkeypatch.setattr(AutoReplyStore, "_initialize", unexpected_initialize)
+
+    AutoReplyStore(db_path)
+
+
 def test_store_migrates_existing_follow_up_drafts_without_nonconstant_defaults(
     tmp_path: Path,
 ):
