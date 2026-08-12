@@ -1,6 +1,11 @@
 import fcntl
+import json
 import os
+import signal
 import stat
+import subprocess
+import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -20,6 +25,75 @@ def _assert_no_sync_artifacts(sessions: Path) -> None:
     assert not any(
         path.name.startswith(".workbench-sync-")
         for path in sessions.rglob("*")
+    )
+
+
+def _wait_for_path(path: Path, process: subprocess.Popen[bytes]) -> None:
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        if process.poll() is not None:
+            raise AssertionError(
+                f"sync subprocess exited before checkpoint: {process.returncode}"
+            )
+        time.sleep(0.02)
+    raise AssertionError("sync subprocess did not reach checkpoint")
+
+
+def _start_crashing_sync(
+    source: Path,
+    root: Path,
+    checkpoint: Path,
+    *,
+    checkpoint_kind: str,
+) -> subprocess.Popen[bytes]:
+    script = "\n".join(
+        (
+            "import os, sys, time",
+            "from pathlib import Path",
+            "import app.workbench.isolated_home as module",
+            "source, root, checkpoint, session_id, kind = "
+            "Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4], sys.argv[5]",
+            "home = module.create_isolated_codex_home("
+            "source, '', root=root, provider_session_ref=session_id)",
+            "isolated = next((home.path / 'sessions').rglob('*' + session_id + '.jsonl'))",
+            "isolated.write_text('first after\\n', encoding='utf-8')",
+            "(isolated.parent / 'second.jsonl').write_text('second after\\n', encoding='utf-8')",
+            "if kind == 'first_replace':",
+            "    real_replace = module.os.replace",
+            "    count = [0]",
+            "    def replace(source_name, destination_name, *args, **kwargs):",
+            "        result = real_replace(source_name, destination_name, *args, **kwargs)",
+            "        if str(source_name).startswith('.workbench-sync-stage-'):",
+            "            count[0] += 1",
+            "            if count[0] == 1:",
+            "                checkpoint.write_text('ready', encoding='utf-8')",
+            "                while True: time.sleep(1)",
+            "        return result",
+            "    module.os.replace = replace",
+            "else:",
+            "    def cleanup(*args, **kwargs):",
+            "        checkpoint.write_text('ready', encoding='utf-8')",
+            "        while True: time.sleep(1)",
+            "    module._cleanup_committed_session_sync = cleanup",
+            "home.cleanup()",
+        )
+    )
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(source),
+            str(root),
+            str(checkpoint),
+            "019ff6ad-c139-7411-9169-6220e8b39688",
+            checkpoint_kind,
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
 
 
@@ -389,6 +463,182 @@ def test_session_sync_detects_concurrent_destination_change_and_does_not_overwri
     assert first.read_bytes() == first_before
     assert second.read_text(encoding="utf-8") == "external concurrent change\n"
     _assert_no_sync_artifacts(source / "sessions")
+
+
+def test_prepared_journal_recovers_after_sigkill_then_allows_complete_sync(
+    tmp_path: Path,
+):
+    source, initial_home, first, second = _two_session_home(tmp_path)
+    root = initial_home.root
+    initial_home.cleanup(sync_sessions=False)
+    checkpoint = tmp_path / "first-replace.checkpoint"
+    process = _start_crashing_sync(
+        source,
+        root,
+        checkpoint,
+        checkpoint_kind="first_replace",
+    )
+    try:
+        _wait_for_path(checkpoint, process)
+        journal = source / ".workbench-session-sync" / "journal.json"
+        payload = journal.read_text(encoding="utf-8")
+        assert "first before" not in payload
+        assert "second before" not in payload
+        assert "first after" not in payload
+        assert "second after" not in payload
+        assert stat.S_IMODE(journal.stat().st_mode) == 0o600
+        assert stat.S_IMODE(journal.parent.stat().st_mode) == 0o700
+        process.send_signal(signal.SIGKILL)
+        assert process.wait(timeout=5) < 0
+
+        recovery_home = create_isolated_codex_home(
+            source,
+            "",
+            root=root,
+            provider_session_ref="019ff6ad-c139-7411-9169-6220e8b39688",
+        )
+        [isolated_first] = list(
+            (recovery_home.path / "sessions").rglob(
+                "*019ff6ad-c139-7411-9169-6220e8b39688.jsonl"
+            )
+        )
+        isolated_first.write_text("final first\n", encoding="utf-8")
+        (isolated_first.parent / second.name).write_text(
+            "final second\n", encoding="utf-8"
+        )
+        recovery_home.cleanup()
+
+        assert first.read_text(encoding="utf-8") == "final first\n"
+        assert second.read_text(encoding="utf-8") == "final second\n"
+        assert not journal.exists()
+        _assert_no_sync_artifacts(source / "sessions")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_committed_journal_after_sigkill_keeps_all_updates_and_only_cleans(
+    tmp_path: Path,
+):
+    source, initial_home, first, second = _two_session_home(tmp_path)
+    root = initial_home.root
+    initial_home.cleanup(sync_sessions=False)
+    checkpoint = tmp_path / "committed.checkpoint"
+    process = _start_crashing_sync(
+        source,
+        root,
+        checkpoint,
+        checkpoint_kind="committed",
+    )
+    try:
+        _wait_for_path(checkpoint, process)
+        journal = source / ".workbench-session-sync" / "journal.json"
+        assert json.loads(journal.read_text(encoding="utf-8"))["phase"] == "committed"
+        process.send_signal(signal.SIGKILL)
+        assert process.wait(timeout=5) < 0
+
+        with isolated_home_module._session_sync_lock(source, root):
+            pass
+
+        assert first.read_text(encoding="utf-8") == "first after\n"
+        assert second.read_text(encoding="utf-8") == "second after\n"
+        assert not journal.exists()
+        _assert_no_sync_artifacts(source / "sessions")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_invalid_symlink_journal_is_quarantined_without_touching_outside(
+    tmp_path: Path,
+):
+    source = _source_home(tmp_path)
+    root = tmp_path / "isolated-root"
+    home = create_isolated_codex_home(source, "", root=root)
+    home.cleanup(sync_sessions=False)
+    state = source / ".workbench-session-sync"
+    state.mkdir(mode=0o700)
+    state.chmod(0o700)
+    outside = tmp_path / "outside-journal"
+    outside.write_text("do not touch\n", encoding="utf-8")
+    (state / "journal.json").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        with isolated_home_module._session_sync_lock(source, root):
+            pass
+
+    assert outside.read_text(encoding="utf-8") == "do not touch\n"
+    assert not (state / "journal.json").exists()
+    assert any(path.name.startswith("journal.invalid-") for path in state.iterdir())
+
+    source_metadata = source.stat()
+    foreign_journal = state / "journal.json"
+    foreign_journal.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "transaction_id": uuid.uuid4().hex,
+                "phase": "prepared",
+                "source_device": source_metadata.st_dev,
+                "source_inode": source_metadata.st_ino + 1,
+                "created_directories": ["../../outside-journal"],
+                "entries": [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    foreign_journal.chmod(0o600)
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        with isolated_home_module._session_sync_lock(source, root):
+            pass
+
+    assert outside.read_text(encoding="utf-8") == "do not touch\n"
+    assert not foreign_journal.exists()
+    assert sum(
+        path.name.startswith("journal.invalid-") for path in state.iterdir()
+    ) == 2
+
+    transaction_id = uuid.uuid4().hex
+    invalid_target = {
+        "version": 1,
+        "transaction_id": transaction_id,
+        "phase": "prepared",
+        "source_device": source_metadata.st_dev,
+        "source_inode": source_metadata.st_ino,
+        "created_directories": [],
+        "entries": [
+            {
+                "relative": "../../outside-journal",
+                "existed": False,
+                "original_identity": None,
+                "backup_identity": None,
+                "stage_identity": None,
+                "backup_name": (
+                    f".workbench-sync-backup-{transaction_id}-00000000"
+                ),
+                "stage_name": f".workbench-sync-stage-{transaction_id}-00000000",
+            }
+        ],
+    }
+    foreign_journal.write_text(
+        json.dumps(invalid_target, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    foreign_journal.chmod(0o600)
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        with isolated_home_module._session_sync_lock(source, root):
+            pass
+
+    assert outside.read_text(encoding="utf-8") == "do not touch\n"
+    assert sum(
+        path.name.startswith("journal.invalid-") for path in state.iterdir()
+    ) == 3
 
 
 def test_all_isolated_state_files_are_distinct_and_mutations_do_not_touch_sources(

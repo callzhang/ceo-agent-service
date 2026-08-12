@@ -479,6 +479,69 @@ def test_runtime_reports_failure_and_rolls_back_all_sessions_when_sync_commit_fa
     assert second_source.read_text(encoding="utf-8") == "second original\n"
 
 
+def test_runtime_stays_completed_when_committed_journal_cleanup_is_deferred(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.workbench_confirmation]\n"
+        'url = "https://conflicting.example/mcp"\n',
+        encoding="utf-8",
+    )
+    source_session = write_resume_session(codex_home)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    real_unlink = isolated_home_module.os.unlink
+    failed_cleanup = False
+
+    def fail_first_backup_unlink(path, *args, **kwargs):
+        nonlocal failed_cleanup
+        if str(path).startswith(".workbench-sync-backup-") and not failed_cleanup:
+            failed_cleanup = True
+            raise OSError("injected committed cleanup failure")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(isolated_home_module.os, "unlink", fail_first_backup_unlink)
+
+    def executor(_command: list[str], **kwargs: object) -> ProcessRunResult:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        isolated_home = Path(env["CODEX_HOME"])
+        [isolated_session] = list(
+            (isolated_home / "sessions").rglob(f"*{SESSION_ID}.jsonl")
+        )
+        isolated_session.write_text("committed mutation\n", encoding="utf-8")
+        on_stdout_line = kwargs["on_stdout_line"]
+        assert callable(on_stdout_line)
+        for record in happy_records():
+            on_stdout_line(json.dumps(record))
+        return ProcessRunResult(returncode=0, stdout="", stderr="")
+
+    runtime = CodexRuntime(workspace=tmp_path, executor=executor)
+    result = runtime.wait(
+        runtime.start(
+            request(tmp_path, provider_session_ref=SESSION_ID),
+            on_event=lambda _event: None,
+        )
+    )
+
+    journal = codex_home / ".workbench-session-sync" / "journal.json"
+    assert result.status == "completed"
+    assert failed_cleanup
+    assert source_session.read_text(encoding="utf-8") == "committed mutation\n"
+    assert json.loads(journal.read_text(encoding="utf-8"))["phase"] == "committed"
+
+    monkeypatch.setattr(isolated_home_module.os, "unlink", real_unlink)
+    with isolated_home_module._session_sync_lock(codex_home, tmp_path):
+        pass
+
+    assert not journal.exists()
+    assert not any(
+        path.name.startswith(".workbench-sync-")
+        for path in (codex_home / "sessions").rglob("*")
+    )
+
+
 def test_runtime_stop_cleans_isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir(mode=0o700)
