@@ -158,3 +158,24 @@ def test_execute_reviewed_read_rejects_arbitrary_python(
                 argv, 0, "", ""
             ),
         )
+
+
+def test_execute_reviewed_write_preserves_provider_error_instead_of_read_failure(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+
+    receipt = agent_cli.execute_reviewed_write(
+        ["dws", "chat", "message", "send", "--user", "user-1", "--text", "hello", "--yes"],
+        process_runner=lambda argv, **_: subprocess.CompletedProcess(
+            argv, 1, '{"code":"1001","message":"provider rejected request"}', ""
+        ),
+    )
+
+    assert receipt["error"] == {
+        "channel": "dws",
+        "code": "1001",
+        "retryable": False,
+        "gate_state": "blocked",
+        "detail": '{"code": "1001"}',
+    }

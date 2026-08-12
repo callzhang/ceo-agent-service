@@ -1884,6 +1884,12 @@ class AutoReplyStore:
                     on work_updates(created_at, id)
                 """
             )
+            db.execute(
+                """
+                create index if not exists idx_work_summary_inputs_updated
+                    on work_summary_inputs(updated_at desc, id desc)
+                """
+            )
             org_user_profile_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
@@ -8970,6 +8976,105 @@ class AutoReplyStore:
                 ),
             )
 
+    def list_confirmed_audit_runs_missing_sent_reply(
+        self,
+        *,
+        limit: int = 50,
+    ) -> list[AgentRun]:
+        """Return completed DingTalk audits whose verified direct send lacks a ledger row."""
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select agent_runs.*
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                join agent_runs as consumer_runs
+                  on consumer_runs.id=agent_runs.parent_agent_run_id
+                where agent_runs.role='audit'
+                  and agent_runs.status='completed'
+                  and agent_runs.side_effect_state='confirmed'
+                  and reply_tasks.channel='dingtalk'
+                  and consumer_runs.role='consumer'
+                  and (
+                      instr(consumer_runs.final_result_json,
+                            '"operation":"chat +messages-send"') > 0
+                      or instr(consumer_runs.final_result_json,
+                               '"operation":"chat message send"') > 0
+                  )
+                  and (
+                      instr(consumer_runs.final_result_json,
+                            '"open_dingtalk_id"') > 0
+                      or instr(consumer_runs.final_result_json,
+                               '"user"') > 0
+                  )
+                  and not exists (
+                      select 1
+                      from sent_replies
+                      where sent_replies.conversation_id=reply_tasks.conversation_id
+                        and sent_replies.trigger_message_id=reply_tasks.trigger_message_id
+                  )
+                order by agent_runs.id asc
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [self._agent_run_from_row(row, db=db) for row in rows]
+
+    def record_confirmed_sent_reply_if_absent(
+        self,
+        *,
+        audit_run_id: int,
+        reply_text: str,
+        send_result_json: str,
+    ) -> bool:
+        """Atomically backfill a delivery ledger row after a verified audit readback.
+
+        The caller must derive the reply from the persisted Consumer and Audit
+        contracts.  This method never performs an external delivery.
+        """
+        if not reply_text.strip():
+            raise ValueError("reply_text must be non-empty")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                """
+                select reply_tasks.conversation_id, reply_tasks.trigger_message_id
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=?
+                  and agent_runs.role='audit'
+                  and agent_runs.status='completed'
+                  and agent_runs.side_effect_state='confirmed'
+                  and reply_tasks.channel='dingtalk'
+                """,
+                (audit_run_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            cursor = db.execute(
+                """
+                insert into sent_replies (
+                    conversation_id, trigger_message_id, reply_text, send_result_json
+                )
+                select ?, ?, ?, ?
+                where not exists (
+                    select 1 from sent_replies
+                    where conversation_id=? and trigger_message_id=?
+                )
+                """,
+                (
+                    row["conversation_id"],
+                    row["trigger_message_id"],
+                    reply_text,
+                    send_result_json,
+                    row["conversation_id"],
+                    row["trigger_message_id"],
+                ),
+            )
+            return cursor.rowcount == 1
+
     def has_sent_reply_for_trigger(
         self,
         conversation_id: str,
@@ -9915,19 +10020,24 @@ class AutoReplyStore:
         oa_action: str = "",
         oa_remark: str = "",
         oa_action_result_json: str = "",
+        sent_reply_text: str = "",
+        sent_reply_result_json: str = "",
     ) -> int:
         """Persist one orchestration result and its task transition atomically."""
         if task_status not in {"done", "failed", "pending", "unchanged"}:
             raise ValueError("invalid reply task terminal status")
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
+        if sent_reply_text and (task_status != "done" or send_status != "completed"):
+            raise ValueError("sent reply ledger requires completed task delivery")
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
                 """
                 select agent_runs.status as run_status,
                        agent_runs.execution_generation as run_generation,
-                       reply_tasks.execution_generation as task_generation
+                       reply_tasks.execution_generation as task_generation,
+                       reply_tasks.oa_url as task_oa_url
                 from agent_runs
                 join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.id=? and reply_tasks.id=?
@@ -9941,6 +10051,15 @@ class AutoReplyStore:
                 or row["run_status"] not in {"completed", "failed", "unknown"}
             ):
                 raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
+            persisted_oa_url = oa_url.strip() or str(row["task_oa_url"] or "").strip()
+            task_process_id, task_oa_task_id = self._oa_identifiers_from_url(
+                persisted_oa_url
+            )
+            persisted_process_id = oa_process_instance_id.strip() or task_process_id
+            persisted_task_id = oa_task_id.strip() or task_oa_task_id
+            persisted_oa_action = oa_action.strip() or (
+                "review" if persisted_process_id else ""
+            )
             cursor = db.execute(
                 """
                 insert into reply_attempts (
@@ -9967,10 +10086,10 @@ class AutoReplyStore:
                     codex_transcript_end_line,
                     audit_tool_events_json,
                     audit_summary,
-                    oa_process_instance_id,
-                    oa_task_id,
-                    oa_url,
-                    oa_action,
+                    persisted_process_id,
+                    persisted_task_id,
+                    persisted_oa_url,
+                    persisted_oa_action,
                     oa_remark,
                     oa_action_result_json,
                     send_status,
@@ -10005,6 +10124,27 @@ class AutoReplyStore:
                 )
                 if cursor.rowcount != 1:
                     raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            if sent_reply_text:
+                db.execute(
+                    """
+                    insert into sent_replies (
+                        conversation_id, trigger_message_id, reply_text, send_result_json
+                    )
+                    select ?, ?, ?, ?
+                    where not exists (
+                        select 1 from sent_replies
+                        where conversation_id=? and trigger_message_id=?
+                    )
+                    """,
+                    (
+                        conversation_id,
+                        trigger_message_id,
+                        sent_reply_text,
+                        sent_reply_result_json,
+                        conversation_id,
+                        trigger_message_id,
+                    ),
+                )
             return attempt_id
 
     def finalize_reply_task_without_run(
@@ -10035,7 +10175,7 @@ class AutoReplyStore:
             db.execute("begin immediate")
             task = db.execute(
                 """
-                select execution_generation, status
+                select execution_generation, status, oa_url
                 from reply_tasks
                 where id=?
                 """,
@@ -10047,13 +10187,18 @@ class AutoReplyStore:
                 or task["execution_generation"] != expected_execution_generation
             ):
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            persisted_oa_url = str(task["oa_url"] or "").strip()
+            process_instance_id, oa_task_id = self._oa_identifiers_from_url(
+                persisted_oa_url
+            )
             cursor = db.execute(
                 """
                 insert into reply_attempts (
                     conversation_id, conversation_title, trigger_message_id,
                     trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, audit_summary, send_status, send_error, channel
-                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?)
+                    codex_reason, audit_summary, oa_process_instance_id,
+                    oa_task_id, oa_url, oa_action, send_status, send_error, channel
+                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -10063,6 +10208,10 @@ class AutoReplyStore:
                     trigger_text,
                     codex_reason,
                     audit_summary,
+                    process_instance_id,
+                    oa_task_id,
+                    persisted_oa_url,
+                    "review" if process_instance_id else "",
                     send_status,
                     send_error,
                     channel,

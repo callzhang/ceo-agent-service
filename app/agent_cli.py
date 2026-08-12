@@ -23,7 +23,7 @@ from app.bounded_process import (
     ProcessOutputLimitError,
     run_bounded_process,
 )
-from app.channel_gate import classify_cli_read_failure
+from app.channel_gate import classify_cli_read_failure, classify_cli_write_failure
 from app.leak_check import is_sensitive_field_name
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -484,12 +484,17 @@ def _execute_reviewed(
         receipt["authorization_id"] = authorization["authorization_id"]
         receipt["action_index"] = authorization["action_index"]
     if process.returncode != 0:
-        failure = classify_cli_read_failure(command.cli, process)
+        failure = (
+            classify_cli_read_failure(command.cli, process)
+            if expected_effect is EffectKind.READ_ONLY
+            else classify_cli_write_failure(command.cli, process)
+        )
         receipt["error"] = {
             "channel": failure.channel,
             "code": failure.code,
             "retryable": failure.retryable,
             "gate_state": failure.gate_state.value,
+            "detail": failure.detail,
         }
     return receipt
 

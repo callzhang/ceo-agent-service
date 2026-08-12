@@ -14,7 +14,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from app.agent_context import AgentTaskContext
-from app.agent_contracts import AuditAgentResult
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import OrchestrationResult
 from app.agent_envelope import AgentEnvelope
 from app.agent_result import (
@@ -5080,6 +5080,315 @@ def test_orchestration_finalize_is_atomic_after_generation_switch(
     assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
 
 
+def test_confirmed_direct_reply_ledger_entry_requires_same_chat_readback(
+    tmp_path: Path,
+    monkeypatch,
+):
+    worker = make_worker(tmp_path, FakeDws([], {}), FakeCodex([]), monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-direct-ledger",
+        conversation_title="Direct",
+        single_chat=True,
+        trigger_message_id="msg-direct-ledger",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please reply",
+    )
+    [task] = worker.store.claim_reply_tasks(limit=1)
+    consumer_result = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "proposal",
+            "summary": "Reply directly.",
+            "proposal": {
+                "objective": "Reply",
+                "actions": [
+                    {
+                        "description": "Send reply",
+                        "capability": "agent_cli.dws",
+                        "operation": "chat +messages-send",
+                        "target": {"open_dingtalk_id": "user-1"},
+                        "payload": {
+                            "argv": [
+                                "dws", "chat", "+messages-send", "--as", "user",
+                                "--open-dingtalk-id", "user-1", "--text", "Done", "--yes",
+                            ],
+                        },
+                        "expected_verification": "Read the direct chat.",
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "A direct reply is appropriate.",
+            },
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    )
+    audit_result = AuditAgentResult.model_validate(
+        {
+            "outcome": "executed",
+            "summary": "Direct delivery readback verified.",
+            "proposal_revision": 0,
+            "side_effect_state": "confirmed",
+            "feedback": None,
+            "external_result": {
+                "operation_id": "direct-operation",
+                "verification_summary": "Direct delivery readback verified.",
+                "live_result_reference": {
+                    "conversation_id": task.conversation_id,
+                    "message_id": "live-message-1",
+                },
+            },
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    )
+
+    entry = worker._confirmed_direct_reply_ledger_entry(
+        task,
+        consumer_result,
+        audit_result,
+    )
+
+    assert entry is not None
+    assert entry[0] == "Done"
+    assert "live-message-1" in entry[1]
+    mismatched = audit_result.model_copy(
+        update={
+            "external_result": audit_result.external_result.model_copy(
+                update={
+                    "live_result_reference": {
+                        "conversation_id": "other-chat",
+                        "message_id": "live-message-1",
+                    },
+                }
+            )
+        }
+    )
+    assert worker._confirmed_direct_reply_ledger_entry(
+        task,
+        consumer_result,
+        mismatched,
+    ) is None
+
+
+def test_backfill_confirmed_direct_reply_ledger_without_external_delivery(
+    tmp_path: Path,
+    monkeypatch,
+):
+    worker = make_worker(tmp_path, FakeDws([], {}), FakeCodex([]), monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-historical-direct",
+        conversation_title="Direct",
+        single_chat=True,
+        trigger_message_id="msg-historical-direct",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please reply",
+    )
+    [task] = worker.store.claim_reply_tasks(limit=1)
+    consumer = worker.store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    worker.store.complete_agent_run(
+        consumer.id,
+        {
+            "outcome": "proposal",
+            "summary": "Reply directly.",
+            "proposal": {
+                "objective": "Reply",
+                "actions": [
+                    {
+                        "description": "Send reply",
+                        "capability": "agent_cli.dws",
+                        "operation": "chat +messages-send",
+                        "target": {"open_dingtalk_id": "user-1"},
+                        "payload": {
+                            "argv": [
+                                "dws", "chat", "+messages-send", "--as", "user",
+                                "--open-dingtalk-id", "user-1", "--text", "Done", "--yes",
+                            ],
+                        },
+                        "expected_verification": "Read the direct chat.",
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "A direct reply is appropriate.",
+            },
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        },
+        owner="consumer",
+    )
+    audit = worker.store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="direct-operation",
+        owner="audit",
+    ).run
+    worker.store.complete_agent_run(
+        audit.id,
+        {
+            "outcome": "executed",
+            "summary": "Direct delivery readback verified.",
+            "proposal_revision": 0,
+            "side_effect_state": "confirmed",
+            "feedback": None,
+            "external_result": {
+                "operation_id": "direct-operation",
+                "verification_summary": "Direct delivery readback verified.",
+                "live_result_reference": {
+                    "conversation_id": task.conversation_id,
+                    "message_id": "live-message-1",
+                },
+            },
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        },
+        owner="audit",
+        side_effect_state="confirmed",
+    )
+
+    assert worker._backfill_confirmed_direct_reply_ledgers(limit=10) == 1
+    sent = worker.store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+
+    assert sent is not None
+    assert sent.reply_text == "Done"
+    assert worker._backfill_confirmed_direct_reply_ledgers(limit=10) == 0
+
+
+def test_backfill_scans_past_non_direct_confirmed_audits(
+    tmp_path: Path,
+    monkeypatch,
+):
+    worker = make_worker(tmp_path, FakeDws([], {}), FakeCodex([]), monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-non-direct",
+        conversation_title="Group",
+        single_chat=False,
+        trigger_message_id="msg-non-direct",
+        trigger_create_time="2026-08-12 09:00:00",
+        trigger_sender="Derek",
+        trigger_text="Post update",
+    )
+    [non_direct_task] = worker.store.claim_reply_tasks(limit=1)
+    non_direct_audit = _claim_audit_run(
+        worker.store,
+        non_direct_task.id,
+        non_direct_task.execution_generation,
+        owner="audit",
+    ).run
+    worker.store.complete_agent_run(
+        non_direct_audit.id,
+        {"outcome": "executed", "summary": "Group readback verified."},
+        owner="audit",
+        side_effect_state="confirmed",
+    )
+
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-direct-after-group",
+        conversation_title="Direct",
+        single_chat=True,
+        trigger_message_id="msg-direct-after-group",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please reply",
+    )
+    [direct_task] = worker.store.claim_reply_tasks(limit=1)
+    consumer = worker.store.claim_agent_run(
+        direct_task.id,
+        direct_task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    worker.store.complete_agent_run(
+        consumer.id,
+        {
+            "outcome": "proposal", "summary": "Reply directly.",
+            "proposal": {
+                "objective": "Reply",
+                "actions": [{
+                    "description": "Send reply", "capability": "agent_cli.dws",
+                    "operation": "chat +messages-send",
+                    "target": {"open_dingtalk_id": "user-1"},
+                    "payload": {"argv": [
+                        "dws", "chat", "+messages-send", "--as", "user",
+                        "--open-dingtalk-id", "user-1", "--text", "Done", "--yes",
+                    ]},
+                    "expected_verification": "Read the direct chat.",
+                }],
+                "sourced_facts": [], "authored_judgment": "Reply directly.",
+            },
+            "decision_options": [],
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+        },
+        owner="consumer",
+    )
+    audit = worker.store.claim_agent_run(
+        direct_task.id,
+        direct_task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="direct-operation",
+        owner="audit",
+    ).run
+    worker.store.complete_agent_run(
+        audit.id,
+        {
+            "outcome": "executed", "summary": "Direct readback verified.",
+            "proposal_revision": 0, "side_effect_state": "confirmed",
+            "feedback": None,
+            "external_result": {
+                "operation_id": "direct-operation",
+                "verification_summary": "Direct readback verified.",
+                "live_result_reference": {
+                    "conversation_id": direct_task.conversation_id,
+                    "message_id": "live-message-1",
+                },
+            },
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+        },
+        owner="audit",
+        side_effect_state="confirmed",
+    )
+
+    assert worker._backfill_confirmed_direct_reply_ledgers(limit=1) == 1
+    assert worker.store.get_sent_reply(
+        direct_task.conversation_id,
+        direct_task.trigger_message_id,
+    ) is not None
+
+
 def test_consume_once_retries_execution_generation_mismatch(
     tmp_path: Path, monkeypatch
 ):
@@ -8358,6 +8667,61 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     assert latest is not None
     assert latest.action == "agent_run"
     assert latest.send_status == "skipped"
+
+
+def test_recovered_oa_attempt_inherits_identity_and_hides_old_failure(
+    tmp_path: Path, monkeypatch
+):
+    oa_url = "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    trigger = message(
+        f"[Ding]吴柯欣提醒您审批录用申请 {oa_url}",
+        single_chat=True,
+    )
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        dry_run=False,
+    )
+    failed_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="吴柯欣",
+        trigger_text=trigger.content,
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        codex_reason="Resource deadlock avoided",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_url=oa_url,
+        oa_action="review",
+        send_status="failed",
+    )
+
+    script_no_action(worker)
+    worker.rerun_message(
+        conversation(single_chat=True),
+        "msg-1",
+        force_new_decision=True,
+        oa_url=oa_url,
+    )
+
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.id != failed_id
+    assert latest.send_status == "skipped"
+    assert latest.oa_process_instance_id == "proc-1"
+    assert latest.oa_task_id == "task-1"
+    assert latest.oa_action == "review"
+    assert worker.store.list_history_items(
+        send_statuses=("failed",), object_types=("approval",)
+    ) == []
+    recovered = worker.store.list_history_items(
+        send_statuses=("skipped",), object_types=("approval",)
+    )
+    assert [item.source_id for item in recovered] == [latest.id]
 
 
 def test_single_chat_oa_follow_up_reuses_recent_review_target(

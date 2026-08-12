@@ -65,6 +65,7 @@ class CliReadFailure:
     code: str
     retryable: bool
     gate_state: ChannelGateState
+    detail: str = ""
 
 
 class ChannelGate(Protocol):
@@ -718,6 +719,60 @@ def classify_cli_read_failure(
         code=code,
         retryable=retryable,
         gate_state=state,
+        detail=_safe_detail(completed.stdout, completed.stderr),
+    )
+
+
+def classify_cli_write_failure(
+    channel: str,
+    completed: subprocess.CompletedProcess[str],
+) -> CliReadFailure:
+    """Classify a reviewed write without relabeling it as a read failure.
+
+    A failed write is not safe to replay merely because the transport returned
+    structured JSON.  Preserve the provider code and let the Audit Agent's
+    mandated readback decide whether the effect is absent or already present.
+    """
+    payloads = _json_objects(completed.stdout, completed.stderr)
+    detail = _safe_detail(completed.stdout, completed.stderr)
+    if not payloads:
+        return CliReadFailure(
+            channel=channel,
+            code=f"{channel}_write_malformed",
+            retryable=True,
+            gate_state=ChannelGateState.UNAVAILABLE,
+            detail=detail,
+        )
+    errors = tuple(_structured_error(payload) for payload in payloads)
+    classified = _classify_structured_failure(
+        channel=channel,
+        phase="write",
+        completed=completed,
+        payloads=payloads,
+        commands=[],
+    )
+    raw_code = next((code for _, _, code in errors if code), "")
+    code = raw_code or (
+        classified.reason_code if classified is not None else f"{channel}_write_failed"
+    )
+    error_types = {error_type for error_type, _, _ in errors}
+    retryable = bool(
+        error_types & {"network", "provider", "timeout", "unavailable"}
+        or (channel == "dws" and raw_code in DwsClient.RETRYABLE_ERROR_CODES)
+    )
+    state = classified.state if classified is not None else ChannelGateState.BLOCKED
+    if channel == "dws" and raw_code in DwsError.LOGIN_ERROR_CODES:
+        state = ChannelGateState.NEEDS_LOGIN
+    elif channel == "dws" and raw_code in DwsError.AUTHORIZATION_ERROR_CODES:
+        state = ChannelGateState.BLOCKED
+    elif not retryable:
+        state = ChannelGateState.BLOCKED
+    return CliReadFailure(
+        channel=channel,
+        code=code,
+        retryable=retryable,
+        gate_state=state,
+        detail=detail,
     )
 
 

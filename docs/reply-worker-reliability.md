@@ -111,7 +111,9 @@ Audit Rules 对 A/B 同时可见，但只控制业务审阅规则。它不能改
 后会产生新 revision，新 revision 经过独立审计后可以执行。
 
 发送层仍使用持久化 claim 和 `sent_replies` 保护精确 trigger 的消息投递。claim 成功不等于
-外部成功；最终状态必须来自 B 的执行结果和外部读回。
+外部成功；最终状态必须来自 B 的执行结果和外部读回。对于唯一受审的直聊回复，B 已读回同一会话且
+拿到消息标识后，服务会在同一 SQLite 事务写入 task 终态、attempt 和 `sent_replies`。历史上已满足
+同一证据条件但缺少账本的记录只会回填本地账本，不会触发任何外部补发。
 
 ## 未知结果恢复
 
@@ -188,6 +190,16 @@ DWS 只读调用可以对明确的临时网络、限流和服务准备错误做�
 所有经 `agent_cli.execute_reviewed_write` 执行的 DWS 写命令必须包含全局 `--yes` 参数。它仅
 消除 CLI 的交互确认等待，不改变已经由 Consumer 候选和 Audit 审阅限定的目标、内容或权限。
 缺少该参数的调用会在进程启动前被拒绝，避免服务任务因无终端交互而长时间占用租约。
+
+写命令返回结构化失败时，回执保留渠道给出的错误码和经脱敏的错误摘要，不把它改写成
+`reconciliation_read_failed`。这只说明写入未获确认，不授权盲目重放；Audit 仍须先做只读
+回查。单聊候选还必须按身份类型传参：`sender_user_id` 对应 `--user`，
+`sender_open_dingtalk_id` 对应 `--open-dingtalk-id`。已知 open-DingTalk ID 被放入 `--user`
+时，Audit 会返回修订请求且不执行写入。
+
+单聊写入的未知结果优先查询本地送达账本。受控 `--user` 与
+`--open-dingtalk-id` 都是直接收件人标识；账本确认该 trigger 没有送达记录时，服务旋转到
+新的 Consumer generation，而不让旧候选进入无法证明结果的外部读对账循环。
 
 结构化 JSON 命令允许标准进度输出，但最终结果必须是完整合法 JSON。截断或损坏的写操作
 结果不会被修补为成功。
@@ -404,6 +416,10 @@ revision instead of being attempted. If an older persisted candidate reaches
 unknown-outcome recovery with that invalid command, the service rotates to a new
 Consumer generation; it does not ask the user to choose and does not replay the
 old command.
+
+机械审查同样检查单聊接收人字段类型。它只拦截已知 `sender_open_dingtalk_id` 被错误地作为
+`--user` 传入的候选，反馈要求保持业务接收人和内容不变、改用 `--open-dingtalk-id`。这避免
+把可自动修正的 CLI 参数问题展示成用户决策或无理由失败。
 
 Only the first Codex turn started for a Consumer or Audit invocation is part of
 that business run. Plugin stop hooks may open later turns for tasks such as

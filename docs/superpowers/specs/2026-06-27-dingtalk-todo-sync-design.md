@@ -230,7 +230,11 @@ without creating duplicate external tasks:
 - Failed links without a `dingtalk_task_id` are retried only when `last_error`
   contains a DWS token verification error code known to be retryable. The same
   link row is reused for the new create attempt, so the retry preserves audit
-  history and does not create a second local link.
+  history and does not create a second local link. If the retry budget is
+  exhausted, or the internal deadline has passed before any external task was
+  created, the link becomes `cancelled` with a machine-readable reason. The
+  internal TODO remains open for its normal project follow-up; no overdue
+  DingTalk task is created.
 - Other failed links remain failed until inspected because the service cannot
   prove whether an external DingTalk Todo was created.
 

@@ -99,10 +99,12 @@ class AuditAgentRunner:
         ):
             return skill_failure
         invalid_actions = _invalid_operation_contracts(context, self.effects)
-        if invalid_actions:
+        recipient_type_mismatches = _typed_direct_recipient_mismatches(context)
+        if invalid_actions or recipient_type_mismatches:
             return self._return_invalid_candidate(
                 claim.run,
                 invalid_actions=invalid_actions,
+                recipient_type_mismatches=recipient_type_mismatches,
             )
         return self._execute_claimed(
             task,
@@ -294,6 +296,21 @@ class AuditAgentRunner:
             self._defer_claimed_unknown_recovery(claim.run, exc)
             raise
 
+    def _requeue_absent_direct_delivery(
+        self,
+        task: ReplyTask,
+        run: AgentRun,
+    ) -> AgentTurnRunResult[AuditAgentResult]:
+        return self._requeue_for_consumer(
+            task,
+            run,
+            code="persisted_delivery_absent",
+            summary=(
+                "No persisted delivery record exists for the exact trigger; "
+                "the direct chat action was requeued in a new generation."
+            ),
+        )
+
     def _requeue_for_consumer(
         self,
         task: ReplyTask,
@@ -331,8 +348,19 @@ class AuditAgentRunner:
         run: AgentRun,
         *,
         invalid_actions: tuple[int, ...],
+        recipient_type_mismatches: tuple[int, ...],
     ) -> AgentTurnRunResult[AuditAgentResult]:
-        listed = ", ".join(str(index) for index in invalid_actions)
+        invalid_details: list[str] = []
+        if invalid_actions:
+            listed = ", ".join(str(index) for index in invalid_actions)
+            invalid_details.append(
+                f"Candidate action indexes {listed} do not satisfy the mechanical command contract."
+            )
+        if recipient_type_mismatches:
+            listed = ", ".join(str(index) for index in recipient_type_mismatches)
+            invalid_details.append(
+                f"Candidate action indexes {listed} use the trigger's open-DingTalk ID as a user ID."
+            )
         result = AuditAgentResult(
             outcome=AuditOutcome.REVISION_REQUIRED,
             summary="The candidate contains an invalid reviewed command contract.",
@@ -341,16 +369,15 @@ class AuditAgentRunner:
             feedback=AuditFeedback(
                 rule=(
                     "The operation must match the reviewed command, and DWS writes "
-                    "require non-interactive confirmation."
+                    "require non-interactive confirmation and typed recipient identifiers."
                 ),
-                observation=(
-                    f"Candidate action indexes {listed} do not satisfy that "
-                    "mechanical command contract."
-                ),
+                observation=" ".join(invalid_details),
                 requested_revision=(
                     "Return the same intended operation with an operation label that "
-                    "matches the exact argv and with --yes on every DWS write; do not "
-                    "change its target or business payload."
+                    "matches the exact argv and with --yes on every DWS write. For a "
+                    "single-chat recipient, use --user only with sender_user_id and "
+                    "use --open-dingtalk-id with sender_open_dingtalk_id. Preserve the "
+                    "business recipient and payload."
                 ),
             ),
             external_result=None,
@@ -693,6 +720,29 @@ def _invalid_operation_contracts(
     )
 
 
+def _typed_direct_recipient_mismatches(
+    context: AuditTurnContext,
+) -> tuple[int, ...]:
+    """Reject only a known open-DingTalk ID passed through the user-ID flag."""
+    if not context.task.single_chat:
+        return ()
+    open_dingtalk_id = context.task.trigger_sender_open_dingtalk_id
+    if not open_dingtalk_id:
+        return ()
+    mismatches: list[int] = []
+    for index, action in enumerate(context.proposal.actions):
+        if action.capability != "agent_cli.dws":
+            continue
+        descriptor = describe_native_command(
+            {"type": "command_execution", **action.payload}
+        )
+        if descriptor is None or descriptor.cli != "dws":
+            continue
+        if descriptor.target_identifiers.get("user") == open_dingtalk_id:
+            mismatches.append(index)
+    return tuple(mismatches)
+
+
 def _database_delivery_absence_reconciliation(
     store: AutoReplyStore,
     task: ReplyTask,
@@ -721,7 +771,7 @@ def _is_direct_chat_send(action: object) -> bool:
     target_keys = set(descriptor.target_identifiers)
     if isinstance(target, dict):
         target_keys.update(str(key).replace("_", "-") for key in target)
-    return "open-dingtalk-id" in target_keys or (
+    return bool({"open-dingtalk-id", "user"} & target_keys) or (
         descriptor.command_path == "chat +send-to-group" and "group" in target_keys
     )
 

@@ -792,6 +792,9 @@ class AgentTurnProcess(Generic[ResultT]):
                 failure_gate_state = receipt_error.get("gate_state")
                 if isinstance(failure_gate_state, str) and failure_gate_state:
                     metadata["failure_gate_state"] = failure_gate_state
+                failure_detail = receipt_error.get("detail")
+                if isinstance(failure_detail, str) and failure_detail:
+                    metadata["failure_detail"] = failure_detail
         if controlled_receipt_failed and call.tool == "read_skill":
             metadata["failure_code"] = "agent_cli_skill_receipt_invalid"
         if event_type == "item.completed" and skill_metadata is not None:

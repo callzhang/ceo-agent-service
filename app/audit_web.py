@@ -628,6 +628,7 @@ TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/
 DEFAULT_ERROR_LIST_LIMIT = 20
 HISTORY_CHART_HOURS = 24
 DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
+DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS = 10.0
 HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
     "💬 Skipped": "#a8a8aa",
@@ -720,6 +721,109 @@ class _RecentHtmlCache:
             self._refreshing = False
 
     def refresh_in_background(self, renderer: Callable[[], str]) -> None:
+        with self._lock:
+            if self._refreshing:
+                return
+            self._refreshing = True
+            refresh_thread = self._thread_factory(
+                target=self._refresh,
+                args=(renderer,),
+                daemon=True,
+            )
+        refresh_thread.start()
+
+
+class _RecentPayloadCache:
+    """Serve the last complete status payload while one refresh is running."""
+
+    def __init__(
+        self,
+        ttl_seconds: float,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        thread_factory: Callable[..., threading.Thread] = threading.Thread,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        self._thread_factory = thread_factory
+        self._payload: dict[str, object] | None = None
+        self._rendered_at = 0.0
+        self._refreshing = False
+        self._lock = threading.Lock()
+
+    def get_or_render(
+        self,
+        renderer: Callable[[], dict[str, object]],
+    ) -> dict[str, object]:
+        refresh_thread: threading.Thread | None = None
+        with self._lock:
+            now = self._clock()
+            if self._payload is not None and now - self._rendered_at < self._ttl_seconds:
+                return self._payload
+            if self._payload is not None:
+                if not self._refreshing:
+                    self._refreshing = True
+                    refresh_thread = self._thread_factory(
+                        target=self._refresh,
+                        args=(renderer,),
+                        daemon=True,
+                    )
+                cached_payload = self._payload
+            else:
+                self._refreshing = True
+                cached_payload = None
+        if refresh_thread is not None:
+            refresh_thread.start()
+        if cached_payload is not None:
+            return cached_payload
+        try:
+            payload = renderer()
+        except Exception:
+            with self._lock:
+                self._refreshing = False
+            raise
+        with self._lock:
+            self._payload = payload
+            self._rendered_at = self._clock()
+            self._refreshing = False
+            return payload
+
+    def get_or_refresh(
+        self,
+        renderer: Callable[[], dict[str, object]],
+        fallback: Callable[[], dict[str, object]],
+    ) -> dict[str, object]:
+        """Return a usable snapshot immediately, including during cold refresh."""
+        refresh_thread: threading.Thread | None = None
+        with self._lock:
+            now = self._clock()
+            if self._payload is not None and now - self._rendered_at < self._ttl_seconds:
+                return self._payload
+            if not self._refreshing:
+                self._refreshing = True
+                refresh_thread = self._thread_factory(
+                    target=self._refresh,
+                    args=(renderer,),
+                    daemon=True,
+                )
+            cached_payload = self._payload
+        if refresh_thread is not None:
+            refresh_thread.start()
+        return cached_payload if cached_payload is not None else fallback()
+
+    def _refresh(self, renderer: Callable[[], dict[str, object]]) -> None:
+        try:
+            payload = renderer()
+        except Exception:
+            with self._lock:
+                self._refreshing = False
+            return
+        with self._lock:
+            self._payload = payload
+            self._rendered_at = self._clock()
+            self._refreshing = False
+
+    def refresh_in_background(self, renderer: Callable[[], dict[str, object]]) -> None:
         with self._lock:
             if self._refreshing:
                 return
@@ -1876,8 +1980,12 @@ def build_worker_status_payload(
     launchd_label: str = "com.ceo-agent-service.main",
 ) -> dict[str, object]:
     service = _launchd_service_status(launchd_label)
-    queues = _queue_status_snapshots(store)
-    attention_rows = _queue_attention_rows(store)
+    # The worker performs short SQLite writes in parallel.  Render every
+    # database section from one read-only snapshot so the status endpoint does
+    # not repeatedly contend for the writer lock or mix queue generations.
+    with store.read_snapshot():
+        queues = _queue_status_snapshots(store)
+        attention_rows = _queue_attention_rows(store)
     return {
         "service": service,
         "components": _service_component_snapshots(),
@@ -1895,8 +2003,12 @@ def build_worker_status_payload(
     }
 
 
-def _render_workers_content(store: AutoReplyStore) -> str:
-    payload = build_worker_status_payload(store)
+def _render_workers_content(
+    store: AutoReplyStore,
+    *,
+    payload: dict[str, object] | None = None,
+) -> str:
+    payload = payload or build_worker_status_payload(store)
     service = payload["service"]
     summary = payload["summary"]
     service_ok = bool(service.get("ok")) if isinstance(service, dict) else False
@@ -2200,10 +2312,10 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
     }
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dict[str, str]]:
     specs = [
-        ("Work item", "work_summary_inputs", "status", "source_type", "source_ref", "updated_at", "error"),
-        ("Follow-up", "follow_up_drafts", "status", "owner_name", "question_text", "updated_at", "suppressed_reason"),
-        ("Meeting", "meeting_alignment_jobs", "status", "title", "target_title", "updated_at", "error"),
-        ("OKR", "okr_review_requests", "status", "conversation_title", "trigger_text", "updated_at", "error"),
+        ("Work item", "work_summary_inputs", "status", "source_type", "source_ref", "updated_at", "error", ("pending", "processing", "failed")),
+        ("Follow-up", "follow_up_drafts", "status", "owner_name", "question_text", "updated_at", "suppressed_reason", ("failed",)),
+        ("Meeting", "meeting_alignment_jobs", "status", "title", "target_title", "updated_at", "error", ("pending", "processing", "failed")),
+        ("OKR", "okr_review_requests", "status", "conversation_title", "trigger_text", "updated_at", "error", ("pending", "processing", "failed")),
     ]
     rows: list[dict[str, str]] = []
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
@@ -2247,15 +2359,16 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                         "error": str(row["error"] or ""),
                     }
                 )
-        for category, table, status_column, context_column, summary_column, updated_column, error_column in specs:
+        for category, table, status_column, context_column, summary_column, updated_column, error_column, statuses in specs:
             if not _sqlite_table_exists(db, table):
                 continue
+            status_placeholders = ",".join("?" for _ in statuses)
             sql = f"""
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
                        {error_column} as error
                 from {table}
-                where lower({status_column}) in ('pending','processing','failed','draft','approved','waiting')
+                where lower({status_column}) in ({status_placeholders})
                 order by
                     case lower({status_column})
                         when 'failed' then 0
@@ -2266,7 +2379,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                     id desc
                 limit ?
             """
-            for row in db.execute(sql, (limit,)).fetchall():
+            for row in db.execute(sql, (*statuses, limit)).fetchall():
                 rows.append(
                     {
                         "category": category,
@@ -2547,9 +2660,10 @@ def render_settings_page(
     log_page: int = 1,
     log_query: str = "",
     log_type: str = "",
+    worker_status_payload: dict[str, object] | None = None,
 ) -> str:
     if active_tab == "workers":
-        content = _render_workers_content(store)
+        content = _render_workers_content(store, payload=worker_status_payload)
     elif active_tab == "logs":
         content = _render_log_content(
             store,
@@ -7614,6 +7728,9 @@ def create_audit_app(
     default_attempt_list_cache = _RecentHtmlCache(
         DEFAULT_HISTORY_CACHE_TTL_SECONDS
     )
+    worker_status_cache = _RecentPayloadCache(
+        DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
+    )
 
     def render_default_attempt_list() -> str:
         return render_attempt_list(
@@ -7629,10 +7746,39 @@ def create_audit_app(
             include_feedback_count=False,
         )
 
+    def render_worker_status_payload() -> dict[str, object]:
+        return build_worker_status_payload(_audit_store(db_path))
+
+    def worker_status_refreshing_payload() -> dict[str, object]:
+        return {
+            "service": {
+                "label": "com.ceo-agent-service.main",
+                "ok": True,
+                "state": "refreshing",
+                "detail": "Status refresh in progress.",
+                "pid": "",
+                "runs": "",
+                "initialized": "",
+            },
+            "components": _service_component_snapshots(),
+            "queues": [],
+            "attention_rows": [],
+            "database": {"path": str(db_path)},
+            "summary": {
+                "queue_count": 0,
+                "pending": 0,
+                "processing": 0,
+                "failed": 0,
+                "retryable": 0,
+                "attention": 0,
+            },
+        }
+
     @asynccontextmanager
     async def audit_lifespan(_app: FastAPI):
         default_attempt_list_cache.get_or_render(_render_history_busy_page)
         default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
+        worker_status_cache.refresh_in_background(render_worker_status_payload)
         yield
 
     app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
@@ -7858,11 +8004,23 @@ def create_audit_app(
 
     @app.get("/workers", response_class=HTMLResponse)
     def workers_page() -> str:
-        return render_settings_page(AutoReplyStore(db_path), active_tab="workers")
+        return render_settings_page(
+            _audit_store(db_path),
+            active_tab="workers",
+            worker_status_payload=worker_status_cache.get_or_refresh(
+                render_worker_status_payload,
+                worker_status_refreshing_payload,
+            ),
+        )
 
     @app.get("/api/workers/status", response_class=JSONResponse)
     def workers_status() -> JSONResponse:
-        return JSONResponse(build_worker_status_payload(AutoReplyStore(db_path)))
+        return JSONResponse(
+            worker_status_cache.get_or_refresh(
+                render_worker_status_payload,
+                worker_status_refreshing_payload,
+            )
+        )
 
     @app.get("/logs", response_class=HTMLResponse)
     def log_list(request: Request) -> str:

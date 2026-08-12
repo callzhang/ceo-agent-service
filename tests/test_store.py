@@ -89,6 +89,179 @@ def _enqueue_universal_reply_task(
     return store.claim_reply_tasks(limit=1)[0].id
 
 
+def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-confirmed-direct",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-confirmed-direct",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please reply",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    audit = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="audit",
+    ).run
+    audit = store.complete_agent_run(
+        audit.id,
+        {"outcome": "executed", "summary": "Readback verified."},
+        owner="audit",
+        side_effect_state="confirmed",
+    )
+
+    store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=audit.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="Readback verified.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="Readback verified.",
+        send_status="completed",
+        send_error="",
+        channel="dingtalk",
+        sent_reply_text="Verified direct reply",
+        sent_reply_result_json='{"source":"test"}',
+    )
+
+    sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
+
+    assert sent is not None
+    assert sent.reply_text == "Verified direct reply"
+    assert store.record_confirmed_sent_reply_if_absent(
+        audit_run_id=audit.id,
+        reply_text="Verified direct reply",
+        send_result_json='{"source":"test"}',
+    ) is False
+
+
+def test_finalize_orchestration_inherits_oa_identity_from_reply_task(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    oa_url = (
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    )
+    store.enqueue_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id="oa-pending:proc-1:revision-1",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="吴柯欣提交的录用申请",
+        oa_url=oa_url,
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    consumer = store.complete_agent_run(
+        consumer.id,
+        {"outcome": "no_action", "summary": "当前审批节点已经完成。"},
+        owner="consumer",
+    )
+
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=consumer.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="当前审批节点已经完成。",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="当前审批节点已经完成。",
+        send_status="skipped",
+        send_error="",
+        channel="dingtalk",
+    )
+
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == "task-1"
+    assert attempt.oa_url == oa_url
+    assert attempt.oa_action == "review"
+
+
+def test_finalize_pre_run_failure_inherits_oa_identity_from_reply_task(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    oa_url = (
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    )
+    store.enqueue_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id="oa-pending:proc-1:revision-1",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="吴柯欣提交的录用申请",
+        oa_url=oa_url,
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+
+    attempt_id = store.finalize_reply_task_without_run(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        task_status="failed",
+        task_error="worker_start_failed",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="worker_start_failed",
+        audit_summary="worker_start_failed",
+        send_status="failed",
+        send_error="worker_start_failed",
+        channel="dingtalk",
+    )
+
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == "task-1"
+    assert attempt.oa_url == oa_url
+    assert attempt.oa_action == "review"
+
+
 def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     tmp_path: Path,
 ):
@@ -5145,6 +5318,7 @@ def test_history_query_has_indexes_for_correlated_reply_lookups(tmp_path: Path):
         "idx_reply_attempts_trigger_history",
         "idx_reply_attempts_current_trigger",
         "idx_sent_replies_history",
+        "idx_work_summary_inputs_updated",
     } <= index_names
     assert not any("scan process_attempts" in detail.lower() for detail in plan)
     assert not any("scan sent" in detail.lower() for detail in plan)

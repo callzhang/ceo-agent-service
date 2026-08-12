@@ -98,6 +98,11 @@ attempt 开始。Attention 中同一 reply trigger 只保留一条 `Reply task` 
 `Reply task`、`work item`、`meeting` 或外部投递失败都必须在报告中逐类说明其恢复、
 对账或不可执行原因。
 
+Attention 只显示实际失败、排队或处理中的工作。未来计划或正常草稿状态的 follow-up 不属于
+故障，保留在其业务列表而不占用 Attention。对于外部写入失败，巡检显示渠道原始错误码和
+脱敏摘要；若发送回执未知，先进入只读对账，不能因为错误文本缺失就把它误判为已发送或直接
+重发。
+
 ## 外部依赖边界
 
 `quality-check` 默认检查 DingTalk，以及当前有 active task 或最近 72 小时 failed/blocked
