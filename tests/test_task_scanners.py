@@ -147,6 +147,31 @@ def test_scan_local_files_skips_virtualenv_and_package_cache_paths(tmp_path):
     assert str(package_file) not in claimed[0].payload_json
 
 
+def test_scan_local_files_skips_skill_worktree_assets(tmp_path):
+    workspace = tmp_path / "workspace"
+    for directory in ("skill-worktrees", "skill-worktrees-fresh"):
+        reference = workspace / directory / "stardust-skills" / "skills" / "demo"
+        reference.mkdir(parents=True)
+        (reference / "SKILL.md").write_text(
+            "Skill instructions are not CEO work inputs",
+            encoding="utf-8",
+        )
+    visible = workspace / "management-note.md"
+    visible.write_text("业务事项需要跟进", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    count = scan_local_workspace_files(
+        store,
+        workspace=workspace,
+        enqueue_existing_on_first_scan=True,
+    )
+
+    assert count == 1
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(claimed) == 1
+    assert str(visible) in claimed[0].source_ref
+
+
 def test_scan_local_files_uses_incremental_mtime_cursor(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

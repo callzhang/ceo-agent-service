@@ -68,7 +68,11 @@ def _has_hidden_path_part(path: Path) -> bool:
 
 
 def _has_default_excluded_path_part(path: Path) -> bool:
-    return any(part in DEFAULT_LOCAL_FILE_EXCLUDE_PARTS for part in path.parts)
+    return any(
+        part in DEFAULT_LOCAL_FILE_EXCLUDE_PARTS
+        or part.casefold().startswith("skill-worktrees")
+        for part in path.parts
+    )
 
 
 def _local_file_source_ref(path: Path, *, digest: str, size: int) -> str:
