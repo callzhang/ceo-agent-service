@@ -13,9 +13,13 @@ The experience should resemble Codex: one conversation is one continuing task, e
 - The home page runs real Agent tasks; it is not a visual wrapper around History.
 - Safe, reversible work may run without per-tool confirmation.
 - External sends, approvals, deletion, destructive changes, and important overwrites require an explicit confirmation in the conversation.
-- One conversation remains a durable task and reuses its Codex session across turns.
+- One conversation remains a durable task and reuses its selected runtime session across turns.
 - The selected layout is a three-column workbench: task history, conversation and progress, then current-run details.
 - The existing audit and operations pages remain available. History moves from `/` to `/history`.
+- The workbench depends on a provider-neutral Agent Runtime contract rather than Codex-specific process or event shapes.
+- Codex is the fully supported first runtime. Claude and Pi must fit the same contract, but production adapters for them are not required in the first release.
+- The interactive workbench is a React and Vite frontend served by FastAPI. Existing audit and settings pages remain server-rendered until separately migrated.
+- Multica informs the runtime and interaction design, but its UI source is not copied or imported.
 
 ## Alternatives Considered
 
@@ -36,7 +40,7 @@ The home page emphasizes queue counts, completion rates, and parallel Agent acti
 ### Included in the first release
 
 - Create, open, rename, search, and archive conversation tasks.
-- Submit a message to a task and run it through a resumable Codex session.
+- Submit a message to a task and run it through a resumable provider session when the selected runtime supports resume.
 - Stream persisted progress to the browser.
 - Show understandable tool activity, file changes, errors, artifacts, and a final result.
 - Stop a running turn without deleting its task or history.
@@ -55,6 +59,9 @@ The home page emphasizes queue counts, completion rates, and parallel Agent acti
 - Cost accounting or estimated time saved.
 - A second credentials system or browser-stored credentials.
 - Replacing the existing DingTalk inbound reply pipeline.
+- Production-ready Claude or Pi runtime adapters. The first release includes their shared interface, capability model, and adapter contract tests only.
+- Rewriting existing History, Workers, Tasks, Tutorial, Notifications, or Settings pages in React.
+- Copying Multica UI, view, daemon, or backend source code.
 
 ## Architecture
 
@@ -64,7 +71,7 @@ The existing reply queue represents inbound DingTalk messages and delivery seman
 
 Add dedicated persisted records for:
 
-- Conversation tasks: title, lifecycle state, Codex session identity, timestamps, and archive state.
+- Conversation tasks: title, lifecycle state, runtime kind, opaque provider session reference, timestamps, and archive state.
 - Execution turns: one user request and its background execution state.
 - Progress events: ordered, append-only user-visible activity for reconnect and audit.
 - Artifacts: files or durable outputs produced by a turn.
@@ -72,9 +79,31 @@ Add dedicated persisted records for:
 
 Names and exact columns will follow existing store conventions during implementation. Records must use stable identifiers and explicit foreign keys. User-visible content must not contain credentials, private local paths, session identifiers, or raw sensitive tool output.
 
-### Reused runtime capabilities
+### Agent Runtime boundary
 
-The interactive channel reuses existing Codex process execution, session resume behavior, local SQLite storage conventions, tool permission classification, run records, and History audit links. It does not create a second tool registry, permission system, credentials store, or Agent runtime.
+The workbench does not call `CodexRunner` directly. It depends on an `AgentRuntime` contract that owns:
+
+- Runtime capability discovery.
+- Starting and resuming a provider session.
+- Streaming normalized execution events.
+- Stopping an owned execution.
+- Returning the final result and provider session reference.
+- Reconciling interrupted or uncertain work where the provider supports it.
+
+Provider-specific implementations translate their native command, session, and event formats into this contract. `CodexRuntime` is implemented in the first release by adapting the current Codex runner and transcript logic. `ClaudeRuntime` and `PiRuntime` are represented by contract fixtures and capability declarations until their production adapters are implemented.
+
+The abstraction has two levels:
+
+- A protocol-family adapter implements one actual execution and event protocol, such as Codex, Claude, or Pi.
+- A runtime descriptor identifies a concrete executable and its capabilities. Compatible forks or wrappers may reuse a protocol-family adapter without duplicating the workbench integration.
+
+This follows the useful boundary demonstrated by Multica without adopting its remote server, machine-registration daemon, PostgreSQL model, or source code. The CEO Agent Service remains a single-machine FastAPI, SQLite, and launchd application.
+
+The design reference was the Multica repository and its documented daemon/runtime model as inspected on 2026-08-13. Multica uses a common streaming backend contract and provider-specific implementations, while compatible runtime identities can reuse a protocol family. Its custom license places additional conditions on derived UI, branding, hosted services, and commercial embedding. Therefore this project uses the architectural lesson only and retains independently authored MIT-licensed product code.
+
+Runtime capabilities are explicit rather than inferred from the provider name. Initial capability fields cover session resume, streamed text, structured tool events, image input, model selection, MCP configuration, stoppable execution, and recoverable execution. The UI hides or explains unavailable controls based on these facts.
+
+The interactive channel reuses local SQLite storage conventions, tool permission classification, run records, and History audit links. It does not create a second tool registry, permission system, or credentials store. Each runtime uses the authenticated local CLI environment already owned by the installation user.
 
 The current Consumer/Audit pipeline remains responsible for inbound message handling. Shared low-level execution and effect-verification components may be reused, but interactive task state must remain separate from reply task state.
 
@@ -82,8 +111,8 @@ The current Consumer/Audit pipeline remains responsible for inbound message hand
 
 1. The browser creates a conversation task or opens an existing one.
 2. A user message creates one queued execution turn.
-3. A background worker atomically claims the turn and starts or resumes the task's Codex session.
-4. User-visible progress is appended to SQLite as ordered events.
+3. A background worker atomically claims the turn and starts or resumes its selected runtime session through `AgentRuntime`.
+4. Provider-native output is normalized and appended to SQLite as ordered user-visible events.
 5. Safe, reversible tool work executes under the existing permission rules.
 6. A high-risk effect creates a confirmation request and moves the turn to `waiting_confirmation`.
 7. Confirmation resumes the same turn and reviewed action; cancellation records the decision and lets the Agent produce an accurate result.
@@ -104,9 +133,22 @@ User-visible turn states are:
 
 Task state is derived from its active or most recent turn rather than maintained as an independent competing truth.
 
-Progress events are append-only and monotonically ordered within a turn. The browser receives live updates through a server event stream and supplies its last observed event identifier when reconnecting. The server then replays missed persisted events before continuing live delivery.
+Progress events are append-only and monotonically ordered within a turn. The normalized event vocabulary includes:
 
-The Codex session transcript remains the detailed runtime source. The application database stores the mapping, user-visible event projections, lifecycle state, confirmation decisions, artifact references, and summary statistics needed for the workbench.
+- `text_delta`
+- `thinking_summary`
+- `tool_started`
+- `tool_completed`
+- `file_changed`
+- `artifact_created`
+- `confirmation_required`
+- `status_changed`
+- `turn_completed`
+- `turn_failed`
+
+The browser receives live updates through Server-Sent Events. It supplies its last observed event identifier when reconnecting, and the server replays missed persisted events before continuing live delivery. User commands such as send, stop, confirm, and cancel remain ordinary protected JSON requests; the local one-way event stream does not require a WebSocket.
+
+The provider's native session transcript remains the detailed runtime source when one exists. The application database stores the runtime kind, opaque provider session reference, user-visible event projections, lifecycle state, confirmation decisions, artifact references, and summary statistics needed for the workbench. Provider session references are never exposed in browser payloads.
 
 ## Safety and Confirmation
 
@@ -128,6 +170,26 @@ All mutating endpoints retain the existing loopback, origin, and JSON request pr
 
 ## Interface Design
 
+### Frontend boundary and reusable components
+
+The interactive workbench is a focused React and TypeScript application built with Vite. FastAPI serves its compiled static assets and owns all API, SSE, persistence, execution, and authorization behavior. The frontend is not a second backend and does not hold credentials or authoritative task state.
+
+The workbench uses independently licensed upstream primitives where useful, such as shadcn-style components, Base UI, React Virtuoso, and a safe Markdown renderer. Dependencies are added from their original projects under compatible licenses. Multica component source, branding, and internal packages are not copied, vendored, or imported.
+
+Product components are owned by this repository and organized around stable workbench concepts:
+
+- `TaskList`
+- `ConversationTimeline`
+- `UserMessage`
+- `AgentMessage`
+- `ExecutionStep`
+- `ConfirmationCard`
+- `ArtifactList`
+- `TurnInspector`
+- `Composer`
+
+Components consume normalized API resources and runtime events. They never branch on raw Codex, Claude, or Pi event formats.
+
 ### Left column: tasks
 
 - A prominent New Task action.
@@ -141,6 +203,7 @@ All mutating endpoints retain the existing loopback, origin, and JSON request pr
 - User messages and Agent answers form the primary timeline.
 - Execution progress appears as compact, collapsible steps.
 - Tool events state what was attempted and the meaningful outcome; raw logs are available through existing audit detail rather than dumped into chat.
+- Assistant text appears incrementally from `text_delta` events. Completed Markdown blocks retain stable identity so streaming does not rerender the entire conversation.
 - File changes show the file name and change summary.
 - Confirmation requests render inline in chronological order.
 - The composer supports text, file attachment, Stop while running, and follow-up after a terminal result.
@@ -172,6 +235,8 @@ The implementation should expose a small resource-oriented interface:
 - Confirm or cancel one pending action.
 
 All writes are JSON mutations protected by the current trusted-request checks. Creating a turn is idempotent under a client-generated request identifier so retries cannot enqueue duplicate work. Stop, confirm, and cancel operations are also idempotent and validate the current persisted state.
+
+The event endpoint uses `text/event-stream`, stable event identifiers, keepalive comments, and disabled intermediary buffering. A reconnect with `Last-Event-ID` replays persisted events after that identifier before attaching to live events.
 
 ## Recovery and Idempotency
 
@@ -228,6 +293,8 @@ The first release does not display estimated time saved or monetary cost because
 ### Store and lifecycle tests
 
 - Task creation, rename, search, archive, and retrieval.
+- Agent Runtime contract tests using the same fixture suite for start, resume, streaming events, stop, capability reporting, terminal results, and redaction.
+- A complete Codex adapter test suite plus Claude and Pi contract fixtures that prove the common interface does not depend on Codex event fields.
 - Atomic turn claim and one-running-turn-per-task constraint.
 - Allowed state transitions and rejection of invalid transitions.
 - Ordered progress replay.
@@ -248,6 +315,8 @@ The first release does not display estimated time saved or monetary cost because
 - Task switching while another task remains active.
 - Queued, running, waiting, completed, stopped, and failed states.
 - Progress replay after reconnect.
+- Incremental assistant text rendering without duplicating deltas after reconnect.
+- Runtime capability differences hide or explain unsupported controls without provider-name conditionals in UI components.
 - Confirmation, cancellation, stop, retry, and continuation flows.
 - Artifact links and History links.
 
@@ -268,8 +337,9 @@ After implementation and focused tests:
 Implementation should proceed in vertical slices:
 
 1. Persisted task and turn lifecycle with tests.
-2. Background execution and recovery with tests.
-3. Event stream and API contract with tests.
-4. Three-column workbench and task navigation.
-5. Stop, confirmation, artifacts, and statistics.
-6. Browser verification, documentation updates, service restart, and live readback.
+2. Agent Runtime contract, capability model, and normalized event vocabulary.
+3. Codex runtime adapter, background execution, and recovery with tests.
+4. Persisted SSE event stream and API contract with tests.
+5. React and Vite component foundation plus the three-column workbench.
+6. Stop, confirmation, artifacts, statistics, and responsive behavior.
+7. Browser verification, documentation updates, service restart, and live readback.
