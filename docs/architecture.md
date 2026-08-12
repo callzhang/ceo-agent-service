@@ -40,6 +40,12 @@ launchd 和本地启动脚本都设置 `PYTHONDONTWRITEBYTECODE=1`。worker 与�
 跨 worker、审计页面和服务重启的竞争由 SQLite 会话锁、Agent run lease 和结果回读处理；
 同一会话顺序不依赖共享的进程级锁。
 
+### Schema 初始化竞争
+
+worker 与审计页面会各自打开 SQLite。它们先取得同一个初始化文件锁，再检查 schema 版本和
+必要表。检查遇到短暂 `locked` 或 `busy` 时会在该锁内等待后复查；只有稳定确认 schema 过期或
+缺表才执行迁移。这样高负载写入不会被误判为 schema 缺失，也不会让审计页面在请求期间执行 DDL。
+
 ## 权威处理流
 
 ```text

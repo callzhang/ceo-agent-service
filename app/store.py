@@ -41,6 +41,8 @@ SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
 CODEX_SESSION_LOCK_RETRY_ATTEMPTS = 3
 CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
+SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
+SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-08-12.1"
@@ -635,6 +637,11 @@ def _json_object_text(value: object, *, field: str) -> str:
     return text
 
 
+def _is_sqlite_lock_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "locked" in message or "busy" in message
+
+
 class AutoReplyStore:
     def __init__(
         self,
@@ -661,13 +668,25 @@ class AutoReplyStore:
             with self._schema_initialize_lock():
                 if path_key in _INITIALIZED_STORE_PATHS:
                     return
-                if self._schema_is_current():
+                if self._schema_is_current_after_lock_retry():
                     _INITIALIZED_STORE_PATHS.add(path_key)
                     return
                 self._initialize()
                 self.backfill_oa_audit_metadata()
                 self.set_service_state(STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION)
                 _INITIALIZED_STORE_PATHS.add(path_key)
+
+    def _schema_is_current_after_lock_retry(self) -> bool:
+        for attempt in range(SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS):
+            try:
+                return self._schema_is_current()
+            except sqlite3.OperationalError as exc:
+                if not _is_sqlite_lock_error(exc):
+                    raise
+                if attempt + 1 >= SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS:
+                    raise
+                time.sleep(SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS)
+        raise RuntimeError("schema check retry loop exhausted")
 
     @contextmanager
     def _schema_initialize_lock(self) -> Iterator[None]:
@@ -695,7 +714,9 @@ class AutoReplyStore:
                         "select name from sqlite_master where type='table'"
                     )
                 }
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            if _is_sqlite_lock_error(exc):
+                raise
             return False
         return (
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)

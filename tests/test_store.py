@@ -183,6 +183,32 @@ def test_store_skips_schema_work_when_another_process_finished_it(
 ):
     db_path = tmp_path / "worker.sqlite3"
     AutoReplyStore(db_path)
+
+
+def test_store_rechecks_schema_after_transient_database_lock(tmp_path, monkeypatch):
+    db_path = tmp_path / "worker.sqlite3"
+    AutoReplyStore(db_path)
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    original_schema_check = AutoReplyStore._schema_is_current
+    checks = 0
+
+    def flaky_schema_check(self: AutoReplyStore) -> bool:
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return original_schema_check(self)
+
+    def unexpected_initialize(_self: AutoReplyStore) -> None:
+        raise AssertionError("transient database lock must not trigger migration")
+
+    monkeypatch.setattr(AutoReplyStore, "_schema_is_current", flaky_schema_check)
+    monkeypatch.setattr(AutoReplyStore, "_initialize", unexpected_initialize)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _seconds: None)
+
+    AutoReplyStore(db_path)
+
+    assert checks == 2
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     def unexpected_initialize(_self: AutoReplyStore) -> None:
