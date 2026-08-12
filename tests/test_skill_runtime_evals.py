@@ -29,6 +29,65 @@ SCRIPT_PATH = REPO_ROOT / "evals" / "skill_runtime" / "run.py"
 EXPECTED_OUTCOMES = {"proposal", "no_action", "needs_human", "failed"}
 
 
+def _rejected_audit_result(outcome: str = "failed") -> dict[str, object]:
+    result: dict[str, object] = {
+        "outcome": outcome,
+        "summary": "Dry-run review did not accept the candidate.",
+        "proposal_revision": 0,
+        "side_effect_state": "none",
+        "feedback": None,
+        "external_result": None,
+        "reconciliation": [],
+        "error": {
+            "code": "review_failed",
+            "retryable": False,
+            "authorization_required": False,
+        },
+    }
+    if outcome == "revision_required":
+        result["feedback"] = {
+            "rule": "fixture_contract",
+            "observation": "The candidate needs revision.",
+            "requested_revision": "Return a compliant candidate.",
+        }
+    return result
+
+
+def _consumer_result_for_outcome(
+    base: dict[str, object], outcome: str
+) -> dict[str, object]:
+    if outcome == "proposal":
+        return base
+    result = {
+        **base,
+        "outcome": outcome,
+        "proposal": None,
+        "decision_options": [],
+    }
+    if outcome == "failed":
+        result["error"] = {
+            "code": "fixture_failure",
+            "retryable": False,
+            "authorization_required": False,
+        }
+    if outcome == "needs_human":
+        result["decision_options"] = [
+            {
+                "key": "A",
+                "label": "Proceed",
+                "instruction": "Proceed with the generalized candidate.",
+                "consequence": "Audit can review the candidate.",
+            },
+            {
+                "key": "B",
+                "label": "Revise",
+                "instruction": "Request a generalized revision.",
+                "consequence": "No candidate executes.",
+            },
+        ]
+    return result
+
+
 def test_every_skill_runtime_eval_declares_skill_outcome_and_assertions():
     cases = load_cases(CASES_PATH)
 
@@ -78,6 +137,108 @@ def test_fixture_loader_applies_sanitization_to_recorded_protocol(tmp_path: Path
 
     with pytest.raises(EvalValidationError, match="sanitization"):
         load_fixtures(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("user_id", 7),
+        ("userId", "8"),
+        ("open-id", "member"),
+        ("session_id", 9),
+        ("messageId", "10"),
+        ("conversation id", "11"),
+        ("task-id", 12),
+        ("attemptId", "13"),
+        ("token", "short"),
+        ("signature", "abc"),
+    ],
+)
+def test_fixture_sanitizer_rejects_nested_identifier_aliases(
+    tmp_path: Path, field: str, value: object
+):
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+    unsafe = fixture.model_copy(
+        update={
+            "consumer_events": (
+                fixture.consumer_events[0].model_copy(
+                    update={
+                        "result": {
+                            **fixture.consumer_events[0].result,
+                            "nested": [{"metadata": {field: value}}],
+                        }
+                    }
+                ),
+                *fixture.consumer_events[1:],
+            )
+        }
+    )
+    path = tmp_path / "unsafe-fixture.jsonl"
+    path.write_text(
+        json.dumps(unsafe.model_dump(mode="json")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(EvalValidationError, match="sanitization"):
+        load_fixtures(path)
+
+
+def test_fixture_sanitizer_rejects_nested_signed_reference(tmp_path: Path):
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+    unsafe = fixture.model_copy(
+        update={
+            "audit_result": {
+                **fixture.audit_result,
+                "feedback": {
+                    "references": ["files.example.test/report?sign=short"]
+                },
+            }
+        }
+    )
+    path = tmp_path / "unsafe-signed-fixture.jsonl"
+    path.write_text(
+        json.dumps(unsafe.model_dump(mode="json")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(EvalValidationError, match="sanitization"):
+        load_fixtures(path)
+
+
+def test_fixture_sanitizer_allows_benign_structured_roles_counts_and_dates(
+    tmp_path: Path,
+):
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+    benign = fixture.model_copy(
+        update={
+            "consumer_events": (
+                fixture.consumer_events[0].model_copy(
+                    update={
+                        "result": {
+                            **fixture.consumer_events[0].result,
+                            "nested": [
+                                {
+                                    "owner_role": "reviewer",
+                                    "task_count": 12,
+                                    "review_date": "2026-08-12",
+                                    "user_id": "",
+                                    "token": None,
+                                }
+                            ],
+                        }
+                    }
+                ),
+                *fixture.consumer_events[1:],
+            )
+        }
+    )
+    path = tmp_path / "benign-fixture.jsonl"
+    path.write_text(
+        json.dumps(benign.model_dump(mode="json")) + "\n",
+        encoding="utf-8",
+    )
+
+    assert load_fixtures(path)[0].case_id == fixture.case_id
 
 
 def test_corpus_is_sanitized_and_covers_all_required_regressions():
@@ -149,6 +310,7 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
     for label, unsafe in (
         ("user identifier", "user id: 839201"),
         ("user hex identifier", "user-id = deadbeef"),
+        ("open identifier", "open_id: member"),
         ("session identifier", "session_id: 1234567890abcdef"),
         ("message identifier", "message-id=90210"),
         ("conversation identifier", "conversation id: abc123"),
@@ -158,6 +320,9 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
         ("signed link", "https://example.test/file?signature=opaque"),
         ("schemeless signed link", "files.example.test/file?expires=1900000000"),
         ("relative signed reference", "/file/report?auth=opaque"),
+        ("query token", "files.example.test/file?token=7"),
+        ("query sign", "files.example.test/file?sign=8"),
+        ("query key", "files.example.test/file?key=9"),
         ("opaque identifier", "01J9ZQ7M4N8K2T6V3X5C7B9D1F"),
     ):
         unsafe_path = tmp_path / f"unsafe-{label.replace(' ', '-')}.jsonl"
@@ -176,6 +341,7 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
         "The corpus contains 10 cases and 24 checks.",
         "Version 123 is the current generalized fixture.",
         "The participant completed the documented reconciliation workflow.",
+        "The owner_role is reviewer and the task count is 12.",
     ],
 )
 def test_sanitizer_accepts_benign_dates_counts_and_prose(tmp_path: Path, benign: str):
@@ -282,26 +448,65 @@ def test_protocol_evaluation_requires_reads_assertions_and_acceptable_audit():
     assert forbidden.forbidden_skills == (forbidden_skill,)
 
     rejected_audit = fixture.model_copy(
-        update={
-            "audit_result": {
-                "outcome": "failed",
-                "summary": "Dry-run review rejected the proposal.",
-                "proposal_revision": 0,
-                "side_effect_state": "none",
-                "feedback": None,
-                "external_result": None,
-                "reconciliation": [],
-                "error": {
-                    "code": "review_failed",
-                    "retryable": False,
-                    "authorization_required": False,
-                },
-            }
-        }
+        update={"audit_result": _rejected_audit_result()}
     )
     rejected = replay_fixture(case, rejected_audit)
     assert not rejected.ok
-    assert "Audit dry-run outcome" in " ".join(rejected.errors)
+    assert "Audit outcome" in " ".join(rejected.errors)
+
+
+@pytest.mark.parametrize("audit_outcome", ["failed", "revision_required"])
+def test_every_recorded_case_rejects_unacceptable_audit_outcome(
+    audit_outcome: str,
+):
+    fixture_by_id = {
+        fixture.case_id: fixture for fixture in load_fixtures(FIXTURES_PATH)
+    }
+    for case in load_cases(CASES_PATH):
+        fixture = fixture_by_id[case.case_id]
+        rejected_fixture = fixture.model_copy(
+            update={"audit_result": _rejected_audit_result(audit_outcome)}
+        )
+
+        result = replay_fixture(case, rejected_fixture)
+
+        assert not result.ok
+        assert "Audit outcome" in " ".join(result.errors)
+
+
+@pytest.mark.parametrize("consumer_outcome", sorted(EXPECTED_OUTCOMES))
+def test_audit_outcome_validation_applies_to_every_consumer_outcome(
+    consumer_outcome: str,
+):
+    case = load_cases(CASES_PATH)[0].model_copy(
+        update={"expected_outcome": consumer_outcome}
+    )
+    fixture = load_fixtures(FIXTURES_PATH)[0]
+    fixture = fixture.model_copy(
+        update={
+            "consumer_result": _consumer_result_for_outcome(
+                fixture.consumer_result, consumer_outcome
+            ),
+            "audit_result": _rejected_audit_result(),
+        }
+    )
+
+    result = replay_fixture(case, fixture)
+
+    assert "Audit outcome 'failed' is not acceptable" in " ".join(result.errors)
+
+
+def test_audit_outcome_can_be_explicitly_allowed_by_corpus():
+    case = load_cases(CASES_PATH)[0].model_copy(
+        update={"acceptable_audit_outcomes": ("failed",)}
+    )
+    fixture = load_fixtures(FIXTURES_PATH)[0].model_copy(
+        update={"audit_result": _rejected_audit_result()}
+    )
+
+    result = replay_fixture(case, fixture)
+
+    assert "Audit outcome 'failed' is not acceptable" not in " ".join(result.errors)
 
 
 def test_recorded_replay_evaluates_every_required_assertion():

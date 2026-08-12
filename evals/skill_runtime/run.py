@@ -73,7 +73,7 @@ AssertionSource = Literal[
 ]
 AssertionOperator = Literal["equals", "contains", "absent", "count_equals"]
 _ID_LABEL = re.compile(
-    r"\b(?:user|session|message|conversation|task|attempt)[\s_-]*id\b"
+    r"\b(?:user|open|union|session|message|conversation|task|attempt)[\s_-]*id\b"
     r"\s*[:=]\s*[a-z0-9][a-z0-9_-]*",
     re.IGNORECASE,
 )
@@ -91,6 +91,32 @@ _LONG_HEX = re.compile(r"\b[0-9a-f]{20,}\b", re.IGNORECASE)
 _SIGNED_QUERY_KEYS = re.compile(
     r"^(?:token|signature|sign|expires|auth|key|api[_-]?key|access[_-]?token)$",
     re.IGNORECASE,
+)
+_SENSITIVE_STRUCTURED_KEYS = frozenset(
+    {
+        "userid",
+        "openid",
+        "unionid",
+        "sessionid",
+        "messageid",
+        "conversationid",
+        "taskid",
+        "attemptid",
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "authtoken",
+        "idtoken",
+        "signature",
+        "sign",
+        "auth",
+        "authkey",
+        "apikey",
+        "clientsecret",
+    }
+)
+_OPAQUE_VALUE_KEYS = frozenset(
+    {"caseid", "assertionid", "scenariosha256", "sha256", "resultdigest"}
 )
 
 
@@ -440,12 +466,9 @@ def _evaluate_protocol(
             f"Consumer outcome {observed_outcome!r} != {case.expected_outcome!r}"
         )
     errors.extend(_validate_effect_metadata(consumer_result))
-    if _proposal_requires_execution(consumer_result) and (
-        audit_outcome not in case.acceptable_audit_outcomes
-    ):
+    if audit_outcome not in case.acceptable_audit_outcomes:
         errors.append(
-            "Audit dry-run outcome "
-            f"{audit_outcome!r} is not acceptable for an executable proposal"
+            f"Audit outcome {audit_outcome!r} is not acceptable for this case"
         )
     sources = {
         "consumer_events": _event_views(consumer_events),
@@ -554,11 +577,6 @@ def _validate_effect_metadata(consumer_result: dict[str, object]) -> list[str]:
         elif call.effect is not EffectKind.EFFECTFUL:
             errors.append(f"proposal action {index} is not an executable effect")
     return errors
-
-
-def _proposal_requires_execution(consumer_result: dict[str, object]) -> bool:
-    proposal = consumer_result.get("proposal")
-    return isinstance(proposal, dict) and bool(proposal.get("actions"))
 
 
 def _validate_skill_bindings(fixture: ProtocolFixture) -> list[str]:
@@ -899,36 +917,83 @@ def _read_event_log(path: Path) -> tuple[ProtocolEvent, ...]:
 
 
 def _validate_sanitized(case: EvalCase, *, path: Path, line_number: int) -> None:
-    for value in (case.trigger, case.context):
-        issue = _sanitization_issue(value)
-        if issue:
-            raise EvalValidationError(
-                f"sanitization failure at {path}:{line_number}: {issue}"
-            )
+    _validate_structured_sanitized(
+        case.model_dump(mode="json"),
+        path=path,
+        line_number=line_number,
+    )
 
 
 def _validate_fixture_sanitized(
     fixture: ProtocolFixture, *, path: Path, line_number: int
 ) -> None:
-    exempt_keys = {"case_id", "scenario_sha256", "sha256", "result_digest"}
+    _validate_structured_sanitized(
+        fixture.model_dump(mode="json"),
+        path=path,
+        line_number=line_number,
+    )
 
-    def visit(value: object, key: str = "") -> None:
-        if isinstance(value, dict):
-            for child_key, child in value.items():
-                visit(child, str(child_key))
-            return
-        if isinstance(value, (list, tuple)):
-            for child in value:
-                visit(child, key)
-            return
-        if isinstance(value, str) and key not in exempt_keys:
-            issue = _sanitization_issue(value)
-            if issue:
-                raise EvalValidationError(
-                    f"sanitization failure at {path}:{line_number}: {issue}"
-                )
 
-    visit(fixture.model_dump(mode="json"))
+def _validate_structured_sanitized(
+    value: object, *, path: Path, line_number: int
+) -> None:
+    def fail(issue: str, location: tuple[str, ...]) -> None:
+        field = ".".join(location) or "root"
+        raise EvalValidationError(
+            f"sanitization failure at {path}:{line_number} ({field}): {issue}"
+        )
+
+    def visit(item: object, location: tuple[str, ...], key: str = "") -> None:
+        if isinstance(item, dict):
+            for child_key, child in item.items():
+                normalized = _normalize_field_name(str(child_key))
+                child_location = (*location, str(child_key))
+                if (
+                    normalized in _SENSITIVE_STRUCTURED_KEYS
+                    and _has_nonempty_identifier(child)
+                ):
+                    fail(f"prohibited identifier field {child_key!r}", child_location)
+                visit(child, child_location, normalized)
+            return
+        if isinstance(item, (list, tuple)):
+            for index, child in enumerate(item):
+                visit(child, (*location, str(index)), key)
+            return
+        if not isinstance(item, str) or key in _OPAQUE_VALUE_KEYS:
+            return
+        issue = _sanitization_issue(item)
+        if issue:
+            fail(issue, location)
+        decoded = _decode_json_container(item)
+        if decoded is not None:
+            visit(decoded, (*location, "decoded"))
+
+    visit(value, ())
+
+
+def _normalize_field_name(value: str) -> str:
+    return "".join(char for char in value.casefold() if char.isalnum())
+
+
+def _has_nonempty_identifier(value: object) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict, set)):
+        return bool(value)
+    return True
+
+
+def _decode_json_container(value: str) -> dict[str, object] | list[object] | None:
+    stripped = value.strip()
+    if not stripped or stripped[0] not in "[{":
+        return None
+    try:
+        decoded = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    return decoded if isinstance(decoded, (dict, list)) else None
 
 
 def _sanitization_issue(value: str) -> str:

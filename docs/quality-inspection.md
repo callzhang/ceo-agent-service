@@ -197,8 +197,9 @@ python evals/skill_runtime/run.py --live
 live 模式对每个场景分别启动真实本地 `codex exec` Consumer 和 Audit dry-run，向两者暴露
 完整的内置业务 Skill 清单，并记录实际 Skill 读取、`execute_reviewed_read` 证据事件、
 Consumer 严格结果和 Audit 严格结果。runner 要求 Consumer 和 Audit 都读取预期 Skill、
-不读取禁止 Skill，并对每条机器可读断言使用本次结果或事件求值；需要执行的 proposal
-还必须得到该场景允许的 Audit dry-run 结论。
+不读取禁止 Skill，并对每条机器可读断言使用本次结果或事件求值。每个场景都必须得到
+该行 `acceptable_audit_outcomes` 明确允许的 Audit dry-run 结论；此规则同样适用于
+`no_action`、`needs_human` 和 `failed` Consumer 结果。
 
 两个进程都忽略用户配置与规则，使用 ephemeral、read-only sandbox，关闭 plugins、apps、
 内置工具和 web，只暴露只读 fixture MCP 的 `read_skill` 与
