@@ -4983,7 +4983,8 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
 
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
     store = SimpleNamespace(
-        record_error=lambda *args: calls.append(("error", *args))
+        record_error=lambda *args: calls.append(("error", *args)),
+        resolve_errors_recovered_by_reply_attempts=lambda: calls.append("resolve"),
     )
     monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
     monkeypatch.setattr(
@@ -5030,6 +5031,7 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
     assert calls == [
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",
+        "resolve",
         "scan",
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",
@@ -5572,6 +5574,60 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path
     assert claimed.id == input_id
     assert dict(row) == {"status": "pending", "attempts": 0, "error": ""}
     assert errors == []
+    assert calls[-1] == ("wait",)
+
+
+def test_run_service_keeps_terminal_user_rejected_wechat_delivery(tmp_path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-28 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="第一条",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1,
+        account_id="acct-1",
+        target_type="direct",
+        target_id="user-1",
+        conversation_id="cid-1",
+        reply_text="不会发送",
+    )
+    store.set_wechat_delivery_status(
+        delivery_id,
+        "failed",
+        error="user_rejected",
+    )
+    calls = []
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+
+    run_service(
+        WorkerSettings(db_path=db_path),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        exit_process=lambda status: calls.append(("exit", status)),
+    )
+
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    assert delivery.status == "failed"
+    assert delivery.error == "user_rejected"
     assert calls[-1] == ("wait",)
 
 

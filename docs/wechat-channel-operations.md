@@ -137,6 +137,11 @@ with the delivery error. `no_reply` and `handoff_to_human` decisions do not
 create a delivery and must be recorded as `skipped`, so the audit backlog does
 not retain stale WeChat `pending` attempts.
 
+The delivery record keeps an explicit rejection as
+`status='failed', error='user_rejected'`; History and the quality gate interpret
+that pair as the terminal user decision. Service startup does not rewrite
+historical delivery states.
+
 An Accessibility result that confirms no UI action occurred is different from an
 ambiguous send. Every pre-action failure records the exact available UI stage;
 if an outdated helper omits that stage, the delivery records
