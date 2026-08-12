@@ -1066,6 +1066,16 @@ def test_consumer_rejects_direct_native_write(store, task, context):
             ),
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert '"code":"agent_write_forbidden"' in run.structured_error_json
+
 
 def test_consumer_rejects_blacklisted_direct_shell_command(store, task, context):
     shell = json.dumps(

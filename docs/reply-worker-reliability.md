@@ -45,6 +45,10 @@ wire schema 的指纹；session 文件缺失、损坏或该指纹变化时，必
 attempt。旧 turn 仍保留失败状态、session 标识和审计事件，绝不清空后复用；这样新的 Codex
 session 不会与旧 session 标识冲突，同时历史页面可以准确显示每次恢复的进度。
 
+本地材料读取遵从安装用户 `config.toml` 的命令黑名单，而不是按文件格式建立白名单。Python
+解析是允许的，只要调用经过 `agent_cli.execute_reviewed_read` 且命令不在黑名单中。若 Agent
+绕过受控读取入口，失败记录保留具体安全码，方便区分直接 shell、未审核命令和黑名单拒绝。
+
 ### Audit Agent B
 
 每个候选 revision 使用一个新的 B session，避免前一候选的审计结论污染新候选。B 读取

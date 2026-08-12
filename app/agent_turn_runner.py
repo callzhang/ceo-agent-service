@@ -383,11 +383,12 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
                 raise
             result = cast(ResultT, fallback)
-        except AgentReadOnlyViolationError:
+        except AgentReadOnlyViolationError as exc:
+            code = str(exc).strip() or "agent_read_only_violation"
             if recover_unknown:
-                self._defer_unknown(run, "agent_read_only_violation")
+                self._defer_unknown(run, code)
             else:
-                self._fail_running(run, "agent_read_only_violation")
+                self._fail_running(run, code)
             raise
         except Exception as exc:
             provider_recovery = _agent_process_error_code(exc)
