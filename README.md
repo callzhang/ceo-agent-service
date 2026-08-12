@@ -63,6 +63,8 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 一次 reply task generation 对应一个或多个 A/B run：同一 `conversation_id` 的 A run 复用 `conversations.codex_session_id`，每个候选 revision 创建新的 B run。Reply consumer 本身按队列逐条处理消息；会话锁只保护同一 A session 的 JSONL 顺序。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID、transcript 行范围、角色关系、operation ID 和恢复状态。任务终态采用严格 A/B result；服务在收到结果后本地校验 JSON，不使用 Codex CLI 的 `--output-schema` 传输参数。精确重复动作由 trigger、generation 与 revision 共同阻止，人工修订后的新内容不被旧结果拦截。
 
+单一 launchd 服务默认每次串行处理 4 条 reply task。该值提高积压恢复吞吐，不创建额外 worker，也不并发执行；同一会话仍必须先取得会话锁，所有外部动作仍走 Consumer A 与 Audit B 的审核和回读。
+
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
 所有服务启动的 Codex 通道（包括微信消费）均复用安装用户的 Codex 配置、MCP、插件和 skills。服务不会复制 OAuth 或 token；单个 MCP 的认证失败按实际依赖错误处理，不会触发 Agent 自行登录。
