@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse
@@ -10,6 +12,12 @@ import sys
 import tempfile
 from typing import Literal
 from urllib.parse import urlsplit
+
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    # Direct script execution exposes only this file's directory on sys.path.
+    sys.path.insert(0, str(ROOT))
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -28,8 +36,6 @@ from app.process_runner import run_process_with_idle_timeout
 from app.store import AgentRole
 from tests.support.native_codex_read_fixture import isolate_read_only_fixture_command
 
-
-ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CASES_PATH = Path(__file__).with_name("cases.jsonl")
 Outcome = Literal["proposal", "no_action", "needs_human", "failed"]
 LiveRole = Literal["consumer", "audit"]

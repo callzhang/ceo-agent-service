@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -19,6 +21,8 @@ from tests.support.native_codex_read_fixture import (
 
 
 CASES_PATH = Path("evals/skill_runtime/cases.jsonl")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_PATH = REPO_ROOT / "evals" / "skill_runtime" / "run.py"
 EXPECTED_OUTCOMES = {"proposal", "no_action", "needs_human", "failed"}
 
 
@@ -144,6 +148,52 @@ def test_cli_exits_nonzero_when_a_scripted_expectation_mismatches(
     output = capsys.readouterr().out
     assert "0/1 passed" in output
     assert '"ok": false' in output
+
+
+def test_script_path_cli_runs_from_repo_root_and_unrelated_cwd(tmp_path: Path):
+    invocations = (
+        ([sys.executable, "evals/skill_runtime/run.py"], REPO_ROOT),
+        ([sys.executable, str(SCRIPT_PATH)], tmp_path),
+    )
+
+    for command, cwd in invocations:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert "scripted: 10/10 passed" in completed.stdout
+        assert '"total": 10' in completed.stdout
+
+
+def test_script_path_cli_returns_nonzero_for_mutated_corpus(tmp_path: Path):
+    case = load_cases(CASES_PATH)[0]
+    mutated_path = tmp_path / "mutated.jsonl"
+    mutated_path.write_text(
+        json.dumps(
+            {
+                **case.model_dump(mode="json"),
+                "expected_outcome": "failed",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--cases", str(mutated_path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1, completed.stderr
+    assert "scripted: 0/1 passed" in completed.stdout
+    assert '"ok": false' in completed.stdout
 
 
 @pytest.mark.parametrize("role", ["consumer", "audit"])
