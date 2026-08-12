@@ -207,13 +207,15 @@ task 和指定 Consumer run 必须是同代最新 run 且仍为 `failed`，并�
 ID 和 transcript 行范围读取这些记录。SQLite 保存 task/run 关系、proposal revision、operation
 ID、租约、终态、外部结果状态和精确去重键，不复制完整 transcript。
 
-Consumer A 的 wire result 只负责传输；其中 `proposal_json` 必须解码为当前运行时
-`ConsumerProposal` 模型的完整对象。模型要求目标、动作说明、能力、操作、目标参数、载荷、
-预期验证、带引用的事实和 Agent 判断。旧的简化对象（例如只有 `actions` 和 `verification`）
-会被严格拒绝，不做兼容补齐；运行时把该模型生成的 JSON Schema 直接交给 Agent，避免提示
-文案与实际校验漂移。同一对话 session 可能含有旧版本输出，因此每个新 turn 的任务 prompt
-也会携带当前 schema；Agent 复用对话事实，但不能照搬历史 wire 形状。若 schema 指纹已变，
-服务不会恢复旧会话，而是从持久化任务上下文启动新会话；这比兼容旧字段或将任务永久标红更可靠。
+Consumer A 的 wire result 使用真实嵌套类型；`proposal` 是当前运行时 `ConsumerProposal`
+模型的完整对象，`decision_options` 是类型化对象数组。模型要求目标、动作说明、能力、操作、
+目标参数、载荷、预期验证、带引用的事实和 Agent 判断。旧的简化对象（例如只有 `actions`
+和 `verification`）以及任何旧的 JSON 字符串封装字段都会被严格拒绝，不做兼容补齐。
+每个新 turn 的 prompt 都在 `Pydantic Wire Contract` 中嵌入直接由当前模型生成的 JSON
+Schema，避免提示文案与实际校验漂移；Codex 返回后，服务再使用同一 Pydantic 模型做严格
+本地校验。同一对话 session 可能含有旧版本输出，但 Agent 只能复用对话事实，不能照搬历史
+wire 形状。若模型生成的 schema 指纹已变，服务不会恢复旧会话，而是从持久化任务上下文
+启动新会话；这比兼容旧字段或将任务永久标红更可靠。
 
 Consumer A 可以在 proposal 中描述受控写操作，但不得调用、试验或验证该写操作；它只能执行
 已审核的读取命令。执行与外部回读均由 Audit B 在接受 proposal 后完成。
@@ -294,13 +296,14 @@ from remaining a red service failure for the rest of the repair window.
 
 ### Consumer/Audit structured output
 
-Consumer A and Audit B use Codex native `--output-schema`. Their wire schemas keep
-dynamic nested proposal and receipt data in JSON strings, then decode and validate
-those values against the full Pydantic business contracts before any action can be
-accepted. The service does not fall back to the former result shape when the wire
-schema is violated.
+Consumer A and Audit B do not use Codex native `--output-schema`; that upstream
+mode rejects the root-discriminated schema before the Agent can run. Each role's
+prompt embeds a `Pydantic Wire Contract` generated directly from its current model.
+Codex returns real nested objects and arrays, and the service validates the response
+strictly with that Pydantic model before accepting any result. There are no
+`*_json` transport fields or compatibility fallback to the former wire shape.
 
-For an executed Audit result, `external_result_json` has one strict shape:
+For an executed Audit result, nested `external_result` has one strict shape:
 `operation_id` must match the reviewed proposal, `verification_summary` describes
 the live readback, and `live_result_reference` contains the external identifiers
 needed to locate that readback. Richer free-form execution summaries do not replace
@@ -332,13 +335,13 @@ terminal attempt resolves the same trigger its primary status fields show the
 effective terminal result and identify the later attempt. The superseded error
 is labeled as historical instead of appearing as an active pending failure.
 
-Audit recovery encodes `reconciliation_json` as a JSON array string. Each entry
+Audit recovery returns `reconciliation` as a typed array of nested objects. Each entry
 contains only `action_index`, `disposition`, and `read_result_digest`; operation
 identity remains in the persisted run and must not be repeated as an outer JSON
-envelope. This keeps the transport shape unambiguous while the full contract binds
-each disposition to a completed, target-matching read event from the current recovery
-turn. Repeating an exact scoped read does not invalidate another scoped read from the
-same turn; unrelated or historical digests remain invalid.
+envelope or encoded string. This keeps the transport shape unambiguous while the full
+contract binds each disposition to a completed, target-matching read event from the
+current recovery turn. Repeating an exact scoped read does not invalidate another
+scoped read from the same turn; unrelated or historical digests remain invalid.
 
 `reconciled` is limited to an explicit unknown-outcome recovery turn. During a
 normal Audit review, live evidence that the proposed action already happened is
