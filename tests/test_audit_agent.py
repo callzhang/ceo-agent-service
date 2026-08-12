@@ -113,6 +113,7 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
     instructions = audit_developer_instructions("Audit role test")
 
     assert "external_result_json\nmust contain exactly" in instructions
+    assert 'dws schema --cli-path "<product> <command>" --compact --format json' in instructions
     assert (
         "operation_id, verification_summary, and\nlive_result_reference"
         in instructions
