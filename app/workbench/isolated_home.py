@@ -9,7 +9,9 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
+import subprocess
 import sys
 import tempfile
 import uuid
@@ -34,6 +36,8 @@ _SYNC_LOCK_NAME = ".lock"
 _SYNC_JOURNAL_NAME = "journal.json"
 _SYNC_JOURNAL_VERSION = 2
 _SYNC_TRANSACTION_MARKER = ".transaction.json"
+_SYNC_TRANSACTION_INTENT_PREFIX = ".transaction-creation-"
+_SYNC_CREATOR_TIMEOUT_SECONDS = 10.0
 _MAX_SYNC_JOURNAL_BYTES = 1024 * 1024
 _MAX_SYNC_JOURNAL_ENTRIES = 4096
 _MAX_SYNC_FILE_BYTES = 256 * 1024 * 1024
@@ -875,9 +879,114 @@ def _execute_session_sync(
 def _create_session_sync_transaction(
     sync_state: _SessionSyncState,
     transaction_id: str,
+    *,
+    helper_checkpoint_fd: int = -1,
+    helper_checkpoint_delay_seconds: float = 0.0,
 ) -> _SessionSyncTransaction:
+    if not _is_canonical_home_id(transaction_id):
+        raise ValueError(_SAFE_ERROR)
     name = f"tx-{transaction_id}"
-    os.mkdir(name, mode=0o700, dir_fd=sync_state.state_fd)
+    nonce = secrets.token_hex(32)
+    intent_name = f"{_SYNC_TRANSACTION_INTENT_PREFIX}{transaction_id}.json"
+    intent = json.dumps(
+        {
+            "creation_nonce": nonce,
+            "transaction_id": transaction_id,
+            "version": _SYNC_JOURNAL_VERSION,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    _write_new_file(sync_state.state_fd, intent_name, intent, 0o600)
+    os.fsync(sync_state.state_fd)
+    try:
+        acknowledgement_read, acknowledgement_write = os.pipe()
+    except OSError as exc:
+        _remove_verified_transaction_intent(
+            sync_state.state_fd, intent_name, intent
+        )
+        raise ValueError(_SAFE_ERROR) from exc
+    helper: subprocess.Popen[bytes] | None = None
+    pass_fds = [sync_state.state_fd, acknowledgement_write]
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("session_transaction_creator.py")),
+        "--state-fd",
+        str(sync_state.state_fd),
+        "--ack-fd",
+        str(acknowledgement_write),
+        "--transaction-id",
+        transaction_id,
+        "--nonce",
+        nonce,
+    ]
+    if helper_checkpoint_fd >= 0:
+        pass_fds.append(helper_checkpoint_fd)
+        command.extend(("--checkpoint-fd", str(helper_checkpoint_fd)))
+    if helper_checkpoint_delay_seconds:
+        delay_ms = min(
+            max(int(helper_checkpoint_delay_seconds * 1000), 0), 2000
+        )
+        command.extend(("--checkpoint-delay-ms", str(delay_ms)))
+    try:
+        helper = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            pass_fds=tuple(pass_fds),
+            start_new_session=True,
+        )
+    except BaseException:
+        os.close(acknowledgement_read)
+        os.close(acknowledgement_write)
+        _remove_verified_transaction_intent(
+            sync_state.state_fd, intent_name, intent
+        )
+        raise ValueError(_SAFE_ERROR)
+    os.close(acknowledgement_write)
+    try:
+        try:
+            return_code = helper.wait(timeout=_SYNC_CREATOR_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            helper.terminate()
+            try:
+                helper.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                helper.kill()
+                helper.wait(timeout=2)
+            raise ValueError(_SAFE_ERROR)
+        acknowledgement = bytearray()
+        while len(acknowledgement) <= 512:
+            chunk = os.read(
+                acknowledgement_read,
+                min(513 - len(acknowledgement), 64 * 1024),
+            )
+            if not chunk:
+                break
+            acknowledgement.extend(chunk)
+        if return_code != 0 or len(acknowledgement) > 512:
+            raise ValueError(_SAFE_ERROR)
+        response = json.loads(bytes(acknowledgement).decode("ascii"))
+        if (
+            not isinstance(response, dict)
+            or set(response) != {"device", "inode", "ok"}
+            or response["ok"] is not True
+            or type(response["device"]) is not int
+            or type(response["inode"]) is not int
+            or response["device"] < 0
+            or response["inode"] <= 0
+        ):
+            raise ValueError(_SAFE_ERROR)
+        expected_identity = (response["device"], response["inode"])
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        _remove_verified_transaction_intent(
+            sync_state.state_fd, intent_name, intent
+        )
+        raise ValueError(_SAFE_ERROR) from exc
+    finally:
+        os.close(acknowledgement_read)
     transaction_fd = os.open(
         name,
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
@@ -889,19 +998,10 @@ def _create_session_sync_transaction(
             not stat.S_ISDIR(metadata.st_mode)
             or metadata.st_uid != os.getuid()
             or stat.S_IMODE(metadata.st_mode) != 0o700
+            or (metadata.st_dev, metadata.st_ino) != expected_identity
+            or not _valid_transaction_marker(transaction_fd, transaction_id)
         ):
             raise ValueError(_SAFE_ERROR)
-        marker = json.dumps(
-            {
-                "version": _SYNC_JOURNAL_VERSION,
-                "uid": os.getuid(),
-                "transaction_id": transaction_id,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        _write_new_file(transaction_fd, _SYNC_TRANSACTION_MARKER, marker, 0o600)
-        os.fsync(transaction_fd)
         return _SessionSyncTransaction(
             transaction_id=transaction_id,
             name=name,
@@ -911,6 +1011,31 @@ def _create_session_sync_transaction(
     except BaseException:
         os.close(transaction_fd)
         raise
+
+
+def _remove_verified_transaction_intent(
+    state_fd: int,
+    name: str,
+    expected: bytes,
+) -> None:
+    try:
+        intent_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=state_fd)
+        try:
+            metadata = os.fstat(intent_fd)
+            data = os.read(intent_fd, 513)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or data != expected
+            ):
+                return
+        finally:
+            os.close(intent_fd)
+        os.unlink(name, dir_fd=state_fd)
+        os.fsync(state_fd)
+    except (FileNotFoundError, OSError):
+        pass
 
 
 class _InvalidSessionJournal(ValueError):
@@ -1145,11 +1270,16 @@ def _valid_transaction_marker(transaction_fd: int, transaction_id: str) -> bool:
         payload = json.loads(data.decode("utf-8"))
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         return False
-    return payload == {
-        "transaction_id": transaction_id,
-        "uid": os.getuid(),
-        "version": _SYNC_JOURNAL_VERSION,
-    }
+    return (
+        isinstance(payload, dict)
+        and set(payload)
+        == {"creation_nonce", "transaction_id", "uid", "version"}
+        and payload["transaction_id"] == transaction_id
+        and payload["uid"] == os.getuid()
+        and payload["version"] == _SYNC_JOURNAL_VERSION
+        and isinstance(payload["creation_nonce"], str)
+        and bool(_SHA256_DIGEST.fullmatch(payload["creation_nonce"]))
+    )
 
 
 def _reconcile_session_sync_transactions(sync_state: _SessionSyncState) -> None:

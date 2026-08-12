@@ -1,6 +1,7 @@
 import fcntl
 import json
 import os
+import select
 import signal
 import stat
 import subprocess
@@ -12,6 +13,7 @@ from pathlib import Path
 import pytest
 
 import app.workbench.isolated_home as isolated_home_module
+import app.workbench.session_transaction_creator as transaction_creator
 from app.workbench.isolated_home import (
     create_isolated_codex_home,
     reconcile_isolated_codex_homes,
@@ -842,6 +844,150 @@ def test_unmarked_transaction_like_state_child_survives_reconciliation(tmp_path:
         pass
 
     assert sentinel.read_text(encoding="utf-8") == "keep\n"
+
+
+def test_transaction_creator_marker_failure_removes_only_its_created_root(
+    tmp_path: Path,
+):
+    source = _source_home(tmp_path)
+    root = tmp_path / "isolated-root"
+    transaction_id = uuid.uuid4().hex
+    nonce = "a" * 64
+    with isolated_home_module._session_sync_lock(source, root) as sync_state:
+        intent_name = f".transaction-creation-{transaction_id}.json"
+        intent = transaction_creator._intent_payload(transaction_id, nonce)
+        isolated_home_module._write_new_file(
+            sync_state.state_fd, intent_name, intent, 0o600
+        )
+        os.fsync(sync_state.state_fd)
+
+        def fail_marker(_fd: int, _transaction_id: str, _nonce: str) -> None:
+            raise OSError("injected marker failure")
+
+        with pytest.raises(OSError, match="injected marker failure"):
+            transaction_creator.create_marked_transaction(
+                sync_state.state_fd,
+                transaction_id,
+                nonce,
+                marker_writer=fail_marker,
+            )
+
+        transaction_root = (
+            source / ".workbench-session-sync" / f"tx-{transaction_id}"
+        )
+        assert not transaction_root.exists()
+
+
+def test_transaction_creator_survives_parent_sigkill_and_is_reconciled(
+    tmp_path: Path,
+):
+    source = _source_home(tmp_path)
+    root = tmp_path / "isolated-root"
+    transaction_id = uuid.uuid4().hex
+    checkpoint_read, checkpoint_write = os.pipe()
+    script = "\n".join(
+        (
+            "import sys",
+            "from pathlib import Path",
+            "import app.workbench.isolated_home as module",
+            "source, root = Path(sys.argv[1]), Path(sys.argv[2])",
+            "with module._session_sync_lock(source, root) as state:",
+            "    transaction = module._create_session_sync_transaction(",
+            "        state, sys.argv[3], helper_checkpoint_fd=int(sys.argv[4]),",
+            "        helper_checkpoint_delay_seconds=0.75)",
+            "    module.os.close(transaction.fd)",
+        )
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(source),
+            str(root),
+            transaction_id,
+            str(checkpoint_write),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        pass_fds=(checkpoint_write,),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    os.close(checkpoint_write)
+    try:
+        ready, _, _ = select.select([checkpoint_read], [], [], 8)
+        assert ready
+        assert os.read(checkpoint_read, 7) == b"created"
+        process.send_signal(signal.SIGKILL)
+        assert process.wait(timeout=5) < 0
+        state_root = source / ".workbench-session-sync"
+        marker = state_root / f"tx-{transaction_id}" / ".transaction.json"
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline and not marker.exists():
+            time.sleep(0.02)
+        assert marker.exists()
+
+        with isolated_home_module._session_sync_lock(source, root):
+            pass
+
+        assert not marker.parent.exists()
+    finally:
+        os.close(checkpoint_read)
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_transaction_creator_preserves_preexisting_exact_name(tmp_path: Path):
+    source = _source_home(tmp_path)
+    root = tmp_path / "isolated-root"
+    transaction_id = uuid.uuid4().hex
+    with isolated_home_module._session_sync_lock(source, root) as sync_state:
+        external = source / ".workbench-session-sync" / f"tx-{transaction_id}"
+        external.mkdir(mode=0o700)
+        sentinel = external / "sentinel"
+        sentinel.write_text("external\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="could not be isolated safely"):
+            isolated_home_module._create_session_sync_transaction(
+                sync_state, transaction_id
+            )
+
+        assert sentinel.read_text(encoding="utf-8") == "external\n"
+        assert not any(
+            child.name.startswith(".transaction-creation-")
+            for child in external.parent.iterdir()
+        )
+
+
+def test_transaction_creator_reaps_helpers_and_closes_fds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = _source_home(tmp_path)
+    root = tmp_path / "isolated-root"
+    helpers: list[subprocess.Popen[bytes]] = []
+    real_popen = isolated_home_module.subprocess.Popen
+
+    def record_helper(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        helpers.append(process)
+        return process
+
+    monkeypatch.setattr(isolated_home_module.subprocess, "Popen", record_helper)
+    fd_count_before = len(os.listdir("/dev/fd"))
+    with isolated_home_module._session_sync_lock(source, root) as sync_state:
+        for _ in range(12):
+            transaction = isolated_home_module._create_session_sync_transaction(
+                sync_state, uuid.uuid4().hex
+            )
+            isolated_home_module._remove_transaction_root(sync_state, transaction)
+            os.close(transaction.fd)
+    fd_count_after = len(os.listdir("/dev/fd"))
+
+    assert helpers
+    assert all(process.poll() is not None for process in helpers)
+    assert fd_count_after <= fd_count_before + 1
 
 
 def test_committed_journal_after_sigkill_keeps_all_updates_and_only_cleans(
