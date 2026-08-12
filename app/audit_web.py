@@ -627,6 +627,7 @@ TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/
 DEFAULT_ERROR_LIST_LIMIT = 20
 HISTORY_CHART_HOURS = 24
 DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
+DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS = 10.0
 HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
     "💬 Skipped": "#a8a8aa",
@@ -719,6 +720,86 @@ class _RecentHtmlCache:
             self._refreshing = False
 
     def refresh_in_background(self, renderer: Callable[[], str]) -> None:
+        with self._lock:
+            if self._refreshing:
+                return
+            self._refreshing = True
+            refresh_thread = self._thread_factory(
+                target=self._refresh,
+                args=(renderer,),
+                daemon=True,
+            )
+        refresh_thread.start()
+
+
+class _RecentPayloadCache:
+    """Serve the last complete status payload while one refresh is running."""
+
+    def __init__(
+        self,
+        ttl_seconds: float,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        thread_factory: Callable[..., threading.Thread] = threading.Thread,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        self._thread_factory = thread_factory
+        self._payload: dict[str, object] | None = None
+        self._rendered_at = 0.0
+        self._refreshing = False
+        self._lock = threading.Lock()
+
+    def get_or_render(
+        self,
+        renderer: Callable[[], dict[str, object]],
+    ) -> dict[str, object]:
+        refresh_thread: threading.Thread | None = None
+        with self._lock:
+            now = self._clock()
+            if self._payload is not None and now - self._rendered_at < self._ttl_seconds:
+                return self._payload
+            if self._payload is not None:
+                if not self._refreshing:
+                    self._refreshing = True
+                    refresh_thread = self._thread_factory(
+                        target=self._refresh,
+                        args=(renderer,),
+                        daemon=True,
+                    )
+                cached_payload = self._payload
+            else:
+                self._refreshing = True
+                cached_payload = None
+        if refresh_thread is not None:
+            refresh_thread.start()
+        if cached_payload is not None:
+            return cached_payload
+        try:
+            payload = renderer()
+        except Exception:
+            with self._lock:
+                self._refreshing = False
+            raise
+        with self._lock:
+            self._payload = payload
+            self._rendered_at = self._clock()
+            self._refreshing = False
+            return payload
+
+    def _refresh(self, renderer: Callable[[], dict[str, object]]) -> None:
+        try:
+            payload = renderer()
+        except Exception:
+            with self._lock:
+                self._refreshing = False
+            return
+        with self._lock:
+            self._payload = payload
+            self._rendered_at = self._clock()
+            self._refreshing = False
+
+    def refresh_in_background(self, renderer: Callable[[], dict[str, object]]) -> None:
         with self._lock:
             if self._refreshing:
                 return
@@ -1898,8 +1979,12 @@ def build_worker_status_payload(
     }
 
 
-def _render_workers_content(store: AutoReplyStore) -> str:
-    payload = build_worker_status_payload(store)
+def _render_workers_content(
+    store: AutoReplyStore,
+    *,
+    payload: dict[str, object] | None = None,
+) -> str:
+    payload = payload or build_worker_status_payload(store)
     service = payload["service"]
     summary = payload["summary"]
     service_ok = bool(service.get("ok")) if isinstance(service, dict) else False
@@ -2551,9 +2636,10 @@ def render_settings_page(
     log_page: int = 1,
     log_query: str = "",
     log_type: str = "",
+    worker_status_payload: dict[str, object] | None = None,
 ) -> str:
     if active_tab == "workers":
-        content = _render_workers_content(store)
+        content = _render_workers_content(store, payload=worker_status_payload)
     elif active_tab == "logs":
         content = _render_log_content(
             store,
@@ -7611,6 +7697,9 @@ def create_audit_app(
     default_attempt_list_cache = _RecentHtmlCache(
         DEFAULT_HISTORY_CACHE_TTL_SECONDS
     )
+    worker_status_cache = _RecentPayloadCache(
+        DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
+    )
 
     def render_default_attempt_list() -> str:
         return render_attempt_list(
@@ -7626,10 +7715,14 @@ def create_audit_app(
             include_feedback_count=False,
         )
 
+    def render_worker_status_payload() -> dict[str, object]:
+        return build_worker_status_payload(_audit_store(db_path))
+
     @asynccontextmanager
     async def audit_lifespan(_app: FastAPI):
         default_attempt_list_cache.get_or_render(_render_history_busy_page)
         default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
+        worker_status_cache.refresh_in_background(render_worker_status_payload)
         yield
 
     app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
@@ -7855,11 +7948,19 @@ def create_audit_app(
 
     @app.get("/workers", response_class=HTMLResponse)
     def workers_page() -> str:
-        return render_settings_page(AutoReplyStore(db_path), active_tab="workers")
+        return render_settings_page(
+            _audit_store(db_path),
+            active_tab="workers",
+            worker_status_payload=worker_status_cache.get_or_render(
+                render_worker_status_payload
+            ),
+        )
 
     @app.get("/api/workers/status", response_class=JSONResponse)
     def workers_status() -> JSONResponse:
-        return JSONResponse(build_worker_status_payload(AutoReplyStore(db_path)))
+        return JSONResponse(
+            worker_status_cache.get_or_render(render_worker_status_payload)
+        )
 
     @app.get("/logs", response_class=HTMLResponse)
     def log_list(request: Request) -> str:
