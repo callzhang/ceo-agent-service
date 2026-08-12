@@ -301,6 +301,10 @@ def fast_path_unread_backoff_duration() -> timedelta:
     return env_duration("FAST_PATH_UNREAD_BACKOFF", timedelta(minutes=5))
 
 
+def codex_capacity_retry_duration() -> timedelta:
+    return env_duration("CEO_CODEX_CAPACITY_RETRY_DELAY", timedelta(minutes=30))
+
+
 def single_chat_read_recovery_window() -> timedelta:
     return env_duration("SINGLE_CHAT_READ_RECOVERY_WINDOW", timedelta(hours=24))
 

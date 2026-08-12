@@ -34,6 +34,7 @@ from app.config import (
     agent_mention_aliases,
     assistant_signature,
     broadcast_mention_aliases,
+    codex_capacity_retry_duration,
     env_duration,
     fast_path_unread_backoff_duration,
     handoff_ack,
@@ -57,6 +58,13 @@ from app.dingtalk_models import (
     DingTalkMessage,
 )
 from app.codex_runner import selected_codex_model_provider
+from app.codex_capacity import (
+    CODEX_CAPACITY_EXHAUSTED_MESSAGE,
+    CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+    CODEX_PROVIDER_UNAVAILABLE,
+    is_codex_capacity_exhausted,
+    is_codex_provider_recovery_code,
+)
 from app.notification import (
     dismiss_browser_notification,
     dingtalk_conversation_notification_url,
@@ -101,7 +109,7 @@ HANDOFF_NOTIFICATION_PREFIX = "【CEO Agent 转人工通知】"
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
 CODEX_LOGIN_REQUIRED_PREFIX = "codex_login_required"
 CODEX_PROVIDER_AUTH_FAILED_PREFIX = "codex_provider_auth_failed"
-CODEX_PROVIDER_UNAVAILABLE_PREFIX = "codex_provider_unavailable"
+CODEX_PROVIDER_UNAVAILABLE_PREFIX = CODEX_PROVIDER_UNAVAILABLE
 CRITICAL_INFO_UNAVAILABLE_PREFIX = "critical_info_unavailable:"
 XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER = (
     f"{CRITICAL_INFO_UNAVAILABLE_PREFIX}xiaoqing_interview"
@@ -289,6 +297,8 @@ def _is_dingteam_okr_login_error(reason: str) -> bool:
 
 
 def _normalize_codex_stop_error_reason(reason: str) -> str:
+    if is_codex_capacity_exhausted(reason):
+        return CODEX_PROVIDER_CAPACITY_EXHAUSTED
     if _is_codex_provider_recovery_wait_reason(reason):
         return reason
     if _is_codex_provider_auth_error(reason):
@@ -301,7 +311,7 @@ def _normalize_codex_stop_error_reason(reason: str) -> str:
 
 
 def _is_codex_provider_recovery_wait_reason(reason: str) -> bool:
-    return reason.startswith(CODEX_PROVIDER_UNAVAILABLE_PREFIX)
+    return is_codex_provider_recovery_code(reason)
 
 
 def _is_terminal_codex_auth_failure(reason: str) -> bool:
@@ -1476,6 +1486,8 @@ class DingTalkAutoReplyWorker:
         processed_tasks = 0
         self._recover_due_unknown_agent_reply_tasks(limit=limit)
         self._recover_stale_agent_reply_tasks()
+        if self.store.active_codex_capacity_pause(now=self._now()):
+            return 0
         claimed_tasks = 0
         scan_now = self._sqlite_timestamp(self._now())
         max_task_id = self.store.max_pending_reply_task_id(
@@ -1545,11 +1557,15 @@ class DingTalkAutoReplyWorker:
                         authorization_wait_error
                     )
                 ):
-                    provider_recovery = authorization_wait_error.startswith(
-                        CODEX_PROVIDER_UNAVAILABLE_PREFIX
+                    provider_recovery = _is_codex_provider_recovery_wait_reason(
+                        authorization_wait_error
+                    )
+                    capacity_exhausted = is_codex_capacity_exhausted(
+                        authorization_wait_error
                     )
                     notify_authorization_wait = (
-                        task.error.strip() != authorization_wait_error
+                        not capacity_exhausted
+                        and task.error.strip() != authorization_wait_error
                     )
                     if self._dws_authorization_required_scopes(exc):
                         self._ensure_dws_pat_authorization(exc)
@@ -1559,23 +1575,34 @@ class DingTalkAutoReplyWorker:
                             authorization_wait_error,
                             expected_execution_generation=task.execution_generation,
                             available_at=(
-                                self._reply_task_retry_available_at(task.attempts)
+                                self._codex_capacity_retry_available_at()
+                                if capacity_exhausted
+                                else self._reply_task_retry_available_at(task.attempts)
                                 if provider_recovery
                                 else self._reply_task_authorization_available_at()
                             ),
                         )
                     except AgentRunLeaseLostError:
                         continue
-                    self.store.record_error(
-                        task.conversation_id,
-                        task.trigger_message_id,
-                        (
-                            "reply_task_provider_recovery"
-                            if provider_recovery
-                            else "reply_task_authorization"
-                        ),
-                        authorization_wait_error,
-                    )
+                    if not capacity_exhausted or self._open_codex_capacity_pause():
+                        self.store.record_error(
+                            task.conversation_id,
+                            task.trigger_message_id,
+                            (
+                                "codex_capacity_pause"
+                                if capacity_exhausted
+                                else (
+                                    "reply_task_provider_recovery"
+                                    if provider_recovery
+                                    else "reply_task_authorization"
+                                )
+                            ),
+                            (
+                                CODEX_CAPACITY_EXHAUSTED_MESSAGE
+                                if capacity_exhausted
+                                else authorization_wait_error
+                            ),
+                        )
                     if notify_authorization_wait:
                         notification_prefix = (
                             "CEO task waiting for Codex provider recovery: "
@@ -1872,6 +1899,17 @@ class DingTalkAutoReplyWorker:
             self._now().astimezone(timezone.utc) + timedelta(seconds=delay_seconds)
         )
 
+    def _codex_capacity_retry_available_at(self) -> str:
+        return self._sqlite_timestamp(
+            self._now().astimezone(timezone.utc) + codex_capacity_retry_duration()
+        )
+
+    def _open_codex_capacity_pause(self) -> bool:
+        return self.store.open_codex_capacity_pause(
+            retry_at=self._codex_capacity_retry_available_at(),
+            now=self._now(),
+        )
+
     def _reply_task_authorization_available_at(self) -> str:
         return self._sqlite_timestamp(
             self._now().astimezone(timezone.utc)
@@ -1956,7 +1994,8 @@ class DingTalkAutoReplyWorker:
         task: ReplyTask,
         result: OrchestrationResult,
     ) -> bool:
-        provider_recovery = result.error.code == "codex_provider_unavailable"
+        provider_recovery = _is_codex_provider_recovery_wait_reason(result.error.code)
+        capacity_exhausted = is_codex_capacity_exhausted(result.error.code)
         authorization_wait = result.error.authorization_required
         active_recovery_wait = result.error.code in {
             "agent_run_unavailable",
@@ -1973,8 +2012,19 @@ class DingTalkAutoReplyWorker:
                 available_at = (
                     self._reply_task_authorization_available_at()
                     if authorization_wait
-                    else self._reply_task_retry_available_at(max(task.attempts, 1))
+                    else (
+                        self._codex_capacity_retry_available_at()
+                        if capacity_exhausted
+                        else self._reply_task_retry_available_at(max(task.attempts, 1))
+                    )
                 )
+                if capacity_exhausted and self._open_codex_capacity_pause():
+                    self.store.record_error(
+                        task.conversation_id,
+                        task.trigger_message_id,
+                        "codex_capacity_pause",
+                        CODEX_CAPACITY_EXHAUSTED_MESSAGE,
+                    )
                 self.store.defer_reply_task(
                     task.id,
                     error,
@@ -2032,7 +2082,19 @@ class DingTalkAutoReplyWorker:
             available_at = (
                 self._reply_task_authorization_available_at()
                 if authorization_wait
-                else self._reply_task_retry_available_at(task.attempts)
+                else (
+                    self._codex_capacity_retry_available_at()
+                    if capacity_exhausted
+                    else self._reply_task_retry_available_at(task.attempts)
+                )
+            )
+
+        if capacity_exhausted and self._open_codex_capacity_pause():
+            self.store.record_error(
+                task.conversation_id,
+                task.trigger_message_id,
+                "codex_capacity_pause",
+                CODEX_CAPACITY_EXHAUSTED_MESSAGE,
             )
 
         run = self.store.get_agent_run(result.final_run_id)

@@ -20,6 +20,7 @@ from app.database_backup import (
     prune_database_backups,
 )
 from app.config import (
+    codex_capacity_retry_duration,
     consumer_poll_interval_seconds,
     embedding_api_key,
     embedding_base_url,
@@ -103,6 +104,10 @@ from app.worker import (
     _is_codex_provider_recovery_wait_reason,
     _is_terminal_codex_auth_failure,
     _normalize_codex_stop_error_reason,
+)
+from app.codex_capacity import (
+    CODEX_CAPACITY_EXHAUSTED_MESSAGE,
+    is_codex_capacity_exhausted,
 )
 from app.weekly_okr_report import (
     DEFAULT_SCHEDULE_HOUR,
@@ -973,6 +978,8 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         )
     processed = 0
     for _ in range(limit):
+        if store.active_codex_capacity_pause(now=datetime.now(timezone.utc)):
+            break
         claimed = store.claim_work_summary_inputs(limit=1)
         if not claimed:
             break
@@ -983,19 +990,34 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         except Exception as exc:
             raw_error = str(exc)
             error = _normalize_codex_stop_error_reason(raw_error)
+            capacity_exhausted = is_codex_capacity_exhausted(error)
+            opened_capacity_pause = False
+            if capacity_exhausted:
+                now = datetime.now(timezone.utc)
+                opened_capacity_pause = store.open_codex_capacity_pause(
+                    retry_at=(now + codex_capacity_retry_duration()).isoformat(),
+                    now=now,
+                )
             if _should_retry_work_summary_input(exc, work_input.attempts):
                 store.schedule_work_summary_input_retry(
                     work_input.id,
                     error,
                     available_at=_work_summary_retry_available_at(
-                        work_input.attempts
+                        work_input.attempts,
+                        capacity_exhausted=capacity_exhausted,
                     ),
                 )
             elif _should_discard_work_summary_input(error):
                 store.mark_work_summary_input_discarded(work_input.id, error)
             else:
                 store.mark_work_summary_input_failed(work_input.id, error)
-            store.record_error(None, None, "task_agent", error)
+            if not capacity_exhausted or opened_capacity_pause:
+                store.record_error(
+                    None,
+                    None,
+                    "codex_capacity_pause" if capacity_exhausted else "task_agent",
+                    CODEX_CAPACITY_EXHAUSTED_MESSAGE if capacity_exhausted else error,
+                )
     print(f"process-work-items processed={processed}", flush=True)
     return processed
 
@@ -1023,7 +1045,13 @@ def _should_discard_work_summary_input(error: str) -> bool:
     )
 
 
-def _work_summary_retry_available_at(attempts: int) -> str:
+def _work_summary_retry_available_at(
+    attempts: int, *, capacity_exhausted: bool = False
+) -> str:
+    if capacity_exhausted:
+        return (
+            datetime.now(timezone.utc) + codex_capacity_retry_duration()
+        ).strftime("%Y-%m-%d %H:%M:%S")
     delay_seconds = min(
         WORK_SUMMARY_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempts - 1, 0)),
         WORK_SUMMARY_RETRY_MAX_DELAY_SECONDS,

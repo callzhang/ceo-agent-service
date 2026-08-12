@@ -37,6 +37,11 @@ from app.agent_effects import (
     _normalized_key,
 )
 from app.codex_runner import CodexRunner
+from app.codex_capacity import (
+    CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+    CODEX_PROVIDER_UNAVAILABLE,
+    codex_provider_failure_code,
+)
 from app.leak_check import contains_credential
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -49,7 +54,6 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
-CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
 CODEX_PROVIDER_AUTH_FAILED = "codex_provider_auth_failed"
 UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS = 60
 UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS = 15 * 60
@@ -87,15 +91,9 @@ def _process_failure_code(process: ProcessRunResult) -> str:
             f"{CODEX_PROVIDER_AUTH_FAILED}: native Codex CLI authentication "
             "is unavailable"
         )
-    if any(
-        marker in detail
-        for marker in (
-            "workspace is out of credits",
-            "hit your usage limit",
-            "quota exceeded",
-        )
-    ):
-        return CODEX_PROVIDER_UNAVAILABLE
+    provider_code = codex_provider_failure_code(detail)
+    if provider_code == CODEX_PROVIDER_CAPACITY_EXHAUSTED:
+        return provider_code
     return "codex_process_failed"
 
 
@@ -103,7 +101,7 @@ def _agent_process_error_code(exc: Exception) -> str:
     code = str(exc).strip()
     if code.startswith(CODEX_PROVIDER_AUTH_FAILED):
         return code
-    if code == CODEX_PROVIDER_UNAVAILABLE:
+    if code in {CODEX_PROVIDER_UNAVAILABLE, CODEX_PROVIDER_CAPACITY_EXHAUSTED}:
         return code
     if isinstance(exc, ResultParseError):
         if code == "no valid typed result JSON found in Codex JSONL":
@@ -406,7 +404,10 @@ class AgentTurnProcess(Generic[ResultT]):
                 self._defer_unknown(run, code)
             else:
                 self._fail_running(run, code)
-            if provider_recovery == CODEX_PROVIDER_UNAVAILABLE:
+            if provider_recovery in {
+                CODEX_PROVIDER_UNAVAILABLE,
+                CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+            }:
                 raise RuntimeError(code) from exc
             raise
         transcript_end = transcript_start + line_count

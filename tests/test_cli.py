@@ -1691,6 +1691,67 @@ def test_process_work_items_command_keeps_codex_transport_failure_pending_after_
     assert row["available_at"] > ""
 
 
+def test_process_work_items_pauses_after_codex_capacity_exhaustion(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-capacity"
+        last_audit_tool_events = []
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def decide(self, *, prompt, session_id=None):
+            raise ExternalDependencyError(
+                "codex task agent",
+                RuntimeError("Your workspace is out of credits."),
+                dependency="codex",
+            )
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "reply_attempt", "ref": "1"},
+            "summary": "同步关键项目状态。",
+            "project_name": "容量暂停项目",
+            "context": {
+                "sender": "Mina",
+                "participants": [],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "测试群",
+            },
+        }
+    )
+    for source_ref in ("1", "2"):
+        store.enqueue_work_summary_input(
+            item.source.type.value,
+            source_ref,
+            item.model_dump_json(),
+        )
+
+    assert process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
+    ) == 0
+    assert capsys.readouterr().out == "process-work-items processed=0\n"
+
+    with AutoReplyStore(db_path)._connect() as db:
+        rows = db.execute(
+            "select status, error from work_summary_inputs order by id"
+        ).fetchall()
+    assert [(row["status"], row["error"]) for row in rows] == [
+        ("pending", "codex_provider_capacity_exhausted"),
+        ("pending", ""),
+    ]
+    assert store.active_codex_capacity_pause(now=datetime.now().astimezone()) > ""
+    assert [error.kind for error in store.list_errors()] == ["codex_capacity_pause"]
+
+
 def test_process_work_items_command_keeps_typed_external_failure_pending_after_limit(
     tmp_path,
     monkeypatch,

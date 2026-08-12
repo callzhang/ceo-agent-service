@@ -844,6 +844,41 @@ def test_consumer_keeps_external_agent_failure_retryable_after_limit(tmp_path):
     assert run.status == "retry"
 
 
+def test_consumer_pauses_meeting_analysis_after_codex_capacity_exhaustion(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class CapacityFailureRunner:
+        last_session_id = "meeting-capacity"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str):
+            raise ExternalDependencyError(
+                "codex meeting alignment",
+                RuntimeError("Your workspace is out of credits."),
+                dependency="codex",
+            )
+
+    runner = CapacityFailureRunner()
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.available_at == (NOW + timedelta(minutes=30)).isoformat()
+    assert store.active_codex_capacity_pause(now=NOW) == job.available_at
+    assert [error.kind for error in store.list_errors()] == ["codex_capacity_pause"]
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW + timedelta(minutes=1), limit=1
+    ) == 0
+    assert len(store.list_meeting_alignment_runs(job_id)) == 1
+
+
 def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

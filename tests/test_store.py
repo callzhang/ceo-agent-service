@@ -5257,6 +5257,34 @@ def test_service_state_round_trip(tmp_path: Path):
     assert loaded.get_service_state("dws_upgrade_checked_date") == "2026-05-25"
 
 
+def test_codex_capacity_pause_is_shared_and_expires(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    now = datetime.fromisoformat("2026-08-12T10:00:00+00:00")
+    retry_at = "2026-08-12T10:30:00+00:00"
+
+    assert store.open_codex_capacity_pause(retry_at=retry_at, now=now) is True
+    assert store.open_codex_capacity_pause(retry_at=retry_at, now=now) is False
+    assert store.active_codex_capacity_pause(now=now) == retry_at
+    assert (
+        store.active_codex_capacity_pause(
+            now=datetime.fromisoformat("2026-08-12T10:30:00+00:00")
+        )
+        == ""
+    )
+
+
+def test_resolve_errors_keeps_history_with_a_resolution(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error(None, None, "consumer", "temporary failure")
+    [error] = store.list_errors()
+
+    assert store.resolve_errors([error.id], resolution="recovered by queue retry") == 1
+    resolved = store.list_errors()[0]
+
+    assert resolved.resolved_at
+    assert resolved.resolution == "recovered by queue retry"
+
+
 def test_missing_service_state_returns_none(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

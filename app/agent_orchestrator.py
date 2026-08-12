@@ -15,12 +15,10 @@ from app.agent_contracts import (
     ConsumerProposal,
 )
 from app.agent_result import AgentError, ResultParseError, SideEffectState
+from app.codex_capacity import is_codex_provider_recovery_code
 from app.agent_skill_usage import LoadedSkillReceipt, loaded_skill_receipts
 from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
-
-
-CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
 
 
 MAX_CONTENT_FEEDBACK_CYCLES = 2
@@ -597,7 +595,7 @@ class AgentOrchestrator:
                 authorization_required=True,
             )
         if run.status == "failed" and error.retryable:
-            if error.code == CODEX_PROVIDER_UNAVAILABLE:
+            if is_codex_provider_recovery_code(error.code):
                 if task.error == error.code:
                     feedback = self._retry_feedback(run)
                     if run.proposal_revision > 0 and feedback is None:
@@ -667,7 +665,7 @@ class AgentOrchestrator:
                 authorization_required=True,
             )
         if run.status == "failed" and error.retryable and run.side_effect_state == "none":
-            if error.code == CODEX_PROVIDER_UNAVAILABLE:
+            if is_codex_provider_recovery_code(error.code):
                 if task.error == error.code:
                     return _NextAudit(
                         run.proposal_revision,

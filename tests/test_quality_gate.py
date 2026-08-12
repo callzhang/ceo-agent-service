@@ -94,6 +94,26 @@ def test_quality_gate_excludes_recent_error_recovered_by_later_attempt(tmp_path)
     ]
 
 
+def test_quality_gate_reports_active_codex_capacity_pause_as_attention(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.open_codex_capacity_pause(
+        retry_at=(NOW + timedelta(minutes=30)).isoformat(), now=NOW
+    )
+    store.record_error(
+        None,
+        None,
+        "codex_capacity_pause",
+        "Codex workspace credits are exhausted; work is paused until the next capacity check",
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert [(issue.source, issue.code, issue.count) for issue in report.attention] == [
+        ("codex_capacity", "paused", 1)
+    ]
+
+
 def test_quality_gate_keeps_future_follow_up_as_attention_not_failure(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     future = (NOW + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
