@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import tomllib
@@ -20,6 +21,42 @@ _SHELL_CONNECTORS = frozenset({"&&", "||", "|", ";"})
 CODEX_CONFIG_PATH_ENV = "CEO_AGENT_CODEX_CONFIG_PATH"
 LOCAL_READ_POLICY_TABLE = ("ceo_agent", "local_read_policy")
 _SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset({"read-oa-approval-detail"})
+_LOCAL_READ_ONLY_COMMANDS = frozenset(
+    {
+        "cat",
+        "date",
+        "file",
+        "find",
+        "grep",
+        "head",
+        "ls",
+        "pwd",
+        "rg",
+        "sed",
+        "sort",
+        "stat",
+        "tail",
+        "wc",
+    }
+)
+_INTRINSICALLY_BLOCKED_ARGUMENT_PREFIXES = {
+    "find": (
+        "-delete",
+        "-exec",
+        "-execdir",
+        "-fls",
+        "-fprint",
+        "-fprint0",
+        "-fprintf",
+        "-ok",
+        "-okdir",
+    ),
+    "grep": ("--pre", "--generate"),
+    "rg": ("--pre", "--generate"),
+    "sort": ("-o", "--output"),
+    "tail": ("-f", "--follow"),
+}
+_SAFE_SED_PRINT_SCRIPT = re.compile(r"^(?:[0-9]+|\$)(?:,(?:[0-9]+|\$))?p$")
 
 
 def service_read_command_contract() -> tuple[str, ...]:
@@ -552,8 +589,54 @@ def _is_local_read_only_segment(argv: tuple[str, ...]) -> bool:
     # DWS and Lark use installed metadata rather than the local command policy.
     if executable in {"dws", "lark-cli"}:
         return False
+    if not _is_intrinsically_read_only_local_command(argv):
+        return False
     policy = load_local_read_command_policy()
     return policy is not None and policy.allows(argv)
+
+
+def _is_intrinsically_read_only_local_command(argv: tuple[str, ...]) -> bool:
+    """Allow only commands whose accepted shape cannot create an external effect."""
+    executable = Path(argv[0]).name.casefold()
+    if executable not in _LOCAL_READ_ONLY_COMMANDS:
+        return False
+    if any(
+        argument.startswith(prefix)
+        for prefix in _INTRINSICALLY_BLOCKED_ARGUMENT_PREFIXES.get(executable, ())
+        for argument in argv[1:]
+    ):
+        return False
+    if executable == "sed":
+        return _is_safe_sed_read(argv[1:])
+    if executable == "date":
+        return all(
+            argument == "-u" or argument.startswith("+") for argument in argv[1:]
+        )
+    return True
+
+
+def _is_safe_sed_read(arguments: tuple[str, ...]) -> bool:
+    scripts: list[str] = []
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in {"-n", "-E"}:
+            index += 1
+            continue
+        if argument == "-e":
+            if index + 1 >= len(arguments):
+                return False
+            scripts.append(arguments[index + 1])
+            index += 2
+            continue
+        if argument.startswith("-"):
+            return False
+        if not scripts:
+            scripts.append(argument)
+        break
+    return bool(scripts) and all(
+        _SAFE_SED_PRINT_SCRIPT.fullmatch(script) for script in scripts
+    )
 
 
 def _is_service_read_only_python_command(argv: tuple[str, ...]) -> bool:

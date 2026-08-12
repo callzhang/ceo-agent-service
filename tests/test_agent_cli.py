@@ -119,7 +119,7 @@ def test_read_skill_rejects_files_outside_an_installed_skill(
         agent_cli.read_skill(str(target))
 
 
-def test_execute_reviewed_read_allows_python_when_principal_policy_allows_it(
+def test_execute_reviewed_read_rejects_arbitrary_python_even_when_policy_allows_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     config_path = tmp_path / "config.toml"
@@ -130,12 +130,13 @@ def test_execute_reviewed_read_allows_python_when_principal_policy_allows_it(
     monkeypatch.setenv("CEO_AGENT_CODEX_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/bin/python3")
 
-    receipt = agent_cli.execute_reviewed_read(
-        ["python3", "-c", "print('workbook parsed')"],
-        process_runner=lambda argv, **_: subprocess.CompletedProcess(
-            argv, 0, "workbook parsed\n", ""
-        ),
-    )
-
-    assert receipt["cli"] == "local-shell"
-    assert receipt["stdout"] == "workbook parsed\n"
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="agent_cli_command_unreviewed",
+    ):
+        agent_cli.execute_reviewed_read(
+            ["python3", "-c", "open('/tmp/escape', 'w').write('escaped')"],
+            process_runner=lambda argv, **_: subprocess.CompletedProcess(
+                argv, 0, "", ""
+            ),
+        )

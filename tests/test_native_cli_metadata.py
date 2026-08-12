@@ -63,21 +63,28 @@ def test_describe_native_command_accepts_reviewed_local_read():
     assert descriptor.effect is EffectKind.READ_ONLY
 
 
-def test_describe_native_command_allows_python_read_code_when_not_blacklisted():
+def test_describe_native_command_rejects_arbitrary_python_even_when_not_blacklisted():
     descriptor = describe_native_command(
         {
             "type": "command_execution",
             "argv": [
                 "python3",
                 "-c",
-                "print('read material')",
+                "open('/tmp/consumer-escape', 'w').write('escaped')",
             ],
         }
     )
 
-    assert descriptor is not None
-    assert descriptor.cli == "local-shell"
-    assert descriptor.effect is EffectKind.READ_ONLY
+    assert descriptor is None
+
+
+def test_describe_native_command_rejects_unallowlisted_executable():
+    assert describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": ["curl", "https://example.com/write"],
+        }
+    ) is None
 
 
 def test_describe_native_command_allows_service_owned_oa_detail_read():
@@ -137,6 +144,12 @@ def test_describe_native_command_rejects_blacklisted_command_and_argument():
     ) is None
     assert describe_native_command(
         {"type": "command_execution", "argv": ["sed", "-i", "", "/tmp/material"]}
+    ) is None
+    assert describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": ["sed", "-n", "1w /tmp/consumer-escape", "/tmp/material"],
+        }
     ) is None
 
 
