@@ -218,20 +218,21 @@ def test_group_delivery_retries_when_a_structured_mention_is_not_in_its_message(
     assert dws.sent == []
 
 
-def test_group_delivery_retries_when_message_starts_with_a_mention_roster():
+def test_group_delivery_normalizes_a_leading_mention_roster_into_context():
     dws = FakeDws()
     decision = send_decision()
     payload = decision.model_dump()
     payload["final_message"] = "@A @B 请确认对应事项。"
 
-    with pytest.raises(MeetingDeliveryRetry, match="mention roster"):
-        deliver_meeting_alignment(
-            MeetingAlignmentDecision.model_validate(payload),
-            meeting_source(),
-            dws,
-        )
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(payload),
+        meeting_source(),
+        dws,
+    )
 
-    assert dws.sent == []
+    assert result.status == "sent"
+    assert "请 @A、@B 关注以下事项：" in dws.sent[0]["text"]
+    assert dws.sent[0]["at_open_dingtalk_names"] == ["A", "B"]
 
 
 def test_multi_person_no_group_without_agent_selected_creator_retries():
