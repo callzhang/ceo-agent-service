@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -83,6 +84,7 @@ class WorkbenchExecutor:
         self._task_locks: dict[str, threading.Lock] = {}
         self._map_lock = threading.RLock()
         self._closed = False
+        self.recover()
 
     def recover(self, *, now=None) -> int:
         ambiguous = self.store.reconcile_confirmed_without_result(now=now)
@@ -94,6 +96,7 @@ class WorkbenchExecutor:
         with self._map_lock:
             if self._closed:
                 raise RuntimeError("workbench executor is closed")
+        self.recover()
         claimed: list[WorkbenchTurn] = []
         for _ in range(max_turns):
             # Store timestamps have one-second precision; one extra second prevents
@@ -151,25 +154,33 @@ class WorkbenchExecutor:
                 process_runner=self.write_runner,
             )
             failed = isinstance(receipt.get("error"), dict)
-            safe_receipt = self._safe_receipt(receipt, failed=failed)
+            safe_receipt = self._safe_receipt(
+                receipt, failed=failed, target_summary=claimed.target
+            )
             return self.store.finish_confirmation_execution(
                 claimed.id,
                 status=(
                     ConfirmationStatus.FAILED if failed else ConfirmationStatus.EXECUTED
                 ),
                 result_json=safe_receipt,
-                resume_context=(
-                    "The reviewed external action failed. Report the blocker; do not replay it."
-                    if failed
-                    else "The reviewed external action executed. Continue from its redacted receipt; do not replay it."
-                ),
+                resume_context=self._receipt_resume_context(safe_receipt),
             )
         except Exception:
+            safe_receipt = self._safe_receipt(
+                {
+                    "error": {
+                        "code": "reviewed_write_failed",
+                        "retryable": False,
+                    }
+                },
+                failed=True,
+                target_summary=claimed.target,
+            )
             return self.store.finish_confirmation_execution(
                 claimed.id,
                 status=ConfirmationStatus.FAILED,
-                result_json={"code": "reviewed_write_failed", "retryable": False},
-                resume_context="The reviewed external action failed safely. Report the blocker; do not replay it.",
+                result_json=safe_receipt,
+                resume_context=self._receipt_resume_context(safe_receipt),
             )
 
     def cancel(self, confirmation_id: str) -> WorkbenchConfirmation:
@@ -269,6 +280,12 @@ class WorkbenchExecutor:
                     and current.status is TurnStatus.WAITING_CONFIRMATION
                 ):
                     return
+                if current is not None and current.status in {
+                    TurnStatus.COMPLETED,
+                    TurnStatus.STOPPED,
+                    TurnStatus.FAILED,
+                }:
+                    return
                 state.lease_lost = True
                 self._stop_state_once(state)
                 return
@@ -279,21 +296,37 @@ class WorkbenchExecutor:
         with state.lock:
             if state.lease_lost or state.confirmation_created:
                 return
+            current = self.store.get_turn(state.turn_id)
+            if current is None or current.status is not TurnStatus.RUNNING:
+                return
             if event.event_type in {"turn_completed", "turn_failed"}:
                 return
             payload = event.payload_json_value()
             assert_no_credentials(payload)
             if event.event_type == "confirmation_required":
-                self._create_confirmation(state, payload)
-                state.confirmation_created = True
+                try:
+                    self._create_confirmation(state, payload)
+                except ValueError:
+                    current = self.store.get_turn(state.turn_id)
+                    if current is not None and current.status is TurnStatus.STOPPED:
+                        return
+                    raise
+                else:
+                    state.confirmation_created = True
                 return
-            self.store.append_event(
-                state.turn_id,
-                sequence=state.next_sequence,
-                event_type=event.event_type,
-                payload=payload,
-                owner=self.owner,
-            )
+            try:
+                self.store.append_event(
+                    state.turn_id,
+                    sequence=state.next_sequence,
+                    event_type=event.event_type,
+                    payload=payload,
+                    owner=self.owner,
+                )
+            except ValueError:
+                current = self.store.get_turn(state.turn_id)
+                if current is not None and current.status is TurnStatus.STOPPED:
+                    return
+                raise
             state.next_sequence += 1
 
     def _create_confirmation(self, state: _RunState, payload: dict[str, Any]) -> None:
@@ -332,7 +365,7 @@ class WorkbenchExecutor:
         if (
             current is None
             or state.lease_lost
-            or current.status is TurnStatus.WAITING_CONFIRMATION
+            or current.status is not TurnStatus.RUNNING
         ):
             return
         if current.stop_requested or result.status == "stopped":
@@ -425,16 +458,47 @@ class WorkbenchExecutor:
         return safe_observability_error(value.strip(), limit=500)
 
     @staticmethod
-    def _safe_receipt(receipt: dict[str, object], *, failed: bool) -> dict[str, object]:
+    def _safe_receipt(
+        receipt: dict[str, object], *, failed: bool, target_summary: str
+    ) -> dict[str, object]:
         safe: dict[str, object] = {
             "status": "failed" if failed else "executed",
-            "result_digest": str(receipt.get("result_digest", "")),
             "retryable": False,
+            "target_summary": target_summary,
         }
+        for key in ("operation_digest", "result_digest"):
+            digest = receipt.get(key)
+            if (
+                isinstance(digest, str)
+                and len(digest) == 64
+                and all(character in "0123456789abcdef" for character in digest)
+            ):
+                safe[key] = digest
         error = receipt.get("error")
         if isinstance(error, dict):
             code = error.get("code")
-            safe["code"] = code if isinstance(code, str) else "reviewed_write_failed"
+            safe["code"] = (
+                code
+                if isinstance(code, str)
+                and 0 < len(code) <= 120
+                and all(character.isalnum() or character in "_-." for character in code)
+                else "reviewed_write_failed"
+            )
             safe["retryable"] = error.get("retryable") is True
         assert_no_credentials(safe)
+        encoded = json.dumps(
+            safe, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        safe["receipt_digest"] = hashlib.sha256(
+            b"workbench-safe-receipt-v1\0" + encoded
+        ).hexdigest()
         return safe
+
+    @staticmethod
+    def _receipt_resume_context(receipt: dict[str, object]) -> str:
+        return "Reviewed action receipt: " + json.dumps(
+            receipt,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )

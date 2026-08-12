@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import threading
@@ -38,12 +39,14 @@ class FakeRuntime:
         self.release_wait = threading.Event()
         self.stop_calls = 0
         self.requests: list[RuntimeRequest] = []
+        self.on_event = None
 
     def capabilities(self):
         return RuntimeCapabilities(True, True, True, True, True, True, True, True)
 
     def start(self, request, *, on_event):
         self.requests.append(request)
+        self.on_event = on_event
         self.start_entered.set()
         if self.block_start:
             assert self.release_start.wait(5)
@@ -290,6 +293,75 @@ def test_stop_during_wait_stops_once(tmp_path: Path):
     executor.close()
 
 
+def test_stop_and_confirmation_callback_race_has_one_authoritative_terminal_state(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    control_store = WorkbenchStore(store.path)
+    task, turn = _queued(store)
+    runtime = FakeRuntime(block=True)
+    executor = WorkbenchExecutor(
+        store,
+        RuntimeRegistry([runtime]),
+        workspace=tmp_path,
+        classifier=_write_classifier(),
+    )
+    proposal = RuntimeEvent(
+        "confirmation_required",
+        {
+            "kind": "reviewed_cli",
+            "argv": [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--group",
+                "cid-1",
+                "--text",
+                "hello",
+                "--yes",
+            ],
+            "target": "Executive group",
+            "summary": "Send update",
+            "risk": "External message",
+            "executed": False,
+        },
+    )
+    barrier = threading.Barrier(2)
+
+    with ThreadPoolExecutor(max_workers=1) as runs:
+        run = runs.submit(executor.run_once)
+        assert runtime.wait_entered.wait(2)
+
+        def stop():
+            barrier.wait()
+            return executor.stop(turn.id)
+
+        def confirm_callback():
+            barrier.wait()
+            runtime.on_event(proposal)
+
+        with ThreadPoolExecutor(max_workers=2) as races:
+            stop_future = races.submit(stop)
+            confirm_future = races.submit(confirm_callback)
+            assert stop_future.result(3).status is TurnStatus.STOPPED
+            confirm_future.result(3)
+        assert run.result(3) == [turn.id]
+
+    persisted = control_store.get_turn(turn.id)
+    assert persisted.status is TurnStatus.STOPPED
+    assert runtime.stop_calls == 1
+    events = control_store.events_after(turn.id)
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+    assert [event.event_type for event in events].count("turn_completed") == 1
+    confirmations = control_store.list_confirmations(task.id)
+    assert len(confirmations) <= 1
+    assert all(item.status is ConfirmationStatus.CANCELLED for item in confirmations)
+    executor.stop(turn.id)
+    assert runtime.stop_calls == 1
+    executor.close()
+
+
 def test_stop_after_runtime_wait_before_atomic_completion_wins(tmp_path: Path):
     class StopRaceStore(WorkbenchStore):
         before_completion = threading.Event()
@@ -302,17 +374,19 @@ def test_stop_after_runtime_wait_before_atomic_completion_wins(tmp_path: Path):
             return super().complete_turn(turn_id, **kwargs)
 
     store = StopRaceStore(tmp_path / "workbench.sqlite3")
+    control_store = WorkbenchStore(store.path)
     _, turn = _queued(store)
     runtime = FakeRuntime()
     executor = WorkbenchExecutor(store, RuntimeRegistry([runtime]), workspace=tmp_path)
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(executor.run_once)
         assert store.before_completion.wait(2)
+        assert control_store.request_stop(turn.id).status is TurnStatus.STOPPED
         executor.stop(turn.id)
         store.release_completion.set()
         assert future.result(3) == [turn.id]
-    assert store.get_turn(turn.id).status is TurnStatus.STOPPED
-    assert [event.event_type for event in store.events_after(turn.id)].count(
+    assert control_store.get_turn(turn.id).status is TurnStatus.STOPPED
+    assert [event.event_type for event in control_store.events_after(turn.id)].count(
         "turn_completed"
     ) == 1
     executor.close()
@@ -398,9 +472,10 @@ def test_confirm_executes_once_redacts_receipt_and_requeues(
     task, turn, confirmation = _pending_confirmation(store)
     calls = []
     monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    runtime = FakeRuntime()
     executor = WorkbenchExecutor(
         store,
-        RuntimeRegistry(),
+        RuntimeRegistry([runtime]),
         workspace=tmp_path,
         classifier=_write_classifier(),
         write_runner=lambda argv, **_: (
@@ -421,6 +496,18 @@ def test_confirm_executes_once_redacts_receipt_and_requeues(
     assert "dws chat" not in first.result_json
     assert dict(os.environ) == before
     assert store.get_task(task.id) is not None
+    executor.run_once(max_turns=1)
+    prompt = runtime.requests[0].prompt
+    assert '"status":"executed"' in prompt
+    assert '"operation_digest":' in prompt
+    assert '"receipt_digest":' in prompt
+    assert '"result_digest":' in prompt
+    assert '"retryable":false' in prompt
+    assert '"target_summary":"Executive group"' in prompt
+    assert "secret provider output" not in prompt
+    assert "dws chat message send" not in prompt
+    assert "cid-1" not in prompt
+    assert "session-" not in prompt
     executor.close()
 
 
@@ -428,9 +515,10 @@ def test_cancel_never_runs_and_conflicting_decision_rejects(tmp_path: Path):
     store = _store(tmp_path)
     _, turn, confirmation = _pending_confirmation(store)
     calls = []
+    runtime = FakeRuntime()
     executor = WorkbenchExecutor(
         store,
-        RuntimeRegistry(),
+        RuntimeRegistry([runtime]),
         workspace=tmp_path,
         write_runner=lambda *args, **kwargs: calls.append((args, kwargs)),
     )
@@ -442,6 +530,9 @@ def test_cancel_never_runs_and_conflicting_decision_rejects(tmp_path: Path):
         executor.confirm(confirmation.id)
     assert calls == []
     assert store.get_turn(turn.id).status is TurnStatus.QUEUED
+    executor.run_once(max_turns=1)
+    assert "The user cancelled the reviewed external action." in runtime.requests[0].prompt
+    assert "dws chat" not in runtime.requests[0].prompt
     executor.close()
 
 
@@ -451,9 +542,10 @@ def test_writer_failure_is_sanitized_and_requeued_for_agent_report(
     store = _store(tmp_path)
     _, turn, confirmation = _pending_confirmation(store)
     monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    runtime = FakeRuntime()
     executor = WorkbenchExecutor(
         store,
-        RuntimeRegistry(),
+        RuntimeRegistry([runtime]),
         workspace=tmp_path,
         classifier=_write_classifier(),
         write_runner=lambda *_args, **_kwargs: (_ for _ in ()).throw(
@@ -467,6 +559,14 @@ def test_writer_failure_is_sanitized_and_requeued_for_agent_report(
     assert "secret-token" not in result.result_json
     assert store.get_turn(turn.id).status is TurnStatus.QUEUED
     assert "failed" in store.get_turn(turn.id).error_detail.lower()
+    executor.run_once(max_turns=1)
+    prompt = runtime.requests[0].prompt
+    assert '"status":"failed"' in prompt
+    assert '"code":"agent_cli_start_unavailable"' in prompt
+    assert '"retryable":true' in prompt
+    assert '"result_digest":' in prompt
+    assert "secret-token" not in prompt
+    assert "dws chat" not in prompt
     executor.close()
 
 
@@ -484,8 +584,7 @@ def test_restart_reconciles_confirmed_without_result_without_execution(tmp_path:
         write_runner=lambda *args, **kwargs: calls.append((args, kwargs)),
     )
 
-    recovered = executor.recover()
-    assert recovered >= 1
+    assert executor.recover() == 0
     assert calls == []
     assert store.get_turn(turn.id).status is TurnStatus.FAILED
     confirmation_result = store.list_confirmations(store.get_turn(turn.id).task_id)[0]
@@ -493,6 +592,100 @@ def test_restart_reconciles_confirmed_without_result_without_execution(tmp_path:
     assert any(
         event.event_type == "turn_failed" for event in store.events_after(turn.id)
     )
+    executor.close()
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        TurnStatus.QUEUED,
+        TurnStatus.RUNNING,
+        TurnStatus.WAITING_CONFIRMATION,
+        TurnStatus.COMPLETED,
+        TurnStatus.STOPPED,
+        TurnStatus.FAILED,
+    ],
+)
+def test_initialization_reconciles_every_resultless_confirmed_state_without_execution(
+    tmp_path: Path, status: TurnStatus
+):
+    store = _store(tmp_path)
+    _, turn, confirmation = _pending_confirmation(store)
+    with store._connect() as db:
+        db.execute(
+            "update workbench_confirmations set status='confirmed' where id=?",
+            (confirmation.id,),
+        )
+        db.execute(
+            """
+            update workbench_turns
+            set status=?, lease_owner=?, lease_expires_at=?, completed_at=?
+            where id=?
+            """,
+            (
+                status.value,
+                "dead-worker" if status is TurnStatus.RUNNING else "",
+                "2099-01-01 00:00:00" if status is TurnStatus.RUNNING else "",
+                "2026-08-13 00:00:02"
+                if status
+                in {TurnStatus.COMPLETED, TurnStatus.STOPPED, TurnStatus.FAILED}
+                else "",
+                turn.id,
+            ),
+        )
+    runtime = FakeRuntime()
+    writer_calls = []
+
+    executor = WorkbenchExecutor(
+        WorkbenchStore(store.path),
+        RuntimeRegistry([runtime]),
+        workspace=tmp_path,
+        write_runner=lambda *args, **kwargs: writer_calls.append((args, kwargs)),
+    )
+
+    confirmation_after = store.get_confirmation(confirmation.id)
+    turn_after = store.get_turn(turn.id)
+    assert confirmation_after.status is ConfirmationStatus.FAILED
+    assert json.loads(confirmation_after.result_json) == {
+        "code": "confirmation_execution_ambiguous",
+        "retryable": False,
+        "status": "failed",
+    }
+    if status in {
+        TurnStatus.QUEUED,
+        TurnStatus.RUNNING,
+        TurnStatus.WAITING_CONFIRMATION,
+    }:
+        assert turn_after.status is TurnStatus.FAILED
+        assert store.events_after(turn.id)[-1].event_type == "turn_failed"
+    else:
+        assert turn_after.status is status
+        assert store.events_after(turn.id)[-1].event_type == "status_changed"
+    assert runtime.requests == []
+    assert writer_calls == []
+    assert executor.run_once() == []
+    executor.close()
+
+
+def test_claim_and_run_once_defend_against_unreconciled_confirmed_action(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    _, turn, confirmation = _pending_confirmation(store)
+    executor = WorkbenchExecutor(
+        store, RuntimeRegistry([FakeRuntime()]), workspace=tmp_path
+    )
+    with store._connect() as db:
+        db.execute(
+            "update workbench_confirmations set status='confirmed' where id=?",
+            (confirmation.id,),
+        )
+        db.execute("update workbench_turns set status='queued' where id=?", (turn.id,))
+
+    assert store.claim_next_turn(owner="other-worker") is None
+    assert executor.run_once() == []
+    assert store.get_turn(turn.id).status is TurnStatus.FAILED
+    assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.FAILED
     executor.close()
 
 

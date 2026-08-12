@@ -56,6 +56,12 @@ def test_store_migrates_resume_context_without_losing_existing_turns(tmp_path: P
     assert "resume_context" in columns
 
 
+def test_store_has_no_public_confirmation_decision_bypass(tmp_path: Path):
+    store = _store(tmp_path)
+    assert not hasattr(store, "decide_confirmation")
+    assert not hasattr(store, "get_confirmation_for_executor")
+
+
 def test_create_task_and_idempotent_turn_request(tmp_path: Path):
     store = _store(tmp_path)
 
@@ -140,35 +146,6 @@ def test_events_replay_in_id_order_and_reject_duplicate_sequence(tmp_path: Path)
     )
 
     assert store.events_after(turn_id, after_id=first.id) == [second]
-
-
-def test_confirmation_cannot_be_decided_through_another_task(tmp_path: Path):
-    store = _store(tmp_path)
-    first_task = store.create_task(title="Analyse sales", runtime_kind="codex")
-    second_task = store.create_task(title="Plan marketing", runtime_kind="codex")
-    turn = store.create_turn(
-        first_task.id,
-        user_text="Compare regions",
-        client_request_id="request-1",
-    )
-    claimed = store.claim_next_turn(owner="worker-1")
-    assert claimed is not None
-    confirmation = store.create_confirmation(
-        turn.id,
-        action_kind="send_message",
-        target="sales@example.com",
-        summary="Send the regional comparison",
-        risk="external communication",
-        arguments_json={"channel": "email"},
-        owner="worker-1",
-    )
-
-    with pytest.raises(ValueError, match="confirmation does not belong to task"):
-        store.decide_confirmation(
-            second_task.id,
-            confirmation.id,
-            decision="confirmed",
-        )
 
 
 def test_recover_expired_running_turn_as_queued(tmp_path: Path):
@@ -316,7 +293,7 @@ def test_running_turn_executor_mutations_reject_mismatched_and_expired_owners(
         )
 
 
-def test_confirmation_list_redacts_arguments_and_executor_lookup_exposes_them(
+def test_confirmation_list_redacts_arguments_and_execution_claim_exposes_them_once(
     tmp_path: Path,
 ):
     store, task_id, turn_id = _running_turn(tmp_path)
@@ -334,23 +311,13 @@ def test_confirmation_list_redacts_arguments_and_executor_lookup_exposes_them(
     assert store.list_confirmations(task_id)[0].arguments_json == ""
     with pytest.raises(TypeError):
         store.list_confirmations(task_id, include_arguments=True)
-    with pytest.raises(ValueError, match="confirmation is not confirmed"):
-        store.get_confirmation_for_executor(
-            task_id,
-            confirmation.id,
-            owner="worker-1",
-            now="2026-08-13T00:00:01Z",
-        )
-    assert store.decide_confirmation(
-        task_id, confirmation.id, decision="confirmed"
-    ).arguments_json == ""
-    store.claim_next_turn(owner="worker-1", now="2026-08-13T00:00:02Z")
-    assert store.get_confirmation_for_executor(
-        task_id,
-        confirmation.id,
-        owner="worker-1",
-        now="2026-08-13T00:00:02Z",
-    ).arguments_json == '{"channel":"email"}'
+    assert (
+        store.claim_confirmation_execution(
+            confirmation.id, now="2026-08-13T00:00:02Z"
+        ).arguments_json
+        == '{"channel":"email"}'
+    )
+    assert store.claim_confirmation_execution(confirmation.id) is None
 
 
 def test_recovered_stale_worker_cannot_append_events(tmp_path: Path):
@@ -435,51 +402,7 @@ def test_confirmation_arguments_reject_nonfinite_json(tmp_path: Path):
         )
 
 
-def test_executor_confirmation_lookup_requires_confirmed_running_lease(tmp_path: Path):
-    store, task_id, turn_id = _running_turn(tmp_path)
-    confirmation = store.create_confirmation(
-        turn_id,
-        action_kind="send_message",
-        target="sales@example.com",
-        summary="Send the regional comparison",
-        risk="external communication",
-        arguments_json={"channel": "email"},
-        owner="worker-1",
-        now="2026-08-13T00:00:01Z",
-    )
-    store.decide_confirmation(task_id, confirmation.id, decision="confirmed")
-
-    with pytest.raises(TypeError):
-        store.get_confirmation_for_executor(
-            task_id, confirmation.id, now="2026-08-13T00:00:02Z"
-        )
-    with pytest.raises(ValueError, match="owner must be non-empty"):
-        store.get_confirmation_for_executor(
-            task_id,
-            confirmation.id,
-            owner="",
-            now="2026-08-13T00:00:02Z",
-        )
-    store.claim_next_turn(
-        owner="worker-1", lease_seconds=1, now="2026-08-13T00:00:02Z"
-    )
-    with pytest.raises(ValueError, match="turn lease is stale"):
-        store.get_confirmation_for_executor(
-            task_id,
-            confirmation.id,
-            owner="worker-2",
-            now="2026-08-13T00:00:02Z",
-        )
-    with pytest.raises(ValueError, match="turn lease is stale"):
-        store.get_confirmation_for_executor(
-            task_id,
-            confirmation.id,
-            owner="worker-1",
-            now="2026-08-13T00:00:03Z",
-        )
-
-
-def test_stop_and_confirmation_decision_are_idempotent(tmp_path: Path):
+def test_stop_is_idempotent(tmp_path: Path):
     store = _store(tmp_path)
     task = store.create_task(title="Analyse sales", runtime_kind="codex")
     stopped_turn = store.create_turn(
@@ -498,28 +421,6 @@ def test_stop_and_confirmation_decision_are_idempotent(tmp_path: Path):
         client_request_id="request-2",
     )
     store.claim_next_turn(owner="worker-1", now="2026-08-13T00:00:03Z")
-    confirmation = store.create_confirmation(
-        active_turn.id,
-        action_kind="send_message",
-        target="sales@example.com",
-        summary="Send the product comparison",
-        risk="external communication",
-        arguments_json={"channel": "email"},
-        owner="worker-1",
-        now="2026-08-13T00:00:03Z",
-    )
-    confirmed = store.decide_confirmation(
-        task.id, confirmation.id, decision="confirmed", now="2026-08-13T00:00:04Z"
-    )
-    assert store.decide_confirmation(
-        task.id, confirmation.id, decision="confirmed", now="2026-08-13T00:00:05Z"
-    ) == confirmed
-    with pytest.raises(ValueError, match="already been decided"):
-        store.decide_confirmation(
-            task.id, confirmation.id, decision="cancelled", now="2026-08-13T00:00:05Z"
-        )
-
-    store.claim_next_turn(owner="worker-1", now="2026-08-13T00:00:06Z")
     completed = store.complete_turn(
         active_turn.id,
         status=TurnStatus.COMPLETED,
@@ -698,19 +599,13 @@ def test_stop_and_terminal_completion_append_atomic_control_events(tmp_path: Pat
     )
     store.claim_next_turn(owner="worker-1", now="2026-08-13T00:00:02Z")
     stop_requested = store.request_stop(running.id, now="2026-08-13T00:00:03Z")
-    assert stop_requested.status is TurnStatus.RUNNING
+    assert stop_requested.status is TurnStatus.STOPPED
     assert stop_requested.stop_requested is True
-    assert store.events_after(running.id) == []
-    stopped = store.complete_turn(
-        running.id,
-        status=TurnStatus.STOPPED,
-        owner="worker-1",
-        now="2026-08-13T00:00:04Z",
-    )
-    assert stopped.status is TurnStatus.STOPPED
     assert [event.event_type for event in store.events_after(running.id)] == [
         "turn_completed"
     ]
+    assert store.request_stop(running.id) == stop_requested
+    assert len(store.events_after(running.id)) == 1
 
     failing = store.create_turn(
         task.id, user_text="Compare channels", client_request_id="request-3"
@@ -817,13 +712,45 @@ def test_independent_stores_allow_one_next_sequence_insert(tmp_path: Path):
     assert [event.sequence for event in first.events_after(turn_id)] == [1]
 
 
-def test_expired_stop_requested_turn_becomes_stopped_on_both_recovery_paths(
+def test_independent_stores_linearize_stop_against_terminal_completion(tmp_path: Path):
+    first, _, turn_id = _running_turn(tmp_path)
+    second = WorkbenchStore(first.path)
+    barrier = threading.Barrier(2)
+
+    def stop():
+        barrier.wait()
+        try:
+            return "stopped", second.request_stop(turn_id).status
+        except ValueError as exc:
+            return "error", str(exc)
+
+    def complete():
+        barrier.wait()
+        try:
+            return "completed", first.complete_turn(
+                turn_id, status=TurnStatus.COMPLETED, owner="worker-1"
+            ).status
+        except ValueError as exc:
+            return "error", str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda operation: operation(), (stop, complete)))
+
+    assert [result[0] for result in results].count("error") == 1
+    persisted = first.get_turn(turn_id)
+    assert persisted.status in {TurnStatus.STOPPED, TurnStatus.COMPLETED}
+    events = first.events_after(turn_id)
+    assert [event.sequence for event in events] == [1]
+    assert events[0].event_type == "turn_completed"
+
+
+def test_running_stop_is_immediately_terminal_on_both_recovery_paths(
     tmp_path: Path,
 ):
     store, _, first_turn_id = _running_turn(tmp_path)
     store.request_stop(first_turn_id, now="2026-08-13T00:00:01Z")
 
-    assert store.recover_expired_turns(now="2026-08-13T00:00:11Z") == 1
+    assert store.recover_expired_turns(now="2026-08-13T00:00:11Z") == 0
     assert store.get_turn(first_turn_id).status is TurnStatus.STOPPED
     assert [event.event_type for event in store.events_after(first_turn_id)] == [
         "turn_completed"

@@ -291,11 +291,11 @@ create table if not exists workbench_confirmations (
 
 - [ ] **Step 5: Implement `WorkbenchStore` with explicit transitions**
 
-Subclass `AutoReplyStore` and implement `create_task`, `get_task`, `list_tasks`, `rename_task`, `archive_task`, `save_attachment`, `list_attachments`, `create_turn`, `claim_next_turn`, `renew_turn_lease`, `request_stop`, `append_event`, `events_after`, `set_provider_session`, `create_confirmation`, `decide_confirmation`, and `complete_turn`. Use `uuid4()` IDs, `begin immediate` for claims and decisions, JSON serialization with `sort_keys=True`, and this transition table:
+Subclass `AutoReplyStore` and implement `create_task`, `get_task`, `list_tasks`, `rename_task`, `archive_task`, `save_attachment`, `list_attachments`, `create_turn`, `claim_next_turn`, `renew_turn_lease`, `request_stop`, `append_event`, `events_after`, `set_provider_session`, `create_confirmation`, executor-only confirmation claim/result/cancel operations, and `complete_turn`. Public confirmation decisions must route through `WorkbenchExecutor.confirm` or `WorkbenchExecutor.cancel`. Use `uuid4()` IDs, `begin immediate` for claims and decisions, JSON serialization with `sort_keys=True`, and this transition table:
 
 ```python
 ALLOWED_TURN_TRANSITIONS = {
-    TurnStatus.QUEUED: {TurnStatus.RUNNING, TurnStatus.STOPPED},
+    TurnStatus.QUEUED: {TurnStatus.RUNNING, TurnStatus.STOPPED, TurnStatus.FAILED},
     TurnStatus.RUNNING: {
         TurnStatus.WAITING_CONFIRMATION,
         TurnStatus.COMPLETED,
@@ -313,11 +313,11 @@ ALLOWED_TURN_TRANSITIONS = {
 }
 ```
 
-Reject blank titles, blank user messages, malformed payload JSON, stale leases, cross-turn confirmation decisions, and invalid transitions. Redact confirmation `arguments_json` from list responses; expose it only to the executor. `save_attachment` accepts decoded bytes only after API validation, generates its own storage filename, and writes below `<db-parent>/workbench/attachments/<task-id>/`; a supplied filename never participates in the filesystem path.
+Reject blank titles, blank user messages, malformed payload JSON, stale leases, confirmation decisions outside the executor, and invalid transitions. Redact confirmation `arguments_json` from list responses; expose it only to the one-use executor claim. `save_attachment` accepts decoded bytes only after API validation, generates its own storage filename, and writes below `<db-parent>/workbench/attachments/<task-id>/`; a supplied filename never participates in the filesystem path.
 
 - [ ] **Step 6: Add ordering, isolation, and recovery tests**
 
-Add tests that append sequences 1 and 2, reject another sequence 2, replay only events after ID 1, prevent a confirmation from being decided through another task, reclaim an expired `running` turn as `queued`, leave `waiting_confirmation` unchanged on recovery, and prove an attachment named `../../secret.txt` is stored under the generated task directory without path traversal.
+Add tests that append sequences 1 and 2, reject another sequence 2, replay only events after ID 1, prevent public confirmation-decision bypasses, reclaim an expired `running` turn as `queued`, leave `waiting_confirmation` unchanged on recovery, and prove an attachment named `../../secret.txt` is stored under the generated task directory without path traversal.
 
 Run: `pytest tests/test_workbench_store.py tests/test_config_runtime_paths.py -q`
 
