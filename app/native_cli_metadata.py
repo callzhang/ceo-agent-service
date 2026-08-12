@@ -16,11 +16,36 @@ from app.leak_check import contains_credential
 
 _SHELL_CONNECTORS = frozenset({"&&", "||", "|", ";"})
 _SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset({"read-oa-approval-detail"})
+MATERIAL_OUTPUT_ROOT = Path("/tmp").resolve() / "ceo-agent-service-materials"
+_LOCAL_OUTPUT_FLAGS = frozenset(
+    {
+        "-o",
+        "--destination",
+        "--download-to",
+        "--output",
+        "--output-file",
+        "--output-path",
+        "--save-to",
+        "--target-file",
+    }
+)
 
 
 def service_read_command_contract() -> tuple[str, ...]:
     """Return the registered service-owned read commands for session versioning."""
     return tuple(sorted(_SERVICE_READ_ONLY_PYTHON_COMMANDS))
+
+
+def prepare_material_output_root() -> Path:
+    """Create the only directory where reviewed reads may download a file."""
+    root = MATERIAL_OUTPUT_ROOT
+    if root.is_symlink():
+        raise AgentReadOnlyViolationError("material_output_root_unsafe")
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not root.is_dir() or root.is_symlink():
+        raise AgentReadOnlyViolationError("material_output_root_unsafe")
+    root.chmod(0o700)
+    return root.resolve()
 
 
 class AgentReadOnlyViolationError(RuntimeError):
@@ -584,7 +609,11 @@ def _classified_native_command(
     command_path: str,
     argv: tuple[str, ...],
     effect: EffectKind,
-) -> NativeCliCommand:
+) -> NativeCliCommand | None:
+    if effect is EffectKind.READ_ONLY and not _safe_read_local_output(
+        command_path, argv
+    ):
+        return None
     normalized = shlex.join(argv)
     return NativeCliCommand(
         cli=cli,
@@ -593,6 +622,43 @@ def _classified_native_command(
         command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
         target_identifiers=_argv_target_identifiers(argv),
     )
+
+
+def _safe_read_local_output(command_path: str, argv: tuple[str, ...]) -> bool:
+    destinations: list[str] = []
+    index = 1
+    while index < len(argv):
+        argument = argv[index]
+        matched_inline = False
+        for flag in _LOCAL_OUTPUT_FLAGS:
+            prefix = f"{flag}="
+            if argument.startswith(prefix):
+                destinations.append(argument[len(prefix) :])
+                matched_inline = True
+                break
+        if matched_inline:
+            index += 1
+            continue
+        if argument in _LOCAL_OUTPUT_FLAGS:
+            if index + 1 >= len(argv):
+                return False
+            destinations.append(argv[index + 1])
+            index += 2
+            continue
+        index += 1
+    is_download = any("download" in part.casefold() for part in command_path.split())
+    if is_download and not destinations:
+        return False
+    return all(_safe_material_destination(value) for value in destinations)
+
+
+def _safe_material_destination(value: str) -> bool:
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute() or candidate.name in {"", ".", ".."}:
+        return False
+    root = MATERIAL_OUTPUT_ROOT.resolve(strict=False)
+    resolved = candidate.resolve(strict=False)
+    return resolved.parent == root and not resolved.exists()
 
 
 def _classify_cli_help(argv: tuple[str, ...]) -> NativeCliCommand | None:

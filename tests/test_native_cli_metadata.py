@@ -4,6 +4,7 @@ import subprocess
 
 import pytest
 
+import app.native_cli_metadata as native_cli_metadata
 from app.agent_cli import (
     CLI_TIMEOUT_SECONDS,
     execute_reviewed_read,
@@ -110,6 +111,45 @@ def test_describe_native_command_rejects_python_module_execution():
 def test_describe_native_command_rejects_generic_local_commands():
     assert describe_native_command(
         {"type": "command_execution", "argv": ["rm", "/tmp/material"]}
+    ) is None
+
+
+def test_dws_download_read_requires_fresh_temp_destination(tmp_path, monkeypatch):
+    monkeypatch.setattr(native_cli_metadata, "MATERIAL_OUTPUT_ROOT", tmp_path)
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={
+            ("dws", "doc download"): EffectKind.READ_ONLY,
+        }
+    )
+
+    assert classifier.classify(
+        {
+            "type": "command_execution",
+            "argv": ["dws", "doc", "download", "--output", "app/worker.py"],
+        }
+    ) is None
+    assert classifier.classify(
+        {
+            "type": "command_execution",
+            "argv": ["dws", "doc", "download"],
+        }
+    ) is None
+
+    destination = tmp_path / "fresh-material.bin"
+    descriptor = classifier.classify(
+        {
+            "type": "command_execution",
+            "argv": ["dws", "doc", "download", "--output", str(destination)],
+        }
+    )
+
+    assert descriptor is not None
+    destination.write_bytes(b"existing")
+    assert classifier.classify(
+        {
+            "type": "command_execution",
+            "argv": ["dws", "doc", "download", "--output", str(destination)],
+        }
     ) is None
     assert describe_native_command(
         {"type": "command_execution", "argv": ["sed", "-i", "", "/tmp/material"]}

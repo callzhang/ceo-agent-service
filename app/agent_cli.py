@@ -31,6 +31,7 @@ from app.native_cli_metadata import (
     NativeCliMetadataUnavailableError,
     describe_native_command,
     has_noninteractive_confirmation,
+    prepare_material_output_root,
 )
 
 MAX_CLI_OUTPUT_BYTES = MAX_PROCESS_OUTPUT_BYTES
@@ -75,6 +76,7 @@ def execute_reviewed_read(
     classifier: NativeCliMetadataClassifier | None = None,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, object]:
+    prepare_material_output_root()
     return _execute_reviewed(
         argv,
         expected_effect=EffectKind.READ_ONLY,

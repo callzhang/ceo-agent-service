@@ -74,6 +74,9 @@ with the exact reviewed read command. This
 lets the Agent use the principal's local CLI credential store and makes a
 reviewed local read command independently repeatable by Audit B. Unknown shell
 commands and every write command remain forbidden for Consumer Agent A.
+For a DWS or Lark download, set its destination to a fresh filename directly
+under `/tmp/ceo-agent-service-materials`; downloads without that exact bounded
+destination or attempts to overwrite an existing file are rejected.
 
 Before composing a DWS command that was not supplied as an exact read command,
 query its local runtime contract with `dws schema --cli-path "<product> <command>"

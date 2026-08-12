@@ -1270,7 +1270,7 @@ def test_consumer_ignores_effectful_event_from_later_hook_turn(store, task, cont
     assert persisted.tool_events == []
 
 
-def test_consumer_allows_reviewed_direct_native_read(store, task, context):
+def test_consumer_rejects_reviewed_direct_native_read(store, task, context):
     command = "dws oa approval detail --instance-id process-1 --format json"
     stream = "\n".join(
         (
@@ -1298,24 +1298,20 @@ def test_consumer_allows_reviewed_direct_native_read(store, task, context):
         )
     )
 
-    result = ConsumerAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=CapturingExecutor(stream),
-        native_cli_classifier=NativeCliMetadataClassifier(
-            reviewed_effects={
-                ("dws", "oa approval detail"): EffectKind.READ_ONLY,
-            }
-        ),
-    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
-    assert result.result.outcome.value == "no_action"
-    run = store.get_agent_run(result.run_id)
-    assert run is not None
-    assert [event["item"]["metadata"]["operation"] for event in run.tool_events] == [
-        "oa approval detail",
-        "oa approval detail",
-    ]
+    with pytest.raises(
+        AgentReadOnlyViolationError,
+        match="agent_shell_execution_forbidden",
+    ):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(stream),
+            native_cli_classifier=NativeCliMetadataClassifier(
+                reviewed_effects={
+                    ("dws", "oa approval detail"): EffectKind.READ_ONLY,
+                }
+            ),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
 def test_consumer_rejects_generic_local_read_tool_call(store, task, context):
@@ -1371,7 +1367,7 @@ def test_consumer_rejects_direct_native_write(store, task, context):
 
     with pytest.raises(
         AgentReadOnlyViolationError,
-        match="agent_write_forbidden",
+        match="agent_shell_execution_forbidden",
     ):
         ConsumerAgentRunner(
             store=store,
@@ -1392,7 +1388,7 @@ def test_consumer_rejects_direct_native_write(store, task, context):
         turn_attempt=0,
     )
     assert run is not None
-    assert '"code":"agent_write_forbidden"' in run.structured_error_json
+    assert '"code":"agent_shell_execution_forbidden"' in run.structured_error_json
 
 
 def test_consumer_rejects_direct_shell_command(store, task, context):

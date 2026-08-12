@@ -634,6 +634,8 @@ class AgentTurnProcess(Generic[ResultT]):
         if not isinstance(item, dict):
             return None
         if item.get("type") == "command_execution":
+            if read_only:
+                raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
             command = self.native_cli.classify(item)
             if command is None:
                 raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
