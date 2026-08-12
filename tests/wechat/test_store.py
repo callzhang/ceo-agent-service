@@ -378,6 +378,119 @@ def test_new_delivery_supersedes_older_unsent_delivery_for_same_conversation(
     assert new_attempt.send_status == "pending"
 
 
+def test_finalize_reply_supersedes_older_unsent_delivery_for_same_conversation(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    attempts = []
+    for message_id in ("m1", "m2"):
+        store.enqueue_reply_task(
+            channel="wechat",
+            conversation_id="u1",
+            conversation_title="Alex",
+            single_chat=True,
+            trigger_message_id=message_id,
+            trigger_create_time=f"2026-07-28T10:0{len(attempts) + 1}:00",
+            trigger_sender="Alex",
+            trigger_text=message_id,
+        )
+        task = store.claim_reply_tasks(1, channel="wechat")[0]
+        attempts.append(
+            store.finalize_wechat_reply_task(
+                task_id=task.id,
+                expected_execution_generation=task.execution_generation,
+                action="send_reply",
+                sensitivity_kind="normal",
+                codex_reason="reply requested",
+                draft_reply_text=f"reply {message_id}",
+                audit_summary="reply queued",
+                send_status="pending",
+                account_id="acct-1",
+                target_type="direct",
+                target_id="u1",
+                conversation_id="u1",
+                reply_text=f"reply {message_id}",
+            )
+        )
+
+    old_delivery = store.get_wechat_delivery_for_task(1)
+    new_delivery = store.get_wechat_delivery_for_task(2)
+    old_attempt = store.get_reply_attempt(attempts[0])
+
+    assert old_delivery.status == "superseded"
+    assert old_delivery.error == "superseded_by_newer_wechat_trigger:2"
+    assert old_attempt.send_status == "skipped"
+    assert old_attempt.send_error == "superseded_by_newer_wechat_trigger:2"
+    assert new_delivery.status == "ready_to_send"
+
+
+def test_stale_ready_delivery_can_be_superseded_without_send(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="u1", conversation_title="Alex",
+        trigger_message_id="m1", trigger_sender="Alex", trigger_text="hi",
+        action="send_reply", sensitivity_kind="normal",
+        send_status="pending", channel="wechat",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="stale reply",
+    )
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    with store._connect() as db:
+        db.execute(
+            "update wechat_deliveries set created_at='2026-07-30 10:00:00' "
+            "where id=?",
+            (delivery_id,),
+        )
+
+    store.supersede_stale_ready_wechat_delivery(
+        delivery_id,
+        expected_execution_generation=delivery.execution_generation,
+        reason="expired_time_sensitive_reply",
+        inactive_before="2026-07-30 10:10:00",
+    )
+
+    refreshed = store.get_wechat_delivery_by_id(delivery_id)
+    attempt = store.get_reply_attempt(attempt_id)
+    assert refreshed.status == "superseded"
+    assert refreshed.error == "expired_time_sensitive_reply"
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "expired_time_sensitive_reply"
+
+
+def test_stale_ready_cleanup_cannot_overwrite_started_delivery(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="reply",
+    )
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    store.mark_wechat_delivery_sending(delivery_id, now="2026-07-30 10:00:00")
+
+    with pytest.raises(AgentRunLeaseLostError, match="not in expected state"):
+        store.supersede_stale_ready_wechat_delivery(
+            delivery_id,
+            expected_execution_generation=delivery.execution_generation,
+            reason="expired_time_sensitive_reply",
+            inactive_before="2026-07-30 10:10:00",
+        )
+
+    assert store.get_wechat_delivery_by_id(delivery_id).status == "sending"
+
+
 def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
     store = _store(tmp_path)
     for task_id, message_id in ((1, "m1"), (2, "m2")):

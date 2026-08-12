@@ -6561,6 +6561,78 @@ class AutoReplyStore:
             error=error,
         )
 
+    @classmethod
+    def _prepare_new_wechat_delivery(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        reply_task_id: int,
+        account_id: str,
+        target_type: str,
+        target_id: str,
+        conversation_id: str,
+    ) -> None:
+        unresolved = db.execute(
+            """
+            select 1
+            from wechat_deliveries
+            where reply_task_id!=?
+              and account_id=?
+              and target_type=?
+              and target_id=?
+              and conversation_id=?
+              and status in ('sending', 'send_unknown')
+            limit 1
+            """,
+            (
+                reply_task_id,
+                account_id,
+                target_type,
+                target_id,
+                conversation_id,
+            ),
+        ).fetchone()
+        if unresolved is not None:
+            raise ValueError(
+                "WeChat delivery reconciliation required before a newer trigger"
+            )
+        error = f"superseded_by_newer_wechat_trigger:{reply_task_id}"
+        older_deliveries = db.execute(
+            """
+            select id
+            from wechat_deliveries
+            where reply_task_id!=?
+              and account_id=?
+              and target_type=?
+              and target_id=?
+              and conversation_id=?
+              and status in ('ready_to_send', 'failed')
+              and error!='user_rejected'
+            """,
+            (
+                reply_task_id,
+                account_id,
+                target_type,
+                target_id,
+                conversation_id,
+            ),
+        ).fetchall()
+        for older in older_deliveries:
+            db.execute(
+                """
+                update wechat_deliveries
+                set status='superseded', error=?, updated_at=current_timestamp
+                where id=?
+                """,
+                (error, older["id"]),
+            )
+            cls._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=older["id"],
+                delivery_status="superseded",
+                error=error,
+            )
+
     def finalize_wechat_reply_task(
         self,
         *,
@@ -6627,6 +6699,14 @@ class AutoReplyStore:
             )
             attempt_id = int(cursor.lastrowid)
             if has_delivery:
+                self._prepare_new_wechat_delivery(
+                    db,
+                    reply_task_id=task_id,
+                    account_id=account_id,
+                    target_type=target_type,
+                    target_id=target_id,
+                    conversation_id=conversation_id,
+                )
                 existing = db.execute(
                     "select * from wechat_deliveries where reply_task_id=?",
                     (task_id,),
@@ -6707,68 +6787,14 @@ class AutoReplyStore:
         evidence: dict[str, str] | None = None,
     ) -> int:
         with self._connect() as db:
-            unresolved = db.execute(
-                """
-                select 1
-                from wechat_deliveries
-                where reply_task_id!=?
-                  and account_id=?
-                  and target_type=?
-                  and target_id=?
-                  and conversation_id=?
-                  and status in ('sending', 'send_unknown')
-                limit 1
-                """,
-                (
-                    reply_task_id,
-                    account_id,
-                    target_type,
-                    target_id,
-                    conversation_id,
-                ),
-            ).fetchone()
-            if unresolved is not None:
-                raise ValueError(
-                    "WeChat delivery reconciliation required before a newer trigger"
-                )
-            superseded_error = (
-                f"superseded_by_newer_wechat_trigger:{reply_task_id}"
+            self._prepare_new_wechat_delivery(
+                db,
+                reply_task_id=reply_task_id,
+                account_id=account_id,
+                target_type=target_type,
+                target_id=target_id,
+                conversation_id=conversation_id,
             )
-            older_deliveries = db.execute(
-                """
-                select id
-                from wechat_deliveries
-                where reply_task_id!=?
-                  and account_id=?
-                  and target_type=?
-                  and target_id=?
-                  and conversation_id=?
-                  and status in ('ready_to_send', 'failed')
-                  and error!='user_rejected'
-                """,
-                (
-                    reply_task_id,
-                    account_id,
-                    target_type,
-                    target_id,
-                    conversation_id,
-                ),
-            ).fetchall()
-            for older in older_deliveries:
-                db.execute(
-                    """
-                    update wechat_deliveries
-                    set status='superseded', error=?, updated_at=current_timestamp
-                    where id=?
-                    """,
-                    (superseded_error, older["id"]),
-                )
-                self._sync_wechat_delivery_reply_attempt(
-                    db,
-                    delivery_id=older["id"],
-                    delivery_status="superseded",
-                    error=superseded_error,
-                )
             db.execute(
                 """
                 insert into wechat_deliveries (
@@ -7165,6 +7191,58 @@ class AutoReplyStore:
                   and datetime(
                     coalesce(nullif(action_started_at, ''), created_at)
                   ) <= datetime(?)
+                  and exists (
+                    select 1 from reply_tasks
+                    where reply_tasks.id=wechat_deliveries.reply_task_id
+                      and reply_tasks.execution_generation=?
+                  )
+                """,
+                (
+                    explanation,
+                    delivery_id,
+                    generation,
+                    inactivity_cutoff,
+                    generation,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"WeChat delivery superseded or not in expected state: {delivery_id}"
+                )
+            self._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=delivery_id,
+                delivery_status="superseded",
+                error=explanation,
+            )
+
+    def supersede_stale_ready_wechat_delivery(
+        self,
+        delivery_id: int,
+        *,
+        expected_execution_generation: str,
+        reason: str,
+        inactive_before: str,
+    ) -> None:
+        """Close an expired, never-started delivery without sending it."""
+        generation = expected_execution_generation.strip()
+        explanation = reason.strip()
+        inactivity_cutoff = inactive_before.strip()
+        if not generation:
+            raise ValueError("expected_execution_generation must be non-empty")
+        if not explanation:
+            raise ValueError("reason must be non-empty")
+        if not inactivity_cutoff:
+            raise ValueError("inactive_before must be non-empty")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update wechat_deliveries
+                set status='superseded', error=?, updated_at=current_timestamp
+                where id=? and status='ready_to_send'
+                  and execution_generation=?
+                  and coalesce(action_started_at, '')=''
+                  and datetime(created_at) <= datetime(?)
                   and exists (
                     select 1 from reply_tasks
                     where reply_tasks.id=wechat_deliveries.reply_task_id

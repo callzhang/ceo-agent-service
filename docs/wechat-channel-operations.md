@@ -158,6 +158,12 @@ uncertain historical send occurred and never queues another send. The delivery
 must also remain inactive beyond the sender timeout window, so this operator
 transition cannot race a still-running sender.
 
+An old `ready_to_send` draft has a narrower recovery path because no send has
+started. `supersede_stale_ready_wechat_delivery` may close it only when the
+generation still matches, `action_started_at` is empty, and the persisted draft
+predates the supplied inactivity cutoff. The transition records `superseded`
+and mirrors `skipped` to History without touching WeChat.
+
 IPC failures are classified at the request boundary. A Unix-socket connection
 failure occurs before the helper can receive the request and is retryable. Once
 the request may have reached the helper, any timeout or broken response remains
@@ -299,9 +305,10 @@ pending.
   the primary guard against a wrong/awkward send.
 - **New inbound context supersedes stale unsent drafts.** Creating a delivery for
   a newer trigger in the same account and conversation atomically marks older
-  `ready_to_send`, `failed`, or `send_unknown` deliveries as `superseded`; their
-  attempts become `skipped`. Sent, sending, and explicitly rejected deliveries
-  remain unchanged.
+  `ready_to_send` or recoverable `failed` deliveries as `superseded`; their
+  attempts become `skipped`. Both delivery creation paths apply this rule.
+  Sent, sending, `send_unknown`, and explicitly rejected deliveries remain
+  unchanged; uncertain sends require read-only reconciliation.
 - **Direct-chat navigation evidence is refreshed at send time.** The normal
   low-load delay means the sidebar preview may have advanced past the message
   that originally triggered a reply. Immediately before claiming a delivery,
