@@ -1112,7 +1112,7 @@ def test_history_chart_shows_provider_capacity_wait_without_failed_red_series(
     [task] = store.claim_reply_tasks(limit=1)
     store.defer_reply_task(
         task.id,
-        "codex_provider_unavailable",
+        "codex_provider_capacity_exhausted",
         expected_execution_generation=task.execution_generation,
         available_at="2026-08-08 02:00:00",
     )
