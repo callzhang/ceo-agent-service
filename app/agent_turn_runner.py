@@ -161,8 +161,6 @@ class AgentTurnProcess(Generic[ResultT]):
         run: AgentRun,
         prompt: str,
         session_id: str | None,
-        schema_path: Path,
-        expected_schema: dict[str, object],
         developer_instructions: str,
         configure_command: Callable[[list[str]], None],
         parse_result: Callable[[str], ResultT],
@@ -331,23 +329,12 @@ class AgentTurnProcess(Generic[ResultT]):
                 primary_turn_closed = True
 
         try:
-            schema = json.loads(schema_path.read_text(encoding="utf-8"))
-            if not isinstance(schema, dict):
-                raise ValueError("agent result schema must be a JSON object")
-            if schema != expected_schema:
-                raise ValueError("agent result schema does not match the result model")
-            contract_instructions = (
-                developer_instructions
-                + "\n\nOutput JSON Schema (validated locally):\n"
-                + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
-            )
             command = self.codex.build_command(
                 prompt=prompt,
                 session_id=session_id,
-                output_schema_path=schema_path,
-                use_output_schema=True,
+                use_output_schema=False,
                 approval_policy="untrusted" if allow_effectful_tools else "never",
-                developer_instructions=contract_instructions,
+                developer_instructions=developer_instructions,
                 use_approval_bypass=allow_effectful_tools,
                 image_paths=image_paths,
             )

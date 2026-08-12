@@ -32,7 +32,6 @@ from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
 
 
-SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "consumer_agent_wire.schema.json"
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_DYNAMIC_SKILL_SENTENCE = (
@@ -237,8 +236,6 @@ class ConsumerAgentRunner:
                     )
                 ),
                 session_id=session_id,
-                schema_path=SCHEMA_PATH,
-                expected_schema=ConsumerAgentWireResult.model_json_schema(),
                 developer_instructions=consumer_developer_instructions(
                     rendered_rules
                 ),

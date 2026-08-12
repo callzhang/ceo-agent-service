@@ -591,6 +591,18 @@ def test_contract_schemas_match_models_and_do_not_enumerate_business_actions():
             assert business_action not in serialized
 
 
+def test_committed_wire_schemas_match_generated_models():
+    expected = {
+        "consumer_agent_wire.schema.json": ConsumerAgentWireResult.model_json_schema(),
+        "audit_agent_wire.schema.json": AuditAgentWireResult.model_json_schema(),
+    }
+
+    for filename, schema in expected.items():
+        committed = json.loads((SCHEMA_DIR / filename).read_text(encoding="utf-8"))
+        assert committed == schema
+        Draft202012Validator.check_schema(committed)
+
+
 @pytest.mark.parametrize(
     ("schema_name", "payload"),
     [

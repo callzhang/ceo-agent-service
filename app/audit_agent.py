@@ -17,7 +17,7 @@ from app.agent_contracts import (
     AuditOutcome,
 )
 from app.agent_result import AgentError, SideEffectState
-from app.agent_wire_contracts import AuditAgentWireResult, parse_audit_agent_wire_result
+from app.agent_wire_contracts import parse_audit_agent_wire_result
 from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_turn_runner import (
@@ -40,7 +40,6 @@ from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_comman
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 
 
-SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "audit_agent_wire.schema.json"
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -442,8 +441,6 @@ class AuditAgentRunner:
             # reconciliation requires. Keep the original session on the run for
             # audit history and start a fresh, isolated recovery turn instead.
             session_id=None if recovery_phase else run.codex_session_id or None,
-            schema_path=SCHEMA_PATH,
-            expected_schema=AuditAgentWireResult.model_json_schema(),
             developer_instructions=audit_developer_instructions(
                 rendered_rules
             ),

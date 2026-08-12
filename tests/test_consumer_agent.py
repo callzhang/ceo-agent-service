@@ -306,16 +306,15 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     assert 'sandbox_mode="read-only"' not in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert "tools.enabled_tools=[]" in command
-    assert "--output-schema" in command
+    assert "--output-schema" not in command
     assert 'approval_policy="never"' in command
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command
     assert 'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_spreadsheet"]' in command
     assert "execute_reviewed_write" not in " ".join(command)
     assert store.get_agent_run(result.run_id).role.value == "consumer"
-    assert any(
-        "Output JSON Schema (validated locally):" in option
-        for option in command
+    assert not any(
+        "Output JSON Schema (validated locally):" in option for option in command
     )
     assert any("agent_cli.read_skill" in option for option in command)
     instructions = consumer_developer_instructions("Verify every supported fact.")
@@ -820,23 +819,57 @@ def test_consumer_reports_session_lock_release_failure(
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
-def test_consumer_rejects_schema_artifact_drift(
+def test_consumer_rejects_malformed_nested_output_locally(
     store,
     task,
     context,
-    tmp_path,
-    monkeypatch,
 ):
-    schema_path = tmp_path / "consumer.schema.json"
-    schema_path.write_text('{"type":"object"}', encoding="utf-8")
-    monkeypatch.setattr("app.consumer_agent.SCHEMA_PATH", schema_path)
+    malformed = {
+        "outcome": "proposal",
+        "summary": "Invalid legacy wire shape.",
+        "proposal": json.dumps({"objective": "Legacy string payload"}),
+        "decision_options": [],
+        "error_code": "",
+        "error_retryable": False,
+        "error_authorization_required": False,
+    }
+    executor = CapturingExecutor(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": json.dumps(malformed),
+                },
+            }
+        )
+    )
 
-    with pytest.raises(ValueError, match="schema does not match"):
+    with pytest.raises(ResultParseError, match="malformed or does not match"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
-            executor=CapturingExecutor(_result_jsonl()),
+            executor=executor,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "--output-schema" not in executor.commands[0]
+
+
+def test_consumer_accepts_valid_nested_output_locally(store, task, context):
+    executor = CapturingExecutor(_proposal_jsonl({"text": "Verified notice."}))
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.outcome.value == "proposal"
+    assert result.result.proposal is not None
+    assert result.result.proposal.actions[0].payload == {
+        "text": "Verified notice."
+    }
+    assert "--output-schema" not in executor.commands[0]
 
 
 @pytest.mark.parametrize(

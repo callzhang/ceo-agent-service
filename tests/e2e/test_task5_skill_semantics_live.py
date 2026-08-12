@@ -12,7 +12,7 @@ import pytest
 
 from app.agent_wire_contracts import parse_consumer_agent_wire_result
 from app.codex_runner import CodexRunner
-from app.consumer_agent import SCHEMA_PATH, consumer_developer_instructions
+from app.consumer_agent import consumer_developer_instructions
 from app.process_runner import run_process_with_idle_timeout
 from tests.support.native_codex_read_fixture import (
     assert_isolated_read_only_fixture_command,
@@ -102,13 +102,14 @@ def _native_consumer(
     command = runner.build_command(
         prompt=prompt,
         session_id=None,
-        output_schema_path=SCHEMA_PATH,
+        use_output_schema=False,
         approval_policy="never",
         developer_instructions=consumer_developer_instructions(
             "Perform business judgment only from verified evidence."
         ),
         use_approval_bypass=False,
     )
+    assert "--output-schema" not in command
     command.insert(command.index("--cd"), "--skip-git-repo-check")
     command = isolate_read_only_fixture_command(
         command,

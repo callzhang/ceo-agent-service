@@ -15,6 +15,7 @@ from app.agent_context import (
 )
 from app.agent_contracts import AuditAgentResult, ConsumerProposal, ProposedAction
 from app.agent_effects import EffectKind, McpToolEffectRegistry
+from app.agent_result import ResultParseError
 from app.agent_turn_runner import (
     _action_receipt_operation_id,
     _json_digest,
@@ -785,7 +786,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     command = executor.commands[0]
     assert command[:2] == ["codex", "exec"]
     assert "resume" not in command
-    assert "--output-schema" in command
+    assert "--output-schema" not in command
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command
     assert "tools.enabled_tools=[]" in command
@@ -817,6 +818,42 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     assert run.tool_events[1]["item"]["metadata"]["target_identifiers"] == {
         "group": "cid-agent"
     }
+
+
+def test_audit_rejects_malformed_nested_output_locally(setup):
+    store, task, audit_context, parent = setup
+    malformed = {
+        "outcome": "failed",
+        "summary": "Invalid legacy wire shape.",
+        "proposal_revision": 0,
+        "side_effect_state": "none",
+        "feedback": None,
+        "external_result": "{}",
+        "reconciliation": [],
+        "error_code": "invalid_result",
+        "error_retryable": False,
+        "error_authorization_required": False,
+    }
+    executor = CapturingExecutor(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": json.dumps(malformed),
+                },
+            }
+        )
+    )
+
+    with pytest.raises(ResultParseError, match="malformed or does not match"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert "--output-schema" not in executor.commands[0]
 
 
 def test_audit_does_not_renew_conversation_session_lock(setup, monkeypatch):
