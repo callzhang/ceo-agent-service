@@ -4767,6 +4767,47 @@ def test_terminal_later_attempt_replaces_stale_pending_detail_fields(tmp_path: P
     assert "audit_recovery_failed" not in html
 
 
+def test_render_attempt_detail_marks_closed_blocked_work_as_historical(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-blocked",
+        conversation_title="OKR 更新",
+        single_chat=False,
+        trigger_message_id="msg-blocked",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Mina",
+        trigger_text="请更新 OKR 进展",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+    store.complete_reply_task(1, expected_execution_generation=task.execution_generation)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-blocked",
+        conversation_title="OKR 更新",
+        trigger_message_id="msg-blocked",
+        trigger_sender="Mina",
+        trigger_text="请更新 OKR 进展",
+        action="agent_run",
+        sensitivity_kind="internal",
+        codex_reason="实时 OKR 接口未登录，因此没有执行更新。",
+        send_status="blocked",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="blocked",
+        send_error="DINGTEAM_OKR_NOT_AUTHENTICATED",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "历史结案（受阻操作未执行）" in html
+    assert "受阻原因见下方“Codex reason”；该外部操作未执行。" in html
+    assert "相关任务已结束，无需你操作。" in html
+    assert "◌ 历史结案" in html
+    assert "DINGTEAM_OKR_NOT_AUTHENTICATED" not in html
+
+
 def test_terminal_later_attempt_keeps_original_failure_reason_visible(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     old_id = store.record_reply_attempt(
