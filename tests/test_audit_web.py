@@ -7486,6 +7486,25 @@ def test_logs_route_renders_logs_and_errors_route_remains_compatible(tmp_path: P
     assert "authorization required" in errors_response.text
 
 
+def test_audit_app_reuses_initialized_store_across_read_routes(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "worker.sqlite3"
+    initialized_store = AutoReplyStore(db_path)
+    store_factory_calls = 0
+
+    def audit_store_factory(path: Path) -> AutoReplyStore:
+        nonlocal store_factory_calls
+        assert path == db_path
+        store_factory_calls += 1
+        return initialized_store
+
+    monkeypatch.setattr(audit_web_module, "_audit_store", audit_store_factory)
+    client = TestClient(create_audit_app(db_path))
+
+    assert client.get("/user-feedback").status_code == 200
+    assert client.get("/workers").status_code == 200
+    assert store_factory_calls == 1
+
+
 def test_run_audit_web_uses_stable_uvicorn_protocols(monkeypatch, tmp_path: Path):
     calls = {}
 

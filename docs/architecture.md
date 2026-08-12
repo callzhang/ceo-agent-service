@@ -25,8 +25,8 @@ CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 D
 - audit-web 子进程：由同一 supervisor 托管，默认监听
   `http://127.0.0.1:8765`
 
-supervisor 同时管理 worker 和 audit-web。任一子进程异常退出时，supervisor 会回收另一个
-子进程并退出，由同一个 launchd job 拉起完整服务。不要安装第二个 audit-web plist，也不要
+supervisor 同时管理 worker 和 audit-web。任一子进程异常退出时，supervisor 只在同一个
+launchd job 内退避重启该子进程，健康子进程继续运行。不要安装第二个 audit-web plist，也不要
 恢复双 launchd 模型。
 
 launchd 和本地启动脚本都设置 `PYTHONDONTWRITEBYTECODE=1`。worker 与审计 Web 会并发

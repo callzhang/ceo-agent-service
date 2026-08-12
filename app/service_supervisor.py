@@ -11,6 +11,7 @@ from pathlib import Path
 
 POLL_INTERVAL_SECONDS = 0.2
 SHUTDOWN_GRACE_SECONDS = 1.0
+CHILD_RESTART_DELAY_SECONDS = 1.0
 
 
 def build_child_command(command: str, args: argparse.Namespace) -> list[str]:
@@ -72,19 +73,34 @@ def run_supervisor(
         current_signal: signal.signal(current_signal, request_shutdown)
         for current_signal in handled_signals
     }
-    children: list[subprocess.Popen] = []
-    try:
-        children.append(popen(worker_command))
-        children.append(popen(audit_web_command))
+    commands = {
+        "worker": worker_command,
+        "audit-web": audit_web_command,
+    }
+    children: dict[str, subprocess.Popen] = {}
+
+    def start_child(name: str) -> None:
         while not shutdown_requested:
-            for child in children:
+            try:
+                children[name] = popen(commands[name])
+                return
+            except OSError:
+                sleep(CHILD_RESTART_DELAY_SECONDS)
+
+    try:
+        for name in commands:
+            start_child(name)
+        while not shutdown_requested:
+            for name, child in tuple(children.items()):
                 returncode = child.poll()
                 if returncode is not None:
-                    return returncode if returncode != 0 else 1
+                    child.wait()
+                    start_child(name)
+                    break
             sleep(POLL_INTERVAL_SECONDS)
         return 0
     finally:
-        stop_children(children, sleep=sleep, monotonic=monotonic)
+        stop_children(tuple(children.values()), sleep=sleep, monotonic=monotonic)
         for current_signal, previous_handler in previous_handlers.items():
             signal.signal(current_signal, previous_handler)
 

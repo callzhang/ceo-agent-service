@@ -7739,6 +7739,9 @@ def create_audit_app(
     ding_robot_code: str | None = None,
     ding_robot_name: str | None = None,
 ) -> FastAPI:
+    # The audit process is read-heavy. Reuse one initialized Store so requests do
+    # not repeatedly contend with the worker for schema initialization writes.
+    audit_store = _audit_store(db_path)
     default_attempt_list_cache = _RecentHtmlCache(
         DEFAULT_HISTORY_CACHE_TTL_SECONDS
     )
@@ -7748,7 +7751,7 @@ def create_audit_app(
 
     def render_default_attempt_list() -> str:
         return render_attempt_list(
-            _audit_store(db_path),
+            audit_store,
             limit=DEFAULT_ATTEMPT_LIST_LIMIT,
             page=1,
             type_filter=(),
@@ -7761,7 +7764,7 @@ def create_audit_app(
         )
 
     def render_worker_status_payload() -> dict[str, object]:
-        return build_worker_status_payload(_audit_store(db_path))
+        return build_worker_status_payload(audit_store)
 
     def worker_status_refreshing_payload() -> dict[str, object]:
         return {
@@ -7847,13 +7850,13 @@ def create_audit_app(
 
     @app.get("/", response_class=HTMLResponse)
     def attempt_list(request: Request) -> Response:
-        if not request.query_params and not _tutorial_is_complete(_audit_store(db_path)):
+        if not request.query_params and not _tutorial_is_complete(audit_store):
             return RedirectResponse("/tutorial", status_code=303)
         query = str(request.query_params.get("q", ""))
 
         def render() -> str:
             return render_attempt_list(
-                _audit_store(db_path),
+                audit_store,
                 limit=_attempt_list_limit(
                     _positive_int_query(
                         request,
@@ -7883,13 +7886,13 @@ def create_audit_app(
     @app.get("/user-feedback", response_class=HTMLResponse)
     def user_feedback_list(request: Request) -> str:
         return render_user_feedback_list(
-            _audit_store(db_path),
+            audit_store,
             page=_positive_int_query(request, "page", default=1),
         )
 
     @app.get("/service-bugfix-candidates", response_class=HTMLResponse)
     def service_bugfix_candidates() -> str:
-        return render_service_bugfix_candidates(_audit_store(db_path))
+        return render_service_bugfix_candidates(audit_store)
 
     @app.get("/tutorial", response_class=HTMLResponse)
     def tutorial_page() -> Response:
@@ -8019,7 +8022,7 @@ def create_audit_app(
     @app.get("/workers", response_class=HTMLResponse)
     def workers_page() -> str:
         return render_settings_page(
-            _audit_store(db_path),
+            audit_store,
             active_tab="workers",
             worker_status_payload=worker_status_cache.get_or_refresh(
                 render_worker_status_payload,

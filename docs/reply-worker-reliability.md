@@ -296,8 +296,8 @@ Audit Rules 在 `Config -> Audit Rules` 可查看和修改。修改后新 A/B tu
 
 生产只运行 `com.ceo-agent-service.main`。它的 supervisor 管理 worker 与 audit-web：
 
-- 任一子进程退出，另一子进程会被回收；
-- launchd 拉起新的 supervisor；
+- 任一子进程退出，supervisor 只退避重启该子进程；
+- 健康子进程持续运行，launchd 只在 supervisor 本身退出时拉起新实例；
 - worker 从 SQLite 恢复任务和租约；
 - audit-web 从最近完整缓存快速提供 History，再后台预热；
 - 不存在独立 audit-web launchd job。
