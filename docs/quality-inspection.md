@@ -167,6 +167,40 @@ Scheduler / hourly heartbeat
 任何新增持久化队列都必须同时更新 `REQUIRED_SOURCES`、本文件的覆盖表和对应测试；
 否则质量门必须以缺失覆盖失败，而不是静默遗漏。
 
+## Skill runtime 回归语料
+
+`evals/skill_runtime/cases.jsonl` 保存脱敏、泛化的 Consumer/Audit 业务回归场景。
+默认运行只做确定性检查：严格校验每行结构、唯一 `case_id`、业务 Skill、结果类型、
+断言和脱敏约束，然后把每个场景交给独立的脚本化 observation contract。脚本化
+observation 不从该行的 `expected_*` 字段生成，因此修改预期 Skill、结果或断言会使
+命令以非零状态退出。
+
+```sh
+.venv/bin/python -m evals.skill_runtime.run
+```
+
+命令同时输出逐场景的人类可读状态和完整 JSON。它不调用模型、网络或外部系统，适合
+单元测试和提交前回归；它证明的是语料结构与已登记静态契约一致，不是模型当前一定会
+作出同样判断。
+
+需要补充当前本机模型的语义证据时，可以显式选择 live 模式：
+
+```sh
+.venv/bin/python -m evals.skill_runtime.run --live
+```
+
+live 模式对每个场景分别启动真实本地 `codex exec` Consumer 和 Audit dry-run，向两者暴露
+完整的内置业务 Skill 清单，并记录实际 `read_skill` 路径与摘要、Consumer 严格结果和
+Audit 严格结果。两个进程都忽略用户配置与
+规则，使用 ephemeral、read-only sandbox，关闭 plugins、apps、内置工具和 web，只暴露
+只读 fixture MCP 的 `read_skill` 与 `execute_reviewed_read`；Audit 不能执行或重放外部写入。
+live 结果是可选的模型语义证据，不进入普通单元测试，也不替代真实业务读回、队列对账或
+`quality-check`。
+
+这套语料不实现或证明增量 cursor、72 小时滚动窗口、错误聚合、外部投递状态或服务健康。
+这些能力仍属于下方目标演进，只有对应持久化实现和边界测试完成后才能在巡检报告中声称
+已覆盖。
+
 ## 目标演进
 
 以下是目标架构，尚未全部由当前命令实现，不能在运行报告中写成已完成：
