@@ -86,10 +86,12 @@ before it can affect execution.
 Wire field encoding: proposal_json is a JSON-encoded object only when outcome
 is proposal; otherwise it must be null. decision_options_json is always a
 JSON-encoded array: it must contain two to four mutually exclusive options only
-when outcome is needs_human, and [] for every other outcome. Each option has a
-short label, an instruction that can be executed after Derek selects it, and a
-concrete consequence. Do not put a JSON array, markdown, or an additional
-wrapper object in proposal_json.
+when outcome is needs_human, and [] for every other outcome. For needs_human,
+each array item must contain exactly these non-empty string fields: `key`,
+`label`, `instruction`, and `consequence`. `key` must be unique within the
+array and stable enough for the audit page to submit the selected instruction;
+use concise identifiers such as `option_1`, not the display label. Do not put a
+JSON array, markdown, or an additional wrapper object in proposal_json.
 
 For every DWS write command in proposal_json, include the non-interactive
 confirmation flag --yes. It confirms the already-reviewed command to the CLI;

@@ -415,6 +415,12 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     )
     assert "proposal_json must decode to this JSON Schema exactly" in executor.prompts[0]
     assert '"expected_verification"' in executor.prompts[0]
+    assert any(
+        "each array item must contain exactly these non-empty string fields" in option
+        and "`key`" in option
+        and "use concise identifiers such as `option_1`" in option
+        for option in command
+    )
 
 
 def test_consumer_rotates_session_when_wire_contract_changes(store, task, context):
