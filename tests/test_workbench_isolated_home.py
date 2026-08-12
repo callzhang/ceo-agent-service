@@ -131,7 +131,7 @@ def _start_preparation_crash(
             "    fired = [False]",
             "    def mkdir(path, *args, **kwargs):",
             "        result = original(path, *args, **kwargs)",
-            "        if not fired[0] and 'new-tree' in str(path):",
+            "        if not fired[0] and str(path).startswith('directory-'):",
             "            fired[0] = True",
             "            stop_here()",
             "        return result",
@@ -659,6 +659,189 @@ def test_no_journal_never_deletes_user_file_with_reserved_artifact_name(tmp_path
     reconcile_isolated_codex_homes(root=root)
 
     assert reserved.read_text(encoding="utf-8") == "user-owned content\n"
+
+
+def test_external_exact_missing_directory_collision_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source, home, first, _second = _two_session_home(tmp_path)
+    isolated_new = home.path / "sessions" / "collision-dir"
+    isolated_new.mkdir(mode=0o700)
+    (isolated_new / "new.jsonl").write_text("new\n", encoding="utf-8")
+    external = source / "sessions" / "collision-dir"
+    original = isolated_home_module._create_missing_session_directories
+    original_identity = isolated_home_module._directory_identity_or_missing
+    created = False
+    hid_collision = False
+
+    def collide(plan, **kwargs):
+        nonlocal created
+        external.mkdir(mode=0o700)
+        created = True
+        return original(plan, **kwargs)
+
+    def hide_collision_once(path):
+        nonlocal hid_collision
+        if path == external and path.exists() and not hid_collision:
+            hid_collision = True
+            return None
+        return original_identity(path)
+
+    monkeypatch.setattr(
+        isolated_home_module,
+        "_create_missing_session_directories",
+        collide,
+    )
+    monkeypatch.setattr(
+        isolated_home_module,
+        "_directory_identity_or_missing",
+        hide_collision_once,
+    )
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        home.cleanup()
+
+    assert created
+    assert hid_collision
+    assert external.is_dir()
+    assert first.read_text(encoding="utf-8") == "first before\n"
+
+
+def test_external_exact_preparation_artifact_collision_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source, home, first, _second = _two_session_home(tmp_path)
+    original = isolated_home_module._copy_validated_file_to_new
+    collided_name = ""
+
+    def collide(source_path, expected, destination_fd, destination_name, **kwargs):
+        nonlocal collided_name
+        if not collided_name and str(destination_name).startswith(
+            ".workbench-sync-stage-"
+        ):
+            collided_name = str(destination_name)
+            fd = os.open(
+                collided_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=destination_fd,
+            )
+            try:
+                os.write(fd, b"external artifact\n")
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        return original(
+            source_path,
+            expected,
+            destination_fd,
+            destination_name,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        isolated_home_module,
+        "_copy_validated_file_to_new",
+        collide,
+    )
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        home.cleanup()
+
+    assert collided_name
+    assert any(
+        path.read_bytes() == b"external artifact\n"
+        for path in source.rglob(collided_name)
+    )
+    assert first.read_text(encoding="utf-8") == "first before\n"
+
+
+def test_null_artifact_identity_never_authorizes_existing_object_deletion(
+    tmp_path: Path,
+):
+    source = _source_home(tmp_path)
+    sessions = source / "sessions"
+    sessions.mkdir(mode=0o700)
+    transaction_id = uuid.uuid4().hex
+    artifact_name = f".workbench-sync-stage-{transaction_id}-00000000"
+    artifact = sessions / artifact_name
+    artifact.write_text("external\n", encoding="utf-8")
+    artifact.chmod(0o600)
+    root = tmp_path / "isolated-root"
+    with isolated_home_module._session_sync_lock(source, root) as sync_state:
+        transaction = isolated_home_module._create_session_sync_transaction(
+            sync_state, transaction_id
+        )
+    state = source / ".workbench-session-sync"
+    source_metadata = source.stat()
+    sessions_metadata = sessions.stat()
+    payload = {
+        "version": 2,
+        "transaction_id": transaction_id,
+        "transaction_root": transaction.name,
+        "transaction_root_identity": {
+            "device": transaction.identity[0],
+            "inode": transaction.identity[1],
+        },
+        "phase": "preparing",
+        "source_device": source_metadata.st_dev,
+        "source_inode": source_metadata.st_ino,
+        "created_directories": [],
+        "directories": [
+            {
+                "relative": ".",
+                "existed": True,
+                "initial_identity": {
+                    "device": sessions_metadata.st_dev,
+                    "inode": sessions_metadata.st_ino,
+                },
+                "prepared_identity": None,
+            }
+        ],
+        "entries": [
+            {
+                "relative": "provider.jsonl",
+                "existed": False,
+                "original_identity": None,
+                "backup_identity": None,
+                "stage_identity": None,
+                "stage_digest": None,
+                "backup_name": f".workbench-sync-backup-{transaction_id}-00000000",
+                "stage_name": artifact_name,
+            }
+        ],
+    }
+    journal = state / "journal.json"
+    journal.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    journal.chmod(0o600)
+    os.close(transaction.fd)
+
+    with isolated_home_module._session_sync_lock(source, root):
+        pass
+
+    assert artifact.read_text(encoding="utf-8") == "external\n"
+
+
+def test_unmarked_transaction_like_state_child_survives_reconciliation(tmp_path: Path):
+    source = _source_home(tmp_path)
+    root = tmp_path / "isolated-root"
+    with isolated_home_module._session_sync_lock(source, root):
+        pass
+    state = source / ".workbench-session-sync"
+    unmarked = state / f"tx-{uuid.uuid4().hex}"
+    unmarked.mkdir(mode=0o700)
+    sentinel = unmarked / "sentinel"
+    sentinel.write_text("keep\n", encoding="utf-8")
+
+    with isolated_home_module._session_sync_lock(source, root):
+        pass
+
+    assert sentinel.read_text(encoding="utf-8") == "keep\n"
 
 
 def test_committed_journal_after_sigkill_keeps_all_updates_and_only_cleans(

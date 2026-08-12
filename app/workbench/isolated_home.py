@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import fcntl
 import hashlib
@@ -9,6 +10,7 @@ import json
 import os
 import re
 import stat
+import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
@@ -31,6 +33,7 @@ _SYNC_STATE_DIRECTORY = ".workbench-session-sync"
 _SYNC_LOCK_NAME = ".lock"
 _SYNC_JOURNAL_NAME = "journal.json"
 _SYNC_JOURNAL_VERSION = 2
+_SYNC_TRANSACTION_MARKER = ".transaction.json"
 _MAX_SYNC_JOURNAL_BYTES = 1024 * 1024
 _MAX_SYNC_JOURNAL_ENTRIES = 4096
 _MAX_SYNC_FILE_BYTES = 256 * 1024 * 1024
@@ -496,6 +499,7 @@ class _SessionSyncPlan:
     directories: tuple[Path, ...]
     directory_identities: dict[Path, tuple[int, int] | None]
     initial_directory_identities: dict[Path, tuple[int, int] | None]
+    prepared_directory_identities: dict[Path, tuple[int, int] | None]
     files: tuple[_SessionSyncFile, ...]
 
 
@@ -503,6 +507,14 @@ class _SessionSyncPlan:
 class _SessionSyncState:
     source_home: Path
     state_fd: int
+
+
+@dataclass(frozen=True)
+class _SessionSyncTransaction:
+    transaction_id: str
+    name: str
+    fd: int
+    identity: tuple[int, int]
 
 
 def _sync_sessions(
@@ -643,6 +655,7 @@ def _build_session_sync_plan(
         directories=tuple(directories),
         directory_identities=destination_identities,
         initial_directory_identities=dict(destination_identities),
+        prepared_directory_identities={relative: None for relative in directories},
         files=tuple(planned_files),
     )
 
@@ -713,6 +726,7 @@ def _execute_session_sync(
     sync_state: _SessionSyncState,
 ) -> None:
     transaction_id = uuid.uuid4().hex
+    transaction = _create_session_sync_transaction(sync_state, transaction_id)
     for index, entry in enumerate(plan.files):
         entry.stage_name = f".workbench-sync-stage-{transaction_id}-{index:08d}"
         entry.backup_name = f".workbench-sync-backup-{transaction_id}-{index:08d}"
@@ -727,8 +741,14 @@ def _execute_session_sync(
         transaction_id=transaction_id,
         phase="preparing",
         created_directories=created_relatives,
+        transaction=transaction,
     )
-    _write_session_journal(sync_state, preparing_payload)
+    try:
+        _write_session_journal(sync_state, preparing_payload)
+    except BaseException:
+        _remove_transaction_root(sync_state, transaction)
+        os.close(transaction.fd)
+        raise
 
     def persist_preparing_progress() -> None:
         _write_session_journal(
@@ -739,62 +759,52 @@ def _execute_session_sync(
                 transaction_id=transaction_id,
                 phase="preparing",
                 created_directories=created_relatives,
+                transaction=transaction,
             ),
         )
 
     try:
         _create_missing_session_directories(
             plan,
+            transaction=transaction,
             on_created=persist_preparing_progress,
         )
         for entry in plan.files:
-            parent_fd = _open_verified_directory(
-                entry.destination.parent,
-                plan.directory_identities[entry.relative.parent],
+            _validate_destination(entry)
+            _copy_validated_file_to_new(
+                entry.source,
+                entry.source_identity,
+                transaction.fd,
+                entry.stage_name,
+                secure_mode=True,
             )
-            try:
-                _validate_destination(entry)
-                _copy_validated_file_to_new(
-                    entry.source,
-                    entry.source_identity,
-                    parent_fd,
-                    entry.stage_name,
-                    secure_mode=True,
-                )
-                entry.stage_identity = _file_identity(
-                    entry.destination.parent / entry.stage_name
-                )
-                entry.stage_digest = _stable_file_digest_at(
-                    parent_fd,
-                    entry.stage_name,
-                    expected=entry.stage_identity,
-                )
-                persist_preparing_progress()
-            finally:
-                os.close(parent_fd)
+            entry.stage_identity = _file_identity_at_or_missing(
+                transaction.fd, entry.stage_name
+            )
+            assert entry.stage_identity is not None
+            entry.stage_digest = _stable_file_digest_at(
+                transaction.fd,
+                entry.stage_name,
+                expected=entry.stage_identity,
+            )
+            persist_preparing_progress()
 
         for entry in plan.files:
             if entry.destination_identity is None:
                 continue
-            parent_fd = _open_verified_directory(
-                entry.destination.parent,
-                plan.directory_identities[entry.relative.parent],
+            _validate_destination(entry)
+            _copy_validated_file_to_new(
+                entry.destination,
+                entry.destination_identity,
+                transaction.fd,
+                entry.backup_name,
+                secure_mode=False,
             )
-            try:
-                _validate_destination(entry)
-                _copy_validated_file_to_new(
-                    entry.destination,
-                    entry.destination_identity,
-                    parent_fd,
-                    entry.backup_name,
-                    secure_mode=False,
-                )
-                entry.backup_identity = _file_identity(
-                    entry.destination.parent / entry.backup_name
-                )
-                persist_preparing_progress()
-            finally:
-                os.close(parent_fd)
+            entry.backup_identity = _file_identity_at_or_missing(
+                transaction.fd, entry.backup_name
+            )
+            assert entry.backup_identity is not None
+            persist_preparing_progress()
 
         _fsync_sync_directories(plan)
         _validate_sync_plan_before_commit(plan)
@@ -804,6 +814,7 @@ def _execute_session_sync(
             transaction_id=transaction_id,
             phase="prepared",
             created_directories=created_relatives,
+            transaction=transaction,
         )
         _write_session_journal(sync_state, prepared_payload)
         for entry in plan.files:
@@ -817,7 +828,7 @@ def _execute_session_sync(
                 os.replace(
                     entry.stage_name,
                     entry.destination.name,
-                    src_dir_fd=parent_fd,
+                    src_dir_fd=transaction.fd,
                     dst_dir_fd=parent_fd,
                 )
                 os.fsync(parent_fd)
@@ -826,18 +837,87 @@ def _execute_session_sync(
         committed_payload = dict(prepared_payload)
         committed_payload["phase"] = "committed"
         _write_session_journal(sync_state, committed_payload)
+    except (FileExistsError, _PreparationConflict):
+        conflict_payload = _session_journal_payload(
+            sync_state,
+            plan,
+            transaction_id=transaction_id,
+            phase="preparing",
+            created_directories=created_relatives,
+            transaction=transaction,
+        )
+        _remove_journal_created_directories(sync_state, conflict_payload)
+        _mark_transaction_conflicted(transaction)
+        _remove_session_journal(sync_state)
+        os.close(transaction.fd)
+        raise ValueError(_SAFE_ERROR)
     except BaseException:
-        _recover_session_journal(sync_state)
+        try:
+            _recover_session_journal(sync_state)
+        finally:
+            os.close(transaction.fd)
         raise
     try:
-        _cleanup_committed_session_sync(sync_state, committed_payload)
+        _cleanup_committed_session_sync(
+            sync_state, committed_payload, transaction
+        )
     except BaseException:
         # The committed journal is the durable cleanup obligation. A later lock
         # holder will finish cleanup without rolling back provider state.
         return
+    finally:
+        try:
+            os.close(transaction.fd)
+        except OSError:
+            pass
+
+
+def _create_session_sync_transaction(
+    sync_state: _SessionSyncState,
+    transaction_id: str,
+) -> _SessionSyncTransaction:
+    name = f"tx-{transaction_id}"
+    os.mkdir(name, mode=0o700, dir_fd=sync_state.state_fd)
+    transaction_fd = os.open(
+        name,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        dir_fd=sync_state.state_fd,
+    )
+    try:
+        metadata = os.fstat(transaction_fd)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+        ):
+            raise ValueError(_SAFE_ERROR)
+        marker = json.dumps(
+            {
+                "version": _SYNC_JOURNAL_VERSION,
+                "uid": os.getuid(),
+                "transaction_id": transaction_id,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        _write_new_file(transaction_fd, _SYNC_TRANSACTION_MARKER, marker, 0o600)
+        os.fsync(transaction_fd)
+        return _SessionSyncTransaction(
+            transaction_id=transaction_id,
+            name=name,
+            fd=transaction_fd,
+            identity=(metadata.st_dev, metadata.st_ino),
+        )
+    except BaseException:
+        os.close(transaction_fd)
+        raise
 
 
 class _InvalidSessionJournal(ValueError):
+    pass
+
+
+class _PreparationConflict(ValueError):
     pass
 
 
@@ -848,12 +928,17 @@ def _session_journal_payload(
     transaction_id: str,
     phase: str,
     created_directories: tuple[Path, ...],
+    transaction: _SessionSyncTransaction,
 ) -> dict[str, object]:
     source_metadata = sync_state.source_home.lstat()
     return {
         "version": _SYNC_JOURNAL_VERSION,
         "transaction_id": transaction_id,
         "phase": phase,
+        "transaction_root": transaction.name,
+        "transaction_root_identity": _directory_identity_payload(
+            transaction.identity
+        ),
         "source_device": source_metadata.st_dev,
         "source_inode": source_metadata.st_ino,
         "created_directories": [
@@ -865,6 +950,9 @@ def _session_journal_payload(
                 "existed": plan.initial_directory_identities[relative] is not None,
                 "initial_identity": _directory_identity_payload(
                     plan.initial_directory_identities[relative]
+                ),
+                "prepared_identity": _directory_identity_payload(
+                    plan.prepared_directory_identities[relative]
                 ),
             }
             for relative in plan.directories
@@ -953,21 +1041,27 @@ def _recover_session_journal(sync_state: _SessionSyncState) -> None:
     try:
         payload = _read_session_journal(sync_state)
     except FileNotFoundError:
+        _reconcile_session_sync_transactions(sync_state)
         return
     except _InvalidSessionJournal as exc:
         _quarantine_session_journal(sync_state)
         raise ValueError(_SAFE_ERROR) from exc
 
+    transaction: _SessionSyncTransaction | None = None
     try:
         _validate_journal_directory_tree(sync_state, payload)
+        transaction = _open_journal_transaction(sync_state, payload)
         if payload["phase"] == "preparing":
-            _recover_preparing_session_sync(sync_state, payload)
+            _recover_preparing_session_sync(sync_state, payload, transaction)
         elif payload["phase"] == "prepared":
-            _recover_prepared_session_sync(sync_state, payload)
+            _recover_prepared_session_sync(sync_state, payload, transaction)
         else:
-            _cleanup_committed_session_sync(sync_state, payload)
+            _cleanup_committed_session_sync(sync_state, payload, transaction)
     except BaseException as exc:
         raise ValueError(_SAFE_ERROR) from exc
+    finally:
+        if transaction is not None:
+            os.close(transaction.fd)
 
 
 def _validate_journal_directory_tree(
@@ -1000,6 +1094,143 @@ def _validate_journal_directory_tree(
             raise ValueError(_SAFE_ERROR)
         if initial_identity is None and stat.S_IMODE(metadata.st_mode) != 0o700:
             raise ValueError(_SAFE_ERROR)
+
+
+def _open_journal_transaction(
+    sync_state: _SessionSyncState,
+    payload: dict[str, object],
+) -> _SessionSyncTransaction:
+    name = payload["transaction_root"]
+    identity = payload["transaction_root_identity"]
+    transaction_id = payload["transaction_id"]
+    assert isinstance(name, str)
+    assert isinstance(identity, tuple)
+    assert isinstance(transaction_id, str)
+    transaction_fd = os.open(
+        name,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        dir_fd=sync_state.state_fd,
+    )
+    metadata = os.fstat(transaction_fd)
+    if (
+        (metadata.st_dev, metadata.st_ino) != identity
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or not _valid_transaction_marker(transaction_fd, transaction_id)
+    ):
+        os.close(transaction_fd)
+        raise ValueError(_SAFE_ERROR)
+    return _SessionSyncTransaction(transaction_id, name, transaction_fd, identity)
+
+
+def _valid_transaction_marker(transaction_fd: int, transaction_id: str) -> bool:
+    try:
+        marker_fd = os.open(
+            _SYNC_TRANSACTION_MARKER,
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=transaction_fd,
+        )
+        try:
+            metadata = os.fstat(marker_fd)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_size > 512
+            ):
+                return False
+            data = os.read(marker_fd, 513)
+        finally:
+            os.close(marker_fd)
+        payload = json.loads(data.decode("utf-8"))
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return False
+    return payload == {
+        "transaction_id": transaction_id,
+        "uid": os.getuid(),
+        "version": _SYNC_JOURNAL_VERSION,
+    }
+
+
+def _reconcile_session_sync_transactions(sync_state: _SessionSyncState) -> None:
+    for name in os.listdir(sync_state.state_fd):
+        match = re.fullmatch(r"tx-([0-9a-f]{32})", name)
+        if match is None:
+            continue
+        try:
+            transaction_fd = os.open(
+                name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=sync_state.state_fd,
+            )
+        except OSError:
+            continue
+        try:
+            metadata = os.fstat(transaction_fd)
+            if (
+                metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o700
+                or not _valid_transaction_marker(transaction_fd, match.group(1))
+            ):
+                continue
+            _clear_directory_fd(transaction_fd)
+        finally:
+            os.close(transaction_fd)
+        try:
+            os.rmdir(name, dir_fd=sync_state.state_fd)
+        except FileNotFoundError:
+            pass
+    os.fsync(sync_state.state_fd)
+
+
+def _remove_transaction_root(
+    sync_state: _SessionSyncState,
+    transaction: _SessionSyncTransaction,
+) -> None:
+    metadata = os.fstat(transaction.fd)
+    if (
+        (metadata.st_dev, metadata.st_ino) != transaction.identity
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or not _valid_transaction_marker(
+            transaction.fd, transaction.transaction_id
+        )
+    ):
+        raise ValueError(_SAFE_ERROR)
+    for name in os.listdir(transaction.fd):
+        if name == _SYNC_TRANSACTION_MARKER:
+            continue
+        metadata = os.stat(name, dir_fd=transaction.fd, follow_symlinks=False)
+        if stat.S_ISDIR(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
+            child_fd = os.open(
+                name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=transaction.fd,
+            )
+            try:
+                _clear_directory_fd(child_fd)
+            finally:
+                os.close(child_fd)
+            os.rmdir(name, dir_fd=transaction.fd)
+        else:
+            os.unlink(name, dir_fd=transaction.fd)
+    os.unlink(_SYNC_TRANSACTION_MARKER, dir_fd=transaction.fd)
+    os.fsync(transaction.fd)
+    os.rmdir(transaction.name, dir_fd=sync_state.state_fd)
+    os.fsync(sync_state.state_fd)
+
+
+def _mark_transaction_conflicted(transaction: _SessionSyncTransaction) -> None:
+    try:
+        os.rename(
+            _SYNC_TRANSACTION_MARKER,
+            ".conflict.json",
+            src_dir_fd=transaction.fd,
+            dst_dir_fd=transaction.fd,
+        )
+        os.fsync(transaction.fd)
+    except OSError:
+        pass
 
 
 def _read_session_journal(sync_state: _SessionSyncState) -> dict[str, object]:
@@ -1073,6 +1304,8 @@ def _validate_session_journal(
     expected_keys = {
         "version",
         "transaction_id",
+        "transaction_root",
+        "transaction_root_identity",
         "phase",
         "source_device",
         "source_inode",
@@ -1091,6 +1324,15 @@ def _validate_session_journal(
         or payload["phase"] not in {"preparing", "prepared", "committed"}
     ):
         raise _InvalidSessionJournal()
+    if (
+        payload["transaction_root"] != f"tx-{transaction_id}"
+        or _directory_identity_from_payload(payload["transaction_root_identity"])
+        is None
+    ):
+        raise _InvalidSessionJournal()
+    payload["transaction_root_identity"] = _directory_identity_from_payload(
+        payload["transaction_root_identity"]
+    )
     source_metadata = sync_state.source_home.lstat()
     if (
         type(payload["source_device"]) is not int
@@ -1192,6 +1434,7 @@ def _validate_session_journal(
             "relative",
             "existed",
             "initial_identity",
+            "prepared_identity",
         }:
             raise _InvalidSessionJournal()
         relative = _validated_journal_relative(
@@ -1200,9 +1443,21 @@ def _validate_session_journal(
         if type(directory["existed"]) is not bool:
             raise _InvalidSessionJournal()
         identity = _directory_identity_from_payload(directory["initial_identity"])
+        prepared_identity = _directory_identity_from_payload(
+            directory["prepared_identity"]
+        )
         if (identity is not None) != directory["existed"]:
             raise _InvalidSessionJournal()
         directory["initial_identity"] = identity
+        directory["prepared_identity"] = prepared_identity
+        if directory["existed"] and prepared_identity is not None:
+            raise _InvalidSessionJournal()
+        if (
+            payload["phase"] != "preparing"
+            and not directory["existed"]
+            and prepared_identity is None
+        ):
+            raise _InvalidSessionJournal()
         validated_directories.append(relative)
         if not directory["existed"]:
             absent_directories.append(relative)
@@ -1295,60 +1550,27 @@ def _validated_journal_relative(value: object, *, allow_root: bool) -> str:
 def _recover_preparing_session_sync(
     sync_state: _SessionSyncState,
     payload: dict[str, object],
+    transaction: _SessionSyncTransaction,
 ) -> None:
-    sessions = sync_state.source_home / "sessions"
-    entries = payload["entries"]
-    assert isinstance(entries, list)
-    for entry in entries:
-        assert isinstance(entry, dict)
-        relative = Path(entry["relative"])
-        parent_fd = _open_recovery_parent(sessions, relative.parent)
-        if parent_fd is None:
-            continue
-        try:
-            _unlink_preparing_artifact(
-                parent_fd,
-                entry["stage_name"],
-                entry["stage_identity"],
-            )
-            _unlink_preparing_artifact(
-                parent_fd,
-                entry["backup_name"],
-                entry["backup_identity"],
-            )
-            os.fsync(parent_fd)
-        finally:
-            os.close(parent_fd)
-    _remove_journal_created_directories(sync_state, payload)
+    conflict = _remove_journal_created_directories(sync_state, payload)
+    _remove_transaction_root(sync_state, transaction)
     _remove_session_journal(sync_state)
-
-
-def _unlink_preparing_artifact(
-    parent_fd: int,
-    name: object,
-    expected_identity: object,
-) -> None:
-    if not isinstance(name, str) or not _SYNC_ARTIFACT.fullmatch(name):
+    if conflict:
         raise ValueError(_SAFE_ERROR)
-    actual = _file_identity_at_or_missing(parent_fd, name)
-    if actual is None:
-        return
-    if expected_identity is not None and actual != expected_identity:
-        raise ValueError(_SAFE_ERROR)
-    os.unlink(name, dir_fd=parent_fd)
 
 
 def _recover_prepared_session_sync(
     sync_state: _SessionSyncState,
     payload: dict[str, object],
+    transaction: _SessionSyncTransaction,
 ) -> None:
     sessions = sync_state.source_home / "sessions"
     entries = payload["entries"]
     assert isinstance(entries, list)
-    transaction_id = payload["transaction_id"]
-    assert isinstance(transaction_id, str)
-    external_writers = _prevalidate_prepared_recovery(sync_state, payload)
-    for index, entry in reversed(list(enumerate(entries))):
+    external_writers = _prevalidate_prepared_recovery(
+        sync_state, payload, transaction
+    )
+    for entry in reversed(entries):
         assert isinstance(entry, dict)
         relative = Path(entry["relative"])
         destination = sessions / relative
@@ -1387,23 +1609,14 @@ def _recover_prepared_session_sync(
                     continue
                 backup_name = entry["backup_name"]
                 assert isinstance(backup_name, str)
-                if _file_identity_at_or_missing(parent_fd, backup_name) != backup_identity:
+                if _file_identity_at_or_missing(
+                    transaction.fd, backup_name
+                ) != backup_identity:
                     raise ValueError(_SAFE_ERROR)
-                restore_name = (
-                    f".workbench-sync-restore-{transaction_id}-{index:08d}"
-                )
-                _unlink_owned_artifact(parent_fd, restore_name)
-                _copy_validated_file_to_new(
-                    destination.parent / backup_name,
-                    backup_identity,
-                    parent_fd,
-                    restore_name,
-                    secure_mode=False,
-                )
                 os.replace(
-                    restore_name,
+                    backup_name,
                     destination.name,
-                    src_dir_fd=parent_fd,
+                    src_dir_fd=transaction.fd,
                     dst_dir_fd=parent_fd,
                 )
                 os.fsync(parent_fd)
@@ -1425,30 +1638,23 @@ def _recover_prepared_session_sync(
         finally:
             os.close(parent_fd)
 
-    _remove_journal_artifacts(sync_state, payload, include_backups=False)
-    _remove_journal_created_directories(sync_state, payload)
+    directory_conflict = _remove_journal_created_directories(sync_state, payload)
+    _remove_transaction_root(sync_state, transaction)
     _remove_session_journal(sync_state)
-    try:
-        _remove_journal_artifacts(sync_state, payload, include_backups=True)
-    except OSError:
-        # With the prepared journal durably removed, destinations are restored.
-        # Remaining component-owned artifacts are reconciled on next acquisition.
-        pass
-    if external_writers:
+    if external_writers or directory_conflict:
         raise ValueError(_SAFE_ERROR)
 
 
 def _prevalidate_prepared_recovery(
     sync_state: _SessionSyncState,
     payload: dict[str, object],
+    transaction: _SessionSyncTransaction,
 ) -> set[str]:
     sessions = sync_state.source_home / "sessions"
     entries = payload["entries"]
     assert isinstance(entries, list)
-    transaction_id = payload["transaction_id"]
-    assert isinstance(transaction_id, str)
     external_writers: set[str] = set()
-    for index, entry in enumerate(entries):
+    for entry in entries:
         assert isinstance(entry, dict)
         relative = Path(entry["relative"])
         parent_fd = _open_recovery_parent(sessions, relative.parent)
@@ -1482,7 +1688,7 @@ def _prevalidate_prepared_recovery(
                         backup_name = entry["backup_name"]
                         assert isinstance(backup_name, str)
                         if _file_identity_at_or_missing(
-                            parent_fd, backup_name
+                            transaction.fd, backup_name
                         ) != backup_identity:
                             raise ValueError(_SAFE_ERROR)
                     else:
@@ -1498,11 +1704,11 @@ def _prevalidate_prepared_recovery(
                 )
                 if installed is not True:
                     external_writers.add(entry["relative"])
-            _validate_owned_artifact_if_present(parent_fd, entry["stage_name"])
-            _validate_owned_artifact_if_present(parent_fd, entry["backup_name"])
-            _validate_owned_artifact_if_present(
-                parent_fd,
-                f".workbench-sync-restore-{transaction_id}-{index:08d}",
+            _validate_transaction_artifact(
+                transaction.fd, entry["stage_name"], entry["stage_identity"]
+            )
+            _validate_transaction_artifact(
+                transaction.fd, entry["backup_name"], entry["backup_identity"]
             )
         finally:
             os.close(parent_fd)
@@ -1524,84 +1730,44 @@ def _prevalidate_prepared_recovery(
     return external_writers
 
 
-def _validate_owned_artifact_if_present(parent_fd: int, name: object) -> None:
+def _validate_transaction_artifact(
+    transaction_fd: int,
+    name: object,
+    expected_identity: object,
+) -> None:
     if not isinstance(name, str) or not _SYNC_ARTIFACT.fullmatch(name):
         raise ValueError(_SAFE_ERROR)
-    try:
-        metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-    except FileNotFoundError:
+    actual = _file_identity_at_or_missing(transaction_fd, name)
+    if actual is None:
         return
-    if (
-        stat.S_ISLNK(metadata.st_mode)
-        or not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-    ):
+    if expected_identity is None or actual != expected_identity:
         raise ValueError(_SAFE_ERROR)
 
 
 def _cleanup_committed_session_sync(
     sync_state: _SessionSyncState,
     payload: dict[str, object],
+    transaction: _SessionSyncTransaction,
 ) -> None:
-    _remove_journal_artifacts(sync_state, payload, include_backups=True)
+    _remove_transaction_root(sync_state, transaction)
     _remove_session_journal(sync_state)
-
-
-def _remove_journal_artifacts(
-    sync_state: _SessionSyncState,
-    payload: dict[str, object],
-    *,
-    include_backups: bool,
-) -> None:
-    sessions = sync_state.source_home / "sessions"
-    entries = payload["entries"]
-    assert isinstance(entries, list)
-    for index, entry in enumerate(entries):
-        assert isinstance(entry, dict)
-        relative = Path(entry["relative"])
-        parent_fd = _open_recovery_parent(sessions, relative.parent)
-        if parent_fd is None:
-            continue
-        try:
-            names = [entry["stage_name"]]
-            if include_backups:
-                names.append(entry["backup_name"])
-            transaction_id = payload["transaction_id"]
-            assert isinstance(transaction_id, str)
-            names.append(
-                f".workbench-sync-restore-{transaction_id}-{index:08d}"
-            )
-            for name in names:
-                assert isinstance(name, str)
-                _unlink_owned_artifact(parent_fd, name)
-            os.fsync(parent_fd)
-        finally:
-            os.close(parent_fd)
-
-
-def _unlink_owned_artifact(parent_fd: int, name: str) -> None:
-    if not _SYNC_ARTIFACT.fullmatch(name):
-        raise ValueError(_SAFE_ERROR)
-    try:
-        metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return
-    if (
-        stat.S_ISLNK(metadata.st_mode)
-        or not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-    ):
-        raise ValueError(_SAFE_ERROR)
-    os.unlink(name, dir_fd=parent_fd)
 
 
 def _remove_journal_created_directories(
     sync_state: _SessionSyncState,
     payload: dict[str, object],
-) -> None:
+) -> bool:
     created = payload["created_directories"]
     assert isinstance(created, list)
     sessions = sync_state.source_home / "sessions"
+    directories = payload["directories"]
+    assert isinstance(directories, list)
+    prepared_identities = {
+        Path(directory["relative"]): directory["prepared_identity"]
+        for directory in directories
+        if isinstance(directory, dict)
+    }
+    conflict = False
     relative_paths = [Path(value) for value in created]
     relative_paths.sort(key=lambda value: len(value.parts), reverse=True)
     for relative in relative_paths:
@@ -1610,6 +1776,7 @@ def _remove_journal_created_directories(
             metadata = destination.lstat()
         except FileNotFoundError:
             continue
+        expected = prepared_identities.get(relative)
         if (
             stat.S_ISLNK(metadata.st_mode)
             or not stat.S_ISDIR(metadata.st_mode)
@@ -1617,10 +1784,15 @@ def _remove_journal_created_directories(
             or stat.S_IMODE(metadata.st_mode) != 0o700
         ):
             raise ValueError(_SAFE_ERROR)
+        if expected is None or (metadata.st_dev, metadata.st_ino) != expected:
+            conflict = True
+            continue
         try:
             destination.rmdir()
         except OSError as exc:
-            if exc.errno != errno.ENOTEMPTY:
+            if exc.errno == errno.ENOTEMPTY:
+                conflict = True
+            else:
                 raise
     if sessions.exists():
         directory_fd = os.open(
@@ -1630,6 +1802,7 @@ def _remove_journal_created_directories(
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
+    return conflict
 
 
 def _open_recovery_parent(sessions: Path, relative_parent: Path) -> int | None:
@@ -1783,15 +1956,35 @@ def _remove_orphan_journal_temps(sync_state: _SessionSyncState) -> None:
 def _create_missing_session_directories(
     plan: _SessionSyncPlan,
     *,
+    transaction: _SessionSyncTransaction,
     on_created: Callable[[], None],
 ) -> None:
-    for relative in plan.directories:
-        if plan.directory_identities[relative] is not None:
-            _validate_directory_identity(
-                plan.destination_sessions / relative,
-                plan.directory_identities[relative],
-            )
-            continue
+    missing = [
+        relative
+        for relative in plan.directories
+        if plan.initial_directory_identities[relative] is None
+    ]
+    for index, relative in enumerate(missing):
+        prepared_name = f"directory-{index:08d}"
+        os.mkdir(prepared_name, mode=0o700, dir_fd=transaction.fd)
+        metadata = os.stat(
+            prepared_name,
+            dir_fd=transaction.fd,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+        ):
+            raise ValueError(_SAFE_ERROR)
+        plan.prepared_directory_identities[relative] = (
+            metadata.st_dev,
+            metadata.st_ino,
+        )
+        on_created()
+
+    for index, relative in enumerate(missing):
         destination = plan.destination_sessions / relative
         parent_relative = relative.parent if relative != Path(".") else None
         expected_parent = (
@@ -1801,11 +1994,74 @@ def _create_missing_session_directories(
         )
         _validate_directory_identity(destination.parent, expected_parent)
         _reject_case_conflict(destination.parent, destination.name)
-        os.mkdir(destination, mode=0o700)
-        destination.chmod(0o700)
+        if _directory_identity_or_missing(destination) is not None:
+            raise _PreparationConflict(_SAFE_ERROR)
+        parent_fd = os.open(
+            destination.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            _rename_directory_exclusive(
+                f"directory-{index:08d}",
+                destination.name,
+                source_fd=transaction.fd,
+                destination_fd=parent_fd,
+            )
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
         identity = _directory_identity(destination)
+        if identity != plan.prepared_directory_identities[relative]:
+            raise ValueError(_SAFE_ERROR)
         plan.directory_identities[relative] = identity
         on_created()
+
+    for relative in plan.directories:
+        if plan.initial_directory_identities[relative] is not None:
+            _validate_directory_identity(
+                plan.destination_sessions / relative,
+                plan.initial_directory_identities[relative],
+            )
+
+
+def _rename_directory_exclusive(
+    source_name: str,
+    destination_name: str,
+    *,
+    source_fd: int,
+    destination_fd: int,
+) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    source = os.fsencode(source_name)
+    destination = os.fsencode(destination_name)
+    if sys.platform == "darwin":
+        rename = libc.renameatx_np
+        rename.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        result = rename(source_fd, source, destination_fd, destination, 0x4)
+    elif sys.platform.startswith("linux"):
+        rename = libc.renameat2
+        rename.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        result = rename(source_fd, source, destination_fd, destination, 0x1)
+    else:
+        raise ValueError(_SAFE_ERROR)
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number == errno.EEXIST:
+        raise _PreparationConflict(_SAFE_ERROR)
+    raise OSError(error_number, os.strerror(error_number))
 
 
 def _validate_sync_plan_before_commit(plan: _SessionSyncPlan) -> None:
