@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from copy import deepcopy
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 from threading import RLock
-from types import MappingProxyType
 from typing import Any, Literal, Protocol
 from weakref import WeakKeyDictionary
 
@@ -43,18 +42,49 @@ _RUNTIME_EVENT_TYPES = frozenset(
 _RUNTIME_RESULT_STATUSES = frozenset({"completed", "stopped", "failed"})
 
 
-def _freeze_payload_value(value: Any) -> Any:
+class _FrozenJsonMapping(dict[str, Any]):
+    """A dict-compatible immutable mapping so generic encoders retain JSON support."""
+
+    def _immutable(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("runtime event payload is immutable")
+
+    __delitem__ = _immutable
+    __ior__ = _immutable
+    __setitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+
+
+def _freeze_json_value(value: Any) -> Any:
+    if value is None or type(value) in (bool, int, str):
+        return value
+    if type(value) is float:
+        if not isfinite(value):
+            raise ValueError("runtime event payload must contain only finite JSON-compatible values")
+        return value
     if isinstance(value, Mapping):
-        return MappingProxyType({key: _freeze_payload_value(item) for key, item in value.items()})
-    if isinstance(value, (list, tuple)):
-        return tuple(_freeze_payload_value(item) for item in value)
-    if isinstance(value, (set, frozenset)):
-        return frozenset(_freeze_payload_value(item) for item in value)
-    return deepcopy(value)
+        frozen_items: dict[str, Any] = {}
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError(
+                    "runtime event payload must use string JSON-compatible mapping keys"
+                )
+            frozen_items[key] = _freeze_json_value(item)
+        return _FrozenJsonMapping(frozen_items)
+    if type(value) in (list, tuple):
+        return tuple(_freeze_json_value(item) for item in value)
+    raise ValueError("runtime event payload must contain only JSON-compatible values")
 
 
-def _freeze_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
-    return MappingProxyType({key: _freeze_payload_value(value) for key, value in payload.items()})
+def _json_projection(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _json_projection(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_projection(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +129,12 @@ class RuntimeEvent:
             raise ValueError(f"unsupported runtime event type: {self.event_type}")
         if not isinstance(self.payload, Mapping):
             raise ValueError("runtime event payload must be a mapping")
-        object.__setattr__(self, "payload", _freeze_payload(self.payload))
+        frozen_payload = _freeze_json_value(self.payload)
+        object.__setattr__(self, "payload", frozen_payload)
+
+    def payload_json_value(self) -> dict[str, Any]:
+        """Return a fresh plain JSON value suitable for persistence or API encoding."""
+        return _json_projection(self.payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,16 +150,24 @@ class RuntimeResult:
             raise ValueError(f"unsupported runtime result status: {self.status}")
 
 
-@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True)
+@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True, init=False)
 class RuntimeHandle:
     run_id: str
 
     @classmethod
     def create(cls, *, run_id: str, owner: object) -> RuntimeHandle:
-        handle = cls(run_id=run_id)
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ValueError("runtime run id must not be blank")
+        if owner is None:
+            raise ValueError("runtime owner must not be None")
+        handle = object.__new__(cls)
+        object.__setattr__(handle, "run_id", run_id)
         with _RUNTIME_OWNER_LOCK:
             _RUNTIME_OWNERS[handle] = owner
         return handle
+
+    def __init__(self, run_id: str) -> None:
+        raise TypeError("use RuntimeHandle.create")
 
 
 _RUNTIME_OWNER_LOCK = RLock()
@@ -136,6 +179,15 @@ def _runtime_owner(handle: RuntimeHandle) -> object:
     with _RUNTIME_OWNER_LOCK:
         try:
             return _RUNTIME_OWNERS[handle]
+        except KeyError as exc:
+            raise ValueError("runtime handle owner is unavailable") from exc
+
+
+def _release_runtime_owner(handle: RuntimeHandle) -> object:
+    """Consume the private process owner when an adapter reaches a terminal state."""
+    with _RUNTIME_OWNER_LOCK:
+        try:
+            return _RUNTIME_OWNERS.pop(handle)
         except KeyError as exc:
             raise ValueError("runtime handle owner is unavailable") from exc
 
@@ -167,6 +219,8 @@ class RuntimeRegistry:
         kind = runtime.kind
         if not isinstance(kind, str) or not kind.strip():
             raise ValueError("runtime kind must not be blank")
+        if kind != kind.strip():
+            raise ValueError("runtime kind must be canonical")
         if kind in self._runtimes:
             raise ValueError(f"duplicate runtime kind: {kind}")
         self._runtimes[kind] = runtime

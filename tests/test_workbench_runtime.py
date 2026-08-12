@@ -1,8 +1,10 @@
+import gc
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import FrozenInstanceError, asdict
 from pathlib import Path
 from typing import Any
+from weakref import ref
 
 import pytest
 from fastapi.encoders import jsonable_encoder
@@ -15,6 +17,7 @@ from app.workbench.runtime import (
     RuntimeRegistry,
     RuntimeRequest,
     RuntimeResult,
+    _release_runtime_owner,
     _runtime_owner,
 )
 
@@ -27,14 +30,14 @@ EXPECTED_EVENT_TYPES = [
     "text_delta",
     "turn_completed",
 ]
-_SESSION_REFERENCE_KEYS = {
+_SESSION_REFERENCE_KEY_STEMS = {
     "session",
-    "session_id",
+    "sessionid",
     "thread",
-    "thread_id",
+    "threadid",
     "conversation",
-    "conversation_id",
-    "resume_id",
+    "conversationid",
+    "resumeid",
 }
 
 
@@ -93,8 +96,51 @@ def test_runtime_event_defensively_freezes_payload():
     assert event.payload["metadata"]["lines"] == ("one",)
     with pytest.raises(TypeError):
         event.payload["text"] = "Nope"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        event.payload["metadata"]["lines"] = ()  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         event.event_type = "turn_completed"  # type: ignore[misc]
+
+
+def test_runtime_event_projects_immutable_payload_as_plain_json():
+    event = RuntimeEvent(
+        event_type="tool_completed",
+        payload={"tool": "shell", "details": {"lines": ["one", "two"]}},
+    )
+
+    projection = event.payload_json_value()
+
+    assert projection == {
+        "tool": "shell",
+        "details": {"lines": ["one", "two"]},
+    }
+    assert json.loads(json.dumps(projection)) == projection
+    assert jsonable_encoder(projection) == projection
+    projection["details"]["lines"].append("three")
+    assert event.payload_json_value()["details"]["lines"] == ["one", "two"]
+
+
+class _CustomInteger(int):
+    pass
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"binary": b"not json"},
+        {"binary": bytearray(b"not json")},
+        {"values": {"not", "json"}},
+        {"nested": {"invalid": object()}},
+        {"custom": _CustomInteger(1)},
+        {1: "non-string key"},
+        {"not_finite": float("nan")},
+        {"not_finite": float("inf")},
+        {"not_finite": float("-inf")},
+    ],
+)
+def test_runtime_event_rejects_non_json_payload_values(payload: dict[object, object]):
+    with pytest.raises(ValueError, match="JSON-compatible"):
+        RuntimeEvent(event_type="text_delta", payload=payload)  # type: ignore[arg-type]
 
 
 def test_runtime_request_converts_path_collections_to_tuples(tmp_path: Path):
@@ -133,6 +179,14 @@ def test_registry_rejects_duplicate_runtime_kind():
         RuntimeRegistry([FixtureRuntime(), FixtureRuntime()])
 
 
+def test_registry_rejects_runtime_kind_with_surrounding_whitespace():
+    class WhitespaceRuntime(FixtureRuntime):
+        kind = " codex "
+
+    with pytest.raises(ValueError, match="canonical"):
+        RuntimeRegistry([WhitespaceRuntime()])
+
+
 def test_runtime_handle_keeps_owner_private_from_serialization():
     owner = {"secret": "must not serialize"}
     handle = RuntimeHandle.create(run_id="run-1", owner=owner)
@@ -146,6 +200,37 @@ def test_runtime_handle_keeps_owner_private_from_serialization():
     assert jsonable_encoder(handle) == {"run_id": "run-1"}
     with pytest.raises(FrozenInstanceError):
         handle.run_id = "run-2"  # type: ignore[misc]
+
+
+def test_runtime_handle_requires_factory_with_valid_run_and_owner():
+    with pytest.raises(TypeError):
+        RuntimeHandle(run_id="run-1")
+    with pytest.raises(ValueError, match="run id must not be blank"):
+        RuntimeHandle.create(run_id="   ", owner=object())
+    with pytest.raises(ValueError, match="owner must not be None"):
+        RuntimeHandle.create(run_id="run-1", owner=None)
+
+
+def test_runtime_handle_release_removes_private_owner_and_breaks_owner_cycle():
+    class CyclicOwner:
+        handle: RuntimeHandle | None = None
+
+    owner = CyclicOwner()
+    handle = RuntimeHandle.create(run_id="run-1", owner=owner)
+    owner.handle = handle
+    owner_reference = ref(owner)
+    handle_reference = ref(handle)
+
+    assert _release_runtime_owner(handle) is owner
+    with pytest.raises(ValueError, match="owner is unavailable"):
+        _runtime_owner(handle)
+
+    del owner
+    del handle
+    gc.collect()
+
+    assert owner_reference() is None
+    assert handle_reference() is None
 
 
 def _read_jsonl(provider: str) -> Iterable[dict[str, Any]]:
@@ -236,21 +321,77 @@ def runtime_fixture():
     return load
 
 
-def _assert_no_provider_session_reference(payload: Mapping[str, Any]) -> None:
+def _session_key_stem(key: str) -> str:
+    return "".join(character for character in key if character.isalnum()).casefold()
+
+
+def _native_session_values(value: Any) -> set[str]:
+    values: set[str] = set()
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if isinstance(key, str) and _session_key_stem(key) in _SESSION_REFERENCE_KEY_STEMS:
+                if isinstance(item, str):
+                    values.add(item)
+            values.update(_native_session_values(item))
+    elif isinstance(value, list):
+        for item in value:
+            values.update(_native_session_values(item))
+    return values
+
+
+def _assert_no_provider_session_reference(
+    payload: Mapping[str, Any], native_session_values: set[str]
+) -> None:
     for key, value in payload.items():
-        assert key.lower() not in _SESSION_REFERENCE_KEYS
-        if isinstance(value, Mapping):
-            _assert_no_provider_session_reference(value)
+        assert _session_key_stem(key) not in _SESSION_REFERENCE_KEY_STEMS
+        if isinstance(value, str):
+            assert value not in native_session_values
+        elif isinstance(value, Mapping):
+            _assert_no_provider_session_reference(value, native_session_values)
         elif isinstance(value, tuple):
             for item in value:
                 if isinstance(item, Mapping):
-                    _assert_no_provider_session_reference(item)
+                    _assert_no_provider_session_reference(item, native_session_values)
+                elif isinstance(item, str):
+                    assert item not in native_session_values
+
+
+def _assert_normalized_payload_shape(event: RuntimeEvent) -> None:
+    assert isinstance(event.payload_json_value(), dict)
+    if event.event_type == "text_delta":
+        assert isinstance(event.payload["text"], str)
+        assert event.payload["text"]
+    elif event.event_type in {"tool_started", "tool_completed"}:
+        assert isinstance(event.payload["tool"], str)
+        assert isinstance(event.payload["summary"], str)
+    elif event.event_type == "turn_completed":
+        assert isinstance(event.payload["summary"], str)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["session_id", "sessionId", "thread_id", "threadId", "conversation_id", "conversationId"],
+)
+def test_provider_session_guard_rejects_known_key_variants(key: str):
+    with pytest.raises(AssertionError):
+        _assert_no_provider_session_reference({key: "redacted"}, set())
+
+
+def test_provider_session_guard_rejects_nested_native_session_value():
+    with pytest.raises(AssertionError):
+        _assert_no_provider_session_reference(
+            {"details": {"label": "session-native-123"}},
+            {"session-native-123"},
+        )
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude", "pi"])
 def test_provider_fixture_contract(provider: str, runtime_fixture):
+    native_session_values = _native_session_values(list(_read_jsonl(provider)))
     events = runtime_fixture(provider)
 
     assert [event.event_type for event in events] == EXPECTED_EVENT_TYPES
+    assert native_session_values
     for event in events:
-        _assert_no_provider_session_reference(event.payload)
+        _assert_no_provider_session_reference(event.payload, native_session_values)
+        _assert_normalized_payload_shape(event)
