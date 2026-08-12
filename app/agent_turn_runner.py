@@ -46,6 +46,10 @@ from app.codex_history import (
     extract_codex_mcp_tool_results_from_session,
 )
 from app.codex_runner import CodexRunner, _codex_home
+from app.codex_capacity import (
+    CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+    is_codex_capacity_exhausted,
+)
 from app.leak_check import contains_credential
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -89,6 +93,8 @@ def _process_failure_code(process: ProcessRunResult) -> str:
     code = classify_codex_process_failure(process.stdout, process.stderr)
     if code == CODEX_PROVIDER_AUTH_FAILED:
         return f"{code}: native Codex CLI authentication is unavailable"
+    if is_codex_capacity_exhausted(f"{process.stdout}\n{process.stderr}"):
+        return CODEX_PROVIDER_CAPACITY_EXHAUSTED
     return code
 
 
@@ -96,7 +102,7 @@ def _agent_process_error_code(exc: Exception) -> str:
     code = str(exc).strip()
     if code.startswith(CODEX_PROVIDER_AUTH_FAILED):
         return code
-    if code == CODEX_PROVIDER_UNAVAILABLE:
+    if code in {CODEX_PROVIDER_UNAVAILABLE, CODEX_PROVIDER_CAPACITY_EXHAUSTED}:
         return code
     if isinstance(exc, ResultParseError):
         if code == "no valid typed result JSON found in Codex JSONL":
@@ -495,7 +501,10 @@ class AgentTurnProcess(Generic[ResultT]):
                 self._defer_unknown(run, code)
             else:
                 self._fail_running(run, code)
-            if provider_recovery == CODEX_PROVIDER_UNAVAILABLE:
+            if provider_recovery in {
+                CODEX_PROVIDER_UNAVAILABLE,
+                CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+            }:
                 raise RuntimeError(code) from exc
             raise
         transcript_end = (

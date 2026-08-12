@@ -47,7 +47,7 @@ violation 或必需数据源不可检查。
 | 外部投递队列 | `work_todo_dingtalk_links`、`wechat_deliveries`、`memory_write_events` 的失败或未知发送 | 这些队列的活动状态 |
 | `feedback_events` | 未记录 `resolved_at` 的反馈 | 无 |
 | `daily_scan_state` / `wechat_read_state` | scanner 仍有 `last_error`；微信 reader 不可用且存在待处理微信回复 | 无待处理微信工作时的 reader 未就绪 |
-| `errors` | 最近 4 小时新建且未解决的服务错误 | 无 |
+ | `errors` | 最近 4 小时新建且没有恢复路径的服务错误 | Codex 容量暂停期间的一条共享容量事件 |
 
 当前时间窗口是有意区分的：`errors` 为最近 4 小时，最新 `dry_run` 为最近 24 小时，
 其余队列按当前所有未终态记录扫描。超时值来自 `app/quality_gate.py`，不要在 heartbeat

@@ -529,7 +529,7 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
         )
     )
 
-    with pytest.raises(RuntimeError, match="codex_provider_unavailable"):
+    with pytest.raises(RuntimeError, match="codex_provider_capacity_exhausted"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
@@ -544,7 +544,7 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
         turn_attempt=0,
     )
     assert run is not None
-    assert '"code":"codex_provider_unavailable"' in run.structured_error_json
+    assert '"code":"codex_provider_capacity_exhausted"' in run.structured_error_json
     assert '"retryable":true' in run.structured_error_json
 
 
@@ -563,7 +563,7 @@ def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advan
             json.dumps({"type": "turn.failed"}),
         )
     )
-    with pytest.raises(RuntimeError, match="codex_provider_unavailable"):
+    with pytest.raises(RuntimeError, match="codex_provider_capacity_exhausted"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
@@ -608,7 +608,7 @@ def test_old_run_parse_failure_does_not_clear_newer_conversation_session(
             json.dumps({"type": "turn.failed"}),
         )
     )
-    with pytest.raises(RuntimeError, match="codex_provider_unavailable"):
+    with pytest.raises(RuntimeError, match="codex_provider_capacity_exhausted"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),

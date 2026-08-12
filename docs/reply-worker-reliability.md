@@ -197,12 +197,14 @@ DWS 只读调用可以对明确的临时网络、限流和服务准备错误做�
 `revision_required`，不能因为“尚未重复发送”就执行迟到消息。这个判断由 Agent 按通用 Audit
 Rules 完成，service 不按午餐、会议等业务关键词代替 Agent 决策。
 
-Codex 明确返回额度、配额或 usage limit 时，服务将其归类为 `codex_provider_unavailable`：不在
-同一 turn 内连续重试，不消耗任务重试预算，并保留为延后执行的 pending 任务。审计图以“等待
-Provider 恢复”显示这类任务。退避到期后，下一次持久队列执行会重新领取同一个无副作用 run
-并真实调用 Codex；如果 Provider 仍不可用，则只执行这一次并再次延期，不能只刷新
-`available_at` 而不启动 Agent。重领旧 run 时必须 resume 该 run 自己已记录的 Codex session；
-同一对话后来产生的新 session 不能覆盖旧 run 的审计身份。只有当前仍处于终态的失败才使用红色。
+Codex 明确返回 workspace credits、配额或 usage limit 时，服务将其归类为
+`codex_provider_capacity_exhausted`，而不是普通的 `codex_provider_unavailable`。首次发现会写入一个
+持久化的共享暂停记录，并把当前任务延后到 `CEO_CODEX_CAPACITY_RETRY_DELAY`（默认 30 分钟）后；
+回复、工作汇总和会议分析在暂停期内都不启动新的 Codex 进程，因此不会产生同一容量故障的错误风暴。
+发送回读和已开始的外部动作核验不受暂停影响。暂停期满后下一次持久队列执行才重新领取一个无副作用
+run 并真实调用 Codex；如果仍耗尽额度，只重新打开一次新的暂停期。重领旧 run 时必须 resume 该 run
+自己已记录的 Codex session；同一对话后来产生的新 session 不能覆盖旧 run 的审计身份。普通网络或
+provider 传输故障仍使用原有的一至十五分钟指数退避。只有当前没有恢复路径的失败才使用红色。
 
 服务启动恢复分三类：没有任何 Agent run 的 processing task 回到 pending；仍在运行且已证明没有
 副作用的 turn 会创建新 generation；而最新 turn 已经 `completed`、不存在 `running/unknown` 的

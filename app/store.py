@@ -41,6 +41,7 @@ SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
 CODEX_SESSION_LOCK_RETRY_ATTEMPTS = 3
 CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
+CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
 _INITIALIZED_STORE_PATHS: set[Path] = set()
@@ -1560,6 +1561,16 @@ class AutoReplyStore:
                     except sqlite3.OperationalError as exc:
                         if "duplicate column name" not in str(exc):
                             raise
+            error_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(errors)").fetchall()
+            }
+            for column, definition in (
+                ("resolved_at", "text not null default ''"),
+                ("resolution", "text not null default ''"),
+            ):
+                if column not in error_columns:
+                    db.execute(f"alter table errors add column {column} {definition}")
             db.execute(
                 """
                 update reply_attempts
@@ -12617,6 +12628,27 @@ class AutoReplyStore:
             ).fetchall()
             return [ReplyError.model_validate(dict(row)) for row in rows]
 
+    def resolve_errors(self, error_ids: list[int], *, resolution: str) -> int:
+        """Close verified historical incidents without removing their audit rows."""
+        unique_ids = sorted({error_id for error_id in error_ids if error_id > 0})
+        if not unique_ids:
+            return 0
+        if not resolution.strip():
+            raise ValueError("error resolution must be non-empty")
+        placeholders = ",".join("?" for _ in unique_ids)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"""
+                update errors
+                set resolved_at=current_timestamp,
+                    resolution=?
+                where id in ({placeholders})
+                  and resolved_at=''
+                """,
+                (resolution.strip(), *unique_ids),
+            )
+            return cursor.rowcount
+
     def count_sent_replies(self) -> int:
         with self._connect() as db:
             row = db.execute(
@@ -12846,6 +12878,72 @@ class AutoReplyStore:
                 """,
                 (key, value),
             )
+
+    def active_codex_capacity_pause(self, *, now: datetime) -> str:
+        """Return the shared retry timestamp while a Codex capacity pause is active."""
+        raw = self.get_service_state(CODEX_CAPACITY_PAUSE_STATE_KEY)
+        if not raw:
+            return ""
+        try:
+            value = json.loads(raw)
+            retry_at = str(value.get("retry_at") or "")
+            retry_time = datetime.fromisoformat(retry_at)
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            return ""
+        if retry_time.tzinfo is None:
+            retry_time = retry_time.replace(tzinfo=timezone.utc)
+        current = now.astimezone(timezone.utc)
+        return retry_at if retry_time.astimezone(timezone.utc) > current else ""
+
+    def open_codex_capacity_pause(self, *, retry_at: str, now: datetime) -> bool:
+        """Persist one shared capacity incident and report whether it is new."""
+        retry_time = datetime.fromisoformat(retry_at)
+        if retry_time.tzinfo is None:
+            retry_time = retry_time.replace(tzinfo=timezone.utc)
+        current = now.astimezone(timezone.utc)
+        if retry_time.astimezone(timezone.utc) <= current:
+            raise ValueError("codex capacity retry_at must be in the future")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select value from service_state where key=?",
+                (CODEX_CAPACITY_PAUSE_STATE_KEY,),
+            ).fetchone()
+            active = False
+            if row is not None:
+                try:
+                    previous = json.loads(row["value"])
+                    previous_at = datetime.fromisoformat(
+                        str(previous.get("retry_at") or "")
+                    )
+                    if previous_at.tzinfo is None:
+                        previous_at = previous_at.replace(tzinfo=timezone.utc)
+                    active = previous_at.astimezone(timezone.utc) > current
+                except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                    active = False
+            if active:
+                return False
+            db.execute(
+                """
+                insert into service_state (key, value, updated_at)
+                values (?, ?, current_timestamp)
+                on conflict(key) do update set
+                    value=excluded.value,
+                    updated_at=current_timestamp
+                """,
+                (
+                    CODEX_CAPACITY_PAUSE_STATE_KEY,
+                    json.dumps(
+                        {
+                            "reason_code": "workspace_credits_exhausted",
+                            "retry_at": retry_at,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            return True
 
     def claim_channel_login_request(
         self,
