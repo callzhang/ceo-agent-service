@@ -512,6 +512,29 @@ class WorkbenchStore(AutoReplyStore):
                 raise ValueError("workbench task does not exist")
             return self._task_from_row(self._require_task(db, turn["task_id"]))
 
+    def attachment_paths_for_executor(
+        self,
+        turn_id: str,
+        *,
+        owner: str,
+        now: str | datetime | None = None,
+    ) -> tuple[tuple[Path, str], ...]:
+        """Return private attachment paths only to the current lease owner."""
+        _, now_text = _utc_store_time(now)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            turn = self._require_executor_lease(
+                db, turn_id, owner=owner, now_text=now_text
+            )
+            rows = db.execute(
+                """
+                select storage_path, media_type from workbench_attachments
+                where task_id=? order by created_at, id
+                """,
+                (turn["task_id"],),
+            ).fetchall()
+            return tuple((Path(row["storage_path"]), row["media_type"]) for row in rows)
+
     def create_confirmation(
         self,
         turn_id: str,
@@ -652,6 +675,232 @@ class WorkbenchStore(AutoReplyStore):
                 for row in rows
             ]
 
+    def get_confirmation(self, confirmation_id: str) -> WorkbenchConfirmation | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from workbench_confirmations where id=?", (confirmation_id,)
+            ).fetchone()
+            return (
+                None
+                if row is None
+                else self._confirmation_from_row(row, redact_arguments=True)
+            )
+
+    def claim_confirmation_execution(
+        self,
+        confirmation_id: str,
+        *,
+        now: str | datetime | None = None,
+    ) -> WorkbenchConfirmation | None:
+        """Claim one external action; exact argv is returned only to the winner."""
+        _, now_text = _utc_store_time(now)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._require_confirmation(db, confirmation_id)
+            status = ConfirmationStatus(row["status"])
+            if status is ConfirmationStatus.PENDING:
+                turn = self._require_turn(db, row["turn_id"])
+                if TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION:
+                    raise ValueError("confirmation turn is not waiting")
+                if db.execute(
+                    """
+                    update workbench_confirmations
+                    set status='confirmed', decided_at=?
+                    where id=? and status='pending'
+                    """,
+                    (now_text, confirmation_id),
+                ).rowcount != 1:
+                    return None
+                return self._confirmation_from_row(
+                    self._require_confirmation(db, confirmation_id)
+                )
+            if status in {ConfirmationStatus.CONFIRMED, ConfirmationStatus.EXECUTED}:
+                return None
+            raise ValueError("confirmation has already been decided")
+
+    def finish_confirmation_execution(
+        self,
+        confirmation_id: str,
+        *,
+        status: ConfirmationStatus | str,
+        result_json: dict[str, Any] | str,
+        resume_context: str,
+        now: str | datetime | None = None,
+    ) -> WorkbenchConfirmation:
+        try:
+            target = ConfirmationStatus(status)
+        except ValueError as exc:
+            raise ValueError("invalid confirmation result status") from exc
+        if target not in {ConfirmationStatus.EXECUTED, ConfirmationStatus.FAILED}:
+            raise ValueError("invalid confirmation result status")
+        result_text = _json_object_text(result_json, field="result_json")
+        resume_context = resume_context.strip()
+        if not resume_context:
+            raise ValueError("resume_context must be non-empty")
+        _, now_text = _utc_store_time(now)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._require_confirmation(db, confirmation_id)
+            current = ConfirmationStatus(row["status"])
+            if current is target:
+                return self._confirmation_from_row(row, redact_arguments=True)
+            if current is not ConfirmationStatus.CONFIRMED:
+                raise ValueError("confirmation execution is not claimed")
+            turn = self._require_turn(db, row["turn_id"])
+            if TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION:
+                raise ValueError("confirmation turn is not waiting")
+            if db.execute(
+                """
+                update workbench_confirmations
+                set status=?, result_json=?
+                where id=? and status='confirmed'
+                """,
+                (target.value, result_text, confirmation_id),
+            ).rowcount != 1:
+                raise ValueError("confirmation execution is not claimed")
+            self._append_control_event(
+                db,
+                row["turn_id"],
+                event_type="status_changed",
+                payload={
+                    "confirmation_id": confirmation_id,
+                    "status": TurnStatus.QUEUED.value,
+                },
+            )
+            self._transition_turn(
+                db,
+                row["turn_id"],
+                current=TurnStatus.WAITING_CONFIRMATION,
+                target=TurnStatus.QUEUED,
+                now_text=now_text,
+            )
+            db.execute(
+                """
+                update workbench_turns
+                set resume_context=?, error_code=?, error_detail=?, updated_at=?
+                where id=? and status='queued'
+                """,
+                (
+                    resume_context,
+                    "reviewed_write_failed" if target is ConfirmationStatus.FAILED else "",
+                    (
+                        "Reviewed external action failed; it will not be replayed."
+                        if target is ConfirmationStatus.FAILED
+                        else ""
+                    ),
+                    now_text,
+                    row["turn_id"],
+                ),
+            )
+            return self._confirmation_from_row(
+                self._require_confirmation(db, confirmation_id), redact_arguments=True
+            )
+
+    def cancel_confirmation_execution(
+        self,
+        confirmation_id: str,
+        *,
+        resume_context: str,
+        now: str | datetime | None = None,
+    ) -> WorkbenchConfirmation:
+        resume_context = resume_context.strip()
+        if not resume_context:
+            raise ValueError("resume_context must be non-empty")
+        _, now_text = _utc_store_time(now)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._require_confirmation(db, confirmation_id)
+            current = ConfirmationStatus(row["status"])
+            if current is ConfirmationStatus.CANCELLED:
+                return self._confirmation_from_row(row, redact_arguments=True)
+            if current is not ConfirmationStatus.PENDING:
+                raise ValueError("confirmation has already been decided")
+            turn = self._require_turn(db, row["turn_id"])
+            if TurnStatus(turn["status"]) is not TurnStatus.WAITING_CONFIRMATION:
+                raise ValueError("confirmation turn is not waiting")
+            db.execute(
+                """
+                update workbench_confirmations
+                set status='cancelled', decided_at=?
+                where id=? and status='pending'
+                """,
+                (now_text, confirmation_id),
+            )
+            self._append_control_event(
+                db,
+                row["turn_id"],
+                event_type="status_changed",
+                payload={
+                    "confirmation_id": confirmation_id,
+                    "status": TurnStatus.QUEUED.value,
+                },
+            )
+            self._transition_turn(
+                db,
+                row["turn_id"],
+                current=TurnStatus.WAITING_CONFIRMATION,
+                target=TurnStatus.QUEUED,
+                now_text=now_text,
+            )
+            db.execute(
+                "update workbench_turns set resume_context=? where id=?",
+                (resume_context, row["turn_id"]),
+            )
+            return self._confirmation_from_row(
+                self._require_confirmation(db, confirmation_id), redact_arguments=True
+            )
+
+    def reconcile_confirmed_without_result(
+        self, *, now: str | datetime | None = None
+    ) -> int:
+        """Fail crash-ambiguous writes without executing or replaying them."""
+        _, now_text = _utc_store_time(now)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select confirmations.*, turns.status as turn_status
+                from workbench_confirmations as confirmations
+                join workbench_turns as turns on turns.id=confirmations.turn_id
+                where confirmations.status='confirmed' and confirmations.result_json=''
+                order by confirmations.id
+                """
+            ).fetchall()
+            for row in rows:
+                recovery_result = _json_object_text(
+                    {
+                        "code": "confirmation_execution_ambiguous",
+                        "retryable": False,
+                    },
+                    field="result_json",
+                )
+                db.execute(
+                    """
+                    update workbench_confirmations
+                    set status='failed', result_json=?
+                    where id=? and status='confirmed' and result_json=''
+                    """,
+                    (recovery_result, row["id"]),
+                )
+                if TurnStatus(row["turn_status"]) is TurnStatus.WAITING_CONFIRMATION:
+                    self._append_control_event(
+                        db,
+                        row["turn_id"],
+                        event_type="turn_failed",
+                        payload={"code": "confirmation_execution_ambiguous"},
+                    )
+                    self._transition_turn(
+                        db,
+                        row["turn_id"],
+                        current=TurnStatus.WAITING_CONFIRMATION,
+                        target=TurnStatus.FAILED,
+                        now_text=now_text,
+                        error_code="confirmation_execution_ambiguous",
+                        error_detail="External action outcome is ambiguous after restart.",
+                        clear_lease=True,
+                    )
+            return len(rows)
+
     def get_confirmation_for_executor(
         self,
         task_id: str,
@@ -706,6 +955,16 @@ class WorkbenchStore(AutoReplyStore):
             db.execute("begin immediate")
             row = self._require_turn(db, turn_id)
             current = TurnStatus(row["status"])
+            if (
+                current is TurnStatus.RUNNING
+                and row["stop_requested"]
+                and target_status in {TurnStatus.COMPLETED, TurnStatus.FAILED}
+            ):
+                target_status = TurnStatus.STOPPED
+                final_text = ""
+                error_code = ""
+                error_detail = ""
+                event_payload = {"status": TurnStatus.STOPPED.value}
             if (current, target_status) in {
                 (TurnStatus.RUNNING, TurnStatus.WAITING_CONFIRMATION),
                 (TurnStatus.WAITING_CONFIRMATION, TurnStatus.QUEUED),

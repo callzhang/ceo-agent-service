@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import app.store as store_module
 from app.workbench.models import ConfirmationStatus, TurnStatus
 from app.workbench.store import WorkbenchStore
 
@@ -26,6 +27,33 @@ def _running_turn(tmp_path: Path) -> tuple[WorkbenchStore, str, str]:
     )
     assert claimed is not None
     return store, task.id, turn.id
+
+
+def test_store_migrates_resume_context_without_losing_existing_turns(tmp_path: Path):
+    db_path = tmp_path / "workbench.sqlite3"
+    store = WorkbenchStore(db_path)
+    task = store.create_task(title="Analyse sales", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="Compare regions", client_request_id="request-1"
+    )
+    with store._connect() as db:
+        db.execute("alter table workbench_turns drop column resume_context")
+        db.execute(
+            "update service_state set value='2026-08-13.1' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    migrated = WorkbenchStore(db_path)
+
+    assert migrated.get_turn(turn.id).user_text == "Compare regions"
+    assert migrated.get_turn(turn.id).resume_context == ""
+    with migrated._connect() as db:
+        columns = {
+            row["name"]
+            for row in db.execute("pragma table_info(workbench_turns)").fetchall()
+        }
+    assert "resume_context" in columns
 
 
 def test_create_task_and_idempotent_turn_request(tmp_path: Path):

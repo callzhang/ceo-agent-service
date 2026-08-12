@@ -37,6 +37,7 @@ class WorkbenchTurn(StrictModel):
     final_text: str = ""
     error_code: str = ""
     error_detail: str = ""
+    resume_context: str = ""
     started_at: str = ""
     completed_at: str = ""
     created_at: str

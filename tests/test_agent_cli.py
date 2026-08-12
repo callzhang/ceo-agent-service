@@ -1,10 +1,13 @@
 import asyncio
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 import app.agent_cli as agent_cli
+from app.agent_result import EffectKind
+from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.native_cli_metadata import AgentReadOnlyViolationError
 
 
@@ -57,7 +60,7 @@ def test_execute_reviewed_read_allows_python_when_principal_policy_allows_it(
 ):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[ceo_agent.local_read_policy]\nblocked_commands = [\"rm\"]\n",
+        '[ceo_agent.local_read_policy]\nblocked_commands = ["rm"]\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_AGENT_CODEX_CONFIG_PATH", str(config_path))
@@ -80,7 +83,17 @@ def test_execute_reviewed_write_preserves_provider_error_instead_of_read_failure
     monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
 
     receipt = agent_cli.execute_reviewed_write(
-        ["dws", "chat", "message", "send", "--user", "user-1", "--text", "hello", "--yes"],
+        [
+            "dws",
+            "chat",
+            "message",
+            "send",
+            "--user",
+            "user-1",
+            "--text",
+            "hello",
+            "--yes",
+        ],
         process_runner=lambda argv, **_: subprocess.CompletedProcess(
             argv, 1, '{"code":"1001","message":"provider rejected request"}', ""
         ),
@@ -93,3 +106,180 @@ def test_execute_reviewed_write_preserves_provider_error_instead_of_read_failure
         "gate_state": "blocked",
         "detail": '{"code": "1001"}',
     }
+
+
+def _write_classifier() -> NativeCliMetadataClassifier:
+    return NativeCliMetadataClassifier(
+        reviewed_effects={
+            ("dws", "chat message send"): EffectKind.EFFECTFUL,
+            ("dws", "calendar event create"): EffectKind.EFFECTFUL,
+        }
+    )
+
+
+def test_explicit_reviewed_write_authorization_is_exact_and_does_not_touch_environment(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    argv = [
+        "dws",
+        "chat",
+        "message",
+        "send",
+        "--user",
+        "user-1",
+        "--text",
+        "hello",
+        "--yes",
+    ]
+    authorization = agent_cli.review_write_authorization(
+        argv,
+        authorization_id="confirmation-1",
+        action_index=0,
+        classifier=_write_classifier(),
+    )
+    before = dict(os.environ)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+
+    receipt = agent_cli.execute_reviewed_write(
+        argv,
+        authorization=authorization,
+        authorization_id="confirmation-1",
+        action_index=0,
+        classifier=_write_classifier(),
+        process_runner=lambda command, **_: (
+            calls.append(command)
+            or subprocess.CompletedProcess(command, 0, '{"ok":true}', "")
+        ),
+    )
+
+    assert len(calls) == 1
+    assert receipt["authorization_id"] == "confirmation-1"
+    assert receipt["action_index"] == 0
+    assert dict(os.environ) == before
+
+
+@pytest.mark.parametrize("argv", ("dws", ["dws", "bad\0argument"]))
+def test_review_write_authorization_rejects_unsafe_argv(argv):
+    with pytest.raises(AgentReadOnlyViolationError, match="agent_cli_command_invalid"):
+        agent_cli.review_write_authorization(
+            argv,
+            authorization_id="confirmation-1",
+            action_index=0,
+            classifier=_write_classifier(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("changed_argv", "authorization_id", "action_index"),
+    [
+        (
+            [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--user",
+                "user-2",
+                "--text",
+                "hello",
+                "--yes",
+            ],
+            "confirmation-1",
+            0,
+        ),
+        (
+            [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--user",
+                "user-1",
+                "--text",
+                "changed",
+                "--yes",
+            ],
+            "confirmation-1",
+            0,
+        ),
+        (
+            ["dws", "calendar", "event", "create", "--user", "user-1", "--yes"],
+            "confirmation-1",
+            0,
+        ),
+        (
+            [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--user",
+                "user-1",
+                "--text",
+                "hello",
+                "--yes",
+            ],
+            "confirmation-2",
+            0,
+        ),
+        (
+            [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--user",
+                "user-1",
+                "--text",
+                "hello",
+                "--yes",
+            ],
+            "confirmation-1",
+            1,
+        ),
+    ],
+)
+def test_explicit_reviewed_write_authorization_rejects_any_change_before_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    changed_argv: list[str],
+    authorization_id: str,
+    action_index: int,
+):
+    original = [
+        "dws",
+        "chat",
+        "message",
+        "send",
+        "--user",
+        "user-1",
+        "--text",
+        "hello",
+        "--yes",
+    ]
+    authorization = agent_cli.review_write_authorization(
+        original,
+        authorization_id="confirmation-1",
+        action_index=0,
+        classifier=_write_classifier(),
+    )
+    calls = 0
+
+    def runner(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("runner must not execute")
+
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    with pytest.raises(
+        AgentReadOnlyViolationError, match="reviewed_write_authorization_mismatch"
+    ):
+        agent_cli.execute_reviewed_write(
+            changed_argv,
+            authorization=authorization,
+            authorization_id=authorization_id,
+            action_index=action_index,
+            classifier=_write_classifier(),
+            process_runner=runner,
+        )
+    assert calls == 0
