@@ -419,7 +419,7 @@ def test_maybe_create_dingtalk_todo_retries_security_check_failure_once(tmp_path
     assert len(dws.created) == 1
 
 
-def test_retry_failed_dingtalk_todo_links_does_not_repeat_security_failure(tmp_path):
+def test_retry_failed_dingtalk_todo_links_terminalizes_exhausted_security_failure(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)
     link_id = store.create_work_todo_dingtalk_link(
@@ -445,8 +445,9 @@ def test_retry_failed_dingtalk_todo_links_does_not_repeat_security_failure(tmp_p
     link = store.get_work_todo_dingtalk_link(link_id)
     assert first == 0
     assert second == 0
-    assert link.status == "failed"
+    assert link.status == "cancelled"
     assert link.retry_count == 1
+    assert link.last_error == "dingtalk_todo_create_retry_exhausted_no_external_task"
     assert len(dws.created) == 1
 
 
