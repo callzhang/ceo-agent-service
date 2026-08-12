@@ -482,6 +482,12 @@ def test_prepared_journal_recovers_after_sigkill_then_allows_complete_sync(
         _wait_for_path(checkpoint, process)
         journal = source / ".workbench-session-sync" / "journal.json"
         payload = journal.read_text(encoding="utf-8")
+        parsed_payload = json.loads(payload)
+        assert all(
+            len(entry["stage_digest"]) == 64
+            and entry["stage_digest"] == entry["stage_digest"].lower()
+            for entry in parsed_payload["entries"]
+        )
         assert "first before" not in payload
         assert "second before" not in payload
         assert "first after" not in payload
@@ -549,6 +555,92 @@ def test_committed_journal_after_sigkill_keeps_all_updates_and_only_cleans(
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)
+
+
+def test_prepared_recovery_preserves_same_inode_external_writer_with_spoofed_mtime(
+    tmp_path: Path,
+):
+    source, initial_home, first, second = _two_session_home(tmp_path)
+    root = initial_home.root
+    initial_home.cleanup(sync_sessions=False)
+    checkpoint = tmp_path / "external-writer.checkpoint"
+    process = _start_crashing_sync(
+        source,
+        root,
+        checkpoint,
+        checkpoint_kind="first_replace",
+    )
+    try:
+        _wait_for_path(checkpoint, process)
+        installed = first.stat()
+        external_content = b"external!!!\n"
+        assert len(external_content) == len(first.read_bytes())
+        with first.open("r+b") as stream:
+            stream.write(external_content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        first.chmod(stat.S_IMODE(installed.st_mode))
+        os.utime(first, ns=(installed.st_atime_ns, installed.st_mtime_ns))
+        modified = first.stat()
+        assert modified.st_ino == installed.st_ino
+        assert modified.st_size == installed.st_size
+        assert stat.S_IMODE(modified.st_mode) == stat.S_IMODE(installed.st_mode)
+        assert modified.st_mtime_ns == installed.st_mtime_ns
+        process.send_signal(signal.SIGKILL)
+        assert process.wait(timeout=5) < 0
+
+        with pytest.raises(ValueError, match="could not be isolated safely"):
+            with isolated_home_module._session_sync_lock(source, root):
+                pass
+
+        assert first.read_bytes() == external_content
+        assert second.read_text(encoding="utf-8") == "second before\n"
+        assert not (source / ".workbench-session-sync" / "journal.json").exists()
+        _assert_no_sync_artifacts(source / "sessions")
+        with isolated_home_module._session_sync_lock(source, root):
+            pass
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_stable_session_hash_fails_closed_when_file_changes_during_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session = tmp_path / "session.jsonl"
+    session.write_bytes(b"a" * (128 * 1024))
+    session.chmod(0o600)
+    parent_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    identity = isolated_home_module._file_identity(session)
+    real_read = isolated_home_module.os.read
+    changed = False
+
+    def mutate_after_first_chunk(fd: int, length: int) -> bytes:
+        nonlocal changed
+        chunk = real_read(fd, length)
+        if fd != parent_fd and chunk and not changed:
+            with session.open("r+b") as stream:
+                stream.seek(70 * 1024)
+                stream.write(b"different")
+                stream.flush()
+                os.fsync(stream.fileno())
+            changed = True
+        return chunk
+
+    monkeypatch.setattr(isolated_home_module.os, "read", mutate_after_first_chunk)
+    try:
+        with pytest.raises(ValueError, match="could not be isolated safely"):
+            isolated_home_module._stable_file_digest_at(
+                parent_fd,
+                session.name,
+                expected=identity,
+            )
+    finally:
+        os.close(parent_fd)
+
+    assert changed
 
 
 def test_invalid_symlink_journal_is_quarantined_without_touching_outside(
@@ -639,6 +731,57 @@ def test_invalid_symlink_journal_is_quarantined_without_touching_outside(
     assert sum(
         path.name.startswith("journal.invalid-") for path in state.iterdir()
     ) == 3
+
+
+@pytest.mark.parametrize("relative", ["bad\0name.jsonl", f"{'x' * 256}.jsonl"])
+def test_invalid_journal_component_is_quarantined_once_without_filesystem_access(
+    tmp_path: Path,
+    relative: str,
+):
+    source = _source_home(tmp_path)
+    root = tmp_path / "isolated-root"
+    home = create_isolated_codex_home(source, "", root=root)
+    home.cleanup(sync_sessions=False)
+    state = source / ".workbench-session-sync"
+    state.mkdir(mode=0o700)
+    state.chmod(0o700)
+    source_metadata = source.stat()
+    transaction_id = uuid.uuid4().hex
+    payload = {
+        "version": 1,
+        "transaction_id": transaction_id,
+        "phase": "prepared",
+        "source_device": source_metadata.st_dev,
+        "source_inode": source_metadata.st_ino,
+        "created_directories": [],
+        "entries": [
+            {
+                "relative": relative,
+                "existed": False,
+                "original_identity": None,
+                "backup_identity": None,
+                "stage_identity": None,
+                "stage_digest": None,
+                "backup_name": f".workbench-sync-backup-{transaction_id}-00000000",
+                "stage_name": f".workbench-sync-stage-{transaction_id}-00000000",
+            }
+        ],
+    }
+    journal = state / "journal.json"
+    journal.write_text(
+        json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    journal.chmod(0o600)
+
+    with pytest.raises(ValueError, match="could not be isolated safely"):
+        with isolated_home_module._session_sync_lock(source, root):
+            pass
+
+    assert not journal.exists()
+    assert len(list(state.glob("journal.invalid-*"))) == 1
+    with isolated_home_module._session_sync_lock(source, root):
+        pass
 
 
 def test_all_isolated_state_files_are_distinct_and_mutations_do_not_touch_sources(

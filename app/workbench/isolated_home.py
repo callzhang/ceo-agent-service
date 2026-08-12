@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -32,6 +33,10 @@ _SYNC_JOURNAL_NAME = "journal.json"
 _SYNC_JOURNAL_VERSION = 1
 _MAX_SYNC_JOURNAL_BYTES = 1024 * 1024
 _MAX_SYNC_JOURNAL_ENTRIES = 4096
+_MAX_SYNC_FILE_BYTES = 256 * 1024 * 1024
+_MAX_JOURNAL_COMPONENT_BYTES = 255
+_MAX_JOURNAL_PATH_BYTES = 4096
+_SHA256_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _SYNC_ARTIFACT = re.compile(
     r"^\.workbench-sync-(?:stage|backup|restore)-[0-9a-f]{32}-[0-9]{8}$"
 )
@@ -481,6 +486,7 @@ class _SessionSyncFile:
     backup_name: str = ""
     backup_identity: _FileIdentity | None = None
     stage_identity: _FileIdentity | None = None
+    stage_digest: str | None = None
 
 
 @dataclass
@@ -677,6 +683,8 @@ def _enumerate_isolated_sessions(
                 directories.append(relative)
                 visit(path, relative)
             elif stat.S_ISREG(metadata.st_mode):
+                if metadata.st_size > _MAX_SYNC_FILE_BYTES:
+                    raise ValueError(_SAFE_ERROR)
                 files.append((relative, path, _identity_from_stat(metadata)))
             else:
                 raise ValueError(_SAFE_ERROR)
@@ -711,14 +719,6 @@ def _execute_session_sync(
         for relative in plan.directories
         if plan.directory_identities[relative] is None
     )
-    prepared_payload = _session_journal_payload(
-        sync_state,
-        plan,
-        transaction_id=transaction_id,
-        phase="prepared",
-        created_directories=created_relatives,
-    )
-    _write_session_journal(sync_state, prepared_payload)
     try:
         _create_missing_session_directories(plan)
         for entry in plan.files:
@@ -737,6 +737,11 @@ def _execute_session_sync(
                 )
                 entry.stage_identity = _file_identity(
                     entry.destination.parent / entry.stage_name
+                )
+                entry.stage_digest = _stable_file_digest_at(
+                    parent_fd,
+                    entry.stage_name,
+                    expected=entry.stage_identity,
                 )
             finally:
                 os.close(parent_fd)
@@ -833,6 +838,7 @@ def _session_journal_payload(
                 "original_identity": _identity_payload(entry.destination_identity),
                 "backup_identity": _identity_payload(entry.backup_identity),
                 "stage_identity": _identity_payload(entry.stage_identity),
+                "stage_digest": entry.stage_digest,
                 "backup_name": entry.backup_name,
                 "stage_name": entry.stage_name,
             }
@@ -1030,6 +1036,7 @@ def _validate_session_journal(
             "original_identity",
             "backup_identity",
             "stage_identity",
+            "stage_digest",
             "backup_name",
             "stage_name",
         }:
@@ -1045,12 +1052,16 @@ def _validate_session_journal(
         original = _identity_from_payload(entry["original_identity"])
         backup = _identity_from_payload(entry["backup_identity"])
         stage = _identity_from_payload(entry["stage_identity"])
+        stage_digest = entry["stage_digest"]
         if (original is not None) != entry["existed"]:
             raise _InvalidSessionJournal()
         if (
             (backup is not None and stage is None)
             or (payload["phase"] == "committed" and stage is None)
             or (entry["existed"] and stage is not None and backup is None)
+            or stage is None
+            or not isinstance(stage_digest, str)
+            or not _SHA256_DIGEST.fullmatch(stage_digest)
         ):
             raise _InvalidSessionJournal()
         expected_stage = f".workbench-sync-stage-{transaction_id}-{index:08d}"
@@ -1102,7 +1113,13 @@ def _identity_from_payload(payload: object) -> _FileIdentity | None:
 
 
 def _validated_journal_relative(value: object, *, allow_root: bool) -> str:
-    if not isinstance(value, str) or not value or len(value) > 4096:
+    if not isinstance(value, str) or not value or "\0" in value or "\\" in value:
+        raise _InvalidSessionJournal()
+    try:
+        encoded = value.encode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise _InvalidSessionJournal() from exc
+    if len(encoded) > _MAX_JOURNAL_PATH_BYTES:
         raise _InvalidSessionJournal()
     relative = PurePosixPath(value)
     if (
@@ -1110,6 +1127,13 @@ def _validated_journal_relative(value: object, *, allow_root: bool) -> str:
         or ".." in relative.parts
         or (value == "." and not allow_root)
         or (value != "." and relative.as_posix() != value)
+        or any(
+            not part
+            or part in {".", ".."}
+            or len(part.encode("utf-8")) > _MAX_JOURNAL_COMPONENT_BYTES
+            for part in relative.parts
+            if value != "."
+        )
     ):
         raise _InvalidSessionJournal()
     return value
@@ -1124,7 +1148,7 @@ def _recover_prepared_session_sync(
     assert isinstance(entries, list)
     transaction_id = payload["transaction_id"]
     assert isinstance(transaction_id, str)
-    _prevalidate_prepared_recovery(sync_state, payload)
+    external_writers = _prevalidate_prepared_recovery(sync_state, payload)
     for index, entry in reversed(list(enumerate(entries))):
         assert isinstance(entry, dict)
         relative = Path(entry["relative"])
@@ -1151,9 +1175,16 @@ def _recover_prepared_session_sync(
                 assert isinstance(stage_identity, _FileIdentity)
                 if destination_identity == original:
                     continue
-                if not _same_installed_file(destination_identity, stage_identity):
+                installed = _destination_matches_stage(
+                    parent_fd,
+                    destination.name,
+                    stage_identity,
+                    entry["stage_digest"],
+                )
+                if installed is not True:
                     # An external writer won the path after preparation. Preserve
                     # that writer's result while rolling back component-owned paths.
+                    external_writers.add(entry["relative"])
                     continue
                 backup_name = entry["backup_name"]
                 assert isinstance(backup_name, str)
@@ -1181,8 +1212,15 @@ def _recover_prepared_session_sync(
                 stage_identity = entry["stage_identity"]
                 if not isinstance(stage_identity, _FileIdentity):
                     raise ValueError(_SAFE_ERROR)
-                if not _same_installed_file(destination_identity, stage_identity):
-                    raise ValueError(_SAFE_ERROR)
+                installed = _destination_matches_stage(
+                    parent_fd,
+                    destination.name,
+                    stage_identity,
+                    entry["stage_digest"],
+                )
+                if installed is not True:
+                    external_writers.add(entry["relative"])
+                    continue
                 os.unlink(destination.name, dir_fd=parent_fd)
                 os.fsync(parent_fd)
         finally:
@@ -1197,17 +1235,20 @@ def _recover_prepared_session_sync(
         # With the prepared journal durably removed, destinations are restored.
         # Remaining component-owned artifacts are reconciled on next acquisition.
         pass
+    if external_writers:
+        raise ValueError(_SAFE_ERROR)
 
 
 def _prevalidate_prepared_recovery(
     sync_state: _SessionSyncState,
     payload: dict[str, object],
-) -> None:
+) -> set[str]:
     sessions = sync_state.source_home / "sessions"
     entries = payload["entries"]
     assert isinstance(entries, list)
     transaction_id = payload["transaction_id"]
     assert isinstance(transaction_id, str)
+    external_writers: set[str] = set()
     for index, entry in enumerate(entries):
         assert isinstance(entry, dict)
         relative = Path(entry["relative"])
@@ -1231,19 +1272,33 @@ def _prevalidate_prepared_recovery(
                 elif (
                     destination_identity != original
                     and isinstance(stage_identity, _FileIdentity)
-                    and _same_installed_file(destination_identity, stage_identity)
                 ):
-                    backup_name = entry["backup_name"]
-                    assert isinstance(backup_name, str)
-                    if _file_identity_at_or_missing(
-                        parent_fd, backup_name
-                    ) != backup_identity:
-                        raise ValueError(_SAFE_ERROR)
+                    installed = _destination_matches_stage(
+                        parent_fd,
+                        relative.name,
+                        stage_identity,
+                        entry["stage_digest"],
+                    )
+                    if installed is True:
+                        backup_name = entry["backup_name"]
+                        assert isinstance(backup_name, str)
+                        if _file_identity_at_or_missing(
+                            parent_fd, backup_name
+                        ) != backup_identity:
+                            raise ValueError(_SAFE_ERROR)
+                    else:
+                        external_writers.add(entry["relative"])
             elif destination_identity is not None:
-                if not isinstance(
-                    stage_identity, _FileIdentity
-                ) or not _same_installed_file(destination_identity, stage_identity):
+                if not isinstance(stage_identity, _FileIdentity):
                     raise ValueError(_SAFE_ERROR)
+                installed = _destination_matches_stage(
+                    parent_fd,
+                    relative.name,
+                    stage_identity,
+                    entry["stage_digest"],
+                )
+                if installed is not True:
+                    external_writers.add(entry["relative"])
             _validate_owned_artifact_if_present(parent_fd, entry["stage_name"])
             _validate_owned_artifact_if_present(parent_fd, entry["backup_name"])
             _validate_owned_artifact_if_present(
@@ -1266,6 +1321,7 @@ def _prevalidate_prepared_recovery(
             or metadata.st_uid != os.getuid()
         ):
             raise ValueError(_SAFE_ERROR)
+    return external_writers
 
 
 def _validate_owned_artifact_if_present(parent_fd: int, name: object) -> None:
@@ -1421,23 +1477,65 @@ def _file_identity_at_or_missing(
     return _identity_from_stat(metadata)
 
 
-def _same_installed_file(
-    actual: _FileIdentity | None,
+def _destination_matches_stage(
+    parent_fd: int,
+    name: str,
     staged: _FileIdentity,
-) -> bool:
-    return actual is not None and (
-        actual.device,
-        actual.inode,
-        actual.size,
-        actual.modified_ns,
-        stat.S_IMODE(actual.mode),
-    ) == (
+    expected_digest: object,
+) -> bool | None:
+    if not isinstance(expected_digest, str) or not _SHA256_DIGEST.fullmatch(
+        expected_digest
+    ):
+        raise ValueError(_SAFE_ERROR)
+    try:
+        current = _file_identity_at_or_missing(parent_fd, name)
+    except ValueError:
+        return None
+    if current is None or (current.device, current.inode) != (
         staged.device,
         staged.inode,
-        staged.size,
-        staged.modified_ns,
-        stat.S_IMODE(staged.mode),
-    )
+    ):
+        return False
+    try:
+        digest = _stable_file_digest_at(parent_fd, name, expected=current)
+    except ValueError:
+        return None
+    return digest == expected_digest
+
+
+def _stable_file_digest_at(
+    parent_fd: int,
+    name: str,
+    *,
+    expected: _FileIdentity,
+) -> str:
+    file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    try:
+        initial = os.fstat(file_fd)
+        initial_identity = _identity_from_stat(initial)
+        if (
+            not stat.S_ISREG(initial.st_mode)
+            or initial.st_uid != os.getuid()
+            or initial.st_size > _MAX_SYNC_FILE_BYTES
+            or initial_identity != expected
+        ):
+            raise ValueError(_SAFE_ERROR)
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(file_fd, 64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_SYNC_FILE_BYTES:
+                raise ValueError(_SAFE_ERROR)
+            digest.update(chunk)
+        final_identity = _identity_from_stat(os.fstat(file_fd))
+        if final_identity != initial_identity or total != initial.st_size:
+            raise ValueError(_SAFE_ERROR)
+        return digest.hexdigest()
+    finally:
+        os.close(file_fd)
 
 
 def _remove_session_journal(sync_state: _SessionSyncState) -> None:
@@ -1584,7 +1682,11 @@ def _copy_validated_file_to_new(
     target_fd = -1
     try:
         initial = os.fstat(source_fd)
-        if _identity_from_stat(initial) != expected or initial.st_uid != os.getuid():
+        if (
+            _identity_from_stat(initial) != expected
+            or initial.st_uid != os.getuid()
+            or initial.st_size > _MAX_SYNC_FILE_BYTES
+        ):
             raise ValueError(_SAFE_ERROR)
         target_fd = os.open(
             destination_name,
@@ -1592,10 +1694,14 @@ def _copy_validated_file_to_new(
             0o600,
             dir_fd=destination_fd,
         )
+        total = 0
         while True:
             chunk = os.read(source_fd, 64 * 1024)
             if not chunk:
                 break
+            total += len(chunk)
+            if total > _MAX_SYNC_FILE_BYTES:
+                raise ValueError(_SAFE_ERROR)
             _write_all(target_fd, chunk)
         if _identity_from_stat(os.fstat(source_fd)) != expected:
             raise ValueError(_SAFE_ERROR)
