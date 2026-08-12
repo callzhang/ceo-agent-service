@@ -304,11 +304,12 @@ from remaining a red service failure for the rest of the repair window.
 
 ### Consumer/Audit structured output
 
-Consumer A and Audit B use Codex native `--output-schema`. Their wire schemas keep
-dynamic nested proposal and receipt data in JSON strings, then decode and validate
-those values against the full Pydantic business contracts before any action can be
-accepted. The service does not fall back to the former result shape when the wire
-schema is violated.
+Consumer A and Audit B do not pass Codex native `--output-schema` because that
+transport constraint can prevent dynamically loaded reviewed MCP tools from running.
+Their wire schemas keep dynamic nested proposal and receipt data in JSON strings;
+the service decodes and validates the final result against the full Pydantic business
+contracts before any action can be accepted. The service does not fall back to the
+former result shape when the wire schema is violated.
 
 For an executed Audit result, `external_result_json` has one strict shape:
 `operation_id` must match the reviewed proposal, `verification_summary` describes

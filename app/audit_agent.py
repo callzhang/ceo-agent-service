@@ -354,6 +354,7 @@ class AuditAgentRunner:
             session_id=None if recovery_phase else run.codex_session_id or None,
             schema_path=SCHEMA_PATH,
             expected_schema=AuditAgentWireResult.model_json_schema(),
+            use_output_schema=False,
             developer_instructions=audit_developer_instructions(
                 "Audit Agent B independently reviews and executes accepted candidates.\n\n"
                 + AUDIT_SKILL_HANDOFF_INSTRUCTION

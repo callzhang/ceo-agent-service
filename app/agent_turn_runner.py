@@ -161,6 +161,7 @@ class AgentTurnProcess(Generic[ResultT]):
         session_id: str | None,
         schema_path: Path,
         expected_schema: dict[str, object],
+        use_output_schema: bool,
         developer_instructions: str,
         configure_command: Callable[[list[str]], None],
         parse_result: Callable[[str], ResultT],
@@ -342,7 +343,10 @@ class AgentTurnProcess(Generic[ResultT]):
                 prompt=prompt,
                 session_id=session_id,
                 output_schema_path=schema_path,
-                use_output_schema=True,
+                # Role agents use dynamically loaded reviewed MCP tools. Codex's
+                # transport-level output schema can constrain those tool turns;
+                # the returned result remains strictly validated by parse_result.
+                use_output_schema=use_output_schema,
                 approval_policy="untrusted" if allow_effectful_tools else "never",
                 developer_instructions=contract_instructions,
                 use_approval_bypass=allow_effectful_tools,

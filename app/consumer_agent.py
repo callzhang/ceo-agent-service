@@ -299,6 +299,7 @@ class ConsumerAgentRunner:
                 session_id=session_id,
                 schema_path=SCHEMA_PATH,
                 expected_schema=ConsumerAgentWireResult.model_json_schema(),
+                use_output_schema=False,
                 developer_instructions=consumer_developer_instructions(
                     "Consumer Agent A is read-only.\n\n" + rendered_rules
                 ),

@@ -382,7 +382,9 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     assert 'sandbox_mode="read-only"' not in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert "tools.enabled_tools=[]" in command
-    assert "--output-schema" in command
+    # Result parsing remains strict in the service, but output-schema is not
+    # sent to Codex because it conflicts with dynamically loaded MCP tools.
+    assert "--output-schema" not in command
     assert 'approval_policy="never"' in command
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command

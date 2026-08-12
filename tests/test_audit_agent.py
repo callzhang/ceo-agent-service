@@ -732,7 +732,9 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(setup):
     command = executor.commands[0]
     assert command[:2] == ["codex", "exec"]
     assert "resume" not in command
-    assert "--output-schema" in command
+    # The service validates the final wire result after Codex returns; avoid
+    # constraining dynamically loaded reviewed MCP tools in the transport.
+    assert "--output-schema" not in command
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command
     assert "tools.enabled_tools=[]" in command
