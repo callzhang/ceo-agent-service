@@ -31,7 +31,6 @@ supervisor 同时管理 worker 和 audit-web。任一子进程异常退出时，
 
 launchd 和本地启动脚本都设置 `PYTHONDONTWRITEBYTECODE=1`。worker 与审计 Web 会并发
 导入同一份代码；禁止写入 `.pyc` 缓存可避免缓存文件锁把一次正常启动误判为服务失败。
-
 ### Codex 会话隔离
 
 同一 `conversation_id` 的 Consumer A 先取得持久会话锁，再通过原子任务认领启动 Codex；

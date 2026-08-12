@@ -2233,16 +2233,18 @@ def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp
     def render_slowly(*args, **kwargs):
         del args, kwargs
         render_started.set()
-        release_render.wait(timeout=0.4)
+        release_render.wait(timeout=2.0)
         return "ready"
 
     monkeypatch.setattr(audit_web_module, "render_attempt_list", render_slowly)
-    started_at = time.monotonic()
     try:
         db_path = tmp_path / "worker.sqlite3"
         complete_setup_wizard(AutoReplyStore(db_path))
+        started_at = time.monotonic()
         with TestClient(create_audit_app(db_path)) as client:
-            assert time.monotonic() - started_at < 0.2
+            # TestClient startup has fixed framework overhead; this only proves
+            # that startup does not wait for the deliberately blocked render.
+            assert time.monotonic() - started_at < 1.0
             assert render_started.wait(timeout=1)
             response = client.get("/")
             assert "History is temporarily busy" in response.text
@@ -4734,6 +4736,86 @@ def test_terminal_later_attempt_replaces_stale_pending_detail_fields(tmp_path: P
     assert "audit_recovery_failed" not in html
 
 
+def test_terminal_later_attempt_keeps_original_failure_reason_visible(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_id = store.record_reply_attempt(
+        conversation_id="cid-resolved-failure",
+        conversation_title="审批通知",
+        trigger_message_id="msg-resolved-failure",
+        trigger_sender="OA审批",
+        trigger_text="请处理离职审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        codex_reason="approval_detail_unavailable",
+        audit_summary="审批详情读取链路未完成，未执行外部动作。",
+        send_status="failed",
+    )
+    store.update_reply_attempt(old_id, send_error="approval_detail_unavailable")
+    later_id = store.record_reply_attempt(
+        conversation_id="cid-resolved-failure",
+        conversation_title="审批通知",
+        trigger_message_id="msg-resolved-failure",
+        trigger_sender="OA审批",
+        trigger_text="请处理离职审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="completed",
+        audit_summary="审批已处理并完成回读。",
+    )
+
+    status, html = render_attempt_detail(store, old_id)
+
+    assert status == 200
+    assert f"Attempt #{later_id}" in html
+    assert "原失败原因：</strong>审批详情读取链路未完成，未执行外部动作。" in html
+    assert "需要你决策：</strong>否" in html
+
+
+def test_codex_process_failure_is_explained_without_internal_code():
+    explanation = audit_web_module._failure_code_explanation("codex_process_failed")
+
+    assert explanation == "Agent 执行进程未成功完成，因此本轮没有得到可验证结果。"
+    assert "codex_process_failed" not in explanation
+
+
+def test_failure_reason_uses_human_stage_label_without_double_punctuation(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-readable-stage",
+        conversation_title="审批通知",
+        trigger_message_id="msg-readable-stage",
+        trigger_sender="OA审批",
+        trigger_text="请处理审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="failed",
+    )
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    run = AgentRun.model_construct(
+        role=AgentRole.CONSUMER,
+        status="failed",
+        structured_error_json=json.dumps(
+            {
+                "code": "codex_process_failed",
+                "detail": "处理未完成，失败代码：codex_process_failed。",
+            }
+        ),
+        side_effect_state="none",
+    )
+
+    reason = audit_web_module._agent_failure_reason_text(attempt, [run])
+
+    assert reason == (
+        "生成回复阶段：Agent 执行进程未成功完成，因此本轮没有得到可验证结果；"
+        "未执行外部操作。"
+    )
+    assert "consumer:" not in reason
+    assert "。；" not in reason
+
+
 def test_render_attempt_detail_suppresses_quality_warnings_for_skipped_attempts(
     tmp_path: Path,
 ):
@@ -5006,6 +5088,46 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
     assert ">暂不处理</button>" in html
     assert ">人工处理</a>" in html
     assert ">技术详情</a>" in html
+    assert "你需要做什么：</strong>请选择一种处理方式" in html
+    assert "重试会沿用同一任务，不会创建新的业务事项" in html
+    assert '<span class="attempt-label">答</span>' not in html
+    assert '<span class="attempt-label">结果</span>' not in html
+
+
+def test_history_only_latest_failed_attempt_for_trigger_offers_actions(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_id = store.record_reply_attempt(
+        conversation_id="cid-duplicate-failure",
+        conversation_title="HR",
+        trigger_message_id="msg-duplicate-failure",
+        trigger_sender="Mina",
+        trigger_text="Please review this once.",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="First execution failed",
+        send_status="failed",
+    )
+    latest_id = store.record_reply_attempt(
+        conversation_id="cid-duplicate-failure",
+        conversation_title="HR",
+        trigger_message_id="msg-duplicate-failure",
+        trigger_sender="Mina",
+        trigger_text="Please review this once.",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="Latest execution failed",
+        send_status="failed",
+    )
+
+    html = render_attempt_list(store, include_chart=False)
+
+    assert html.count(">重试当前任务</button>") == 1
+    assert html.count(">暂不处理</button>") == 1
+    assert f"#{old_id}" in html
+    assert (
+        f'已由 <a href="/attempts/{latest_id}">#{latest_id}</a> 接管，无需操作。'
+        in html
+    )
 
 
 def test_history_retrying_item_shows_persisted_plan_without_human_choices(
@@ -5153,6 +5275,7 @@ def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
 
     assert status == 200
     assert "事项：</strong>Please complete this task." in html
+    assert "需要你决策：</strong>否" in html
     assert "状态：</strong>需要你处理" in html
     assert "原因：</strong>Current task did not complete" in html
     assert "外部副作用：</strong>未执行任何外部动作" in html

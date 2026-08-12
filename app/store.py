@@ -14255,6 +14255,27 @@ class AutoReplyStore:
             ).fetchall()
             return [ReplyError.model_validate(dict(row)) for row in rows]
 
+    def resolve_errors(self, error_ids: list[int], *, resolution: str) -> int:
+        """Close verified historical incidents without removing their audit rows."""
+        unique_ids = sorted({error_id for error_id in error_ids if error_id > 0})
+        if not unique_ids:
+            return 0
+        if not resolution.strip():
+            raise ValueError("error resolution must be non-empty")
+        placeholders = ",".join("?" for _ in unique_ids)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"""
+                update errors
+                set resolved_at=current_timestamp,
+                    resolution=?
+                where id in ({placeholders})
+                  and resolved_at=''
+                """,
+                (resolution.strip(), *unique_ids),
+            )
+            return cursor.rowcount
+
     def count_sent_replies(self) -> int:
         with self._connect() as db:
             row = db.execute(

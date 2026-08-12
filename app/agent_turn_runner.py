@@ -54,6 +54,7 @@ from app.codex_runner import CodexRunner, _codex_home
 from app.codex_capacity import (
     CODEX_PROVIDER_CAPACITY_EXHAUSTED,
     codex_provider_failure_code,
+    is_codex_capacity_exhausted,
 )
 from app.leak_check import contains_credential
 from app.native_cli_metadata import (
@@ -104,6 +105,8 @@ def _process_failure_code(process: ProcessRunResult) -> str:
         )
         if provider_code == CODEX_PROVIDER_CAPACITY_EXHAUSTED:
             return provider_code
+    if is_codex_capacity_exhausted(f"{process.stdout}\n{process.stderr}"):
+        return CODEX_PROVIDER_CAPACITY_EXHAUSTED
     return code
 
 

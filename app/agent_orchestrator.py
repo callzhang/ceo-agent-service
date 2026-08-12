@@ -115,6 +115,7 @@ class _Deferred:
     code: str
     feedback_cycles: int
     authorization_required: bool = False
+    detail: str = ""
 
 
 class AgentOrchestrator:
@@ -245,12 +246,13 @@ class AgentOrchestrator:
                             raise ValueError(
                                 "refreshed agent context does not match reply task"
                             )
-                    except Exception:
+                    except Exception as exc:
                         return self._deferred_result(
                             _Deferred(
                                 run=None,
                                 code="agent_context_refresh_failed",
                                 feedback_cycles=self._feedback_cycles(task),
+                                detail=_context_refresh_failure_detail(exc),
                             )
                         )
                     if isinstance(state, _ExecuteAuditRecovery):
@@ -811,7 +813,7 @@ class AgentOrchestrator:
             status="failed_retryable",
             final_run_id=run.id if run is not None else 0,
             final_role=run.role if run is not None else AgentRole.CONSUMER,
-            summary=state.code,
+            summary=state.detail or state.code,
             error=AgentError(
                 code=state.code,
                 retryable=True,
@@ -819,6 +821,25 @@ class AgentOrchestrator:
             ),
             feedback_cycles=state.feedback_cycles,
         )
+
+
+def _context_refresh_failure_detail(exc: Exception) -> str:
+    """Return a stable retry explanation without exposing DWS arguments or data."""
+    code = str(getattr(exc, "code", "") or "").strip()
+    normalized = str(exc).casefold()
+    if code:
+        return f"agent_context_refresh_failed: DingTalk read unavailable ({code})"
+    if "not_authenticated" in normalized or "not authenticated" in normalized:
+        return "agent_context_refresh_failed: DingTalk login is unavailable"
+    if "permission" in normalized or "forbidden" in normalized:
+        return "agent_context_refresh_failed: DingTalk read permission is unavailable"
+    if "timeout" in normalized or "timed out" in normalized:
+        return "agent_context_refresh_failed: DingTalk read timed out"
+    if "database is locked" in normalized or "database is busy" in normalized:
+        return "agent_context_refresh_failed: local task database is busy"
+    if "conversation_context_refresh_forbidden" in normalized:
+        return "agent_context_refresh_failed: current conversation cannot be refreshed"
+    return "agent_context_refresh_failed: context source is temporarily unavailable"
 
 
 def _operation_id(task: ReplyTask, revision: int) -> str:

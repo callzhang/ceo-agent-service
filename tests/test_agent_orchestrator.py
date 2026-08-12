@@ -18,6 +18,7 @@ from app.agent_orchestrator import AgentOrchestrator, _NextAudit
 from app.agent_result import ResultParseError, SideEffectState
 from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import AgentTurnRunResult
+from app.dws_client import DwsError
 from app.store import AgentRole, AutoReplyStore
 
 
@@ -1675,6 +1676,32 @@ def test_context_refresh_failure_defers_before_audit(store):
     assert result.status == "failed_retryable"
     assert result.error.code == "agent_context_refresh_failed"
     assert audit.calls == []
+
+
+def test_context_refresh_failure_exposes_safe_dws_code_without_raw_detail(store):
+    task = _task(store)
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+
+    def fail_refresh():
+        raise DwsError(
+            "request failed for private target cid-secret", code="SYSTEM_ERROR"
+        )
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=ScriptedConsumer(store, _consumer_result("proposal", "candidate-0")),
+            audit=audit,
+        ),
+        task,
+        refresh_context=fail_refresh,
+    )
+
+    assert result.error.code == "agent_context_refresh_failed"
+    assert result.summary == (
+        "agent_context_refresh_failed: DingTalk read unavailable (SYSTEM_ERROR)"
+    )
+    assert "cid-secret" not in result.summary
 
 
 class SerialConsumer(ScriptedConsumer):
