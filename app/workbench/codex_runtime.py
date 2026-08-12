@@ -361,10 +361,10 @@ class _CancellableProcessExecutor:
             cwd=self._cwd,
             start_new_session=True,
         )
-        owned_pgid = os.getpgid(process.pid)
-        if owned_pgid != process.pid:
+        owned_pgid = process.pid
+        if type(owned_pgid) is not int or owned_pgid <= 0:
             process.terminate()
-            raise RuntimeError("process did not establish an owned process group")
+            raise RuntimeError("process did not establish a valid owned process group")
         with self._lock:
             self._process = process
             self._owned_pgid = owned_pgid

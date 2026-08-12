@@ -187,6 +187,12 @@ def test_request_reviewed_action_rejects_incomplete_details_and_never_executes()
     with pytest.raises(ValueError, match="^complete reviewed action details are required$"):
         request_reviewed_action(["dws"], " ", "summary", "risk")
 
+    for argv in (["tool", "   "], ["tool", 7]):
+        with pytest.raises(
+            ValueError, match="^complete reviewed action details are required$"
+        ):
+            request_reviewed_action(argv, "target", "summary", "risk")  # type: ignore[arg-type]
+
     source = inspect.getsource(
         __import__("app.workbench.confirmation_mcp", fromlist=["confirmation_mcp"])
     )
@@ -194,6 +200,14 @@ def test_request_reviewed_action_rejects_incomplete_details_and_never_executes()
     assert "app.agent_cli" not in source
     assert "dws_client" not in source
     assert "external_connector" not in source
+
+
+def test_request_reviewed_action_preserves_valid_argv_exactly():
+    argv = ["tool", "--label", " value with intentional whitespace "]
+
+    proposal = request_reviewed_action(argv, "target", "summary", "risk")
+
+    assert proposal["argv"] == argv
 
 
 def test_delta_and_completed_message_emit_logical_text_once(tmp_path: Path):
@@ -522,6 +536,27 @@ def _leader_with_inherited_pipe_child() -> list[str]:
         "print(child.pid, flush=True)"
     )
     return [sys.executable, "-c", script]
+
+
+def test_owned_executor_records_spawned_pid_without_live_pgid_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    def fail_getpgid(_pid: int) -> int:
+        raise AssertionError("live process-group lookup is racy")
+
+    monkeypatch.setattr(os, "getpgid", fail_getpgid)
+    executor = _CancellableProcessExecutor(cwd=tmp_path)
+
+    result = executor(
+        [sys.executable, "-c", "pass"],
+        prompt="",
+        env=None,
+        total_timeout_seconds=5,
+        idle_timeout_seconds=5,
+        on_stdout_line=lambda _line: None,
+    )
+
+    assert result.returncode == 0
 
 
 def test_owned_executor_cleans_inherited_pipe_child_after_leader_exit(tmp_path: Path):

@@ -60,7 +60,10 @@ def _validate_argv(argv: object) -> list[str]:
     if (
         not isinstance(argv, list)
         or not argv
-        or any(not isinstance(argument, str) or not argument for argument in argv)
+        or any(
+            not isinstance(argument, str) or not argument.strip()
+            for argument in argv
+        )
         or any(contains_credential(argument) for argument in argv)
         or _has_sensitive_argument_name(argv)
     ):
