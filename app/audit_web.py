@@ -6963,11 +6963,15 @@ def _operation_status_class(status: str) -> str:
     normalized = status.strip().lower()
     if normalized.startswith(("resolved", "recovered")) or normalized in {"sent", "done", "completed"}:
         return "status-resolved"
-    if normalized == "historical":
+    if normalized in {"historical", "skipped", "discarded", "cancelled", "no_action"}:
         return "status-skipped"
-    if normalized == "failed":
+    if normalized in {"pending", "processing", "pending_reconciliation", "dry_run"}:
+        return "status-processing"
+    if normalized == "needs_human":
+        return "status-needs-human"
+    if normalized in {"failed", "blocked"}:
         return "status-failed"
-    return "status-active"
+    return "status-action"
 
 
 def _config_tabs(active_tab: str, *, tab_href_prefix: str = "/config?tab=") -> str:

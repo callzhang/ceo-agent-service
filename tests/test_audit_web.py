@@ -7580,6 +7580,34 @@ def test_render_log_list_marks_superseded_failed_attempt_recovered(tmp_path: Pat
     assert '<span class="pill status-resolved">recovered by later attempt</span>' in html
 
 
+def test_render_log_list_renders_non_error_terminal_states_without_red_status(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    skipped_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="终态群",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="无需发送",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+    work_input_id = store.enqueue_work_summary_input(
+        "reply_attempt",
+        "1",
+        '{"summary":"无需汇总"}',
+    )
+    store.mark_work_summary_input_discarded(work_input_id, "not actionable")
+
+    html = render_log_list(store)
+
+    assert skipped_id
+    assert '<span class="pill status-skipped">skipped</span>' in html
+    assert '<span class="pill status-skipped">discarded</span>' in html
+    assert '<span class="pill status-active">skipped</span>' not in html
+    assert '<span class="pill status-active">discarded</span>' not in html
+
+
 def test_logs_route_renders_logs_and_errors_route_remains_compatible(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
