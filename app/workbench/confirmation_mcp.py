@@ -9,7 +9,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from app.leak_check import is_sensitive_field_name
+from app.leak_check import contains_credential, is_sensitive_field_name
 
 
 _INCOMPLETE_DETAILS = "complete reviewed action details are required"
@@ -61,6 +61,7 @@ def _validate_argv(argv: object) -> list[str]:
         not isinstance(argv, list)
         or not argv
         or any(not isinstance(argument, str) or not argument for argument in argv)
+        or any(contains_credential(argument) for argument in argv)
         or _has_sensitive_argument_name(argv)
     ):
         raise ValueError(_INCOMPLETE_DETAILS)
@@ -94,6 +95,9 @@ def request_reviewed_action(
         or not target.strip()
         or not summary.strip()
         or not risk.strip()
+        or contains_credential(target)
+        or contains_credential(summary)
+        or contains_credential(risk)
     ):
         raise ValueError(_INCOMPLETE_DETAILS)
     return {

@@ -94,9 +94,9 @@ class _CodexNormalizer:
                 "invalid_provider_output", "provider event must be a JSON object"
             )
         self.saw_valid_record = True
-        if _has_sensitive_field_name(record):
+        if _contains_sensitive_provider_data(record):
             raise _AdapterFailure(
-                "sensitive_provider_output", "provider output contained a sensitive field"
+                "sensitive_provider_output", "provider output contained sensitive data"
             )
         self._normalize(record)
 
@@ -202,15 +202,17 @@ class _CodexNormalizer:
         self._on_event(RuntimeEvent(event_type, payload))
 
 
-def _has_sensitive_field_name(value: object) -> bool:
+def _contains_sensitive_provider_data(value: object) -> bool:
     if isinstance(value, Mapping):
         for key, item in value.items():
             if isinstance(key, str) and is_sensitive_field_name(key):
                 return True
-            if _has_sensitive_field_name(item):
+            if _contains_sensitive_provider_data(item):
                 return True
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return any(_has_sensitive_field_name(item) for item in value)
+        return any(_contains_sensitive_provider_data(item) for item in value)
+    elif isinstance(value, str):
+        return contains_credential(value)
     return False
 
 
@@ -313,6 +315,7 @@ class _CancellableProcessExecutor:
         self._cwd = cwd
         self._lock = threading.Lock()
         self._process: subprocess.Popen[bytes] | None = None
+        self._owned_pgid: int | None = None
         self._stop_requested = False
 
     def stop(self) -> None:
@@ -320,9 +323,18 @@ class _CancellableProcessExecutor:
             if self._stop_requested:
                 return
             self._stop_requested = True
-            process = self._process
-        if process is not None:
-            _terminate_owned_process_group(process)
+        self._terminate_owned_group()
+
+    def _terminate_owned_group(self) -> None:
+        with self._lock:
+            owned_pgid = self._owned_pgid
+            self._owned_pgid = None
+        if owned_pgid is not None:
+            _terminate_owned_process_group(owned_pgid)
+
+    def _release_owned_group(self) -> None:
+        with self._lock:
+            self._owned_pgid = None
 
     def __call__(
         self,
@@ -349,11 +361,16 @@ class _CancellableProcessExecutor:
             cwd=self._cwd,
             start_new_session=True,
         )
+        owned_pgid = os.getpgid(process.pid)
+        if owned_pgid != process.pid:
+            process.terminate()
+            raise RuntimeError("process did not establish an owned process group")
         with self._lock:
             self._process = process
+            self._owned_pgid = owned_pgid
             should_stop = self._stop_requested
         if should_stop:
-            _terminate_owned_process_group(process)
+            self._terminate_owned_group()
         assert process.stdin is not None
         try:
             process.stdin.write(prompt.encode("utf-8"))
@@ -372,11 +389,11 @@ class _CancellableProcessExecutor:
                 now = time.monotonic()
                 if now - started_at >= total_timeout_seconds:
                     timed_out, timeout_kind = True, "total"
-                    _terminate_owned_process_group(process)
+                    self._terminate_owned_group()
                     break
                 if now - last_output_at >= idle_timeout_seconds:
                     timed_out, timeout_kind = True, "idle"
-                    _terminate_owned_process_group(process)
+                    self._terminate_owned_group()
                     break
                 for key, _ in selector.select(0.25):
                     chunk = os.read(key.fd, 4096)
@@ -397,12 +414,19 @@ class _CancellableProcessExecutor:
                             on_stdout_line(line.removesuffix("\r"))
                     last_output_at = time.monotonic()
                 if process.poll() is not None:
-                    break
+                    if selector.get_map():
+                        self._terminate_owned_group()
+                    else:
+                        break
             returncode = process.wait(timeout=5)
         finally:
+            streams_lingering = bool(selector.get_map())
             selector.close()
+            if process.poll() is None or streams_lingering:
+                self._terminate_owned_group()
+            else:
+                self._release_owned_group()
             if process.poll() is None:
-                _terminate_owned_process_group(process)
                 returncode = process.wait(timeout=5)
             with self._lock:
                 self._process = None
@@ -419,19 +443,22 @@ class _CancellableProcessExecutor:
         )
 
 
-def _terminate_owned_process_group(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
+def _terminate_owned_process_group(owned_pgid: int) -> None:
     try:
-        os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=2)
-    except ProcessLookupError:
+        os.killpg(owned_pgid, signal.SIGTERM)
+    except (PermissionError, ProcessLookupError):
         return
-    except subprocess.TimeoutExpired:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+            os.killpg(owned_pgid, 0)
+        except (PermissionError, ProcessLookupError):
             return
+        time.sleep(0.02)
+    try:
+        os.killpg(owned_pgid, signal.SIGKILL)
+    except (PermissionError, ProcessLookupError):
+        return
 
 
 class CodexRuntime:

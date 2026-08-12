@@ -1,12 +1,17 @@
 import inspect
 import json
+import os
+import signal
+import subprocess
+import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from app.process_runner import ProcessRunResult
-from app.workbench.codex_runtime import CodexRuntime
+from app.workbench.codex_runtime import CodexRuntime, _CancellableProcessExecutor
 from app.workbench.confirmation_mcp import request_reviewed_action
 from app.workbench.runtime import RuntimeRequest, _runtime_owner
 
@@ -161,9 +166,19 @@ def test_request_reviewed_action_is_data_only_and_rejects_sensitive_names():
         ["tool", "--token=value"],
         ["tool", "--password", "opaque"],
         ["tool", 'payload={"api_key":"opaque"}'],
+        ["tool", "--value", "sk-proj-credentialvalue1234"],
     ):
         with pytest.raises(ValueError, match="complete reviewed action details are required"):
             request_reviewed_action(argv, "target", "summary", "risk")
+
+
+@pytest.mark.parametrize("field", ["target", "summary", "risk"])
+def test_request_reviewed_action_rejects_credentials_in_display_fields(field: str):
+    details = {"target": "target", "summary": "summary", "risk": "risk"}
+    details[field] = "Bearer credentialvalue1234"
+
+    with pytest.raises(ValueError, match="^complete reviewed action details are required$"):
+        request_reviewed_action(["tool", "--safe", "value"], **details)
 
 
 def test_request_reviewed_action_rejects_incomplete_details_and_never_executes():
@@ -361,6 +376,71 @@ def test_credential_bearing_assistant_text_never_enters_events_or_errors(
     assert "credential-value-1234" not in repr(events)
 
 
+@pytest.mark.parametrize(
+    "sensitive_leaf",
+    [
+        "sk-proj-nestedcredential1234",
+        "Bearer nestedcredential1234",
+        "service_token=nestedcredential1234",
+    ],
+)
+def test_credential_in_any_nested_provider_string_is_rejected_before_emission(
+    tmp_path: Path, sensitive_leaf: str
+):
+    records = [
+        {"type": "thread.started", "thread_id": "session-1"},
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "metadata": {"nested": ["safe", {"value": sensitive_leaf}]},
+            },
+        },
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    assert result.status == "failed"
+    assert result.error_code == "sensitive_provider_output"
+    assert sensitive_leaf not in result.error_detail
+    assert sensitive_leaf not in repr(events)
+
+
+def test_confirmation_argv_credential_value_is_rejected_without_leak(tmp_path: Path):
+    credential = "sk-proj-confirmationcredential1234"
+    confirmation = {
+        "kind": "reviewed_cli",
+        "argv": ["tool", "--value", credential],
+        "target": "target",
+        "summary": "summary",
+        "risk": "risk",
+        "executed": False,
+    }
+    records = [
+        {"type": "thread.started", "thread_id": "session-1"},
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call",
+                "server": "workbench_confirmation",
+                "tool": "request_reviewed_action",
+                "result": {"structuredContent": confirmation},
+            },
+        },
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    assert result.status == "failed"
+    assert result.error_code == "sensitive_provider_output"
+    assert credential not in result.error_detail
+    assert credential not in repr(events)
+
+
 def test_bounded_preamble_is_allowed_but_oversized_line_and_output_fail(tmp_path: Path):
     preamble_runtime = CodexRuntime(
         workspace=tmp_path,
@@ -414,6 +494,106 @@ def test_stop_terminates_only_owned_execution_and_is_idempotent(tmp_path: Path):
     assert result.status == "stopped"
     with pytest.raises(ValueError, match="owner is unavailable"):
         _runtime_owner(handle)
+
+
+def _wait_for_pid_exit(pid: int, timeout: float = 2) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def _kill_test_child_if_alive(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _leader_with_inherited_pipe_child() -> list[str]:
+    script = (
+        "import subprocess, sys; "
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import time; time.sleep(30)']); "
+        "print(child.pid, flush=True)"
+    )
+    return [sys.executable, "-c", script]
+
+
+def test_owned_executor_cleans_inherited_pipe_child_after_leader_exit(tmp_path: Path):
+    executor = _CancellableProcessExecutor(cwd=tmp_path)
+    child_pids: list[int] = []
+    started_at = time.monotonic()
+
+    result = executor(
+        _leader_with_inherited_pipe_child(),
+        prompt="",
+        env=None,
+        total_timeout_seconds=5,
+        idle_timeout_seconds=5,
+        on_stdout_line=lambda line: child_pids.append(int(line)),
+    )
+
+    assert time.monotonic() - started_at < 3
+    assert result.returncode == 0
+    assert len(child_pids) == 1
+    try:
+        assert _wait_for_pid_exit(child_pids[0])
+    finally:
+        _kill_test_child_if_alive(child_pids[0])
+
+
+def test_owned_executor_stop_cleans_child_after_leader_exit_idempotently(
+    tmp_path: Path,
+):
+    executor = _CancellableProcessExecutor(cwd=tmp_path)
+    child_pids: list[int] = []
+    callback_entered = threading.Event()
+    release_callback = threading.Event()
+    completed: list[ProcessRunResult] = []
+
+    def capture_child(line: str) -> None:
+        child_pids.append(int(line))
+        callback_entered.set()
+        release_callback.wait(timeout=3)
+
+    thread = threading.Thread(
+        target=lambda: completed.append(
+            executor(
+                _leader_with_inherited_pipe_child(),
+                prompt="",
+                env=None,
+                total_timeout_seconds=5,
+                idle_timeout_seconds=5,
+                on_stdout_line=capture_child,
+            )
+        )
+    )
+    thread.start()
+    assert callback_entered.wait(timeout=1)
+    assert len(child_pids) == 1
+    leader = executor._process
+    assert isinstance(leader, subprocess.Popen)
+    assert leader.wait(timeout=1) == 0
+
+    started_at = time.monotonic()
+    executor.stop()
+    executor.stop()
+    release_callback.set()
+    thread.join(timeout=3)
+
+    assert time.monotonic() - started_at < 3
+    assert not thread.is_alive()
+    assert len(completed) == 1
+    try:
+        assert _wait_for_pid_exit(child_pids[0])
+    finally:
+        release_callback.set()
+        _kill_test_child_if_alive(child_pids[0])
 
 
 def test_wait_releases_owner_after_failure(tmp_path: Path):
