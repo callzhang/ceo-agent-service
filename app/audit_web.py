@@ -787,6 +787,29 @@ class _RecentPayloadCache:
             self._refreshing = False
             return payload
 
+    def get_or_refresh(
+        self,
+        renderer: Callable[[], dict[str, object]],
+        fallback: Callable[[], dict[str, object]],
+    ) -> dict[str, object]:
+        """Return a usable snapshot immediately, including during cold refresh."""
+        refresh_thread: threading.Thread | None = None
+        with self._lock:
+            now = self._clock()
+            if self._payload is not None and now - self._rendered_at < self._ttl_seconds:
+                return self._payload
+            if not self._refreshing:
+                self._refreshing = True
+                refresh_thread = self._thread_factory(
+                    target=self._refresh,
+                    args=(renderer,),
+                    daemon=True,
+                )
+            cached_payload = self._payload
+        if refresh_thread is not None:
+            refresh_thread.start()
+        return cached_payload if cached_payload is not None else fallback()
+
     def _refresh(self, renderer: Callable[[], dict[str, object]]) -> None:
         try:
             payload = renderer()
@@ -7718,6 +7741,31 @@ def create_audit_app(
     def render_worker_status_payload() -> dict[str, object]:
         return build_worker_status_payload(_audit_store(db_path))
 
+    def worker_status_refreshing_payload() -> dict[str, object]:
+        return {
+            "service": {
+                "label": "com.ceo-agent-service.main",
+                "ok": True,
+                "state": "refreshing",
+                "detail": "Status refresh in progress.",
+                "pid": "",
+                "runs": "",
+                "initialized": "",
+            },
+            "components": _service_component_snapshots(),
+            "queues": [],
+            "attention_rows": [],
+            "database": {"path": str(db_path)},
+            "summary": {
+                "queue_count": 0,
+                "pending": 0,
+                "processing": 0,
+                "failed": 0,
+                "retryable": 0,
+                "attention": 0,
+            },
+        }
+
     @asynccontextmanager
     async def audit_lifespan(_app: FastAPI):
         default_attempt_list_cache.get_or_render(_render_history_busy_page)
@@ -7951,15 +7999,19 @@ def create_audit_app(
         return render_settings_page(
             _audit_store(db_path),
             active_tab="workers",
-            worker_status_payload=worker_status_cache.get_or_render(
-                render_worker_status_payload
+            worker_status_payload=worker_status_cache.get_or_refresh(
+                render_worker_status_payload,
+                worker_status_refreshing_payload,
             ),
         )
 
     @app.get("/api/workers/status", response_class=JSONResponse)
     def workers_status() -> JSONResponse:
         return JSONResponse(
-            worker_status_cache.get_or_render(render_worker_status_payload)
+            worker_status_cache.get_or_refresh(
+                render_worker_status_payload,
+                worker_status_refreshing_payload,
+            )
         )
 
     @app.get("/logs", response_class=HTMLResponse)

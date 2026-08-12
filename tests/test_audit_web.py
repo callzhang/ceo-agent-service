@@ -2281,6 +2281,28 @@ def test_recent_html_cache_refreshes_after_ttl():
     assert calls == 2
 
 
+def test_recent_payload_cache_returns_fallback_while_first_refresh_runs():
+    started = threading.Event()
+    release = threading.Event()
+    cache = audit_web_module._RecentPayloadCache(10.0)
+
+    def render_once():
+        started.set()
+        assert release.wait(timeout=1)
+        return {"state": "ready"}
+
+    fallback = {"state": "refreshing"}
+    assert cache.get_or_refresh(render_once, lambda: fallback) == fallback
+    assert started.wait(timeout=1)
+    release.set()
+    for _ in range(20):
+        payload = cache.get_or_refresh(render_once, lambda: fallback)
+        if payload["state"] == "ready":
+            break
+        time.sleep(0.01)
+    assert payload == {"state": "ready"}
+
+
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     client = loopback_test_client(create_audit_app(db_path))
@@ -7186,13 +7208,18 @@ def test_workers_routes_render_page_and_json(tmp_path: Path, monkeypatch):
     client = TestClient(create_audit_app(db_path))
 
     page_response = client.get("/workers")
-    api_response = client.get("/api/workers/status")
 
     assert page_response.status_code == 200
     assert "Workers" in page_response.text
-    assert "Work items" in page_response.text
-    assert api_response.status_code == 200
-    payload = api_response.json()
+    assert "Status refresh in progress." in page_response.text or "Work items" in page_response.text
+    payload = {}
+    for _ in range(20):
+        api_response = client.get("/api/workers/status")
+        assert api_response.status_code == 200
+        payload = api_response.json()
+        if payload["service"]["state"] == "running":
+            break
+        time.sleep(0.01)
     assert payload["service"]["state"] == "running"
     assert payload["summary"]["pending"] >= 1
 
