@@ -1,4 +1,8 @@
 import re
+from collections import Counter
+from collections.abc import Mapping, Sequence
+from math import log2
+from typing import Any
 
 from app.config import forbidden_path_prefixes
 
@@ -27,8 +31,17 @@ FORBIDDEN_MARKERS = (
 
 _CREDENTIAL_PATTERNS = (
     re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{10,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
+    re.compile(r"\bsk_live_[A-Za-z0-9]{16,}\b"),
+    re.compile(r"\bAIza[A-Za-z0-9_-]{30,}\b"),
     re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{6,}\b", re.IGNORECASE),
+    re.compile(r"\bBasic\s+[A-Za-z0-9+/]{8,}={0,2}\b", re.IGNORECASE),
+    re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
+    re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@", re.IGNORECASE),
     re.compile(
         r"\b[A-Za-z0-9_.-]*(?:password|token|api[_-]?key|private[_-]?key|secret)"
         r"\s*[:=]\s*(?:['\"])?[^\s'\"<>]{4,}",
@@ -37,9 +50,72 @@ _CREDENTIAL_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----", re.IGNORECASE),
 )
 
+_OPAQUE_CREDENTIAL_CANDIDATE = re.compile(
+    r"(?<![A-Za-z0-9_+/=])[A-Za-z0-9_+/=]{40,}(?![A-Za-z0-9_+/=])"
+)
+_CREDENTIAL_BOUNDARY_ERROR = "credential-bearing data is not allowed"
+
 
 def contains_credential(text: str) -> bool:
-    return any(pattern.search(text) for pattern in _CREDENTIAL_PATTERNS)
+    if any(pattern.search(text) for pattern in _CREDENTIAL_PATTERNS):
+        return True
+    return any(
+        _is_high_confidence_opaque_credential(match.group(0))
+        for match in _OPAQUE_CREDENTIAL_CANDIDATE.finditer(text)
+    )
+
+
+def _is_high_confidence_opaque_credential(candidate: str) -> bool:
+    if len(candidate) < 40:
+        return False
+    character_classes = sum(
+        (
+            any(character.islower() for character in candidate),
+            any(character.isupper() for character in candidate),
+            any(character.isdigit() for character in candidate),
+            any(character in "_+/=" for character in candidate),
+        )
+    )
+    if character_classes < 3:
+        return False
+    frequencies = Counter(candidate)
+    entropy = -sum(
+        (count / len(candidate)) * log2(count / len(candidate))
+        for count in frequencies.values()
+    )
+    return entropy >= 3.5
+
+
+def assert_no_credentials(value: Any) -> None:
+    """Reject credential-bearing JSON-like data without including it in the error."""
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if isinstance(key, str) and (
+                is_sensitive_field_name(key) or contains_credential(key)
+            ):
+                raise ValueError(_CREDENTIAL_BOUNDARY_ERROR)
+            assert_no_credentials(item)
+        return
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for item in value:
+            assert_no_credentials(item)
+        return
+    if isinstance(value, str) and contains_credential(value):
+        raise ValueError(_CREDENTIAL_BOUNDARY_ERROR)
+
+
+def redact_credentials(text: str, replacement: str = "[REDACTED]") -> str:
+    redacted = text
+    for pattern in _CREDENTIAL_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return _OPAQUE_CREDENTIAL_CANDIDATE.sub(
+        lambda match: (
+            replacement
+            if _is_high_confidence_opaque_credential(match.group(0))
+            else match.group(0)
+        ),
+        redacted,
+    )
 
 
 def is_sensitive_field_name(value: str) -> bool:

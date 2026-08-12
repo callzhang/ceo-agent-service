@@ -7,6 +7,7 @@ import json
 import os
 import selectors
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -19,7 +20,7 @@ from typing import Any
 
 from app.bounded_process import MAX_PROCESS_OUTPUT_BYTES
 from app.codex_runner import CodexRunner, _config_string
-from app.leak_check import contains_credential, is_sensitive_field_name
+from app.leak_check import assert_no_credentials, contains_credential, is_sensitive_field_name
 from app.process_runner import ProcessRunResult
 from app.workbench.confirmation_mcp import _validate_argv
 from app.workbench.runtime import (
@@ -36,6 +37,7 @@ from app.workbench.runtime import (
 _MAX_PREAMBLE_BYTES = 8 * 1024
 _DEFAULT_TOTAL_TIMEOUT_SECONDS = 1200
 _DEFAULT_IDLE_TIMEOUT_SECONDS = 900
+MAX_PROMPT_BYTES = 1024 * 1024
 _CONFIRMATION_SERVER = "workbench_confirmation"
 _CONFIRMATION_TOOL = "request_reviewed_action"
 _DEVELOPER_INSTRUCTIONS = """
@@ -49,7 +51,7 @@ only records a proposal and never performs the action.
 """.strip()
 
 
-class _AdapterFailure(Exception):
+class _AdapterFailure(ValueError):
     def __init__(self, code: str, detail: str):
         super().__init__(detail)
         self.code = code
@@ -62,10 +64,14 @@ class _CodexNormalizer:
         self.provider_session_ref = ""
         self.final_text = ""
         self.saw_valid_record = False
-        self.saw_turn_completed = False
+        self.terminal_status = ""
         self._preamble_bytes = 0
         self._output_bytes = 0
-        self._streamed_text = ""
+        self._text_states: dict[str, str] = {}
+        self._idless_text_key = ""
+        self._text_sequence = 0
+        self._tool_call_ids: dict[str, str] = {}
+        self._tool_sequence = 0
 
     def accept_line(self, line: str) -> None:
         line_bytes = len(line.encode("utf-8")) + 1
@@ -76,6 +82,10 @@ class _CodexNormalizer:
             )
         if not line.strip():
             return
+        if self.terminal_status:
+            raise _AdapterFailure(
+                "invalid_provider_output", "provider emitted data after terminal state"
+            )
         try:
             record = json.loads(line)
         except (TypeError, ValueError) as exc:
@@ -94,10 +104,12 @@ class _CodexNormalizer:
                 "invalid_provider_output", "provider event must be a JSON object"
             )
         self.saw_valid_record = True
-        if _contains_sensitive_provider_data(record):
+        try:
+            assert_no_credentials(record)
+        except ValueError as exc:
             raise _AdapterFailure(
                 "sensitive_provider_output", "provider output contained sensitive data"
-            )
+            ) from exc
         self._normalize(record)
 
     def _normalize(self, record: Mapping[str, Any]) -> None:
@@ -114,53 +126,42 @@ class _CodexNormalizer:
             "command_execution",
             "mcp_tool_call",
         }:
-            self._emit(
-                "tool_started",
-                {
-                    "tool": _safe_tool_name(item),
-                    "summary": "Tool started",
-                },
-            )
+            self._start_tool(item)
             return
         if event_type == "item.completed" and item_type in {
             "command_execution",
             "mcp_tool_call",
         }:
-            self._emit(
-                "tool_completed",
-                {
-                    "tool": _safe_tool_name(item),
-                    "summary": "Tool completed",
-                },
-            )
-            if _is_confirmation_call(item):
-                self._emit_confirmation(item.get("result"))
+            self._complete_tool(item)
             return
         if event_type == "item.delta" and item_type in {
             "assistant_message",
             "agent_message",
         }:
-            self._accept_delta(item.get("text"))
+            self._accept_delta(item)
             return
         if event_type == "item.completed" and item_type in {
             "assistant_message",
             "agent_message",
         }:
-            self._accept_completed_text(item.get("text"))
+            self._accept_completed_text(item)
             return
         if event_type == "turn.completed":
-            self.saw_turn_completed = True
             response = record.get("response")
             output_text = response.get("output_text") if isinstance(response, Mapping) else None
             if not isinstance(output_text, str):
                 output_text = record.get("last_agent_message")
             if isinstance(output_text, str) and output_text:
-                self._accept_completed_text(output_text)
+                self._accept_terminal_text(output_text)
+            self.terminal_status = "completed"
+            return
+        if event_type == "turn.failed":
+            self.terminal_status = "failed"
 
     def _capture_session(self, value: object) -> None:
-        if not isinstance(value, str) or not value.strip():
+        if not isinstance(value, str) or not _is_canonical_session_ref(value):
             raise _AdapterFailure(
-                "invalid_provider_output", "provider session reference was missing"
+                "invalid_provider_session", "provider session reference was invalid"
             )
         if self.provider_session_ref and self.provider_session_ref != value:
             self.provider_session_ref = ""
@@ -170,50 +171,105 @@ class _CodexNormalizer:
             )
         self.provider_session_ref = value
 
-    def _accept_delta(self, value: object) -> None:
+    def _accept_delta(self, item: Mapping[str, Any]) -> None:
+        value = item.get("text")
         if not isinstance(value, str) or not value:
             return
         _reject_credential_bearing_text(value)
-        self._streamed_text += value
-        self.final_text = self._streamed_text
+        key = self._text_key(item, completing=False)
+        text = self._text_states.get(key, "") + value
+        self._text_states[key] = text
+        self.final_text = text
         self._emit("text_delta", {"text": value})
 
-    def _accept_completed_text(self, value: object) -> None:
+    def _accept_completed_text(self, item: Mapping[str, Any]) -> None:
+        value = item.get("text")
         if not isinstance(value, str) or not value:
             return
         _reject_credential_bearing_text(value)
-        if value.startswith(self._streamed_text):
-            suffix = value[len(self._streamed_text) :]
+        key = self._text_key(item, completing=True)
+        streamed = self._text_states.pop(key, "")
+        if value.startswith(streamed):
+            suffix = value[len(streamed) :]
             if suffix:
                 self._emit("text_delta", {"text": suffix})
-                self._streamed_text += suffix
-        elif self._streamed_text.endswith(value):
-            pass
-        elif value != self.final_text:
+        elif value != streamed:
             self._emit("text_delta", {"text": value})
-            self._streamed_text += value
+        self.final_text = value
+        if key == self._idless_text_key:
+            self._idless_text_key = ""
+
+    def _accept_terminal_text(self, value: str) -> None:
+        _reject_credential_bearing_text(value)
+        if value != self.final_text:
+            self._emit("text_delta", {"text": value})
         self.final_text = value
 
-    def _emit_confirmation(self, native_result: object) -> None:
-        proposal = _extract_confirmation(native_result)
-        self._emit("confirmation_required", proposal)
+    def _text_key(self, item: Mapping[str, Any], *, completing: bool) -> str:
+        native_id = item.get("id")
+        if isinstance(native_id, str) and native_id:
+            key = f"native:{native_id}"
+        elif self._idless_text_key:
+            key = self._idless_text_key
+        elif completing:
+            self._text_sequence += 1
+            key = f"completed:{self._text_sequence}"
+        else:
+            self._text_sequence += 1
+            key = f"active:{self._text_sequence}"
+            self._idless_text_key = key
+        if key not in self._text_states and len(self._text_states) >= 64:
+            raise _AdapterFailure(
+                "invalid_provider_output", "provider opened too many text items"
+            )
+        return key
+
+    def _start_tool(self, item: Mapping[str, Any]) -> None:
+        native_id = _required_native_item_id(item)
+        if native_id in self._tool_call_ids or len(self._tool_call_ids) >= 128:
+            raise _AdapterFailure(
+                "invalid_provider_output", "provider tool start was invalid"
+            )
+        self._tool_sequence += 1
+        correlation_id = f"tool-call-{self._tool_sequence}"
+        self._tool_call_ids[native_id] = correlation_id
+        self._emit(
+            "tool_started",
+            {
+                "tool": _safe_tool_name(item),
+                "summary": "Tool started",
+                "tool_call_id": correlation_id,
+            },
+        )
+
+    def _complete_tool(self, item: Mapping[str, Any]) -> None:
+        native_id = _required_native_item_id(item)
+        correlation_id = self._tool_call_ids.pop(native_id, None)
+        if correlation_id is None:
+            raise _AdapterFailure(
+                "invalid_provider_output", "provider tool completion was not correlated"
+            )
+        proposal: dict[str, object] | None = None
+        if item.get("type") == "mcp_tool_call":
+            if _native_tool_failed(item):
+                raise _AdapterFailure(
+                    "provider_tool_failed", "provider tool call failed"
+                )
+            if _is_confirmation_call(item):
+                proposal = _extract_confirmation(item.get("result"))
+        self._emit(
+            "tool_completed",
+            {
+                "tool": _safe_tool_name(item),
+                "summary": "Tool completed",
+                "tool_call_id": correlation_id,
+            },
+        )
+        if proposal is not None:
+            self._emit("confirmation_required", proposal)
 
     def _emit(self, event_type: str, payload: Mapping[str, Any]) -> None:
         self._on_event(RuntimeEvent(event_type, payload))
-
-
-def _contains_sensitive_provider_data(value: object) -> bool:
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            if isinstance(key, str) and is_sensitive_field_name(key):
-                return True
-            if _contains_sensitive_provider_data(item):
-                return True
-    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return any(_contains_sensitive_provider_data(item) for item in value)
-    elif isinstance(value, str):
-        return contains_credential(value)
-    return False
 
 
 def _safe_tool_name(item: Mapping[str, Any]) -> str:
@@ -229,6 +285,50 @@ def _safe_tool_name(item: Mapping[str, Any]) -> str:
     ):
         return name.strip()
     return "mcp_tool"
+
+
+def _required_native_item_id(item: Mapping[str, Any]) -> str:
+    native_id = item.get("id")
+    if not isinstance(native_id, str) or not native_id:
+        raise _AdapterFailure(
+            "invalid_provider_output", "provider tool item identifier was missing"
+        )
+    return native_id
+
+
+def _is_canonical_session_ref(value: str) -> bool:
+    try:
+        return str(uuid.UUID(value)) == value
+    except (AttributeError, ValueError):
+        return False
+
+
+def _native_tool_failed(item: Mapping[str, Any]) -> bool:
+    status = item.get("status")
+    if isinstance(status, str) and status.casefold() in {
+        "cancelled",
+        "error",
+        "failed",
+    }:
+        return True
+    return _nested_native_failure(item.get("result"))
+
+
+def _nested_native_failure(value: object) -> bool:
+    if isinstance(value, Mapping):
+        if value.get("isError") is True or bool(value.get("error")):
+            return True
+        status = value.get("status")
+        if isinstance(status, str) and status.casefold() in {
+            "cancelled",
+            "error",
+            "failed",
+        }:
+            return True
+        return any(_nested_native_failure(item) for item in value.values())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return any(_nested_native_failure(item) for item in value)
+    return False
 
 
 def _is_confirmation_call(item: Mapping[str, Any]) -> bool:
@@ -308,6 +408,7 @@ class _RuntimeOwner:
     thread: threading.Thread | None = None
     stop_requested: bool = False
     stop_dispatched: bool = False
+    wait_claimed: bool = False
 
 
 class _CancellableProcessExecutor:
@@ -316,6 +417,7 @@ class _CancellableProcessExecutor:
         self._lock = threading.Lock()
         self._process: subprocess.Popen[bytes] | None = None
         self._owned_pgid: int | None = None
+        self._watchdog_write_fd: int | None = None
         self._stop_requested = False
 
     def stop(self) -> None:
@@ -329,12 +431,33 @@ class _CancellableProcessExecutor:
         with self._lock:
             owned_pgid = self._owned_pgid
             self._owned_pgid = None
+            watchdog_write_fd = self._watchdog_write_fd
+            self._watchdog_write_fd = None
+        _close_fd(watchdog_write_fd)
         if owned_pgid is not None:
             _terminate_owned_process_group(owned_pgid)
 
     def _release_owned_group(self) -> None:
         with self._lock:
+            owned_pgid = self._owned_pgid
             self._owned_pgid = None
+            watchdog_write_fd = self._watchdog_write_fd
+            self._watchdog_write_fd = None
+        if owned_pgid is not None and _owned_process_group_exists(owned_pgid):
+            _close_fd(watchdog_write_fd)
+            _terminate_owned_process_group(owned_pgid)
+            return
+        if watchdog_write_fd is not None:
+            try:
+                os.write(watchdog_write_fd, b"R")
+            except (BrokenPipeError, OSError):
+                pass
+            _close_fd(watchdog_write_fd)
+
+    def _start_watchdog(self, process: subprocess.Popen[bytes]) -> None:
+        """Hook for lifecycle tests; the wrapper has already started supervision."""
+        if process.pid <= 0:
+            raise RuntimeError("process did not establish a valid owned process group")
 
     def __call__(
         self,
@@ -348,43 +471,73 @@ class _CancellableProcessExecutor:
     ) -> ProcessRunResult:
         started_at = time.monotonic()
         last_output_at = started_at
+        prompt_bytes = prompt.encode("utf-8")
+        if len(prompt_bytes) > MAX_PROMPT_BYTES:
+            raise _AdapterFailure(
+                "prompt_limit", "prompt exceeds safe byte limit"
+            )
         stdout = bytearray()
         stderr = bytearray()
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         line_buffer = ""
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            cwd=self._cwd,
-            start_new_session=True,
-        )
-        owned_pgid = process.pid
-        if type(owned_pgid) is not int or owned_pgid <= 0:
-            process.terminate()
-            raise RuntimeError("process did not establish a valid owned process group")
-        with self._lock:
-            self._process = process
-            self._owned_pgid = owned_pgid
-            should_stop = self._stop_requested
-        if should_stop:
-            self._terminate_owned_group()
-        assert process.stdin is not None
+        parent_read_fd, parent_write_fd = os.pipe()
+        identity = str(uuid.uuid4())
+        wrapped_command = [
+            sys.executable,
+            str(Path(__file__).with_name("process_watchdog.py")),
+            "--parent-fd",
+            str(parent_read_fd),
+            "--identity",
+            identity,
+            "--",
+            *command,
+        ]
         try:
-            process.stdin.write(prompt.encode("utf-8"))
-            process.stdin.close()
-        except BrokenPipeError:
-            pass
-        assert process.stdout is not None
-        assert process.stderr is not None
-        selector = selectors.DefaultSelector()
-        selector.register(process.stdout, selectors.EVENT_READ, stdout)
-        selector.register(process.stderr, selectors.EVENT_READ, stderr)
-        timed_out = False
-        timeout_kind = ""
+            process = subprocess.Popen(
+                wrapped_command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                cwd=self._cwd,
+                start_new_session=True,
+                pass_fds=(parent_read_fd,),
+            )
+        except BaseException:
+            _close_fd(parent_read_fd)
+            _close_fd(parent_write_fd)
+            raise
+        os.close(parent_read_fd)
+        selector: selectors.BaseSelector | None = None
+        selector_ready = False
+        returncode = -1
         try:
+            owned_pgid = process.pid
+            if type(owned_pgid) is not int or owned_pgid <= 0:
+                raise RuntimeError("process did not establish a valid owned process group")
+            with self._lock:
+                self._process = process
+                self._owned_pgid = owned_pgid
+                self._watchdog_write_fd = parent_write_fd
+                should_stop = self._stop_requested
+            self._start_watchdog(process)
+            if should_stop:
+                self._terminate_owned_group()
+            assert process.stdin is not None
+            assert process.stdout is not None
+            assert process.stderr is not None
+            os.set_blocking(process.stdin.fileno(), False)
+            selector = selectors.DefaultSelector()
+            selector.register(process.stdout, selectors.EVENT_READ, ("stdout", stdout))
+            selector.register(process.stderr, selectors.EVENT_READ, ("stderr", stderr))
+            prompt_offset = 0
+            if prompt_bytes:
+                selector.register(process.stdin, selectors.EVENT_WRITE, ("stdin", None))
+            else:
+                process.stdin.close()
+            selector_ready = True
+            timed_out = False
+            timeout_kind = ""
             while selector.get_map():
                 now = time.monotonic()
                 if now - started_at >= total_timeout_seconds:
@@ -396,11 +549,27 @@ class _CancellableProcessExecutor:
                     self._terminate_owned_group()
                     break
                 for key, _ in selector.select(0.25):
+                    stream_kind, target = key.data
+                    if stream_kind == "stdin":
+                        try:
+                            written = os.write(
+                                key.fd,
+                                prompt_bytes[prompt_offset : prompt_offset + 65536],
+                            )
+                        except BrokenPipeError:
+                            written = 0
+                        except BlockingIOError:
+                            continue
+                        prompt_offset += written
+                        if written == 0 or prompt_offset == len(prompt_bytes):
+                            selector.unregister(key.fileobj)
+                            key.fileobj.close()
+                        continue
                     chunk = os.read(key.fd, 4096)
                     if not chunk:
                         selector.unregister(key.fileobj)
                         continue
-                    target: bytearray = key.data
+                    assert isinstance(target, bytearray)
                     if len(target) + len(chunk) > MAX_PROCESS_OUTPUT_BYTES:
                         raise _AdapterFailure(
                             "provider_output_limit",
@@ -420,8 +589,14 @@ class _CancellableProcessExecutor:
                         break
             returncode = process.wait(timeout=5)
         finally:
-            streams_lingering = bool(selector.get_map())
-            selector.close()
+            streams_lingering = not selector_ready
+            if selector_ready and selector is not None:
+                streams_lingering = bool(selector.get_map())
+            if selector is not None:
+                selector.close()
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
             if process.poll() is None or streams_lingering:
                 self._terminate_owned_group()
             else:
@@ -461,6 +636,23 @@ def _terminate_owned_process_group(owned_pgid: int) -> None:
         return
 
 
+def _owned_process_group_exists(owned_pgid: int) -> bool:
+    try:
+        os.killpg(owned_pgid, 0)
+        return True
+    except (PermissionError, ProcessLookupError):
+        return False
+
+
+def _close_fd(fd: int | None) -> None:
+    if fd is None:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
 class CodexRuntime:
     kind = "codex"
 
@@ -470,12 +662,16 @@ class CodexRuntime:
         workspace: Path,
         executor: Callable[..., ProcessRunResult] | None = None,
         codex_bin: str = "codex",
+        approved_input_roots: Sequence[Path] = (),
         total_timeout_seconds: float = _DEFAULT_TOTAL_TIMEOUT_SECONDS,
         idle_timeout_seconds: float = _DEFAULT_IDLE_TIMEOUT_SECONDS,
     ):
         self.workspace = Path(workspace).resolve()
         self._executor = executor
         self.codex_bin = codex_bin
+        self._approved_input_roots = tuple(
+            root.resolve() for root in (self.workspace, *approved_input_roots)
+        )
         self.total_timeout_seconds = total_timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
 
@@ -502,11 +698,14 @@ class CodexRuntime:
     ) -> list[str]:
         effective_workspace = Path(workspace or self.workspace).resolve()
         self._validate_workspace(effective_workspace)
+        if provider_session_ref and not _is_canonical_session_ref(provider_session_ref):
+            raise ValueError("invalid provider session reference")
+        validated_images = self._validated_images(image_paths, effective_workspace)
         runner = CodexRunner(workspace=effective_workspace, codex_bin=self.codex_bin)
         command = runner.build_command(
             prompt=prompt,
             session_id=provider_session_ref or None,
-            image_paths=list(image_paths),
+            image_paths=validated_images,
             use_output_schema=False,
             approval_policy="untrusted",
             developer_instructions=_DEVELOPER_INSTRUCTIONS,
@@ -531,6 +730,10 @@ class CodexRuntime:
             ),
             "-c",
             'mcp_servers.workbench_confirmation.enabled_tools=["request_reviewed_action"]',
+            "-c",
+            "mcp_servers.workbench_confirmation.enabled=true",
+            "-c",
+            "mcp_servers.workbench_confirmation.disabled_tools=[]",
         ]
         if model.strip():
             overlay[0:0] = ["-m", model.strip()]
@@ -575,6 +778,10 @@ class CodexRuntime:
         owner = _runtime_owner(handle)
         if not isinstance(owner, _RuntimeOwner):
             raise ValueError("runtime handle does not belong to Codex")
+        with owner.lock:
+            if owner.wait_claimed:
+                raise ValueError("runtime handle is already being waited")
+            owner.wait_claimed = True
         owner.done.wait()
         try:
             assert owner.result is not None
@@ -627,7 +834,13 @@ class CodexRuntime:
                     error_code="provider_process_failed",
                     error_detail="provider execution failed",
                 )
-            elif not owner.normalizer.saw_turn_completed:
+            elif owner.normalizer.terminal_status == "failed":
+                result = RuntimeResult(
+                    status="failed",
+                    error_code="provider_turn_failed",
+                    error_detail="provider turn failed",
+                )
+            elif owner.normalizer.terminal_status != "completed":
                 result = RuntimeResult(
                     status="failed",
                     error_code="incomplete_provider_output",
@@ -665,3 +878,33 @@ class CodexRuntime:
             workspace.relative_to(self.workspace)
         except ValueError as exc:
             raise ValueError("workspace is outside runtime boundary") from exc
+
+    def _validated_images(
+        self, image_paths: Sequence[Path], workspace: Path
+    ) -> list[Path]:
+        validated: list[Path] = []
+        for raw_path in image_paths:
+            candidate = Path(raw_path)
+            if not candidate.is_absolute():
+                candidate = workspace / candidate
+            try:
+                metadata = candidate.lstat()
+                resolved = candidate.resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                raise ValueError("invalid image input") from exc
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("invalid image input")
+            if candidate.absolute() != resolved:
+                raise ValueError("invalid image input")
+            if not any(_path_is_within(resolved, root) for root in self._approved_input_roots):
+                raise ValueError("invalid image input")
+            validated.append(resolved)
+        return validated
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
