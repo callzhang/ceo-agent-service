@@ -81,12 +81,14 @@ AssertionSource = Literal[
     "audit_result",
 ]
 AssertionOperator = Literal["equals", "contains", "absent", "count_equals"]
-_ID_LABEL = re.compile(
-    r"\b(?:user|open|union|session|message|conversation|task|attempt)[\s_-]*id\b"
-    r"\s*(?:[:=#-]\s*)?"
-    r"(?:\d+|(?=[a-z0-9_-]*\d)[a-z0-9_-]+|[a-f]{6,}|"
-    r"(?!(?:is|was|remains|unknown|unavailable|missing|not)\b)[a-z]{6,})"
-    r"(?![a-z0-9_-])",
+_PROSE_ID_LABEL = re.compile(
+    r"\b(?:(?:user|open|union|session|message|conversation|task|attempt)"
+    r"[\s_-]*id|process[\s_-]+instance[\s_-]+id)\b",
+    re.IGNORECASE,
+)
+_ABSENT_ID_VALUE = re.compile(
+    r"^(?:(?:is|was|remains)\s+)?"
+    r"(?:unknown|unavailable|missing|none|not\s+provided)\b",
     re.IGNORECASE,
 )
 _CREDENTIAL_LABEL = re.compile(
@@ -200,16 +202,18 @@ class EvalCase(BaseModel):
 
     @model_validator(mode="after")
     def validate_audit_expectation(self) -> "EvalCase":
-        if self.expected_outcome == "no_action":
+        if self.expected_outcome != "proposal":
             if self.acceptable_audit_outcomes != "not_applicable":
-                raise ValueError("no_action must declare Audit not_applicable")
+                raise ValueError(
+                    "non-proposal outcomes must declare Audit not_applicable"
+                )
             if any(
                 assertion.source.startswith("audit_")
                 for assertion in self.required_assertions
             ):
-                raise ValueError("no_action cannot declare Audit assertions")
+                raise ValueError("non-proposal outcomes cannot declare Audit assertions")
         elif self.acceptable_audit_outcomes == "not_applicable":
-            raise ValueError("non-no_action cases require acceptable Audit outcomes")
+            raise ValueError("proposal cases require acceptable Audit outcomes")
         elif not self.acceptable_audit_outcomes:
             raise ValueError("acceptable Audit outcomes cannot be empty")
         elif not any(
@@ -465,7 +469,7 @@ def _evaluate_protocol(
 ) -> CaseResult:
     errors = list(initial_errors or ())
     observed_outcome = str(consumer_result.get("outcome", ""))
-    terminal_no_action = observed_outcome == "no_action"
+    terminal_outcome = observed_outcome != "proposal"
     consumer_skills = _observed_skill_names(consumer_events)
     audit_skills = _observed_skill_names(audit_events)
     expected = set(case.expected_business_skills)
@@ -473,7 +477,7 @@ def _evaluate_protocol(
     missing: set[str] = set()
     observed_forbidden: set[str] = set()
     observed_roles = [("Consumer", consumer_skills)]
-    if not terminal_no_action:
+    if not terminal_outcome:
         observed_roles.append(("Audit", audit_skills))
     for role, observed in observed_roles:
         role_set = set(observed)
@@ -486,17 +490,17 @@ def _evaluate_protocol(
         if role_forbidden:
             errors.append(f"{role} read forbidden Skills: {sorted(role_forbidden)}")
     observed_event_roles = [("Consumer", consumer_events)]
-    if not terminal_no_action:
+    if not terminal_outcome:
         observed_event_roles.append(("Audit", audit_events))
     for role, events in observed_event_roles:
         errors.extend(_validate_observed_skill_events(events, role))
         if not any(event.tool == "execute_reviewed_read" for event in events):
             errors.append(f"{role} has no evidence read event")
-    if terminal_no_action:
+    if terminal_outcome:
         if audit_events:
-            errors.append("no_action must not contain Audit events")
+            errors.append("terminal Consumer outcome must not contain Audit events")
         if audit_result is not None:
-            errors.append("no_action must not contain an Audit result")
+            errors.append("terminal Consumer outcome must not contain an Audit result")
         audit_outcome = "not_applicable"
     else:
         if audit_result is None:
@@ -510,9 +514,9 @@ def _evaluate_protocol(
             f"Consumer outcome {observed_outcome!r} != {case.expected_outcome!r}"
         )
     errors.extend(_validate_effect_metadata(consumer_result))
-    if terminal_no_action:
+    if terminal_outcome:
         if case.acceptable_audit_outcomes != "not_applicable":
-            errors.append("no_action case must declare Audit not_applicable")
+            errors.append("terminal case must declare Audit not_applicable")
     elif (
         case.acceptable_audit_outcomes == "not_applicable"
         or audit_outcome not in case.acceptable_audit_outcomes
@@ -919,7 +923,7 @@ def _run_live_case(case: EvalCase, fixture: ProtocolFixture) -> CaseResult:
         consumer = parse_consumer_agent_wire_result(consumer_raw)
         consumer_events = _read_event_log(consumer_log)
         consumer_receipts = _verified_live_skill_receipts(consumer_events, role="Consumer")
-        if consumer.outcome.value == "no_action":
+        if consumer.outcome.value != "proposal":
             return _evaluate_protocol(
                 case,
                 consumer.model_dump(mode="json"),
@@ -1187,7 +1191,7 @@ def _decode_json_container(value: str) -> dict[str, object] | list[object] | Non
 def _sanitization_issue(value: str) -> str:
     if any(ord(char) < 32 or ord(char) > 126 for char in value):
         return "only printable ASCII generalized text is allowed"
-    if _ID_LABEL.search(value):
+    if _has_prose_identifier_value(value):
         return "identifier field is not allowed"
     if _CREDENTIAL_LABEL.search(value):
         return "credential field is not allowed"
@@ -1215,6 +1219,27 @@ def _sanitization_issue(value: str) -> str:
         ):
             return "opaque high-entropy identifier is not allowed"
     return ""
+
+
+def _has_prose_identifier_value(value: str) -> bool:
+    for match in _PROSE_ID_LABEL.finditer(value):
+        remainder = value[match.end() :].lstrip()
+        if not remainder or remainder[0] in ".!?;":
+            continue
+        remainder = re.sub(r"^[:=#,\-]+\s*", "", remainder)
+        if not remainder or remainder[0] in ".!?;":
+            continue
+        absent = _ABSENT_ID_VALUE.match(remainder)
+        if absent is not None:
+            trailing = remainder[absent.end() :].lstrip()
+            if (
+                not trailing
+                or trailing[0] in ".!?;"
+                or re.match(r"^(?:in|from|by|for|at|on|within)\b", trailing)
+            ):
+                continue
+        return True
+    return False
 
 
 def _entropy(value: str) -> float:

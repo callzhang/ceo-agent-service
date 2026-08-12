@@ -93,6 +93,22 @@ def _consumer_result_for_outcome(
     return result
 
 
+def _case_for_terminal_outcome(case: EvalCase, outcome: str) -> EvalCase:
+    assertions = tuple(
+        assertion.model_copy(update={"expected": outcome})
+        if assertion.source == "consumer_result" and assertion.path == ("outcome",)
+        else assertion
+        for assertion in case.required_assertions
+    )
+    return case.model_copy(
+        update={
+            "expected_outcome": outcome,
+            "acceptable_audit_outcomes": "not_applicable",
+            "required_assertions": assertions,
+        }
+    )
+
+
 def test_every_skill_runtime_eval_declares_skill_outcome_and_assertions():
     cases = load_cases(CASES_PATH)
 
@@ -102,6 +118,23 @@ def test_every_skill_runtime_eval_declares_skill_outcome_and_assertions():
         assert case.expected_business_skills
         assert case.expected_outcome in EXPECTED_OUTCOMES
         assert case.required_assertions
+
+
+@pytest.mark.parametrize("terminal_outcome", ["no_action", "needs_human", "failed"])
+def test_non_proposal_case_schema_requires_audit_not_applicable(
+    terminal_outcome: str,
+):
+    base = load_cases(CASES_PATH)[5]
+    terminal = _case_for_terminal_outcome(base, terminal_outcome)
+
+    assert EvalCase.model_validate(terminal.model_dump(mode="json"))
+    with pytest.raises(ValueError, match="not_applicable"):
+        EvalCase.model_validate(
+            {
+                **terminal.model_dump(mode="json"),
+                "acceptable_audit_outcomes": ["needs_human"],
+            }
+        )
 
 
 def test_recorded_protocol_fixtures_are_separate_complete_and_read_only():
@@ -116,7 +149,7 @@ def test_recorded_protocol_fixtures_are_separate_complete_and_read_only():
         assert fixture.skill_receipts
         assert fixture.consumer_events
         assert fixture.consumer_result
-        if fixture.consumer_result["outcome"] == "no_action":
+        if fixture.consumer_result["outcome"] != "proposal":
             assert fixture.audit_events == ()
             assert fixture.audit_result is None
         else:
@@ -335,6 +368,11 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
         ("session id whitespace", "session id 1234567890abcdef"),
         ("message id whitespace", "message id msg90210"),
         ("conversation id whitespace", "conversation id 442200"),
+        ("short user id", "user id x"),
+        ("short open id", "open id: z"),
+        ("short task id", "task id=a"),
+        ("process instance id", "process instance id p"),
+        ("status followed by value", "user id unknown x"),
         ("token", "token=abcdefghijklmnopqrstuvwxyz0123456789"),
         ("signed link", "https://example.test/file?signature=opaque"),
         ("schemeless signed link", "files.example.test/file?expires=1900000000"),
@@ -362,8 +400,11 @@ def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
         "The participant completed the documented reconciliation workflow.",
         "The owner_role is reviewer and the task count is 12.",
         "The user id is unavailable in this generalized fixture.",
-        "The message id was not supplied by the source.",
+        "The message id was not provided by the source.",
         "The session id remains unknown.",
+        "The conversation id is missing.",
+        "The task id: none.",
+        "A user identity is important for authorization checks.",
     ],
 )
 def test_sanitizer_accepts_benign_dates_counts_and_prose(tmp_path: Path, benign: str):
@@ -536,7 +577,10 @@ def test_live_skill_receipts_use_production_validation_and_context_formatter():
         _verified_live_skill_receipts(())
 
 
-def test_live_no_action_does_not_invoke_audit(monkeypatch):
+@pytest.mark.parametrize("terminal_outcome", ["no_action", "needs_human", "failed"])
+def test_live_terminal_outcome_does_not_invoke_audit(
+    monkeypatch, terminal_outcome: str
+):
     cases = {case.case_id: case for case in load_cases(CASES_PATH)}
     fixture = next(
         item
@@ -544,7 +588,7 @@ def test_live_no_action_does_not_invoke_audit(monkeypatch):
         if item.consumer_result["outcome"] == "no_action"
     )
     case = cases[fixture.case_id]
-    nested = fixture.consumer_result
+    nested = _consumer_result_for_outcome(fixture.consumer_result, terminal_outcome)
     error = nested["error"]
     wire = {
         **{key: value for key, value in nested.items() if key != "error"},
@@ -577,7 +621,8 @@ def test_live_no_action_does_not_invoke_audit(monkeypatch):
         lambda _events, **_kwargs: (),
     )
 
-    result = _run_live_case(case, fixture)
+    terminal_case = _case_for_terminal_outcome(case, terminal_outcome)
+    result = _run_live_case(terminal_case, fixture)
 
     assert result.ok
     assert result.audit_outcome == "not_applicable"
@@ -606,46 +651,35 @@ def test_every_recorded_case_rejects_unacceptable_audit_outcome(
         assert "Audit outcome" in " ".join(result.errors)
 
 
-def test_recorded_no_action_rejects_any_audit_protocol():
+def test_recorded_terminal_outcomes_reject_any_audit_protocol():
     cases = {case.case_id: case for case in load_cases(CASES_PATH)}
     for fixture in load_fixtures(FIXTURES_PATH):
         if fixture.consumer_result["outcome"] != "no_action":
             continue
-        case = cases[fixture.case_id]
-        audited = fixture.model_copy(
-            update={
-                "audit_events": (fixture.consumer_events[0],),
-                "audit_result": _rejected_audit_result(),
-            }
-        )
+        for terminal_outcome in ("no_action", "needs_human", "failed"):
+            case = _case_for_terminal_outcome(
+                cases[fixture.case_id], terminal_outcome
+            )
+            terminal = fixture.model_copy(
+                update={
+                    "consumer_result": _consumer_result_for_outcome(
+                        fixture.consumer_result, terminal_outcome
+                    ),
+                }
+            )
+            assert replay_fixture(case, terminal).ok
 
-        result = replay_fixture(case, audited)
+            audited = terminal.model_copy(
+                update={
+                    "audit_events": (fixture.consumer_events[0],),
+                    "audit_result": _rejected_audit_result(),
+                }
+            )
+            result = replay_fixture(case, audited)
 
-        assert not result.ok
-        assert "no_action must not contain Audit events" in result.errors
-        assert "no_action must not contain an Audit result" in result.errors
-
-
-@pytest.mark.parametrize("consumer_outcome", ["proposal", "needs_human", "failed"])
-def test_audit_outcome_validation_applies_to_every_consumer_outcome(
-    consumer_outcome: str,
-):
-    case = load_cases(CASES_PATH)[0].model_copy(
-        update={"expected_outcome": consumer_outcome}
-    )
-    fixture = load_fixtures(FIXTURES_PATH)[0]
-    fixture = fixture.model_copy(
-        update={
-            "consumer_result": _consumer_result_for_outcome(
-                fixture.consumer_result, consumer_outcome
-            ),
-            "audit_result": _rejected_audit_result(),
-        }
-    )
-
-    result = replay_fixture(case, fixture)
-
-    assert "Audit outcome 'failed' is not acceptable" in " ".join(result.errors)
+            assert not result.ok
+            assert "terminal Consumer outcome must not contain Audit events" in result.errors
+            assert "terminal Consumer outcome must not contain an Audit result" in result.errors
 
 
 def test_audit_outcome_can_be_explicitly_allowed_by_corpus():
@@ -702,9 +736,9 @@ def test_cli_exits_nonzero_when_a_scripted_expectation_mismatches(
     mutated_path = tmp_path / "mutated.jsonl"
     mutated_path.write_text(
         json.dumps(
-            {
-                **case.model_dump(mode="json"),
-                "expected_outcome": "failed",
+                {
+                    **case.model_dump(mode="json"),
+                    "expected_business_skills": ["ceo-document-review"],
             }
         )
         + "\n",
@@ -741,9 +775,9 @@ def test_script_path_cli_returns_nonzero_for_mutated_corpus(tmp_path: Path):
     mutated_path = tmp_path / "mutated.jsonl"
     mutated_path.write_text(
         json.dumps(
-            {
-                **case.model_dump(mode="json"),
-                "expected_outcome": "failed",
+                {
+                    **case.model_dump(mode="json"),
+                    "expected_business_skills": ["ceo-document-review"],
             }
         )
         + "\n",
