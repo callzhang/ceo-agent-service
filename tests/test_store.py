@@ -140,6 +140,111 @@ def test_store_connections_enable_sqlite_concurrency_pragmas(tmp_path: Path):
     assert foreign_keys == 1
 
 
+def test_discard_unstarted_service_tasks_closes_only_no_effect_tasks(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for message_id in ("service-1", "service-2"):
+        assert store.enqueue_reply_task(
+            conversation_id="cid-service",
+            conversation_title="Service",
+            single_chat=True,
+            trigger_message_id=message_id,
+            trigger_create_time="2026-08-11 10:00:00",
+            trigger_sender="Service",
+            trigger_text="synthetic recovery",
+            trigger_message_json=json.dumps(
+                {"raw_payload": {"service_task": True, "source": "repair"}}
+            ),
+        )
+    tasks = store.claim_reply_tasks(limit=2)
+    run = store.claim_agent_run(
+        tasks[0].id,
+        tasks[0].execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    ).run
+
+    discarded = store.discard_unstarted_service_tasks(
+        [tasks[0].id, tasks[1].id],
+        reason="The synthetic recovery source was invalid.",
+    )
+
+    assert [task.status for task in discarded] == ["done", "done"]
+    assert all(task.error == "The synthetic recovery source was invalid." for task in discarded)
+    failed_run = store.get_agent_run(run.id)
+    assert failed_run is not None and failed_run.status == "failed"
+    assert failed_run.side_effect_state == "none"
+    assert json.loads(failed_run.structured_error_json)["code"] == (
+        "invalid_service_task_discarded"
+    )
+
+
+def test_discard_unstarted_service_tasks_rejects_started_effect(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-service",
+        conversation_title="Service",
+        single_chat=True,
+        trigger_message_id="service-effect",
+        trigger_create_time="2026-08-11 10:00:00",
+        trigger_sender="Service",
+        trigger_text="synthetic recovery",
+        trigger_message_json=json.dumps(
+            {"raw_payload": {"service_task": True, "source": "repair"}}
+        ),
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    run = _claim_audit_run(store, task.id, task.execution_generation, owner="worker-1").run
+    store.append_agent_run_event(
+        run.id,
+        {
+            "type": "item.started",
+            "item": {"id": "write-1", "metadata": {"effect": "effectful"}},
+        },
+        owner="worker-1",
+    )
+
+    with pytest.raises(ValueError, match="started or uncertain effects"):
+        store.discard_unstarted_service_tasks(
+            [task.id],
+            reason="The synthetic recovery source was invalid.",
+        )
+
+
+def test_discard_unstarted_service_tasks_requires_exact_legacy_source(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-service",
+        conversation_title="Service",
+        single_chat=True,
+        trigger_message_id="legacy-service",
+        trigger_create_time="2026-08-11 10:00:00",
+        trigger_sender="Service",
+        trigger_text="synthetic recovery",
+        trigger_message_json=json.dumps(
+            {"raw_payload": {"source": "oa_pending_scan"}}
+        ),
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+
+    with pytest.raises(ValueError, match="not an explicit service task"):
+        store.discard_unstarted_service_tasks(
+            [task.id],
+            reason="The synthetic recovery source was invalid.",
+            expected_source="wrong_source",
+        )
+
+    discarded = store.discard_unstarted_service_tasks(
+        [task.id],
+        reason="The synthetic recovery source was invalid.",
+        expected_source="oa_pending_scan",
+    )
+    assert discarded[0].status == "done"
+
+
 def test_store_connections_can_use_short_busy_timeout(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3", busy_timeout_seconds=2)
 
@@ -874,6 +979,121 @@ def test_generation_rotation_waits_for_unknown_effect_reconciliation(
         "initial",
         owner="new-worker",
     ).claimed is False
+
+
+def test_service_restart_releases_pending_unknown_audit_reconciliation_lease(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="stopped-worker"
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="stopped-worker",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="stopped-reconciler")
+    assert claim.claimed
+    store.requeue_reply_task(
+        task.id,
+        "service_restart_before_reconciliation",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    released = store.release_unknown_audit_reconciliation_leases_after_service_restart()
+
+    assert [item.id for item in released] == [run.id]
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.lease_owner == ""
+    claimed_task = store.claim_reply_tasks(limit=1)
+    assert [item.id for item in claimed_task] == [task.id]
+    assert store.claim_unknown_agent_run(run.id, owner="new-reconciler").claimed
+
+
+def test_finalize_closed_failed_audit_run_repairs_completed_unknown_state(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store,
+        task_id,
+        "initial",
+        owner="worker-1",
+    ).run
+    for event in (
+        {
+            "type": "item.started",
+            "item": {
+                "id": "write-1",
+                "metadata": {"effect": "effectful", "action_index": 0},
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "write-1",
+                "metadata": {"effect": "effectful", "action_index": 0},
+            },
+        },
+        {
+            "type": "item.started",
+            "item": {
+                "id": "write-2",
+                "metadata": {"effect": "effectful", "action_index": 1},
+            },
+        },
+        {
+            "type": "item.failed",
+            "item": {
+                "id": "write-2",
+                "metadata": {
+                    "effect": "effectful",
+                    "action_index": 1,
+                    "failure_code": "reconciliation_read_failed",
+                    "failure_retryable": False,
+                    "failure_gate_state": "unavailable",
+                },
+            },
+        },
+    ):
+        store.append_agent_run_event(run.id, event, owner="worker-1")
+    unknown = store.mark_agent_run_unknown(
+        run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="worker-1",
+    )
+    claim = store.claim_unknown_agent_run(unknown.id, owner="reconciler")
+    assert claim.claimed
+    store.complete_agent_run(
+        unknown.id,
+        {
+            "outcome": "needs_human",
+            "summary": "audit_recovery_ambiguous",
+        },
+        owner="reconciler",
+        side_effect_state="unknown",
+        expected_status="unknown",
+    )
+
+    repaired = store.finalize_closed_failed_audit_run(
+        unknown.id,
+        reason="Applicant identity is not available in the current organization.",
+    )
+
+    assert repaired.status == "failed"
+    assert repaired.side_effect_state == "confirmed"
+    assert repaired.final_result_json == ""
+    assert json.loads(repaired.structured_error_json) == {
+        "authorization_required": False,
+        "code": "reconciliation_read_failed",
+        "reason": "Applicant identity is not available in the current organization.",
+        "retryable": False,
+    }
 
 
 def test_reconciliation_defer_rejects_stale_generation_even_with_live_lease(
@@ -6055,6 +6275,36 @@ def test_service_restart_keeps_unknown_or_effectful_agent_turns_for_recovery(
     assert store.recover_no_effect_agent_runs_after_service_restart() == []
     assert store.get_reply_task(task.id).status == "processing"
     assert store.get_agent_run(run.id).status == "unknown"
+
+
+def test_service_restart_releases_unknown_audit_reconciliation_lease(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="stopped-worker"
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="stopped-worker",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="stopped-reconciler")
+    assert claim.claimed
+
+    released = store.release_unknown_audit_reconciliation_leases_after_service_restart()
+
+    assert [item.id for item in released] == [run.id]
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.status == "unknown"
+    assert persisted.lease_owner == ""
+    assert persisted.lease_expires_at == ""
+    assert persisted.reconciliation_next_attempt_at == ""
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
 
 
 def test_service_restart_resumes_completed_turn_without_replaying_it(

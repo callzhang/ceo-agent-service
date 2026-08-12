@@ -732,8 +732,7 @@ class DingTalkAutoReplyWorker:
         results = [self._channel_result(channel) for channel in sorted(channels)]
         return all(result.state is ChannelGateState.READY for result in results)
 
-    @staticmethod
-    def required_channels_for_task(task: ReplyTask) -> set[str]:
+    def required_channels_for_task(self, task: ReplyTask) -> set[str]:
         channels = {task.channel}
         try:
             payload = json.loads(task.trigger_message_json)
@@ -2588,7 +2587,7 @@ class DingTalkAutoReplyWorker:
         *,
         strict: bool = False,
     ) -> tuple[list[DingTalkMessage], list[DingTalkMessage]]:
-        if self._is_oa_pending_scan_trigger(trigger):
+        if self._is_service_task_trigger(trigger):
             return [trigger], [trigger]
         context_messages: list[DingTalkMessage] = []
         unread_messages: list[DingTalkMessage] = []
@@ -2616,8 +2615,10 @@ class DingTalkAutoReplyWorker:
         )
 
     @staticmethod
-    def _is_oa_pending_scan_trigger(trigger: DingTalkMessage) -> bool:
-        return str(trigger.raw_payload.get("source") or "") == "oa_pending_scan"
+    def _is_service_task_trigger(trigger: DingTalkMessage) -> bool:
+        return bool(trigger.raw_payload.get("service_task")) or (
+            str(trigger.raw_payload.get("source") or "") == "oa_pending_scan"
+        )
 
     def _enqueue_reply_task(
         self,
@@ -2953,34 +2954,36 @@ class DingTalkAutoReplyWorker:
         force_new_decision: bool = False,
         oa_url: str = "",
     ) -> str:
-        context_messages = self._read_conversation_messages(
-            "read_recent_messages_rerun",
-            conversation,
-            lambda: self.dws.read_recent_messages(conversation),
-            default=[],
-        )
-        unread_messages = self._read_conversation_messages(
-            "read_unread_messages_rerun",
-            conversation,
-            lambda: self.dws.read_unread_messages(conversation),
-            default=[],
-        )
-        prompt_context_messages = self._prompt_context_messages(
-            context_messages, unread_messages
-        )
-        candidates = [
-            message
-            for message in prompt_context_messages
-            if message.open_message_id == message_id
-        ]
-        trigger = (
-            candidates[-1]
-            if candidates
-            else self._lookup_rerun_message_by_id(
+        trigger = self._persisted_service_task_trigger(conversation, message_id)
+        if trigger is None:
+            context_messages = self._read_conversation_messages(
+                "read_recent_messages_rerun",
                 conversation,
-                message_id,
+                lambda: self.dws.read_recent_messages(conversation),
+                default=[],
             )
-        )
+            unread_messages = self._read_conversation_messages(
+                "read_unread_messages_rerun",
+                conversation,
+                lambda: self.dws.read_unread_messages(conversation),
+                default=[],
+            )
+            prompt_context_messages = self._prompt_context_messages(
+                context_messages, unread_messages
+            )
+            candidates = [
+                message
+                for message in prompt_context_messages
+                if message.open_message_id == message_id
+            ]
+            trigger = (
+                candidates[-1]
+                if candidates
+                else self._lookup_rerun_message_by_id(
+                    conversation,
+                    message_id,
+                )
+            )
         if trigger is None:
             raise ValueError(
                 f"message not found in recent DingTalk context: {message_id}"
@@ -3023,6 +3026,34 @@ class DingTalkAutoReplyWorker:
                 raise RuntimeError("rerun reply task was not persisted")
         self._process_queued_task(conversation, task)
         return trigger.open_message_id
+
+    def _persisted_service_task_trigger(
+        self,
+        conversation: DingTalkConversation,
+        message_id: str,
+    ) -> DingTalkMessage | None:
+        task = self.store.get_reply_task_for_message(
+            conversation.open_conversation_id,
+            message_id,
+        )
+        if task is None:
+            return None
+        try:
+            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        except (ValueError, TypeError):
+            return None
+        if (
+            trigger.open_message_id != message_id
+            or trigger.open_conversation_id != conversation.open_conversation_id
+            or not self._is_service_task_trigger(trigger)
+        ):
+            return None
+        return trigger.model_copy(
+            update={
+                "conversation_title": conversation.title or trigger.conversation_title,
+                "single_chat": conversation.single_chat,
+            }
+        )
 
     def _restore_richer_rerun_trigger(
         self,

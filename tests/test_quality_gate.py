@@ -1,6 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
-from app.quality_gate import add_channel_health, scan_hourly_quality, write_hourly_quality_state
+from app.quality_gate import (
+    add_channel_health,
+    required_live_channels,
+    scan_hourly_quality,
+    write_hourly_quality_state,
+)
 from app.cli import WorkerSettings, quality_check_command
 from app.store import AutoReplyStore
 
@@ -27,6 +32,26 @@ def test_quality_gate_fails_closed_when_a_required_source_is_missing(tmp_path):
     assert not report.ok
     assert "reply_tasks" in report.missing_sources
     assert {issue.code for issue in report.violations} == {"source_missing"}
+
+
+def test_required_live_channels_skips_unused_lark_but_includes_referenced_lark(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    _insert_reply_task(store)
+
+    assert required_live_channels(store.path) == frozenset({"codex", "dingtalk"})
+
+    with store._connect() as db:
+        db.execute(
+            """update reply_tasks set trigger_message_json=?
+               where conversation_id='conversation'""",
+            ('{"link":"https://example.larksuite.com/docx/demo"}',),
+        )
+
+    assert required_live_channels(store.path) == frozenset(
+        {"codex", "dingtalk", "lark"}
+    )
 
 
 def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
@@ -84,6 +109,25 @@ def test_quality_gate_excludes_recent_error_recovered_by_later_attempt(tmp_path)
                 'agent_run', 'normal', '', 'none', 'completed',
                 '2026-08-07 00:45:00')"""
         )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not [
+        issue
+        for issue in report.violations
+        if issue.source == "errors" and issue.code == "recent_error"
+    ]
+
+
+def test_quality_gate_excludes_explicitly_resolved_global_error(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.record_error(None, None, "task_agent", "temporary provider failure")
+    error_id = store.list_errors(limit=1)[0].id
+
+    assert store.resolve_errors(
+        [error_id],
+        resolution="Codex channel is healthy after readback.",
+    ) == 1
 
     report = scan_hourly_quality(store.path, now=NOW)
 

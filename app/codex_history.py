@@ -102,6 +102,35 @@ def extract_codex_audit_events_from_session(
     return events
 
 
+def extract_codex_mcp_tool_results_from_session(
+    session_id: str,
+    codex_home: Path | None = None,
+    start_line: int = 0,
+    end_line: int | None = None,
+) -> list[dict[str, object]]:
+    """Return completed MCP calls recorded by the local Codex session.
+
+    Codex JSONL streaming output is normally sufficient for the worker. Some
+    completed MCP calls, however, are persisted only as ``mcp_tool_call_end``
+    session events. Recovering their original CallToolResult here lets the
+    worker apply its existing reviewed-tool and receipt validation rather than
+    treating a successful external action as unproven.
+    """
+    path = find_codex_session_path(session_id, codex_home=codex_home)
+    if path is None:
+        return []
+    events: list[dict[str, object]] = []
+    for line in _iter_file_lines(path, start_line=start_line, end_line=end_line):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        event = _mcp_tool_result_from_event_msg(payload)
+        if event is not None:
+            events.append(event)
+    return events
+
+
 def find_codex_session_path(
     session_id: str,
     codex_home: Path | None = None,
@@ -406,6 +435,48 @@ def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
             event["path"] = path
         return event
     return None
+
+
+def _mcp_tool_result_from_event_msg(
+    payload: dict[str, Any],
+) -> dict[str, object] | None:
+    if payload.get("type") != "event_msg":
+        return None
+    event = payload.get("payload")
+    if not isinstance(event, dict) or event.get("type") != "mcp_tool_call_end":
+        return None
+    invocation = event.get("invocation")
+    result = event.get("result")
+    if not isinstance(invocation, dict) or not isinstance(result, dict):
+        return None
+    server = invocation.get("server")
+    tool = invocation.get("tool")
+    arguments = invocation.get("arguments")
+    call_id = event.get("call_id")
+    call_result = result.get("Ok")
+    if not (
+        isinstance(server, str)
+        and server
+        and isinstance(tool, str)
+        and tool
+        and isinstance(arguments, dict)
+        and isinstance(call_id, str)
+        and call_id
+        and isinstance(call_result, dict)
+    ):
+        return None
+    return {
+        "type": "item.completed",
+        "item": {
+            "type": "mcp_tool_call",
+            "id": call_id,
+            "server": server,
+            "tool": tool,
+            "arguments": arguments,
+            "status": "completed",
+            "result": call_result,
+        },
+    }
 
 
 def _render_event_msg(

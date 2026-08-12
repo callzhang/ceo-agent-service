@@ -61,6 +61,11 @@ _SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset(
 )
 
 
+def service_read_command_contract() -> tuple[str, ...]:
+    """Return the registered service-owned read commands for session versioning."""
+    return tuple(sorted(_SERVICE_READ_ONLY_PYTHON_COMMANDS))
+
+
 class AgentReadOnlyViolationError(RuntimeError):
     pass
 
@@ -393,6 +398,9 @@ def _classify_local_read_only_command(
     segments = _local_read_only_segments(item)
     if segments is None:
         return None
+    service_read = _service_read_only_descriptor(segments)
+    if service_read is not None:
+        return service_read
     command_path = " ; ".join(Path(segment[0]).name for segment in segments)
     normalized = "\x1e".join(shlex.join(segment) for segment in segments)
     return NativeCliCommand(
@@ -401,6 +409,24 @@ def _classify_local_read_only_command(
         effect=EffectKind.READ_ONLY,
         command_digest=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
         target_identifiers={},
+    )
+
+
+def _service_read_only_descriptor(
+    segments: tuple[tuple[str, ...], ...],
+) -> NativeCliCommand | None:
+    """Preserve the stable target of a registered service-owned read command."""
+    if len(segments) != 1:
+        return None
+    argv = segments[0]
+    if not _is_service_read_only_python_command(argv):
+        return None
+    return NativeCliCommand(
+        cli="local-shell",
+        command_path=f"app.cli {argv[3]}",
+        effect=EffectKind.READ_ONLY,
+        command_digest=hashlib.sha256(shlex.join(argv).encode("utf-8")).hexdigest(),
+        target_identifiers={"instance-id": argv[5]},
     )
 
 

@@ -1528,6 +1528,7 @@ def test_worker_defaults_to_real_channel_gates(tmp_path, monkeypatch):
 
     assert isinstance(worker.channel_gates["dingtalk"], DwsChannelGate)
     assert isinstance(worker.channel_gates["lark"], LarkChannelGate)
+    assert set(worker.channel_gates) == {"dingtalk", "lark"}
 
 
 def test_notification_url_includes_attempt_id(tmp_path, monkeypatch):
@@ -1787,6 +1788,40 @@ def test_required_channels_for_task_detects_referenced_channel_capabilities(
         "dingtalk",
         "lark",
     }
+
+
+def test_consume_once_waits_for_codex_gate_before_starting_agent_run(
+    tmp_path, monkeypatch
+):
+    dws = FakeDws([], {})
+    codex = FakeCodex([])
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        channel_gates={
+            "dingtalk": FixedGate("dingtalk", ChannelGateState.READY),
+            "lark": FixedGate("lark", ChannelGateState.READY),
+            "codex": FixedGate("codex", ChannelGateState.NEEDS_LOGIN),
+        },
+    )
+    trigger = message("请处理审批")
+    assert worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        channel="dingtalk",
+    )
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert codex.calls == []
+    assert worker.store.count_reply_tasks(status="pending") == 1
 
 
 def test_produce_once_records_list_unread_failure_without_crashing(
@@ -11459,6 +11494,64 @@ def test_rerun_message_looks_up_trigger_by_id_when_recent_context_expired(
     assert dws.messages_by_id_reads == [["msg-1"]]
     assert len(agent_runner(worker).calls) == 1
     assert final_sent(dws) == []
+
+
+def test_rerun_message_reuses_persisted_service_trigger_without_chat_lookup(
+    tmp_path: Path, monkeypatch
+):
+    service_conversation = DingTalkConversation(
+        open_conversation_id="oa_pending_scan",
+        title="审批待办",
+        single_chat=True,
+        unread_point=0,
+    )
+    trigger = message(
+        "请审阅当前审批。",
+        message_id="oa-pending:proc-1:revision-1",
+        single_chat=True,
+    ).model_copy(
+        update={
+            "open_conversation_id": "oa_pending_scan",
+            "conversation_title": "审批待办",
+            "raw_payload": {
+                "source": "oa_pending_scan",
+                "processInstanceId": "proc-1",
+                "taskId": "task-1",
+            },
+        }
+    )
+    dws = FakeDws(
+        [service_conversation],
+        {"oa_pending_scan": []},
+        unread_messages={"oa_pending_scan": []},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    assert worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        channel="dingtalk",
+    )
+    script_agent_result(
+        worker,
+        explicit_agent_result(ScriptOutcome.NO_ACTION, "approval already reviewed"),
+    )
+
+    processed = worker.rerun_message(
+        service_conversation,
+        trigger.open_message_id,
+        force_new_decision=True,
+    )
+
+    assert processed == trigger.open_message_id
+    assert dws.recent_message_reads == []
+    assert dws.unread_message_reads == []
+    assert dws.messages_by_id_reads == []
 
 
 def test_rerun_message_does_not_resend_when_trigger_already_has_sent_reply(

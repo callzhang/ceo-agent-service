@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import app.consumer_agent as consumer_agent
 from app.agent_context import AgentTaskContext, _CONSUMER_AGENT_RULES
 from app.agent_contracts import ConsumerAgentResult
 from app.consumer_agent import (
@@ -369,6 +370,75 @@ def test_consumer_forced_rerun_starts_a_fresh_session(store, task, context):
     assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
 
 
+def test_consumer_accepts_read_only_session_handoff(store, task, context):
+    result = {
+        "outcome": "no_action",
+        "summary": "Nothing to do.",
+        "proposal": None,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    }
+    executor = CapturingExecutor(
+        "\n".join(
+            (
+                json.dumps({"type": "thread.started", "thread_id": "session-first"}),
+                json.dumps({"type": "thread.started", "thread_id": "session-final"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": json.dumps(_wire_result(result)),
+                        },
+                    }
+                ),
+            )
+        )
+    )
+
+    outcome = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run(outcome.run_id)
+    assert run is not None and run.codex_session_id == "session-final"
+    assert store.get_codex_session_id(task.conversation_id) == "session-final"
+
+
+def test_consumer_rotates_session_when_service_read_contract_changes(
+    store, task, context, monkeypatch
+):
+    monkeypatch.setattr(
+        consumer_agent,
+        "service_read_command_contract",
+        lambda: ("previous-read-command",),
+    )
+    old_contract = consumer_agent.consumer_wire_contract_hash()
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(task.conversation_id, old_contract)
+    monkeypatch.setattr(
+        consumer_agent,
+        "service_read_command_contract",
+        lambda: ("current-read-command",),
+    )
+    executor = CapturingExecutor(_result_jsonl(session="session-fresh"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert executor.commands[0][2] != "resume"
+    assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
+    assert store.get_codex_session_contract_hash(task.conversation_id) == (
+        consumer_agent.consumer_wire_contract_hash()
+    )
+
+
 def test_consumer_retryable_failure_without_tool_progress_rotates_session(
     store, task, context
 ):
@@ -413,7 +483,6 @@ def test_consumer_retryable_failure_without_tool_progress_rotates_session(
     assert result.result.outcome.value == "failed"
     assert executor.commands[0][:3] == ["codex", "exec", "resume"]
     assert store.get_codex_session_id(task.conversation_id) is None
-
 
 def test_consumer_rotates_damaged_session_after_missing_final_result(
     store, task, context

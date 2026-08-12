@@ -47,11 +47,15 @@ violation 或必需数据源不可检查。
 | 外部投递队列 | `work_todo_dingtalk_links`、`wechat_deliveries`、`memory_write_events` 的失败或未知发送 | 这些队列的活动状态 |
 | `feedback_events` | 未记录 `resolved_at` 的反馈 | 无 |
 | `daily_scan_state` / `wechat_read_state` | scanner 仍有 `last_error`；微信 reader 不可用且存在待处理微信回复 | 无待处理微信工作时的 reader 未就绪 |
-| `errors` | 最近 4 小时新建的服务错误 | 无 |
+| `errors` | 最近 4 小时新建且未解决的服务错误 | 无 |
 
 当前时间窗口是有意区分的：`errors` 为最近 4 小时，最新 `dry_run` 为最近 24 小时，
 其余队列按当前所有未终态记录扫描。超时值来自 `app/quality_gate.py`，不要在 heartbeat
 或审计页面重新硬编码另一套值。
+
+服务错误保留原始时间和详情。只有完成了可读回验证的恢复动作，才可以写入明确的
+解决说明和时间；质量巡检随后不再将该错误计为未解决。没有关联业务 trigger 的通道错误
+不能仅因时间过去或新任务成功而自动关闭。
 
 ## Trigger 收敛规则
 
@@ -96,9 +100,10 @@ attempt 开始。Attention 中同一 reply trigger 只保留一条 `Reply task` 
 
 ## 外部依赖边界
 
-`quality-check` 默认附加当前 `default_channel_gates()` 的实时检查，即 DingTalk 和
-Lark。任一 gate 不是 `ready` 都作为 `channel:<name>/not_ready` violation。离线诊断
-可以显式使用 `--no-verify-channels`，但该结果不能作为线上健康证明。
+`quality-check` 默认附加实时 channel gate。DingTalk 和 Codex 始终检查；Lark 只在未完成
+任务实际引用飞书材料时检查。任一被要求的 gate 不是 `ready` 都作为
+`channel:<name>/not_ready` violation。离线诊断可以显式使用 `--no-verify-channels`，但该
+结果不能作为线上健康证明。
 
 微信目前由本地 reader/delivery 状态覆盖，并没有在此命令中执行独立的 token 刷新或
 发送 smoke test。Codex 也不在本命令中执行登录或写入 smoke test；其运行可用性由
@@ -125,6 +130,12 @@ Lark。任一 gate 不是 `ready` 都作为 `channel:<name>/not_ready` violation
 operation 和回执上下文，并被限制为只读。这样原会话即使已经中断或终止，也不会让对账
 无限重试或诱发写入重放。只有只读结果明确为 `absent`，后续受限的执行阶段才可新建会话
 并执行已授权的单个动作。
+
+Codex 的流式输出与本地 session JSONL 是同一 turn 的两份审计载体。若流式输出缺少已完成
+的 reviewed MCP 调用，worker 会在短暂等待 session 落盘后读取对应的
+`mcp_tool_call_end` 回执，并按同一 allowlist、命令摘要、目标和返回回执规则重新验证。
+只有验证通过的回执才会补入 `agent_runs` 和发送台账；读取失败、未审核工具或回执不匹配
+仍保持 `unknown`，不会以 session 文件的存在假定外部动作成功。
 
 恢复失败状态必须保留可操作的分类，例如结果缺失、结果格式不合法、provider 不可用或
 核验结果不符合约束；不得把它们重新覆盖成泛化的 `audit_recovery_failed`。页面和通知

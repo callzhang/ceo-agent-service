@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -36,12 +37,22 @@ from app.agent_effects import (
     _mcp_call_completed,
     _normalized_key,
 )
-from app.codex_runner import CodexRunner
+from app.codex_failure import (
+    CODEX_PROVIDER_AUTH_FAILED,
+    CODEX_PROVIDER_UNAVAILABLE,
+    classify_codex_process_failure,
+)
+from app.codex_history import (
+    count_codex_session_lines,
+    extract_codex_mcp_tool_results_from_session,
+)
+from app.codex_runner import CodexRunner, _codex_home
 from app.leak_check import contains_credential
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
     describe_native_command,
+    native_command_argv,
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
@@ -49,8 +60,6 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
-CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
-CODEX_PROVIDER_AUTH_FAILED = "codex_provider_auth_failed"
 UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS = 60
 UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS = 15 * 60
 
@@ -78,25 +87,10 @@ class AgentTurnRunResult(Generic[ResultT]):
 
 
 def _process_failure_code(process: ProcessRunResult) -> str:
-    detail = f"{process.stdout}\n{process.stderr}".casefold()
-    if (
-        "missing bearer or basic authentication" in detail
-        and "/v1/responses" in detail
-    ):
-        return (
-            f"{CODEX_PROVIDER_AUTH_FAILED}: native Codex CLI authentication "
-            "is unavailable"
-        )
-    if any(
-        marker in detail
-        for marker in (
-            "workspace is out of credits",
-            "hit your usage limit",
-            "quota exceeded",
-        )
-    ):
-        return CODEX_PROVIDER_UNAVAILABLE
-    return "codex_process_failed"
+    code = classify_codex_process_failure(process.stdout, process.stderr)
+    if code == CODEX_PROVIDER_AUTH_FAILED:
+        return f"{code}: native Codex CLI authentication is unavailable"
+    return code
 
 
 def _agent_process_error_code(exc: Exception) -> str:
@@ -184,6 +178,10 @@ class AgentTurnProcess(Generic[ResultT]):
         recovery_started_actions: set[int] = set()
         effect_action_counts = [0] * len(expected_effect_actions)
         effect_action_by_call_id: dict[str, int] = {}
+        completed_effect_call_ids: set[str] = set()
+        suppressed_session_replay_call_ids: set[str] = set()
+        observed_session_id = ""
+        session_transcript_end = 0
         recovery_event_start = len(run.tool_events)
         completed_before_recovery = (
             _action_completion_accounting(
@@ -200,8 +198,96 @@ class AgentTurnProcess(Generic[ResultT]):
             run.transcript_end_line if recover_unknown else run.transcript_start_line
         )
 
-        def persist_line(line: str) -> None:
+        def persist_effect_event(
+            payload: dict[str, object], *, from_session_replay: bool = False
+        ) -> None:
             nonlocal line_count, saw_json
+            nonlocal primary_turn_started, primary_turn_closed
+            event = self._normalized_effect_event(
+                payload,
+                read_only=(
+                    run.role is AgentRole.CONSUMER
+                    or recovery_phase == "reconcile"
+                ),
+                operation_id=run.operation_id,
+            )
+            if event is None:
+                return
+            item = event.get("item")
+            metadata = item.get("metadata") if isinstance(item, dict) else None
+            effect = metadata.get("effect") if isinstance(metadata, dict) else None
+            call_id = str(item.get("id") or item.get("call_id") or "") if isinstance(item, dict) else ""
+            if event.get("type") == "item.completed" and call_id:
+                completed_effect_call_ids.add(call_id)
+            if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
+                if event.get("type") == "item.started":
+                    authorization_id = metadata.get("authorization_id")
+                    if recovery_phase == "execute":
+                        action_index = recovery_authorizations.get(
+                            str(authorization_id or "")
+                        )
+                        if (
+                            action_index is None
+                            or action_index >= len(expected_effect_actions)
+                            or not _metadata_matches_action(
+                                metadata, expected_effect_actions[action_index]
+                            )
+                        ):
+                            action_index = None
+                    else:
+                        candidates = [
+                            index
+                            for index, action in enumerate(expected_effect_actions)
+                            if _metadata_matches_action(metadata, action)
+                        ]
+                        action_index = (
+                            min(candidates, key=effect_action_counts.__getitem__)
+                            if candidates
+                            else None
+                        )
+                    if action_index is not None:
+                        # The local Codex session can contain the same completed
+                        # controlled call already observed in the live JSON stream,
+                        # but with a different call ID. Replaying it would create a
+                        # second lifecycle in our ledger and falsely make one action
+                        # look like two executions. Keep session-only recovery, but
+                        # never replay an action that live streaming already covered.
+                        if from_session_replay and effect_action_counts[action_index]:
+                            suppressed_session_replay_call_ids.add(call_id)
+                            return
+                        metadata["action_index"] = action_index
+                        effect_action_counts[action_index] += 1
+                        effect_action_by_call_id[call_id] = action_index
+                else:
+                    if from_session_replay and call_id in suppressed_session_replay_call_ids:
+                        return
+                    action_index = effect_action_by_call_id.get(call_id)
+                    if action_index is not None:
+                        metadata["action_index"] = action_index
+            if (
+                recovery_phase == "execute"
+                and event.get("type") == "item.started"
+                and effect == EffectKind.EFFECTFUL.value
+            ):
+                action_index = metadata.get("action_index")
+                if (
+                    action_index is None
+                    or action_index not in authorized_recovery_actions
+                    or action_index in completed_before_recovery
+                    or action_index in recovery_started_actions
+                ):
+                    raise RuntimeError("audit_recovery_action_not_authorized")
+                recovery_started_actions.add(action_index)
+            if recover_unknown:
+                self.store.append_unknown_agent_run_event(
+                    run.id, event, owner=self.owner
+                )
+            else:
+                self.store.append_agent_run_event(run.id, event, owner=self.owner)
+            self._record_direct_send_receipt(event, payload, run=run)
+
+        def persist_line(line: str) -> None:
+            nonlocal line_count, saw_json, observed_session_id
             nonlocal primary_turn_started, primary_turn_closed
             if not line.strip():
                 return
@@ -235,6 +321,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 on_progress()
             new_session = _session_id(payload)
             if new_session:
+                observed_session_id = new_session
                 if recover_unknown:
                     # Reconciliation and the narrowly authorized follow-up write
                     # run as fresh sessions. Preserve the original session on the
@@ -247,6 +334,9 @@ class AgentTurnProcess(Generic[ResultT]):
                         new_session,
                         owner=self.owner,
                         transcript_start_line=run.transcript_start_line,
+                        allow_consumer_session_handoff=(
+                            run.role is AgentRole.CONSUMER
+                        ),
                     )
                 if persist_conversation_session and not recover_unknown:
                     self.store.upsert_conversation(
@@ -255,73 +345,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         self.task.single_chat,
                         new_session,
                     )
-            event = self._normalized_effect_event(
-                payload,
-                read_only=(
-                    run.role is AgentRole.CONSUMER
-                    or recovery_phase == "reconcile"
-                ),
-                operation_id=run.operation_id,
-            )
-            if event is not None:
-                item = event.get("item")
-                metadata = item.get("metadata") if isinstance(item, dict) else None
-                effect = metadata.get("effect") if isinstance(metadata, dict) else None
-                if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
-                    call_id = str(item.get("id") or item.get("call_id") or "")
-                    if event.get("type") == "item.started":
-                        authorization_id = metadata.get("authorization_id")
-                        if recovery_phase == "execute":
-                            action_index = recovery_authorizations.get(
-                                str(authorization_id or "")
-                            )
-                            if (
-                                action_index is None
-                                or action_index >= len(expected_effect_actions)
-                                or not _metadata_matches_action(
-                                    metadata, expected_effect_actions[action_index]
-                                )
-                            ):
-                                action_index = None
-                        else:
-                            candidates = [
-                                index
-                                for index, action in enumerate(expected_effect_actions)
-                                if _metadata_matches_action(metadata, action)
-                            ]
-                            action_index = (
-                                min(candidates, key=effect_action_counts.__getitem__)
-                                if candidates
-                                else None
-                            )
-                        if action_index is not None:
-                            metadata["action_index"] = action_index
-                            effect_action_counts[action_index] += 1
-                            effect_action_by_call_id[call_id] = action_index
-                    else:
-                        action_index = effect_action_by_call_id.get(call_id)
-                        if action_index is not None:
-                            metadata["action_index"] = action_index
-                if (
-                    recovery_phase == "execute"
-                    and event.get("type") == "item.started"
-                    and effect == EffectKind.EFFECTFUL.value
-                ):
-                    action_index = metadata.get("action_index")
-                    if (
-                        action_index is None
-                        or action_index not in authorized_recovery_actions
-                        or action_index in completed_before_recovery
-                        or action_index in recovery_started_actions
-                    ):
-                        raise RuntimeError("audit_recovery_action_not_authorized")
-                    recovery_started_actions.add(action_index)
-                if recover_unknown:
-                    self.store.append_unknown_agent_run_event(
-                        run.id, event, owner=self.owner
-                    )
-                else:
-                    self.store.append_agent_run_event(run.id, event, owner=self.owner)
+            persist_effect_event(payload)
             if primary_turn_started and payload_type in {
                 "turn.completed",
                 "turn.failed",
@@ -349,6 +373,72 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             self._raise_for_process_failure(process, run=run)
             result = parse_result(process.stdout)
+            session_for_receipts = observed_session_id or session_id or run.codex_session_id
+            if session_for_receipts:
+                session_start = 0 if recover_unknown else transcript_start
+                # The CLI can flush local session events after the JSON stream has
+                # ended. Wait briefly for a stable line count, then replay only
+                # previously unseen completed calls through the normal validator.
+                previous_count = -1
+                for _ in range(4):
+                    session_end = count_codex_session_lines(
+                        session_for_receipts, codex_home=_codex_home()
+                    )
+                    if session_end == previous_count:
+                        break
+                    previous_count = session_end
+                    time.sleep(0.05)
+                session_transcript_end = max(previous_count, 0)
+                for completed_payload in extract_codex_mcp_tool_results_from_session(
+                    session_for_receipts,
+                    codex_home=_codex_home(),
+                    start_line=session_start,
+                    end_line=max(previous_count, 0),
+                ):
+                    completed_item = completed_payload.get("item")
+                    call_id = (
+                        str(completed_item.get("id") or "")
+                        if isinstance(completed_item, dict)
+                        else ""
+                    )
+                    if not call_id or call_id in completed_effect_call_ids:
+                        continue
+                    # Session history contains every MCP call, including
+                    # read-only integrations owned outside this effect registry.
+                    # They are useful audit context but cannot create execution
+                    # evidence here; only a reviewed call may be replayed into
+                    # the durable effect ledger.
+                    call = self.effects.classify(completed_item)
+                    if call is None:
+                        continue
+                    if run.role is AgentRole.CONSUMER:
+                        continue
+                    if recovery_phase != "reconcile" and call.effect is EffectKind.READ_ONLY:
+                        continue
+                    # A session-only read without a controlled receipt cannot
+                    # become audit evidence. Ignore it here; reconciliation
+                    # validation will still reject a result that relies on it.
+                    try:
+                        self._normalized_effect_event(
+                            completed_payload,
+                            read_only=(recovery_phase == "reconcile"),
+                            operation_id=run.operation_id,
+                        )
+                    except AgentReadOnlyViolationError as exc:
+                        if str(exc) != "agent_cli_receipt_invalid":
+                            raise
+                        continue
+                    start_payload = {
+                        "type": "item.started",
+                        "item": {
+                            key: value
+                            for key, value in completed_item.items()
+                            if key not in {"status", "result"}
+                        }
+                        | {"status": "in_progress"},
+                    }
+                    persist_effect_event(start_payload, from_session_replay=True)
+                    persist_effect_event(completed_payload, from_session_replay=True)
             if _contains_sensitive_value(result.model_dump(mode="json")):
                 raise ValueError("agent_result_contains_sensitive_value")
         except ResultParseError as exc:
@@ -398,7 +488,11 @@ class AgentTurnProcess(Generic[ResultT]):
             if provider_recovery == CODEX_PROVIDER_UNAVAILABLE:
                 raise RuntimeError(code) from exc
             raise
-        transcript_end = transcript_start + line_count
+        transcript_end = (
+            run.transcript_end_line
+            if recover_unknown
+            else max(transcript_start + line_count, session_transcript_end)
+        )
         outcome = getattr(result, "outcome")
         side_effect_state = getattr(result, "side_effect_state", SideEffectState.NONE)
         persisted = self.store.get_agent_run(run.id)
@@ -663,6 +757,10 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             if result_identifiers:
                 metadata["result_identifiers"] = result_identifiers
+        elif controlled_receipt_failed and validated_receipt is not None:
+            result_digest = validated_receipt.get("result_digest")
+            if isinstance(result_digest, str) and result_digest:
+                metadata["result_digest"] = result_digest
         if native_cli:
             metadata["native_cli"] = native_cli
         if authorization_id:
@@ -678,6 +776,75 @@ class AgentTurnProcess(Generic[ResultT]):
                 "metadata": metadata,
             },
         }
+
+    def _record_direct_send_receipt(
+        self,
+        event: dict[str, object],
+        payload: dict[str, object],
+        *,
+        run: AgentRun,
+    ) -> None:
+        """Persist the service delivery fact for a completed reviewed chat send."""
+        if event.get("type") != "item.completed":
+            return
+        event_item = event.get("item")
+        metadata = (
+            event_item.get("metadata") if isinstance(event_item, dict) else None
+        )
+        raw_item = payload.get("item")
+        arguments = raw_item.get("arguments") if isinstance(raw_item, dict) else None
+        argv = native_command_argv(
+            {"type": "command_execution", "argv": arguments.get("argv")}
+            if isinstance(arguments, dict)
+            else {}
+        )
+        if (
+            not isinstance(metadata, dict)
+            or not _is_dingtalk_chat_send_argv(metadata, argv)
+        ):
+            return
+        reply_text = _command_option_value(argv, "--text")
+        if not reply_text or self.store.has_sent_reply_for_trigger(
+            self.task.conversation_id, self.task.trigger_message_id
+        ):
+            return
+        self.store.record_sent_reply(
+            self.task.conversation_id,
+            self.task.trigger_message_id,
+            reply_text,
+            send_result_json=json.dumps(
+                {
+                    "agent_run_id": run.id,
+                    "operation_id": run.operation_id,
+                    "operation_digest": metadata.get("operation_digest", ""),
+                    "result_digest": metadata.get("result_digest", ""),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+
+    def _require_direct_send_receipt(
+        self,
+        run: AgentRun,
+        expected_effect_actions: tuple[dict[str, object], ...],
+    ) -> None:
+        if not any(
+            _is_expected_dingtalk_chat_send(action)
+            for action in expected_effect_actions
+        ):
+            return
+        if self.store.has_sent_reply_for_trigger(
+            self.task.conversation_id, self.task.trigger_message_id
+        ):
+            return
+        self.store.mark_agent_run_unknown(
+            run.id,
+            {"code": "audit_delivery_ledger_missing", "retryable": True},
+            owner=self.owner,
+        )
+        raise RuntimeError("audit_delivery_ledger_missing")
 
     def _validate_audit_result(
         self,
@@ -707,18 +874,19 @@ class AgentTurnProcess(Generic[ResultT]):
                 registry=self.effects,
             )
             if completed == set(range(len(expected_effect_actions))) and all_effects_closed:
-                if _actions_have_required_readbacks(
+                if not _actions_have_required_readbacks(
                     persisted.tool_events,
                     expected_effect_actions,
                     self.effects,
                 ):
-                    return
-                self.store.mark_agent_run_unknown(
-                    run.id,
-                    {"code": "audit_external_readback_missing", "retryable": True},
-                    owner=self.owner,
-                )
-                raise RuntimeError("audit_external_readback_missing")
+                    self.store.mark_agent_run_unknown(
+                        run.id,
+                        {"code": "audit_external_readback_missing", "retryable": True},
+                        owner=self.owner,
+                    )
+                    raise RuntimeError("audit_external_readback_missing")
+                self._require_direct_send_receipt(run, expected_effect_actions)
+                return
             code = (
                 "audit_execution_evidence_missing"
                 if persisted.side_effect_state == SideEffectState.NONE.value
@@ -910,6 +1078,7 @@ class AgentTurnProcess(Generic[ResultT]):
             self.effects,
         ):
             raise RuntimeError("audit_external_readback_missing")
+        self._require_direct_send_receipt(run, expected_effect_actions)
 
     def _raise_for_process_failure(
         self, process: ProcessRunResult, *, run: AgentRun
@@ -943,6 +1112,16 @@ class AgentTurnProcess(Generic[ResultT]):
                         **({"detail": detail} if detail else {}),
                     },
                     owner=self.owner,
+                )
+            elif failure := _closed_effect_failure(persisted, fallback_code=code):
+                self.store.fail_agent_run(
+                    run.id,
+                    {
+                        **failure,
+                        **({"detail": detail} if detail else {}),
+                    },
+                    owner=self.owner,
+                    side_effect_state=SideEffectState.CONFIRMED.value,
                 )
             else:
                 self.store.mark_agent_run_unknown(
@@ -999,6 +1178,98 @@ def _stream_has_no_agent_result(raw: str) -> bool:
         ):
             return False
     return saw_json
+
+
+def _is_dingtalk_chat_send(metadata: dict[str, object]) -> bool:
+    target = metadata.get("target_identifiers")
+    return (
+        metadata.get("effect") == EffectKind.EFFECTFUL.value
+        and metadata.get("capability") == "agent_cli.dws"
+        and isinstance(target, dict)
+        and any(
+            isinstance(target.get(key), str) and target[key]
+            for key in ("group", "user", "open-dingtalk-id")
+        )
+    )
+
+
+def _is_dingtalk_chat_send_argv(
+    metadata: dict[str, object],
+    argv: tuple[str, ...] | None,
+) -> bool:
+    operation = metadata.get("operation")
+    return (
+        _is_dingtalk_chat_send(metadata)
+        and argv is not None
+        and len(argv) >= 3
+        and argv[0] == "dws"
+        and isinstance(operation, str)
+        and operation.startswith("chat ")
+        and bool(_command_option_value(argv, "--text"))
+    )
+
+
+def _is_expected_dingtalk_chat_send(action: dict[str, object]) -> bool:
+    target = action.get("target_identifiers")
+    return (
+        action.get("capability") == "agent_cli.dws"
+        and isinstance(target, dict)
+        and any(
+            isinstance(target.get(key), str) and target[key]
+            for key in ("group", "user", "open-dingtalk-id")
+        )
+    )
+
+
+def _command_option_value(
+    argv: tuple[str, ...] | None,
+    option: str,
+) -> str:
+    if argv is None:
+        return ""
+    try:
+        index = argv.index(option)
+    except ValueError:
+        return ""
+    if index + 1 >= len(argv):
+        return ""
+    value = argv[index + 1]
+    return value if value and not value.startswith("--") else ""
+
+
+def _closed_effect_failure(
+    run: AgentRun,
+    *,
+    fallback_code: str,
+) -> dict[str, object] | None:
+    if (
+        run.effect_started_count <= 0
+        or run.effect_failed_count <= 0
+        or run.effect_unreviewed_count
+        or run.effect_started_count
+        > run.effect_completed_count
+        + run.effect_failed_count
+        + run.effect_receipt_count
+    ):
+        return None
+    for event in reversed(run.tool_events):
+        if event.get("type") != "item.failed":
+            continue
+        item = event.get("item")
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        if not isinstance(metadata, dict) or metadata.get("effect") != "effectful":
+            continue
+        failure_code = metadata.get("failure_code")
+        return {
+            "code": (
+                failure_code
+                if isinstance(failure_code, str) and failure_code
+                else fallback_code
+            ),
+            "retryable": bool(metadata.get("failure_retryable", False)),
+            "authorization_required": False,
+        }
+    return None
 
 
 def _session_id(payload: dict[str, object]) -> str:
@@ -1293,7 +1564,13 @@ def _validated_reconciliation(
             raise RuntimeError("audit_reconciliation_action_mismatch")
         matching_digests: list[str] = []
         for index, event in enumerate(events):
-            if index < event_start or event.get("type") != "item.completed":
+            if index < event_start or (
+                event.get("type") != "item.completed"
+                and not (
+                    event.get("type") == "item.failed"
+                    and entry.disposition is ReconciliationDisposition.AMBIGUOUS
+                )
+            ):
                 continue
             metadata = _event_metadata(event)
             if (

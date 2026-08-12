@@ -34,9 +34,17 @@ Agent 超时、进程重启和外部写入结果未知时，仍能恢复而不�
 ### Consumer Agent A
 
 每个 `conversation_id` 绑定一个 A Codex session。新消息通过 `codex exec resume` 追加到该
-session，使 A 能复用参与者、历史事实、已做决定和此前澄清结果。服务同时保存严格 Consumer
-wire schema 的指纹；session 文件缺失、损坏或该指纹变化时，必须新建会话。新会话仍从 SQLite
-任务上下文读取事实，不能用旧 session 的输出形状绕过当前校验。
+session，使 A 能复用参与者、历史事实、已做决定和此前澄清结果。服务同时保存 Consumer
+会话合同的指纹：严格 wire schema、基础职责指令和注册的 service-owned 只读命令都包含在内；
+session 文件缺失、损坏或任一合同项变化时，必须新建会话。新会话仍从 SQLite 任务上下文读取
+事实，不能用旧 session 的输出形状、旧提示或旧工具策略绕过当前校验。
+
+Consumer turn 全程只读；如果 Codex 在同一 Consumer turn 中报告新的 session，且该 run 没有
+持久化执行 receipt，服务把会话指向包含最终结果的最新 session。Audit turn 不适用此规则：一旦
+启动，Audit session 始终不可替换，避免外部动作审计链断裂。
+
+服务自带的 OA 详情读取命令会把审批实例标识写入审计元数据。这样审批评论或审批动作发生
+不确定时，恢复回合可用同一实例的详情读回逐项确认已发生与未发生的动作，避免把已写评论重复执行。
 
 同一时刻只允许一个 A turn 更新该 session。服务使用短期可续租的 transcript 锁保证 JSONL
 顺序；后续消息仍保留在 SQLite 队列，不因锁存在而丢失。
@@ -82,6 +90,10 @@ OA 待办扫描产生的是合成 trigger，不是名为“审批待办”的真
 Audit Rules 对 A/B 同时可见，但只控制业务审阅规则。它不能改变角色权限、加载新的 MCP、
 取消精确去重或扩大恢复写入范围。
 
+行动依赖的事实必须能回指到任务提供的材料或实际执行过的受控只读命令。A 不得以临时外网
+请求或任意本地脚本建立行动事实；B 发现不可复读来源时必须返回具体的 `revision_required`，而
+不是绕开受控工具边界自行抓取。证据不足时由 A 提出可回答的事实澄清，随后按常规 A/B 链路处理。
+
 ## 外部写入与精确去重
 
 每个候选动作绑定 task generation、proposal revision、operation ID、目标和参数摘要。B 在写入
@@ -96,6 +108,12 @@ Audit Rules 对 A/B 同时可见，但只控制业务审阅规则。它不能改
 ## 未知结果恢复
 
 当 B 已开始写入但进程退出、连接断开或结果无法解析时，run 标记为 `unknown`。恢复顺序固定：
+
+`unknown` 只适用于至少一个写调用仍未闭合的情况。若每个写调用都已有
+`completed` 或 `failed` 终态，系统直接保存确定结果：已经完成的动作保持 `confirmed`，
+明确失败且未执行的动作保持 `failed`。即使 Codex 随后异常退出，也不再进入只读核对或要求
+用户在没有业务选择的情况下作决定。历史误标记录只能在校验全部写调用均已闭合后，通过
+Store 的受约束修复入口改回确定失败；不得直接改数据库或重放已完成动作。
 
 1. 领取原 unknown run，并续租原 run。
 2. 使用原 B session 和原 operation ID 做只读查询。
@@ -280,12 +298,14 @@ and every attempted external action remain error-reporting paths.
 
 The CEO service uses the authentication state already owned by the local Codex
 App/CLI. It does not read or modify `~/.codex/auth.json`, launch `codex login`,
-or inspect/restart Codex app-server processes. A Codex 401/403, missing auth
-header, or explicit login-required failure is persisted immediately as a
-terminal failed task and surfaced through the normal failed-attempt
-notification. It is not converted into an authorization wait or retried as a
-service-owned recovery. Transient provider transport failures remain eligible
-for the existing bounded retry.
+run `codex login status` as a task gate, or inspect/restart Codex app-server
+processes. DWS and Lark remain explicit channel gates; Codex is invoked directly.
+A Codex 401/403, missing auth header, or explicit login-required failure is
+persisted immediately as a terminal failed task and surfaced through the normal
+failed-attempt notification. It is not converted into an authorization wait,
+assigned a recovery code, or retried when a later login probe changes state.
+Transient provider transport failures remain eligible for the existing bounded
+retry.
 
 ### Recent error reconciliation
 
@@ -391,11 +411,15 @@ The reconciliation result must cite the digest of a completed matching read in
 that turn. Repeating the same scoped read is allowed; the service does not rewrite
 the Agent's cited digest and rejects an unrelated or historical digest.
 
-Unknown DingTalk message delivery uses the reviewed command descriptor and the
-service delivery ledger as its identity. The Agent's free-form operation label
-does not decide whether an action is a message send. When the exact trigger has
-no delivery record, the unknown run is closed as absent and the task rotates to
-a fresh generation; the old write is never replayed.
+The service delivery ledger is not evidence that an Agent-executed DingTalk
+message is absent: controlled DWS writes may complete before the final service
+delivery row is recorded. Unknown delivery therefore remains read-only until a
+target-scoped read proves presence or absence. A completed controlled tool event
+or persisted receipt for the exact action overrides any older absent readback and
+prevents recovery from authorizing the same write again.
+On service startup, unfinished unknown Audit reconciliation leases are released
+immediately. The next worker pass continues the read-only reconciliation; it
+does not mark the old external action as absent or replay it because of restart.
 
 Browser notification clicks call the local DingTalk bridge with `POST`, matching
 the bridge's external-action boundary. The click may then focus an existing audit

@@ -35,6 +35,14 @@
             },
             {"read": "oa approval detail", "write": "oa approval approve"},
             {"read": "oa approval detail", "write": "oa approval comment"},
+            {
+              "read": "app.cli read-oa-approval-detail",
+              "write": "oa approval approve"
+            },
+            {
+              "read": "app.cli read-oa-approval-detail",
+              "write": "oa approval comment"
+            },
             {"read": "oa approval tasks", "write": "oa approval approve"},
             {"read": "oa approval tasks", "write": "oa approval comment"}
           ]

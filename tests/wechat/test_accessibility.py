@@ -8,7 +8,7 @@ import app.wechat.accessibility as accessibility
 from app.store import AutoReplyStore
 from app.wechat.accessibility import (
     AccessibilityResult, MacWechatAccessibility, SenderExecutionError,
-    WechatSender, _open_target,
+    SendOutcome, WechatSender, _open_target,
     _attribute_text_matches, _screen_is_locked, _text_evidence_matches,
     _walk_accessibility_tree, _result_after_return,
     reconcile_incomplete_deliveries,
@@ -154,8 +154,54 @@ def test_sender_failure_before_request_dispatch_is_retryable(store):
     outcome = sender.send(delivery, _scope("verified"))
 
     assert outcome.status == "failed"
-    assert outcome.error == "action_not_performed"
-    assert store.get_wechat_delivery_for_task(1).status == "failed"
+    assert outcome.error == "sender_unavailable_before_dispatch"
+    persisted = store.get_wechat_delivery_for_task(1)
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.pre_action_failure is True
+
+
+def test_sender_persists_specific_pre_action_failure_reason(store):
+    sender = WechatSender(
+        store,
+        FakeRunner(
+            AccessibilityResult(
+                action_performed=False,
+                visible_confirmation=False,
+                failure_reason="composer_input_unconfirmed",
+            )
+        ),
+    )
+    delivery = _seed_delivery(store)
+
+    outcome = sender.send(delivery, _scope("verified"))
+
+    persisted = store.get_wechat_delivery_for_task(1)
+    assert outcome == SendOutcome("failed", "composer_input_unconfirmed")
+    assert persisted is not None
+    assert persisted.error == "composer_input_unconfirmed"
+    assert persisted.pre_action_failure is True
+
+
+def test_sender_labels_missing_pre_action_failure_reason(store):
+    sender = WechatSender(
+        store,
+        FakeRunner(
+            AccessibilityResult(
+                action_performed=False,
+                visible_confirmation=False,
+            )
+        ),
+    )
+    delivery = _seed_delivery(store)
+
+    outcome = sender.send(delivery, _scope("verified"))
+
+    persisted = store.get_wechat_delivery_for_task(1)
+    assert outcome == SendOutcome("failed", "sender_result_missing_failure_reason")
+    assert persisted is not None
+    assert persisted.error == "sender_result_missing_failure_reason"
+    assert persisted.pre_action_failure is True
 
 
 def test_return_key_attempt_is_unknown_when_composer_confirmation_fails():

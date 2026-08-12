@@ -77,6 +77,7 @@ def test_sender_rpc_exposes_only_bounded_accessibility_operations():
         "action_performed": True,
         "visible_confirmation": True,
         "target_fingerprint": "fp-1",
+        "failure_reason": "",
     }
     assert service.dispatch("recall_last_outbound", {"text": "收到"}) is True
     with pytest.raises(module.SenderIpcError, match="unsupported method"):

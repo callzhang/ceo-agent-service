@@ -199,27 +199,35 @@ def scan_ai_minutes(
         )
         return 0
 
+    state = store.get_daily_scan_state(AI_MINUTES_SCANNER) or {}
+    raw_cursor = state.get("cursor_json") or "{}"
+    try:
+        cursor = json.loads(raw_cursor)
+    except json.JSONDecodeError:
+        cursor = {}
+        raw_cursor = "{}"
+    previous_seen_ids = set(str(value) for value in (cursor.get("seen_ids") or []))
+    previous_oldest_at = str(cursor.get("oldest_seen_at") or "").strip()
+
     list_minutes_page = getattr(dws, "list_minutes_page", None)
     try:
         if list_minutes_page is not None:
-            minutes_items = _list_all_ai_minutes(list_minutes_page)
+            minutes_items, oldest_seen_at = _list_incremental_ai_minutes(
+                list_minutes_page,
+                oldest_seen_at=previous_oldest_at,
+            )
         else:
             minutes_items = list_minutes()
+            oldest_seen_at = _oldest_minutes_item_time(minutes_items)
     except Exception as exc:
         store.set_daily_scan_state(
             AI_MINUTES_SCANNER,
-            last_success_at="",
-            cursor_json="{}",
+            last_success_at=state.get("last_success_at") or "",
+            cursor_json=raw_cursor,
             last_error=str(exc),
         )
         return 0
 
-    state = store.get_daily_scan_state(AI_MINUTES_SCANNER) or {}
-    try:
-        cursor = json.loads(state.get("cursor_json") or "{}")
-    except json.JSONDecodeError:
-        cursor = {}
-    previous_seen_ids = set(str(value) for value in (cursor.get("seen_ids") or []))
     first_scan = not previous_seen_ids
     seen_ids = set(previous_seen_ids)
     count = 0
@@ -277,7 +285,10 @@ def scan_ai_minutes(
         AI_MINUTES_SCANNER,
         last_success_at=_utc_now(),
         cursor_json=json.dumps(
-            {"seen_ids": sorted(seen_ids)},
+            {
+                "seen_ids": sorted(seen_ids),
+                "oldest_seen_at": oldest_seen_at,
+            },
             sort_keys=True,
         ),
         last_error="",
@@ -604,17 +615,71 @@ def _oa_task_field(task: dict[str, Any], names: tuple[str, ...]) -> str:
     return ""
 
 
-def _list_all_ai_minutes(list_minutes_page) -> list[dict]:
+def _minutes_item_time(item: dict) -> str:
+    return str(
+        item.get("createdAt")
+        or item.get("startTimeISO")
+        or item.get("startTime")
+        or ""
+    ).strip()
+
+
+def _parse_minutes_item_time(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _oldest_minutes_item_time(items: list[dict]) -> str:
+    dated_items = [
+        (_parse_minutes_item_time(_minutes_item_time(item)), _minutes_item_time(item))
+        for item in items
+    ]
+    dated_items = [item for item in dated_items if item[0] is not None]
+    if not dated_items:
+        return ""
+    return min(dated_items, key=lambda item: item[0])[1]
+
+
+def _list_incremental_ai_minutes(
+    list_minutes_page,
+    *,
+    oldest_seen_at: str,
+) -> tuple[list[dict], str]:
+    """Read from newest until the durable time boundary, without full rescans."""
     items: list[dict] = []
     cursor = ""
     seen_tokens: set[str] = set()
+    boundary = _parse_minutes_item_time(oldest_seen_at)
     for _ in range(100):
         page = list_minutes_page(limit=50, cursor=cursor)
-        page_items = page.get("items") or []
-        items.extend(item for item in page_items if isinstance(item, dict))
+        page_items = [item for item in (page.get("items") or []) if isinstance(item, dict)]
+        if boundary is None:
+            # Older state had IDs but no time boundary. Process this one recovery
+            # page, then establish the boundary without walking stale cursors.
+            items.extend(page_items)
+            return items, _oldest_minutes_item_time(page_items)
+        newer_items = [
+            item
+            for item in page_items
+            if (
+                (item_time := _parse_minutes_item_time(_minutes_item_time(item)))
+                is not None
+                and item_time > boundary
+            )
+        ]
+        items.extend(newer_items)
+        if len(newer_items) != len(page_items):
+            return items, oldest_seen_at
         cursor = str(page.get("next_token") or "")
         has_more = bool(page.get("has_more"))
         if not has_more or not cursor or cursor in seen_tokens:
             break
         seen_tokens.add(cursor)
-    return items
+    return items, oldest_seen_at or _oldest_minutes_item_time(items)

@@ -14,6 +14,7 @@ import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 REQUIRED_SOURCES = (
@@ -144,6 +145,54 @@ def scan_hourly_quality(
         violations=tuple(violations),
         attention=tuple(attention),
     )
+
+
+def required_live_channels(db_path: Path | str) -> frozenset[str]:
+    """Return integrations needed by the service and its unfinished work.
+
+    DingTalk and Codex are the service's always-on ingress and decision path.
+    Optional integrations are probed only when an unfinished task actually
+    references them, so an unused local CLI cannot make the CEO queue appear
+    unhealthy.
+    """
+    channels = {"dingtalk", "codex"}
+    with sqlite3.connect(str(db_path)) as db:
+        rows = db.execute(
+            """select channel, oa_url, trigger_message_json
+               from reply_tasks
+               where lower(status) in ('pending', 'processing', 'failed')"""
+        )
+        for channel, oa_url, trigger_json in rows:
+            if isinstance(channel, str) and channel.strip():
+                channels.add(channel.strip().casefold())
+            for reference in _reference_strings((oa_url, trigger_json)):
+                host = (urlsplit(reference).hostname or "").casefold()
+                if _host_matches(host, ("feishu.cn", "larksuite.com", "larkoffice.com")):
+                    channels.add("lark")
+    return frozenset(channels)
+
+
+def _reference_strings(value: object):
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = value
+        if parsed is value:
+            for token in value.split():
+                yield token.strip("()[]{}<>\"',.;，。；：")
+        else:
+            yield from _reference_strings(parsed)
+    elif isinstance(value, tuple | list):
+        for nested in value:
+            yield from _reference_strings(nested)
+    elif isinstance(value, dict):
+        for nested in value.values():
+            yield from _reference_strings(nested)
+
+
+def _host_matches(host: str, suffixes: tuple[str, ...]) -> bool:
+    return any(host == suffix or host.endswith(f".{suffix}") for suffix in suffixes)
 
 
 def write_hourly_quality_state(report: QualityGateReport, state_path: Path | str) -> None:
@@ -546,6 +595,7 @@ def _check_recent_errors(
         """select count(*)
            from errors error_event
            where datetime(error_event.created_at) >= datetime(?)
+             and coalesce(error_event.resolved_at, '')=''
              and not exists (
                 select 1
                 from reply_attempts recovery

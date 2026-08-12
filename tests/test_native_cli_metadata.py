@@ -59,6 +59,8 @@ def test_describe_native_command_accepts_service_owned_oa_detail_read():
     assert descriptor is not None
     assert descriptor.cli == "local-shell"
     assert descriptor.effect is EffectKind.READ_ONLY
+    assert descriptor.command_path == "app.cli read-oa-approval-detail"
+    assert descriptor.target_identifiers == {"instance-id": "proc-1"}
 
 
 def test_describe_native_command_rejects_other_service_python_commands():

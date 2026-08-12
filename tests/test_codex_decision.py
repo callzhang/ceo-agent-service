@@ -9,6 +9,7 @@ from app.codex_decision import (
     extract_codex_session_id,
     parse_codex_json,
 )
+from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.codex_runner import memory_connector_config_issue
 from app.dingtalk_models import (
     CalendarResponseStatus,
@@ -1297,6 +1298,29 @@ def test_subprocess_nonzero_preserves_thread_id_for_error(tmp_path: Path, monkey
     assert decision.action == CodexAction.STOP_WITH_ERROR
     assert runner.last_session_id == "thread-1"
     assert "fatal schema error" in decision.reason
+
+
+def test_subprocess_auth_failure_has_structured_failure_code(
+    tmp_path: Path, monkeypatch
+):
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=1,
+            stdout="",
+            stderr=(
+                "Missing bearer or basic authentication in header "
+                "for /v1/responses"
+            ),
+        )
+
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
+    runner = make_runner(tmp_path)
+
+    decision = runner.decide(prompt="decide", session_id=None)
+
+    assert decision.action == CodexAction.STOP_WITH_ERROR
+    assert decision.external_dependency_failed is True
+    assert decision.failure_code == CODEX_PROVIDER_AUTH_FAILED
 
 
 def test_subprocess_nonzero_reports_error_line_before_startup_warning(

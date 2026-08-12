@@ -9355,16 +9355,9 @@ def _attempt_status_card(
         later_attempt
     )
     if later_is_terminal:
-        result_summary = later_attempt.audit_summary.strip()
-        result_html = (
-            f"<br><strong>处理结果：</strong>{escape(result_summary)}"
-            if result_summary
-            else ""
-        )
         message = (
             f'该历史记录已由 <a href="/attempts/{later_attempt.id}">'
             f'Attempt #{later_attempt.id}</a> 后续处理，无需你操作。'
-            f"{result_html}"
         )
     elif active_attempt.send_status == "sent":
         message = "这条回复已发送，无需你操作。"
@@ -9390,7 +9383,29 @@ def _attempt_status_card(
         message = "这次处理没有完成。可使用“重新处理”重新读取材料并执行当前规则。"
     else:
         return ""
-    return f'<section class="card compact-card attempt-status-card"><strong>当前状态：</strong>{message}</section>'
+    decision_required = active_attempt.send_status == "needs_human"
+    decision_detail = ""
+    if decision_required:
+        decision_summary = (
+            active_attempt.audit_summary.strip()
+            or active_attempt.codex_reason.strip()
+        )
+        if decision_summary:
+            decision_detail = (
+                f"<br><strong>待决策问题：</strong>{escape(decision_summary)}"
+            )
+    result_detail = (
+        "<br><strong>处理结果：</strong>后续任务已完成，详细执行证据见后续记录。"
+        if later_is_terminal
+        else ""
+    )
+    return (
+        '<section class="card compact-card attempt-status-card">'
+        f"<strong>事项：</strong>{escape(subject)}"
+        f"<br><strong>当前状态：</strong>{message}"
+        f"<br><strong>需要你决策：</strong>{'是' if decision_required else '否'}"
+        f"{decision_detail}{result_detail}</section>"
+    )
 
 
 def _pending_reconciliation_message(agent_runs: list[AgentRun]) -> str:

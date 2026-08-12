@@ -99,6 +99,36 @@ def test_quality_check_help_names_the_default_live_channel_gates():
     assert "DingTalk and WeChat" not in help_text
 
 
+def test_service_start_releases_unknown_audit_reconciliation_lease(tmp_path: Path):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    store = AutoReplyStore(settings.db_path)
+    enqueue_trigger_task(store)
+    task = store.claim_reply_tasks(1)[0]
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="operation-1",
+        owner="stopped-worker",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="stopped-worker",
+    )
+    assert store.claim_unknown_agent_run(run.id, owner="stopped-reconciler").claimed
+
+    assert cli._recover_orphaned_reply_tasks_on_service_start(settings) == 1
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.lease_owner == ""
+    assert persisted.lease_expires_at == ""
+
+
 def test_parser_requires_structured_agent_run_resolution():
     args = build_parser().parse_args(
         [
@@ -269,7 +299,6 @@ def test_channel_doctor_reports_typed_gate_results(monkeypatch, capsys):
             reason_code="status_auth_invalid",
         ),
     )
-
     report = channel_doctor_command()
 
     assert report == {
@@ -4479,6 +4508,36 @@ def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
     ]
 
 
+def test_meeting_consumer_does_not_preflight_codex_auth(monkeypatch, tmp_path):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path / "memory",
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: object())
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: object())
+    monkeypatch.setattr(cli, "MeetingAlignmentCodexRunner", lambda **kwargs: object())
+    monkeypatch.setattr(
+        cli,
+        "consume_meeting_alignment_jobs",
+        lambda *args, **kwargs: calls.append("consume-meeting"),
+    )
+    with pytest.raises(StopLoop):
+        cli.run_meeting_consumer_loop(
+            settings,
+            poll_interval_seconds=10,
+            max_tasks=1,
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+            network_ready=lambda: True,
+        )
+
+    assert calls == ["consume-meeting"]
+
+
 def test_meeting_producer_suppresses_transient_dws_dependency_error(
     monkeypatch, tmp_path
 ):
@@ -4686,6 +4745,56 @@ def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_pat
         )
 
     assert calls == [("sleep", 60)]
+
+
+def test_task_maintenance_loop_does_not_preflight_codex_auth(
+    monkeypatch, tmp_path
+):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda received: calls.append("work-items"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_okr_reviews_command",
+        lambda received: calls.append("okr-reviews"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda received, max_new_items=None: calls.append("scan-task-sources"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "check_follow_up_completions_command",
+        lambda received, limit=1: calls.append("completion-check"),
+    )
+    with pytest.raises(StopLoop):
+        run_task_maintenance_loop(
+            settings,
+            work_item_interval_seconds=60,
+            daily_interval_seconds=3600,
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+            monotonic=lambda: 10.0,
+            network_ready=lambda: True,
+            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
+        )
+
+    assert calls == [
+        "work-items",
+        "okr-reviews",
+        "scan-task-sources",
+        "work-items",
+        "okr-reviews",
+        "completion-check",
+    ]
 
 
 def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
@@ -5792,6 +5901,45 @@ def test_wechat_consumer_loop_records_failed_trigger_identity(
     assert error.conversation_id == "cid-1"
     assert error.message_id == "msg-1"
     assert error.kind == "wechat_consumer_loop_error"
+
+
+def test_wechat_consumer_does_not_preflight_codex_authentication(
+    monkeypatch,
+    tmp_path,
+):
+    import time
+
+    class StopLoop(Exception):
+        pass
+
+    db = tmp_path / "w.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a1",
+        account_dir="/a1",
+        db_dir="/a1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+    )
+    settings = SimpleNamespace(
+        db_path=db,
+        workspace=tmp_path,
+        codex_timeout_seconds=30,
+        codex_idle_timeout_seconds=30,
+    )
+    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
+    consumed = []
+    monkeypatch.setattr(
+        "app.wechat.service.run_consume_once",
+        lambda *a, **k: consumed.append(True),
+    )
+    monkeypatch.setattr(time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopLoop))
+
+    with pytest.raises(StopLoop):
+        cli._run_wechat_loop(settings, "consumer")
+
+    assert consumed == [True]
 
 
 def test_wechat_loop_pauses_after_reader_reports_app_data_denial(

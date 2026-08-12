@@ -21,7 +21,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **Consumer / Audit Agent 执行**：Consumer A 是管理者的 read-oriented representative，用原生 `codex exec` 读取材料、判断业务并提出精确候选；按角色协议不得主动执行外部写操作。Audit B 独立审阅，并且是 service 生命周期中唯一获授权发布 accepted action、执行和读回外部动作的 Agent。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
 - **Skill-first 材料处理**：服务只传递材料引用、原始 ID、链接和精确读取命令；A 动态读取业务 Skill 和操作 Skill，自行决定展开哪些材料，B 按 verified Skill receipt 重读相同 Skill 并在写入前核对实时状态。
-- **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。写入结果未知时只在原 B session 中核对，不能盲目重放。
+- **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。DingTalk 和 Lark 使用显式通道 gate；Codex 直接沿用本地 App/CLI 登录状态，认证失败立即落为可见失败。写入结果未知时只在原 B session 中核对，不能盲目重放。
 - **人工接管**：对需要本人处理的消息发送 handoff，并暂停该会话的自动回复直到检测到真人回复。
 - **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时生成跟进。多人会议默认发到 Agent 核验过、明确承接该业务或后续行动的团队群；涉及个人隐私、薪酬绩效或不适合公开的个人负面反馈时，可以私信相关参会人。
@@ -86,7 +86,7 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
-所有服务启动的 Codex 通道（包括微信消费）均复用安装用户的 Codex 配置、MCP、插件和 skills。服务不会复制 OAuth 或 token；单个 MCP 的认证失败按实际依赖错误处理，不会触发 Agent 自行登录。
+所有服务启动的 Codex 通道（包括微信消费）均复用安装用户的 Codex 配置、MCP、插件和 skills。服务不会复制 OAuth 或 token；单个 MCP 的认证失败按实际依赖错误处理，不会触发 Agent 自行登录。微信任务将认证恢复资格作为独立状态持久化，不依赖提供方的原始错误文案。Codex 登录恢复后，消费者只会重新排入最近三天内、没有 delivery 或 `sent_replies` 记录、且带有该恢复资格的未开始决策任务；每条恢复任务都会创建新的 generation，已进入发送路径的任务不会自动重放。
 
 A 和 B 使用同一套安装用户 MCP/plugin/Skill 环境，没有 service-owned MCP allowlist，也没有两阶段
 MCP permission profile。某个继承 MCP 可能同时公开读写工具，service 不承诺能在技术上隐藏其中
@@ -94,6 +94,8 @@ MCP permission profile。某个继承 MCP 可能同时公开读写工具，servi
 B 对 accepted candidate 的执行才会进入正式发布、读回和完成流程。
 
 Agent 必须如实返回动作结果；只有诊断、没有完成用户要求的动作时不能标为 `executed`。可向对话参与者补齐的事实必须变成一个具体澄清消息候选，不得要求 Derek 选择“继续还是追问”。发送只允许当前 task generation 的 delivery，sender 必须先原子 claim 才能真实发送。
+
+微信投递把“发送动作明确未执行”和“动作已经开始但送达未知”分开保存。前者记录实际界面失败阶段，并且最多自动重试两次；后者只读回消息记录后再决定，绝不因为重试而重复发送。
 
 重复发送保护命中已有 `sent_replies` 时，新的发送 attempt 记为 `skipped`，不记为 `blocked`，也不写入 service error；这表示同一触发消息已处理完成，只是跳过了重复投递。对于唯一的受审私信动作，`sent_replies` 是服务的送达账本：未知结果但账本没有该 trigger 的送达记录时，服务终结旧 generation 并创建新的受审 generation；群消息、审批和其他外部动作仍必须依赖各自的精确读回，不能套用该规则。恢复执行以受控命令摘要、参数摘要和目标作为身份，命令显示名不是身份依据；候选声明的操作仍必须与受控命令分类一致。
 
@@ -452,7 +454,7 @@ cd /path/to/ceo-agent-service
 CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-message
 ```
 
-`scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。AI 听记通过当前 `dws` 登录态增量读取。
+`scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。AI 听记通过当前 `dws` 登录态从最新页读取到已记录的时间边界；首次只建立最新页基线，后续在到达该边界时停止，不会为查找历史 ID 持续使用易失效分页游标。旧版仅含 ID 的状态会安全读取一页、处理该恢复窗口中未记录的条目，并建立时间边界。
 
 CEO reply agent 使用原生 `codex exec`，沿用启动服务的安装用户现有 `~/.codex` 配置、MCP、
 plugins、hooks、Skills 和认证状态。服务不会把 MCP transport、OAuth header、bearer token 或

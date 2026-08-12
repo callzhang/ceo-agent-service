@@ -236,6 +236,10 @@ For an unknown run:
 - create a new execution generation only if external state confirms no effect.
 
 Definite command failures with no side effect use `failed` and may be retried.
+When a multi-action run has both completed and failed writes, and every started
+write has a persisted terminal event, the run is also definite: it is `failed`
+with `side_effect_state=confirmed`, preserving the completed receipts without
+replaying them. It must not be represented as `unknown` or as a human choice.
 The service relies on structured process/tool-event fields rather than matching
 human error strings.
 

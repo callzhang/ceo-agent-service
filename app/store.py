@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from app.agent_result import SideEffectState
 from app.wechat.models import WechatReplyScope
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
@@ -141,6 +142,8 @@ class ReplyError(BaseModel):
     kind: str
     detail: str
     created_at: str
+    resolved_at: str = ""
+    resolution: str = ""
 
 
 class OperationLog(BaseModel):
@@ -299,6 +302,7 @@ class ReplyTask(BaseModel):
     manual_rerun_attempt_id: int = 0
     manual_rerun_revision_key: str = ""
     execution_generation: str = "initial"
+    recovery_code: str = ""
     status: str
     attempts: int
     locked_at: str | None = None
@@ -759,7 +763,9 @@ class AutoReplyStore:
                     message_id text,
                     kind text not null,
                     detail text not null,
-                    created_at text not null default current_timestamp
+                    created_at text not null default current_timestamp,
+                    resolved_at text not null default '',
+                    resolution text not null default ''
                 );
                 create table if not exists reply_attempts (
                     id integer primary key autoincrement,
@@ -850,6 +856,7 @@ class AutoReplyStore:
                     manual_rerun_attempt_id integer not null default 0,
                     manual_rerun_revision_key text not null default '',
                     execution_generation text not null default 'initial',
+                    recovery_code text not null default '',
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     locked_at text,
@@ -983,6 +990,7 @@ class AutoReplyStore:
                     execution_generation text not null default 'initial',
                     status text not null default 'ready_to_send',
                     action_started_at text not null default '',
+                    pre_action_failure integer not null default 0,
                     evidence_json text not null default '{}',
                     error text not null default '',
                     created_at text not null default current_timestamp,
@@ -1391,6 +1399,7 @@ class AutoReplyStore:
                 ("manual_rerun_attempt_id", "integer not null default 0"),
                 ("manual_rerun_revision_key", "text not null default ''"),
                 ("channel", "text not null default 'dingtalk'"),
+                ("recovery_code", "text not null default ''"),
             ):
                 if column not in reply_task_columns:
                     db.execute(
@@ -1606,6 +1615,7 @@ class AutoReplyStore:
                 ("manual_rerun_revision_key", "text not null default ''"),
                 ("channel", "text not null default 'dingtalk'"),
                 ("execution_generation", "text not null default 'initial'"),
+                ("recovery_code", "text not null default ''"),
             ):
                 if column not in reply_task_columns:
                     db.execute(
@@ -1823,6 +1833,22 @@ class AutoReplyStore:
                 db.execute(
                     "alter table wechat_deliveries add column "
                     "execution_generation text not null default 'initial'"
+                )
+            if "pre_action_failure" not in wechat_delivery_columns:
+                db.execute(
+                    "alter table wechat_deliveries add column "
+                    "pre_action_failure integer not null default 0"
+                )
+            error_columns = {
+                row["name"] for row in db.execute("pragma table_info(errors)").fetchall()
+            }
+            if "resolved_at" not in error_columns:
+                db.execute(
+                    "alter table errors add column resolved_at text not null default ''"
+                )
+            if "resolution" not in error_columns:
+                db.execute(
+                    "alter table errors add column resolution text not null default ''"
                 )
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
@@ -2466,6 +2492,9 @@ class AutoReplyStore:
             manual_rerun_attempt_id=row["manual_rerun_attempt_id"],
             manual_rerun_revision_key=row["manual_rerun_revision_key"],
             execution_generation=row["execution_generation"],
+            recovery_code=(
+                row["recovery_code"] if "recovery_code" in row.keys() else ""
+            ),
             status=row["status"],
             attempts=row["attempts"],
             locked_at=row["locked_at"],
@@ -3515,6 +3544,7 @@ class AutoReplyStore:
         *,
         owner: str,
         transcript_start_line: int = 0,
+        allow_consumer_session_handoff: bool = False,
         now: str | datetime | None = None,
     ) -> AgentRun:
         if not codex_session_id.strip():
@@ -3531,23 +3561,52 @@ class AutoReplyStore:
                 now_text=now_text,
                 status_error="agent run session requires running status",
             )
+            current = db.execute(
+                """
+                select role, codex_session_id, side_effect_state
+                from agent_runs
+                where id=?
+                """,
+                (run_id,),
+            ).fetchone()
+            if current is None:
+                raise ValueError("agent run does not exist")
+            current_session_id = str(current["codex_session_id"] or "")
+            replace_session = (
+                allow_consumer_session_handoff
+                and current["role"] == AgentRole.CONSUMER.value
+                and current["side_effect_state"] == SideEffectState.NONE.value
+                and bool(current_session_id)
+                and current_session_id != codex_session_id
+                and db.execute(
+                    """
+                    select 1 from agent_execution_receipts
+                    where agent_run_id=? and completed=1 and persisted=1
+                    limit 1
+                    """,
+                    (run_id,),
+                ).fetchone()
+                is None
+            )
             cursor = db.execute(
                 """
                 update agent_runs
                 set codex_session_id=case
-                        when codex_session_id='' then ? else codex_session_id
+                        when codex_session_id='' or ? then ? else codex_session_id
                     end,
                     transcript_start_line=case
-                        when codex_session_id='' then ? else transcript_start_line
+                        when codex_session_id='' or ? then ? else transcript_start_line
                     end,
                     transcript_end_line=max(transcript_end_line, ?),
                     updated_at=?
                 where id=? and status='running' and lease_owner=?
                   and lease_expires_at>?
-                  and (codex_session_id='' or codex_session_id=?)
+                  and (codex_session_id='' or codex_session_id=? or ?)
                 """,
                 (
+                    int(replace_session),
                     codex_session_id,
+                    int(replace_session),
                     transcript_start_line,
                     transcript_start_line,
                     now_text,
@@ -3555,6 +3614,7 @@ class AutoReplyStore:
                     owner,
                     now_text,
                     codex_session_id,
+                    int(replace_session),
                 ),
             )
             if cursor.rowcount != 1:
@@ -4094,6 +4154,98 @@ class AutoReplyStore:
             transcript_end_line=transcript_end_line,
             now=now,
         )
+
+    def finalize_closed_failed_audit_run(
+        self,
+        run_id: int,
+        *,
+        reason: str,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        """Replace a false unknown with the exact closed write failure."""
+        if not reason.strip():
+            raise ValueError("reason must be non-empty")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("agent run does not exist")
+            if (
+                row["role"] != AgentRole.AUDIT.value
+                or row["status"] not in {"unknown", "completed"}
+                or row["side_effect_state"] != "unknown"
+                or int(row["effect_failed_count"]) <= 0
+                or int(row["effect_unreviewed_count"]) != 0
+                or int(row["effect_started_count"])
+                > int(row["effect_completed_count"])
+                + int(row["effect_failed_count"])
+                + int(row["effect_receipt_count"])
+            ):
+                raise ValueError("agent run does not have a closed failed effect")
+            failed_event = db.execute(
+                """
+                select event_json
+                from agent_run_events
+                where agent_run_id=? and event_type='item.failed'
+                  and effect_kind='effectful'
+                order by sequence desc
+                limit 1
+                """,
+                (run_id,),
+            ).fetchone()
+            if failed_event is None:
+                raise ValueError("agent run has no persisted failed effect event")
+            event = json.loads(str(failed_event["event_json"]))
+            item = event.get("item") if isinstance(event, dict) else None
+            metadata = item.get("metadata") if isinstance(item, dict) else None
+            failure_code = (
+                metadata.get("failure_code") if isinstance(metadata, dict) else None
+            )
+            if not isinstance(failure_code, str) or not failure_code:
+                failure_code = "audit_action_failed_before_completion"
+            side_effect_state = (
+                "confirmed"
+                if int(row["effect_completed_count"])
+                + int(row["effect_receipt_count"])
+                else "none"
+            )
+            structured_error = json.dumps(
+                {
+                    "authorization_required": False,
+                    "code": failure_code,
+                    "reason": reason.strip(),
+                    "retryable": False,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            cursor = db.execute(
+                """
+                update agent_runs
+                set status='failed', final_result_json='', structured_error_json=?,
+                    side_effect_state=?, reconciliation_suspended=0,
+                    reconciliation_next_attempt_at='', lease_owner='',
+                    lease_expires_at='', completed_at=?, updated_at=?
+                where id=? and status=? and side_effect_state='unknown'
+                """,
+                (
+                    structured_error,
+                    side_effect_state,
+                    now_text,
+                    now_text,
+                    run_id,
+                    row["status"],
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"agent run changed: {run_id}")
+            updated = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            return self._agent_run_from_row(updated, db=db)
 
     def persist_unknown_agent_run_result(
         self,
@@ -5280,6 +5432,161 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
+    def discard_unstarted_service_tasks(
+        self,
+        task_ids: list[int] | tuple[int, ...],
+        *,
+        reason: str,
+        expected_source: str = "",
+        now: str | datetime | None = None,
+    ) -> list[ReplyTask]:
+        """Finalize explicitly selected synthetic tasks that never started a write."""
+        normalized_ids = tuple(dict.fromkeys(int(task_id) for task_id in task_ids))
+        if not normalized_ids:
+            return []
+        if any(task_id <= 0 for task_id in normalized_ids):
+            raise ValueError("task ids must be positive")
+        if not reason.strip():
+            raise ValueError("reason must be non-empty")
+
+        placeholders = ",".join("?" for _ in normalized_ids)
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            rows = db.execute(
+                f"select * from reply_tasks where id in ({placeholders}) order by id",
+                normalized_ids,
+            ).fetchall()
+            if len(rows) != len(normalized_ids):
+                raise ValueError("one or more reply tasks do not exist")
+            for row in rows:
+                try:
+                    payload = json.loads(str(row["trigger_message_json"]))
+                except json.JSONDecodeError as exc:
+                    raise ValueError("service task payload is invalid") from exc
+                raw_payload = payload.get("raw_payload")
+                source = (
+                    str(raw_payload.get("source") or "").strip()
+                    if isinstance(raw_payload, dict)
+                    else ""
+                )
+                explicitly_selected_legacy_source = (
+                    bool(expected_source.strip()) and source == expected_source.strip()
+                )
+                if not isinstance(raw_payload, dict) or not (
+                    raw_payload.get("service_task")
+                    or explicitly_selected_legacy_source
+                ):
+                    raise ValueError("reply task is not an explicit service task")
+                if row["status"] not in {"pending", "processing", "failed"}:
+                    raise ValueError("reply task is already terminal")
+                unsafe = db.execute(
+                    """
+                    select 1
+                    from agent_runs
+                    where reply_task_id=? and execution_generation=?
+                      and (side_effect_state<>'none' or effect_started_count>0)
+                    limit 1
+                    """,
+                    (int(row["id"]), str(row["execution_generation"])),
+                ).fetchone()
+                if unsafe is not None:
+                    raise ValueError("service task has started or uncertain effects")
+
+            error_json = json.dumps(
+                {
+                    "authorization_required": False,
+                    "code": "invalid_service_task_discarded",
+                    "reason": reason.strip(),
+                    "retryable": False,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            for row in rows:
+                task_id = int(row["id"])
+                generation = str(row["execution_generation"])
+                db.execute(
+                    """
+                    update agent_runs
+                    set status='failed', structured_error_json=?,
+                        lease_owner='', lease_expires_at='',
+                        completed_at=?, updated_at=?
+                    where reply_task_id=? and execution_generation=?
+                      and status='running' and side_effect_state='none'
+                      and effect_started_count=0
+                    """,
+                    (error_json, now_text, now_text, task_id, generation),
+                )
+                db.execute(
+                    """
+                    update reply_tasks
+                    set status='done', locked_at=null, available_at='', error=?,
+                        updated_at=?
+                    where id=? and execution_generation=?
+                      and status in ('pending', 'processing', 'failed')
+                    """,
+                    (reason.strip(), now_text, task_id, generation),
+                )
+                db.execute(
+                    "delete from codex_session_locks where conversation_id=?",
+                    (str(row["conversation_id"]),),
+                )
+            updated_rows = db.execute(
+                f"select * from reply_tasks where id in ({placeholders}) order by id",
+                normalized_ids,
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in updated_rows]
+
+    def release_unknown_audit_reconciliation_leases_after_service_restart(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[AgentRun]:
+        """Make interrupted Audit reconciliation eligible on the next worker pass.
+
+        A service restart terminates the only worker process. An unknown Audit run
+        has not reached a new external action; retaining its old lease only delays
+        the mandatory read-only reconciliation until the former lease expires.
+        """
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select runs.*
+                from agent_runs as runs
+                join reply_tasks as tasks on tasks.id=runs.reply_task_id
+                where runs.status='unknown'
+                  and runs.role='audit'
+                  and runs.reconciliation_suspended=0
+                  and runs.lease_owner<>''
+                  and tasks.status in ('processing', 'pending')
+                  and tasks.execution_generation=runs.execution_generation
+                order by runs.updated_at, runs.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            released: list[AgentRun] = []
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update agent_runs
+                    set lease_owner='', lease_expires_at='',
+                        reconciliation_next_attempt_at='', updated_at=current_timestamp
+                    where id=? and status='unknown' and role='audit'
+                      and reconciliation_suspended=0 and lease_owner<>''
+                    """,
+                    (row["id"],),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                updated = db.execute(
+                    "select * from agent_runs where id=?", (row["id"],)
+                ).fetchone()
+                released.append(self._agent_run_from_row(updated, db=db))
+            return released
+
     def resume_completed_agent_turns_after_service_restart(
         self,
         *,
@@ -6007,6 +6314,7 @@ class AutoReplyStore:
         audit_summary: str,
         send_status: str,
         send_error: str = "",
+        recovery_code: str = "",
         task_status: str = "done",
         available_at: str = "",
         account_id: str = "",
@@ -6024,6 +6332,8 @@ class AutoReplyStore:
             raise ValueError("pending WeChat task requires available_at")
         if task_status != "pending" and available_at:
             raise ValueError("terminal WeChat task cannot set available_at")
+        if recovery_code and task_status not in {"failed", "pending"}:
+            raise ValueError("recovery code requires a recoverable WeChat task")
         has_delivery = bool(reply_text)
         if has_delivery and not all(
             value.strip()
@@ -6085,7 +6395,7 @@ class AutoReplyStore:
                         existing["status"] in {"ready_to_send", "superseded"}
                         or (
                             existing["status"] == "failed"
-                            and existing["error"] == "action_not_performed"
+                            and bool(existing["pre_action_failure"])
                         )
                     )
                 ):
@@ -6095,11 +6405,12 @@ class AutoReplyStore:
                         set account_id=?, target_type=?, target_id=?,
                             conversation_id=?, reply_text=?,
                             execution_generation=?, status='ready_to_send',
-                            action_started_at='', evidence_json=?, error='',
+                            action_started_at='', pre_action_failure=0,
+                            evidence_json=?, error='',
                             updated_at=current_timestamp
                         where id=? and (
                             status in ('ready_to_send', 'superseded')
-                            or (status='failed' and error='action_not_performed')
+                            or (status='failed' and pre_action_failure=1)
                         )
                         """,
                         (
@@ -6114,6 +6425,7 @@ class AutoReplyStore:
                 """
                 update reply_tasks
                 set status=?, locked_at=null, available_at=?, error=?,
+                    recovery_code=?,
                     updated_at=current_timestamp
                 where id=? and status='processing' and execution_generation=?
                 """,
@@ -6121,6 +6433,7 @@ class AutoReplyStore:
                     task_status,
                     available_at if task_status == "pending" else "",
                     send_error if task_status in {"failed", "pending"} else "",
+                    recovery_code if task_status in {"failed", "pending"} else "",
                     task_id,
                     expected_execution_generation,
                 ),
@@ -6213,15 +6526,12 @@ class AutoReplyStore:
                     reply_text=excluded.reply_text,
                     execution_generation=excluded.execution_generation,
                     status='ready_to_send',
+                    pre_action_failure=0,
                     evidence_json=excluded.evidence_json,
                     error='',
                     updated_at=current_timestamp
                 where wechat_deliveries.status='failed'
-                  and wechat_deliveries.action_started_at=''
-                  and wechat_deliveries.error in (
-                    'target_binding_unverified',
-                    'action_not_performed'
-                  )
+                  and wechat_deliveries.pre_action_failure=1
                 """,
                 (
                     reply_task_id, account_id, target_type, target_id,
@@ -6251,6 +6561,7 @@ class AutoReplyStore:
             execution_generation=row["execution_generation"],
             status=row["status"], evidence=json.loads(row["evidence_json"]),
             error=row["error"],
+            pre_action_failure=bool(row["pre_action_failure"]),
         )
 
     def list_wechat_deliveries_by_status(self, status: str) -> list:
@@ -6275,6 +6586,7 @@ class AutoReplyStore:
                 execution_generation=row["execution_generation"],
                 status=row["status"], evidence=json.loads(row["evidence_json"]),
                 error=row["error"],
+                pre_action_failure=bool(row["pre_action_failure"]),
             )
             for row in rows
         ]
@@ -6311,7 +6623,7 @@ class AutoReplyStore:
             for row in rows
         }
 
-    def requeue_unperformed_wechat_deliveries(self, *, max_retries: int = 1) -> int:
+    def requeue_unperformed_wechat_deliveries(self, *, max_retries: int = 2) -> int:
         """Return pre-action failures to the send queue for a bounded retry."""
         if max_retries < 1:
             return 0
@@ -6331,7 +6643,8 @@ class AutoReplyStore:
                 from wechat_deliveries as deliveries
                 join reply_tasks as tasks on tasks.id=deliveries.reply_task_id
                 where deliveries.status='failed'
-                  and deliveries.error='action_not_performed'
+                  and deliveries.pre_action_failure=1
+                  and deliveries.action_started_at<>''
                   and deliveries.execution_generation=tasks.execution_generation
                   and coalesce((
                       select attempts.retry_count
@@ -6351,10 +6664,11 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """
                     update wechat_deliveries
-                    set status='ready_to_send', error='', updated_at=current_timestamp
+                    set status='ready_to_send', error='', pre_action_failure=0,
+                        updated_at=current_timestamp
                     where id=?
                       and status='failed'
-                      and error='action_not_performed'
+                      and pre_action_failure=1
                       and exists (
                       select 1 from reply_tasks
                       where reply_tasks.id=wechat_deliveries.reply_task_id
@@ -6433,6 +6747,7 @@ class AutoReplyStore:
                 set status='sending',
                     action_started_at=case
                         when ?='' then current_timestamp else ? end,
+                    pre_action_failure=0,
                     error='',
                     updated_at=current_timestamp
                 where id=? and status='ready_to_send'
@@ -6470,6 +6785,7 @@ class AutoReplyStore:
             execution_generation=row["execution_generation"],
             status=row["status"], evidence=json.loads(row["evidence_json"]),
             error=row["error"],
+            pre_action_failure=bool(row["pre_action_failure"]),
         )
 
     def mark_wechat_delivery_sending(self, delivery_id: int, *, now: str = "") -> None:
@@ -6497,11 +6813,13 @@ class AutoReplyStore:
             execution_generation=row["execution_generation"],
             status=row["status"], evidence=json.loads(row["evidence_json"]),
             error=row["error"],
+            pre_action_failure=bool(row["pre_action_failure"]),
         )
 
     def set_wechat_delivery_status(
         self, delivery_id: int, status: str, *, error: str = "",
         action_started_at: str | None = None,
+        pre_action_failure: bool = False,
     ) -> None:
         expected_statuses = self._wechat_delivery_source_statuses(status, error)
         placeholders = ",".join("?" for _ in expected_statuses)
@@ -6515,16 +6833,30 @@ class AutoReplyStore:
             if action_started_at is not None:
                 cursor = db.execute(
                     "update wechat_deliveries set status=?, error=?, "
-                    "action_started_at=?, updated_at=current_timestamp where id=? "
+                    "action_started_at=?, pre_action_failure=?, "
+                    "updated_at=current_timestamp where id=? "
                     f"and status in ({placeholders}) {generation_guard}",
-                    (status, error, action_started_at, delivery_id, *expected_statuses),
+                    (
+                        status,
+                        error,
+                        action_started_at,
+                        int(pre_action_failure),
+                        delivery_id,
+                        *expected_statuses,
+                    ),
                 )
             else:
                 cursor = db.execute(
                     "update wechat_deliveries set status=?, error=?, "
-                    "updated_at=current_timestamp where id=? "
+                    "pre_action_failure=?, updated_at=current_timestamp where id=? "
                     f"and status in ({placeholders}) {generation_guard}",
-                    (status, error, delivery_id, *expected_statuses),
+                    (
+                        status,
+                        error,
+                        int(pre_action_failure),
+                        delivery_id,
+                        *expected_statuses,
+                    ),
                 )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(
@@ -6628,7 +6960,7 @@ class AutoReplyStore:
               and conversation_id=?
               and reply_task_id < ?
               and status='failed'
-              and error='action_not_performed'
+              and pre_action_failure=1
             """,
             (
                 sent["account_id"],
@@ -6644,8 +6976,9 @@ class AutoReplyStore:
             db.execute(
                 """
                 update wechat_deliveries
-                set status='superseded', error=?, updated_at=current_timestamp
-                where id=? and status='failed' and error='action_not_performed'
+                set status='superseded', error=?, pre_action_failure=0,
+                    updated_at=current_timestamp
+                where id=? and status='failed' and pre_action_failure=1
                 """,
                 (error, delivery_id),
             )
@@ -13433,6 +13766,31 @@ class AutoReplyStore:
                 (conversation_id, message_id, kind, detail),
             )
 
+    def resolve_errors(
+        self,
+        error_ids: list[int] | tuple[int, ...],
+        *,
+        resolution: str,
+    ) -> int:
+        normalized_ids = tuple(dict.fromkeys(int(error_id) for error_id in error_ids))
+        if not normalized_ids:
+            return 0
+        if any(error_id <= 0 for error_id in normalized_ids):
+            raise ValueError("error ids must be positive")
+        if not resolution.strip():
+            raise ValueError("error resolution must be non-empty")
+        placeholders = ",".join("?" for _ in normalized_ids)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"""
+                update errors
+                set resolved_at=current_timestamp, resolution=?
+                where id in ({placeholders}) and resolved_at=''
+                """,
+                (resolution, *normalized_ids),
+            )
+        return cursor.rowcount
+
     def list_errors(
         self, limit: int | None = None, offset: int = 0
     ) -> list[ReplyError]:
@@ -13554,10 +13912,11 @@ class AutoReplyStore:
                     created_at as occurred_at,
                     'Error' as category,
                     kind as action,
-                    'active' as status,
+                    case when coalesce(resolved_at, '')='' then 'active' else 'resolved' end as status,
                     coalesce(conversation_id, '') as context,
                     detail as summary,
-                    detail as detail,
+                    case when coalesce(resolved_at, '')='' then detail
+                         else detail || char(10) || 'Resolved: ' || resolution end as detail,
                     coalesce(conversation_id, '') as conversation_id,
                     coalesce(message_id, '') as message_id
                 from errors

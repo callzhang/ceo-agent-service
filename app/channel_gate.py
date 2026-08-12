@@ -501,7 +501,9 @@ class LarkChannelGate:
 
 
 def default_channel_gates(
-    *, dws_binary: str = "dws", lark_binary: str = "lark-cli"
+    *,
+    dws_binary: str = "dws",
+    lark_binary: str = "lark-cli",
 ) -> dict[str, ChannelGate]:
     gates: tuple[ChannelGate, ...] = (
         DwsChannelGate(binary=dws_binary),
