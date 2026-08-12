@@ -2808,6 +2808,37 @@ class AutoReplyStore:
             ).fetchone()
             return self._agent_run_from_row(row, db=db) if row is not None else None
 
+    def next_agent_run_turn_attempt(
+        self,
+        reply_task_id: int,
+        execution_generation: str,
+        *,
+        role: AgentRole,
+        proposal_revision: int,
+    ) -> int:
+        """Return the next persisted attempt number for one Agent role/revision."""
+        role = AgentRole(role)
+        if not execution_generation.strip():
+            raise ValueError("execution_generation must be non-empty")
+        if proposal_revision < 0:
+            raise ValueError("proposal_revision must not be negative")
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select coalesce(max(turn_attempt), -1) + 1 as next_turn_attempt
+                from agent_runs
+                where reply_task_id=? and execution_generation=? and role=?
+                  and proposal_revision=?
+                """,
+                (
+                    reply_task_id,
+                    execution_generation,
+                    role.value,
+                    proposal_revision,
+                ),
+            ).fetchone()
+            return int(row["next_turn_attempt"])
+
     def list_agent_runs_for_task_generation(
         self,
         reply_task_id: int,
@@ -3210,8 +3241,6 @@ class AutoReplyStore:
             raise ValueError("Consumer operation_id must be empty")
         if role is AgentRole.AUDIT and not operation_id:
             raise ValueError("Audit operation_id must be non-empty")
-        if role is AgentRole.CONSUMER and turn_attempt != 0:
-            raise ValueError("Consumer turn_attempt must be zero")
         if (
             role is AgentRole.CONSUMER
             and proposal_revision == 0
@@ -3250,7 +3279,6 @@ class AutoReplyStore:
                     select id from agent_runs
                     where id=? and role='consumer' and reply_task_id=?
                       and execution_generation=? and proposal_revision=?
-                      and turn_attempt=0
                     """,
                     (
                         parent_agent_run_id,
@@ -3391,7 +3419,11 @@ class AutoReplyStore:
                     "select * from agent_runs where id=?",
                     (row["id"],),
                 ).fetchone()
-            if not claimed and row["status"] == "failed":
+            if (
+                not claimed
+                and role is AgentRole.AUDIT
+                and row["status"] == "failed"
+            ):
                 try:
                     structured_error = json.loads(row["structured_error_json"])
                 except json.JSONDecodeError:

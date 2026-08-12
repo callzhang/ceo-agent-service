@@ -241,7 +241,12 @@ class ConsumerAgentRunner:
             task.execution_generation,
             role=AgentRole.CONSUMER,
             proposal_revision=proposal_revision,
-            turn_attempt=0,
+            turn_attempt=self.store.next_agent_run_turn_attempt(
+                task.id,
+                task.execution_generation,
+                role=AgentRole.CONSUMER,
+                proposal_revision=proposal_revision,
+            ),
             parent_agent_run_id=parent_agent_run_id,
             operation_id="",
             owner=self.owner,
@@ -254,11 +259,7 @@ class ConsumerAgentRunner:
             if conversation_session_id is not None
             else None
         ) or conversation_session_id
-        persist_conversation_session = not (
-            claim.run.codex_session_id
-            and conversation_session_id
-            and claim.run.codex_session_id != conversation_session_id
-        )
+        persist_conversation_session = conversation_session_id is None
         process = AgentTurnProcess[ConsumerAgentResult](
             store=self.store,
             task=task,
@@ -316,7 +317,7 @@ class ConsumerAgentRunner:
             ):
                 persisted = self.store.get_agent_run(claim.run.id)
                 if persisted is not None and not persisted.tool_events:
-                    failed_session_id = persisted.codex_session_id or session_id
+                    failed_session_id = session_id or persisted.codex_session_id
                     if failed_session_id:
                         # A retryable result without any controlled tool event
                         # made no evidence progress. Retry with the current

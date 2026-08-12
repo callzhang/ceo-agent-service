@@ -41,6 +41,10 @@ wire schema 的指纹；session 文件缺失、损坏或该指纹变化时，必
 同一时刻只允许一个 A turn 更新该 session。服务使用短期可续租的 transcript 锁保证 JSONL
 顺序；后续消息仍保留在 SQLite 队列，不因锁存在而丢失。
 
+若 A 在没有外部副作用时失败，恢复会为同一 proposal revision 写入一个新的递增 turn
+attempt。旧 turn 仍保留失败状态、session 标识和审计事件，绝不清空后复用；这样新的 Codex
+session 不会与旧 session 标识冲突，同时历史页面可以准确显示每次恢复的进度。
+
 ### Audit Agent B
 
 每个候选 revision 使用一个新的 B session，避免前一候选的审计结论污染新候选。B 读取

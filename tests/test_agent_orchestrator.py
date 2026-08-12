@@ -126,7 +126,12 @@ class ScriptedConsumer:
             task.execution_generation,
             role=AgentRole.CONSUMER,
             proposal_revision=proposal_revision,
-            turn_attempt=0,
+            turn_attempt=self.store.next_agent_run_turn_attempt(
+                task.id,
+                task.execution_generation,
+                role=AgentRole.CONSUMER,
+                proposal_revision=proposal_revision,
+            ),
             parent_agent_run_id=parent_agent_run_id,
             operation_id="",
             owner=self.owner,
@@ -536,7 +541,7 @@ def test_provider_capacity_failure_retries_on_later_task_attempt(store):
 
     assert second.status == "no_action"
     assert len(consumer.calls) == 2
-    assert consumer.calls[0]["run_id"] == consumer.calls[1]["run_id"]
+    assert consumer.calls[0]["run_id"] != consumer.calls[1]["run_id"]
 
 
 def test_audit_provider_capacity_failure_defers_without_in_process_retries(store):
@@ -1045,8 +1050,11 @@ def test_authorization_wait_defers_without_consuming_feedback_cycle(store):
     assert len(audit.calls) == 1
 
 
-def test_expired_consumer_turn_without_session_is_reclaimed_in_place(store):
+def test_expired_consumer_turn_without_session_creates_a_recovery_turn(store):
     task = _task(store)
+    claimed_task = store.claim_reply_task(task.id)
+    assert claimed_task is not None
+    task = claimed_task
     stale = store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -1067,10 +1075,15 @@ def test_expired_consumer_turn_without_session_is_reclaimed_in_place(store):
     )
 
     assert result.status == "no_action"
-    assert result.final_run_id == stale.id
-    assert len(
-        store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
-    ) == 1
+    assert result.final_run_id != stale.id
+    stale_after_recovery = store.get_agent_run(stale.id)
+    assert stale_after_recovery is not None
+    assert stale_after_recovery.status == "failed"
+    assert '"code":"consumer_lease_expired"' in stale_after_recovery.structured_error_json
+    runs = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation
+    )
+    assert [run.turn_attempt for run in runs] == [0, 1]
 
 
 def test_expired_audit_turn_without_session_is_reclaimed_in_place(store):
@@ -1365,8 +1378,11 @@ def test_recovered_failed_consumer_task_reclaims_same_run(store):
     recovered = _process(orchestrator, recovered_task)
 
     assert recovered.status == "no_action"
-    assert recovered.final_run_id == failed_run_id
-    assert consumer.calls[-1]["run_id"] == failed_run_id
+    assert recovered.final_run_id != failed_run_id
+    assert consumer.calls[-1]["run_id"] != failed_run_id
+    failed_run = store.get_agent_run(failed_run_id)
+    assert failed_run is not None
+    assert failed_run.status == "failed"
 
 
 class RevisionRetryConsumer(ScriptedConsumer):
@@ -1386,7 +1402,12 @@ class RevisionRetryConsumer(ScriptedConsumer):
                 task.execution_generation,
                 role=AgentRole.CONSUMER,
                 proposal_revision=revision,
-                turn_attempt=0,
+                turn_attempt=self.store.next_agent_run_turn_attempt(
+                    task.id,
+                    task.execution_generation,
+                    role=AgentRole.CONSUMER,
+                    proposal_revision=revision,
+                ),
                 parent_agent_run_id=kwargs["parent_agent_run_id"],
                 operation_id="",
                 owner=self.owner,

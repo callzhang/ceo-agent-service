@@ -2327,7 +2327,7 @@ def test_failed_agent_run_rejects_conflicting_terminal_rewrite(tmp_path: Path):
         )
 
 
-def test_retry_failed_reply_task_reopens_same_retryable_no_effect_run(
+def test_retry_failed_reply_task_creates_a_new_retryable_consumer_turn(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2366,7 +2366,7 @@ def test_retry_failed_reply_task_reopens_same_retryable_no_effect_run(
     assert recovered.error == "operator_retry_after_runtime_fix"
     retry_claim = store.claim_reply_task(task_id)
     assert retry_claim is not None
-    reclaimed = store.claim_agent_run(
+    same_turn = store.claim_agent_run(
         task_id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -2376,8 +2376,26 @@ def test_retry_failed_reply_task_reopens_same_retryable_no_effect_run(
         operation_id="",
         owner="worker-2",
     )
-    assert reclaimed.claimed is True
-    assert reclaimed.run.id == claim.run.id
+    assert same_turn.claimed is False
+    next_turn = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=store.next_agent_run_turn_attempt(
+            task_id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+        ),
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-2",
+    )
+    assert next_turn.claimed is True
+    assert next_turn.run.id != claim.run.id
+    assert next_turn.run.turn_attempt == 1
+    assert store.get_agent_run(claim.run.id).status == "failed"
 
 
 @pytest.mark.parametrize(

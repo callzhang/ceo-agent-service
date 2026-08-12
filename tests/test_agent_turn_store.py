@@ -924,17 +924,17 @@ def test_consumer_parent_follows_previous_audit_revision(tmp_path):
     ).run
 
     assert consumer_1.parent_agent_run_id == audit_0.id
-    with pytest.raises(ValueError, match="Consumer turn_attempt must be zero"):
-        store.claim_agent_run(
-            task.id,
-            task.execution_generation,
-            role=AgentRole.CONSUMER,
-            proposal_revision=2,
-            turn_attempt=1,
-            parent_agent_run_id=audit_0.id,
-            operation_id="",
-            owner="consumer-2",
-        )
+    consumer_2_retry = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=1,
+        turn_attempt=1,
+        parent_agent_run_id=audit_0.id,
+        operation_id="",
+        owner="consumer-2",
+    ).run
+    assert consumer_2_retry.turn_attempt == 1
     with pytest.raises(ValueError, match="Initial Consumer parent must be empty"):
         store.claim_agent_run(
             task.id,

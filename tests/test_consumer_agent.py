@@ -486,7 +486,7 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
     assert '"retryable":true' in run.structured_error_json
 
 
-def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advances(
+def test_retryable_consumer_turn_uses_the_current_conversation_session(
     store, task, context
 ):
     provider_failure = "\n".join(
@@ -517,7 +517,7 @@ def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advan
     store.set_codex_session_contract_hash(
         task.conversation_id, consumer_wire_contract_hash()
     )
-    executor = CapturingExecutor(_result_jsonl(session="session-old"))
+    executor = CapturingExecutor(_result_jsonl(session="session-new"))
 
     ConsumerAgentRunner(
         store=store,
@@ -527,11 +527,27 @@ def test_retryable_consumer_run_resumes_its_own_session_after_conversation_advan
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     assert executor.commands[0][:3] == ["codex", "exec", "resume"]
-    assert executor.commands[0][-2:] == ["session-old", "-"]
+    assert executor.commands[0][-2:] == ["session-new", "-"]
     assert store.get_codex_session_id(task.conversation_id) == "session-new"
+    failed = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    recovered = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=1,
+    )
+    assert failed is not None and failed.status == "failed"
+    assert recovered is not None and recovered.status == "completed"
 
 
-def test_old_run_parse_failure_does_not_clear_newer_conversation_session(
+def test_retry_turn_parse_failure_clears_only_its_current_conversation_session(
     store, task, context
 ):
     provider_failure = "\n".join(
@@ -572,7 +588,56 @@ def test_old_run_parse_failure_does_not_clear_newer_conversation_session(
             codex_session_exists=lambda _: True,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert store.get_codex_session_id(task.conversation_id) == "session-new"
+    assert store.get_codex_session_id(task.conversation_id) is None
+    failed = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    retry = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=1,
+    )
+    assert failed is not None and failed.codex_session_id == "session-old"
+    assert retry is not None and retry.codex_session_id == ""
+
+
+def test_retry_after_failed_session_creates_a_new_turn_and_session(store, task, context):
+    first = CapturingExecutor(json.dumps({"type": "thread.started", "thread_id": "session-old"}))
+    with pytest.raises(ResultParseError, match="no valid typed result"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=first,
+            codex_session_exists=lambda _: True,
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert store.get_codex_session_id(task.conversation_id) is None
+    recovered = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(_result_jsonl(session="session-fresh")),
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    failed = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    retry = store.get_agent_run(recovered.run_id)
+    assert failed is not None and failed.status == "failed"
+    assert failed.codex_session_id == "session-old"
+    assert retry is not None and retry.turn_attempt == 1
+    assert retry.codex_session_id == "session-fresh"
+    assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
 
 
 def test_consumer_preserves_codex_cli_authentication_failure(store, task, context):

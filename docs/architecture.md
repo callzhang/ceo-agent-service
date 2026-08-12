@@ -109,6 +109,11 @@ session，以保留该次执行的工具上下文和操作身份。
 - 一个任务最多允许两个内容反馈周期。基础设施重试不消耗内容反馈周期。
 - A session 缺失或损坏时才创建新的会话；服务不会为每条消息无条件创建新 A session。
 
+当 A 在外部写入之前因进程、解析或会话错误失败时，重试会在同一 revision 创建新的
+Consumer turn。失败 turn、其 session 标识、事件和错误保持不可变，供 History 审计；新
+turn 可以复用仍有效的对话 session，或在该 session 已失效时安全创建新会话。Audit B 始终
+绑定该 revision 最新成功的 A turn，避免覆盖失败记录或把旧 session 标识写入新会话。
+
 同一对话在任一时刻只允许一个 A turn 写入会话 JSONL。会话锁只保护本地 transcript 的
 一致性，不代表业务消息被丢弃；新任务保留在持久队列中等待该 turn 完成。
 

@@ -362,10 +362,11 @@ class AgentOrchestrator:
         revision = 0
         while revision <= MAX_CONTENT_FEEDBACK_CYCLES:
             revision_runs = by_revision.get(revision, [])
-            consumer = next(
+            consumer_turns = sorted(
                 (run for run in revision_runs if run.role is AgentRole.CONSUMER),
-                None,
+                key=lambda run: (run.turn_attempt, run.id),
             )
+            consumer = consumer_turns[-1] if consumer_turns else None
             if consumer is None:
                 if revision == 0:
                     return _NextConsumer(0, None, None)
@@ -620,6 +621,11 @@ class AgentOrchestrator:
         if run.status == "running":
             if self.store.agent_run_lease_is_active(run.id):
                 return _Deferred(run, "agent_run_active", feedback_cycles)
+            self.store.fail_expired_agent_run(
+                run.id,
+                {"code": "consumer_lease_expired", "retryable": True},
+                expected_execution_generation=task.execution_generation,
+            )
             feedback = self._retry_feedback(run)
             if run.proposal_revision > 0 and feedback is None:
                 return _Deferred(run, "agent_feedback_missing", feedback_cycles)
