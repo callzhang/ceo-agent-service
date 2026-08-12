@@ -676,7 +676,10 @@ def classify_cli_read_failure(
         return CliReadFailure(
             channel=channel,
             code=f"{channel}_reconciliation_read_malformed",
-            retryable=False,
+            # The command only reads external state. An unparseable nonzero
+            # result has no delivery side effect, so let the task retry within
+            # its normal bounded retry budget.
+            retryable=True,
             gate_state=ChannelGateState.BLOCKED,
         )
     errors = tuple(_structured_error(payload) for payload in payloads)
@@ -703,6 +706,11 @@ def classify_cli_read_failure(
         state = ChannelGateState.NEEDS_LOGIN
     elif channel == "dws" and raw_code in DwsError.AUTHORIZATION_ERROR_CODES:
         state = ChannelGateState.BLOCKED
+    elif not retryable:
+        # A structured but unclassified reconciliation-read error is likewise
+        # read-only. Retry it instead of turning a transient CLI shape change
+        # into a terminal task failure. Explicit auth cases above remain blocked.
+        retryable = True
     return CliReadFailure(
         channel=channel,
         code=code,

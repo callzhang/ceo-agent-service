@@ -53,7 +53,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 7. **Audit Agent B 层**：每个 A 候选 revision 启动一个新的审计 session。B 接受后执行并读回；业务含义变化通过结构化反馈回到 A。
 8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd、fail-closed 质量巡检和结果未知写操作的只读核对。
 
-当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取仍以临时网络错误失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。
+当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取以临时网络错误或未分类的命令输出失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。明确的登录或授权失败仍保持阻断，避免无效重试。
 
 DWS 可能同时返回通用错误码和更具体的服务端错误码；服务始终按具体服务端错误码分类。日历、消息、通讯录和 AI 听记等只读命令遇到临时 `ERROR`、`RATE_LIMIT_ERROR` 或 `PREPARE_CALL_TOOL_ERROR` 会在当前调用内重试，写操作不使用这条通用重试规则。
 

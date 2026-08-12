@@ -16,6 +16,7 @@ from app.channel_gate import (
     DwsChannelGate,
     LarkChannelGate,
     LoginCoordinator,
+    classify_cli_read_failure,
     start_lark_auth_login,
 )
 from app.store import AutoReplyStore
@@ -287,6 +288,25 @@ def completed(
     stderr: str = "",
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
+
+
+def test_unclassified_reconciliation_read_failures_are_retryable():
+    malformed = classify_cli_read_failure("dingtalk", completed(1, "not-json"))
+    structured = classify_cli_read_failure(
+        "dingtalk", completed(1, '{"error":{"type":"unknown"}}')
+    )
+
+    assert malformed.retryable is True
+    assert structured.retryable is True
+
+
+def test_reconciliation_read_auth_failure_remains_non_retryable():
+    failure = classify_cli_read_failure(
+        "dws", completed(1, '{"code":"not_authenticated"}')
+    )
+
+    assert failure.retryable is False
+    assert failure.gate_state is ChannelGateState.NEEDS_LOGIN
 
 
 class ScriptedRunner:
