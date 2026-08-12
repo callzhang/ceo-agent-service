@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import AgentTaskContext
+from app.agent_turn_runner import _agent_cli_receipt
 from app.consumer_agent import (
     ConsumerAgentRunner,
     consumer_developer_instructions,
@@ -18,6 +19,18 @@ from app.native_cli_metadata import (
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
+
+
+def test_agent_cli_receipt_accepts_json_encoded_mcp_result() -> None:
+    receipt = {
+        "cli": "dws",
+        "operation": "chat message list",
+        "operation_digest": "digest",
+        "target_identifiers": {"conversation": "cid-1"},
+        "result_digest": "result-digest",
+    }
+
+    assert _agent_cli_receipt(json.dumps({"structuredContent": receipt})) == receipt
 
 
 class CapturingExecutor:

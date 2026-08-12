@@ -998,6 +998,18 @@ def _session_id(payload: dict[str, object]) -> str:
 def _agent_cli_receipt(
     value: object, *, allow_error: bool = False
 ) -> dict[str, object] | None:
+    if isinstance(value, str):
+        try:
+            encoded_size = len(value.encode("utf-8"))
+        except (UnicodeError, MemoryError):
+            return None
+        if encoded_size > 64 * 1024:
+            return None
+        try:
+            decoded = json.loads(value)
+        except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
+            return None
+        return _agent_cli_receipt(decoded, allow_error=allow_error)
     receipt = _controlled_cli_receipt(value)
     if receipt is not None or not isinstance(value, dict):
         return receipt
