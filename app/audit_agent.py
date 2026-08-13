@@ -777,12 +777,21 @@ def _is_direct_chat_send(action: object) -> bool:
 
 
 def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:
-    """Canonicalize only a persisted pre-contract DingTalk chat action."""
-    if action.capability != "dingtalk-chat" or action.operation != "dws chat message send":
+    """Canonicalize persisted pre-contract DingTalk chat actions for audit."""
+    if action.capability != "dingtalk-chat":
         return None
-    group = action.payload.get("group")
     text = action.payload.get("text")
-    if not isinstance(group, str) or not group or not isinstance(text, str) or not text:
+    if not isinstance(text, str) or not text:
+        return None
+    target = action.target
+    recipient = target.get("recipient_open_dingtalk_id")
+    if isinstance(recipient, str) and recipient:
+        return [
+            "dws", "chat", "+messages-send", "--open-dingtalk-id", recipient,
+            "--text", text, "--yes", "--format", "json",
+        ]
+    group = action.payload.get("group")
+    if not isinstance(group, str) or not group:
         return None
     return [
         "dws", "chat", "message", "send", "--group", group,

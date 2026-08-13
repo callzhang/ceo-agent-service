@@ -2757,6 +2757,41 @@ def test_legacy_dingtalk_chat_candidate_normalizes_for_reconciliation():
     assert expected["reviewed_tool"] == "execute_reviewed_write"
 
 
+def test_legacy_direct_dingtalk_chat_candidate_normalizes_for_reconciliation():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Acknowledge receipt",
+            "capability": "dingtalk-chat",
+            "operation": "dws chat +messages-send --open-dingtalk-id recipient-1",
+            "target": {
+                "channel": "dingtalk",
+                "recipient_open_dingtalk_id": "recipient-1",
+                "single_chat": True,
+            },
+            "payload": {"text": "Received."},
+            "expected_verification": "Message exists",
+        }
+    )
+
+    expected = _expected_effect_action(
+        action, McpToolEffectRegistry.default(), action_index=0
+    )
+
+    assert expected["capability"] == "agent_cli.dws"
+    assert expected["operation"] == "chat +messages-send"
+    assert expected["target_identifiers"] == {"open-dingtalk-id": "recipient-1"}
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat +chat-messages",
+            "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+        },
+        expected,
+        McpToolEffectRegistry.default(),
+    )
+
+
 def test_ambiguous_recovery_requires_matching_live_read(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     executor = CapturingExecutor(
