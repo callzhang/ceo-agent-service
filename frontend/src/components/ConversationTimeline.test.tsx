@@ -79,6 +79,39 @@ describe("ConversationTimeline", () => {
     expect(artifact).toHaveAttribute("target", "_blank");
   });
 
+  it("localizes legacy execution details without exposing unknown tool names", () => {
+    render(
+      <ConversationTimeline
+        timeline={{
+          ...timeline,
+          events: [{
+            id: 10,
+            turn_id: turn.id,
+            sequence: 1,
+            event_type: "tool_completed",
+            payload: {
+              tool: "untrusted.provider.secret_tool",
+              tool_call_id: "tool-legacy",
+              summary: "Tool completed",
+              status: "completed",
+            },
+            created_at: "",
+          }],
+          confirmations: [],
+          artifacts: [],
+        }}
+        activeTurnId={turn.id}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("MCP 工具")).toBeInTheDocument();
+    expect(screen.getAllByText("已完成")).toHaveLength(2);
+    expect(screen.queryByText("untrusted.provider.secret_tool")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tool completed")).not.toBeInTheDocument();
+  });
+
   it("shows every turn lifecycle state in Chinese", () => {
     const states = ["queued", "running", "waiting_confirmation", "completed", "stopped", "failed"] as const;
     const turns = states.map((status, index) => ({
@@ -254,5 +287,31 @@ describe("TurnInspector", () => {
     expect(within(inspector).getByText("当前已加载页面")).toBeInTheDocument();
     expect(within(inspector).getByText(/统计可能不完整/)).toBeInTheDocument();
     expect(within(inspector).getByText(/Codex 运行时当前不可用/)).toBeInTheDocument();
+  });
+
+  it("localizes failed status and renders the latest update in local time", () => {
+    vi.stubEnv("TZ", "Asia/Shanghai");
+    try {
+      const failedTurn = { ...turn, status: "failed" as const, error_detail: "执行失败" };
+      const failedTimeline = {
+        ...timeline,
+        task: { ...timeline.task, state: "failed" as const, updated_at: "2026-08-13 15:14:36" },
+        turns: [failedTurn],
+      };
+      const { rerender } = render(<TurnInspector task={failedTimeline.task} timeline={failedTimeline} capabilities={[]} stats={null} />);
+
+      const inspector = screen.getByTestId("turn-inspector");
+      expect(within(inspector).getByText("失败")).toBeInTheDocument();
+      expect(within(inspector).queryByText("failed")).not.toBeInTheDocument();
+      const timestamp = within(inspector).getByText(/23[:：]14[:：]36/);
+      expect(timestamp.tagName).toBe("TIME");
+      expect(timestamp).toHaveAttribute("dateTime", "2026-08-13T15:14:36.000Z");
+      expect(timestamp).toHaveTextContent(/2026.*08.*13/);
+
+      rerender(<TurnInspector task={{ ...failedTimeline.task, updated_at: "not-a-date" }} timeline={failedTimeline} capabilities={[]} stats={null} />);
+      expect(within(inspector).getByText("时间未知")).toBeInTheDocument();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

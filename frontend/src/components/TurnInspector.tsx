@@ -1,3 +1,4 @@
+import { formatWorkbenchDateTime, parseWorkbenchTimestamp, taskStateLabel } from "../presentation";
 import type { RuntimeCapabilities, Task, Timeline, WorkbenchStats } from "../types";
 
 interface TurnInspectorProps {
@@ -19,9 +20,9 @@ const capabilityLabels: Record<keyof RuntimeCapabilities["capabilities"], string
 };
 
 function secondsBetween(start: string, end: string): number | null {
-  const startValue = Date.parse(start.includes("T") ? start : `${start.replace(" ", "T")}Z`);
-  const endValue = Date.parse(end.includes("T") ? end : `${end.replace(" ", "T")}Z`);
-  return Number.isFinite(startValue) && Number.isFinite(endValue) ? Math.max(0, (endValue - startValue) / 1000) : null;
+  const startValue = parseWorkbenchTimestamp(start);
+  const endValue = parseWorkbenchTimestamp(end);
+  return startValue && endValue ? Math.max(0, (endValue.getTime() - startValue.getTime()) / 1000) : null;
 }
 
 export function TurnInspector({ task, timeline, capabilities, stats }: TurnInspectorProps) {
@@ -37,12 +38,13 @@ export function TurnInspector({ task, timeline, capabilities, stats }: TurnInspe
     ? ["claude", "pi"].filter((kind) => !capabilities.some((item) => item.kind === kind))
     : [];
   const duration = latest?.started_at && latest.completed_at ? secondsBetween(latest.started_at, latest.completed_at) : null;
+  const updatedAt = formatWorkbenchDateTime(task.updated_at);
   return (
     <div data-testid="turn-inspector">
       <dl className="detail-list">
         <div><dt>运行时</dt><dd>{task.runtime_kind}</dd></div>
-        <div><dt>最近更新</dt><dd>{task.updated_at}</dd></div>
-        <div><dt>状态</dt><dd>{latest?.status ?? task.state}</dd></div>
+        <div><dt>最近更新</dt><dd>{updatedAt ? <time dateTime={updatedAt.dateTime}>{updatedAt.label}</time> : "时间未知"}</dd></div>
+        <div><dt>状态</dt><dd>{taskStateLabel(latest?.status ?? task.state)}</dd></div>
         <div><dt>耗时</dt><dd>{duration === null ? "尚未完成" : `${duration.toFixed(1)} 秒`}</dd></div>
       </dl>
       <section className="inspector-section">

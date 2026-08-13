@@ -2,17 +2,8 @@ import { Archive, Check, Pencil, Search, X } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
 
-import type { Task, TaskState } from "../types";
-
-const stateLabels: Record<TaskState, string> = {
-  idle: "空闲",
-  queued: "等待中",
-  running: "执行中",
-  waiting_confirmation: "等待确认",
-  completed: "已完成",
-  stopped: "已停止",
-  failed: "失败",
-};
+import { parseWorkbenchTimestamp, taskStateLabel } from "../presentation";
+import type { Task } from "../types";
 
 interface TaskListProps {
   tasks: Task[];
@@ -33,56 +24,8 @@ interface TaskGroup {
   tasks: Task[];
 }
 
-function isBackendTimestamp(value: string): boolean {
-  if (
-    value.length !== 19 ||
-    value[4] !== "-" ||
-    value[7] !== "-" ||
-    value[10] !== " " ||
-    value[13] !== ":" ||
-    value[16] !== ":"
-  ) {
-    return false;
-  }
-  for (const [index, character] of Array.from(value).entries()) {
-    if ([4, 7, 10, 13, 16].includes(index)) continue;
-    if (character < "0" || character > "9") return false;
-  }
-  return true;
-}
-
-function parseTimestamp(value: string): Date | null {
-  if (isBackendTimestamp(value)) {
-    const parts = [
-      Number(value.slice(0, 4)),
-      Number(value.slice(5, 7)),
-      Number(value.slice(8, 10)),
-      Number(value.slice(11, 13)),
-      Number(value.slice(14, 16)),
-      Number(value.slice(17, 19)),
-    ];
-    const parsed = new Date(`${value.slice(0, 10)}T${value.slice(11)}Z`);
-    if (
-      parsed.getUTCFullYear() !== parts[0] ||
-      parsed.getUTCMonth() + 1 !== parts[1] ||
-      parsed.getUTCDate() !== parts[2] ||
-      parsed.getUTCHours() !== parts[3] ||
-      parsed.getUTCMinutes() !== parts[4] ||
-      parsed.getUTCSeconds() !== parts[5]
-    ) {
-      return null;
-    }
-    return parsed;
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-  return parsed;
-}
-
 function localDay(value: string): number | null {
-  const parsed = parseTimestamp(value);
+  const parsed = parseWorkbenchTimestamp(value);
   if (!parsed) return null;
   return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()).getTime();
 }
@@ -106,7 +49,7 @@ function groupTasks(tasks: Task[]): TaskGroup[] {
 }
 
 function activityDetails(value: string, groupKey: TaskGroup["key"]) {
-  const parsed = parseTimestamp(value);
+  const parsed = parseWorkbenchTimestamp(value);
   if (!parsed) return null;
   const formatter = groupKey === "earlier"
     ? new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })
@@ -218,7 +161,7 @@ export function TaskList({
               <span className="task-title">{task.title}</span>
               <span className="task-meta">
                 <span className={`task-state task-state-${task.state}`}>
-                  {stateLabels[task.state]}
+                  {taskStateLabel(task.state)}
                 </span>
                 {activity ? (
                   <time className="task-activity" dateTime={activity.dateTime}>{activity.label}</time>
