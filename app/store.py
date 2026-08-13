@@ -45,7 +45,7 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-13.5"
+STORE_SCHEMA_VERSION = "2026-08-13.6"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "workbench_tasks",
@@ -1595,10 +1595,31 @@ class AutoReplyStore:
                 "create index if not exists idx_workbench_turns_recovery "
                 "on workbench_turns(status, lease_expires_at)"
             )
+            db.execute("drop index if exists idx_workbench_confirmations_recovery")
             db.execute(
-                "create index if not exists idx_workbench_confirmations_recovery "
-                "on workbench_confirmations(status, execution_lease_expires_at, turn_id)"
+                """
+                create index idx_workbench_confirmations_recovery
+                on workbench_confirmations(execution_lease_expires_at, turn_id)
+                where status='confirmed' and result_json=''
+                """
             )
+            db.execute(
+                """
+                create index if not exists idx_workbench_confirmations_ready_intents
+                on workbench_confirmations(decision_requested_at, id)
+                where status='pending' and decision_requested<>''
+                  and proposer_run_id<>'' and proposer_quiesced_at<>''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_workbench_confirmations_proposer_recovery
+                on workbench_confirmations(proposer_lease_expires_at, id)
+                where status='pending' and proposer_run_id<>''
+                  and proposer_quiesced_at=''
+                """
+            )
+            self._reconcile_legacy_workbench_confirmations(db)
             reply_task_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(reply_tasks)").fetchall()
@@ -2014,6 +2035,92 @@ class AutoReplyStore:
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
             self._backfill_agent_run_effect_counters(db)
+
+    @staticmethod
+    def _reconcile_legacy_workbench_confirmations(db: sqlite3.Connection) -> None:
+        rows = db.execute(
+            """
+            select id, turn_id from workbench_confirmations
+            where status='pending' and proposer_run_id=''
+            order by turn_id, created_at, id
+            """
+        ).fetchall()
+        if not rows:
+            return
+        result_json = json.dumps(
+            {
+                "code": "legacy_proposer_state_unknown",
+                "retryable": False,
+                "status": "failed",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        affected_turn_ids: list[str] = []
+        for row in rows:
+            changed = db.execute(
+                """
+                update workbench_confirmations
+                set status='failed', result_json=?,
+                    decided_at=case when decided_at='' then current_timestamp else decided_at end,
+                    execution_owner='', execution_lease_expires_at='',
+                    execution_started_at='', authorization_consumed_at='',
+                    proposer_owner='', proposer_lease_expires_at='',
+                    proposer_quiesced_at='', decision_requested='',
+                    decision_requested_at=''
+                where id=? and status='pending' and proposer_run_id=''
+                """,
+                (result_json, row["id"]),
+            ).rowcount
+            if changed == 1 and row["turn_id"] not in affected_turn_ids:
+                affected_turn_ids.append(row["turn_id"])
+        for turn_id in affected_turn_ids:
+            turn = db.execute(
+                "select status from workbench_turns where id=?", (turn_id,)
+            ).fetchone()
+            if turn is None or turn["status"] not in {
+                "queued",
+                "running",
+                "waiting_confirmation",
+            }:
+                continue
+            sequence = int(
+                db.execute(
+                    "select coalesce(max(sequence), 0) + 1 from workbench_events where turn_id=?",
+                    (turn_id,),
+                ).fetchone()[0]
+            )
+            db.execute(
+                """
+                insert into workbench_events (
+                    turn_id, sequence, event_type, payload_json
+                ) values (?, ?, 'turn_failed', ?)
+                """,
+                (
+                    turn_id,
+                    sequence,
+                    json.dumps(
+                        {
+                            "code": "legacy_proposer_state_unknown",
+                            "status": "failed",
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+            db.execute(
+                """
+                update workbench_turns
+                set status='failed', lease_owner='', lease_expires_at='',
+                    error_code='legacy_proposer_state_unknown',
+                    error_detail='Legacy confirmation proposer state is unknown.',
+                    completed_at=case when completed_at='' then current_timestamp else completed_at end,
+                    updated_at=current_timestamp
+                where id=? and status in ('queued', 'running', 'waiting_confirmation')
+                """,
+                (turn_id,),
+            )
 
     @staticmethod
     def _migrate_agent_run_turn_identity(db: sqlite3.Connection) -> None:

@@ -287,11 +287,17 @@ class WorkbenchStore(AutoReplyStore):
             ).fetchone()
             return None if row is None else self._turn_from_row(row)
 
-    def resume_context_for_executor(self, turn_id: str, *, owner: str) -> str:
+    def resume_context_for_executor(
+        self,
+        turn_id: str,
+        *,
+        owner: str,
+        now: str | datetime | None = None,
+    ) -> str:
         owner = owner.strip()
         if not owner:
             raise ValueError("owner must be non-empty")
-        _, now_text = _utc_store_time()
+        _, now_text = _utc_store_time(now)
         with self._connect() as db:
             row = self._require_executor_lease(
                 db, turn_id, owner=owner, now_text=now_text
@@ -719,9 +725,14 @@ class WorkbenchStore(AutoReplyStore):
                 raise ValueError("confirmation proposer lease is stale")
 
     def mark_confirmation_proposer_quiesced(
-        self, turn_id: str, *, owner: str, proposer_run_id: str
+        self,
+        turn_id: str,
+        *,
+        owner: str,
+        proposer_run_id: str,
+        now: str | datetime | None = None,
     ) -> tuple[str, str] | None:
-        _, now_text = _utc_store_time()
+        _, now_text = _utc_store_time(now)
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
@@ -761,28 +772,44 @@ class WorkbenchStore(AutoReplyStore):
             rows = db.execute(
                 """
                 select * from workbench_confirmations
-                where status='pending' and proposer_run_id<>''
-                  and proposer_quiesced_at='' and proposer_lease_expires_at<=?
+                where status='pending' and (
+                    proposer_run_id=''
+                    or (
+                        proposer_run_id<>'' and proposer_quiesced_at=''
+                        and proposer_lease_expires_at<=?
+                    )
+                )
                 order by id
                 """,
                 (now_text,),
             ).fetchall()
             for row in rows:
+                code = (
+                    "legacy_proposer_state_unknown"
+                    if not row["proposer_run_id"]
+                    else "confirmation_proposer_not_quiesced"
+                )
                 db.execute(
                     """
                     update workbench_confirmations
-                    set status='failed', result_json=?
-                    where id=? and status='pending' and proposer_quiesced_at=''
+                    set status='failed', result_json=?, decided_at=?,
+                        execution_owner='', execution_lease_expires_at='',
+                        execution_started_at='', authorization_consumed_at='',
+                        proposer_owner='', proposer_lease_expires_at='',
+                        proposer_quiesced_at='', decision_requested='',
+                        decision_requested_at=''
+                    where id=? and status='pending'
                     """,
                     (
                         _json_object_text(
                             {
-                                "code": "confirmation_proposer_not_quiesced",
+                                "code": code,
                                 "retryable": False,
                                 "status": "failed",
                             },
                             field="result_json",
                         ),
+                        now_text,
                         row["id"],
                     ),
                 )
@@ -798,7 +825,7 @@ class WorkbenchStore(AutoReplyStore):
                         row["turn_id"],
                         event_type="turn_failed",
                         payload={
-                            "code": "confirmation_proposer_not_quiesced",
+                            "code": code,
                             "status": TurnStatus.FAILED.value,
                         },
                     )
@@ -808,8 +835,12 @@ class WorkbenchStore(AutoReplyStore):
                         current=status,
                         target=TurnStatus.FAILED,
                         now_text=now_text,
-                        error_code="confirmation_proposer_not_quiesced",
-                        error_detail="Confirmation proposer did not quiesce safely.",
+                        error_code=code,
+                        error_detail=(
+                            "Legacy confirmation proposer state is unknown."
+                            if code == "legacy_proposer_state_unknown"
+                            else "Confirmation proposer did not quiesce safely."
+                        ),
                         clear_lease=True,
                     )
             return len(rows)
@@ -853,7 +884,7 @@ class WorkbenchStore(AutoReplyStore):
                 """
                 select id, decision_requested from workbench_confirmations
                 where status='pending' and decision_requested<>''
-                  and proposer_quiesced_at<>''
+                  and proposer_run_id<>'' and proposer_quiesced_at<>''
                 order by decision_requested_at, id limit ?
                 """,
                 (limit,),

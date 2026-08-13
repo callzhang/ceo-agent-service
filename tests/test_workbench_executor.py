@@ -644,6 +644,54 @@ def test_unquiesced_crashed_proposer_recovery_fails_closed(tmp_path: Path):
     executor.close()
 
 
+def test_runtime_recovery_fails_corrupt_blank_legacy_proposer(tmp_path: Path):
+    store = _store(tmp_path)
+    _, turn, confirmation = _pending_confirmation(store)
+    with store._connect() as db:
+        db.execute(
+            """
+            update workbench_confirmations
+            set proposer_run_id='', proposer_quiesced_at='stale-quiesced', status='pending',
+                proposer_owner='stale-owner', proposer_lease_expires_at='2099-01-01',
+                execution_started_at='2026-08-13T00:00:00Z', result_json='',
+                decision_requested='confirm'
+            where id=?
+            """,
+            (confirmation.id,),
+        )
+        db.execute(
+            """
+            update workbench_turns
+            set status='waiting_confirmation', runtime_quiesced_run_id=''
+            where id=?
+            """,
+            (turn.id,),
+        )
+    calls = []
+    executor = WorkbenchExecutor(
+        WorkbenchStore(store.path),
+        RuntimeRegistry(),
+        workspace=tmp_path,
+        write_runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    assert executor.recover() == 1
+    result = store.get_confirmation(confirmation.id)
+    assert result.status is ConfirmationStatus.FAILED
+    assert json.loads(result.result_json)["code"] == "legacy_proposer_state_unknown"
+    assert result.decision_requested == ""
+    assert store.get_turn(turn.id).status is TurnStatus.FAILED
+    with store._connect() as db:
+        internal = db.execute(
+            "select * from workbench_confirmations where id=?", (confirmation.id,)
+        ).fetchone()
+    assert internal["execution_started_at"] == ""
+    assert internal["proposer_owner"] == ""
+    assert internal["proposer_lease_expires_at"] == ""
+    assert calls == []
+    executor.close()
+
+
 def test_other_executor_picks_persisted_quiesced_confirm_intent(
     tmp_path: Path, monkeypatch
 ):

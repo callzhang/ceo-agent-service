@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -89,6 +90,8 @@ def test_store_migrates_confirmation_execution_claim_without_losing_data(
     _, _, confirmation = _waiting_confirmation(store)
     with store._connect() as db:
         db.execute("drop index idx_workbench_confirmations_recovery")
+        db.execute("drop index idx_workbench_confirmations_ready_intents")
+        db.execute("drop index idx_workbench_confirmations_proposer_recovery")
         for column in (
             "execution_owner",
             "execution_lease_expires_at",
@@ -117,7 +120,7 @@ def test_store_migrates_confirmation_execution_claim_without_losing_data(
 
     migrated = WorkbenchStore(db_path)
 
-    assert migrated.get_confirmation(confirmation.id).status is ConfirmationStatus.PENDING
+    assert migrated.get_confirmation(confirmation.id).status is ConfirmationStatus.FAILED
     with migrated._connect() as db:
         row = db.execute(
             "select * from workbench_confirmations where id=?", (confirmation.id,)
@@ -137,6 +140,160 @@ def test_store_migrates_confirmation_execution_claim_without_losing_data(
     assert {"execution_run_id", "runtime_quiesced_run_id"} <= turn_columns
 
 
+def test_migration_fails_legacy_pending_confirmations_once_across_turn_states(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "workbench.sqlite3"
+    store = WorkbenchStore(db_path)
+    turns = {}
+    confirmations = []
+    for label in ("waiting", "queued", "running", "completed"):
+        task = store.create_task(title=label, runtime_kind="codex")
+        turn = store.create_turn(
+            task.id,
+            user_text=label,
+            client_request_id=f"request-{label}",
+        )
+        store.claim_next_turn(owner=f"owner-{label}")
+        confirmation = store.create_confirmation(
+            turn.id,
+            action_kind="reviewed_cli",
+            target="group=executive",
+            summary="[Untrusted agent description] send",
+            risk="[Untrusted agent risk] external",
+            arguments_json={"argv": ["dws", "chat", "message", "send", "--yes"]},
+            owner=f"owner-{label}",
+        )
+        turns[label] = turn.id
+        confirmations.append(confirmation.id)
+    with store._connect() as db:
+        source = db.execute(
+            "select * from workbench_confirmations where id=?",
+            (confirmations[0],),
+        ).fetchone()
+        duplicate_id = "00000000-0000-4000-8000-000000000099"
+        db.execute(
+            """
+            insert into workbench_confirmations (
+                id, turn_id, action_kind, target, summary, risk, arguments_json,
+                canonical_capability, canonical_operation, canonical_targets_json,
+                canonical_operation_digest, canonical_arguments_digest, status
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            """,
+            (
+                duplicate_id,
+                source["turn_id"],
+                source["action_kind"],
+                source["target"],
+                source["summary"],
+                source["risk"],
+                source["arguments_json"],
+                source["canonical_capability"],
+                source["canonical_operation"],
+                source["canonical_targets_json"],
+                source["canonical_operation_digest"],
+                source["canonical_arguments_digest"],
+            ),
+        )
+        confirmations.append(duplicate_id)
+        db.execute(
+            "update workbench_turns set status='queued' where id=?",
+            (turns["queued"],),
+        )
+        db.execute(
+            "update workbench_turns set status='running' where id=?",
+            (turns["running"],),
+        )
+        db.execute(
+            """
+            update workbench_turns set status='completed', completed_at=current_timestamp
+            where id=?
+            """,
+            (turns["completed"],),
+        )
+        db.execute("drop index idx_workbench_confirmations_ready_intents")
+        db.execute("drop index idx_workbench_confirmations_proposer_recovery")
+        for column in (
+            "proposer_run_id",
+            "proposer_owner",
+            "proposer_lease_expires_at",
+            "proposer_quiesced_at",
+            "decision_requested",
+            "decision_requested_at",
+        ):
+            db.execute(f"alter table workbench_confirmations drop column {column}")
+        for column in ("execution_run_id", "runtime_quiesced_run_id"):
+            db.execute(f"alter table workbench_turns drop column {column}")
+        db.execute(
+            "update service_state set value='2026-08-13.4' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    migrated = WorkbenchStore(db_path)
+
+    expected_result = {
+        "code": "legacy_proposer_state_unknown",
+        "retryable": False,
+        "status": "failed",
+    }
+    for confirmation_id in confirmations:
+        result = migrated.get_confirmation(confirmation_id)
+        assert result.status is ConfirmationStatus.FAILED
+        assert json.loads(result.result_json) == expected_result
+        assert result.decision_requested == ""
+        assert result.decided_at
+        assert migrated.claim_confirmation_execution(
+            confirmation_id, owner="executor"
+        ) is None
+        with pytest.raises(ValueError, match="already been decided"):
+            migrated.cancel_confirmation_execution(
+                confirmation_id, resume_context="cancelled"
+            )
+    with migrated._connect() as db:
+        internal_rows = db.execute(
+            "select * from workbench_confirmations order by id"
+        ).fetchall()
+    for row in internal_rows:
+        assert row["execution_owner"] == ""
+        assert row["execution_lease_expires_at"] == ""
+        assert row["execution_started_at"] == ""
+        assert row["authorization_consumed_at"] == ""
+        assert row["proposer_owner"] == ""
+        assert row["proposer_lease_expires_at"] == ""
+        assert row["proposer_quiesced_at"] == ""
+    assert migrated.get_turn(turns["waiting"]).status is TurnStatus.FAILED
+    assert migrated.get_turn(turns["queued"]).status is TurnStatus.FAILED
+    assert migrated.get_turn(turns["running"]).status is TurnStatus.FAILED
+    assert migrated.get_turn(turns["completed"]).status is TurnStatus.COMPLETED
+    before = {
+        turn_id: [
+            (event.sequence, event.event_type, event.payload)
+            for event in migrated.events_after(turn_id)
+        ]
+        for turn_id in turns.values()
+    }
+    assert sum(event[1] == "turn_failed" for event in before[turns["waiting"]]) == 1
+    assert sum(event[1] == "turn_failed" for event in before[turns["queued"]]) == 1
+    assert sum(event[1] == "turn_failed" for event in before[turns["running"]]) == 1
+    assert sum(event[1] == "turn_failed" for event in before[turns["completed"]]) == 0
+
+    with migrated._connect() as db:
+        db.execute(
+            "update service_state set value='2026-08-13.4' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    repeated = WorkbenchStore(db_path)
+    assert {
+        turn_id: [
+            (event.sequence, event.event_type, event.payload)
+            for event in repeated.events_after(turn_id)
+        ]
+        for turn_id in turns.values()
+    } == before
+
+
 def test_store_has_no_public_confirmation_decision_bypass(tmp_path: Path):
     store = _store(tmp_path)
     assert not hasattr(store, "decide_confirmation")
@@ -152,7 +309,12 @@ def test_public_turn_excludes_private_resume_context(tmp_path: Path):
         )
     public = store.get_turn(turn_id)
     assert "resume_context" not in public.model_dump()
-    assert store.resume_context_for_executor(turn_id, owner="worker-1") == "private receipt"
+    assert (
+        store.resume_context_for_executor(
+            turn_id, owner="worker-1", now="2026-08-13T00:00:01Z"
+        )
+        == "private receipt"
+    )
 
 
 def test_workbench_query_indexes_exist(tmp_path: Path):
@@ -169,6 +331,8 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
         "idx_workbench_turns_recovery",
         "idx_workbench_confirmations_recovery",
         "idx_workbench_confirmations_turn_status",
+        "idx_workbench_confirmations_ready_intents",
+        "idx_workbench_confirmations_proposer_recovery",
     } <= indexes
     with store._connect() as db:
         plan = " ".join(
@@ -183,6 +347,35 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
             ).fetchall()
         )
     assert "idx_workbench_confirmations_turn_status" in plan
+    with store._connect() as db:
+        ready_plan = " ".join(
+            row["detail"]
+            for row in db.execute(
+                """
+                explain query plan select id, decision_requested
+                from workbench_confirmations
+                where status='pending' and decision_requested<>''
+                  and proposer_run_id<>'' and proposer_quiesced_at<>''
+                order by decision_requested_at, id limit 2
+                """
+            ).fetchall()
+        )
+        recovery_plan = " ".join(
+            row["detail"]
+            for row in db.execute(
+                """
+                explain query plan select id from workbench_confirmations
+                where status='pending' and proposer_run_id<>''
+                  and proposer_quiesced_at='' and proposer_lease_expires_at<=?
+                order by proposer_lease_expires_at, id
+                """,
+                ("2099-01-01 00:00:00",),
+            ).fetchall()
+        )
+    assert "idx_workbench_confirmations_ready_intents" in ready_plan
+    assert "USE TEMP B-TREE" not in ready_plan
+    assert "idx_workbench_confirmations_proposer_recovery" in recovery_plan
+    assert "USE TEMP B-TREE" not in recovery_plan
 
 
 def test_stale_prior_run_quiescence_cannot_unlock_confirmation(tmp_path: Path):
@@ -467,6 +660,7 @@ def test_confirmation_list_redacts_arguments_and_execution_claim_exposes_them_on
         turn_id,
         owner="worker-1",
         proposer_run_id=store.execution_run_id_for_executor(turn_id, owner="worker-1"),
+        now="2026-08-13T00:00:01Z",
     )
 
     assert store.list_confirmations(task_id)[0].arguments_json == ""
@@ -518,6 +712,7 @@ def test_claim_owner_can_finish_receipt_after_turn_is_stopped(tmp_path: Path):
         turn_id,
         owner="worker-1",
         proposer_run_id=store.execution_run_id_for_executor(turn_id, owner="worker-1"),
+        now="2026-08-13T00:00:01Z",
     )
     assert store.claim_confirmation_execution(
         confirmation.id,
