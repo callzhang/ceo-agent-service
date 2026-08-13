@@ -6690,6 +6690,7 @@ class AutoReplyStore:
                 """
                 update reply_tasks
                 set status='pending',
+                    attempts=max(attempts - 1, 0),
                     locked_at=null,
                     available_at=?,
                     error=?,
@@ -6709,12 +6710,23 @@ class AutoReplyStore:
         expected_execution_generation: str,
         available_at: str = "",
     ) -> None:
-        self.defer_reply_task(
-            task_id,
-            error,
-            expected_execution_generation=expected_execution_generation,
-            available_at=available_at,
-        )
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending',
+                    locked_at=null,
+                    available_at=?,
+                    error=?,
+                    updated_at=current_timestamp
+                where id=? and status='processing' and execution_generation=?
+                """,
+                (available_at, error, task_id, expected_execution_generation),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
     def count_reply_tasks(
         self, status: str | None = None, *, channel: str | None = None

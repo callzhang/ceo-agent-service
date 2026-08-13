@@ -8,6 +8,9 @@
   duplicate external send, and terminate authorization waits immediately when
   DingTalk supplies no actionable scope to request. Authorization waits with a
   valid scope retain their retry accounting and bounded retry limit.
+- Restrict that recovery to the original single-chat recipient and reject
+  duplicate controlled writes in one Audit turn. Ordinary transient deferrals
+  still refund their claim attempt; authorization deferrals do not.
 
 - Close an unknown Audit run directly when every approved controlled write has
   a completed lifecycle and a target-matched post-write readback. This avoids

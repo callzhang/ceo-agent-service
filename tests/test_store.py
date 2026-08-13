@@ -4320,7 +4320,7 @@ def test_requeue_reply_task_keeps_attempt_count_for_retry(tmp_path: Path):
     assert reclaimed[0].error == "temporary dws auth failure"
 
 
-def test_defer_reply_task_for_authorization_refunds_claim_attempt(tmp_path: Path):
+def test_defer_reply_task_for_authorization_preserves_claim_attempt(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1",
@@ -4341,7 +4341,7 @@ def test_defer_reply_task_for_authorization_refunds_claim_attempt(tmp_path: Path
     reclaimed = store.claim_reply_tasks(limit=1)
 
     assert reclaimed[0].id == claimed[0].id
-    assert reclaimed[0].attempts == 1
+    assert reclaimed[0].attempts == 2
     assert reclaimed[0].error == "authorization required"
 
 

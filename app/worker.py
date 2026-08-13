@@ -1586,12 +1586,15 @@ class DingTalkAutoReplyWorker:
                             or task.attempts >= self.max_task_attempts
                         )
                     ):
-                        task_status, attempt_id = self._record_agent_runtime_failure_attempt(
-                            task,
-                            terminal_authorization_error,
-                            retryable=False,
-                            prior_run_snapshot=run_snapshot,
-                        )
+                        try:
+                            task_status, attempt_id = self._record_agent_runtime_failure_attempt(
+                                task,
+                                terminal_authorization_error,
+                                retryable=False,
+                                prior_run_snapshot=run_snapshot,
+                            )
+                        except AgentRunLeaseLostError:
+                            continue
                         self.store.record_error(
                             task.conversation_id,
                             task.trigger_message_id,
@@ -1606,7 +1609,12 @@ class DingTalkAutoReplyWorker:
                         )
                         continue
                     try:
-                        self.store.defer_reply_task_for_authorization(
+                        defer = (
+                            self.store.defer_reply_task
+                            if provider_recovery or capacity_exhausted
+                            else self.store.defer_reply_task_for_authorization
+                        )
+                        defer(
                             task.id,
                             authorization_wait_error,
                             expected_execution_generation=task.execution_generation,

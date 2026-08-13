@@ -2481,6 +2481,7 @@ def test_persisted_single_direct_delivery_receipt_finishes_unknown_without_rerun
 
 def test_persisted_chat_dm_to_recipient_finishes_unknown_without_rerun(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    direct_task = task.model_copy(update={"single_chat": True})
     direct_proposal = ConsumerProposal.model_validate(
         {
             "objective": "Send direct result",
@@ -2510,7 +2511,15 @@ def test_persisted_chat_dm_to_recipient_finishes_unknown_without_rerun(setup):
         store=store,
         workspace=Path("/workspace"),
         executor=executor,
-    ).recover(task, replace(audit_context, proposal=direct_proposal), run=run)
+    ).recover(
+        direct_task,
+        replace(
+            audit_context,
+            task=replace(audit_context.task, single_chat=True),
+            proposal=direct_proposal,
+        ),
+        run=run,
+    )
 
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome is AuditOutcome.EXECUTED
@@ -3175,7 +3184,7 @@ def test_named_direct_message_readback_keeps_the_completed_write_receipt():
     )
 
 
-def test_named_direct_message_readback_closes_duplicate_replayed_write_events():
+def test_named_direct_message_readback_rejects_duplicate_write_events():
     action = {
         "reviewed_server": "agent_cli",
         "reviewed_tool": "execute_reviewed_write",
@@ -3223,8 +3232,8 @@ def test_named_direct_message_readback_closes_duplicate_replayed_write_events():
         registry=McpToolEffectRegistry.default(),
     )
 
-    assert completed == {0}
-    assert all_closed
+    assert completed == set()
+    assert not all_closed
 
 
 def test_native_command_contract_uses_parsed_cli_not_consumer_label():

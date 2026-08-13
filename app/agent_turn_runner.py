@@ -1976,6 +1976,11 @@ def _action_completion_accounting(
         action_index = start["action_index"]
         if (
             not start["closed"]
+            and not any(
+                other is not start
+                and other["call_id"] == start["call_id"]
+                for other in starts
+            )
             and action_index is not None
             and _matching_read_digest(
                 events,
@@ -2023,13 +2028,15 @@ def _action_completion_accounting(
             open_start["closed"] = True
         successes[action_index] += 1
 
-    # Session-replayed receipts can repeat an already completed controlled call.
-    # A matching completion is sufficient evidence for its one proposed action;
-    # only distinct proposal action indexes represent distinct external writes.
+    # Session replay is suppressed before persistence. Multiple completed calls
+    # for one proposal action in this accounting pass are therefore distinct
+    # external writes and must keep Audit from reporting a single safe effect.
     completed = {
-        index for index, success_count in enumerate(successes) if success_count >= 1
+        index for index, success_count in enumerate(successes) if success_count == 1
     }
-    return completed, all(bool(start["closed"]) for start in starts)
+    return completed, all(bool(start["closed"]) for start in starts) and all(
+        success_count <= 1 for success_count in successes
+    )
 
 
 def _json_digest(value: object) -> str:

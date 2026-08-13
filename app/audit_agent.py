@@ -950,7 +950,7 @@ def _database_delivery_absence_reconciliation(
     if store.has_sent_reply_for_trigger(task.conversation_id, task.trigger_message_id):
         return False
     actions = context.proposal.actions
-    if not actions or not all(_is_direct_chat_send(action) for action in actions):
+    if not actions or not all(_is_direct_chat_send(action, task) for action in actions):
         return False
     return True
 
@@ -964,7 +964,7 @@ def _persisted_single_direct_delivery(
     actions = context.proposal.actions
     return (
         len(actions) == 1
-        and _is_direct_chat_send(actions[0])
+        and _is_direct_chat_send(actions[0], task)
         and store.has_sent_reply_for_trigger(
             task.conversation_id,
             task.trigger_message_id,
@@ -972,8 +972,7 @@ def _persisted_single_direct_delivery(
     )
 
 
-def _is_direct_chat_send(action: object) -> bool:
-    capability = getattr(action, "capability", "")
+def _is_direct_chat_send(action: object, task: ReplyTask | None = None) -> bool:
     payload = getattr(action, "payload", None)
     if not isinstance(payload, dict):
         return False
@@ -985,16 +984,22 @@ def _is_direct_chat_send(action: object) -> bool:
         )
     if descriptor is None or descriptor.cli != "dws":
         return False
+    argv = native_command_argv({"type": "command_execution", **payload})
+    if argv is None:
+        argv = legacy_argv
+    if descriptor.command_path == "chat +dm":
+        return bool(
+            task is not None
+            and task.single_chat
+            and argv is not None
+            and _argv_option_value(argv, "--to").casefold()
+            == task.trigger_sender.casefold()
+        )
     target = getattr(action, "target", None)
     target_keys = set(descriptor.target_identifiers)
     if isinstance(target, dict):
         target_keys.update(str(key).replace("_", "-") for key in target)
-    # `chat +dm` uses its positional `--to` recipient rather than an ID-valued
-    # target flag. It is still a one-to-one delivery and a matching ledger row
-    # must close recovery before it opens another audit session.
-    return descriptor.command_path == "chat +dm" or bool(
-        {"open-dingtalk-id", "user"} & target_keys
-    ) or (
+    return bool({"open-dingtalk-id", "user"} & target_keys) or (
         descriptor.command_path == "chat +send-to-group" and "group" in target_keys
     )
 
