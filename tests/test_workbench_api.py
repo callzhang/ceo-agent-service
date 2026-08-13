@@ -580,6 +580,72 @@ def test_public_event_projection_redacts_delimited_paths_but_preserves_web_urls(
     assert projected["relative"] == "docs/report.md"
 
 
+def test_public_event_projection_only_allows_canonical_public_url_paths(
+    tmp_path: Path,
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    task = store.create_task(title="Canonical paths", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="Paths", client_request_id="canonical-path-request"
+    )
+    unsafe_paths = [
+        "/secret",
+        "/etc",
+        "/",
+        "/api/../../etc",
+        "/api/%2e%2e/etc",
+        "/api/%252e%252e/etc",
+        "/api/%2Fetc",
+        "/api/%252fetc",
+        "/api/%5c..%5cetc",
+        r"/api\..\etc",
+        "/api//tasks",
+        "/api/./tasks",
+        "/api/tasks;../../etc",
+        "/api/tasks,../../etc",
+        "/api/tasks]../../etc",
+        "/api/tasks?next=../../etc",
+        "/api/tasks#../../etc",
+        "/api/tasks?path=/etc/passwd",
+        "/api/tasks#path=/custom/private",
+        "/api/%00secret",
+        "/api/\x00secret",
+        "/api/\x1fsecret",
+        "/api/tasks%20one",
+    ]
+    safe_paths = [
+        "/api/workbench/tasks/123",
+        "/workbench-assets/index.js",
+        "/api/tasks?page=1",
+        "https://example.com/api/../../etc",
+    ]
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into workbench_events (turn_id, sequence, event_type, payload_json)
+            values (?, 2, 'tool_started', ?)
+            """,
+            (
+                turn.id,
+                json.dumps(
+                    {
+                        "tool": "reader",
+                        "summary": {"unsafe": unsafe_paths, "safe": safe_paths},
+                        "tool_call_id": "tool-canonical-paths",
+                    }
+                ),
+            ),
+        )
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/workbench/turns/{turn.id}/events?after=0&limit=10")
+
+    summary = response.json()[1]["payload"]["summary"]
+    assert response.status_code == 200
+    assert summary["unsafe"] == ["[local path]"] * len(unsafe_paths)
+    assert summary["safe"] == safe_paths
+
+
 def test_sse_replays_persisted_events_with_last_event_id_precedence(tmp_path: Path):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
     task = store.create_task(title="Replay", runtime_kind="codex")

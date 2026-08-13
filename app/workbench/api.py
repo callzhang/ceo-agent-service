@@ -14,10 +14,10 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 from uuid import UUID
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse, urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -449,19 +449,58 @@ def _safe_path_display(value: str, workspace: Path) -> str:
 
 _WEB_URL_PATTERN = re.compile(r"https?://[^\s'\"`<>\[\]{}(),;|]+", re.IGNORECASE)
 _LOCAL_PATH_BOUNDARY = r"(?:^|[\s=:'\"`\[\]{}(),;<>|])"
-_LOCAL_PATH_END = r"[^\s'\"`\[\]{}(),;<>|]*"
+_LOCAL_PATH_END = r"[^ \t\r\n\f\v'\"`<>|]*"
 _SAFE_PUBLIC_PATH_PREFIXES = ("/api", "/workbench-assets")
 
 
-def _looks_like_absolute_local_path(value: str) -> bool:
-    if any(
-        value == prefix or value.startswith(f"{prefix}/")
-        for prefix in _SAFE_PUBLIC_PATH_PREFIXES
+def _bounded_unquote(value: str) -> str | None:
+    current = value
+    for _ in range(3):
+        try:
+            decoded = unquote(current, errors="strict")
+        except (UnicodeDecodeError, ValueError):
+            return None
+        if decoded == current:
+            return decoded
+        current = decoded
+    return None
+
+
+def _has_path_traversal_component(value: str) -> bool:
+    return any(part in {".", ".."} for part in re.split(r"[/=&;:]+", value))
+
+
+def _is_canonical_safe_public_url_path(value: str) -> bool:
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        return False
+    if "\\" in value:
+        return False
+    decoded = _bounded_unquote(value)
+    if decoded is None or decoded != value or "%" in value:
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    if parsed.scheme or parsed.netloc:
+        return False
+    path = parsed.path
+    if not any(
+        path.startswith(f"{prefix}/") for prefix in _SAFE_PUBLIC_PATH_PREFIXES
     ):
         return False
-    path_without_suffix = value.split("?", 1)[0].split("#", 1)[0]
-    parts = tuple(part for part in path_without_suffix.split("/") if part)
-    return len(parts) >= 2 or (len(parts) == 1 and "." in parts[0])
+    if re.fullmatch(r"/[A-Za-z0-9._~/-]+", path) is None:
+        return False
+    if "//" in path or PurePosixPath(path).as_posix() != path:
+        return False
+    if any(part in {"", ".", ".."} for part in path.split("/")[1:]):
+        return False
+    return not (
+        "/" in parsed.query
+        or "/" in parsed.fragment
+        or _has_path_traversal_component(parsed.query)
+        or _has_path_traversal_component(parsed.fragment)
+    )
 
 
 def _redact_local_path_segment(value: str) -> str:
@@ -475,7 +514,7 @@ def _redact_local_path_segment(value: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         path = match.group("path")
-        if path.startswith("/") and not _looks_like_absolute_local_path(path):
+        if path.startswith("/") and _is_canonical_safe_public_url_path(path):
             return match.group(0)
         return f"{match.group('prefix')}[local path]"
 
