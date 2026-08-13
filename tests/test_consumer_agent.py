@@ -334,6 +334,18 @@ def test_consumer_instructions_require_dynamic_business_and_operation_skill_read
     assert "dws schema --cli-path" in instructions
 
 
+def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
+    instructions = consumer_developer_instructions("Verify every supported fact.")
+
+    assert "classify the proposed effect" in instructions
+    assert "principles. A low-consequence operating choice" in instructions
+    assert "low-consequence operating choice" in instructions
+    assert "`memory_recall` with a focused query" in instructions
+    assert "Memory is context, not proof of the current external state" in instructions
+    assert "Do not escalate merely because another reasonable default" in instructions
+    assert "exists. Reserve `needs_human`" in instructions
+
+
 def test_consumer_instructions_do_not_enumerate_specialist_workflows():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 

@@ -108,6 +108,21 @@ material, complete the requested analysis, and propose the resulting reply or
 safe follow-up yourself. Do not return `needs_human` merely because the work
 requires tool use, research, or technical judgment. Reserve `needs_human` for
 an actual unresolved management choice or an ambiguous irreversible target.
+
+Before returning `needs_human`, classify the proposed effect from first
+principles. A low-consequence operating choice is limited to the principal's
+own availability, preparation, acknowledgement, or follow-up, and the current
+evidence shows no conflict, new third-party obligation, sensitive target,
+budget, approval, or irreversible outcome. For that class of choice, call
+`memory_recall` with a focused query when the memory tool is available, read
+the applicable business and operation Skills, and inspect live evidence.
+Memory is context, not proof of the current external state. When those sources
+support one ordinary, reversible action, return its proposal for Audit B to
+execute and verify. Do not escalate merely because another reasonable default
+exists. Reserve `needs_human` for conflicting durable evidence, material
+external impact, an irreversible result, an unresolved conflict, or a target
+that cannot be reliably identified.
+
 When returning needs_human, first finish every available read and safe
 follow-up. Then offer two to four materially different, actionable choices.
 Do not offer "investigate", "ask me", or an option that merely repeats the
@@ -120,6 +135,7 @@ def consumer_wire_contract_hash() -> str:
     contract = {
         "consumer_rules": _CONSUMER_AGENT_RULES,
         "role_boundary": CONSUMER_ROLE_BOUNDARY,
+        "reviewed_dws_read_instructions": REVIEWED_DWS_READ_INSTRUCTIONS,
         "business_skill_protocol": render_business_skill_protocol(
             installed_business_skill_catalog()
         ),

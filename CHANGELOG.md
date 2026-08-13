@@ -4,6 +4,10 @@
 
 ### Audit reconciliation
 
+- Require Consumer A to resolve low-consequence operating choices from focused
+  memory context, the applicable Skills, and live evidence before escalating.
+  The Consumer session contract now fingerprints this instruction so prior
+  sessions cannot silently continue under the old escalation rule.
 - Fix audit validation so a valid parsed native command is normalized to its
   controlled CLI contract instead of being rejected because the Consumer used
   a non-canonical capability label.
