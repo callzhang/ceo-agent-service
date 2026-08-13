@@ -8,6 +8,9 @@
   memory context, the applicable Skills, and live evidence before escalating.
   The Consumer session contract now fingerprints this instruction so prior
   sessions cannot silently continue under the old escalation rule.
+- Retry an Agent-run write transaction when SQLite reports a short-lived lock,
+  so lease heartbeats do not interrupt a no-effect Audit turn during concurrent
+  queue activity.
 - Fix audit validation so a valid parsed native command is normalized to its
   controlled CLI contract instead of being rejected because the Consumer used
   a non-canonical capability label.

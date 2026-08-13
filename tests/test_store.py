@@ -1929,6 +1929,44 @@ def test_agent_run_lease_renewal_requires_current_owner(tmp_path: Path):
         )
 
 
+def test_agent_run_lease_renewal_retries_transient_database_lock(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    claim = _claim_audit_run(
+        store,
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-07-29 00:00:00",
+    )
+    original_connect = store._connect
+    attempts = 0
+
+    @contextmanager
+    def flaky_connect():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise sqlite3.OperationalError("database is locked")
+        with original_connect() as db:
+            yield db
+
+    monkeypatch.setattr(store, "_connect", flaky_connect)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _seconds: None)
+
+    renewed = store.renew_agent_run_lease(
+        claim.run.id,
+        owner="worker-1",
+        lease_seconds=900,
+        now="2026-07-29 00:10:00",
+    )
+
+    assert attempts == 2
+    assert renewed.lease_expires_at == "2026-07-29 00:25:00"
+
+
 def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

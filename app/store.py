@@ -39,6 +39,8 @@ from app.history import HistoryItem
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
+AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
+AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
 CODEX_SESSION_LOCK_RETRY_ATTEMPTS = 3
 CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
@@ -3259,9 +3261,19 @@ class AutoReplyStore:
         self,
         now: str | datetime | None,
     ) -> Iterator[tuple[sqlite3.Connection, tuple[datetime, str]]]:
-        with self._connect() as db:
-            db.execute("begin immediate")
-            yield db, _utc_store_time(now)
+        for attempt in range(AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS):
+            try:
+                with self._connect() as db:
+                    db.execute("begin immediate")
+                    yield db, _utc_store_time(now)
+                    return
+            except sqlite3.OperationalError as exc:
+                if (
+                    not _is_sqlite_lock_error(exc)
+                    or attempt + 1 >= AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS
+                ):
+                    raise
+                time.sleep(AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
 
     @staticmethod
     def _require_current_agent_run_write_access(
