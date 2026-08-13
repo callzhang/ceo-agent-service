@@ -450,33 +450,46 @@ def _safe_path_display(value: str, workspace: Path) -> str:
 _WEB_URL_PATTERN = re.compile(r"https?://[^\s'\"`<>\[\]{}(),;|]+", re.IGNORECASE)
 _LOCAL_PATH_BOUNDARY = r"(?:^|[\s=:'\"`\[\]{}(),;<>|])"
 _LOCAL_PATH_END = r"[^\s'\"`\[\]{}(),;<>|]*"
+_SAFE_PUBLIC_PATH_PREFIXES = ("/api", "/workbench-assets")
 
 
-def _redact_local_path_segment(value: str, workspace: Path) -> str:
-    workspace_text = workspace.resolve(strict=False).as_posix().rstrip("/")
-    posix_roots = r"/(?:Users|etc|opt|private|tmp|var)"
-    if workspace_text and not re.match(posix_roots + r"(?:/|$)", workspace_text):
-        posix_roots = rf"(?:{posix_roots}|{re.escape(workspace_text)})"
+def _looks_like_absolute_local_path(value: str) -> bool:
+    if any(
+        value == prefix or value.startswith(f"{prefix}/")
+        for prefix in _SAFE_PUBLIC_PATH_PREFIXES
+    ):
+        return False
+    path_without_suffix = value.split("?", 1)[0].split("#", 1)[0]
+    parts = tuple(part for part in path_without_suffix.split("/") if part)
+    return len(parts) >= 2 or (len(parts) == 1 and "." in parts[0])
+
+
+def _redact_local_path_segment(value: str) -> str:
     local_path_pattern = re.compile(
         rf"(?P<prefix>{_LOCAL_PATH_BOUNDARY})(?P<path>"
-        rf"{posix_roots}(?:/{_LOCAL_PATH_END})?"
+        rf"/(?!/){_LOCAL_PATH_END}"
         rf"|[A-Za-z]:[\\/]{_LOCAL_PATH_END}"
         rf"|\\\\[^\\/\s]+[\\/]{_LOCAL_PATH_END}"
         rf")"
     )
-    return local_path_pattern.sub(
-        lambda match: f"{match.group('prefix')}[local path]", value
-    )
+
+    def replace(match: re.Match[str]) -> str:
+        path = match.group("path")
+        if path.startswith("/") and not _looks_like_absolute_local_path(path):
+            return match.group(0)
+        return f"{match.group('prefix')}[local path]"
+
+    return local_path_pattern.sub(replace, value)
 
 
-def _redact_local_path_substrings(value: str, workspace: Path) -> str:
+def _redact_local_path_substrings(value: str) -> str:
     pieces: list[str] = []
     cursor = 0
     for match in _WEB_URL_PATTERN.finditer(value):
-        pieces.append(_redact_local_path_segment(value[cursor : match.start()], workspace))
+        pieces.append(_redact_local_path_segment(value[cursor : match.start()]))
         pieces.append(match.group(0))
         cursor = match.end()
-    pieces.append(_redact_local_path_segment(value[cursor:], workspace))
+    pieces.append(_redact_local_path_segment(value[cursor:]))
     return "".join(pieces)
 
 
@@ -509,7 +522,7 @@ def _safe_public_value(value: Any, *, key: str, workspace: Path) -> Any:
                 return _safe_path_display(value, workspace)
         if contains_credential(value):
             return "[redacted]"
-        safe_value = _redact_local_path_substrings(value, workspace)
+        safe_value = _redact_local_path_substrings(value)
         if _contains_local_runtime_leak_outside_web_urls(safe_value):
             return "[redacted]"
         if _is_path_field_name(key):
@@ -1080,9 +1093,19 @@ def register_workbench_routes(
                         cursor = event.id
                         last_activity = loop.time()
                     turn = store.get_turn(turn_id_text)
-                    if turn is None or (
-                        turn.status in _TERMINAL_TURN_STATUSES and not persisted
-                    ):
+                    if turn is None:
+                        return
+                    if turn.status in _TERMINAL_TURN_STATUSES:
+                        post_terminal = store.events_after(
+                            turn_id_text, cursor, limit=1000
+                        )
+                        for event in post_terminal:
+                            public = _public_event(event, executor.workspace)
+                            yield encode_sse(public)
+                            cursor = event.id
+                            last_activity = loop.time()
+                        if post_terminal:
+                            continue
                         return
                     elapsed = loop.time() - last_activity
                     if elapsed >= sse_keepalive_seconds:

@@ -524,8 +524,15 @@ def test_public_event_projection_redacts_delimited_paths_but_preserves_web_urls(
         'nested={"source":"/private/tmp/secret.json"} '
         f'workspace=[{tmp_path}/private/report.md] '
         r'windows="C:\Users\Derek\secret.txt" '
+        "system=/usr/local/bin/private-tool "
+        "home=/home/alice/private/report.csv "
+        "application=/Applications/Private.app/Contents/MacOS/private "
+        "volume=/Volumes/private-drive/archive.tar "
+        "root=/root/.ssh/id_ed25519 device=/dev/disk4 "
+        "custom=/custom/mount/private-file "
         "url=https://example.com/docs/path?q=/etc/passwd "
-        "public=https://example.com/tmp/public-report"
+        "public=https://example.com/tmp/public-report "
+        "api=/api/workbench/tasks/123 asset=/workbench-assets/index.js"
     )
     with store._connect() as db:
         db.execute(
@@ -556,8 +563,20 @@ def test_public_event_projection_redacts_delimited_paths_but_preserves_web_urls(
     assert "/private/tmp/secret.json" not in encoded
     assert str(tmp_path) not in encoded
     assert r"C:\\Users\\Derek\\secret.txt" not in encoded
+    for local_path in (
+        "/usr/local/bin/private-tool",
+        "/home/alice/private/report.csv",
+        "/Applications/Private.app/Contents/MacOS/private",
+        "/Volumes/private-drive/archive.tar",
+        "/root/.ssh/id_ed25519",
+        "/dev/disk4",
+        "/custom/mount/private-file",
+    ):
+        assert local_path not in encoded
     assert "https://example.com/docs/path?q=/etc/passwd" in projected["message"]
     assert "https://example.com/tmp/public-report" in projected["message"]
+    assert "/api/workbench/tasks/123" in projected["message"]
+    assert "/workbench-assets/index.js" in projected["message"]
     assert projected["relative"] == "docs/report.md"
 
 
@@ -614,6 +633,80 @@ def test_sse_polling_delivers_database_event_without_broker_wakeup(tmp_path: Pat
     assert not writer.is_alive()
     assert response.status_code == 200
     assert "event: turn_completed" in response.text
+
+
+def test_sse_terminal_race_rechecks_sqlite_without_missing_or_duplicates_100_times(
+    tmp_path: Path, monkeypatch
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    controller = {
+        "turn_id": "",
+        "calls": 0,
+        "empty_query_complete": threading.Event(),
+        "terminal_committed": threading.Event(),
+    }
+    original_events_after = WorkbenchStore.events_after
+
+    def events_after_with_terminal_barrier(self, turn_id, after_id=0, *, limit=100):
+        result = original_events_after(self, turn_id, after_id, limit=limit)
+        if turn_id == controller["turn_id"]:
+            controller["calls"] += 1
+            if controller["calls"] == 2:
+                assert result == []
+                controller["empty_query_complete"].set()
+                assert controller["terminal_committed"].wait(1)
+        return result
+
+    monkeypatch.setattr(
+        WorkbenchStore, "events_after", events_after_with_terminal_barrier
+    )
+    with _client(tmp_path) as client:
+        for repetition in range(100):
+            task = store.create_task(
+                title=f"Terminal race {repetition}", runtime_kind="codex"
+            )
+            turn = store.create_turn(
+                task.id,
+                user_text="Stop after empty replay",
+                client_request_id=f"terminal-race-{repetition}",
+            )
+            initial_event_id = original_events_after(store, turn.id)[0].id
+            controller.update(
+                {
+                    "turn_id": turn.id,
+                    "calls": 0,
+                    "empty_query_complete": threading.Event(),
+                    "terminal_committed": threading.Event(),
+                }
+            )
+
+            def commit_terminal_event():
+                assert controller["empty_query_complete"].wait(1)
+                WorkbenchStore(store.path).request_stop(turn.id)
+                controller["terminal_committed"].set()
+
+            writer = threading.Thread(target=commit_terminal_event)
+            writer.start()
+            response = client.get(
+                f"/api/workbench/turns/{turn.id}/events/stream",
+                headers={"Last-Event-ID": str(initial_event_id)},
+            )
+            writer.join(timeout=1)
+
+            assert writer.is_alive() is False
+            event_ids = [
+                int(line.removeprefix("id: "))
+                for line in response.text.splitlines()
+                if line.startswith("id: ")
+            ]
+            terminal_events = [
+                line
+                for line in response.text.splitlines()
+                if line == "event: turn_completed"
+            ]
+            assert response.status_code == 200
+            assert len(event_ids) == len(set(event_ids)) == 1
+            assert len(terminal_events) == 1
 
 
 @pytest.mark.parametrize("cursor", ["-1", "1.0", "abc", ""])
