@@ -5516,6 +5516,97 @@ def test_fastapi_app_serves_history_routes(tmp_path: Path):
     assert "agent 执行记录" in detail_response.text
 
 
+def test_fastapi_app_serves_built_workbench_assets_with_secure_boundaries(
+    tmp_path: Path,
+):
+    asset_dir = tmp_path / "app" / "static" / "workbench"
+    hashed_assets = asset_dir / "assets"
+    hashed_assets.mkdir(parents=True)
+    index = (
+        b'<!doctype html><html><head><link rel="stylesheet" '
+        b'href="/workbench-assets/assets/index-a1b2c3.css"></head>'
+        b'<body><a href="/history">History</a><script type="module" '
+        b'src="/workbench-assets/assets/index-d4e5f6.js"></script></body></html>'
+    )
+    (asset_dir / "index.html").write_bytes(index)
+    (hashed_assets / "index-a1b2c3.css").write_text("body { color: black; }")
+    (hashed_assets / "index-d4e5f6.js").write_text("document.body.dataset.ready = '1';")
+    (asset_dir / "favicon.svg").write_text("<svg></svg>")
+    outside = tmp_path / "outside.js"
+    outside.write_text("globalThis.secret = true;")
+    (hashed_assets / "outside-link.js").symlink_to(outside)
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    complete_setup_wizard(store)
+    app = create_audit_app(
+        store.path,
+        workbench_asset_dir=asset_dir,
+        workbench_workspace=tmp_path,
+    )
+
+    with TestClient(app) as client:
+        root = client.get("/")
+        javascript = client.get(
+            "/workbench-assets/assets/index-d4e5f6.js"
+        )
+        stylesheet = client.get(
+            "/workbench-assets/assets/index-a1b2c3.css"
+        )
+        favicon = client.get("/workbench-assets/favicon.svg")
+        missing = client.get("/workbench-assets/assets/missing.js")
+        directory = client.get("/workbench-assets/assets/")
+        traversal = client.get("/workbench-assets/%2e%2e/outside.js")
+        symlink = client.get("/workbench-assets/assets/outside-link.js")
+        api = client.get("/api")
+        history = client.get("/history")
+        tasks = client.get("/tasks")
+        workers = client.get("/workers")
+        settings = client.get("/settings")
+
+    content_security_policy = (
+        "default-src 'self'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
+        "base-uri 'none'; frame-ancestors 'none'"
+    )
+    assert root.status_code == 200
+    assert root.content == index
+    assert root.headers["cache-control"] == "no-cache"
+    assert root.headers["content-security-policy"] == content_security_policy
+    assert root.headers["x-content-type-options"] == "nosniff"
+    assert root.headers["referrer-policy"] == "no-referrer"
+    assert root.headers["permissions-policy"] == (
+        "camera=(), microphone=(), geolocation=()"
+    )
+
+    assert javascript.status_code == 200
+    assert javascript.headers["content-type"].startswith("text/javascript")
+    assert javascript.headers["cache-control"] == (
+        "public, max-age=31536000, immutable"
+    )
+    assert javascript.headers["content-security-policy"] == content_security_policy
+    assert stylesheet.status_code == 200
+    assert stylesheet.headers["content-type"].startswith("text/css")
+    assert stylesheet.headers["cache-control"] == (
+        "public, max-age=31536000, immutable"
+    )
+    assert favicon.status_code == 200
+    assert favicon.headers["cache-control"] == "no-cache"
+
+    assert missing.status_code == 404
+    assert missing.headers["cache-control"] == "no-cache"
+    assert directory.status_code == 404
+    assert traversal.status_code == 404
+    assert symlink.status_code == 404
+    assert outside.read_text() not in symlink.text
+    assert api.status_code == 404
+    assert api.content != index
+    assert history.status_code == 200
+    assert "CEO Agent Audit" in history.text
+    assert tasks.status_code == 200
+    assert workers.status_code == 200
+    assert settings.status_code == 200
+
+
 def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)

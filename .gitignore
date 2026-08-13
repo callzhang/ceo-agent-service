@@ -13,6 +13,7 @@ node_modules/
 .worktrees/
 .next/
 dist/
+app/static/workbench/
 coverage/
 prompts/
 profiles/

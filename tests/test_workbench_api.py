@@ -103,7 +103,10 @@ def test_root_reports_missing_workbench_build_and_history_keeps_query(tmp_path: 
         history = client.get("/history?object_type=meeting&q=roadmap")
 
     assert root.status_code == 503
-    assert "npm run build:workbench" in root.text
+    assert (
+        "npm install --prefix frontend &amp;&amp; npm run build:workbench"
+        in root.text
+    )
     assert history.status_code == 200
     assert "History" in history.text
 

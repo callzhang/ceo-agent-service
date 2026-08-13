@@ -1,4 +1,7 @@
+import os
+import subprocess
 from argparse import Namespace
+from pathlib import Path
 
 import pytest
 
@@ -26,6 +29,51 @@ class FakeChild:
     def wait(self):
         self.waited = True
         return self.returncode
+
+
+def _run_installer_fixture(
+    tmp_path: Path,
+    *,
+    index_html: str | None = None,
+) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+    repository = tmp_path / "repository"
+    scripts_dir = repository / "scripts"
+    scripts_dir.mkdir(parents=True)
+    source_script = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "install-auto-reply-agents.sh"
+    )
+    installer = scripts_dir / source_script.name
+    installer.write_bytes(source_script.read_bytes())
+    if index_html is not None:
+        asset_dir = repository / "app" / "static" / "workbench"
+        asset_dir.mkdir(parents=True)
+        (asset_dir / "index.html").write_text(index_html)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    launchctl_log = tmp_path / "launchctl.log"
+    fake_launchctl = fake_bin / "launchctl"
+    fake_launchctl.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$LAUNCHCTL_LOG\"\n"
+    )
+    fake_launchctl.chmod(0o755)
+    fake_home = tmp_path / "home"
+    env = {
+        **os.environ,
+        "HOME": str(fake_home),
+        "LAUNCHCTL_LOG": str(launchctl_log),
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+    }
+    completed = subprocess.run(
+        ["bash", str(installer)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return completed, fake_home, launchctl_log
 
 
 def test_shutdown_grace_finishes_before_launchd_forces_exit():
@@ -100,3 +148,40 @@ def test_supervisor_reaps_worker_when_audit_web_cannot_start():
 
     assert worker.terminated is True
     assert worker.waited is True
+
+
+def test_installer_rejects_missing_workbench_build_before_service_mutation(
+    tmp_path: Path,
+):
+    completed, fake_home, launchctl_log = _run_installer_fixture(tmp_path)
+
+    assert completed.returncode == 1
+    assert completed.stderr.strip() == (
+        "workbench assets missing; run npm install --prefix frontend && "
+        "npm run build:workbench"
+    )
+    assert not (fake_home / "Library" / "LaunchAgents").exists()
+    assert not (fake_home / "Library" / "Logs" / "ceo-agent-service").exists()
+    assert not launchctl_log.exists()
+
+
+def test_installer_rejects_index_with_missing_assets_before_service_mutation(
+    tmp_path: Path,
+):
+    completed, fake_home, launchctl_log = _run_installer_fixture(
+        tmp_path,
+        index_html=(
+            '<!doctype html><link rel="stylesheet" '
+            'href="/workbench-assets/assets/index-missing.css">'
+            '<script src="/workbench-assets/assets/index-missing.js"></script>'
+        ),
+    )
+
+    assert completed.returncode == 1
+    assert completed.stderr.strip() == (
+        "workbench assets missing; run npm install --prefix frontend && "
+        "npm run build:workbench"
+    )
+    assert not (fake_home / "Library" / "LaunchAgents").exists()
+    assert not (fake_home / "Library" / "Logs" / "ceo-agent-service").exists()
+    assert not launchctl_log.exists()

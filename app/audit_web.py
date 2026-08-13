@@ -26,6 +26,7 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
+from fastapi.staticfiles import StaticFiles
 
 from app.agent_contracts import ConsumerAgentResult, ConsumerOutcome, DecisionOption
 from app.audit_rules import (
@@ -154,6 +155,17 @@ AUDIT_WEB_SQLITE_BUSY_TIMEOUT_SECONDS = 2
 USER_FEEDBACK_SYNC_BATCH_LIMIT = 5
 USER_FEEDBACK_SYNC_TIMEOUT_SECONDS = 0.5
 USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN = 5
+WORKBENCH_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
+    "base-uri 'none'; frame-ancestors 'none'"
+)
+WORKBENCH_SECURITY_HEADERS = {
+    "Content-Security-Policy": WORKBENCH_CONTENT_SECURITY_POLICY,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
 
 
 CSS = """
@@ -7600,6 +7612,10 @@ def _render_history_busy_page() -> str:
     )
 
 
+def _workbench_asset_dir() -> Path:
+    return Path(__file__).resolve().parent / "static" / "workbench"
+
+
 def create_audit_app(
     db_path: Path,
     ding_robot_code: str | None = None,
@@ -7618,10 +7634,7 @@ def create_audit_app(
     from app.workbench.runtime import RuntimeRegistry
     from app.workbench.store import WorkbenchStore
 
-    asset_dir = Path(
-        workbench_asset_dir
-        or Path(__file__).resolve().parent / "static" / "workbench"
-    )
+    asset_dir = Path(workbench_asset_dir or _workbench_asset_dir()).resolve()
     workbench_store = WorkbenchStore(db_path)
     effective_workspace = Path(workbench_workspace or workspace_path()).resolve()
     runtime_registry = workbench_runtime_registry or RuntimeRegistry(
@@ -7692,6 +7705,16 @@ def create_audit_app(
         stream_guard=_require_trusted_mutation,
         scheduler_interval_seconds=workbench_scheduler_interval_seconds,
     )
+    if asset_dir.is_dir():
+        app.mount(
+            "/workbench-assets",
+            StaticFiles(
+                directory=asset_dir,
+                html=False,
+                follow_symlink=False,
+            ),
+            name="workbench-assets",
+        )
 
     @app.middleware("http")
     async def require_trusted_requests(request: Request, call_next):
@@ -7705,7 +7728,20 @@ def create_audit_app(
                 status_code=exc.status_code,
                 headers=exc.headers,
             )
-        return await call_next(request)
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.startswith("/workbench-assets/"):
+            response.headers.update(WORKBENCH_SECURITY_HEADERS)
+        if (
+            path.startswith("/workbench-assets/assets/")
+            and response.status_code == 200
+        ):
+            response.headers["Cache-Control"] = (
+                "public, max-age=31536000, immutable"
+            )
+        elif path.startswith("/workbench-assets/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     from app.store import AutoReplyStore as _WechatStore
     from app.wechat import service as _wechat_service
@@ -7792,7 +7828,7 @@ def create_audit_app(
             )
         return HTMLResponse(
             """<!doctype html><html><head><meta charset="utf-8"><title>Workbench unavailable</title></head>
-            <body><h1>Workbench assets are missing</h1><p>Run <code>npm run build:workbench</code> and reload this page.</p></body></html>""",
+            <body><h1>Workbench assets are missing</h1><p>Run <code>npm install --prefix frontend &amp;&amp; npm run build:workbench</code> and reload this page.</p></body></html>""",
             status_code=503,
             headers={"Cache-Control": "no-cache"},
         )

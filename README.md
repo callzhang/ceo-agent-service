@@ -26,6 +26,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；仅在存在观点分歧或需要输出 Derek 观点解读时生成跟进。多人会议默认发到 Agent 核验过、明确承接该业务或后续行动的团队群；涉及个人隐私、薪酬绩效或不适合公开的个人负面反馈时，可以私信相关参会人。
 - **审计 Web UI**：本地 FastAPI 页面查看历史、attempt 详情、Codex session、错误、Prompt 模板和路由配置。
+- **Agent Workbench**：在本地 Web 界面中创建 agent 任务、连续对话、查看流式事件和产物，并在高风险工具调用前进行人工确认。
 - **自动修复 heartbeat**：消费 fail-closed 质量巡检结果，覆盖必需队列、最新 trigger、陈旧处理、外部投递、反馈和近期错误；将须恢复的问题与仍在进行的工作分开呈现。未知写操作只做只读核对，不自动重放。
 - **管理者 OKR 周报**：每周日读取 CEO-2 管理群成员的实时叮当 OKR 和可访问证据，按 `dingtang-okr-review` 生成可审计评分、知识库报告和群内重点摘要。
 
@@ -52,6 +53,8 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 6. **Consumer Agent A 层**：同一对话复用一个原生 Codex session；每条新消息通过 `codex exec resume` 追加到该 session，并形成独立只读判断 run。
 7. **Audit Agent B 层**：每个 A 候选 revision 启动一个新的审计 session。B 接受后执行并读回；业务含义变化通过结构化反馈回到 A。
 8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd、fail-closed 质量巡检和结果未知写操作的只读核对。
+
+Agent Workbench 的运行协议与模型提供商无关：SQLite 是任务、回合、确认和产物的权威状态，SSE 只流式传送可重放的事件，不成为第二份状态。需要外部效果的操作必须先生成持久化确认，只有当前回合的确认可以被消费。首个生产 runtime 是 Codex；Claude 和 Pi 尚未实现专用 adapter，未来只需实现同一事件、停止、恢复和确认契约即可接入。
 
 当回复判断依赖 DWS 材料时，`codex exec` 内的只读 DWS 命令统一使用 900 秒 HTTP 超时。若 DWS 读取以临时网络错误或未分类的命令输出失败，且本轮没有记录其他可用材料，决策会被强制转换为 `blocked`，原 reply task 按指数退避重试；服务不会把材料读取失败改写成拒绝、追问或无依据回复。明确的登录或授权失败仍保持阻断，避免无效重试。
 
@@ -188,6 +191,9 @@ Lark 可通过 `LARK_CLI_INSTALL_COMMAND` 覆盖默认 npm 安装命令。
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
+npm install --prefix frontend
+npm run test:workbench
+npm run build:workbench
 ```
 
 ### 3. 配置环境变量
@@ -339,7 +345,8 @@ http://127.0.0.1:8765/
 
 常用页面：
 
-- `/`：回复历史和待处理任务；“检索对象”可分别筛选普通钉钉回复、微信、审批、task 和 meeting，状态筛选支持 sent、reacted、skipped、blocked、failed 和 done
+- `/`：Agent Workbench，用于创建和继续 agent 任务、查看流式进度、产物与待确认操作
+- `/history`：回复与执行历史；“检索对象”可分别筛选普通钉钉回复、微信、审批、task 和 meeting，状态筛选支持 sent、reacted、skipped、blocked、failed 和 done
 - History 的状态筛选按当前可处理性展示：同一触发消息或同一会后任务已经有后续结果时，旧 `failed` / `blocked` / `ready_to_send` 行保留为审计证据，但不再进入 active failed/blocked/pending 筛选；尚无后续结果的 blocked 统一显示为可恢复的 `Blocked`。
 - `/tasks`：work projects、状态、category filter、Priority/Risk 排序、TODO checklist、实时全文检索和分页
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录
@@ -348,7 +355,7 @@ http://127.0.0.1:8765/
 - `/settings`：`Config`、`Workers` 与 `Logs` 标签页；`Config → Channels` 展示 DingTalk/Feishu CLI doctor 状态。`/config`、`/workers`、`/logs` 保留为兼容入口，但渲染同一 Settings 页面。
 - `/errors`：错误列表
 
-### 7. 启用 task 总结
+### 8. 启用 task 总结
 
 Task 总结以项目为主线记录管理事项、产研事项、业务项目和其他重要事项。每条新处理对话会生成一个结构化 Work Item，task agent 再结合 BM25 候选、DWS 上下文和 Memory Connector 判断是更新现有项目还是新增项目。
 
@@ -454,10 +461,13 @@ Follow-up 发送仍遵守 live-send 安全边界：默认 dry-run 时只生成/�
 本项目提供 macOS `launchd` 模板：
 
 ```bash
+npm install --prefix frontend
+npm run test:workbench
+npm run build:workbench
 scripts/install-auto-reply-agents.sh
 ```
 
-安装前请先检查 `launchd/*.plist` 中的本地路径、用户名、workspace、数据库路径和 persona 配置。开源部署时通常需要替换这些值。
+安装前请先检查 `launchd/*.plist` 中的本地路径、用户名、workspace、数据库路径和 persona 配置。开源部署时通常需要替换这些值。安装脚本会在修改 plist 或 launchd 前验证 Workbench 的 `index.html` 和它引用的每个资源；缺少构建时直接失败，不会自动执行 npm install/build。
 
 运行模型只有一个 launchd job。它的 supervisor 运行 worker 和审计 Web 两个独立子进程；它们共享 SQLite，但不共享 Python 解释器。任一子进程退出时，supervisor 会回收另一方并让 launchd 重启整个可恢复服务，因此 worker 重启或高负载不会阻塞页面。不会创建 meeting crontab 或第二个 plist：
 
@@ -548,6 +558,7 @@ cd /path/to/ceo-agent-service
 ```text
 .
 ├── app/                         # Python 应用包、CLI、worker 和资源
+├── frontend/                    # React/Vite Agent Workbench 源码与测试
 ├── tests/                       # Python 测试
 ├── docs/                        # 架构图、DWS 能力、消息路由和产品逻辑文档
 ├── launchd/                     # macOS launchd 模板
@@ -562,8 +573,19 @@ cd /path/to/ceo-agent-service
 
 ```bash
 cd /path/to/ceo-agent-service
-.venv/bin/pytest -q
+npm test
 ```
+
+`npm test` 依次运行现有 Python 测试和 Workbench 前端测试。修改 Workbench 后的本地集成流程是：
+
+```bash
+npm install --prefix frontend
+npm run test:workbench
+npm run build:workbench
+.venv/bin/python -m app.cli audit-web --reload --host 127.0.0.1 --port 8765
+```
+
+构建产物写入被 Git 忽略的 `app/static/workbench/`；FastAPI 在 `/` 精确返回其 `index.html`，并从 `/workbench-assets/` 提供带哈希的 JS/CSS。在构建之前启动页面会明确返回 503，安装脚本也不会自动下载依赖或构建。
 
 只跑相关测试：
 

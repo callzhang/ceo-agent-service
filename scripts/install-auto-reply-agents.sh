@@ -36,6 +36,56 @@ legacy_plist_names=(
   "${legacy_label_prefix}.memory-flush.plist"
 )
 
+workbench_asset_dir="${repo_root}/app/static/workbench"
+workbench_index="${workbench_asset_dir}/index.html"
+workbench_assets_missing() {
+  printf '%s\n' \
+    'workbench assets missing; run npm install --prefix frontend && npm run build:workbench' \
+    >&2
+  exit 1
+}
+
+if [[ ! -f "${workbench_index}" ]]; then
+  workbench_assets_missing
+fi
+if ! python3 - "${workbench_index}" "${workbench_asset_dir}" <<'PY'
+from html.parser import HTMLParser
+from pathlib import Path
+import sys
+from urllib.parse import unquote, urlsplit
+
+
+class AssetReferences(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.paths = []
+
+    def handle_starttag(self, _tag, attrs):
+        for name, value in attrs:
+            if name in {"href", "src"} and value:
+                path = urlsplit(value).path
+                if path.startswith("/workbench-assets/"):
+                    self.paths.append(unquote(path.removeprefix("/workbench-assets/")))
+
+
+index_path = Path(sys.argv[1])
+asset_root = Path(sys.argv[2]).resolve()
+try:
+    index_path.resolve().relative_to(asset_root)
+    parser = AssetReferences()
+    parser.feed(index_path.read_text(encoding="utf-8"))
+    for relative_path in parser.paths:
+        candidate = (asset_root / relative_path).resolve()
+        candidate.relative_to(asset_root)
+        if not candidate.is_file():
+            raise FileNotFoundError(candidate)
+except (OSError, UnicodeError, ValueError):
+    raise SystemExit(1)
+PY
+then
+  workbench_assets_missing
+fi
+
 mkdir -p "${target_dir}" "${log_dir}"
 
 for label in "${obsolete_labels[@]}"; do
