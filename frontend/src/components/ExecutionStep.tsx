@@ -47,7 +47,7 @@ export function ExecutionStep({ kind, status = "running", payload = {} }: Execut
       <summary>
         <Icon aria-hidden="true" size={16} />
         <span className="execution-name">{name}</span>
-        <span className="execution-state">{stateLabel}</span>
+        <span className="execution-state" role="status">{stateLabel}</span>
         <ChevronRight className="execution-chevron" aria-hidden="true" size={15} />
       </summary>
       <p>{summary}</p>

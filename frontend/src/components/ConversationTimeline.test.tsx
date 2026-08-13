@@ -7,7 +7,7 @@ import { ArtifactList } from "./ArtifactList";
 import { ConfirmationCard } from "./ConfirmationCard";
 import { assistantTurnKey, ConversationTimeline } from "./ConversationTimeline";
 import { TurnInspector } from "./TurnInspector";
-import type { Timeline } from "../types";
+import type { Timeline, TurnStatus } from "../types";
 
 const turn = {
   id: "turn-1", task_id: "task-1", client_request_id: "request-1", user_text: "请生成 **报告**",
@@ -219,27 +219,34 @@ describe("ConversationTimeline", () => {
     expect(within(execution as HTMLElement).queryByText("执行中")).not.toBeInTheDocument();
   });
 
-  it("keeps an unmatched tool running while its turn is running", () => {
-    const running = { ...turn, status: "running" as const };
-    render(
+  it("updates unmatched tool presentation when the same turn becomes terminal", () => {
+    const events = [{ id: 41, turn_id: turn.id, sequence: 41, event_type: "tool_started" as const, payload: { tool: "read", tool_call_id: "tool-41", summary: "读取文件" }, created_at: "" }];
+    const renderTimeline = (status: TurnStatus) => (
       <ConversationTimeline
-        timeline={{
-          ...timeline,
-          turns: [running],
-          events: [{ id: 41, turn_id: running.id, sequence: 41, event_type: "tool_started", payload: { tool: "read", tool_call_id: "tool-41", summary: "读取文件" }, created_at: "" }],
-          confirmations: [],
-          artifacts: [],
-        }}
-        activeTurnId={running.id}
+        timeline={{ ...timeline, turns: [{ ...turn, status }], events, confirmations: [], artifacts: [] }}
+        activeTurnId={turn.id}
         onConfirm={vi.fn()}
         onCancel={vi.fn()}
-      />,
+      />
     );
+    const { rerender } = render(renderTimeline("running"));
+    const execution = () => {
+      const card = document.querySelector(".execution-step");
+      expect(card).not.toBeNull();
+      return within(card as HTMLElement);
+    };
 
-    const execution = document.querySelector(".execution-step");
-    expect(execution).not.toBeNull();
-    expect(within(execution as HTMLElement).getByText("执行中")).toBeInTheDocument();
-    expect(within(execution as HTMLElement).queryByText("已中止")).not.toBeInTheDocument();
+    expect(execution().getByText("执行中")).toBeInTheDocument();
+    for (const status of ["queued", "waiting_confirmation"] as const) {
+      rerender(renderTimeline(status));
+      expect(execution().getByText("执行中")).toBeInTheDocument();
+      expect(execution().queryByText("已中止")).not.toBeInTheDocument();
+    }
+    for (const status of ["failed", "completed", "stopped"] as const) {
+      rerender(renderTimeline(status));
+      expect(execution().getByText("已中止")).toBeInTheDocument();
+      expect(execution().queryByText("执行中")).not.toBeInTheDocument();
+    }
   });
 
   it("keeps persisted terminal tool completions completed or failed", () => {
