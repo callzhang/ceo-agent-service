@@ -1295,36 +1295,96 @@ def test_credential_bearing_assistant_text_never_enters_events_or_errors(
     assert "credential-value-1234" not in repr(events)
 
 
-@pytest.mark.parametrize(
-    "sensitive_leaf",
-    [
-        "sk-proj-nestedcredential1234",
-        "Bearer nestedcredential1234",
-        "service_token=nestedcredential1234",
-    ],
-)
-def test_credential_in_any_nested_provider_string_is_rejected_before_emission(
-    tmp_path: Path, sensitive_leaf: str
-):
+def test_calendar_result_cursor_is_ignored_before_public_event_emission(tmp_path: Path):
+    cursor = "opaque-pagination-value"
     records = [
         {"type": "thread.started", "thread_id": SESSION_ID},
         {
-            "type": "item.completed",
+            "type": "item.started",
             "item": {
-                "type": "command_execution",
-                "metadata": {"nested": ["safe", {"value": sensitive_leaf}]},
+                "id": "calendar-1",
+                "type": "mcp_tool_call",
+                "server": "codex_apps",
+                "tool": "google_calendar.search_events",
             },
         },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "calendar-1",
+                "type": "mcp_tool_call",
+                "server": "codex_apps",
+                "tool": "google_calendar.search_events",
+                "result": {
+                    "Ok": {
+                        "structuredContent": {
+                            "events": [],
+                            "next_page_token": cursor,
+                        }
+                    }
+                },
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": "完成"},
+        },
+        {"type": "turn.completed"},
     ]
     events = []
     runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
 
     result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
 
-    assert result.status == "failed"
-    assert result.error_code == "sensitive_provider_output"
-    assert sensitive_leaf not in result.error_detail
-    assert sensitive_leaf not in repr(events)
+    assert result.status == "completed"
+    assert [
+        event.payload_json_value()
+        for event in events
+        if event.event_type == "tool_completed"
+    ] == [
+        {
+            "tool": "Google 日历查询",
+            "summary": "已完成",
+            "status": "completed",
+            "tool_call_id": "tool-call-1",
+        }
+    ]
+    assert cursor not in repr(events)
+
+
+def test_credential_in_ignored_command_metadata_never_enters_events(tmp_path: Path):
+    credential = "sk-proj-nativecredential1234"
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {
+            "type": "item.started",
+            "item": {
+                "id": "command-1",
+                "type": "command_execution",
+                "metadata": {"credential": credential},
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "command-1",
+                "type": "command_execution",
+                "aggregated_output": credential,
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": "完成"},
+        },
+        {"type": "turn.completed"},
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    assert result.status == "completed"
+    assert credential not in repr(events)
 
 
 def test_confirmation_argv_credential_value_is_rejected_without_leak(tmp_path: Path):
