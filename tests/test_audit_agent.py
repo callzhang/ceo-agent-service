@@ -3608,6 +3608,44 @@ def test_effect_registry_accepts_registered_direct_message_readback():
     )
 
 
+def test_effect_registry_accepts_registered_reply_and_todo_readbacks():
+    registry = McpToolEffectRegistry.default()
+
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat +chat-messages",
+            "target_identifiers": {"conversation-id": "conversation-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "chat +messages-reply",
+            "target_identifiers": {
+                "conversation-id": "conversation-1",
+                "message-id": "message-1",
+            },
+        },
+        registry,
+    )
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "todo task get",
+            "target_identifiers": {"task-id": "todo-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "todo task update",
+            "target_identifiers": {"task-id": "todo-1"},
+        },
+        registry,
+    )
+
+
 def test_controlled_cli_mail_verify_reads_back_reply_for_same_mailbox():
     registry = McpToolEffectRegistry.default()
     write = {

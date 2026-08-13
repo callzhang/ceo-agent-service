@@ -8,6 +8,9 @@
   a completed lifecycle and a target-matched post-write readback. This avoids
   indefinite reconciliation caused by a malformed recovery summary while
   retaining command, target, and readback checks before any terminal state.
+- Register DingTalk reply and TODO-update readback pairs in the effect contract,
+  so verified `messages-reply` and `todo task update` operations can close a
+  recovery without weakening target matching for other commands.
 - Require Consumer A to resolve low-consequence operating choices from focused
   memory context, the applicable Skills, and live evidence before escalating.
   The Consumer session contract now fingerprints this instruction so prior

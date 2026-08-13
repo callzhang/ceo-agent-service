@@ -15,6 +15,7 @@
             {"read": "calendar event get", "write": "calendar event respond"},
             {"read": "chat message list", "write": "chat message send"},
             {"read": "chat +chat-messages", "write": "chat +messages-send"},
+            {"read": "chat +chat-messages", "write": "chat +messages-reply"},
             {"read": "chat message reaction list", "write": "chat message reaction add"},
             {
               "read": "mail message verify",
@@ -45,7 +46,8 @@
               "write": "oa approval comment"
             },
             {"read": "oa approval tasks", "write": "oa approval approve"},
-            {"read": "oa approval tasks", "write": "oa approval comment"}
+            {"read": "oa approval tasks", "write": "oa approval comment"},
+            {"read": "todo task get", "write": "todo task update"}
           ]
         }
       ]
