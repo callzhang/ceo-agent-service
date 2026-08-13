@@ -14,6 +14,7 @@
           "operation_relations": [
             {"read": "calendar event get", "write": "calendar event respond"},
             {"read": "chat message list", "write": "chat message send"},
+            {"read": "chat message list", "write": "chat message reply"},
             {"read": "chat +chat-messages", "write": "chat +dm"},
             {"read": "chat +chat-messages", "write": "chat +messages-send"},
             {"read": "chat +chat-messages", "write": "chat +messages-reply"},

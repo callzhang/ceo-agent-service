@@ -2022,8 +2022,11 @@ def _action_completion_accounting(
             open_start["closed"] = True
         successes[action_index] += 1
 
+    # Session-replayed receipts can repeat an already completed controlled call.
+    # A matching completion is sufficient evidence for its one proposed action;
+    # only distinct proposal action indexes represent distinct external writes.
     completed = {
-        index for index, success_count in enumerate(successes) if success_count == 1
+        index for index, success_count in enumerate(successes) if success_count >= 1
     }
     return completed, all(bool(start["closed"]) for start in starts)
 

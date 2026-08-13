@@ -3982,6 +3982,29 @@ def test_controlled_cli_readback_matches_conversation_target_aliases(
     )
 
 
+def test_controlled_cli_group_list_readback_matches_group_reply():
+    registry = McpToolEffectRegistry.default()
+
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat message list",
+            "target_identifiers": {"group": "conversation-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "chat message reply",
+            "target_identifiers": {
+                "conversation-id": "conversation-1",
+                "ref-msg-id": "message-1",
+            },
+        },
+        registry,
+    )
+
+
 def test_controlled_cli_readback_does_not_alias_unrelated_target_names():
     registry = McpToolEffectRegistry.default()
 
