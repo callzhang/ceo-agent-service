@@ -314,4 +314,18 @@ describe("TurnInspector", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("reports unknown duration for invalid or reversed completed turn timestamps", () => {
+    const completedTurn = {
+      ...turn,
+      status: "completed" as const,
+      started_at: "2026-08-13 10:00:00",
+      completed_at: "not-a-date",
+    };
+    const { rerender } = render(<TurnInspector task={timeline.task} timeline={{ ...timeline, turns: [completedTurn] }} capabilities={[]} stats={null} />);
+    expect(within(screen.getByText("耗时").parentElement!).getByText("耗时未知")).toBeInTheDocument();
+
+    rerender(<TurnInspector task={timeline.task} timeline={{ ...timeline, turns: [{ ...completedTurn, completed_at: "2026-08-13 09:59:59" }] }} capabilities={[]} stats={null} />);
+    expect(within(screen.getByText("耗时").parentElement!).getByText("耗时未知")).toBeInTheDocument();
+  });
 });

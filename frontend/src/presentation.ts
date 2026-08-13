@@ -44,7 +44,8 @@ function isBackendTimestamp(value: string): boolean {
   return true;
 }
 
-const explicitIsoTimestamp = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
+// Explicit ISO years begin at 0100 to avoid Date.UTC's special handling of 0-99.
+const explicitIsoTimestamp = /^(0[1-9]\d{2}|[1-9]\d{3})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
 
 function isValidDateTime(year: number, month: number, day: number, hour: number, minute: number, second: number): boolean {
   if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
@@ -55,7 +56,7 @@ function isValidDateTime(year: number, month: number, day: number, hour: number,
 function parseExplicitIsoTimestamp(value: string): Date | null {
   const match = explicitIsoTimestamp.exec(value);
   if (!match) return null;
-  const [, rawYear, rawMonth, rawDay, rawHour, rawMinute, rawSecond, , timezone] = match;
+  const [, rawYear, rawMonth, rawDay, rawHour, rawMinute, rawSecond, rawMilliseconds, timezone] = match;
   const year = Number(rawYear);
   const month = Number(rawMonth);
   const day = Number(rawDay);
@@ -68,7 +69,14 @@ function parseExplicitIsoTimestamp(value: string): Date | null {
     const offsetMinute = Number(timezone.slice(4, 6));
     if (offsetHour > 23 || offsetMinute > 59) return null;
   }
-  const parsed = new Date(value);
+  const milliseconds = Number((rawMilliseconds ?? "").padEnd(3, "0"));
+  const localEpoch = Date.UTC(year, month - 1, day, hour, minute, second, milliseconds);
+  const offsetMinutes = timezone === "Z"
+    ? 0
+    : (timezone[0] === "+" ? 1 : -1) * (Number(timezone.slice(1, 3)) * 60 + Number(timezone.slice(4, 6)));
+  const epoch = localEpoch - offsetMinutes * 60_000;
+  if (!Number.isFinite(epoch)) return null;
+  const parsed = new Date(epoch);
   return Number.isFinite(parsed.getTime()) ? parsed : null;
 }
 
@@ -116,7 +124,7 @@ export function formatWorkbenchDateTime(value: string): { dateTime: string; labe
 }
 
 export function taskStateLabel(value: TaskState | TurnStatus): string {
-  return Object.prototype.hasOwnProperty.call(taskStateLabels, value) ? taskStateLabels[value] : "执行中";
+  return Object.prototype.hasOwnProperty.call(taskStateLabels, value) ? taskStateLabels[value] : "状态未知";
 }
 
 export function executionStateLabel(value: string): string {

@@ -26,6 +26,8 @@ describe("Workbench presentation", () => {
   it("supports ISO timestamps with an explicit timezone", () => {
     expect(parseWorkbenchTimestamp("2026-08-13T15:14:36Z")?.toISOString()).toBe("2026-08-13T15:14:36.000Z");
     expect(parseWorkbenchTimestamp("2026-08-13T23:14:36+08:00")?.toISOString()).toBe("2026-08-13T15:14:36.000Z");
+    expect(parseWorkbenchTimestamp("2026-08-13T15:14:36.1Z")?.toISOString()).toBe("2026-08-13T15:14:36.100Z");
+    expect(parseWorkbenchTimestamp("2026-08-13T23:14:36.12+08:00")?.toISOString()).toBe("2026-08-13T15:14:36.120Z");
     expect(parseWorkbenchTimestamp("2026-08-13T15:14:36.123Z")?.toISOString()).toBe("2026-08-13T15:14:36.123Z");
   });
 
@@ -52,6 +54,10 @@ describe("Workbench presentation", () => {
     ["failed", "失败"],
   ] as const)("maps %s task state to %s", (state, label) => {
     expect(taskStateLabel(state)).toBe(label);
+  });
+
+  it("uses a safe label for an unexpected runtime task state", () => {
+    expect(taskStateLabel("unexpected" as unknown as Parameters<typeof taskStateLabel>[0])).toBe("状态未知");
   });
 
   it.each([
