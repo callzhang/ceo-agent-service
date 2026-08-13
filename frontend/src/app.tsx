@@ -185,6 +185,10 @@ export function App() {
       const local = currentById.get(incoming.id);
       const ownership = taskMutationOwnershipRef.current.get(incoming.id);
       if (local && ownership) {
+        if (ownership.revision > startRevision) {
+          nextById.set(incoming.id, local);
+          continue;
+        }
         const titleConfirmed = incoming.title === ownership.title;
         const runtimeConfirmed = ownership.runtimeKind === undefined
           || incoming.runtime_kind === ownership.runtimeKind;

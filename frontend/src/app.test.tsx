@@ -282,6 +282,64 @@ describe("App", () => {
     expect(screen.queryByText("执行中")).not.toBeInTheDocument();
   });
 
+  it("does not roll back a mutation snapshot with a refresh started before the rename", async () => {
+    const user = userEvent.setup();
+    const pendingRefresh = deferred<{ items: typeof first[]; nextCursor: string }>();
+    const renamedCompleted = {
+      ...first,
+      title: "完成态新名称",
+      state: "completed" as const,
+      updated_at: "2026-08-13 12:00:00",
+    };
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "" })
+      .mockReturnValueOnce(pendingRefresh.promise);
+    api.renameTask.mockResolvedValue(renamedCompleted);
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "销售策略" });
+    await user.click(screen.getByRole("button", { name: "刷新任务" }));
+    await user.click(screen.getByRole("button", { name: "重命名 销售策略" }));
+    await user.clear(screen.getByRole("textbox", { name: "任务名称" }));
+    await user.type(screen.getByRole("textbox", { name: "任务名称" }), "完成态新名称");
+    await user.click(screen.getByRole("button", { name: "保存名称" }));
+    expect(await screen.findByText("已完成")).toBeInTheDocument();
+    await act(async () => pendingRefresh.resolve({ items: [first], nextCursor: "" }));
+
+    expect(screen.getByRole("heading", { name: "完成态新名称" })).toBeInTheDocument();
+    expect(screen.getByText("已完成")).toBeInTheDocument();
+    expect(screen.queryByText("执行中")).not.toBeInTheDocument();
+    expect(screen.getByText("2026-08-13 12:00:00")).toBeInTheDocument();
+  });
+
+  it("does not roll back a mutation snapshot with pagination started before the rename", async () => {
+    const user = userEvent.setup();
+    const pendingPage = deferred<{ items: typeof first[]; nextCursor: string }>();
+    const renamedCompleted = {
+      ...first,
+      title: "分页完成态",
+      state: "completed" as const,
+      updated_at: "2026-08-13 12:00:00",
+    };
+    api.listTasks.mockResolvedValueOnce({ items: [first], nextCursor: "page-2" });
+    api.listTasks.mockReturnValueOnce(pendingPage.promise);
+    api.renameTask.mockResolvedValue(renamedCompleted);
+    render(<App />);
+
+    await screen.findByText("销售策略");
+    await user.click(screen.getByRole("button", { name: "加载更多任务" }));
+    await user.click(screen.getByRole("button", { name: "重命名 销售策略" }));
+    await user.clear(screen.getByRole("textbox", { name: "任务名称" }));
+    await user.type(screen.getByRole("textbox", { name: "任务名称" }), "分页完成态");
+    await user.click(screen.getByRole("button", { name: "保存名称" }));
+    await act(async () => pendingPage.resolve({ items: [first], nextCursor: "" }));
+
+    expect(screen.getByText("分页完成态")).toBeInTheDocument();
+    expect(screen.getByText("已完成")).toBeInTheDocument();
+    expect(screen.queryByText("执行中")).not.toBeInTheDocument();
+  });
+
   it("paints page one while chasing a deep-link target in the background", async () => {
     const pendingDeepPage = deferred<{ items: typeof deep[]; nextCursor: string }>();
     api.listTasks
