@@ -203,7 +203,7 @@ Run:
 
 ```bash
 ./.venv/bin/python -m pytest -q tests/test_workbench_codex_runtime.py
-./.venv/bin/python -m ruff check app/workbench/codex_runtime.py tests/test_workbench_codex_runtime.py
+ruff check app/workbench/codex_runtime.py tests/test_workbench_codex_runtime.py
 ```
 
 Expected: all Codex runtime tests pass; Ruff reports no errors. Confirm the assistant-text and confirmation-credential tests still pass.
@@ -357,7 +357,7 @@ Run:
 
 ```bash
 ./.venv/bin/python -m pytest -q tests/test_workbench_store.py tests/test_workbench_api.py
-./.venv/bin/python -m ruff check app/workbench/store.py tests/test_workbench_store.py tests/test_workbench_api.py
+ruff check app/workbench/store.py tests/test_workbench_store.py tests/test_workbench_api.py
 ```
 
 Expected: all store and API tests pass; no schema migration is introduced.
@@ -764,7 +764,7 @@ Run:
   tests/test_workbench_executor.py
 npm run test --prefix frontend -- --run
 npm run build --prefix frontend
-./.venv/bin/python -m ruff check \
+ruff check \
   app/workbench/codex_runtime.py \
   app/workbench/store.py \
   tests/test_workbench_codex_runtime.py \
@@ -805,7 +805,7 @@ git -C /Users/derek/Documents/Projects/ceo-agent-service-release status --short 
 git -C /Users/derek/Documents/Projects/ceo-agent-service-release log -5 --oneline
 ```
 
-If tracked production changes remain, stop and reconcile ownership before merging. Once clean, merge the feature branch without rewriting history:
+If tracked production changes remain, stop and reconcile ownership before merging. Merge onto the current release HEAD, preserving every post-base audit fix already on that checkout; never deploy the feature checkout directly. Once clean, merge the feature branch without rewriting history:
 
 ```bash
 git -C /Users/derek/Documents/Projects/ceo-agent-service-release merge --no-ff codex/workbench-runtime-truth
@@ -814,22 +814,35 @@ npm run build:workbench --prefix /Users/derek/Documents/Projects/ceo-agent-servi
 
 Expected: merge and production build succeed; generated assets remain ignored.
 
+On the merged release tree, rerun both previously failing audit nodes and then the full regression gate before deployment:
+
+```bash
+/Users/derek/Documents/Projects/ceo-agent-service-release/.venv/bin/python -m pytest -q \
+  /Users/derek/Documents/Projects/ceo-agent-service-release/tests/test_audit_agent.py::test_audit_rejects_unrelated_or_duplicate_writes[cid-agent-2] \
+  /Users/derek/Documents/Projects/ceo-agent-service-release/tests/test_audit_agent.py::test_audit_two_starts_with_one_completion_remains_unknown
+npm test --prefix /Users/derek/Documents/Projects/ceo-agent-service-release
+```
+
+Do not deploy if either audit node or the merged-tree regression gate fails.
+
 - [ ] **Step 6: Verify resumability, restart launchd, and read back live state**
 
-Record the current PID and Workbench state, then restart:
+Record the current PID, Workbench state, and worker state before restarting. Classify every known historical `failed` item, review both `failed` and `processing` state, and confirm all pending work is safely resumable before restarting:
 
 ```bash
 lsof -nP -iTCP:8765 -sTCP:LISTEN
 curl -sS http://127.0.0.1:8765/api/workbench/stats
+curl -sS http://127.0.0.1:8765/api/workers/status
 launchctl kickstart -k gui/$(id -u)/com.ceo-agent-service.main
 launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'
 lsof -nP -iTCP:8765 -sTCP:LISTEN
 curl -sS http://127.0.0.1:8765/
-curl -sS http://127.0.0.1:8765/api/workbench/runtime-capabilities
+curl -sS http://127.0.0.1:8765/api/workbench/runtimes
 curl -sS http://127.0.0.1:8765/api/workbench/stats
+curl -sS http://127.0.0.1:8765/api/workers/status
 ```
 
-Expected: the post-restart PID differs, launchd reports `state = running`, root HTML references existing hashed assets, Codex capability is available, and no new unresolved processing backlog appears. Do not restart until queued/running work has been checked for safe resumability.
+Expected: the post-restart PID differs, launchd reports `state = running`, root HTML references existing hashed assets, and Codex capability is available. Compare both pre- and post-restart worker responses: `failed` and `processing` counts must not increase unexpectedly, and every remaining item must have an understood historical classification or a safe resumability path.
 
 - [ ] **Step 7: Perform a new live acceptance turn**
 
