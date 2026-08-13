@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Audit reconciliation
+
+- Registered the current direct-message send/read pair for audit reconciliation,
+  while retaining target-scoped matching so a read from another recipient cannot
+  confirm or suppress a pending delivery.
+- Applied the same delivery-ledger recovery to persisted legacy direct-message
+  actions, so a missing local delivery record requeues a new generation instead
+  of attempting an unnecessary external reconciliation.
+- Restored omitted direct-delivery ledger rows from the original Audit run's
+  validated controlled receipt, while keeping recovery-only authorization
+  checks restricted to recovery execution.
+- Finalize an unknown Audit run from that restored ledger when it contains one
+  matching direct-message action, avoiding a second model reconciliation or
+  duplicate delivery; multi-action and non-direct work still requires normal
+  reconciliation evidence.
+
+### Material reading and local parsing
+
+- Made the default downloaded-material reader detect OOXML workbooks by their
+  file content, so extensionless downloads no longer fail after being treated
+  as UTF-8 text.
+- Added bounded PPTX text previews and fixed Audit parent validation after a
+  retrying Consumer run, so a successful retry can continue into Audit.
+
 ### Skill-first Agent runtime
 
 - Added seven distributable CEO business Skills for message triage, calendar invitations, document review,

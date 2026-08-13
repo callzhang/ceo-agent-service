@@ -525,6 +525,16 @@ def _work_tracking_review_item(
 ) -> tuple[WorkItem, str]:
     project = store.get_work_project(draft.project_id)
     todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
+    original_update = None
+    if todo is not None and todo.created_from_update_id > 0:
+        original_update = next(
+            (
+                update
+                for update in store.list_work_updates(todo.project_id)
+                if update.id == todo.created_from_update_id
+            ),
+            None,
+        )
     dingtalk_link = (
         store.get_active_work_todo_dingtalk_link(todo.id) if todo is not None else None
     )
@@ -601,6 +611,17 @@ def _work_tracking_review_item(
                         }
                         if todo is not None
                         else {"id": draft.todo_id, "missing": True}
+                    ),
+                    "original_work_update": (
+                        {
+                            "id": original_update.id,
+                            "source_type": original_update.source_type,
+                            "source_ref": original_update.source_ref,
+                            "summary": original_update.summary,
+                            "merge_reason": original_update.merge_reason,
+                        }
+                        if original_update is not None
+                        else None
                     ),
                     "follow_up": {
                         "id": draft.id,

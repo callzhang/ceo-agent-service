@@ -2380,6 +2380,84 @@ def test_direct_chat_user_target_without_delivery_record_rotates_generation(setu
     assert executor.commands == []
 
 
+def test_persisted_single_direct_delivery_receipt_finishes_unknown_without_rerun(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    direct_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send direct result",
+            "actions": [
+                {
+                    "description": "Send direct message",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat +messages-send",
+                    "target": {"open_dingtalk_id": "user-1"},
+                    "payload": {
+                        "argv": [
+                            "dws", "chat", "+messages-send",
+                            "--open-dingtalk-id", "user-1",
+                            "--text", "done", "--yes",
+                        ]
+                    },
+                    "expected_verification": "Message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Requested by Derek",
+        }
+    )
+    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "done")
+    executor = CapturingExecutor("")
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, replace(audit_context, proposal=direct_proposal), run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome is AuditOutcome.EXECUTED
+    assert persisted is not None and persisted.status == "completed"
+    assert persisted.side_effect_state == "confirmed"
+    assert executor.commands == []
+
+
+def test_legacy_direct_chat_without_delivery_record_rotates_generation(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    legacy_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send direct result",
+            "actions": [
+                {
+                    "description": "Send direct message",
+                    "capability": "dingtalk-chat",
+                    "operation": "dws chat +messages-send --open-dingtalk-id user-1",
+                    "target": {"recipient_open_dingtalk_id": "user-1"},
+                    "payload": {"text": "done"},
+                    "expected_verification": "Message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Requested by Derek",
+        }
+    )
+    executor = CapturingExecutor("")
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, replace(audit_context, proposal=legacy_proposal), run=run)
+
+    persisted = store.get_agent_run(run.id)
+    requeued = store.get_reply_task(task.id)
+    assert result.result.error is not None
+    assert result.result.error.code == "persisted_delivery_absent"
+    assert persisted is not None and persisted.status == "failed"
+    assert requeued is not None and requeued.status == "pending"
+    assert requeued.execution_generation != task.execution_generation
+    assert executor.commands == []
+
+
 def test_controlled_group_chat_without_delivery_record_rotates_generation(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     group_proposal = ConsumerProposal.model_validate(
@@ -2755,6 +2833,42 @@ def test_legacy_dingtalk_chat_candidate_normalizes_for_reconciliation():
     assert expected["operation"] == "chat message send"
     assert expected["target_identifiers"] == {"group": "cid-agent"}
     assert expected["reviewed_tool"] == "execute_reviewed_write"
+
+
+def test_legacy_direct_dingtalk_chat_candidate_normalizes_for_reconciliation():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Acknowledge receipt",
+            "capability": "dingtalk-chat",
+            "operation": "dws chat +messages-send --open-dingtalk-id recipient-1",
+            "target": {
+                "channel": "dingtalk",
+                "recipient_open_dingtalk_id": "recipient-1",
+                "single_chat": True,
+            },
+            "payload": {"text": "Received."},
+            "expected_verification": "Message exists",
+        }
+    )
+
+    expected = _expected_effect_action(
+        action, McpToolEffectRegistry.default(), action_index=0
+    )
+
+    assert expected["capability"] == "agent_cli.dws"
+    assert expected["operation"] == "chat +messages-send"
+    assert expected["operation_contract_valid"] is True
+    assert expected["target_identifiers"] == {"open-dingtalk-id": "recipient-1"}
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat +chat-messages",
+            "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+        },
+        expected,
+        McpToolEffectRegistry.default(),
+    )
 
 
 def test_ambiguous_recovery_requires_matching_live_read(setup):
@@ -3285,6 +3399,42 @@ def test_effect_registry_requires_registered_inner_cli_operation_relation():
         write_server="agent_cli",
         write_tool="execute_reviewed_write",
         write_operation="unregistered write operation",
+    )
+
+
+def test_effect_registry_accepts_registered_direct_message_readback():
+    registry = McpToolEffectRegistry.default()
+
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat +chat-messages",
+            "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "chat +messages-send",
+            "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+        },
+        registry,
+    )
+
+    assert not _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat +chat-messages",
+            "target_identifiers": {"open-dingtalk-id": "recipient-2"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "chat +messages-send",
+            "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+        },
+        registry,
     )
 
 

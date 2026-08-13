@@ -27,8 +27,10 @@ from app.agent_turn_runner import (
     _action_completion_accounting,
     _actions_have_required_readbacks,
     _agent_process_error_code,
+    _metadata_matches_action,
     unknown_reconciliation_retry_at,
 )
+from app.codex_history import extract_codex_mcp_tool_results_from_session
 from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import (
     describe_native_command,
@@ -141,6 +143,15 @@ class AuditAgentRunner:
             raise RuntimeError("agent_run_unavailable")
         try:
             self._image_dependency_failure(claim.run, context)
+            self._backfill_persisted_direct_delivery_receipt(
+                task,
+                context,
+                claim.run,
+            )
+            if _persisted_single_direct_delivery(task, context, self.store):
+                return self._complete_persisted_direct_delivery_recovery(
+                    claim.run,
+                )
             if skill_failure := self._skill_receipt_gate(
                 task,
                 context,
@@ -166,6 +177,91 @@ class AuditAgentRunner:
         except Exception as exc:
             self._defer_claimed_unknown_recovery(claim.run, exc)
             raise
+
+    def _backfill_persisted_direct_delivery_receipt(
+        self,
+        task: ReplyTask,
+        context: AuditTurnContext,
+        run: AgentRun,
+    ) -> None:
+        """Restore an omitted direct-delivery ledger only from its own receipt."""
+        if not run.codex_session_id or self.store.has_sent_reply_for_trigger(
+            task.conversation_id,
+            task.trigger_message_id,
+        ):
+            return
+        expected_actions = tuple(
+            _expected_effect_action(action, self.effects, action_index=index)
+            for index, action in enumerate(context.proposal.actions)
+        )
+        process = AgentTurnProcess(
+            store=self.store,
+            task=task,
+            workspace=self.workspace,
+            owner=self.owner,
+            executor=self.executor,
+            codex_bin=self.codex_bin,
+            mcp_effect_registry=self.effects,
+        )
+        for payload in extract_codex_mcp_tool_results_from_session(
+            run.codex_session_id,
+        ):
+            event = process._normalized_effect_event(
+                payload,
+                read_only=False,
+                operation_id=run.operation_id,
+            )
+            item = event.get("item") if event is not None else None
+            metadata = item.get("metadata") if isinstance(item, dict) else None
+            if not isinstance(metadata, dict) or not any(
+                _metadata_matches_action(metadata, action)
+                for action in expected_actions
+            ):
+                continue
+            process._record_direct_send_receipt(event, payload, run=run)
+            if self.store.has_sent_reply_for_trigger(
+                task.conversation_id,
+                task.trigger_message_id,
+            ):
+                return
+
+    def _complete_persisted_direct_delivery_recovery(
+        self,
+        run: AgentRun,
+    ) -> AgentTurnRunResult[AuditAgentResult]:
+        result = AuditAgentResult(
+            outcome=AuditOutcome.EXECUTED,
+            summary="A persisted direct-delivery receipt matches the approved action.",
+            proposal_revision=run.proposal_revision,
+            side_effect_state=SideEffectState.CONFIRMED,
+            feedback=None,
+            external_result={
+                "operation_id": run.operation_id,
+                "verification_summary": (
+                    "The local delivery ledger contains the matching successful "
+                    "direct-message receipt."
+                ),
+                "live_result_reference": {
+                    "evidence": "persisted_direct_delivery_receipt",
+                },
+            },
+            reconciliation=(),
+            error=AgentError(),
+        )
+        completed = self.store.complete_agent_run(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=self.owner,
+            side_effect_state=SideEffectState.CONFIRMED.value,
+            transcript_end_line=run.transcript_end_line,
+            expected_status="unknown",
+        )
+        return AgentTurnRunResult(
+            run_id=completed.id,
+            result=result,
+            transcript_start_line=run.transcript_end_line,
+            transcript_end_line=completed.transcript_end_line,
+        )
 
     def execute_recovery(
         self,
@@ -672,8 +768,13 @@ def _expected_effect_action(
         # executable contract, and native metadata derives its canonical path
         # and target identifiers. Requiring both spellings to match made a
         # harmless label reject a valid command before Audit could review it.
+        expected_capability = (
+            f"agent_cli.{descriptor.cli}"
+            if legacy_argv is not None
+            else action.capability
+        )
         expected["operation_contract_valid"] = (
-            action.capability == f"agent_cli.{descriptor.cli}"
+            expected_capability == f"agent_cli.{descriptor.cli}"
             and (
                 descriptor.cli != "dws"
                 or (argv is not None and has_noninteractive_confirmation(argv))
@@ -759,13 +860,37 @@ def _database_delivery_absence_reconciliation(
     return True
 
 
+def _persisted_single_direct_delivery(
+    task: ReplyTask,
+    context: AuditTurnContext,
+    store: AutoReplyStore,
+) -> bool:
+    """A ledger row is terminal only for one matching direct-message action."""
+    actions = context.proposal.actions
+    return (
+        len(actions) == 1
+        and _is_direct_chat_send(actions[0])
+        and store.has_sent_reply_for_trigger(
+            task.conversation_id,
+            task.trigger_message_id,
+        )
+    )
+
+
 def _is_direct_chat_send(action: object) -> bool:
     capability = getattr(action, "capability", "")
     payload = getattr(action, "payload", None)
-    if capability != "agent_cli.dws" or not isinstance(payload, dict):
+    if not isinstance(payload, dict):
         return False
     descriptor = describe_native_command({"type": "command_execution", **payload})
+    legacy_argv = _legacy_dingtalk_chat_send_argv(action)
+    if descriptor is None and legacy_argv is not None:
+        descriptor = describe_native_command(
+            {"type": "command_execution", "argv": legacy_argv}
+        )
     if descriptor is None or descriptor.cli != "dws":
+        return False
+    if capability != "agent_cli.dws" and legacy_argv is None:
         return False
     target = getattr(action, "target", None)
     target_keys = set(descriptor.target_identifiers)
@@ -777,12 +902,24 @@ def _is_direct_chat_send(action: object) -> bool:
 
 
 def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:
-    """Canonicalize only a persisted pre-contract DingTalk chat action."""
-    if action.capability != "dingtalk-chat" or action.operation != "dws chat message send":
+    """Canonicalize persisted pre-contract DingTalk chat actions for audit."""
+    if action.capability != "dingtalk-chat":
         return None
-    group = action.payload.get("group")
     text = action.payload.get("text")
-    if not isinstance(group, str) or not group or not isinstance(text, str) or not text:
+    if not isinstance(text, str) or not text:
+        return None
+    target = action.target
+    recipient = (
+        target.get("recipient_open_dingtalk_id")
+        or target.get("sender_open_dingtalk_id")
+    )
+    if isinstance(recipient, str) and recipient:
+        return [
+            "dws", "chat", "+messages-send", "--open-dingtalk-id", recipient,
+            "--text", text, "--yes", "--format", "json",
+        ]
+    group = action.payload.get("group")
+    if not isinstance(group, str) or not group:
         return None
     return [
         "dws", "chat", "message", "send", "--group", group,

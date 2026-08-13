@@ -229,6 +229,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     or recovery_phase == "reconcile"
                 ),
                 operation_id=run.operation_id,
+                require_recovery_authorization=recovery_phase == "execute",
             )
             if event is None:
                 return
@@ -465,6 +466,9 @@ class AgentTurnProcess(Generic[ResultT]):
                             completed_payload,
                             read_only=(recovery_phase == "reconcile"),
                             operation_id=run.operation_id,
+                            require_recovery_authorization=(
+                                recovery_phase == "execute"
+                            ),
                         )
                     except AgentReadOnlyViolationError as exc:
                         if str(exc) != "agent_cli_receipt_invalid":
@@ -637,6 +641,7 @@ class AgentTurnProcess(Generic[ResultT]):
         *,
         read_only: bool,
         operation_id: str,
+        require_recovery_authorization: bool = False,
     ) -> dict[str, object] | None:
         if payload.get("type") not in {"item.started", "item.completed", "item.failed"}:
             return None
@@ -740,8 +745,9 @@ class AgentTurnProcess(Generic[ResultT]):
                 if receipt.get("target_identifiers") != target_identifiers:
                     raise AgentReadOnlyViolationError("agent_cli_receipt_target_mismatch")
                 if (
-                    authorization_id
-                    and receipt.get("authorization_id") != authorization_id
+                    require_recovery_authorization
+                    and call.effect is EffectKind.EFFECTFUL
+                    and (not authorization_id or receipt.get("authorization_id") != authorization_id)
                 ):
                     raise AgentReadOnlyViolationError(
                         "agent_cli_receipt_authorization_mismatch"

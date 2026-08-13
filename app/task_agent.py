@@ -204,6 +204,20 @@ Current Work Item JSON:
 Current candidate context:
 {candidate_prompt}
 
+Existing follow-up repair rule:
+- When the Work Item summary contains follow_up.id, it identifies an existing
+  follow-up draft under review. Do not recreate that draft as a new
+  follow_up_draft just to change its schedule, target, or state. Use a
+  follow_up_change for that id after reading the linked TODO and, when present,
+  original_work_update.source_type/source_ref source material.
+- A persisted owner id or name is not owner evidence. Create or reassign a
+  follow-up only when the original source independently supports the owner and
+  you can provide risk_check.owner_evidence with source, reason, and
+  description. Do not invent owner evidence from matching stored records.
+- If the original source cannot support an owner, keep the existing follow-up
+  suppressed with a clear evidence_check rather than emitting an invalid new
+  follow_up_draft. Do not send a message as part of this repair decision.
+
 TaskAgentDecision Pydantic JSON schema:
 {decision_schema}
 """
@@ -692,14 +706,12 @@ def _validate_owner_changes(store: AutoReplyStore, decision: TaskAgentDecision) 
             "owner_user_id": current_project.owner_user_id,
             "owner_name": current_project.owner_name,
         }
-        project_evidence = project.owner_evidence
-        if not project_evidence and not project_owner_changed and current_project is not None:
-            project_evidence = _json_object(current_project.owner_evidence_json)
-        _require_supported_owner(
-            assigned=final_project_owner,
-            evidence=project_evidence,
-            label="project.owner_evidence",
-        )
+        if project_owner_changed:
+            _require_supported_owner(
+                assigned=final_project_owner,
+                evidence=project.owner_evidence,
+                label="project.owner_evidence",
+            )
 
     for change in decision.todo_changes:
         current_todo = (
@@ -728,14 +740,12 @@ def _validate_owner_changes(store: AutoReplyStore, decision: TaskAgentDecision) 
                 "owner_user_id": current_todo.owner_user_id,
                 "owner_name": current_todo.owner_name,
             }
-            todo_evidence = change.owner_evidence
-            if not todo_evidence and not todo_owner_changed and current_todo is not None:
-                todo_evidence = _json_object(current_todo.owner_evidence_json)
-            _require_supported_owner(
-                assigned=final_todo_owner,
-                evidence=todo_evidence,
-                label="todo_change.owner_evidence",
-            )
+            if todo_owner_changed:
+                _require_supported_owner(
+                    assigned=final_todo_owner,
+                    evidence=change.owner_evidence,
+                    label="todo_change.owner_evidence",
+                )
 
     for draft in decision.follow_up_drafts:
         evidence = draft.risk_check.get("owner_evidence")
@@ -852,7 +862,27 @@ def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:
         return store.create_work_project(**_project_values(project))
     if project.id is None:
         raise ValueError("update_project requires project.id")
-    values = _project_values(project, only_fields=project.model_fields_set - {"id"})
+    current_project = store.get_work_project(project.id)
+    fields = project.model_fields_set - {"id"}
+    if current_project is not None:
+        final_owner = {
+            "owner_user_id": (
+                project.owner_user_id
+                if "owner_user_id" in fields
+                else current_project.owner_user_id
+            ),
+            "owner_name": (
+                project.owner_name
+                if "owner_name" in fields
+                else current_project.owner_name
+            ),
+        }
+        if final_owner == {
+            "owner_user_id": current_project.owner_user_id,
+            "owner_name": current_project.owner_name,
+        }:
+            fields -= {"owner_user_id", "owner_name", "owner_evidence"}
+    values = _project_values(project, only_fields=fields)
     store.update_work_project(project.id, **values)
     return project.id
 
@@ -918,9 +948,29 @@ def _apply_todo_change(
         )
     if change.todo_id is None:
         raise ValueError(f"{change.action} requires todo_id")
+    current_todo = store.get_work_todo(change.todo_id)
+    fields = change.model_fields_set - {"action", "todo_id"}
+    if current_todo is not None:
+        final_owner = {
+            "owner_user_id": (
+                change.owner_user_id
+                if "owner_user_id" in fields
+                else current_todo.owner_user_id
+            ),
+            "owner_name": (
+                change.owner_name
+                if "owner_name" in fields
+                else current_todo.owner_name
+            ),
+        }
+        if final_owner == {
+            "owner_user_id": current_todo.owner_user_id,
+            "owner_name": current_todo.owner_name,
+        }:
+            fields -= {"owner_user_id", "owner_name", "owner_evidence"}
     values = _todo_values(
         change,
-        only_fields=change.model_fields_set - {"action", "todo_id"},
+        only_fields=fields,
     )
     if change.action == "close":
         values["status"] = "done"

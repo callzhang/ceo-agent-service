@@ -89,10 +89,13 @@ returned command path and flags exactly; do not invent shortcut names or flag
 aliases. A rejected read has no external effect: inspect its error, then use the
 runtime contract or the installed skill to correct it in the same turn.
 
-For a downloaded local material file, use `agent_cli.read_text_file` for UTF-8
-text or `agent_cli.read_spreadsheet` for xlsx content. Arbitrary local shell and
-Python execution are forbidden. Do not return `needs_human` merely because a
-supported material requires one of these dedicated readers.
+For a downloaded local material file, call `agent_cli.read_text_file` first. It
+automatically returns a bounded UTF-8 text file or an OOXML workbook preview,
+including when the download filename has no extension. Use
+`agent_cli.read_spreadsheet` only when the material is already known to be an
+xlsx workbook. Arbitrary local shell and Python execution remain forbidden by
+the service read boundary. Do not return `needs_human` merely because a
+supported material requires one of these reads.
 
 Before proposing a DingTalk message send, read
 `/Users/derek/.agents/skills/dws/multi/dingtalk-chat/SKILL.md` with

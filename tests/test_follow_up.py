@@ -955,6 +955,15 @@ def test_due_follow_up_queues_agent_repair_for_unverified_group_target(tmp_path)
             ensure_ascii=False,
         ),
     )
+    update_id = store.create_work_update(
+        project_id=project_id,
+        source_type="reply_attempt",
+        source_ref="42",
+        summary="来源回复明确要求确认交付风险。",
+        changes_json="{}",
+        merge_reason="来源事项需要持续跟进。",
+        confidence=0.9,
+    )
     todo_id = store.create_work_todo(
         project_id=project_id,
         title="确认交付风险",
@@ -963,6 +972,7 @@ def test_due_follow_up_queues_agent_repair_for_unverified_group_target(tmp_path)
         status="open",
         priority="P0",
         next_follow_up_at="2026-06-07 09:00:00",
+        created_from_update_id=update_id,
     )
     draft_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -993,6 +1003,14 @@ def test_due_follow_up_queues_agent_repair_for_unverified_group_target(tmp_path)
     queued = store.claim_work_summary_inputs(limit=1)
     assert len(queued) == 1
     assert queued[0].source_ref == f"follow-up-repair:{draft.id}"
+    summary = json.loads(queued[0].payload_json)["summary"]
+    assert json.loads(summary)["original_work_update"] == {
+        "id": update_id,
+        "source_type": "reply_attempt",
+        "source_ref": "42",
+        "summary": "来源回复明确要求确认交付风险。",
+        "merge_reason": "来源事项需要持续跟进。",
+    }
 
 
 def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
