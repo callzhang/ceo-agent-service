@@ -13,6 +13,10 @@
 - Restored omitted direct-delivery ledger rows from the original Audit run's
   validated controlled receipt, while keeping recovery-only authorization
   checks restricted to recovery execution.
+- Finalize an unknown Audit run from that restored ledger when it contains one
+  matching direct-message action, avoiding a second model reconciliation or
+  duplicate delivery; multi-action and non-direct work still requires normal
+  reconciliation evidence.
 
 ### Material reading and local parsing
 

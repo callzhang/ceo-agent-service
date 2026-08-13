@@ -143,6 +143,15 @@ class AuditAgentRunner:
             raise RuntimeError("agent_run_unavailable")
         try:
             self._image_dependency_failure(claim.run, context)
+            self._backfill_persisted_direct_delivery_receipt(
+                task,
+                context,
+                claim.run,
+            )
+            if _persisted_single_direct_delivery(task, context, self.store):
+                return self._complete_persisted_direct_delivery_recovery(
+                    claim.run,
+                )
             if skill_failure := self._skill_receipt_gate(
                 task,
                 context,
@@ -150,11 +159,6 @@ class AuditAgentRunner:
                 recovery_phase="reconcile",
             ):
                 return skill_failure
-            self._backfill_persisted_direct_delivery_receipt(
-                task,
-                context,
-                claim.run,
-            )
             database_absence = _database_delivery_absence_reconciliation(
                 self.store,
                 task,
@@ -220,6 +224,44 @@ class AuditAgentRunner:
                 task.trigger_message_id,
             ):
                 return
+
+    def _complete_persisted_direct_delivery_recovery(
+        self,
+        run: AgentRun,
+    ) -> AgentTurnRunResult[AuditAgentResult]:
+        result = AuditAgentResult(
+            outcome=AuditOutcome.EXECUTED,
+            summary="A persisted direct-delivery receipt matches the approved action.",
+            proposal_revision=run.proposal_revision,
+            side_effect_state=SideEffectState.CONFIRMED,
+            feedback=None,
+            external_result={
+                "operation_id": run.operation_id,
+                "verification_summary": (
+                    "The local delivery ledger contains the matching successful "
+                    "direct-message receipt."
+                ),
+                "live_result_reference": {
+                    "evidence": "persisted_direct_delivery_receipt",
+                },
+            },
+            reconciliation=(),
+            error=AgentError(),
+        )
+        completed = self.store.complete_agent_run(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=self.owner,
+            side_effect_state=SideEffectState.CONFIRMED.value,
+            transcript_end_line=run.transcript_end_line,
+            expected_status="unknown",
+        )
+        return AgentTurnRunResult(
+            run_id=completed.id,
+            result=result,
+            transcript_start_line=run.transcript_end_line,
+            transcript_end_line=completed.transcript_end_line,
+        )
 
     def execute_recovery(
         self,
@@ -816,6 +858,23 @@ def _database_delivery_absence_reconciliation(
     if not actions or not all(_is_direct_chat_send(action) for action in actions):
         return False
     return True
+
+
+def _persisted_single_direct_delivery(
+    task: ReplyTask,
+    context: AuditTurnContext,
+    store: AutoReplyStore,
+) -> bool:
+    """A ledger row is terminal only for one matching direct-message action."""
+    actions = context.proposal.actions
+    return (
+        len(actions) == 1
+        and _is_direct_chat_send(actions[0])
+        and store.has_sent_reply_for_trigger(
+            task.conversation_id,
+            task.trigger_message_id,
+        )
+    )
 
 
 def _is_direct_chat_send(action: object) -> bool:
