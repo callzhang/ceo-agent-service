@@ -340,6 +340,37 @@ describe("App", () => {
     expect(screen.queryByText("执行中")).not.toBeInTheDocument();
   });
 
+  it("preserves a renamed page-two task omitted by a page-one refresh started earlier", async () => {
+    const user = userEvent.setup();
+    const pendingRefresh = deferred<{ items: typeof first[]; nextCursor: string }>();
+    const renamedSecond = {
+      ...second,
+      title: "第二页新名称",
+      updated_at: "2026-08-13 12:00:00",
+    };
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "page-2" })
+      .mockResolvedValueOnce({ items: [second], nextCursor: "" })
+      .mockReturnValueOnce(pendingRefresh.promise);
+    api.renameTask.mockResolvedValue(renamedSecond);
+    render(<App />);
+
+    await screen.findByText("销售策略");
+    await user.click(screen.getByRole("button", { name: "加载更多任务" }));
+    await user.click(await screen.findByRole("button", { name: "打开任务 产品规划" }));
+    await user.click(screen.getByRole("button", { name: "刷新任务" }));
+    await user.click(screen.getByRole("button", { name: "重命名 产品规划" }));
+    await user.clear(screen.getByRole("textbox", { name: "任务名称" }));
+    await user.type(screen.getByRole("textbox", { name: "任务名称" }), "第二页新名称");
+    await user.click(screen.getByRole("button", { name: "保存名称" }));
+    await act(async () => pendingRefresh.resolve({ items: [first], nextCursor: "page-2" }));
+
+    expect(screen.getByRole("heading", { name: "第二页新名称" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开任务 第二页新名称" })).toHaveAttribute("aria-current", "page");
+    expect(new URL(window.location.href).searchParams.get("task")).toBe(second.id);
+    expect(api.listTasks).toHaveBeenCalledTimes(3);
+  });
+
   it("paints page one while chasing a deep-link target in the background", async () => {
     const pendingDeepPage = deferred<{ items: typeof deep[]; nextCursor: string }>();
     api.listTasks

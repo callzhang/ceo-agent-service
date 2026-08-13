@@ -211,7 +211,7 @@ export function App() {
       for (const [taskId, ownership] of taskMutationOwnershipRef.current) {
         const local = currentById.get(taskId);
         if (
-          ownership.protectsExistence
+          (ownership.protectsExistence || ownership.revision > startRevision)
           && local
           && !archiveTombstonesRef.current.has(taskId)
           && !incomingIds.has(taskId)
