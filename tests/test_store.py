@@ -7009,3 +7009,31 @@ def test_recover_interrupted_wechat_read_only_decision_has_precise_reason(
     assert recovered_task is not None
     assert recovered_task.status == "pending"
     assert recovered_task.error == "interrupted_read_only_decision"
+
+
+def test_requeue_failed_work_summary_input_is_scoped_to_failed_record(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    input_id = store.enqueue_work_summary_input(
+        "local_file",
+        "file:reference",
+        "{}",
+    )
+    [claimed] = store.claim_work_summary_inputs(1)
+    store.mark_work_summary_input_failed(claimed.id, "validation failed")
+
+    assert store.requeue_failed_work_summary_input(
+        input_id,
+        "retry_after_reviewed_root_cause_fix",
+    )
+    with store._connect() as db:
+        row = db.execute(
+            "select status, attempts, error, available_at from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert dict(row) == {
+        "status": "pending",
+        "attempts": 1,
+        "error": "retry_after_reviewed_root_cause_fix",
+        "available_at": "",
+    }
+    assert not store.requeue_failed_work_summary_input(input_id, "again")

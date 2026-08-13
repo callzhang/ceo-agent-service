@@ -12381,6 +12381,22 @@ class AutoReplyStore:
                 (error, input_id),
             )
 
+    def requeue_failed_work_summary_input(self, input_id: int, reason: str) -> bool:
+        """Restore one reviewed failure after its root cause has been fixed."""
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update work_summary_inputs
+                set status='pending',
+                    error=?,
+                    available_at='',
+                    updated_at=current_timestamp
+                where id=? and status='failed'
+                """,
+                (reason.strip(), input_id),
+            )
+            return cursor.rowcount == 1
+
     def schedule_work_summary_input_retry(
         self, input_id: int, error: str, *, available_at: str
     ) -> None:

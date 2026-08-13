@@ -33,6 +33,7 @@ from app.cli import (
     process_okr_reviews_command,
     process_work_items_command,
     read_oa_approval_detail_command,
+    retry_work_summary_input_command,
     send_attempt_command,
     settings_from_args,
     test_ding_command as run_test_ding_command,
@@ -209,6 +210,28 @@ def test_parser_supports_process_work_items():
 
     assert args.command == "process-work-items"
     assert args.max_batches == 3
+
+
+def test_parser_supports_retry_work_summary_input():
+    args = build_parser().parse_args(
+        ["retry-work-summary-input", "--input-id", "42"]
+    )
+
+    assert args.command == "retry-work-summary-input"
+    assert args.input_id == 42
+
+
+def test_retry_work_summary_input_command_requeues_failed_input(tmp_path, capsys):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    store = AutoReplyStore(settings.db_path)
+    input_id = store.enqueue_work_summary_input("local_file", "file:reference", "{}")
+    [claimed] = store.claim_work_summary_inputs(1)
+    store.mark_work_summary_input_failed(claimed.id, "validation failed")
+
+    retry_work_summary_input_command(settings, input_id=input_id)
+
+    assert capsys.readouterr().out == f"work-summary-input requeued={input_id}\n"
+    assert store.claim_work_summary_inputs(1)[0].id == input_id
 
 
 def test_parser_supports_backfill_task_memory_context():

@@ -265,6 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume-once",
         "consume",
         "process-work-items",
+        "retry-work-summary-input",
         "backfill-task-memory-context",
         "backfill-routine-process-todos",
         "process-okr-reviews",
@@ -424,6 +425,8 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--user-id", action="append", default=[])
         if command == "read-oa-approval-detail":
             subparser.add_argument("--instance-id", required=True)
+        if command == "retry-work-summary-input":
+            subparser.add_argument("--input-id", type=_positive_int, required=True)
         if command == "replay-recent-meetings":
             subparser.add_argument("--limit", type=_positive_int, required=True)
             subparser.add_argument(
@@ -1029,6 +1032,23 @@ def process_work_items_command(settings: WorkerSettings) -> int:
                 )
     print(f"process-work-items processed={processed}", flush=True)
     return processed
+
+
+def retry_work_summary_input_command(
+    settings: WorkerSettings,
+    *,
+    input_id: int,
+) -> None:
+    store = AutoReplyStore(settings.db_path)
+    requeued = store.requeue_failed_work_summary_input(
+        input_id,
+        "retry_after_reviewed_root_cause_fix",
+    )
+    if not requeued:
+        raise SystemExit(
+            f"work summary input is not a retryable failed record: {input_id}"
+        )
+    print(f"work-summary-input requeued={input_id}", flush=True)
 
 
 def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> bool:
@@ -3012,6 +3032,8 @@ def main() -> None:
         )
     elif args.command == "process-work-items":
         process_work_items_command(settings)
+    elif args.command == "retry-work-summary-input":
+        retry_work_summary_input_command(settings, input_id=args.input_id)
     elif args.command == "backfill-task-memory-context":
         backfill_task_memory_context_command(settings)
     elif args.command == "backfill-routine-process-todos":

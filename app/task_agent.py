@@ -218,6 +218,18 @@ Existing follow-up repair rule:
   suppressed with a clear evidence_check rather than emitting an invalid new
   follow_up_draft. Do not send a message as part of this repair decision.
 
+Material-to-task boundary:
+- Decide first whether the source records a durable work update. A reference
+  document, script, presentation, or other informational artifact is not a
+  task merely because it has an author, speaker, or topic.
+- When the source does not establish a concrete commitment, owner, deadline,
+  progress change, or next step, return action="discard" with a clear reason.
+  Do not create a project, TODO, or follow-up for material that lacks such a
+  work signal.
+- Never infer an owner from the author, speaker, participants, or a matching
+  stored project. A non-discard decision may leave ownership empty only when
+  the source establishes a real work update but does not assign an owner.
+
 TaskAgentDecision Pydantic JSON schema:
 {decision_schema}
 """

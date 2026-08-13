@@ -3372,6 +3372,32 @@ def test_task_agent_prompt_uses_skill_for_important_vs_routine_process_boundary(
     assert "Do not use keyword routers" in prompt
 
 
+def test_task_agent_prompt_discards_non_actionable_reference_material():
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "local_file",
+                "ref": "/tmp/reference.md#sha256=abc",
+                "title": "内部演讲稿",
+            },
+            "summary": "一份内部培训演讲稿，未记录负责人、截止时间或下一步。",
+            "context": {
+                "sender": "Derek",
+                "participants": ["Derek"],
+                "source_conversation_kind": "file",
+                "source_conversation_title": "内部培训演讲稿",
+            },
+        }
+    )
+
+    prompt = build_task_agent_prompt(item, "候选上下文为空。")
+
+    assert "Material-to-task boundary:" in prompt
+    assert "document, script, presentation" in prompt
+    assert "return action=\"discard\"" in prompt
+    assert "Never infer an owner from the author, speaker" in prompt
+
+
 def test_task_agent_prompt_does_not_inject_retrieved_business_examples():
     work_item = _work_item(project_name="宝马项目客户 Demo 推进")
     work_item.summary = (
