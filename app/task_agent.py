@@ -706,14 +706,12 @@ def _validate_owner_changes(store: AutoReplyStore, decision: TaskAgentDecision) 
             "owner_user_id": current_project.owner_user_id,
             "owner_name": current_project.owner_name,
         }
-        project_evidence = project.owner_evidence
-        if not project_evidence and not project_owner_changed and current_project is not None:
-            project_evidence = _json_object(current_project.owner_evidence_json)
-        _require_supported_owner(
-            assigned=final_project_owner,
-            evidence=project_evidence,
-            label="project.owner_evidence",
-        )
+        if project_owner_changed:
+            _require_supported_owner(
+                assigned=final_project_owner,
+                evidence=project.owner_evidence,
+                label="project.owner_evidence",
+            )
 
     for change in decision.todo_changes:
         current_todo = (
@@ -866,7 +864,27 @@ def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:
         return store.create_work_project(**_project_values(project))
     if project.id is None:
         raise ValueError("update_project requires project.id")
-    values = _project_values(project, only_fields=project.model_fields_set - {"id"})
+    current_project = store.get_work_project(project.id)
+    fields = project.model_fields_set - {"id"}
+    if current_project is not None:
+        final_owner = {
+            "owner_user_id": (
+                project.owner_user_id
+                if "owner_user_id" in fields
+                else current_project.owner_user_id
+            ),
+            "owner_name": (
+                project.owner_name
+                if "owner_name" in fields
+                else current_project.owner_name
+            ),
+        }
+        if final_owner == {
+            "owner_user_id": current_project.owner_user_id,
+            "owner_name": current_project.owner_name,
+        }:
+            fields -= {"owner_user_id", "owner_name", "owner_evidence"}
+    values = _project_values(project, only_fields=fields)
     store.update_work_project(project.id, **values)
     return project.id
 

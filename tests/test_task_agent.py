@@ -2267,6 +2267,46 @@ def test_project_owner_create_persists_coherent_evidence(tmp_path):
     assert json.loads(project.owner_evidence_json) == evidence
 
 
+def test_project_update_preserves_unchanged_legacy_owner_without_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="Owner validation",
+        owner_user_id="uid-1",
+        owner_name="Display One",
+        owner_evidence_json="{}",
+        status="active",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "Owner validation",
+                "owner_user_id": "uid-1",
+                "owner_name": "Display One",
+                "current_state": "仍在等待交付证据。",
+                "memory_context": _memory_context(),
+            },
+            "memory_recall_used": True,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    project = store.get_work_project(project_id)
+    assert project is not None
+    assert project.owner_user_id == "uid-1"
+    assert project.owner_name == "Display One"
+    assert project.owner_evidence_json == "{}"
+    assert project.current_state == "仍在等待交付证据。"
+
+
 def test_todo_owner_update_rejects_cross_record_evidence(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="Owner validation")
