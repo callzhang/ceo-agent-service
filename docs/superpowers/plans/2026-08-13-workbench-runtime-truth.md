@@ -818,7 +818,7 @@ On the merged release tree, rerun both previously failing audit nodes and then t
 
 ```bash
 /Users/derek/Documents/Projects/ceo-agent-service-release/.venv/bin/python -m pytest -q \
-  /Users/derek/Documents/Projects/ceo-agent-service-release/tests/test_audit_agent.py::test_audit_rejects_unrelated_or_duplicate_writes[cid-agent-2] \
+  '/Users/derek/Documents/Projects/ceo-agent-service-release/tests/test_audit_agent.py::test_audit_rejects_unrelated_or_duplicate_writes[cid-agent-2]' \
   /Users/derek/Documents/Projects/ceo-agent-service-release/tests/test_audit_agent.py::test_audit_two_starts_with_one_completion_remains_unknown
 npm test --prefix /Users/derek/Documents/Projects/ceo-agent-service-release
 ```
