@@ -26,12 +26,20 @@ describe("Workbench presentation", () => {
   it("supports ISO timestamps with an explicit timezone", () => {
     expect(parseWorkbenchTimestamp("2026-08-13T15:14:36Z")?.toISOString()).toBe("2026-08-13T15:14:36.000Z");
     expect(parseWorkbenchTimestamp("2026-08-13T23:14:36+08:00")?.toISOString()).toBe("2026-08-13T15:14:36.000Z");
+    expect(parseWorkbenchTimestamp("2026-08-13T15:14:36.123Z")?.toISOString()).toBe("2026-08-13T15:14:36.123Z");
   });
 
   it("rejects impossible backend dates and invalid timestamp text", () => {
     expect(parseWorkbenchTimestamp("2026-02-30 12:00:00")).toBeNull();
     expect(parseWorkbenchTimestamp("not-a-date")).toBeNull();
     expect(formatWorkbenchDateTime("not-a-date")).toBeNull();
+  });
+
+  it("rejects invalid or timezone-less ISO timestamps", () => {
+    expect(parseWorkbenchTimestamp("2026-02-30T12:00:00Z")).toBeNull();
+    expect(parseWorkbenchTimestamp("2026-08-13T15:14:36")).toBeNull();
+    expect(parseWorkbenchTimestamp("2026-08-13T15:14:36+24:00")).toBeNull();
+    expect(parseWorkbenchTimestamp("2026-08-13T15:14:36+08:60")).toBeNull();
   });
 
   it.each([

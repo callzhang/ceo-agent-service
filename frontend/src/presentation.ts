@@ -44,6 +44,34 @@ function isBackendTimestamp(value: string): boolean {
   return true;
 }
 
+const explicitIsoTimestamp = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
+
+function isValidDateTime(year: number, month: number, day: number, hour: number, minute: number, second: number): boolean {
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
+  const daysInMonth = [31, (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day >= 1 && day <= daysInMonth[month - 1];
+}
+
+function parseExplicitIsoTimestamp(value: string): Date | null {
+  const match = explicitIsoTimestamp.exec(value);
+  if (!match) return null;
+  const [, rawYear, rawMonth, rawDay, rawHour, rawMinute, rawSecond, , timezone] = match;
+  const year = Number(rawYear);
+  const month = Number(rawMonth);
+  const day = Number(rawDay);
+  const hour = Number(rawHour);
+  const minute = Number(rawMinute);
+  const second = Number(rawSecond);
+  if (!isValidDateTime(year, month, day, hour, minute, second)) return null;
+  if (timezone !== "Z") {
+    const offsetHour = Number(timezone.slice(1, 3));
+    const offsetMinute = Number(timezone.slice(4, 6));
+    if (offsetHour > 23 || offsetMinute > 59) return null;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
 export function parseWorkbenchTimestamp(value: string): Date | null {
   if (isBackendTimestamp(value)) {
     const parts = [
@@ -67,8 +95,7 @@ export function parseWorkbenchTimestamp(value: string): Date | null {
     }
     return parsed;
   }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return parseExplicitIsoTimestamp(value);
 }
 
 export function formatWorkbenchDateTime(value: string): { dateTime: string; label: string } | null {
