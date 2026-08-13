@@ -872,6 +872,7 @@ def _expected_effect_action(
         )
         expected["capability"] = expected_capability
         expected["operation"] = descriptor.command_path
+        expected["arguments_digest"] = _json_digest({"argv": list(argv or ())})
         if legacy_argv is not None:
             expected["operation"] = descriptor.command_path
             expected["arguments_digest"] = _json_digest({"argv": legacy_argv})

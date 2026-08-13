@@ -3074,6 +3074,32 @@ def test_named_direct_message_uses_proposal_recipient_only_for_readback():
     )
 
 
+def test_native_action_uses_argv_digest_matching_persisted_receipt():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Reply in the group",
+            "capability": "dingtalk-chat",
+            "operation": "chat message reply",
+            "target": {"conversation_id": "conversation-1", "ref_msg_id": "message-1"},
+            "payload": {
+                "argv": [
+                    "dws", "chat", "message", "reply",
+                    "--conversation-id", "conversation-1",
+                    "--ref-msg-id", "message-1",
+                    "--text", "done", "--yes",
+                ],
+                "text": "done",
+            },
+            "expected_verification": "Message exists",
+        }
+    )
+    expected = _expected_effect_action(
+        action, McpToolEffectRegistry.default(), action_index=0
+    )
+
+    assert expected["arguments_digest"] == _json_digest({"argv": action.payload["argv"]})
+
+
 def test_named_direct_message_readback_keeps_the_completed_write_receipt():
     action = {
         "reviewed_server": "agent_cli",
