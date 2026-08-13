@@ -343,15 +343,20 @@ export function App() {
   }
 
   const applyTaskSnapshot = useCallback((snapshot: Task) => {
-    writeTasks((current) => current.map((task) => {
-      if (task.id !== snapshot.id) return task;
+    writeTasks((current) => sortTasks(current.map((task) => {
+      if (task.id !== snapshot.id || taskTimestamp(snapshot.updated_at) < taskTimestamp(task.updated_at)) return task;
       const ownership = taskMutationOwnershipRef.current.get(task.id);
+      if (ownership?.kind === "create") {
+        ownership.protectsExistence = false;
+        ownership.revision = ++dataRevisionRef.current;
+        return snapshot;
+      }
       return ownership ? {
         ...snapshot,
         title: ownership.title,
         runtime_kind: ownership.runtimeKind ?? snapshot.runtime_kind,
       } : snapshot;
-    }));
+    })));
   }, [writeTasks]);
 
   const commitSelection = useCallback(
@@ -381,6 +386,18 @@ export function App() {
       if (local && ownership) {
         if (ownership.revision > startRevision) {
           nextById.set(incoming.id, local);
+          continue;
+        }
+        if (ownership.kind === "create") {
+          if (taskTimestamp(incoming.updated_at) < taskTimestamp(local.updated_at)) {
+            nextById.set(incoming.id, local);
+          } else {
+            if (ownership.protectsExistence) {
+              ownership.protectsExistence = false;
+              ownership.revision = ++dataRevisionRef.current;
+            }
+            nextById.set(incoming.id, incoming);
+          }
           continue;
         }
         const titleConfirmed = incoming.title === ownership.title;

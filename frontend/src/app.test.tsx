@@ -279,6 +279,71 @@ describe("App", () => {
     expect(screen.queryByText("空闲")).not.toBeInTheDocument();
   });
 
+  it("adopts a first-message title from the authoritative timeline without a reload", async () => {
+    const user = userEvent.setup();
+    class QuietEventSource {
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      addEventListener() {}
+      close() {}
+    }
+    vi.stubGlobal("EventSource", QuietEventSource);
+    const staleTaskList = deferred<{ items: Task[]; nextCursor: string }>();
+    const created = {
+      ...deep,
+      title: "新任务",
+      state: "idle" as const,
+      updated_at: "2026-08-13 10:30:00",
+    };
+    const derived = {
+      ...created,
+      title: "检查今天的重要事项",
+      state: "queued" as const,
+      updated_at: "2026-08-13 12:00:00",
+    };
+    const createdTurn: Turn = {
+      id: "derived-title-turn",
+      task_id: created.id,
+      client_request_id: "derived-title-request",
+      user_text: "检查今天的重要事项",
+      status: "queued",
+      stop_requested: false,
+      final_text: "",
+      error_code: "",
+      error_detail: "",
+      started_at: "",
+      completed_at: "",
+      created_at: "2026-08-13 12:00:00",
+      updated_at: "2026-08-13 12:00:00",
+    };
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "" })
+      .mockReturnValueOnce(staleTaskList.promise);
+    api.createTask.mockResolvedValue(created);
+    api.createTurn.mockResolvedValue(createdTurn);
+    api.getTimeline
+      .mockResolvedValueOnce(emptyTimeline(created))
+      .mockResolvedValueOnce(emptyTimeline(derived, [createdTurn]));
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "新任务" }));
+    await user.type(await screen.findByRole("textbox", { name: "发送消息" }), "检查今天的重要事项");
+    await user.click(screen.getByRole("button", { name: "刷新任务" }));
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(await screen.findByRole("heading", { name: "检查今天的重要事项" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开任务 检查今天的重要事项" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getAllByRole("button", { name: /^打开任务 / }).map((button) => button.getAttribute("aria-label"))).toEqual([
+      "打开任务 检查今天的重要事项",
+      "打开任务 销售策略",
+    ]);
+
+    await act(async () => staleTaskList.resolve({ items: [created, first], nextCursor: "" }));
+
+    expect(screen.getByRole("heading", { name: "检查今天的重要事项" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开任务 检查今天的重要事项" })).toBeInTheDocument();
+  });
+
   it("refreshes global stats after creating a task", async () => {
     const user = userEvent.setup();
     api.listTasks.mockResolvedValue({ items: [], nextCursor: "" });

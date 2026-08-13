@@ -957,15 +957,17 @@ def test_first_turn_derives_default_title_and_idempotently_replays(tmp_path: Pat
         user_text=user_text,
         client_request_id="derive-default-title",
     )
+    derived_task = store.get_task(task.id)
     replayed = store.create_turn(
         task.id,
-        user_text=user_text,
+        user_text="\u3000今天有哪些 \n\t 值得我关注的事项？\u00a0",
         client_request_id="derive-default-title",
     )
 
     assert replayed == first
     assert replayed.user_text == "今天有哪些 \n\t 值得我关注的事项？"
-    assert store.get_task(task.id).title == "今天有哪些 值得我关注的事项？"
+    assert derived_task.title == "今天有哪些 值得我关注的事项？"
+    assert store.get_task(task.id) == derived_task
 
 
 def test_first_turn_does_not_overwrite_manually_renamed_default_title(tmp_path: Path):
@@ -1015,7 +1017,7 @@ def test_second_turn_never_derives_title_after_title_is_restored_to_default(tmp_
 def test_derived_default_title_truncates_to_unicode_boundary(tmp_path: Path):
     store = _store(tmp_path)
     task = store.create_task(title="新任务", runtime_kind="codex")
-    user_text = "请帮我整理今天与人工智能、产品、客户和团队相关的重要事项，并指出需要我立即处理的风险和机会"
+    user_text = "请帮我整理今天与人工智能🚀、产品、客户和团队相关的重要事项，并指出需要我立即处理的风险和机会"
 
     store.create_turn(
         task.id,
@@ -1027,9 +1029,9 @@ def test_derived_default_title_truncates_to_unicode_boundary(tmp_path: Path):
     assert len(title) == 32
     assert title[-1] == "…"
     assert title == user_text[:31].rstrip() + "…"
-    assert title.encode("utf-8").decode("utf-8") == title
     assert all(not 0xD800 <= ord(character) <= 0xDFFF for character in title)
     assert "人工智能" in title
+    assert "🚀" in title
 
 
 def test_create_turn_rejects_second_active_request_for_task(tmp_path: Path):
