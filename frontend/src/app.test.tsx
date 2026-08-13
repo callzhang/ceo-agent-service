@@ -39,6 +39,12 @@ const second = {
   title: "产品规划",
   state: "idle" as const,
 };
+const deep = {
+  ...first,
+  id: "33333333-3333-4333-8333-333333333333",
+  title: "深层任务",
+  state: "completed" as const,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -104,26 +110,186 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "销售策略" })).toBeInTheDocument();
   });
 
-  it("paints the first page before requesting more and restores a later URL selection", async () => {
+  it("paints the first page before manually requesting more", async () => {
     const user = userEvent.setup();
     api.listTasks
       .mockResolvedValueOnce({ items: [first], nextCursor: "page-2" })
       .mockResolvedValueOnce({ items: [second], nextCursor: "" });
-    window.history.replaceState({}, "", `/?task=${second.id}`);
-
     render(<App />);
 
     expect(await screen.findByText("销售策略")).toBeInTheDocument();
     expect(api.listTasks).toHaveBeenCalledOnce();
-    expect(new URL(window.location.href).searchParams.get("task")).toBe(second.id);
     await user.click(screen.getByRole("button", { name: "加载更多任务" }));
-    expect(await screen.findByRole("heading", { name: "产品规划" })).toBeInTheDocument();
+    expect(await screen.findByText("产品规划")).toBeInTheDocument();
     expect(api.listTasks).toHaveBeenNthCalledWith(2, {
       archived: "active",
       limit: 100,
       cursor: "page-2",
       signal: expect.any(AbortSignal),
     });
+  });
+
+  it("preserves a created task when an older refresh resolves afterward", async () => {
+    const user = userEvent.setup();
+    const pendingCreate = deferred<typeof deep>();
+    const pendingRefresh = deferred<{ items: Array<typeof first | typeof second>; nextCursor: string }>();
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "" })
+      .mockReturnValueOnce(pendingRefresh.promise);
+    api.createTask.mockReturnValue(pendingCreate.promise);
+    render(<App />);
+
+    await screen.findByText("销售策略");
+    await user.click(screen.getByRole("button", { name: "新任务" }));
+    await user.click(screen.getByRole("button", { name: "刷新任务" }));
+    await act(async () => pendingCreate.resolve(deep));
+    await act(async () => pendingRefresh.resolve({ items: [first], nextCursor: "" }));
+
+    expect(screen.getByRole("heading", { name: "深层任务" })).toBeInTheDocument();
+  });
+
+  it("preserves a newer rename when an older refresh resolves afterward", async () => {
+    const user = userEvent.setup();
+    const pendingRename = deferred<typeof first>();
+    const pendingRefresh = deferred<{ items: typeof first[]; nextCursor: string }>();
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "" })
+      .mockReturnValueOnce(pendingRefresh.promise);
+    api.renameTask.mockReturnValue(pendingRename.promise);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "重命名 销售策略" }));
+    await user.clear(screen.getByRole("textbox", { name: "任务名称" }));
+    await user.type(screen.getByRole("textbox", { name: "任务名称" }), "本地新名称");
+    await user.click(screen.getByRole("button", { name: "保存名称" }));
+    await user.click(screen.getByRole("button", { name: "刷新任务" }));
+    await act(async () => pendingRename.resolve({ ...first, title: "本地新名称" }));
+    await act(async () => pendingRefresh.resolve({ items: [first], nextCursor: "" }));
+
+    expect(screen.getByText("本地新名称")).toBeInTheDocument();
+    expect(screen.queryByText("销售策略")).not.toBeInTheDocument();
+  });
+
+  it("does not resurrect an archived task from an older refresh", async () => {
+    const user = userEvent.setup();
+    const pendingArchive = deferred<typeof first>();
+    const pendingRefresh = deferred<{ items: Array<typeof first | typeof second>; nextCursor: string }>();
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first, second], nextCursor: "" })
+      .mockReturnValueOnce(pendingRefresh.promise);
+    api.archiveTask.mockReturnValue(pendingArchive.promise);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "归档 销售策略" }));
+    await user.click(screen.getByRole("button", { name: "刷新任务" }));
+    await act(async () => pendingArchive.resolve({ ...first, archived_at: "2026-08-13 12:00:00" }));
+    await act(async () => pendingRefresh.resolve({ items: [first, second], nextCursor: "" }));
+
+    expect(screen.queryByText("销售策略")).not.toBeInTheDocument();
+    expect(screen.getByText("产品规划")).toBeInTheDocument();
+  });
+
+  it("does not let a stale pagination duplicate overwrite a newer rename", async () => {
+    const user = userEvent.setup();
+    const pendingPage = deferred<{ items: typeof first[]; nextCursor: string }>();
+    api.listTasks.mockResolvedValueOnce({ items: [first], nextCursor: "page-2" });
+    api.listTasks.mockReturnValueOnce(pendingPage.promise);
+    api.renameTask.mockResolvedValue({ ...first, title: "分页前新名称" });
+    render(<App />);
+
+    await screen.findByText("销售策略");
+    await user.click(screen.getByRole("button", { name: "加载更多任务" }));
+    await user.click(screen.getByRole("button", { name: "重命名 销售策略" }));
+    await user.clear(screen.getByRole("textbox", { name: "任务名称" }));
+    await user.type(screen.getByRole("textbox", { name: "任务名称" }), "分页前新名称");
+    await user.click(screen.getByRole("button", { name: "保存名称" }));
+    await act(async () => pendingPage.resolve({ items: [first], nextCursor: "" }));
+
+    expect(screen.getByText("分页前新名称")).toBeInTheDocument();
+    expect(screen.queryByText("销售策略")).not.toBeInTheDocument();
+  });
+
+  it("paints page one while chasing a deep-link target in the background", async () => {
+    const pendingDeepPage = deferred<{ items: typeof deep[]; nextCursor: string }>();
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "page-2" })
+      .mockReturnValueOnce(pendingDeepPage.promise);
+    window.history.replaceState({}, "", `/?task=${deep.id}`);
+
+    render(<App />);
+
+    expect(await screen.findByText("销售策略")).toBeInTheDocument();
+    expect(screen.queryByText("正在加载任务…")).not.toBeInTheDocument();
+    expect(api.listTasks).toHaveBeenCalledTimes(2);
+    await act(async () => pendingDeepPage.resolve({ items: [deep], nextCursor: "" }));
+    expect(await screen.findByRole("heading", { name: "深层任务" })).toBeInTheDocument();
+  });
+
+  it("shares an in-flight cursor request between deep-link chase and load more", async () => {
+    const user = userEvent.setup();
+    const pendingPage = deferred<{ items: typeof deep[]; nextCursor: string }>();
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "page-2" })
+      .mockReturnValueOnce(pendingPage.promise);
+    window.history.replaceState({}, "", `/?task=${deep.id}`);
+    render(<App />);
+
+    await screen.findByText("销售策略");
+    await waitFor(() => expect(api.listTasks).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole("button", { name: "加载更多任务" }));
+    expect(api.listTasks).toHaveBeenCalledTimes(2);
+    await act(async () => pendingPage.resolve({ items: [deep], nextCursor: "" }));
+
+    expect(await screen.findByRole("heading", { name: "深层任务" })).toBeInTheDocument();
+  });
+
+  it("aborts a deep-link chase when the user explicitly selects another task", async () => {
+    const user = userEvent.setup();
+    const pendingPage = deferred<{ items: typeof deep[]; nextCursor: string }>();
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "page-2" })
+      .mockReturnValueOnce(pendingPage.promise);
+    window.history.replaceState({}, "", `/?task=${deep.id}`);
+    render(<App />);
+
+    const firstTask = await screen.findByRole("button", { name: "打开任务 销售策略" });
+    await waitFor(() => expect(api.listTasks).toHaveBeenCalledTimes(2));
+    const chaseSignal = api.listTasks.mock.calls[1][0].signal as AbortSignal;
+    await user.click(firstTask);
+
+    expect(chaseSignal.aborted).toBe(true);
+    expect(screen.getByRole("heading", { name: "销售策略" })).toBeInTheDocument();
+  });
+
+  it("switches popstate chases and never selects the stale target", async () => {
+    const oldTarget = { ...deep, id: "44444444-4444-4444-8444-444444444444", title: "旧目标" };
+    const newTarget = { ...deep, id: "55555555-5555-4555-8555-555555555555", title: "新目标" };
+    const oldPage = deferred<{ items: typeof oldTarget[]; nextCursor: string }>();
+    const newPage = deferred<{ items: typeof newTarget[]; nextCursor: string }>();
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "page-2" })
+      .mockReturnValueOnce(oldPage.promise)
+      .mockReturnValueOnce(newPage.promise);
+    render(<App />);
+    await screen.findByText("销售策略");
+
+    act(() => {
+      window.history.pushState({}, "", `/?task=${oldTarget.id}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() => expect(api.listTasks).toHaveBeenCalledTimes(2));
+    const oldSignal = api.listTasks.mock.calls[1][0].signal as AbortSignal;
+    act(() => {
+      window.history.pushState({}, "", `/?task=${newTarget.id}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() => expect(api.listTasks).toHaveBeenCalledTimes(3));
+    expect(oldSignal.aborted).toBe(true);
+    await act(async () => oldPage.resolve({ items: [oldTarget], nextCursor: "" }));
+    expect(screen.queryByRole("heading", { name: "旧目标" })).not.toBeInTheDocument();
+    await act(async () => newPage.resolve({ items: [newTarget], nextCursor: "" }));
+    expect(await screen.findByRole("heading", { name: "新目标" })).toBeInTheDocument();
   });
 
   it("aborts stale pagination so a refreshed first page cannot be contaminated", async () => {

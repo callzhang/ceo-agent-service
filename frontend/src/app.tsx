@@ -3,7 +3,37 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { archiveTask, createTask, listTasks, renameTask } from "./api";
 import { TaskList } from "./components/TaskList";
-import type { Task } from "./types";
+import type { Task, TaskPage } from "./types";
+
+interface SharedPageRequest {
+  controller: AbortController;
+  startRevision: number;
+  promise: Promise<TaskPage>;
+  owners: Set<string>;
+  settled: boolean;
+  cancelled: boolean;
+  applied: boolean;
+}
+
+function taskTimestamp(value: string) {
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+    ? `${value.slice(0, 10)}T${value.slice(11)}Z`
+    : value;
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function sortTasks(tasks: Task[]) {
+  return [...tasks].sort((left, right) => taskTimestamp(right.updated_at) - taskTimestamp(left.updated_at));
+}
+
+function serverConfirmsLocal(server: Task, local: Task) {
+  return server.title === local.title
+    && server.runtime_kind === local.runtime_kind
+    && server.archived_at === local.archived_at
+    && server.state === local.state
+    && taskTimestamp(server.updated_at) >= taskTimestamp(local.updated_at);
+}
 
 function taskIdFromUrl(): string | null {
   return new URL(window.location.href).searchParams.get("task");
@@ -62,10 +92,21 @@ export function App() {
   const selectionVersionRef = useRef(0);
   const selectedTaskIdRef = useRef<string | null>(null);
   const tasksRef = useRef<Task[]>([]);
+  const nextCursorRef = useRef("");
+  const dataRevisionRef = useRef(0);
+  const taskMutationRevisionsRef = useRef(new Map<string, number>());
+  const archiveTombstonesRef = useRef(new Map<string, number>());
   const controllersRef = useRef(new Set<AbortController>());
   const loadRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
-  const paginationRequestRef = useRef<{ id: number; controller: AbortController; cursor: string } | null>(null);
   const usedCursorsRef = useRef(new Set<string>());
+  const pageRequestsRef = useRef(new Map<string, SharedPageRequest>());
+  const chaseSequenceRef = useRef(0);
+  const activeChaseRef = useRef<{
+    id: number;
+    target: string;
+    owner: string;
+    release: (() => void) | null;
+  } | null>(null);
   const createRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
   const renameRequestsRef = useRef(new Map<string, { id: number; controller: AbortController }>());
   const archiveRequestsRef = useRef(new Map<string, { id: number; controller: AbortController }>());
@@ -89,6 +130,17 @@ export function App() {
     controllersRef.current.delete(controller);
   }
 
+  function writeNextCursor(cursor: string) {
+    nextCursorRef.current = cursor;
+    setNextCursor(cursor);
+  }
+
+  function recordTaskMutation(taskId: string) {
+    const revision = ++dataRevisionRef.current;
+    taskMutationRevisionsRef.current.set(taskId, revision);
+    return revision;
+  }
+
   const commitSelection = useCallback(
     (taskId: string | null, mode?: "push" | "replace") => {
       selectedTaskIdRef.current = taskId;
@@ -99,28 +151,217 @@ export function App() {
     [],
   );
 
-  const applyLoadedTasks = useCallback((loadedTasks: Task[], cursor: string) => {
+  const reconcileTasks = useCallback((
+    incomingTasks: Task[],
+    startRevision: number,
+    mode: "replace" | "append",
+    cursor: string,
+  ) => {
+    const currentById = new Map(tasksRef.current.map((task) => [task.id, task]));
+    const incomingIds = new Set(incomingTasks.map((task) => task.id));
+    const nextById = mode === "append" ? new Map(currentById) : new Map<string, Task>();
+
+    for (const incoming of incomingTasks) {
+      if (archiveTombstonesRef.current.has(incoming.id)) continue;
+      const local = currentById.get(incoming.id);
+      const localRevision = taskMutationRevisionsRef.current.get(incoming.id);
+      if (local && localRevision !== undefined) {
+        if (localRevision > startRevision || !serverConfirmsLocal(incoming, local)) {
+          nextById.set(incoming.id, local);
+          continue;
+        }
+        taskMutationRevisionsRef.current.delete(incoming.id);
+      }
+      nextById.set(incoming.id, incoming);
+    }
+
+    if (mode === "replace") {
+      for (const [taskId, revision] of taskMutationRevisionsRef.current) {
+        const local = currentById.get(taskId);
+        if (local && !archiveTombstonesRef.current.has(taskId) && (!incomingIds.has(taskId) || revision > startRevision)) {
+          nextById.set(taskId, local);
+        }
+      }
+    }
+
+    if (!cursor) {
+      for (const [taskId, revision] of archiveTombstonesRef.current) {
+        if (revision <= startRevision && !incomingIds.has(taskId)) {
+          archiveTombstonesRef.current.delete(taskId);
+        }
+      }
+    }
+
+    const reconciled = sortTasks(Array.from(nextById.values()));
+    writeTasks(reconciled);
+    return reconciled;
+  }, [writeTasks]);
+
+  const applyLoadedTasks = useCallback((loadedTasks: Task[], cursor: string, startRevision: number) => {
     const uniqueTasks = Array.from(new Map(loadedTasks.map((task) => [task.id, task])).values());
-    writeTasks(uniqueTasks);
-    setNextCursor(cursor);
+    const reconciled = reconcileTasks(uniqueTasks, startRevision, "replace", cursor);
+    writeNextCursor(cursor);
     usedCursorsRef.current.clear();
     const requestedTaskId = taskIdFromUrl();
-    if (requestedTaskId && uniqueTasks.some((task) => task.id === requestedTaskId)) {
+    if (requestedTaskId && reconciled.some((task) => task.id === requestedTaskId)) {
       commitSelection(requestedTaskId);
     } else {
       commitSelection(null);
       if (requestedTaskId && !cursor) updateTaskUrl(null, "replace");
     }
-  }, [commitSelection, writeTasks]);
+    return reconciled;
+  }, [commitSelection, reconcileTasks]);
+
+  const cancelActiveChase = useCallback(() => {
+    const chase = activeChaseRef.current;
+    activeChaseRef.current = null;
+    chase?.release?.();
+  }, []);
+
+  const cancelPageRequests = useCallback(() => {
+    for (const [cursor, request] of pageRequestsRef.current) {
+      request.cancelled = true;
+      request.controller.abort();
+      pageRequestsRef.current.delete(cursor);
+    }
+  }, []);
+
+  const acquirePage = useCallback((cursor: string, owner: string) => {
+    let request = pageRequestsRef.current.get(cursor);
+    if (!request || request.cancelled) {
+      const controller = new AbortController();
+      const startRevision = dataRevisionRef.current;
+      nextRequest(controller);
+      request = {
+        controller,
+        startRevision,
+        owners: new Set(),
+        settled: false,
+        cancelled: false,
+        applied: false,
+        promise: Promise.resolve({ items: [], nextCursor: "" }),
+      };
+      const createdRequest = request;
+      createdRequest.promise = listTasks({
+        archived: "active",
+        limit: 100,
+        cursor,
+        signal: controller.signal,
+      }).finally(() => {
+        createdRequest.settled = true;
+        finishRequest(controller);
+        if (pageRequestsRef.current.get(cursor) === createdRequest) {
+          pageRequestsRef.current.delete(cursor);
+        }
+      });
+      pageRequestsRef.current.set(cursor, createdRequest);
+    }
+    request.owners.add(owner);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      request!.owners.delete(owner);
+      if (request!.owners.size === 0 && !request!.settled) {
+        request!.cancelled = true;
+        request!.controller.abort();
+        if (pageRequestsRef.current.get(cursor) === request) pageRequestsRef.current.delete(cursor);
+      }
+    };
+    return { request, release };
+  }, []);
+
+  const applyPage = useCallback((cursor: string, request: SharedPageRequest, page: TaskPage) => {
+    if (request.cancelled || request.applied) return tasksRef.current;
+    request.applied = true;
+    usedCursorsRef.current.add(cursor);
+    const merged = reconcileTasks(page.items, request.startRevision, "append", page.nextCursor);
+    if (page.nextCursor && usedCursorsRef.current.has(page.nextCursor)) {
+      writeNextCursor("");
+      setMutationError("任务分页游标重复，已停止继续加载");
+    } else {
+      writeNextCursor(page.nextCursor);
+    }
+    const requestedTaskId = taskIdFromUrl();
+    if (requestedTaskId && merged.some((task) => task.id === requestedTaskId)) {
+      commitSelection(requestedTaskId);
+    } else if (requestedTaskId && !page.nextCursor) {
+      commitSelection(null);
+      updateTaskUrl(null, "replace");
+      setMutationError("未找到链接指定的任务");
+    }
+    return merged;
+  }, [commitSelection, reconcileTasks]);
+
+  const startDeepLinkChase = useCallback((target: string, initialCursor: string) => {
+    cancelActiveChase();
+    if (tasksRef.current.some((task) => task.id === target)) {
+      commitSelection(target);
+      return;
+    }
+    if (!initialCursor) {
+      commitSelection(null);
+      updateTaskUrl(null, "replace");
+      setMutationError("未找到链接指定的任务");
+      return;
+    }
+    const id = ++chaseSequenceRef.current;
+    const chase = { id, target, owner: `chase:${id}`, release: null as (() => void) | null };
+    activeChaseRef.current = chase;
+    void (async () => {
+      const seen = new Set<string>();
+      let cursor = initialCursor;
+      try {
+        while (cursor && mountedRef.current && activeChaseRef.current?.id === id) {
+          if (seen.has(cursor)) {
+            writeNextCursor("");
+            setMutationError("任务分页游标重复，未找到链接指定的任务");
+            updateTaskUrl(null, "replace");
+            return;
+          }
+          seen.add(cursor);
+          const acquired = acquirePage(cursor, chase.owner);
+          chase.release = acquired.release;
+          const page = await acquired.request.promise;
+          acquired.release();
+          chase.release = null;
+          if (
+            !mountedRef.current
+            || activeChaseRef.current?.id !== id
+            || taskIdFromUrl() !== target
+          ) return;
+          const merged = applyPage(cursor, acquired.request, page);
+          if (merged.some((task) => task.id === target)) {
+            commitSelection(target);
+            return;
+          }
+          cursor = page.nextCursor;
+        }
+      } catch (error) {
+        if (
+          activeChaseRef.current?.id === id
+          && mountedRef.current
+          && !(error instanceof DOMException && error.name === "AbortError")
+        ) {
+          setMutationError("链接任务加载失败，请重试");
+        }
+      } finally {
+        chase.release?.();
+        if (activeChaseRef.current?.id === id) activeChaseRef.current = null;
+      }
+    })();
+  }, [acquirePage, applyPage, cancelActiveChase, commitSelection]);
 
   const load = useCallback(async () => {
     loadRequestRef.current?.controller.abort();
-    paginationRequestRef.current?.controller.abort();
-    paginationRequestRef.current = null;
+    cancelActiveChase();
+    cancelPageRequests();
     const controller = new AbortController();
     const requestId = nextRequest(controller);
+    const startRevision = dataRevisionRef.current;
     loadRequestRef.current = { id: requestId, controller };
-    setLoading(true);
+    const isInitialLoad = tasksRef.current.length === 0;
+    setLoading(isInitialLoad);
     setLoadingMore(false);
     setLoadError(false);
     setMutationError("");
@@ -131,7 +372,11 @@ export function App() {
         signal: controller.signal,
       });
       if (loadRequestRef.current?.id === requestId && mountedRef.current) {
-        applyLoadedTasks(page.items, page.nextCursor);
+        const reconciled = applyLoadedTasks(page.items, page.nextCursor, startRevision);
+        const requestedTaskId = taskIdFromUrl();
+        if (requestedTaskId && !reconciled.some((task) => task.id === requestedTaskId) && page.nextCursor) {
+          startDeepLinkChase(requestedTaskId, page.nextCursor);
+        }
       }
     } catch (error) {
       if (
@@ -147,58 +392,26 @@ export function App() {
         setLoading(false);
       }
     }
-  }, [applyLoadedTasks]);
+  }, [applyLoadedTasks, cancelActiveChase, cancelPageRequests, startDeepLinkChase]);
 
   async function loadMoreTasks() {
-    const cursor = nextCursor;
+    const cursor = nextCursorRef.current;
     if (!cursor || loadingMore) return;
     if (usedCursorsRef.current.has(cursor)) {
-      setNextCursor("");
+      writeNextCursor("");
       setMutationError("任务分页游标重复，已停止继续加载");
       return;
     }
-    paginationRequestRef.current?.controller.abort();
-    const controller = new AbortController();
-    const requestId = nextRequest(controller);
-    paginationRequestRef.current = { id: requestId, controller, cursor };
-    usedCursorsRef.current.add(cursor);
+    const owner = `manual:${++requestSequenceRef.current}`;
+    const acquired = acquirePage(cursor, owner);
     setLoadingMore(true);
     setMutationError("");
     try {
-      const page = await listTasks({
-        archived: "active",
-        limit: 100,
-        cursor,
-        signal: controller.signal,
-      });
-      const activeRequest = paginationRequestRef.current;
-      if (
-        activeRequest?.id !== requestId ||
-        activeRequest.cursor !== cursor ||
-        !mountedRef.current
-      ) {
-        return;
-      }
-      const merged = Array.from(
-        new Map([...tasksRef.current, ...page.items].map((task) => [task.id, task])).values(),
-      );
-      writeTasks(merged);
-      if (page.nextCursor && usedCursorsRef.current.has(page.nextCursor)) {
-        setNextCursor("");
-        setMutationError("任务分页游标重复，已停止继续加载");
-      } else {
-        setNextCursor(page.nextCursor);
-      }
-      const requestedTaskId = taskIdFromUrl();
-      if (requestedTaskId && merged.some((task) => task.id === requestedTaskId)) {
-        commitSelection(requestedTaskId);
-      } else if (requestedTaskId && !page.nextCursor) {
-        commitSelection(null);
-        updateTaskUrl(null, "replace");
-      }
+      const page = await acquired.request.promise;
+      if (!mountedRef.current) return;
+      applyPage(cursor, acquired.request, page);
     } catch (error) {
       if (
-        paginationRequestRef.current?.id === requestId &&
         mountedRef.current &&
         !(error instanceof DOMException && error.name === "AbortError")
       ) {
@@ -206,10 +419,8 @@ export function App() {
         setMutationError("更多任务加载失败，请重试");
       }
     } finally {
-      finishRequest(controller);
-      if (paginationRequestRef.current?.id === requestId && mountedRef.current) {
-        setLoadingMore(false);
-      }
+      acquired.release();
+      if (mountedRef.current) setLoadingMore(false);
     }
   }
 
@@ -218,24 +429,34 @@ export function App() {
     void load();
     return () => {
       mountedRef.current = false;
+      cancelActiveChase();
+      cancelPageRequests();
       for (const controller of controllersRef.current) controller.abort();
       controllersRef.current.clear();
     };
-  }, [load]);
+  }, [cancelActiveChase, cancelPageRequests, load]);
 
   useEffect(() => {
     function handlePopState() {
       const requestedTaskId = taskIdFromUrl();
-      commitSelection(
-        requestedTaskId && tasks.some((task) => task.id === requestedTaskId)
-          ? requestedTaskId
-          : null,
-      );
+      cancelActiveChase();
+      if (requestedTaskId && tasksRef.current.some((task) => task.id === requestedTaskId)) {
+        commitSelection(requestedTaskId);
+      } else if (requestedTaskId && nextCursorRef.current) {
+        commitSelection(null);
+        startDeepLinkChase(requestedTaskId, nextCursorRef.current);
+      } else {
+        commitSelection(null);
+        if (requestedTaskId) {
+          updateTaskUrl(null, "replace");
+          setMutationError("未找到链接指定的任务");
+        }
+      }
       setInspectorOpen(false);
     }
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [commitSelection, tasks]);
+  }, [cancelActiveChase, commitSelection, startDeepLinkChase]);
 
   useEffect(() => {
     if (!inspectorIsDrawer) setInspectorOpen(false);
@@ -288,11 +509,13 @@ export function App() {
   );
 
   function selectTask(taskId: string) {
+    cancelActiveChase();
     commitSelection(taskId, "push");
     setInspectorOpen(false);
   }
 
   function returnToTaskList() {
+    cancelActiveChase();
     commitSelection(null, "push");
     setInspectorOpen(false);
   }
@@ -310,6 +533,7 @@ export function App() {
     try {
       const created = await createTask("新任务", "codex", { signal: controller.signal });
       if (createRequestRef.current?.id !== requestId || !mountedRef.current) return;
+      recordTaskMutation(created.id);
       writeTasks((current) => [created, ...current.filter((task) => task.id !== created.id)]);
       if (
         selectedTaskIdRef.current === selectionAtStart &&
@@ -343,6 +567,7 @@ export function App() {
     try {
       const renamed = await renameTask(taskId, title, { signal: controller.signal });
       if (renameRequestsRef.current.get(taskId)?.id !== requestId || !mountedRef.current) return;
+      recordTaskMutation(taskId);
       writeTasks((current) => current.map((task) => (task.id === taskId ? renamed : task)));
     } catch (error) {
       if (
@@ -377,6 +602,9 @@ export function App() {
     try {
       await archiveTask(taskId, { signal: controller.signal });
       if (archiveRequestsRef.current.get(taskId)?.id !== requestId || !mountedRef.current) return;
+      const revision = ++dataRevisionRef.current;
+      archiveTombstonesRef.current.set(taskId, revision);
+      taskMutationRevisionsRef.current.delete(taskId);
       writeTasks((current) => current.filter((task) => task.id !== taskId));
       if (selectedTaskIdRef.current === taskId) {
         commitSelection(null, "replace");
