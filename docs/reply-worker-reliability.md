@@ -119,6 +119,10 @@ Audit Rules 对 A/B 同时可见，但只控制业务审阅规则。它不能改
 
 当 B 已开始写入但进程退出、连接断开或结果无法解析时，run 标记为 `unknown`。恢复顺序固定：
 
+如果旧版本在恢复事件上限后把关联 task 标成 `failed`，但当前 generation 的 Audit run
+仍是未暂停的 `unknown`，Worker 会先把该 task 重新排入同一 generation 的只读恢复路径。
+这不会创建新的 Consumer 或 Audit 写入；只会核验原有回执和实时读回。
+
 `unknown` 只适用于至少一个写调用仍未闭合的情况。若每个写调用都已有
 `completed` 或 `failed` 终态，系统直接保存确定结果：已经完成的动作保持 `confirmed`，
 明确失败且未执行的动作保持 `failed`。即使 Codex 随后异常退出，也不再进入只读核对或要求

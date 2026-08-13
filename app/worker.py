@@ -1678,12 +1678,19 @@ class DingTalkAutoReplyWorker:
             if task is None:
                 continue
             try:
-                self.store.requeue_reply_task(
-                    task.id,
-                    "unknown_agent_run_reconciliation",
-                    expected_execution_generation=run.execution_generation,
-                )
-            except AgentRunLeaseLostError:
+                if task.status == "failed":
+                    self.store.requeue_failed_unknown_audit_reconciliation(
+                        task.id,
+                        run.id,
+                        reason="unknown_agent_run_reconciliation",
+                    )
+                else:
+                    self.store.requeue_reply_task(
+                        task.id,
+                        "unknown_agent_run_reconciliation",
+                        expected_execution_generation=run.execution_generation,
+                    )
+            except (AgentRunLeaseLostError, ValueError):
                 continue
             recovered += 1
         return recovered
