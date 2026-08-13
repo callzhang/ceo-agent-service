@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -78,6 +79,7 @@ class WorkbenchExecutor:
         confirmation_heartbeat_interval_seconds: float | None = None,
         classifier: NativeCliMetadataClassifier | None = None,
         write_runner=None,
+        artifact_roots: tuple[Path, ...] = (),
     ) -> None:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
@@ -86,6 +88,15 @@ class WorkbenchExecutor:
         self.store = store
         self.runtimes = runtimes
         self.workspace = Path(workspace).resolve()
+        self.artifact_roots = tuple(
+            dict.fromkeys(
+                (
+                    self.workspace,
+                    (store.path.parent / "workbench" / "outputs").resolve(),
+                    *(Path(root).resolve() for root in artifact_roots),
+                )
+            )
+        )
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = heartbeat_interval_seconds or max(
             0.1, min(30.0, lease_seconds / 3)
@@ -547,13 +558,16 @@ class WorkbenchExecutor:
                     stop_after = True
             else:
                 try:
-                    self.store.append_event(
-                        state.turn_id,
-                        sequence=state.next_sequence,
-                        event_type=event.event_type,
-                        payload=payload,
-                        owner=self.owner,
-                    )
+                    if event.event_type == "artifact_created":
+                        self._append_artifact_event(state, payload)
+                    else:
+                        self.store.append_event(
+                            state.turn_id,
+                            sequence=state.next_sequence,
+                            event_type=event.event_type,
+                            payload=payload,
+                            owner=self.owner,
+                        )
                 except ValueError:
                     current = self.store.get_turn(state.turn_id)
                     if current is not None and current.status is TurnStatus.STOPPED:
@@ -562,6 +576,50 @@ class WorkbenchExecutor:
                 state.next_sequence += 1
         if stop_after:
             self._stop_state_once(state)
+
+    def _append_artifact_event(self, state: _RunState, payload: dict[str, Any]) -> None:
+        if set(payload) != {"label", "path", "media_type"} or not all(
+            isinstance(payload.get(key), str) for key in payload
+        ):
+            raise ValueError("invalid artifact event")
+        candidate = Path(payload["path"])
+        if not candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError("invalid artifact path")
+        token = r"[!#$&^_.+\-A-Za-z0-9]+"
+        media_type = payload["media_type"]
+        if (
+            len(media_type) > 100
+            or not media_type.isascii()
+            or re.fullmatch(rf"{token}/{token}", media_type) is None
+        ):
+            raise ValueError("invalid artifact media type")
+        try:
+            root = next(
+                (root for root in self.artifact_roots if root in candidate.parents),
+                None,
+            )
+            if root is None:
+                raise ValueError("invalid artifact path")
+            relative = candidate.relative_to(root)
+            current = root
+            for component in relative.parts:
+                current = current / component
+                if current.is_symlink():
+                    raise ValueError("invalid artifact path")
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+        except (OSError, ValueError) as exc:
+            raise ValueError("invalid artifact path") from exc
+        if not resolved.is_file():
+            raise ValueError("invalid artifact path")
+        self.store.append_artifact_event(
+            state.turn_id,
+            sequence=state.next_sequence,
+            label=payload["label"],
+            path=str(resolved),
+            media_type=payload["media_type"],
+            owner=self.owner,
+        )
 
     def _create_confirmation(self, state: _RunState, payload: dict[str, Any]) -> None:
         if (

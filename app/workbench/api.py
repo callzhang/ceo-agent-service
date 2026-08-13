@@ -19,7 +19,8 @@ from typing import Any, Literal
 from uuid import UUID
 from urllib.parse import quote, unquote, urlparse, urlsplit
 
-from fastapi import FastAPI, HTTPException, Query, Request
+import anyio
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -359,11 +360,16 @@ async def _request_model(
             raise HTTPException(
                 status_code=400, detail="Invalid Content-Length"
             ) from exc
-    body = await request.body()
-    if len(body) > max_bytes:
-        raise HTTPException(status_code=413, detail="JSON request is too large")
+    body = bytearray()
+    async for chunk in request.stream():
+        remaining = max_bytes + 1 - len(body)
+        body.extend(chunk[:remaining])
+        if len(body) > max_bytes or len(chunk) > remaining:
+            raise HTTPException(status_code=413, detail="JSON request is too large")
     try:
-        return model_type.model_validate_json(body)
+        return await anyio.to_thread.run_sync(
+            model_type.model_validate_json, bytes(body)
+        )
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON request") from exc
 
@@ -380,6 +386,39 @@ def _public_task(store: WorkbenchStore, task: WorkbenchTask) -> PublicTask:
         created_at=task.created_at,
         updated_at=task.updated_at,
     )
+
+
+def _public_task_with_state(task: WorkbenchTask, state: str) -> PublicTask:
+    return PublicTask(
+        id=task.id,
+        title=task.title,
+        runtime_kind=task.runtime_kind,
+        archived_at=task.archived_at,
+        state=state,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+    )
+
+
+def _task_cursor(task: WorkbenchTask) -> str:
+    raw = json.dumps([task.updated_at, task.id], separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _parse_task_cursor(cursor: str | None) -> tuple[str, str] | None:
+    if cursor is None:
+        return None
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        value = json.loads(base64.b64decode(padded, altchars=b"-_", validate=True))
+        if not isinstance(value, list) or len(value) != 2 or not all(
+            isinstance(item, str) and item for item in value
+        ):
+            raise ValueError
+        UUID(value[1])
+        return value[0], value[1]
+    except (ValueError, TypeError, binascii.Error, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid task cursor") from exc
 
 
 def _public_turn(turn: WorkbenchTurn) -> PublicTurn:
@@ -595,7 +634,11 @@ def _public_artifact(task_id: str, artifact: WorkbenchArtifact) -> PublicArtifac
         id=artifact.id,
         turn_id=artifact.turn_id,
         label=artifact.label,
-        media_type=artifact.media_type,
+        media_type=(
+            artifact.media_type
+            if _media_type_permitted(artifact.media_type)
+            else "application/octet-stream"
+        ),
         created_at=artifact.created_at,
         download_url=(
             f"/api/workbench/tasks/{task_id}/turns/{artifact.turn_id}"
@@ -605,7 +648,10 @@ def _public_artifact(task_id: str, artifact: WorkbenchArtifact) -> PublicArtifac
 
 
 def _public_confirmation(
-    store: WorkbenchStore, confirmation: WorkbenchConfirmation
+    store: WorkbenchStore,
+    confirmation: WorkbenchConfirmation,
+    *,
+    proposer_quiesced: bool | None = None,
 ) -> PublicConfirmation:
     try:
         canonical_targets = json.loads(confirmation.canonical_targets_json)
@@ -628,7 +674,11 @@ def _public_confirmation(
         status=confirmation.status,
         decision_requested=confirmation.decision_requested,
         decision_requested_at=confirmation.decision_requested_at,
-        proposer_quiesced=bool(store.confirmation_is_quiesced(confirmation.id)),
+        proposer_quiesced=(
+            bool(store.confirmation_is_quiesced(confirmation.id))
+            if proposer_quiesced is None
+            else proposer_quiesced
+        ),
         created_at=confirmation.created_at,
         decided_at=confirmation.decided_at,
     )
@@ -653,8 +703,11 @@ def _owned_confirmation(
 
 
 def _media_type_permitted(media_type: str) -> bool:
+    if len(media_type) > 100 or not media_type.isascii():
+        return False
     normalized = media_type.casefold()
-    if ";" in normalized or any(ord(char) < 33 for char in normalized):
+    token = r"[!#$&^_.+\-A-Za-z0-9]+"
+    if re.fullmatch(rf"{token}/{token}", normalized) is None:
         return False
     return normalized.startswith(("text/", "image/")) or normalized in {
         "application/json",
@@ -809,22 +862,22 @@ def register_workbench_routes(
 
     @app.get("/api/workbench/tasks", response_model=list[PublicTask])
     def list_tasks(
+        response: Response,
         include_archived: bool = False,
         archived: Literal["active", "archived", "all"] | None = None,
+        limit: int = Query(default=50, ge=1, le=100),
+        cursor: str | None = None,
     ) -> list[PublicTask]:
-        if archived == "archived":
-            tasks = [
-                task
-                for task in store.list_tasks(include_archived=True)
-                if task.archived_at
-            ]
-        else:
-            tasks = store.list_tasks(
-                include_archived=(
-                    archived == "all" if archived is not None else include_archived
-                )
-            )
-        return [_public_task(store, task) for task in tasks]
+        rows = store.list_tasks_with_state(
+            include_archived=(archived == "all" if archived is not None else include_archived),
+            archived_only=archived == "archived",
+            limit=limit + 1,
+            cursor=_parse_task_cursor(cursor),
+        )
+        if len(rows) > limit:
+            response.headers["X-Next-Cursor"] = _task_cursor(rows[limit - 1][0])
+            rows = rows[:limit]
+        return [_public_task_with_state(task, state) for task, state in rows]
 
     @app.post("/api/workbench/tasks", response_model=PublicTask, status_code=201)
     async def create_task(request: Request) -> PublicTask:
@@ -835,11 +888,13 @@ def register_workbench_routes(
         if payload.runtime_kind not in runtime_registry.kinds():
             raise HTTPException(status_code=400, detail="Unsupported runtime kind")
         try:
-            return _public_task(
-                store,
-                store.create_task(
-                    title=payload.title, runtime_kind=payload.runtime_kind
-                ),
+            return await anyio.to_thread.run_sync(
+                lambda: _public_task(
+                    store,
+                    store.create_task(
+                        title=payload.title, runtime_kind=payload.runtime_kind
+                    ),
+                )
             )
         except ValueError as exc:
             raise _public_error(400, "unknown") from exc
@@ -857,11 +912,13 @@ def register_workbench_routes(
             request, _RenameTask, mutation_guard=mutation_guard
         )
         assert isinstance(payload, _RenameTask)
-        if store.get_task(_uuid_text(task_id)) is None:
+        if await anyio.to_thread.run_sync(store.get_task, _uuid_text(task_id)) is None:
             raise _not_found()
         try:
-            return _public_task(
-                store, store.rename_task(_uuid_text(task_id), title=payload.title)
+            return await anyio.to_thread.run_sync(
+                lambda: _public_task(
+                    store, store.rename_task(_uuid_text(task_id), title=payload.title)
+                )
             )
         except ValueError as exc:
             raise _public_error(400, "unknown") from exc
@@ -869,10 +926,12 @@ def register_workbench_routes(
     @app.post("/api/workbench/tasks/{task_id}/archive", response_model=PublicTask)
     async def archive_task(task_id: UUID, request: Request) -> PublicTask:
         await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
-        if store.get_task(_uuid_text(task_id)) is None:
+        if await anyio.to_thread.run_sync(store.get_task, _uuid_text(task_id)) is None:
             raise _not_found()
         try:
-            return _public_task(store, store.archive_task(_uuid_text(task_id)))
+            return await anyio.to_thread.run_sync(
+                lambda: _public_task(store, store.archive_task(_uuid_text(task_id)))
+            )
         except WorkbenchConflictError as exc:
             raise _public_error(409, exc.code) from exc
         except ValueError as exc:
@@ -901,15 +960,20 @@ def register_workbench_routes(
             max_bytes=_MAX_ATTACHMENT_JSON_BYTES,
         )
         assert isinstance(payload, _AttachmentUpload)
-        if store.get_task(_uuid_text(task_id)) is None:
+        if await anyio.to_thread.run_sync(store.get_task, _uuid_text(task_id)) is None:
             raise _not_found()
         try:
-            content = _decode_attachment(payload)
-            return store.save_attachment(
-                _uuid_text(task_id),
-                filename=payload.filename,
-                media_type=payload.media_type,
-                content=content,
+            if len(payload.content_base64) > _MAX_ATTACHMENT_BASE64_LENGTH:
+                raise ValueError("attachment encoded content is too large")
+            content = await anyio.to_thread.run_sync(_decode_attachment, payload)
+            return await anyio.to_thread.run_sync(
+                lambda: store.save_attachment(
+                    _uuid_text(task_id),
+                    filename=payload.filename,
+                    media_type=payload.media_type,
+                    content=content,
+                ),
+                abandon_on_cancel=False,
             )
         except ValueError as exc:
             raise _public_error(400, "attachment_invalid") from exc
@@ -925,13 +989,15 @@ def register_workbench_routes(
         )
         assert isinstance(payload, _CreateTurn)
         task_id_text = _uuid_text(task_id)
-        if store.get_task(task_id_text) is None:
+        if await anyio.to_thread.run_sync(store.get_task, task_id_text) is None:
             raise _not_found()
         try:
-            turn = store.create_turn(
-                task_id_text,
-                user_text=payload.text,
-                client_request_id=payload.client_request_id,
+            turn = await anyio.to_thread.run_sync(
+                lambda: store.create_turn(
+                    task_id_text,
+                    user_text=payload.text,
+                    client_request_id=payload.client_request_id,
+                )
             )
             broker.notify(turn.id)
             scheduler.wake()
@@ -964,9 +1030,13 @@ def register_workbench_routes(
     async def stop_turn(task_id: UUID, turn_id: UUID, request: Request) -> PublicTurn:
         await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
         turn_id_text = _uuid_text(turn_id)
-        _owned_turn(store, _uuid_text(task_id), turn_id_text)
+        await anyio.to_thread.run_sync(
+            _owned_turn, store, _uuid_text(task_id), turn_id_text
+        )
         try:
-            result = executor.stop(turn_id_text)
+            result = await anyio.to_thread.run_sync(
+                executor.stop, turn_id_text, abandon_on_cancel=False
+            )
             broker.notify(turn_id_text)
             return _public_turn(result)
         except ValueError as exc:
@@ -989,27 +1059,39 @@ def register_workbench_routes(
             raise _not_found() from exc
 
     @app.get("/api/workbench/tasks/{task_id}/timeline", response_model=PublicTimeline)
-    def timeline(task_id: UUID) -> PublicTimeline:
+    def timeline(
+        task_id: UUID,
+        turn_limit: int = Query(default=100, ge=1, le=100),
+        event_limit: int = Query(default=1000, ge=1, le=1000),
+    ) -> PublicTimeline:
         task_id_text = _uuid_text(task_id)
-        task = store.get_task(task_id_text)
-        if task is None:
+        try:
+            task, turns, events, attachments, artifacts, confirmations = (
+                store.timeline_snapshot(
+                    task_id_text, turn_limit=turn_limit, event_limit=event_limit
+                )
+            )
+            quiescence = store.confirmation_quiescence_for_task(task_id_text)
+        except ValueError:
             raise _not_found()
-        turns = store.list_turns(task_id_text)
-        events = [
-            event for turn in turns for event in store.events_after(turn.id, limit=1000)
-        ]
         return PublicTimeline(
-            task=_public_task(store, task),
+            task=_public_task_with_state(
+                task, turns[-1].status.value if turns else "idle"
+            ),
             turns=[_public_turn(turn) for turn in turns],
             events=[_public_event(event, executor.workspace) for event in events],
-            attachments=store.list_attachments(task_id_text),
+            attachments=attachments,
             artifacts=[
                 _public_artifact(task_id_text, artifact)
-                for artifact in store.list_artifacts(task_id_text)
+                for artifact in artifacts
             ],
             confirmations=[
-                _public_confirmation(store, confirmation)
-                for confirmation in store.list_confirmations(task_id_text)
+                _public_confirmation(
+                    store,
+                    confirmation,
+                    proposer_quiesced=quiescence.get(confirmation.id, False),
+                )
+                for confirmation in confirmations
             ],
         )
 
@@ -1022,14 +1104,22 @@ def register_workbench_routes(
     ) -> PublicConfirmation:
         await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
         confirmation_id_text = _uuid_text(confirmation_id)
-        _owned_confirmation(
-            store, _uuid_text(task_id), _uuid_text(turn_id), confirmation_id_text
+        await anyio.to_thread.run_sync(
+            _owned_confirmation,
+            store,
+            _uuid_text(task_id),
+            _uuid_text(turn_id),
+            confirmation_id_text,
         )
         try:
-            result = executor.confirm(confirmation_id_text)
+            result = await anyio.to_thread.run_sync(
+                executor.confirm, confirmation_id_text, abandon_on_cancel=False
+            )
             broker.notify(_uuid_text(turn_id))
             scheduler.wake()
-            return _public_confirmation(store, result)
+            return await anyio.to_thread.run_sync(
+                _public_confirmation, store, result
+            )
         except ValueError as exc:
             raise _public_error(409, "unknown") from exc
 
@@ -1042,14 +1132,22 @@ def register_workbench_routes(
     ) -> PublicConfirmation:
         await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
         confirmation_id_text = _uuid_text(confirmation_id)
-        _owned_confirmation(
-            store, _uuid_text(task_id), _uuid_text(turn_id), confirmation_id_text
+        await anyio.to_thread.run_sync(
+            _owned_confirmation,
+            store,
+            _uuid_text(task_id),
+            _uuid_text(turn_id),
+            confirmation_id_text,
         )
         try:
-            result = executor.cancel(confirmation_id_text)
+            result = await anyio.to_thread.run_sync(
+                executor.cancel, confirmation_id_text, abandon_on_cancel=False
+            )
             broker.notify(_uuid_text(turn_id))
             scheduler.wake()
-            return _public_confirmation(store, result)
+            return await anyio.to_thread.run_sync(
+                _public_confirmation, store, result
+            )
         except ValueError as exc:
             raise _public_error(409, "unknown") from exc
 
@@ -1110,7 +1208,7 @@ def register_workbench_routes(
         if stream_guard is not None:
             stream_guard(request)
         turn_id_text = _uuid_text(turn_id)
-        if store.get_turn(turn_id_text) is None:
+        if await anyio.to_thread.run_sync(store.get_turn, turn_id_text) is None:
             raise _not_found()
         cursor = _parse_event_cursor(request)
 
@@ -1120,7 +1218,11 @@ def register_workbench_routes(
             last_activity = loop.time()
             subscription: _Subscription | None = None
             try:
-                initial = store.events_after(turn_id_text, cursor, limit=1000)
+                initial, _ = await anyio.to_thread.run_sync(
+                    lambda: store.event_stream_snapshot(
+                        turn_id_text, cursor, limit=1000
+                    )
+                )
                 for event in initial:
                     public = _public_event(event, executor.workspace)
                     yield encode_sse(public)
@@ -1128,18 +1230,23 @@ def register_workbench_routes(
                     last_activity = loop.time()
                 subscription = broker.subscribe(turn_id_text)
                 while True:
-                    persisted = store.events_after(turn_id_text, cursor, limit=1000)
+                    persisted, turn = await anyio.to_thread.run_sync(
+                        lambda: store.event_stream_snapshot(
+                            turn_id_text, cursor, limit=1000
+                        )
+                    )
                     for event in persisted:
                         public = _public_event(event, executor.workspace)
                         yield encode_sse(public)
                         cursor = event.id
                         last_activity = loop.time()
-                    turn = store.get_turn(turn_id_text)
                     if turn is None:
                         return
                     if turn.status in _TERMINAL_TURN_STATUSES:
-                        post_terminal = store.events_after(
-                            turn_id_text, cursor, limit=1000
+                        post_terminal, _ = await anyio.to_thread.run_sync(
+                            lambda: store.event_stream_snapshot(
+                                turn_id_text, cursor, limit=1000
+                            )
                         )
                         for event in post_terminal:
                             public = _public_event(event, executor.workspace)

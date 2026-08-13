@@ -1,13 +1,16 @@
 import json
 import os
+import asyncio
 from pathlib import Path
 import threading
 import time
 from uuid import uuid4
 
 import pytest
+import httpx
 
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 import app.workbench.api as workbench_api_module
 from app.audit_web import create_audit_app
@@ -18,12 +21,16 @@ from app.workbench.models import TurnStatus
 from app.workbench.store import WorkbenchStore
 
 
-def _client(tmp_path: Path) -> TestClient:
-    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+def _complete_setup(store: WorkbenchStore) -> None:
     for step in SETUP_WIZARD_STEPS:
         store.upsert_setup_wizard_step(
             step_id=step.id, status="done", summary="complete"
         )
+
+
+def _client(tmp_path: Path) -> TestClient:
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    _complete_setup(store)
 
     class NonExecutingExecutor:
         workspace = tmp_path
@@ -158,12 +165,21 @@ def test_attachment_is_strict_bounded_and_has_no_storage_path(tmp_path: Path):
                 "content_base64": " aGVsbG8=",
             },
         )
+        emoji_media_type = client.post(
+            f"/api/workbench/tasks/{task['id']}/attachments",
+            json={
+                "filename": "notes.txt",
+                "media_type": "text/💥",
+                "content_base64": "aGVsbG8=",
+            },
+        )
 
     assert uploaded.status_code == 201
     assert uploaded.json()["size_bytes"] == 5
     assert "storage_path" not in uploaded.json()
     assert invalid.status_code == 400
     assert whitespace.status_code == 400
+    assert emoji_media_type.status_code == 400
 
 
 def test_task_archive_filter_is_explicit(tmp_path: Path):
@@ -181,6 +197,241 @@ def test_task_archive_filter_is_explicit(tmp_path: Path):
     assert active_list.json() == []
     assert [item["id"] for item in archived_list.json()] == [task["id"]]
     assert [item["id"] for item in all_list.json()] == [task["id"]]
+
+
+def test_task_list_is_bounded_and_cursor_paginates_without_duplicates(tmp_path: Path):
+    with _client(tmp_path) as client:
+        for index in range(5):
+            client.post(
+                "/api/workbench/tasks",
+                json={"title": f"Task {index}", "runtime_kind": "codex"},
+            )
+        first = client.get("/api/workbench/tasks?limit=2")
+        second = client.get(
+            "/api/workbench/tasks",
+            params={"limit": 2, "cursor": first.headers["x-next-cursor"]},
+        )
+
+    first_ids = [item["id"] for item in first.json()]
+    second_ids = [item["id"] for item in second.json()]
+    assert len(first_ids) == len(second_ids) == 2
+    assert set(first_ids).isdisjoint(second_ids)
+    assert second.headers.get("x-next-cursor")
+
+
+def test_streaming_json_collector_stops_at_cap_without_consuming_remaining_chunks():
+    chunks = [b'{"title":"', b"x" * 20, b'","runtime_kind":"codex"}', b"unused"]
+    consumed = 0
+
+    async def receive():
+        nonlocal consumed
+        chunk = chunks[consumed]
+        consumed += 1
+        return {
+            "type": "http.request",
+            "body": chunk,
+            "more_body": consumed < len(chunks),
+        }
+
+    request = Request(
+        {"type": "http", "method": "POST", "path": "/", "headers": []},
+        receive,
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        asyncio.run(
+            workbench_api_module._request_model(
+                request,
+                workbench_api_module._CreateTask,
+                mutation_guard=lambda _request: None,
+                max_bytes=16,
+            )
+        )
+
+    assert getattr(exc_info.value, "status_code", None) == 413
+    assert consumed == 2
+
+
+def test_streaming_json_collector_rejects_large_content_length_before_receive():
+    consumed = False
+
+    async def receive():
+        nonlocal consumed
+        consumed = True
+        raise AssertionError("body must not be read")
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [(b"content-length", b"17")],
+        },
+        receive,
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        asyncio.run(
+            workbench_api_module._request_model(
+                request,
+                workbench_api_module._CreateTask,
+                mutation_guard=lambda _request: None,
+                max_bytes=16,
+            )
+        )
+
+    assert getattr(exc_info.value, "status_code", None) == 413
+    assert consumed is False
+
+
+def test_blocked_confirmation_does_not_block_unrelated_async_request(tmp_path: Path):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    _complete_setup(store)
+    task = store.create_task(title="Confirm", runtime_kind="codex")
+    turn = store.create_turn(task.id, user_text="Confirm", client_request_id="confirm")
+    assert store.claim_next_turn(owner="seed") is not None
+    confirmation = store.create_confirmation(
+        turn.id,
+        action_kind="reviewed_cli",
+        target="target",
+        summary="summary",
+        risk="risk",
+        arguments_json={},
+        owner="seed",
+    )
+
+    class BlockingExecutor:
+        workspace = tmp_path
+
+        def recover(self): return 0
+        def run_once(self): return []
+        def close(self): return True
+        def confirm(self, confirmation_id):
+            time.sleep(0.4)
+            return store.get_confirmation(confirmation_id)
+
+    app = create_audit_app(
+        store.path,
+        workbench_asset_dir=tmp_path / "assets",
+        workbench_workspace=tmp_path,
+        workbench_executor=BlockingExecutor(),
+    )
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1:8765",
+            headers={"Host": "127.0.0.1:8765"},
+        ) as client:
+            confirm_request = asyncio.create_task(client.post(
+                f"/api/workbench/tasks/{task.id}/turns/{turn.id}/confirmations/{confirmation.id}/confirm",
+                json={},
+            ))
+            await asyncio.sleep(0.05)
+            started = time.monotonic()
+            stats = await client.get("/api/workbench/stats")
+            elapsed = time.monotonic() - started
+            confirmed = await confirm_request
+            return stats, confirmed, elapsed
+
+    stats, confirmed, elapsed = asyncio.run(exercise())
+    assert stats.status_code == confirmed.status_code == 200
+    assert elapsed < 0.25
+
+
+def test_slow_sse_snapshot_does_not_block_unrelated_async_request(
+    tmp_path: Path, monkeypatch
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    _complete_setup(store)
+    task = store.create_task(title="SSE", runtime_kind="codex")
+    turn = store.create_turn(task.id, user_text="SSE", client_request_id="sse-slow")
+    store.request_stop(turn.id)
+    original = WorkbenchStore.event_stream_snapshot
+
+    def slow_snapshot(self, *args, **kwargs):
+        time.sleep(0.4)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(WorkbenchStore, "event_stream_snapshot", slow_snapshot)
+    app = create_audit_app(
+        store.path,
+        workbench_asset_dir=tmp_path / "assets",
+        workbench_workspace=tmp_path,
+    )
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1:8765",
+            headers={"Host": "127.0.0.1:8765"},
+        ) as client:
+            stream_request = asyncio.create_task(client.get(
+                f"/api/workbench/turns/{turn.id}/events/stream"
+            ))
+            await asyncio.sleep(0.05)
+            started = time.monotonic()
+            stats = await client.get("/api/workbench/stats")
+            elapsed = time.monotonic() - started
+            streamed = await stream_request
+            return stats, streamed, elapsed
+
+    stats, streamed, elapsed = asyncio.run(exercise())
+    assert stats.status_code == streamed.status_code == 200
+    assert elapsed < 0.25
+
+
+def test_attachment_fsync_does_not_block_unrelated_async_request(
+    tmp_path: Path, monkeypatch
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    _complete_setup(store)
+    task = store.create_task(title="Upload", runtime_kind="codex")
+    original_fsync = WorkbenchStore._fsync_attachment_file
+
+    def slow_fsync(path):
+        time.sleep(0.4)
+        return original_fsync(path)
+
+    monkeypatch.setattr(
+        WorkbenchStore, "_fsync_attachment_file", staticmethod(slow_fsync)
+    )
+    app = create_audit_app(
+        store.path,
+        workbench_asset_dir=tmp_path / "assets",
+        workbench_workspace=tmp_path,
+    )
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1:8765",
+            headers={"Host": "127.0.0.1:8765"},
+        ) as client:
+            upload_request = asyncio.create_task(
+                client.post(
+                    f"/api/workbench/tasks/{task.id}/attachments",
+                    json={
+                        "filename": "report.txt",
+                        "media_type": "text/plain",
+                        "content_base64": "cmVwb3J0",
+                    },
+                )
+            )
+            await asyncio.sleep(0.05)
+            started = time.monotonic()
+            stats = await client.get("/api/workbench/stats")
+            elapsed = time.monotonic() - started
+            uploaded = await upload_request
+            return stats, uploaded, elapsed
+
+    stats, uploaded, elapsed = asyncio.run(exercise())
+    assert stats.status_code == 200
+    assert uploaded.status_code == 201
+    assert elapsed < 0.25
 
 
 def test_archived_task_and_active_turn_archive_return_fixed_conflicts(tmp_path: Path):
@@ -334,7 +585,7 @@ def test_artifact_download_checks_nested_ownership_and_does_not_expose_path(
             insert into workbench_artifacts (id, turn_id, label, path, media_type)
             values (?, ?, ?, ?, ?)
             """,
-            (artifact_id, turn.id, "Report", str(artifact_path), "text/plain"),
+            (artifact_id, turn.id, "Report", str(artifact_path), "text/💥"),
         )
 
     with _client(tmp_path) as client:
@@ -348,8 +599,10 @@ def test_artifact_download_checks_nested_ownership_and_does_not_expose_path(
 
     assert timeline.status_code == 200
     assert "path" not in timeline.json()["artifacts"][0]
+    assert timeline.json()["artifacts"][0]["media_type"] == "application/octet-stream"
     assert download.status_code == 200
     assert download.text == "report"
+    assert download.headers["content-type"] == "application/octet-stream"
     assert cross_task.status_code == 404
 
 
@@ -762,19 +1015,21 @@ def test_sse_terminal_race_rechecks_sqlite_without_missing_or_duplicates_100_tim
         "terminal_committed": threading.Event(),
     }
     original_events_after = WorkbenchStore.events_after
+    original_snapshot = WorkbenchStore.event_stream_snapshot
 
-    def events_after_with_terminal_barrier(self, turn_id, after_id=0, *, limit=100):
-        result = original_events_after(self, turn_id, after_id, limit=limit)
+    def snapshot_with_terminal_barrier(self, turn_id, after_id=0, *, limit=100):
+        result = original_snapshot(self, turn_id, after_id, limit=limit)
         if turn_id == controller["turn_id"]:
             controller["calls"] += 1
             if controller["calls"] == 2:
-                assert result == []
+                assert result[0] == []
                 controller["empty_query_complete"].set()
                 assert controller["terminal_committed"].wait(1)
+                return result[0], self.get_turn(turn_id)
         return result
 
     monkeypatch.setattr(
-        WorkbenchStore, "events_after", events_after_with_terminal_barrier
+        WorkbenchStore, "event_stream_snapshot", snapshot_with_terminal_barrier
     )
     with _client(tmp_path) as client:
         for repetition in range(100):

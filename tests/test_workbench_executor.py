@@ -274,6 +274,57 @@ def test_run_once_persists_stream_session_and_one_terminal_event(tmp_path: Path)
     executor.close()
 
 
+def test_runtime_artifact_event_persists_artifact_and_safe_event_atomically(tmp_path: Path):
+    store = _store(tmp_path)
+    task, turn = _queued(store)
+    artifact_path = tmp_path / "output" / "report.txt"
+    artifact_path.parent.mkdir()
+    artifact_path.write_text("report", encoding="utf-8")
+    runtime = FakeRuntime([
+        RuntimeEvent("artifact_created", {
+            "label": "Report", "path": str(artifact_path), "media_type": "text/plain"
+        })
+    ])
+    executor = WorkbenchExecutor(store, RuntimeRegistry([runtime]), workspace=tmp_path)
+
+    executor.run_once()
+
+    artifacts = store.list_artifacts(task.id)
+    event = store.events_after(turn.id)[1]
+    assert len(artifacts) == 1
+    assert event.event_type == "artifact_created"
+    assert event.payload["artifact_id"] == artifacts[0].id
+    assert "path" not in event.payload
+    executor.close()
+
+
+@pytest.mark.parametrize("kind", ["outside", "symlink"])
+def test_runtime_artifact_event_rejects_unsafe_path_without_artifact_row(
+    tmp_path: Path, kind: str
+):
+    store = _store(tmp_path)
+    task, turn = _queued(store)
+    outside = tmp_path.parent / f"outside-{uuid4()}.txt"
+    outside.write_text("private", encoding="utf-8")
+    path = outside
+    if kind == "symlink":
+        path = tmp_path / "linked.txt"
+        path.symlink_to(outside)
+    runtime = FakeRuntime([
+        RuntimeEvent("artifact_created", {
+            "label": "Bad", "path": str(path), "media_type": "text/plain"
+        })
+    ])
+    executor = WorkbenchExecutor(store, RuntimeRegistry([runtime]), workspace=tmp_path)
+
+    executor.run_once()
+
+    assert store.list_artifacts(task.id) == []
+    assert all(event.event_type != "artifact_created" for event in store.events_after(turn.id))
+    assert store.get_turn(turn.id).status is TurnStatus.FAILED
+    executor.close()
+
+
 def test_recover_requeues_only_expired_running_turns(tmp_path: Path):
     store = _store(tmp_path)
     _, running = _queued(store)

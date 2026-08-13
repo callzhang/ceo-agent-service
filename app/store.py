@@ -1595,6 +1595,38 @@ class AutoReplyStore:
                 "create index if not exists idx_workbench_turns_recovery "
                 "on workbench_turns(status, lease_expires_at)"
             )
+            db.execute(
+                "create index if not exists idx_workbench_events_turn_id_id "
+                "on workbench_events(turn_id, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_artifacts_turn_created_id "
+                "on workbench_artifacts(turn_id, created_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_turns_task_created_id "
+                "on workbench_turns(task_id, created_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_tasks_updated_id "
+                "on workbench_tasks(updated_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_events_id_turn_id "
+                "on workbench_events(id, turn_id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_artifacts_created_id_turn "
+                "on workbench_artifacts(created_at, id, turn_id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_confirmations_created_id_turn "
+                "on workbench_confirmations(created_at, id, turn_id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_attachments_task_created_id "
+                "on workbench_attachments(task_id, created_at, id)"
+            )
             db.execute("drop index if exists idx_workbench_confirmations_recovery")
             db.execute(
                 """

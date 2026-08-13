@@ -163,6 +163,43 @@ class WorkbenchStore(AutoReplyStore):
             query += " order by updated_at desc, id desc"
             return [self._task_from_row(row) for row in db.execute(query)]
 
+    def list_tasks_with_state(
+        self,
+        *,
+        include_archived: bool = False,
+        archived_only: bool = False,
+        limit: int = 50,
+        cursor: tuple[str, str] | None = None,
+    ) -> list[tuple[WorkbenchTask, str]]:
+        if limit < 1 or limit > 101:
+            raise ValueError("task limit must be between 1 and 101")
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        if archived_only:
+            clauses.append("tasks.archived_at<>''")
+        elif not include_archived:
+            clauses.append("tasks.archived_at=''")
+        if cursor is not None:
+            clauses.append("(tasks.updated_at < ? or (tasks.updated_at=? and tasks.id<?))")
+            parameters.extend((cursor[0], cursor[0], cursor[1]))
+        where = f"where {' and '.join(clauses)}" if clauses else ""
+        parameters.append(limit)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select tasks.*,
+                       coalesce((select status from workbench_turns
+                                 where task_id=tasks.id
+                                 order by created_at desc, id desc limit 1), 'idle')
+                           as latest_state
+                from workbench_tasks as tasks
+                {where}
+                order by tasks.updated_at desc, tasks.id desc limit ?
+                """,
+                tuple(parameters),
+            ).fetchall()
+            return [(self._task_from_row(row), row["latest_state"]) for row in rows]
+
     def rename_task(self, task_id: str, *, title: str) -> WorkbenchTask:
         title = title.strip()
         if not title:
@@ -626,6 +663,78 @@ class WorkbenchStore(AutoReplyStore):
             rows = db.execute(query, parameters).fetchall()
             return [self._event_from_row(row) for row in rows]
 
+    def event_stream_snapshot(
+        self, turn_id: str, after_id: int = 0, *, limit: int = 1000
+    ) -> tuple[list[WorkbenchEvent], WorkbenchTurn | None]:
+        if after_id < 0 or limit < 1 or limit > 1000:
+            raise ValueError("invalid event stream cursor or limit")
+        with self._connect() as db:
+            db.execute("begin")
+            rows = db.execute(
+                """
+                select * from workbench_events
+                where turn_id=? and id>? order by id limit ?
+                """,
+                (turn_id, after_id, limit),
+            ).fetchall()
+            turn_row = db.execute(
+                "select * from workbench_turns where id=?", (turn_id,)
+            ).fetchone()
+            return (
+                [self._event_from_row(row) for row in rows],
+                None if turn_row is None else self._turn_from_row(turn_row),
+            )
+
+    def append_artifact_event(
+        self,
+        turn_id: str,
+        *,
+        sequence: int,
+        label: str,
+        path: str,
+        media_type: str,
+        owner: str,
+        now: str | datetime | None = None,
+    ) -> tuple[WorkbenchArtifact, WorkbenchEvent]:
+        label = label.strip()
+        media_type = media_type.strip()
+        if not label or not path or not media_type:
+            raise ValueError("invalid artifact event")
+        _, now_text = _utc_store_time(now)
+        artifact_id = str(uuid4())
+        payload = {
+            "artifact_id": artifact_id,
+            "label": label,
+            "filename": Path(path).name,
+            "media_type": media_type,
+        }
+        with self._connect() as db:
+            db.execute("begin immediate")
+            self._require_executor_lease(db, turn_id, owner=owner, now_text=now_text)
+            expected = int(db.execute(
+                "select coalesce(max(sequence),0)+1 from workbench_events where turn_id=?",
+                (turn_id,),
+            ).fetchone()[0])
+            if sequence != expected:
+                raise ValueError("event sequence must be next")
+            db.execute(
+                """insert into workbench_artifacts(id,turn_id,label,path,media_type)
+                   values(?,?,?,?,?)""",
+                (artifact_id, turn_id, label, path, media_type),
+            )
+            cursor = db.execute(
+                """insert into workbench_events(turn_id,sequence,event_type,payload_json)
+                   values(?,?,'artifact_created',?)""",
+                (turn_id, sequence, json.dumps(payload, separators=(",", ":"))),
+            )
+            artifact_row = db.execute(
+                "select * from workbench_artifacts where id=?", (artifact_id,)
+            ).fetchone()
+            event_row = db.execute(
+                "select * from workbench_events where id=?", (cursor.lastrowid,)
+            ).fetchone()
+            return self._artifact_from_row(artifact_row), self._event_from_row(event_row)
+
     def list_artifacts(self, task_id: str) -> list[WorkbenchArtifact]:
         with self._connect() as db:
             self._require_task(db, task_id)
@@ -639,6 +748,62 @@ class WorkbenchStore(AutoReplyStore):
                 (task_id,),
             ).fetchall()
             return [self._artifact_from_row(row) for row in rows]
+
+    def timeline_snapshot(
+        self, task_id: str, *, turn_limit: int = 100, event_limit: int = 1000
+    ) -> tuple[
+        WorkbenchTask,
+        list[WorkbenchTurn],
+        list[WorkbenchEvent],
+        list[WorkbenchAttachment],
+        list[WorkbenchArtifact],
+        list[WorkbenchConfirmation],
+    ]:
+        if turn_limit < 1 or turn_limit > 100 or event_limit < 1 or event_limit > 1000:
+            raise ValueError("invalid timeline limit")
+        with self._connect() as db:
+            task_row = self._require_task(db, task_id)
+            turn_rows = db.execute(
+                """select * from workbench_turns where task_id=?
+                   order by created_at desc, id desc limit ?""",
+                (task_id, turn_limit),
+            ).fetchall()
+            event_rows = db.execute(
+                """select events.* from workbench_events events
+                   indexed by idx_workbench_events_id_turn_id
+                   join workbench_turns turns on turns.id=events.turn_id
+                   where turns.task_id=? order by events.id desc limit ?""",
+                (task_id, event_limit),
+            ).fetchall()
+            attachment_rows = db.execute(
+                """select * from workbench_attachments where task_id=?
+                   order by created_at,id limit 100""",
+                (task_id,),
+            ).fetchall()
+            artifact_rows = db.execute(
+                """select artifacts.* from workbench_artifacts artifacts
+                   indexed by idx_workbench_artifacts_created_id_turn
+                   join workbench_turns turns on turns.id=artifacts.turn_id
+                   where turns.task_id=? order by artifacts.created_at,artifacts.id
+                   limit 100""",
+                (task_id,),
+            ).fetchall()
+            confirmation_rows = db.execute(
+                """select confirmations.* from workbench_confirmations confirmations
+                   indexed by idx_workbench_confirmations_created_id_turn
+                   join workbench_turns turns on turns.id=confirmations.turn_id
+                   where turns.task_id=? order by confirmations.created_at,confirmations.id
+                   limit 100""",
+                (task_id,),
+            ).fetchall()
+            return (
+                self._task_from_row(task_row),
+                [self._turn_from_row(row) for row in reversed(turn_rows)],
+                [self._event_from_row(row) for row in reversed(event_rows)],
+                [self._attachment_from_row(row) for row in attachment_rows],
+                [self._artifact_from_row(row) for row in artifact_rows],
+                [self._confirmation_from_row(row) for row in confirmation_rows],
+            )
 
     def get_artifact(self, artifact_id: str) -> WorkbenchArtifact | None:
         with self._connect() as db:
@@ -1104,6 +1269,27 @@ class WorkbenchStore(AutoReplyStore):
             and row["proposer_run_id"]
             and row["proposer_run_id"] == row["runtime_quiesced_run_id"]
         )
+
+    def confirmation_quiescence_for_task(self, task_id: str) -> dict[str, bool]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select confirmations.id, confirmations.proposer_quiesced_at,
+                       confirmations.proposer_run_id, turns.runtime_quiesced_run_id
+                from workbench_confirmations confirmations
+                join workbench_turns turns on turns.id=confirmations.turn_id
+                where turns.task_id=?
+                """,
+                (task_id,),
+            ).fetchall()
+        return {
+            row["id"]: bool(
+                row["proposer_quiesced_at"]
+                and row["proposer_run_id"]
+                and row["proposer_run_id"] == row["runtime_quiesced_run_id"]
+            )
+            for row in rows
+        }
 
     def requested_quiesced_confirmation_ids(
         self, *, limit: int = 2

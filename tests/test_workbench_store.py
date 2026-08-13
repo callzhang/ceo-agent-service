@@ -474,6 +474,14 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
         "idx_workbench_confirmations_legacy_proposer_recovery",
         "idx_workbench_confirmations_legacy_execution_owner_recovery",
         "idx_workbench_confirmations_legacy_execution_lease_recovery",
+        "idx_workbench_events_turn_id_id",
+        "idx_workbench_artifacts_turn_created_id",
+        "idx_workbench_turns_task_created_id",
+        "idx_workbench_tasks_updated_id",
+        "idx_workbench_events_id_turn_id",
+        "idx_workbench_artifacts_created_id_turn",
+        "idx_workbench_confirmations_created_id_turn",
+        "idx_workbench_attachments_task_created_id",
     } <= indexes
     with store._connect() as db:
         plan = " ".join(
@@ -488,6 +496,30 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
             ).fetchall()
         )
     assert "idx_workbench_confirmations_turn_status" in plan
+    with store._connect() as db:
+        timeline_plans = (
+            db.execute(
+                """explain query plan
+                select events.* from workbench_events events
+                indexed by idx_workbench_events_id_turn_id
+                join workbench_turns turns on turns.id=events.turn_id
+                where turns.task_id=? order by events.id desc limit ?""",
+                ("task-id", 1000),
+            ).fetchall(),
+            db.execute(
+                """explain query plan
+                select artifacts.* from workbench_artifacts artifacts
+                indexed by idx_workbench_artifacts_created_id_turn
+                join workbench_turns turns on turns.id=artifacts.turn_id
+                where turns.task_id=?
+                order by artifacts.created_at,artifacts.id limit 100""",
+                ("task-id",),
+            ).fetchall(),
+        )
+    assert all(
+        "TEMP B-TREE" not in " ".join(row["detail"] for row in rows)
+        for rows in timeline_plans
+    )
     with store._connect() as db:
         ready_plan = " ".join(
             row["detail"]
@@ -667,6 +699,84 @@ def test_events_replay_in_id_order_and_reject_duplicate_sequence(tmp_path: Path)
     )
 
     assert store.events_after(turn_id, after_id=first.id) == [second]
+
+
+def test_event_stream_snapshot_returns_bounded_events_and_authoritative_turn(tmp_path: Path):
+    store, _, turn_id = _running_turn(tmp_path)
+    store.append_event(
+        turn_id,
+        sequence=2,
+        event_type="text_delta",
+        payload={"text": "one"},
+        owner="worker-1",
+        now="2026-08-13T00:00:01Z",
+    )
+
+    events, turn = store.event_stream_snapshot(turn_id, after_id=0, limit=1)
+
+    assert len(events) == 1
+    assert turn is not None and turn.status is TurnStatus.RUNNING
+
+
+def test_append_artifact_event_is_atomic_and_public_payload_has_no_path(tmp_path: Path):
+    store, task_id, turn_id = _running_turn(tmp_path)
+    artifact_path = tmp_path / "report.txt"
+    artifact_path.write_text("report", encoding="utf-8")
+    artifact, event = store.append_artifact_event(
+        turn_id,
+        sequence=2,
+        label="Report",
+        path=str(artifact_path),
+        media_type="text/plain",
+        owner="worker-1",
+        now="2026-08-13T00:00:01Z",
+    )
+    assert event.payload == {
+        "artifact_id": artifact.id,
+        "label": "Report",
+        "filename": "report.txt",
+        "media_type": "text/plain",
+    }
+    with pytest.raises(ValueError):
+        store.append_artifact_event(
+            turn_id,
+            sequence=4,
+            label="Invalid",
+            path=str(artifact_path),
+            media_type="text/plain",
+            owner="worker-1",
+            now="2026-08-13T00:00:01Z",
+        )
+    assert len(store.list_artifacts(task_id)) == 1
+    assert len(store.events_after(turn_id)) == 2
+
+
+def test_append_artifact_event_rolls_back_artifact_when_event_insert_fails(tmp_path: Path):
+    store, task_id, turn_id = _running_turn(tmp_path)
+    artifact_path = tmp_path / "report.txt"
+    artifact_path.write_text("report", encoding="utf-8")
+    with store._connect() as db:
+        db.execute(
+            """create trigger reject_artifact_event before insert on workbench_events
+               when new.event_type='artifact_created'
+               begin select raise(abort, 'rejected'); end"""
+        )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.append_artifact_event(
+            turn_id,
+            sequence=2,
+            label="Report",
+            path=str(artifact_path),
+            media_type="text/plain",
+            owner="worker-1",
+            now="2026-08-13T00:00:01Z",
+        )
+
+    assert store.list_artifacts(task_id) == []
+    assert [event.event_type for event in store.events_after(turn_id)] == [
+        "status_changed"
+    ]
 
 
 def test_recover_expired_running_turn_as_queued(tmp_path: Path):
