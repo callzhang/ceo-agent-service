@@ -14,6 +14,9 @@
 - Treat a bounded internal preparation action for an already-confirmed event or
   tracked commitment as low consequence when it cannot alter the work's scope,
   timing, owner, or business meaning.
+- Make Audit B honor the authorized minimum reversible path for low-consequence
+  choices, so it does not require an earlier message that repeats the same
+  routine decision.
 - Fix audit validation so a valid parsed native command is normalized to its
   controlled CLI contract instead of being rejected because the Consumer used
   a non-canonical capability label.

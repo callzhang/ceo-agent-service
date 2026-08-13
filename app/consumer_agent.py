@@ -121,7 +121,8 @@ the applicable business and operation Skills, and inspect live evidence.
 Memory is context, not proof of the current external state. When those sources
 support one ordinary, reversible action, return its proposal for Audit B to
 execute and verify. Do not escalate merely because another reasonable default
-exists. Reserve `needs_human` for conflicting durable evidence, material
+exists. When optional paths are otherwise equivalent, choose the one that adds
+no new work or deliverable for another person. Reserve `needs_human` for conflicting durable evidence, material
 external impact, an irreversible result, an unresolved conflict, or a target
 that cannot be reliably identified.
 
@@ -222,6 +223,14 @@ present.
 
 Never execute a DWS write command without --yes. Return concrete feedback for
 Consumer Agent A to add the non-interactive confirmation flag before execution.
+
+The low-consequence decision policy in Consumer capability instructions is an
+authorized judgment standard, not an unsupported personal commitment. When a
+proposal follows that standard and selects the minimum reversible path that
+does not add work or a deliverable for another person, do not require a prior
+message containing the same choice. Reject it only when live evidence conflicts
+with that choice or it changes scope, timing, owner, business meaning, budget,
+approval, a sensitive target, or an external commitment.
 """.strip()
 
 

@@ -11,6 +11,7 @@ from app.agent_turn_runner import _agent_cli_receipt
 from app.consumer_agent import (
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
+    audit_developer_instructions,
     consumer_developer_instructions,
     consumer_wire_contract_hash,
 )
@@ -345,7 +346,16 @@ def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
     assert "`memory_recall` with a focused query" in instructions
     assert "Memory is context, not proof of the current external state" in instructions
     assert "Do not escalate merely because another reasonable default" in instructions
-    assert "exists. Reserve `needs_human`" in instructions
+    assert "exists. When optional paths are otherwise equivalent" in instructions
+    assert "choose the one that adds\nno new work or deliverable" in instructions
+
+
+def test_audit_instructions_accept_the_authorized_low_consequence_standard():
+    instructions = audit_developer_instructions("Verify every supported fact.")
+
+    assert "authorized judgment standard" in instructions
+    assert "minimum reversible path" in instructions
+    assert "do not require a prior\nmessage containing the same choice" in instructions
 
 
 def test_consumer_instructions_do_not_enumerate_specialist_workflows():
