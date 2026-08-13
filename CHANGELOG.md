@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Audit reconciliation
+
+- Registered the current direct-message send/read pair for audit reconciliation,
+  while retaining target-scoped matching so a read from another recipient cannot
+  confirm or suppress a pending delivery.
+
 ### Material reading and local parsing
 
 - Made the default downloaded-material reader detect OOXML workbooks by their

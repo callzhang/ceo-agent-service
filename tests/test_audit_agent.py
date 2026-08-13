@@ -3288,6 +3288,42 @@ def test_effect_registry_requires_registered_inner_cli_operation_relation():
     )
 
 
+def test_effect_registry_accepts_registered_direct_message_readback():
+    registry = McpToolEffectRegistry.default()
+
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat +chat-messages",
+            "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "chat +messages-send",
+            "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+        },
+        registry,
+    )
+
+    assert not _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat +chat-messages",
+            "target_identifiers": {"open-dingtalk-id": "recipient-2"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "chat +messages-send",
+            "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+        },
+        registry,
+    )
+
+
 def test_controlled_cli_mail_verify_reads_back_reply_for_same_mailbox():
     registry = McpToolEffectRegistry.default()
     write = {
