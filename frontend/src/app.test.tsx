@@ -137,7 +137,7 @@ describe("App", () => {
       resolveTasks({ items: [first], nextCursor: "" });
     });
     expect(await screen.findByRole("heading", { name: "销售策略" })).toBeInTheDocument();
-    expect(screen.getByText("执行中")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: "打开任务 销售策略" })).getByText("执行中")).toBeInTheDocument();
   });
 
   it("pushes explicit selections and follows browser popstate", async () => {
@@ -272,11 +272,12 @@ describe("App", () => {
 
     await screen.findByText("还没有任务");
     await user.click(screen.getByRole("button", { name: "新任务" }));
-    expect(await screen.findByText("空闲")).toBeInTheDocument();
+    const createdTask = await screen.findByRole("button", { name: "打开任务 产品规划" });
+    expect(within(createdTask).getByText("空闲")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "刷新任务" }));
 
-    expect(await screen.findByText("等待中")).toBeInTheDocument();
-    expect(screen.queryByText("空闲")).not.toBeInTheDocument();
+    expect(await within(createdTask).findByText("排队中")).toBeInTheDocument();
+    expect(within(createdTask).queryByText("空闲")).not.toBeInTheDocument();
   });
 
   it("adopts a first-message title from the authoritative timeline without a reload", async () => {
@@ -437,13 +438,14 @@ describe("App", () => {
     await user.clear(screen.getByRole("textbox", { name: "任务名称" }));
     await user.type(screen.getByRole("textbox", { name: "任务名称" }), "完成态新名称");
     await user.click(screen.getByRole("button", { name: "保存名称" }));
-    expect(await screen.findByText("已完成")).toBeInTheDocument();
+    const renamedTask = await screen.findByRole("button", { name: "打开任务 完成态新名称" });
+    expect(within(renamedTask).getByText("已完成")).toBeInTheDocument();
     await act(async () => pendingRefresh.resolve({ items: [first], nextCursor: "" }));
 
     expect(screen.getByRole("heading", { name: "完成态新名称" })).toBeInTheDocument();
-    expect(screen.getByText("已完成")).toBeInTheDocument();
-    expect(screen.queryByText("执行中")).not.toBeInTheDocument();
-    expect(screen.getByText("2026-08-13 12:00:00")).toBeInTheDocument();
+    expect(within(renamedTask).getByText("已完成")).toBeInTheDocument();
+    expect(within(renamedTask).queryByText("执行中")).not.toBeInTheDocument();
+    expect(renamedTask.querySelector("time")).toHaveAttribute("dateTime", "2026-08-13T12:00:00.000Z");
   });
 
   it("does not roll back a mutation snapshot with pagination started before the rename", async () => {
