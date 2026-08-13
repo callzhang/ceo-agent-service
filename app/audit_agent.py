@@ -989,7 +989,12 @@ def _is_direct_chat_send(action: object) -> bool:
     target_keys = set(descriptor.target_identifiers)
     if isinstance(target, dict):
         target_keys.update(str(key).replace("_", "-") for key in target)
-    return bool({"open-dingtalk-id", "user"} & target_keys) or (
+    # `chat +dm` uses its positional `--to` recipient rather than an ID-valued
+    # target flag. It is still a one-to-one delivery and a matching ledger row
+    # must close recovery before it opens another audit session.
+    return descriptor.command_path == "chat +dm" or bool(
+        {"open-dingtalk-id", "user"} & target_keys
+    ) or (
         descriptor.command_path == "chat +send-to-group" and "group" in target_keys
     )
 
