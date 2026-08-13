@@ -204,6 +204,20 @@ Current Work Item JSON:
 Current candidate context:
 {candidate_prompt}
 
+Existing follow-up repair rule:
+- When the Work Item summary contains follow_up.id, it identifies an existing
+  follow-up draft under review. Do not recreate that draft as a new
+  follow_up_draft just to change its schedule, target, or state. Use a
+  follow_up_change for that id after reading the linked TODO and, when present,
+  original_work_update.source_type/source_ref source material.
+- A persisted owner id or name is not owner evidence. Create or reassign a
+  follow-up only when the original source independently supports the owner and
+  you can provide risk_check.owner_evidence with source, reason, and
+  description. Do not invent owner evidence from matching stored records.
+- If the original source cannot support an owner, keep the existing follow-up
+  suppressed with a clear evidence_check rather than emitting an invalid new
+  follow_up_draft. Do not send a message as part of this repair decision.
+
 TaskAgentDecision Pydantic JSON schema:
 {decision_schema}
 """

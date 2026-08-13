@@ -3244,6 +3244,27 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
     assert '"summary":' in prompt
 
 
+def test_task_agent_prompt_requires_existing_follow_up_repair_without_inventing_owner_evidence():
+    item = _work_item()
+    item.summary = json.dumps(
+        {
+            "reason": "target_requires_agent_review",
+            "follow_up": {
+                "id": 42,
+                "owner_user_id": "owner-1",
+                "risk_check": {"sensitive": True},
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    prompt = build_task_agent_prompt(item, "候选上下文为空。")
+
+    assert "follow_up_change for that id" in prompt
+    assert "persisted owner id or name is not owner evidence" in prompt
+    assert "Do not send a message as part of this repair decision." in prompt
+
+
 def test_task_agent_prompt_uses_skill_for_important_vs_routine_process_boundary():
     work_item = _work_item()
     work_item.summary = "Mina: 这种事情没必要创建待办，我不办这人也没法发 offer。"
