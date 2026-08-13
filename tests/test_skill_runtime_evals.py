@@ -312,11 +312,47 @@ def test_corpus_is_sanitized_and_covers_all_required_regressions():
         "document-image-inspect-before-judgment",
         "mail-truncated-card-resolve-thread",
         "personnel-unrelated-recipient-protect",
+        "personnel-authorized-hr-recipient-send",
         "tracking-participant-is-not-owner",
         "tracking-completed-todo-suppress",
+        "tracking-owner-commitment-create-todo-and-follow-up",
+        "tracking-due-open-todo-send-contextual-follow-up",
+        "tracking-reply-completes-todo-and-suppresses-follow-up",
         "oa-factual-gap-clarify-applicant",
+        "oa-complete-material-approve-and-notify-applicant",
+        "oa-correctable-gap-return-and-notify-applicant",
+        "oa-policy-conflict-reject-and-notify-applicant",
+        "unknown-side-effect-read-only-reconcile-no-replay",
         "meeting-mentions-adjacent-to-actions",
     }
+
+
+def test_eval_matrix_covers_positive_negative_and_recovery_paths():
+    case_ids = {case.case_id for case in load_cases(CASES_PATH)}
+
+    expected_comparisons = {
+        "personnel": {
+            "personnel-unrelated-recipient-protect",
+            "personnel-authorized-hr-recipient-send",
+        },
+        "tracking": {
+            "tracking-participant-is-not-owner",
+            "tracking-owner-commitment-create-todo-and-follow-up",
+            "tracking-due-open-todo-send-contextual-follow-up",
+            "tracking-reply-completes-todo-and-suppresses-follow-up",
+            "tracking-completed-todo-suppress",
+        },
+        "oa": {
+            "oa-factual-gap-clarify-applicant",
+            "oa-complete-material-approve-and-notify-applicant",
+            "oa-correctable-gap-return-and-notify-applicant",
+            "oa-policy-conflict-reject-and-notify-applicant",
+        },
+        "recovery": {"unknown-side-effect-read-only-reconcile-no-replay"},
+    }
+
+    for comparison in expected_comparisons.values():
+        assert comparison <= case_ids
 
 
 def test_loader_rejects_extra_fields_duplicate_ids_and_unsanitized_content(
@@ -919,7 +955,7 @@ def test_default_cli_passes_without_invoking_live_runner(monkeypatch, capsys):
 
     assert main([]) == 0
     output = capsys.readouterr().out
-    assert "11/11 passed" in output
+    assert "19/19 passed" in output
     assert '"mode": "recorded_replay"' in output
 
 
@@ -961,8 +997,8 @@ def test_script_path_cli_runs_from_repo_root_and_unrelated_cwd(tmp_path: Path):
             check=False,
         )
         assert completed.returncode == 0, completed.stderr
-        assert "recorded replay: 11/11 passed" in completed.stdout
-        assert '"total": 11' in completed.stdout
+        assert "recorded replay: 19/19 passed" in completed.stdout
+        assert '"total": 19' in completed.stdout
 
 
 def test_script_path_cli_returns_nonzero_for_mutated_corpus(tmp_path: Path):

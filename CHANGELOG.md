@@ -25,3 +25,6 @@
   the same root are preserved, and no user Skills are installed under `~/.codex/skills`.
 - Updated the native Skill-runtime fixtures to advertise their two MCP tools as read-only and non-destructive,
   and added live coverage for a three-message mail thread plus a full Consumer/Audit calendar dry-run.
+- Expanded the sanitized Skill-runtime comparison matrix from 11 to 19 cases. The added cases cover
+  authorized personnel delivery, the create/follow-up/complete work lifecycle, OA approve/return/reject
+  decisions with applicant notification, and read-only recovery when an external side effect is unknown.

@@ -200,6 +200,13 @@ Scheduler / hourly heartbeat
 规范化 trigger/context 摘要以及当时安装的 Skill 路径和 SHA-256 摘要绑定；场景内容或
 Skill 内容变化后，旧 fixture 必须失效。
 
+当前语料包含 19 个对比场景。其中人事沟通同时覆盖“无关接收人不披露”和“已验证 HR
+职责后最小化发送”；工作跟踪覆盖创建 TODO、绑定 follow-up、到期前读取当前状态、完成后
+关闭并抑制提醒，以及参与者不等于 owner；OA 覆盖事实缺失时询问申请人、材料齐全时同意、
+可补正时退回、不可补正的政策冲突时拒绝，并要求每种终态都通知实际申请人；恢复场景覆盖
+外部动作无持久回执且读回不明确时只读核验、保持 unknown、禁止重放。测试中的矩阵断言会
+阻止这些正向、反向或恢复路径被单独删除。
+
 Consumer 返回 `no_action`、`needs_human` 或 `failed` 时流程在 Consumer 终止，fixture 的
 Audit result 为 `null`、Audit events 为空，语料使用 `not_applicable`，不得为了统一形状再
 启动 Audit。只有 Consumer 返回 proposal 时才进入 Audit dry-run；Audit 上下文使用生产 Skill receipt 解析与
