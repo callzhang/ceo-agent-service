@@ -1069,6 +1069,58 @@ def test_audit_returns_single_chat_open_id_passed_as_user_to_consumer(setup):
     assert executor.commands == []
 
 
+def test_audit_keeps_typed_recipient_check_when_cli_label_is_noncanonical(setup):
+    store, task, audit_context, parent = setup
+    single_chat_task = task.model_copy(update={"single_chat": True})
+    single_chat_context = replace(
+        audit_context,
+        task=replace(
+            audit_context.task,
+            single_chat=True,
+            trigger_sender_open_dingtalk_id="open-dingtalk-1",
+        ),
+        proposal=ConsumerProposal.model_validate(
+            {
+                "objective": "Reply to the sender",
+                "actions": [
+                    {
+                        "description": "Send the verified reply",
+                        "capability": "dws",
+                        "operation": "chat +messages-send",
+                        "target": {"user": "open-dingtalk-1"},
+                        "payload": {
+                            "argv": [
+                                "dws", "chat", "+messages-send", "--as", "user",
+                                "--user", "open-dingtalk-1", "--text", "done", "--yes",
+                            ]
+                        },
+                        "expected_verification": "Message exists",
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "The trigger identifies the direct recipient.",
+            }
+        ),
+    )
+    executor = CapturingExecutor("")
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(
+        single_chat_task,
+        single_chat_context,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+    )
+
+    assert result.result.outcome.value == "revision_required"
+    assert result.result.feedback is not None
+    assert "open-DingTalk ID as a user ID" in result.result.feedback.observation
+    assert executor.commands == []
+
+
 def test_audit_starts_fresh_and_does_not_replace_conversation_session(
     setup, tmp_path, monkeypatch
 ):
@@ -2871,6 +2923,35 @@ def test_legacy_direct_dingtalk_chat_candidate_normalizes_for_reconciliation():
     )
 
 
+def test_native_command_contract_uses_parsed_cli_not_consumer_label():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Acknowledge the calendar invitation",
+            "capability": "dws",
+            "operation": "send a direct acknowledgement",
+            "target": {"recipient_open_dingtalk_id": "recipient-1"},
+            "payload": {
+                "argv": [
+                    "dws", "chat", "+messages-send",
+                    "--open-dingtalk-id", "recipient-1",
+                    "--text", "I will attend.",
+                    "--yes", "--format", "json",
+                ]
+            },
+            "expected_verification": "Message exists",
+        }
+    )
+
+    expected = _expected_effect_action(
+        action, McpToolEffectRegistry.default(), action_index=0
+    )
+
+    assert expected["capability"] == "agent_cli.dws"
+    assert expected["operation"] == "chat +messages-send"
+    assert expected["operation_contract_valid"] is True
+    assert expected["target_identifiers"] == {"open-dingtalk-id": "recipient-1"}
+
+
 def test_ambiguous_recovery_requires_matching_live_read(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     executor = CapturingExecutor(
@@ -4386,7 +4467,7 @@ def test_audit_derives_native_operation_from_exact_argv(setup):
     assert len(executor.commands) == 1
 
 
-def test_audit_rejects_native_command_with_wrong_controlled_capability(setup):
+def test_audit_normalizes_native_command_with_wrong_controlled_capability(setup):
     store, task, audit_context, parent = setup
     action = audit_context.proposal.actions[0].model_copy(
         update={"capability": "agent_cli.lark-cli"}
@@ -4405,8 +4486,8 @@ def test_audit_rejects_native_command_with_wrong_controlled_capability(setup):
         parent_agent_run_id=parent.id,
     )
 
-    assert result.result.outcome.value == "revision_required"
-    assert executor.commands == []
+    assert result.result.outcome.value == "executed"
+    assert len(executor.commands) == 1
 
 
 def test_audit_rejects_partial_writes(setup):

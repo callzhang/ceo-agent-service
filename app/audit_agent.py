@@ -768,11 +768,10 @@ def _expected_effect_action(
         # executable contract, and native metadata derives its canonical path
         # and target identifiers. Requiring both spellings to match made a
         # harmless label reject a valid command before Audit could review it.
-        expected_capability = (
-            f"agent_cli.{descriptor.cli}"
-            if legacy_argv is not None
-            else action.capability
-        )
+        # The command parser is the authority for executable contracts.  A
+        # Consumer-generated capability is descriptive metadata and must not
+        # invalidate an otherwise allow-listed command with a verified argv.
+        expected_capability = f"agent_cli.{descriptor.cli}"
         expected["operation_contract_valid"] = (
             expected_capability == f"agent_cli.{descriptor.cli}"
             and (
@@ -780,9 +779,9 @@ def _expected_effect_action(
                 or (argv is not None and has_noninteractive_confirmation(argv))
             )
         )
+        expected["capability"] = expected_capability
         expected["operation"] = descriptor.command_path
         if legacy_argv is not None:
-            expected["capability"] = f"agent_cli.{descriptor.cli}"
             expected["operation"] = descriptor.command_path
             expected["arguments_digest"] = _json_digest({"argv": legacy_argv})
         expected["operation_digest"] = descriptor.command_digest
@@ -832,8 +831,6 @@ def _typed_direct_recipient_mismatches(
         return ()
     mismatches: list[int] = []
     for index, action in enumerate(context.proposal.actions):
-        if action.capability != "agent_cli.dws":
-            continue
         descriptor = describe_native_command(
             {"type": "command_execution", **action.payload}
         )
@@ -889,8 +886,6 @@ def _is_direct_chat_send(action: object) -> bool:
             {"type": "command_execution", "argv": legacy_argv}
         )
     if descriptor is None or descriptor.cli != "dws":
-        return False
-    if capability != "agent_cli.dws" and legacy_argv is None:
         return False
     target = getattr(action, "target", None)
     target_keys = set(descriptor.target_identifiers)
