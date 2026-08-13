@@ -7610,6 +7610,7 @@ def create_audit_app(
     workbench_runtime_registry=None,
     workbench_executor=None,
     workbench_scheduler_interval_seconds: float = 1.0,
+    workbench_scheduler_join_timeout_seconds: float = 1.0,
 ) -> FastAPI:
     from app.workbench.api import register_workbench_routes
     from app.workbench.codex_runtime import CodexRuntime
@@ -7664,8 +7665,20 @@ def create_audit_app(
             yield
         finally:
             if workbench_lifecycle is not None:
-                workbench_lifecycle.close()
-            executor.close()
+                workbench_lifecycle.stop()
+            executor_close_complete = False
+            try:
+                executor_close_complete = bool(executor.close())
+            finally:
+                scheduler_close_complete = (
+                    workbench_lifecycle is None
+                    or workbench_lifecycle.join(
+                        timeout=workbench_scheduler_join_timeout_seconds
+                    )
+                )
+                _app.state.workbench_shutdown_complete = (
+                    executor_close_complete and scheduler_close_complete
+                )
 
     app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
 

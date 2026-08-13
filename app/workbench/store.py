@@ -308,11 +308,6 @@ class WorkbenchStore(AutoReplyStore):
             raise ValueError("client_request_id must be non-empty")
         with self._connect() as db:
             db.execute("begin immediate")
-            task = self._require_task(db, task_id)
-            if task["archived_at"]:
-                raise WorkbenchConflictError(
-                    "task_archived", "workbench task is archived"
-                )
             existing = db.execute(
                 "select * from workbench_turns where client_request_id=?",
                 (client_request_id,),
@@ -322,8 +317,16 @@ class WorkbenchStore(AutoReplyStore):
                     existing["task_id"] != task_id
                     or existing["user_text"] != user_text
                 ):
-                    raise ValueError("client_request_id conflicts with an existing turn")
+                    raise WorkbenchConflictError(
+                        "client_request_conflict",
+                        "client_request_id conflicts with an existing turn",
+                    )
                 return self._turn_from_row(existing)
+            task = self._require_task(db, task_id)
+            if task["archived_at"]:
+                raise WorkbenchConflictError(
+                    "task_archived", "workbench task is archived"
+                )
             active = db.execute(
                 """
                 select 1 from workbench_turns

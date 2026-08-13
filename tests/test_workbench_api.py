@@ -222,6 +222,54 @@ def test_archived_task_and_active_turn_archive_return_fixed_conflicts(tmp_path: 
     }
 
 
+def test_archived_task_idempotent_retry_precedes_fixed_collision_and_archive_errors(
+    tmp_path: Path,
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    with _client(tmp_path) as client:
+        task = client.post(
+            "/api/workbench/tasks",
+            json={"title": "Retry", "runtime_kind": "codex"},
+        ).json()
+        created = client.post(
+            f"/api/workbench/tasks/{task['id']}/turns",
+            json={"text": "Generate report", "client_request_id": "stable-request"},
+        ).json()
+        claimed = store.claim_next_turn(owner="worker")
+        assert claimed is not None
+        store.complete_turn(
+            claimed.id,
+            status=TurnStatus.COMPLETED,
+            final_text="done",
+            owner="worker",
+        )
+        store.archive_task(task["id"])
+
+        retry = client.post(
+            f"/api/workbench/tasks/{task['id']}/turns",
+            json={"text": "Generate report", "client_request_id": "stable-request"},
+        )
+        collision = client.post(
+            f"/api/workbench/tasks/{task['id']}/turns",
+            json={"text": "Different body", "client_request_id": "stable-request"},
+        )
+        new_request = client.post(
+            f"/api/workbench/tasks/{task['id']}/turns",
+            json={"text": "Another report", "client_request_id": "new-request"},
+        )
+
+    assert retry.status_code == 201
+    assert retry.json()["id"] == created["id"]
+    assert collision.status_code == 409
+    assert collision.json() == {
+        "detail": "Client request ID conflicts with an existing turn"
+    }
+    assert new_request.status_code == 409
+    assert new_request.json() == {
+        "detail": "Archived tasks cannot accept new turns"
+    }
+
+
 def test_nested_turn_and_confirmation_resources_do_not_leak_across_tasks(
     tmp_path: Path,
 ):
@@ -463,6 +511,56 @@ def test_public_event_projection_redacts_nested_paths_and_credentials(tmp_path: 
     assert payload["summary"]["nested"]["outputFile"] == "safe/result.json"
 
 
+def test_public_event_projection_redacts_delimited_paths_but_preserves_web_urls(
+    tmp_path: Path,
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    task = store.create_task(title="Delimited paths", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="Events", client_request_id="delimited-path-request"
+    )
+    message = (
+        'path=/etc/passwd error:/opt/private/file '
+        'nested={"source":"/private/tmp/secret.json"} '
+        f'workspace=[{tmp_path}/private/report.md] '
+        r'windows="C:\Users\Derek\secret.txt" '
+        "url=https://example.com/docs/path?q=/etc/passwd "
+        "public=https://example.com/tmp/public-report"
+    )
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into workbench_events (turn_id, sequence, event_type, payload_json)
+            values (?, 2, 'tool_started', ?)
+            """,
+            (
+                turn.id,
+                json.dumps(
+                    {
+                        "tool": "reader",
+                        "summary": {"message": message, "relative": "docs/report.md"},
+                        "tool_call_id": "tool-2",
+                    }
+                ),
+            ),
+        )
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/workbench/turns/{turn.id}/events?after=0&limit=10")
+
+    projected = response.json()[1]["payload"]["summary"]
+    encoded = json.dumps(projected)
+    assert response.status_code == 200
+    assert projected["message"].count("/etc/passwd") == 1
+    assert "/opt/private/file" not in encoded
+    assert "/private/tmp/secret.json" not in encoded
+    assert str(tmp_path) not in encoded
+    assert r"C:\\Users\\Derek\\secret.txt" not in encoded
+    assert "https://example.com/docs/path?q=/etc/passwd" in projected["message"]
+    assert "https://example.com/tmp/public-report" in projected["message"]
+    assert projected["relative"] == "docs/report.md"
+
+
 def test_sse_replays_persisted_events_with_last_event_id_precedence(tmp_path: Path):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
     task = store.create_task(title="Replay", runtime_kind="codex")
@@ -603,6 +701,35 @@ def test_scheduler_wakeup_runs_before_next_poll_interval():
     scheduler.close()
 
 
+def test_scheduler_join_is_bounded_and_records_incomplete_close():
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockedExecutor:
+        def run_once(self):
+            entered.set()
+            release.wait()
+            return []
+
+    scheduler = WorkbenchScheduler(BlockedExecutor(), interval_seconds=60)
+    scheduler.start()
+    assert entered.wait(1)
+
+    try:
+        scheduler.stop()
+        complete = scheduler.join(timeout=0.02)
+
+        assert complete is False
+        assert scheduler.close_complete is False
+        release.set()
+        assert scheduler.join(timeout=1) is True
+        assert scheduler.close_complete is True
+        assert scheduler.is_alive is False
+    finally:
+        release.set()
+        scheduler.close()
+
+
 def test_app_startup_recovers_then_runs_persisted_queue_and_shutdown_joins(
     tmp_path: Path,
 ):
@@ -658,6 +785,70 @@ def test_app_startup_recovers_then_runs_persisted_queue_and_shutdown_joins(
 
     assert app.state.workbench_scheduler.is_alive is False
     assert calls[-1] == "executor_close"
+
+
+def test_app_shutdown_stops_executor_before_bounded_scheduler_join(tmp_path: Path):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    for step in SETUP_WIZARD_STEPS:
+        store.upsert_setup_wizard_step(
+            step_id=step.id, status="done", summary="complete"
+        )
+    run_entered = threading.Event()
+    release_run = threading.Event()
+    allow_shutdown = threading.Event()
+    shutdown_done = threading.Event()
+    calls = []
+
+    class BlockedExecutor:
+        workspace = tmp_path
+
+        def recover(self):
+            calls.append("recover")
+            return 0
+
+        def run_once(self):
+            calls.append("run")
+            run_entered.set()
+            release_run.wait()
+            calls.append("run_exit")
+            return []
+
+        def close(self):
+            calls.append("executor_close")
+            release_run.set()
+            return True
+
+    executor = BlockedExecutor()
+    app = create_audit_app(
+        store.path,
+        workbench_asset_dir=tmp_path / "assets",
+        workbench_workspace=tmp_path,
+        workbench_executor=executor,
+        workbench_scheduler_interval_seconds=60,
+    )
+
+    def run_lifecycle():
+        with TestClient(app):
+            allow_shutdown.wait()
+        shutdown_done.set()
+
+    lifecycle_thread = threading.Thread(target=run_lifecycle)
+    lifecycle_thread.start()
+    completed_without_cleanup = False
+    try:
+        assert run_entered.wait(1)
+        allow_shutdown.set()
+        completed_without_cleanup = shutdown_done.wait(1)
+    finally:
+        allow_shutdown.set()
+        release_run.set()
+        lifecycle_thread.join(timeout=1)
+
+    assert completed_without_cleanup is True
+    assert lifecycle_thread.is_alive() is False
+    assert app.state.workbench_scheduler.is_alive is False
+    assert app.state.workbench_shutdown_complete is True
+    assert calls.index("executor_close") < calls.index("run_exit")
 
 
 def test_unknown_store_error_never_reflects_exception_text(tmp_path: Path, monkeypatch):

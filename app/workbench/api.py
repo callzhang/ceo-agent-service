@@ -254,10 +254,11 @@ class WorkbenchScheduler:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.Lock()
+        self._close_complete: bool | None = None
         self._thread = threading.Thread(
             target=self._run,
             name="workbench-api-scheduler",
-            daemon=False,
+            daemon=True,
         )
 
     def start(self) -> None:
@@ -284,17 +285,35 @@ class WorkbenchScheduler:
             self._wake.wait(self._interval_seconds)
             self._wake.clear()
 
-    def close(self) -> None:
+    def stop(self) -> None:
         with self._lock:
             self._stop.set()
             self._wake.set()
+
+    def join(self, *, timeout: float) -> bool:
+        if timeout < 0:
+            raise ValueError("scheduler join timeout must be nonnegative")
+        with self._lock:
             started = self._thread.ident is not None
         if started and self._thread is not threading.current_thread():
-            self._thread.join()
+            self._thread.join(timeout=timeout)
+        complete = not self._thread.is_alive()
+        with self._lock:
+            self._close_complete = complete
+        return complete
+
+    def close(self, *, timeout: float = 1.0) -> bool:
+        self.stop()
+        return self.join(timeout=timeout)
 
     @property
     def is_alive(self) -> bool:
         return self._thread.is_alive()
+
+    @property
+    def close_complete(self) -> bool | None:
+        with self._lock:
+            return self._close_complete
 
 
 def _uuid_text(value: UUID) -> str:
@@ -308,6 +327,7 @@ def _not_found() -> HTTPException:
 _PUBLIC_ERROR_DETAILS = {
     "task_has_active_turn": "Tasks with active turns cannot be archived",
     "task_archived": "Archived tasks cannot accept new turns",
+    "client_request_conflict": "Client request ID conflicts with an existing turn",
     "attachment_invalid": "Attachment data is invalid",
 }
 
@@ -427,17 +447,46 @@ def _safe_path_display(value: str, workspace: Path) -> str:
     return candidate.as_posix()
 
 
-def _contains_absolute_path_fragment(value: str) -> bool:
-    boundary_characters = "'\"`()[]{}<>,:;"
-    return any(
-        (
-            Path(fragment.strip(boundary_characters)).is_absolute()
-            or PureWindowsPath(fragment.strip(boundary_characters)).is_absolute()
-            or fragment.strip(boundary_characters).casefold().startswith("file://")
-        )
-        for fragment in value.split()
-        if fragment.strip(boundary_characters)
+_WEB_URL_PATTERN = re.compile(r"https?://[^\s'\"`<>\[\]{}(),;|]+", re.IGNORECASE)
+_LOCAL_PATH_BOUNDARY = r"(?:^|[\s=:'\"`\[\]{}(),;<>|])"
+_LOCAL_PATH_END = r"[^\s'\"`\[\]{}(),;<>|]*"
+
+
+def _redact_local_path_segment(value: str, workspace: Path) -> str:
+    workspace_text = workspace.resolve(strict=False).as_posix().rstrip("/")
+    posix_roots = r"/(?:Users|etc|opt|private|tmp|var)"
+    if workspace_text and not re.match(posix_roots + r"(?:/|$)", workspace_text):
+        posix_roots = rf"(?:{posix_roots}|{re.escape(workspace_text)})"
+    local_path_pattern = re.compile(
+        rf"(?P<prefix>{_LOCAL_PATH_BOUNDARY})(?P<path>"
+        rf"{posix_roots}(?:/{_LOCAL_PATH_END})?"
+        rf"|[A-Za-z]:[\\/]{_LOCAL_PATH_END}"
+        rf"|\\\\[^\\/\s]+[\\/]{_LOCAL_PATH_END}"
+        rf")"
     )
+    return local_path_pattern.sub(
+        lambda match: f"{match.group('prefix')}[local path]", value
+    )
+
+
+def _redact_local_path_substrings(value: str, workspace: Path) -> str:
+    pieces: list[str] = []
+    cursor = 0
+    for match in _WEB_URL_PATTERN.finditer(value):
+        pieces.append(_redact_local_path_segment(value[cursor : match.start()], workspace))
+        pieces.append(match.group(0))
+        cursor = match.end()
+    pieces.append(_redact_local_path_segment(value[cursor:], workspace))
+    return "".join(pieces)
+
+
+def _contains_local_runtime_leak_outside_web_urls(value: str) -> bool:
+    cursor = 0
+    for match in _WEB_URL_PATTERN.finditer(value):
+        if contains_local_runtime_leak(value[cursor : match.start()]):
+            return True
+        cursor = match.end()
+    return contains_local_runtime_leak(value[cursor:])
 
 
 def _safe_public_value(value: Any, *, key: str, workspace: Path) -> Any:
@@ -455,13 +504,17 @@ def _safe_public_value(value: Any, *, key: str, workspace: Path) -> Any:
         ]
     if isinstance(value, str):
         if _is_path_field_name(key):
-            return _safe_path_display(value, workspace)
-        if (
-            contains_credential(value)
-            or contains_local_runtime_leak(value)
-            or _contains_absolute_path_fragment(value)
-        ):
+            candidate = Path(value)
+            if candidate.is_absolute() or PureWindowsPath(value).is_absolute():
+                return _safe_path_display(value, workspace)
+        if contains_credential(value):
             return "[redacted]"
+        safe_value = _redact_local_path_substrings(value, workspace)
+        if _contains_local_runtime_leak_outside_web_urls(safe_value):
+            return "[redacted]"
+        if _is_path_field_name(key):
+            return _safe_path_display(safe_value, workspace)
+        return safe_value
     return value
 
 

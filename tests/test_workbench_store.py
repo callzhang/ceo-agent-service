@@ -9,7 +9,7 @@ import pytest
 import app.store as store_module
 import app.workbench.store as workbench_store_module
 from app.workbench.models import ConfirmationStatus, TurnStatus
-from app.workbench.store import WorkbenchStore
+from app.workbench.store import WorkbenchConflictError, WorkbenchStore
 
 
 def _store(tmp_path: Path) -> WorkbenchStore:
@@ -367,6 +367,48 @@ def test_archived_task_rejects_new_turn_and_active_task_rejects_archive(
     with pytest.raises(ValueError, match="workbench task has an active turn"):
         store.archive_task(active.id)
     assert store.get_task(active.id).archived_at == ""
+
+
+def test_archived_task_returns_exact_idempotent_turn_before_rejecting_new_requests(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    task = store.create_task(title="Archived retry", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id,
+        user_text="Generate report",
+        client_request_id="stable-request",
+    )
+    assert store.claim_next_turn(owner="worker") is not None
+    store.complete_turn(
+        turn.id,
+        status=TurnStatus.COMPLETED,
+        final_text="done",
+        owner="worker",
+    )
+    store.archive_task(task.id)
+
+    retry = store.create_turn(
+        task.id,
+        user_text="Generate report",
+        client_request_id="stable-request",
+    )
+
+    assert retry.id == turn.id
+    with pytest.raises(WorkbenchConflictError) as archived_error:
+        store.create_turn(
+            task.id,
+            user_text="Generate another report",
+            client_request_id="new-request",
+        )
+    assert archived_error.value.code == "task_archived"
+    with pytest.raises(WorkbenchConflictError) as collision_error:
+        store.create_turn(
+            task.id,
+            user_text="Different request body",
+            client_request_id="stable-request",
+        )
+    assert collision_error.value.code == "client_request_conflict"
 
 
 def test_archive_and_create_turn_race_has_one_valid_outcome(tmp_path: Path):
