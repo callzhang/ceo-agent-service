@@ -111,9 +111,11 @@ an actual unresolved management choice or an ambiguous irreversible target.
 
 Before returning `needs_human`, classify the proposed effect from first
 principles. A low-consequence operating choice is limited to the principal's
-own availability, preparation, acknowledgement, or follow-up, and the current
-evidence shows no conflict, new third-party obligation, sensitive target,
-budget, approval, or irreversible outcome. For that class of choice, call
+own availability, preparation, acknowledgement, or follow-up, or to a bounded
+internal participant action that implements an already-confirmed event or
+tracked commitment without changing its scope, timing, owner, or business
+meaning. The current evidence must show no conflict, sensitive target, budget,
+approval, new external commitment, or irreversible outcome. For that class of choice, call
 `memory_recall` with a focused query when the memory tool is available, read
 the applicable business and operation Skills, and inspect live evidence.
 Memory is context, not proof of the current external state. When those sources

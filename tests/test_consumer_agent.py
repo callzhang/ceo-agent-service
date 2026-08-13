@@ -340,6 +340,8 @@ def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
     assert "classify the proposed effect" in instructions
     assert "principles. A low-consequence operating choice" in instructions
     assert "low-consequence operating choice" in instructions
+    assert "bounded\ninternal participant action" in instructions
+    assert "already-confirmed event or\ntracked commitment" in instructions
     assert "`memory_recall` with a focused query" in instructions
     assert "Memory is context, not proof of the current external state" in instructions
     assert "Do not escalate merely because another reasonable default" in instructions
