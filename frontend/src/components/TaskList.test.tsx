@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -95,6 +95,69 @@ describe("TaskList", () => {
     expect(screen.getByText("产品设计")).toBeInTheDocument();
     expect(screen.queryByText("销售复盘")).not.toBeInTheDocument();
     expect(screen.getByText("已完成")).toBeInTheDocument();
+  });
+
+  it("treats backend store timestamps as UTC before grouping in the browser timezone", () => {
+    vi.stubEnv("TZ", "Asia/Shanghai");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-13T04:00:00Z"));
+
+    try {
+      render(
+        <TaskList
+          tasks={[
+            task("backend", "后端 UTC", "idle", "2026-08-12 18:00:00"),
+            task("iso-z", "ISO Z", "idle", "2026-08-11T18:00:00Z"),
+            task("iso-offset", "ISO Offset", "idle", "2026-08-12T18:00:00-06:00"),
+            task("invalid", "Invalid", "idle", "not-a-date"),
+          ]}
+          activeTaskId={null}
+          onSelect={() => undefined}
+          onNewTask={() => undefined}
+          onRename={() => undefined}
+          onArchive={() => undefined}
+        />,
+      );
+
+      const today = screen.getByRole("heading", { name: "今天" }).closest("section");
+      const yesterday = screen.getByRole("heading", { name: "昨天" }).closest("section");
+      const earlier = screen.getByRole("heading", { name: "更早" }).closest("section");
+      expect(today).not.toBeNull();
+      expect(yesterday).not.toBeNull();
+      expect(earlier).not.toBeNull();
+      expect(within(today!).getByText("后端 UTC")).toBeInTheDocument();
+      expect(within(today!).getByText("ISO Offset")).toBeInTheDocument();
+      expect(within(yesterday!).getByText("ISO Z")).toBeInTheDocument();
+      expect(within(earlier!).getByText("Invalid")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("falls back to Earlier for impossible backend calendar dates", () => {
+    vi.stubEnv("TZ", "Asia/Shanghai");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-02T12:00:00Z"));
+
+    try {
+      render(
+        <TaskList
+          tasks={[task("invalid-date", "Invalid Date", "idle", "2026-02-30 12:00:00")]}
+          activeTaskId={null}
+          onSelect={() => undefined}
+          onNewTask={() => undefined}
+          onRename={() => undefined}
+          onArchive={() => undefined}
+        />,
+      );
+
+      expect(screen.getByRole("heading", { name: "更早" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "今天" })).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("renders every public lifecycle state without inventing state", () => {
