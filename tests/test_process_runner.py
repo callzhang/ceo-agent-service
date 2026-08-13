@@ -201,12 +201,12 @@ def test_process_runner_allows_independent_codex_processes_to_overlap(tmp_path):
     codex = tmp_path / "codex"
     codex.write_text(
         "#!/bin/sh\n"
-        "printf 'start\\n' >> \"$EVENTS\"\n"
+        "printf 'start %s\\n' \"$$\" >> \"$EVENTS\"\n"
         "while [ \"$(wc -l < \"$EVENTS\")\" -lt 2 ]; do\n"
         "  printf '.\\n'\n"
         "  sleep 0.01\n"
         "done\n"
-        "printf 'end\\n' >> \"$EVENTS\"\n",
+        "printf 'end %s\\n' \"$$\" >> \"$EVENTS\"\n",
         encoding="utf-8",
     )
     codex.chmod(0o755)
@@ -220,8 +220,8 @@ def test_process_runner_allows_independent_codex_processes_to_overlap(tmp_path):
                 [str(codex)],
                 prompt="",
                 env={"EVENTS": str(events), "PATH": "/bin:/usr/bin"},
-                total_timeout_seconds=1,
-                idle_timeout_seconds=1,
+                total_timeout_seconds=5,
+                idle_timeout_seconds=5,
             )
         )
 
@@ -229,7 +229,17 @@ def test_process_runner_allows_independent_codex_processes_to_overlap(tmp_path):
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=10)
 
+    assert all(not thread.is_alive() for thread in threads)
+    assert all(result.timed_out is False for result in results)
     assert [result.returncode for result in results] == [0, 0]
-    assert events.read_text(encoding="utf-8").splitlines()[:2] == ["start", "start"]
+    event_rows = [
+        event.split() for event in events.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event for event, _ in event_rows] == ["start", "start", "end", "end"]
+    process_ids = {int(process_id) for _, process_id in event_rows}
+    assert len(process_ids) == 2
+    for process_id in process_ids:
+        with pytest.raises(ProcessLookupError):
+            os.kill(process_id, 0)
