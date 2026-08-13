@@ -173,6 +173,8 @@ class AuditAgentRunner:
                 )
             ):
                 return self._complete_verified_effect_recovery(
+                    task,
+                    context,
                     claim.run,
                     completed=completed,
                 )
@@ -289,6 +291,8 @@ class AuditAgentRunner:
 
     def _complete_verified_effect_recovery(
         self,
+        task: ReplyTask,
+        context: AuditTurnContext,
         run: AgentRun,
         *,
         completed: set[int],
@@ -324,6 +328,12 @@ class AuditAgentRunner:
             side_effect_state=SideEffectState.CONFIRMED.value,
             transcript_end_line=run.transcript_end_line,
             expected_status="unknown",
+        )
+        _record_verified_chat_delivery_receipt(
+            self.store,
+            task,
+            context,
+            audit_run=completed_run,
         )
         return AgentTurnRunResult(
             run_id=completed_run.id,
@@ -855,6 +865,12 @@ def _expected_effect_action(
             expected["arguments_digest"] = _json_digest({"argv": legacy_argv})
         expected["operation_digest"] = descriptor.command_digest
         expected["target_identifiers"] = descriptor.target_identifiers
+        if descriptor.command_path == "chat +dm":
+            recipient = action.target.get("recipient_open_dingtalk_id")
+            if isinstance(recipient, str) and recipient:
+                expected["readback_target_identifiers"] = {
+                    "open-dingtalk-id": recipient
+                }
         expected["reviewed_server"] = "agent_cli"
         expected["reviewed_tool"] = "execute_reviewed_write"
     else:
@@ -963,6 +979,72 @@ def _is_direct_chat_send(action: object) -> bool:
     return bool({"open-dingtalk-id", "user"} & target_keys) or (
         descriptor.command_path == "chat +send-to-group" and "group" in target_keys
     )
+
+
+def _record_verified_chat_delivery_receipt(
+    store: AutoReplyStore,
+    task: ReplyTask,
+    context: AuditTurnContext,
+    *,
+    audit_run: AgentRun,
+) -> None:
+    """Backfill one delivery ledger row only after every audited effect is confirmed."""
+    if store.has_sent_reply_for_trigger(task.conversation_id, task.trigger_message_id):
+        return
+    actions = context.proposal.actions
+    if len(actions) != 1:
+        return
+    action = actions[0]
+    argv = native_command_argv({"type": "command_execution", **action.payload})
+    descriptor = describe_native_command(
+        {"type": "command_execution", **action.payload}
+    )
+    if descriptor is None or descriptor.cli != "dws" or argv is None:
+        return
+    reply_text = _argv_option_value(argv, "--text")
+    if not reply_text:
+        return
+    target = descriptor.target_identifiers
+    is_direct_message = (
+        descriptor.command_path == "chat +dm"
+        and task.single_chat
+        and _argv_option_value(argv, "--to").casefold()
+        == task.trigger_sender.casefold()
+    )
+    is_conversation_reply = (
+        descriptor.command_path in {"chat message reply", "chat +messages-reply"}
+        and target.get("conversation-id", target.get("conversation", ""))
+        == task.conversation_id
+    )
+    is_addressed_send = descriptor.command_path in {
+        "chat message send",
+        "chat +messages-send",
+        "chat +send-to-group",
+    } and bool({"group", "user", "open-dingtalk-id"} & set(target))
+    if not (is_direct_message or is_conversation_reply or is_addressed_send):
+        return
+    store.record_confirmed_sent_reply_if_absent(
+        audit_run_id=audit_run.id,
+        reply_text=reply_text,
+        send_result_json=json.dumps(
+            {
+                "source": "agent_audit_verified_recovery",
+                "operation_id": audit_run.operation_id,
+                "verification_summary": "Controlled write and target-matched readback confirmed.",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    )
+
+
+def _argv_option_value(argv: tuple[str, ...], option: str) -> str:
+    for index, value in enumerate(argv):
+        if value == option and index + 1 < len(argv):
+            return argv[index + 1]
+        if value.startswith(f"{option}="):
+            return value.partition("=")[2]
+    return ""
 
 
 def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:

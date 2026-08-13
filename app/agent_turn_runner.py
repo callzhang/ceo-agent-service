@@ -882,7 +882,7 @@ class AgentTurnProcess(Generic[ResultT]):
         )
         if (
             not isinstance(metadata, dict)
-            or not _is_dingtalk_chat_send_argv(metadata, argv)
+            or not self._is_recordable_dingtalk_chat_delivery(metadata, argv)
         ):
             return
         reply_text = _command_option_value(argv, "--text")
@@ -905,6 +905,22 @@ class AgentTurnProcess(Generic[ResultT]):
                 sort_keys=True,
                 separators=(",", ":"),
             ),
+        )
+
+    def _is_recordable_dingtalk_chat_delivery(
+        self,
+        metadata: dict[str, object],
+        argv: tuple[str, ...] | None,
+    ) -> bool:
+        if _is_dingtalk_chat_send_argv(metadata, argv):
+            return True
+        recipient = _command_option_value(argv, "--to")
+        return (
+            self.task.single_chat
+            and metadata.get("operation") == "chat +dm"
+            and bool(recipient)
+            and recipient.casefold() == self.task.trigger_sender.casefold()
+            and bool(_command_option_value(argv, "--text"))
         )
 
     def _require_direct_send_receipt(
@@ -1304,7 +1320,7 @@ def _is_dingtalk_chat_send(metadata: dict[str, object]) -> bool:
         and isinstance(target, dict)
         and any(
             isinstance(target.get(key), str) and target[key]
-            for key in ("group", "user", "open-dingtalk-id")
+            for key in ("group", "user", "open-dingtalk-id", "conversation-id", "conversation")
         )
     )
 
@@ -1332,7 +1348,7 @@ def _is_expected_dingtalk_chat_send(action: dict[str, object]) -> bool:
         and isinstance(target, dict)
         and any(
             isinstance(target.get(key), str) and target[key]
-            for key in ("group", "user", "open-dingtalk-id")
+            for key in ("group", "user", "open-dingtalk-id", "conversation-id", "conversation")
         )
     )
 
@@ -1659,7 +1675,9 @@ def _read_matches_action(
     ):
         return False
     read_target = read.get("target_identifiers")
-    action_target = action.get("target_identifiers")
+    action_target = action.get("readback_target_identifiers")
+    if not isinstance(action_target, dict):
+        action_target = action.get("target_identifiers")
     if not isinstance(read_target, dict) or not isinstance(action_target, dict):
         return False
     if not registry.readback_targets_match(
@@ -1747,7 +1765,7 @@ def _actions_have_required_readbacks(
         if any(
             not _matching_read_digest(
                 events,
-                write_metadata,
+                _readback_action_metadata(write_metadata, action),
                 after_index=write_index,
                 registry=registry,
             )
@@ -1755,6 +1773,17 @@ def _actions_have_required_readbacks(
         ):
             return False
     return True
+
+
+def _readback_action_metadata(
+    write_metadata: dict[str, object],
+    expected_action: dict[str, object],
+) -> dict[str, object]:
+    """Keep the actual write receipt, with a reviewed recipient for name-resolved DMs."""
+    targets = expected_action.get("readback_target_identifiers")
+    if not isinstance(targets, dict):
+        return write_metadata
+    return {**write_metadata, "target_identifiers": targets}
 
 
 def _validated_reconciliation(

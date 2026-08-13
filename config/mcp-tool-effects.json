@@ -14,8 +14,10 @@
           "operation_relations": [
             {"read": "calendar event get", "write": "calendar event respond"},
             {"read": "chat message list", "write": "chat message send"},
+            {"read": "chat +chat-messages", "write": "chat +dm"},
             {"read": "chat +chat-messages", "write": "chat +messages-send"},
             {"read": "chat +chat-messages", "write": "chat +messages-reply"},
+            {"read": "chat +chat-messages", "write": "chat message reply"},
             {"read": "chat message reaction list", "write": "chat message reaction add"},
             {
               "read": "mail message verify",
@@ -37,6 +39,7 @@
             },
             {"read": "oa approval detail", "write": "oa approval approve"},
             {"read": "oa approval detail", "write": "oa approval comment"},
+            {"read": "oa approval detail", "write": "oa approval oa-comments"},
             {
               "read": "app.cli read-oa-approval-detail",
               "write": "oa approval approve"
@@ -45,8 +48,13 @@
               "read": "app.cli read-oa-approval-detail",
               "write": "oa approval comment"
             },
+            {
+              "read": "app.cli read-oa-approval-detail",
+              "write": "oa approval oa-comments"
+            },
             {"read": "oa approval tasks", "write": "oa approval approve"},
             {"read": "oa approval tasks", "write": "oa approval comment"},
+            {"read": "oa approval tasks", "write": "oa approval oa-comments"},
             {"read": "todo task get", "write": "todo task update"}
           ]
         }

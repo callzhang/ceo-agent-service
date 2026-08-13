@@ -27,6 +27,7 @@ from app.agent_turn_runner import (
     _is_dingtalk_chat_send_argv,
     _json_digest,
     _metadata_matches_action,
+    _actions_have_required_readbacks,
     _read_matches_action,
     _validated_reconciliation,
 )
@@ -2800,6 +2801,21 @@ def test_delivery_ledger_recognizes_current_text_message_command():
     assert _is_dingtalk_chat_send_argv(metadata, argv)
 
 
+def test_delivery_ledger_recognizes_quote_reply_with_conversation_identity():
+    metadata = {
+        "effect": "effectful",
+        "capability": "agent_cli.dws",
+        "operation": "chat message reply",
+        "target_identifiers": {"conversation-id": "conversation-1"},
+    }
+    argv = (
+        "dws", "chat", "message", "reply", "--conversation-id", "conversation-1",
+        "--ref-msg-id", "message-1", "--text", "done", "--yes",
+    )
+
+    assert _is_dingtalk_chat_send_argv(metadata, argv)
+
+
 def test_recovery_execution_completes_from_controlled_receipts_without_agent_json(
     setup,
 ):
@@ -3009,6 +3025,82 @@ def test_legacy_direct_dingtalk_chat_candidate_normalizes_for_reconciliation():
         },
         expected,
         McpToolEffectRegistry.default(),
+    )
+
+
+def test_named_direct_message_uses_proposal_recipient_only_for_readback():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Send the prepared notes",
+            "capability": "dws chat",
+            "operation": "+dm",
+            "target": {
+                "recipient_display_name": "Mina",
+                "recipient_open_dingtalk_id": "recipient-1",
+                "single_chat": True,
+            },
+            "payload": {
+                "argv": [
+                    "dws", "chat", "+dm", "--to", "Mina",
+                    "--text", "done", "--yes",
+                ]
+            },
+            "expected_verification": "Message exists",
+        }
+    )
+
+    expected = _expected_effect_action(
+        action, McpToolEffectRegistry.default(), action_index=0
+    )
+
+    assert expected["target_identifiers"] == {}
+    assert expected["readback_target_identifiers"] == {
+        "open-dingtalk-id": "recipient-1"
+    }
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat +chat-messages",
+            "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+        },
+        expected,
+        McpToolEffectRegistry.default(),
+    )
+
+
+def test_named_direct_message_readback_keeps_the_completed_write_receipt():
+    action = {
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "chat +dm",
+        "capability": "agent_cli.dws",
+        "arguments_digest": "write-1",
+        "target_identifiers": {},
+        "readback_target_identifiers": {"open-dingtalk-id": "recipient-1"},
+    }
+    events = [
+        {
+            "type": "item.completed",
+            "item": {"metadata": {**action, "readback_target_identifiers": None}},
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "metadata": {
+                    "effect": "read_only",
+                    "reviewed_server": "agent_cli",
+                    "reviewed_tool": "execute_reviewed_read",
+                    "operation": "chat +chat-messages",
+                    "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+                    "result_digest": "read-1",
+                }
+            },
+        },
+    ]
+
+    assert _actions_have_required_readbacks(
+        events, (action,), McpToolEffectRegistry.default()
     )
 
 
@@ -3626,6 +3718,39 @@ def test_effect_registry_accepts_registered_reply_and_todo_readbacks():
                 "conversation-id": "conversation-1",
                 "message-id": "message-1",
             },
+        },
+        registry,
+    )
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat +chat-messages",
+            "target_identifiers": {"conversation-id": "conversation-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "chat message reply",
+            "target_identifiers": {
+                "conversation-id": "conversation-1",
+                "message-id": "message-1",
+            },
+        },
+        registry,
+    )
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "oa approval detail",
+            "target_identifiers": {"instance-id": "instance-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "oa approval oa-comments",
+            "target_identifiers": {"instance-id": "instance-1"},
         },
         registry,
     )
