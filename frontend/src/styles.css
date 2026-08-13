@@ -272,6 +272,7 @@ h1, h2, h3, p { margin-top: 0; }
 .execution-running summary > svg:first-child { color: var(--warning); }
 .execution-completed summary > svg:first-child { color: var(--accent); }
 .execution-failed summary > svg:first-child { color: var(--danger); }
+.execution-aborted summary > svg:first-child { color: var(--ink-soft); }
 
 .confirmation-card { padding: 15px; border: 1px solid #e1c67f; border-radius: 12px; background: #fffaf0; }
 .confirmation-title { display: flex; align-items: center; gap: 8px; color: #7b5210; }

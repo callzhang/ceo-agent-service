@@ -71,6 +71,62 @@ describe("workbench event reducer", () => {
     expect(blocks.map((block) => block.status)).toEqual(["failed", "completed"]);
   });
 
+  it("derives unmatched tools as aborted only after the turn is terminal", () => {
+    const events = createEventState([
+      event(1, "tool_started", { tool: "read", tool_call_id: "call-1", summary: "读取文件" }),
+    ]).events;
+
+    expect(timelineBlocks("turn-1", events, "running")[0]).toMatchObject({
+      status: "running",
+      payload: { summary: "读取文件" },
+    });
+    for (const status of ["failed", "completed", "stopped"] as const) {
+      expect(timelineBlocks("turn-1", events, status)[0]).toMatchObject({
+        status: "aborted",
+        payload: { tool: "read", tool_call_id: "call-1", summary: "任务已结束，未收到工具完成事件。" },
+      });
+    }
+  });
+
+  it("keeps a correlated completed tool authoritative on a failed turn", () => {
+    const blocks = timelineBlocks("turn-1", createEventState([
+      event(1, "tool_started", { tool: "read", tool_call_id: "call-1", summary: "读取文件" }),
+      event(2, "tool_completed", { tool: "read", tool_call_id: "call-1", status: "completed", summary: "读取完成" }),
+    ]).events, "failed");
+
+    expect(blocks).toMatchObject([{ status: "completed", payload: { summary: "读取完成" } }]);
+  });
+
+  it("keeps correlated failed tool completions authoritative on terminal turns", () => {
+    const events = createEventState([
+      event(1, "tool_started", { tool: "shell", tool_call_id: "call-1", summary: "运行命令" }),
+      event(2, "tool_completed", { tool: "shell", tool_call_id: "call-1", status: "failed", summary: "命令失败" }),
+    ]).events;
+
+    for (const status of ["stopped", "completed"] as const) {
+      expect(timelineBlocks("turn-1", events, status)[0]).toMatchObject({
+        status: "failed",
+        payload: { summary: "命令失败" },
+      });
+    }
+  });
+
+  it("leaves text and file blocks unchanged when deriving aborted tools", () => {
+    const events = createEventState([
+      event(1, "text_delta", { text: "处理中" }),
+      event(2, "tool_started", { tool: "read", tool_call_id: "call-1", summary: "读取文件" }),
+      event(3, "file_changed", { filename: "结果.txt", path: "结果.txt", change: "新增", status: "completed" }),
+    ]).events;
+    const [text, tool, file] = timelineBlocks("turn-1", events, "failed");
+
+    expect(text).toMatchObject({ kind: "markdown", key: "event:1", eventId: 1, text: "处理中" });
+    expect(tool).toMatchObject({ kind: "tool", key: "event:2", eventId: 2, status: "aborted" });
+    expect(file).toMatchObject({
+      kind: "file", key: "event:3", eventId: 3, status: "completed",
+      payload: { filename: "结果.txt", path: "结果.txt", change: "新增", status: "completed" },
+    });
+  });
+
   it("does not coalesce text deltas separated by an in-place tool completion", () => {
     const blocks = timelineBlocks("turn-1", createEventState([
       event(1, "tool_started", { tool: "read", tool_call_id: "call-1" }),

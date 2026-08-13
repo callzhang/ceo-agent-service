@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronRight, CircleEllipsis, FilePenLine, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronRight, CircleEllipsis, CircleSlash2, FilePenLine, XCircle } from "lucide-react";
 
 import { executionName, executionStateLabel } from "../presentation";
 
@@ -29,7 +29,8 @@ export interface ExecutionStepProps {
 export function ExecutionStep({ kind, status = "running", payload = {} }: ExecutionStepProps) {
   const failed = status === "failed" || status === "error";
   const completed = status === "completed" || status === "success";
-  const Icon = kind === "file" ? FilePenLine : failed ? XCircle : completed ? CheckCircle2 : CircleEllipsis;
+  const aborted = status === "aborted";
+  const Icon = kind === "file" ? FilePenLine : failed ? XCircle : completed ? CheckCircle2 : aborted ? CircleSlash2 : CircleEllipsis;
   const name = kind === "file"
     ? safeDisplayText(payload.filename, "文件变更")
     : executionName(payload.tool);
@@ -42,7 +43,7 @@ export function ExecutionStep({ kind, status = "running", payload = {} }: Execut
   );
   const stateLabel = executionStateLabel(status);
   return (
-    <details className={`execution-step execution-${failed ? "failed" : completed ? "completed" : "running"}`}>
+    <details className={`execution-step execution-${failed ? "failed" : completed ? "completed" : aborted ? "aborted" : "running"}`}>
       <summary>
         <Icon aria-hidden="true" size={16} />
         <span className="execution-name">{name}</span>
