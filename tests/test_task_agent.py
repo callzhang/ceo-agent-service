@@ -2307,6 +2307,55 @@ def test_project_update_preserves_unchanged_legacy_owner_without_evidence(tmp_pa
     assert project.current_state == "仍在等待交付证据。"
 
 
+def test_todo_update_preserves_unchanged_legacy_owner_without_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Owner validation", status="active")
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Validate owner",
+        owner_user_id="uid-1",
+        owner_name="Display One",
+        owner_evidence_json="{}",
+        status="open",
+        priority="P1",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "Owner validation",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "owner_user_id": "uid-1",
+                    "owner_name": "Display One",
+                    "blocker": "等待可验证的负责人来源。",
+                }
+            ],
+            "memory_recall_used": True,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.owner_user_id == "uid-1"
+    assert todo.owner_name == "Display One"
+    assert todo.owner_evidence_json == "{}"
+    assert todo.blocker == "等待可验证的负责人来源。"
+
+
 def test_todo_owner_update_rejects_cross_record_evidence(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="Owner validation")
@@ -2439,7 +2488,7 @@ def test_todo_owner_update_persists_coherent_evidence(tmp_path):
     assert json.loads(todo.owner_evidence_json) == evidence
 
 
-def test_unchanged_todo_owner_requires_persisted_verified_evidence(tmp_path):
+def test_unchanged_todo_owner_does_not_require_reverification(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="Owner validation")
     todo_id = store.create_work_todo(
@@ -2470,14 +2519,19 @@ def test_unchanged_todo_owner_requires_persisted_verified_evidence(tmp_path):
         }
     )
 
-    with pytest.raises(ValueError, match="todo_change.owner_evidence"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-            memory_recall_attempted=True,
-        )
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.owner_user_id == "uid-1"
+    assert todo.owner_name == "Display One"
+    assert todo.owner_evidence_json == "{}"
 
 
 def test_unchanged_todo_owner_reuses_persisted_verified_evidence(tmp_path):

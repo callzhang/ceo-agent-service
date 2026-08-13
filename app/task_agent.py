@@ -740,14 +740,12 @@ def _validate_owner_changes(store: AutoReplyStore, decision: TaskAgentDecision) 
                 "owner_user_id": current_todo.owner_user_id,
                 "owner_name": current_todo.owner_name,
             }
-            todo_evidence = change.owner_evidence
-            if not todo_evidence and not todo_owner_changed and current_todo is not None:
-                todo_evidence = _json_object(current_todo.owner_evidence_json)
-            _require_supported_owner(
-                assigned=final_todo_owner,
-                evidence=todo_evidence,
-                label="todo_change.owner_evidence",
-            )
+            if todo_owner_changed:
+                _require_supported_owner(
+                    assigned=final_todo_owner,
+                    evidence=change.owner_evidence,
+                    label="todo_change.owner_evidence",
+                )
 
     for draft in decision.follow_up_drafts:
         evidence = draft.risk_check.get("owner_evidence")
@@ -950,9 +948,29 @@ def _apply_todo_change(
         )
     if change.todo_id is None:
         raise ValueError(f"{change.action} requires todo_id")
+    current_todo = store.get_work_todo(change.todo_id)
+    fields = change.model_fields_set - {"action", "todo_id"}
+    if current_todo is not None:
+        final_owner = {
+            "owner_user_id": (
+                change.owner_user_id
+                if "owner_user_id" in fields
+                else current_todo.owner_user_id
+            ),
+            "owner_name": (
+                change.owner_name
+                if "owner_name" in fields
+                else current_todo.owner_name
+            ),
+        }
+        if final_owner == {
+            "owner_user_id": current_todo.owner_user_id,
+            "owner_name": current_todo.owner_name,
+        }:
+            fields -= {"owner_user_id", "owner_name", "owner_evidence"}
     values = _todo_values(
         change,
-        only_fields=change.model_fields_set - {"action", "todo_id"},
+        only_fields=fields,
     )
     if change.action == "close":
         values["status"] = "done"
