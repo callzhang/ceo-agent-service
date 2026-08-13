@@ -1,4 +1,4 @@
-import type { EventType, WorkbenchEvent } from "./types";
+import type { EventType, TurnStatus, WorkbenchEvent } from "./types";
 
 const eventTypes: readonly EventType[] = [
   "text_delta",
@@ -41,6 +41,9 @@ export interface TimelineBlock {
   confirmationId?: string;
   artifactId?: string;
 }
+
+const terminalTurnStatuses = new Set<TurnStatus>(["completed", "stopped", "failed"]);
+const abortedToolSummary = "任务已结束，未收到工具完成事件。";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -100,7 +103,7 @@ function payloadText(payload: Record<string, unknown>, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
-export function timelineBlocks(turnId: string, events: WorkbenchEvent[]): TimelineBlock[] {
+export function timelineBlocks(turnId: string, events: WorkbenchEvent[], turnStatus?: TurnStatus): TimelineBlock[] {
   const blocks: TimelineBlock[] = [];
   const tools = new Map<string, number>();
   let adjacentTextBlock: number | null = null;
@@ -158,7 +161,10 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[]): Timeli
       if (artifactId) blocks.push({ kind: "artifact", key: `event:${event.id}`, eventId: event.id, artifactId });
     }
   }
-  return blocks;
+  if (!turnStatus || !terminalTurnStatuses.has(turnStatus)) return blocks;
+  return blocks.map((block) => block.kind === "tool" && block.status === "running"
+    ? { ...block, status: "aborted", payload: { ...block.payload, summary: abortedToolSummary } }
+    : block);
 }
 
 interface EventSourceLike {

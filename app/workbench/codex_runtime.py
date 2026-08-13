@@ -23,7 +23,7 @@ from typing import Any
 
 from app.bounded_process import MAX_PROCESS_OUTPUT_BYTES
 from app.codex_runner import CodexRunner
-from app.leak_check import assert_no_credentials, contains_credential, is_sensitive_field_name
+from app.leak_check import assert_no_credentials, contains_credential
 from app.process_runner import ProcessRunResult
 from app.workbench.confirmation_mcp import _validate_argv
 from app.workbench.isolated_home import IsolatedCodexHome, create_isolated_codex_home
@@ -44,6 +44,11 @@ _DEFAULT_IDLE_TIMEOUT_SECONDS = 900
 MAX_PROMPT_BYTES = 1024 * 1024
 _CONFIRMATION_SERVER = "workbench_confirmation"
 _CONFIRMATION_TOOL = "request_reviewed_action"
+_SAFE_MCP_TOOL_NAMES = {
+    ("codex_apps", "google_calendar.search_events"): "Google 日历查询",
+    ("codex_apps", "gmail.search_emails"): "邮件查询",
+    (_CONFIRMATION_SERVER, _CONFIRMATION_TOOL): "操作确认",
+}
 _DEVELOPER_INSTRUCTIONS = """
 You are running inside the local Agent Workbench. Preserve the user's configured
 Codex skills, rules, plugins, and authenticated read tools. You may perform local,
@@ -267,12 +272,6 @@ class _CodexNormalizer:
                 "invalid_provider_output", "provider event must be a JSON object"
             )
         self.saw_valid_record = True
-        try:
-            assert_no_credentials(record)
-        except ValueError as exc:
-            raise _AdapterFailure(
-                "sensitive_provider_output", "provider output contained sensitive data"
-            ) from exc
         self._normalize(record)
 
     def _normalize(self, record: Mapping[str, Any]) -> None:
@@ -400,7 +399,7 @@ class _CodexNormalizer:
             "tool_started",
             {
                 "tool": _safe_tool_name(item),
-                "summary": "Tool started",
+                "summary": "执行中",
                 "tool_call_id": correlation_id,
             },
         )
@@ -421,7 +420,7 @@ class _CodexNormalizer:
             "tool_completed",
             {
                 "tool": _safe_tool_name(item),
-                "summary": "Tool failed" if failed else "Tool completed",
+                "summary": "执行失败" if failed else "已完成",
                 "status": "failed" if failed else "completed",
                 "tool_call_id": correlation_id,
             },
@@ -430,22 +429,23 @@ class _CodexNormalizer:
             self._emit("confirmation_required", proposal)
 
     def _emit(self, event_type: str, payload: Mapping[str, Any]) -> None:
+        try:
+            assert_no_credentials(payload)
+        except ValueError as exc:
+            raise _AdapterFailure(
+                "sensitive_provider_output", "provider output contained sensitive data"
+            ) from exc
         self._on_event(RuntimeEvent(event_type, payload))
 
 
 def _safe_tool_name(item: Mapping[str, Any]) -> str:
     if item.get("type") == "command_execution":
-        return "command"
-    name = item.get("tool")
-    if (
-        isinstance(name, str)
-        and name.strip()
-        and not is_sensitive_field_name(name)
-        and not contains_credential(name)
-        and len(name) <= 80
-    ):
-        return name.strip()
-    return "mcp_tool"
+        return "本地命令"
+    server = item.get("server")
+    tool = item.get("tool")
+    if isinstance(server, str) and isinstance(tool, str):
+        return _SAFE_MCP_TOOL_NAMES.get((server, tool), "MCP 工具")
+    return "MCP 工具"
 
 
 def _required_native_item_id(item: Mapping[str, Any]) -> str:
@@ -532,6 +532,12 @@ def _extract_confirmation(native_result: object) -> dict[str, object]:
     if set(candidate) != expected_fields:
         raise _AdapterFailure("invalid_confirmation", "confirmation proposal was invalid")
     try:
+        assert_no_credentials(candidate)
+    except ValueError as exc:
+        raise _AdapterFailure(
+            "sensitive_provider_output", "confirmation proposal contained sensitive data"
+        ) from exc
+    try:
         argv = _validate_argv(candidate.get("argv"))
     except ValueError as exc:
         raise _AdapterFailure("invalid_confirmation", "confirmation proposal was invalid") from exc
@@ -545,8 +551,8 @@ def _extract_confirmation(native_result: object) -> dict[str, object]:
         )
     ):
         raise _AdapterFailure("invalid_confirmation", "confirmation proposal was invalid")
-    for field in fields:
-        _reject_credential_bearing_text(candidate[field])
+    for text_field in fields:
+        _reject_credential_bearing_text(candidate[text_field])
     return {
         "kind": "reviewed_cli",
         "argv": argv,

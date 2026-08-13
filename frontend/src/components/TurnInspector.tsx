@@ -1,3 +1,4 @@
+import { formatWorkbenchDateTime, parseWorkbenchTimestamp, taskStateLabel } from "../presentation";
 import type { RuntimeCapabilities, Task, Timeline, WorkbenchStats } from "../types";
 
 interface TurnInspectorProps {
@@ -18,10 +19,14 @@ const capabilityLabels: Record<keyof RuntimeCapabilities["capabilities"], string
   recoverable: "失败恢复",
 };
 
-function secondsBetween(start: string, end: string): number | null {
-  const startValue = Date.parse(start.includes("T") ? start : `${start.replace(" ", "T")}Z`);
-  const endValue = Date.parse(end.includes("T") ? end : `${end.replace(" ", "T")}Z`);
-  return Number.isFinite(startValue) && Number.isFinite(endValue) ? Math.max(0, (endValue - startValue) / 1000) : null;
+type Duration = { seconds: number } | "incomplete" | "unknown";
+
+function durationBetween(start: string, end: string): Duration {
+  if (!start || !end) return "incomplete";
+  const startValue = parseWorkbenchTimestamp(start);
+  const endValue = parseWorkbenchTimestamp(end);
+  if (!startValue || !endValue || endValue.getTime() < startValue.getTime()) return "unknown";
+  return { seconds: (endValue.getTime() - startValue.getTime()) / 1000 };
 }
 
 export function TurnInspector({ task, timeline, capabilities, stats }: TurnInspectorProps) {
@@ -36,14 +41,15 @@ export function TurnInspector({ task, timeline, capabilities, stats }: TurnInspe
   const unavailableOptionalRuntimes = capabilities
     ? ["claude", "pi"].filter((kind) => !capabilities.some((item) => item.kind === kind))
     : [];
-  const duration = latest?.started_at && latest.completed_at ? secondsBetween(latest.started_at, latest.completed_at) : null;
+  const duration = durationBetween(latest?.started_at ?? "", latest?.completed_at ?? "");
+  const updatedAt = formatWorkbenchDateTime(task.updated_at);
   return (
     <div data-testid="turn-inspector">
       <dl className="detail-list">
         <div><dt>运行时</dt><dd>{task.runtime_kind}</dd></div>
-        <div><dt>最近更新</dt><dd>{task.updated_at}</dd></div>
-        <div><dt>状态</dt><dd>{latest?.status ?? task.state}</dd></div>
-        <div><dt>耗时</dt><dd>{duration === null ? "尚未完成" : `${duration.toFixed(1)} 秒`}</dd></div>
+        <div><dt>最近更新</dt><dd>{updatedAt ? <time dateTime={updatedAt.dateTime}>{updatedAt.label}</time> : "时间未知"}</dd></div>
+        <div><dt>状态</dt><dd>{taskStateLabel(latest?.status ?? task.state)}</dd></div>
+        <div><dt>耗时</dt><dd>{duration === "incomplete" ? "尚未完成" : duration === "unknown" ? "耗时未知" : `${duration.seconds.toFixed(1)} 秒`}</dd></div>
       </dl>
       <section className="inspector-section">
         <h3>当前已加载页面</h3>

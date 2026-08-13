@@ -43,6 +43,8 @@ _TURN_TRANSITIONS = {
 }
 
 WORKBENCH_RECOVERY_BATCH_LIMIT = 100
+_DEFAULT_WORKBENCH_TASK_TITLE = "新任务"
+_DERIVED_TASK_TITLE_MAX_LENGTH = 32
 
 
 class WorkbenchConflictError(ValueError):
@@ -119,6 +121,13 @@ def _json_object_text(value: dict[str, Any] | str, *, field: str) -> str:
 
 def _reject_json_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON value: {value}")
+
+
+def _derive_task_title(user_text: str) -> str:
+    title = " ".join(user_text.split())
+    if len(title) <= _DERIVED_TASK_TITLE_MAX_LENGTH:
+        return title
+    return title[: _DERIVED_TASK_TITLE_MAX_LENGTH - 1].rstrip() + "…"
 
 
 class WorkbenchStore(AutoReplyStore):
@@ -442,6 +451,25 @@ class WorkbenchStore(AutoReplyStore):
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("task already has an active turn") from exc
+            if task_sequence == 1 and task["title"] == _DEFAULT_WORKBENCH_TASK_TITLE:
+                db.execute(
+                    """
+                    update workbench_tasks
+                    set title=?, updated_at=current_timestamp
+                    where id=? and title=?
+                      and not exists (
+                          select 1 from workbench_turns
+                          where task_id=? and id<>?
+                      )
+                    """,
+                    (
+                        _derive_task_title(user_text),
+                        task_id,
+                        _DEFAULT_WORKBENCH_TASK_TITLE,
+                        task_id,
+                        turn_id,
+                    ),
+                )
             self._append_control_event(
                 db,
                 turn_id,

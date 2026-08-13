@@ -61,7 +61,7 @@ function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, acti
   onConfirm: ConversationTimelineProps["onConfirm"];
   onCancel: ConversationTimelineProps["onCancel"];
 }) {
-  const blocks = useMemo(() => timelineBlocks(turn.id, events), [events, turn.id]);
+  const blocks = useMemo(() => timelineBlocks(turn.id, events, turn.status), [events, turn.id, turn.status]);
   const renderedText = blocks.some((block) => block.kind === "markdown");
   const nonterminal = ["queued", "running", "waiting_confirmation"].includes(turn.status);
   const authoritativeFinalText = !nonterminal && Boolean(turn.final_text);

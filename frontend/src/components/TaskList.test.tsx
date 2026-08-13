@@ -231,7 +231,7 @@ describe("TaskList", () => {
       />,
     );
 
-    for (const label of ["空闲", "等待中", "执行中", "等待确认", "已完成", "已停止", "失败"]) {
+    for (const label of ["空闲", "排队中", "执行中", "等待确认", "已完成", "已停止", "失败"]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
   });
