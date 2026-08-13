@@ -78,12 +78,17 @@ Write chosen values to `.env` from `.env.example`. Keep user-specific values in
    .venv/bin/pip install -e '.[dev]'
    ```
 
-5. Install Node dependencies only when package checks or Vercel/API tests are
-   needed:
+5. Install and verify the Agent Workbench dependencies and production build:
 
    ```sh
-   npm install
+   npm install --prefix frontend
+   npm run test:workbench
+   npm run build:workbench
    ```
+
+   The build must create `app/static/workbench/index.html` plus every referenced
+   file under `/workbench-assets/`. Generated files remain untracked. Do not let
+   the installer download dependencies or build implicitly.
 
 If any dependency download is blocked by network, package registry, or missing
 credentials, report the exact failed command and error.
@@ -382,7 +387,14 @@ deployment boundary.
 
 ## Phase 7: Start Web Management In Dry-Run
 
-1. Start the audit web UI:
+1. Re-run the frontend checks and build after any Workbench source change:
+
+   ```sh
+   npm run test:workbench
+   npm run build:workbench
+   ```
+
+2. Start the audit web UI:
 
    ```sh
    .venv/bin/python -m app.cli audit-web \
@@ -391,29 +403,35 @@ deployment boundary.
      --port 8765
    ```
 
-2. Open and inspect:
+3. Open and inspect:
 
    ```text
    http://127.0.0.1:8765/
    ```
 
-3. Key pages:
+4. Key pages:
 
-   - `/`: reply history and pending tasks.
+   - `/`: Agent Workbench conversations, streaming progress, artifacts, and confirmations.
+   - `/history`: reply and execution history.
    - `/attempts/{id}`: single attempt, prompt, decision, evidence, send status.
    - `/tasks`: project/TODO summary and follow-up drafts.
-   - `/codex`: local Codex session references.
-   - `/developer-prompt`: prompt templates.
-   - `/config`: routing rules and runtime config.
-   - `/errors`: unresolved runtime errors.
+   - `/workers`: service worker status.
+   - `/settings`: configuration and logs.
 
-4. Run one dry-run pass:
+   Workbench state is authoritative in SQLite. Server-sent events stream
+   replayable progress but do not replace persisted state. Tool calls that need
+   approval stop at a persisted confirmation and resume only after that exact
+   confirmation is accepted. Codex is the first production runtime; Claude and
+   Pi do not have dedicated adapters yet and may be added only by implementing
+   the same event, stop, recovery, and confirmation contract.
+
+5. Run one dry-run pass:
 
    ```sh
    CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message
    ```
 
-5. Review the web UI for:
+6. Review the web UI for:
 
    - no unresolved `processing` or `failed` backlog
    - no leaked local paths, tokens, session ids, or raw tool output
@@ -438,6 +456,11 @@ Install launchd only after dry-run behavior and configuration are reviewed.
    ```sh
    scripts/install-auto-reply-agents.sh
    ```
+
+   The installer exits before any plist or service mutation when the Workbench
+   build or an asset referenced by its index is missing. Run
+   `npm install --prefix frontend && npm run build:workbench` explicitly; the
+   installer never runs those commands for you.
 
 4. Verify:
 
@@ -489,6 +512,8 @@ Only after reviewing dry-run attempts with the user:
 - Shared rules read from `~/.agents/AGENT.md`.
 - Worktree inspected and unrelated changes preserved.
 - Python environment installed and tests for touched behavior pass.
+- `npm run test:workbench` and `npm run build:workbench` pass, with all index
+  asset references present.
 - `dws` exists, is authenticated, and passes `probe-dws`.
 - Codex CLI exists and can be used by the worker.
 - Optional Memory Connector configured without a separate memory `user_id`.

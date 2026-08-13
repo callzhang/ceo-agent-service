@@ -1,0 +1,6 @@
+{"event":"session_start","session":"pi-session-789","agent":"pi"}
+{"event":"message_update","session":"pi-session-789","delta":{"role":"assistant","content":"I will inspect the workspace."}}
+{"event":"tool_call","session":"pi-session-789","call":{"callId":"pi-call-1","toolName":"bash","args":{"command":"pwd"}}}
+{"event":"tool_result","session":"pi-session-789","callId":"pi-call-1","result":{"output":"/workspace"}}
+{"event":"message_update","session":"pi-session-789","delta":{"role":"assistant","content":"The workspace is ready."}}
+{"event":"agent_end","session":"pi-session-789","final":"The workspace is ready."}

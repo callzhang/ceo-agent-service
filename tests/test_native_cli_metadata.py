@@ -275,6 +275,20 @@ def test_dws_mail_reply_and_verify_preserve_shared_mailbox_identity():
     }
 
 
+def test_native_metadata_keeps_long_opaque_conversation_identifier():
+    conversation_id = "cidAbCDefghIJklMNopQRstUVwxYZ0123456789+/==conversation"
+
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": ["dws", "chat", "+chat-messages", "--conversation", conversation_id],
+        }
+    )
+
+    assert descriptor is not None
+    assert descriptor.target_identifiers == {"conversation": conversation_id}
+
+
 @pytest.mark.parametrize(
     "command",
     (

@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import zipfile
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -24,7 +25,7 @@ from app.bounded_process import (
     run_bounded_process,
 )
 from app.channel_gate import classify_cli_read_failure, classify_cli_write_failure
-from app.leak_check import is_sensitive_field_name
+from app.leak_check import contains_credential, is_sensitive_field_name
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
@@ -49,6 +50,17 @@ SPREADSHEET_MATERIAL_ROOTS = (
     Path(tempfile.gettempdir()).resolve(),
 )
 TEXT_MATERIAL_ROOTS = SPREADSHEET_MATERIAL_ROOTS
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedWriteAuthorization:
+    authorization_id: str
+    action_index: int
+    capability: str
+    operation: str
+    operation_digest: str
+    target_identifiers: tuple[str, ...]
+    arguments_digest: str
 
 
 def _process_failure_receipt(
@@ -89,6 +101,9 @@ def execute_reviewed_write(
     argv: Sequence[str],
     *,
     authorization_id: str | None = None,
+    action_index: int | None = None,
+    authorization: ReviewedWriteAuthorization | None = None,
+    authorization_consumer: Callable[[ReviewedWriteAuthorization], object] | None = None,
     classifier: NativeCliMetadataClassifier | None = None,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, object]:
@@ -96,6 +111,9 @@ def execute_reviewed_write(
         argv,
         expected_effect=EffectKind.EFFECTFUL,
         authorization_id=authorization_id,
+        action_index=action_index,
+        reviewed_authorization=authorization,
+        authorization_consumer=authorization_consumer,
         classifier=classifier,
         process_runner=process_runner,
     )
@@ -105,6 +123,94 @@ def _json_digest(value: object) -> str:
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _domain_json_digest(value: object, *, domain: str) -> str:
+    encoded = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(domain.encode("ascii") + b"\0" + encoded).hexdigest()
+
+
+def _validate_reviewed_argv(argv: Sequence[str]) -> tuple[str, ...]:
+    if (
+        isinstance(argv, (str, bytes))
+        or not argv
+        or any(
+            not isinstance(argument, str) or not argument or "\0" in argument
+            for argument in argv
+        )
+    ):
+        raise AgentReadOnlyViolationError("agent_cli_command_invalid")
+    if any(
+        argument.startswith("--")
+        and is_sensitive_field_name(argument[2:].partition("=")[0])
+        for argument in argv
+    ) or any(contains_credential(argument) for argument in argv):
+        raise AgentReadOnlyViolationError("agent_cli_sensitive_argument")
+    return tuple(argv)
+
+
+def _classify_reviewed_write(
+    argv: Sequence[str],
+    *,
+    classifier: NativeCliMetadataClassifier | None,
+):
+    canonical_argv = _validate_reviewed_argv(argv)
+    reviewed = classifier or NativeCliMetadataClassifier()
+    item = {"type": "command_execution", "argv": list(canonical_argv)}
+    descriptor = describe_native_command(item)
+    if descriptor is None or descriptor.cli == "local-shell":
+        command = reviewed.classify(item)
+    else:
+        reviewed.prewarm()
+        command = reviewed.classify(item)
+    if command is None:
+        raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
+    if command.effect is not EffectKind.EFFECTFUL:
+        raise AgentReadOnlyViolationError("reviewed_cli_effect_mismatch")
+    if command.cli == "dws" and not has_noninteractive_confirmation(canonical_argv):
+        raise AgentReadOnlyViolationError("agent_cli_confirmation_required")
+    return canonical_argv, command
+
+
+def review_write_authorization(
+    argv: Sequence[str],
+    authorization_id: str,
+    action_index: int,
+    classifier: NativeCliMetadataClassifier | None = None,
+) -> ReviewedWriteAuthorization:
+    if (
+        not isinstance(authorization_id, str)
+        or not authorization_id
+        or authorization_id != authorization_id.strip()
+    ):
+        raise AgentReadOnlyViolationError("reviewed_write_authorization_invalid")
+    if (
+        isinstance(action_index, bool)
+        or not isinstance(action_index, int)
+        or action_index < 0
+    ):
+        raise AgentReadOnlyViolationError("reviewed_write_authorization_invalid")
+    canonical_argv, command = _classify_reviewed_write(argv, classifier=classifier)
+    capability = f"agent_cli.{command.cli}"
+    targets = tuple(
+        f"{key}={value}" for key, value in sorted(command.target_identifiers.items())
+    )
+    return ReviewedWriteAuthorization(
+        authorization_id=authorization_id,
+        action_index=action_index,
+        capability=capability,
+        operation=command.command_path,
+        operation_digest=_domain_json_digest(
+            {"capability": capability, "operation": command.command_path},
+            domain="agent-cli-operation-v1",
+        ),
+        target_identifiers=targets,
+        arguments_digest=_domain_json_digest(
+            {"argv": list(canonical_argv)}, domain="agent-cli-arguments-v1"
+        ),
+    )
 
 
 def _recovery_write_authorization(
@@ -420,15 +526,11 @@ def _execute_reviewed(
     classifier: NativeCliMetadataClassifier | None,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None,
     authorization_id: str | None = None,
+    action_index: int | None = None,
+    reviewed_authorization: ReviewedWriteAuthorization | None = None,
+    authorization_consumer: Callable[[ReviewedWriteAuthorization], object] | None = None,
 ) -> dict[str, object]:
-    if not argv:
-        raise AgentReadOnlyViolationError("agent_cli_command_invalid")
-    if any(
-        argument.startswith("--")
-        and is_sensitive_field_name(argument[2:].partition("=")[0])
-        for argument in argv
-    ):
-        raise AgentReadOnlyViolationError("agent_cli_sensitive_argument")
+    argv = _validate_reviewed_argv(argv)
     reviewed = classifier or NativeCliMetadataClassifier()
     item = {"type": "command_execution", "argv": list(argv)}
     descriptor = describe_native_command(item)
@@ -454,13 +556,34 @@ def _execute_reviewed(
         and not has_noninteractive_confirmation(tuple(argv))
     ):
         raise AgentReadOnlyViolationError("agent_cli_confirmation_required")
-    authorization = None
+    authorization: dict[str, object] | ReviewedWriteAuthorization | None = None
     if expected_effect is EffectKind.EFFECTFUL:
-        authorization = _recovery_write_authorization(
-            command,
-            argv,
-            authorization_id=authorization_id,
-        )
+        if reviewed_authorization is not None:
+            if authorization_id is None or action_index is None:
+                raise AgentReadOnlyViolationError(
+                    "reviewed_write_authorization_mismatch"
+                )
+            actual = review_write_authorization(
+                argv,
+                authorization_id=authorization_id,
+                action_index=action_index,
+                classifier=reviewed,
+            )
+            if actual != reviewed_authorization:
+                raise AgentReadOnlyViolationError(
+                    "reviewed_write_authorization_mismatch"
+                )
+            if authorization_consumer is None:
+                raise AgentReadOnlyViolationError(
+                    "reviewed_write_authorization_consumer_required"
+                )
+            authorization = actual
+        else:
+            authorization = _recovery_write_authorization(
+                command,
+                argv,
+                authorization_id=authorization_id,
+            )
     executable_name = argv[0] if command.cli == "local-shell" else command.cli
     executable = shutil.which(executable_name)
     if executable is None:
@@ -469,6 +592,8 @@ def _execute_reviewed(
             code="agent_cli_start_unavailable",
             retryable=True,
         )
+    if isinstance(authorization, ReviewedWriteAuthorization):
+        authorization_consumer(authorization)
     reviewed_argv = [executable, *argv[1:]]
     try:
         process = (
@@ -528,8 +653,12 @@ def _execute_reviewed(
         "stdout": process.stdout,
     }
     if authorization is not None:
-        receipt["authorization_id"] = authorization["authorization_id"]
-        receipt["action_index"] = authorization["action_index"]
+        if isinstance(authorization, ReviewedWriteAuthorization):
+            receipt["authorization_id"] = authorization.authorization_id
+            receipt["action_index"] = authorization.action_index
+        else:
+            receipt["authorization_id"] = authorization["authorization_id"]
+            receipt["action_index"] = authorization["action_index"]
     if process.returncode != 0:
         failure = (
             classify_cli_read_failure(command.cli, process)

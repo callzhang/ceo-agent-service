@@ -50,10 +50,27 @@ CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-12.1"
+STORE_SCHEMA_VERSION = "2026-08-13.10"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "follow_up_send_attempts",
+    "workbench_tasks",
+    "workbench_turns",
+    "workbench_events",
+    "workbench_attachments",
+    "workbench_artifacts",
+    "workbench_confirmations",
+)
+STORE_SCHEMA_REQUIRED_INDEXES = (
+    "idx_workbench_events_turn_id_id",
+    "idx_workbench_artifacts_turn_created_id",
+    "idx_workbench_turns_task_created_id",
+    "idx_workbench_turns_task_sequence",
+    "idx_workbench_tasks_updated_id",
+    "idx_workbench_confirmations_turn_created_id",
+    "idx_workbench_attachments_task_created_id",
+    "idx_workbench_attachments_task_request",
+    "idx_workbench_events_event_type",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
@@ -723,12 +740,19 @@ class AutoReplyStore:
                         "select name from sqlite_master where type='table'"
                     )
                 }
+                present_indexes = {
+                    str(item["name"])
+                    for item in db.execute(
+                        "select name from sqlite_master where type='index'"
+                    )
+                }
         except sqlite3.OperationalError as exc:
             if _is_sqlite_lock_error(exc):
                 raise
             return False
         return (
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
+            and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
             and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
         )
 
@@ -1466,8 +1490,311 @@ class AutoReplyStore:
                     last_error text not null default '',
                     updated_at text not null default current_timestamp
                 );
+                create table if not exists workbench_tasks (
+                    id text primary key,
+                    title text not null,
+                    runtime_kind text not null,
+                    provider_session_ref text not null default '',
+                    archived_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
+                create table if not exists workbench_turns (
+                    id text primary key,
+                    task_id text not null,
+                    client_request_id text not null unique,
+                    task_sequence integer not null check(task_sequence > 0),
+                    user_text text not null,
+                    status text not null check(status in (
+                        'queued', 'running', 'waiting_confirmation',
+                        'completed', 'stopped', 'failed'
+                    )),
+                    stop_requested integer not null default 0
+                        check(stop_requested in (0, 1)),
+                    final_text text not null default '',
+                    error_code text not null default '',
+                    error_detail text not null default '',
+                    resume_context text not null default '',
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    execution_run_id text not null default '',
+                    runtime_quiesced_run_id text not null default '',
+                    started_at text not null default '',
+                    completed_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(task_id) references workbench_tasks(id)
+                );
+                create unique index if not exists idx_workbench_one_active_turn
+                    on workbench_turns(task_id)
+                    where status in ('queued', 'running', 'waiting_confirmation');
+                create index if not exists idx_workbench_turns_queue
+                    on workbench_turns(status, created_at, id);
+                create index if not exists idx_workbench_turns_recovery
+                    on workbench_turns(status, lease_expires_at);
+                create table if not exists workbench_events (
+                    id integer primary key autoincrement,
+                    turn_id text not null,
+                    sequence integer not null,
+                    event_type text not null,
+                    payload_json text not null,
+                    created_at text not null default current_timestamp,
+                    unique(turn_id, sequence),
+                    foreign key(turn_id) references workbench_turns(id)
+                );
+                create table if not exists workbench_attachments (
+                    id text primary key,
+                    task_id text not null,
+                    client_request_id text not null,
+                    filename text not null,
+                    media_type text not null,
+                    size_bytes integer not null check(size_bytes >= 0),
+                    content_sha256 text not null,
+                    storage_path text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(task_id) references workbench_tasks(id)
+                );
+                create table if not exists workbench_artifacts (
+                    id text primary key,
+                    turn_id text not null,
+                    label text not null,
+                    path text not null,
+                    media_type text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(turn_id) references workbench_turns(id)
+                );
+                create table if not exists workbench_confirmations (
+                    id text primary key,
+                    turn_id text not null,
+                    action_kind text not null,
+                    target text not null,
+                    summary text not null,
+                    risk text not null,
+                    canonical_capability text not null default '',
+                    canonical_operation text not null default '',
+                    canonical_targets_json text not null default '[]',
+                    canonical_operation_digest text not null default '',
+                    canonical_arguments_digest text not null default '',
+                    arguments_json text not null,
+                    status text not null check(status in (
+                        'pending', 'confirmed', 'cancelled', 'executed', 'failed'
+                    )),
+                    result_json text not null default '',
+                    created_at text not null default current_timestamp,
+                    decided_at text not null default '',
+                    execution_owner text not null default '',
+                    execution_lease_expires_at text not null default '',
+                    execution_started_at text not null default '',
+                    authorization_consumed_at text not null default '',
+                    proposer_run_id text not null default '',
+                    proposer_owner text not null default '',
+                    proposer_lease_expires_at text not null default '',
+                    proposer_quiesced_at text not null default '',
+                    decision_requested text not null default ''
+                        check(decision_requested in ('', 'confirm', 'cancel')),
+                    decision_requested_at text not null default '',
+                    foreign key(turn_id) references workbench_turns(id)
+                );
                 """
             )
+            workbench_turn_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(workbench_turns)").fetchall()
+            }
+            if "resume_context" not in workbench_turn_columns:
+                db.execute(
+                    "alter table workbench_turns add column "
+                    "resume_context text not null default ''"
+                )
+            if "task_sequence" not in workbench_turn_columns:
+                db.execute(
+                    "alter table workbench_turns add column "
+                    "task_sequence integer not null default 0"
+                )
+            db.execute(
+                """
+                with ranked as (
+                    select rowid as row_id,
+                           row_number() over (
+                               partition by task_id order by created_at,rowid
+                           ) as sequence
+                    from workbench_turns
+                )
+                update workbench_turns
+                set task_sequence=(
+                    select sequence from ranked
+                    where ranked.row_id=workbench_turns.rowid
+                )
+                where task_sequence=0
+                """
+            )
+            for column in ("execution_run_id", "runtime_quiesced_run_id"):
+                if column not in workbench_turn_columns:
+                    db.execute(
+                        "alter table workbench_turns add column "
+                        f"{column} text not null default ''"
+                    )
+            workbench_confirmation_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(workbench_confirmations)"
+                ).fetchall()
+            }
+            for column in (
+                "execution_owner",
+                "execution_lease_expires_at",
+                "execution_started_at",
+                "canonical_capability",
+                "canonical_operation",
+                "canonical_targets_json",
+                "canonical_operation_digest",
+                "canonical_arguments_digest",
+                "authorization_consumed_at",
+                "proposer_run_id",
+                "proposer_owner",
+                "proposer_lease_expires_at",
+                "proposer_quiesced_at",
+                "decision_requested",
+                "decision_requested_at",
+            ):
+                if column not in workbench_confirmation_columns:
+                    default = "'[]'" if column == "canonical_targets_json" else "''"
+                    db.execute(
+                        "alter table workbench_confirmations add column "
+                        f"{column} text not null default {default}"
+                    )
+            workbench_attachment_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(workbench_attachments)"
+                ).fetchall()
+            }
+            if "client_request_id" not in workbench_attachment_columns:
+                db.execute(
+                    "alter table workbench_attachments add column "
+                    "client_request_id text not null default ''"
+                )
+            if "content_sha256" not in workbench_attachment_columns:
+                db.execute(
+                    "alter table workbench_attachments add column "
+                    "content_sha256 text not null default ''"
+                )
+            db.execute(
+                "update workbench_attachments set client_request_id=id "
+                "where client_request_id=''"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_turns_queue "
+                "on workbench_turns(status, created_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_confirmations_turn_status "
+                "on workbench_confirmations(turn_id, status, result_json, created_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_turns_recovery "
+                "on workbench_turns(status, lease_expires_at)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_events_turn_id_id "
+                "on workbench_events(turn_id, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_artifacts_turn_created_id "
+                "on workbench_artifacts(turn_id, created_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_turns_task_created_id "
+                "on workbench_turns(task_id, created_at, id)"
+            )
+            db.execute(
+                "create unique index if not exists idx_workbench_turns_task_sequence "
+                "on workbench_turns(task_id, task_sequence desc)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_tasks_updated_id "
+                "on workbench_tasks(updated_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_events_id_turn_id "
+                "on workbench_events(id, turn_id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_artifacts_created_id_turn "
+                "on workbench_artifacts(created_at, id, turn_id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_confirmations_created_id_turn "
+                "on workbench_confirmations(created_at, id, turn_id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_confirmations_turn_created_id "
+                "on workbench_confirmations(turn_id, created_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_attachments_task_created_id "
+                "on workbench_attachments(task_id, created_at, id)"
+            )
+            db.execute(
+                "create unique index if not exists idx_workbench_attachments_task_request "
+                "on workbench_attachments(task_id, client_request_id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_events_event_type "
+                "on workbench_events(event_type)"
+            )
+            db.execute("drop index if exists idx_workbench_confirmations_recovery")
+            db.execute(
+                """
+                create index idx_workbench_confirmations_recovery
+                on workbench_confirmations(execution_lease_expires_at, id)
+                where status='confirmed' and result_json=''
+                  and execution_owner<>'' and execution_lease_expires_at<>''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_workbench_confirmations_ready_intents
+                on workbench_confirmations(decision_requested_at, id)
+                where status='pending' and decision_requested<>''
+                  and proposer_run_id<>'' and proposer_quiesced_at<>''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_workbench_confirmations_proposer_recovery
+                on workbench_confirmations(proposer_lease_expires_at, id)
+                where status='pending' and proposer_run_id<>''
+                  and proposer_quiesced_at=''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists
+                    idx_workbench_confirmations_legacy_proposer_recovery
+                on workbench_confirmations(id)
+                where status='pending' and proposer_run_id=''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists
+                    idx_workbench_confirmations_legacy_execution_owner_recovery
+                on workbench_confirmations(id)
+                where status='confirmed' and result_json=''
+                  and execution_owner=''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists
+                    idx_workbench_confirmations_legacy_execution_lease_recovery
+                on workbench_confirmations(id)
+                where status='confirmed' and result_json=''
+                  and execution_owner<>'' and execution_lease_expires_at=''
+                """
+            )
+            self._reconcile_legacy_workbench_confirmations(db)
             reply_task_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(reply_tasks)").fetchall()
@@ -1952,6 +2279,141 @@ class AutoReplyStore:
             self._backfill_agent_run_effect_counters(db)
 
     @staticmethod
+    def _reconcile_legacy_workbench_confirmations(db: sqlite3.Connection) -> None:
+        rows = db.execute(
+            """
+            select id, turn_id from workbench_confirmations
+            where status='pending' and proposer_run_id=''
+            order by turn_id, created_at, id
+            """
+        ).fetchall()
+        if not rows:
+            return
+        result_json = json.dumps(
+            {
+                "code": "legacy_proposer_state_unknown",
+                "retryable": False,
+                "status": "failed",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        affected_turn_ids: list[str] = []
+        for row in rows:
+            changed = db.execute(
+                """
+                update workbench_confirmations
+                set status='failed', result_json=?,
+                    decided_at=case when decided_at='' then current_timestamp else decided_at end,
+                    execution_owner='', execution_lease_expires_at='',
+                    execution_started_at='', authorization_consumed_at='',
+                    proposer_owner='', proposer_lease_expires_at='',
+                    proposer_quiesced_at='', decision_requested='',
+                    decision_requested_at=''
+                where id=? and status='pending' and proposer_run_id=''
+                """,
+                (result_json, row["id"]),
+            ).rowcount
+            if changed == 1 and row["turn_id"] not in affected_turn_ids:
+                affected_turn_ids.append(row["turn_id"])
+        for turn_id in affected_turn_ids:
+            turn = db.execute(
+                "select status from workbench_turns where id=?", (turn_id,)
+            ).fetchone()
+            if turn is None or turn["status"] not in {
+                "queued",
+                "running",
+                "waiting_confirmation",
+            }:
+                continue
+            sequence = int(
+                db.execute(
+                    "select coalesce(max(sequence), 0) + 1 from workbench_events where turn_id=?",
+                    (turn_id,),
+                ).fetchone()[0]
+            )
+            db.execute(
+                """
+                insert into workbench_events (
+                    turn_id, sequence, event_type, payload_json
+                ) values (?, ?, 'turn_failed', ?)
+                """,
+                (
+                    turn_id,
+                    sequence,
+                    json.dumps(
+                        {
+                            "code": "legacy_proposer_state_unknown",
+                            "status": "failed",
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+            db.execute(
+                """
+                update workbench_turns
+                set status='failed', lease_owner='', lease_expires_at='',
+                    error_code='legacy_proposer_state_unknown',
+                    error_detail='Legacy confirmation proposer state is unknown.',
+                    completed_at=case when completed_at='' then current_timestamp else completed_at end,
+                    updated_at=current_timestamp
+                where id=? and status in ('queued', 'running', 'waiting_confirmation')
+                """,
+                (turn_id,),
+            )
+
+    @staticmethod
+    @contextmanager
+    def _foreign_key_rebuild(
+        db: sqlite3.Connection,
+        *,
+        migration_name: str,
+    ) -> Iterator[None]:
+        """Run a table rebuild with foreign keys verifiably disabled."""
+        if db.in_transaction:
+            db.commit()
+        if db.in_transaction:
+            raise sqlite3.IntegrityError(
+                f"{migration_name} migration could not finish prior transaction"
+            )
+        try:
+            db.execute("pragma foreign_keys=off")
+            if db.execute("pragma foreign_keys").fetchone()[0] != 0:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration could not disable foreign keys"
+                )
+            yield
+            if not db.in_transaction:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration transaction is missing"
+                )
+            violations = db.execute("pragma foreign_key_check").fetchall()
+            if violations:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration broke foreign keys"
+                )
+            db.commit()
+            violations = db.execute("pragma foreign_key_check").fetchall()
+            if violations:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration broke foreign keys"
+                )
+        except Exception:
+            if db.in_transaction:
+                db.rollback()
+            raise
+        finally:
+            if db.in_transaction:
+                db.rollback()
+            db.execute("pragma foreign_keys=on")
+            if db.execute("pragma foreign_keys").fetchone()[0] != 1:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration could not restore foreign keys"
+                )
+
+    @staticmethod
     def _migrate_agent_run_turn_identity(db: sqlite3.Connection) -> None:
         columns = {
             row["name"] for row in db.execute("pragma table_info(agent_runs)").fetchall()
@@ -1994,10 +2456,10 @@ class AutoReplyStore:
             else "'audit', 0, 0, null, ''"
         )
 
-        if db.in_transaction:
-            db.commit()
-        db.execute("pragma foreign_keys=off")
-        try:
+        with AutoReplyStore._foreign_key_rebuild(
+            db,
+            migration_name="agent_runs",
+        ):
             db.executescript(
                 f"""
                 begin immediate;
@@ -2069,18 +2531,6 @@ class AutoReplyStore:
                     on agent_runs(status, reconciliation_next_attempt_at, id);
                 """
             )
-            violations = db.execute("pragma foreign_key_check").fetchall()
-            if violations:
-                raise sqlite3.IntegrityError(
-                    "agent_runs migration broke foreign keys"
-                )
-            db.commit()
-        except Exception:
-            if db.in_transaction:
-                db.rollback()
-            raise
-        finally:
-            db.execute("pragma foreign_keys=on")
 
     @staticmethod
     def _migrate_removed_runtime(db: sqlite3.Connection) -> None:
@@ -2508,8 +2958,10 @@ class AutoReplyStore:
             if "execution_generation" in columns
             else "'initial'"
         )
-        db.execute("pragma foreign_keys=off")
-        try:
+        with AutoReplyStore._foreign_key_rebuild(
+            db,
+            migration_name="reply_tasks",
+        ):
             db.executescript(
                 f"""
                 begin immediate;
@@ -2557,18 +3009,8 @@ class AutoReplyStore:
                 drop table reply_tasks;
                 alter table reply_tasks_channel_migration rename to reply_tasks;
                 create index idx_reply_tasks_status on reply_tasks(status, id);
-                commit;
                 """
             )
-        except Exception:
-            if db.in_transaction:
-                db.rollback()
-            raise
-        finally:
-            db.execute("pragma foreign_keys=on")
-        violations = db.execute("pragma foreign_key_check").fetchall()
-        if violations:
-            raise sqlite3.IntegrityError("reply_tasks migration broke foreign keys")
 
     @staticmethod
     def _reply_task_from_row(row: sqlite3.Row) -> ReplyTask:

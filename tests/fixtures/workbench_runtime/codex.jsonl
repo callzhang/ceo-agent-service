@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"thread-codex-123"}
+{"type":"item.delta","thread_id":"thread-codex-123","item":{"type":"assistant_message","text":"I will inspect the workspace."}}
+{"type":"item.started","thread_id":"thread-codex-123","item":{"type":"command_execution","id":"call-codex-1","command":"pwd"}}
+{"type":"item.completed","thread_id":"thread-codex-123","item":{"type":"command_execution","id":"call-codex-1","aggregated_output":"/workspace"}}
+{"type":"item.delta","thread_id":"thread-codex-123","item":{"type":"assistant_message","text":"The workspace is ready."}}
+{"type":"turn.completed","thread_id":"thread-codex-123","response":{"output_text":"The workspace is ready."}}

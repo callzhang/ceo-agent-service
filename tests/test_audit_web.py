@@ -1353,14 +1353,14 @@ def test_render_attempt_list_paginates_attempts(tmp_path: Path):
     assert '<option value="sent" selected>sent</option>' in first_page
     assert '<option value="1" selected>1/页</option>' in first_page
     assert '<span class="table-toolbar-total">共 2 条</span>' in first_page
-    assert 'href="/?page=2&amp;limit=1&amp;q=question&amp;type=sent"' in first_page
+    assert 'href="/history?page=2&amp;limit=1&amp;q=question&amp;type=sent"' in first_page
     assert 'aria-label="上一页"' in first_page
     assert 'aria-label="下一页"' in first_page
     assert 'class="table-page-link active" aria-current="page">1</span>' in first_page
     assert 'class="table-page-arrow disabled" aria-label="上一页"' in first_page
     assert f"/attempts/{older_id}" in second_page
     assert f"/attempts/{newer_id}" not in second_page
-    assert 'href="/?limit=1&amp;q=question&amp;type=sent"' in second_page
+    assert 'href="/history?limit=1&amp;q=question&amp;type=sent"' in second_page
     assert 'class="table-page-link active" aria-current="page">2</span>' in second_page
     assert 'class="table-page-arrow disabled" aria-label="下一页"' in second_page
 
@@ -1417,7 +1417,7 @@ def test_history_route_reads_page_query(tmp_path: Path):
     app = create_audit_app(store.path)
     client = loopback_test_client(app)
 
-    response = client.get("/?page=2&limit=50")
+    response = client.get("/history?page=2&limit=50")
 
     assert response.status_code == 200
     assert f"/attempts/{first_id}" in response.text
@@ -1460,7 +1460,7 @@ def test_history_route_reads_multi_type_query(tmp_path: Path):
     app = create_audit_app(store.path)
     client = loopback_test_client(app)
 
-    response = client.get("/?type=sent&type=reacted&limit=1")
+    response = client.get("/history?type=sent&type=reacted&limit=1")
 
     assert response.status_code == 200
     assert f"/attempts/{reacted_id}" in response.text
@@ -1517,7 +1517,7 @@ def test_render_attempt_list_filters_by_type_and_preserves_query(tmp_path: Path)
     assert '<option value="sent">sent</option>' in html
     assert '<option value="reacted">reacted</option>' in html
     assert '<option value="skipped">skipped</option>' in html
-    assert 'href="/?page=2&amp;limit=1&amp;type=sent&amp;type=reacted"' in html
+    assert 'href="/history?page=2&amp;limit=1&amp;type=sent&amp;type=reacted"' in html
     assert "共 2 条" in html
 
 
@@ -2017,6 +2017,8 @@ def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
     assert "/settings?tab=config&amp;config_tab=system" in html
     assert "/settings?tab=logs" in html
     assert "/tasks" in html
+    assert 'href="/history"' in html
+    assert 'href="/"' not in html
     assert "Tutorial" in html
     assert "Landing page" not in html
 
@@ -2162,7 +2164,7 @@ def test_tutorial_is_hidden_after_setup_completes(tmp_path: Path):
     response = client.get("/tutorial", follow_redirects=False)
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/history"
 
 
 def test_tutorial_status_route_returns_json(tmp_path: Path):
@@ -2195,7 +2197,7 @@ def test_history_route_returns_busy_page_when_database_is_locked(
     monkeypatch.setattr(audit_web_module, "render_attempt_list", locked_attempt_list)
     with TestClient(create_audit_app(db_path)) as client:
         assert rendered.wait(timeout=1)
-        response = client.get("/")
+        response = client.get("/history")
 
     assert response.status_code == 200
     assert "History is temporarily busy" in response.text
@@ -2208,7 +2210,7 @@ def test_history_route_renders_chart_on_default_page(tmp_path: Path):
     complete_setup_wizard(AutoReplyStore(db_path))
     client = TestClient(create_audit_app(db_path))
 
-    response = client.get("/")
+    response = client.get("/history")
 
     assert response.status_code == 200
     assert "CEO Agent Audit" in response.text
@@ -2229,9 +2231,9 @@ def test_history_route_reuses_recent_default_render(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(audit_web_module, "render_attempt_list", render_once)
     client = TestClient(create_audit_app(db_path))
 
-    first = client.get("/")
-    second = client.get("/")
-    filtered = client.get("/?object_type=meeting")
+    first = client.get("/history")
+    second = client.get("/history")
+    filtered = client.get("/history?object_type=meeting")
 
     assert first.text == "render-1"
     assert second.text == "render-1"
@@ -2277,7 +2279,7 @@ def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp
             # that startup does not wait for the deliberately blocked render.
             assert time.monotonic() - started_at < 1.0
             assert render_started.wait(timeout=1)
-            response = client.get("/")
+            response = client.get("/history")
             assert "History is temporarily busy" in response.text
     finally:
         release_render.set()
@@ -4140,7 +4142,7 @@ def test_config_route_is_available(tmp_path: Path):
 def test_render_page_brand_links_to_history():
     html = render_config_page()
 
-    assert '<a class="brand brand-home" href="/" aria-label="History home">' in html
+    assert '<a class="brand brand-home" href="/history" aria-label="History home">' in html
 
 
 def test_render_developer_prompt_editor_shows_template_and_preview(
@@ -5156,7 +5158,7 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
     assert "状态：</strong>需要你处理" in html
     assert "原因：</strong>Current task did not complete" in html
     assert "外部副作用：</strong>未执行任何外部动作" in html
-    assert f'action="/attempts/{attempt_id}/rerun?return_to=/"' in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/history"' in html
     assert ">重试当前任务</button>" in html
     assert ">暂不处理</button>" in html
     assert ">人工处理</a>" in html
@@ -5325,7 +5327,7 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
 
     assert "A. 同意当前方案" in html
     assert "B. 要求补充材料" in html
-    assert f'action="/attempts/{attempt_id}/human-decision?return_to=/"' in html
+    assert f'action="/attempts/{attempt_id}/human-decision?return_to=/history"' in html
 
 
 def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
@@ -5774,7 +5776,7 @@ def test_fastapi_app_serves_history_routes(tmp_path: Path):
     app = create_audit_app(store.path)
     client = TestClient(app)
 
-    response = client.get("/")
+    response = client.get("/history")
     detail_response = client.get(f"/attempts/{attempt_id}")
 
     assert response.status_code == 200
@@ -5782,6 +5784,159 @@ def test_fastapi_app_serves_history_routes(tmp_path: Path):
     assert "技术部" in response.text
     assert detail_response.status_code == 200
     assert "agent 执行记录" in detail_response.text
+
+
+def test_fastapi_app_serves_built_workbench_assets_with_secure_boundaries(
+    tmp_path: Path,
+):
+    asset_dir = tmp_path / "app" / "static" / "workbench"
+    hashed_assets = asset_dir / "assets"
+    hashed_assets.mkdir(parents=True)
+    index = (
+        b'<!doctype html><html><head><link rel="stylesheet" '
+        b'href="/workbench-assets/assets/index-a1b2c3.css"></head>'
+        b'<body><a href="/history">History</a><script type="module" '
+        b'src="/workbench-assets/assets/index-d4e5f6.js"></script></body></html>'
+    )
+    (asset_dir / "index.html").write_bytes(index)
+    (hashed_assets / "index-a1b2c3.css").write_text("body { color: black; }")
+    (hashed_assets / "index-d4e5f6.js").write_text("document.body.dataset.ready = '1';")
+    (asset_dir / "favicon.svg").write_text("<svg></svg>")
+    outside = tmp_path / "outside.js"
+    outside.write_text("globalThis.secret = true;")
+    (hashed_assets / "outside-link.js").symlink_to(outside)
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    complete_setup_wizard(store)
+    app = create_audit_app(
+        store.path,
+        workbench_asset_dir=asset_dir,
+        workbench_workspace=tmp_path,
+    )
+
+    with TestClient(app) as client:
+        root = client.get("/")
+        javascript = client.get(
+            "/workbench-assets/assets/index-d4e5f6.js"
+        )
+        stylesheet = client.get(
+            "/workbench-assets/assets/index-a1b2c3.css"
+        )
+        favicon = client.get("/workbench-assets/favicon.svg")
+        missing = client.get("/workbench-assets/assets/missing.js")
+        directory = client.get("/workbench-assets/assets/")
+        traversal = client.get("/workbench-assets/%2e%2e/outside.js")
+        symlink = client.get("/workbench-assets/assets/outside-link.js")
+        api = client.get("/api")
+        history = client.get("/history")
+        tasks = client.get("/tasks")
+        workers = client.get("/workers")
+        settings = client.get("/settings")
+
+    content_security_policy = (
+        "default-src 'self'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
+        "base-uri 'none'; frame-ancestors 'none'"
+    )
+    assert root.status_code == 200
+    assert root.content == index
+    assert root.headers["cache-control"] == "no-cache"
+    assert root.headers["content-security-policy"] == content_security_policy
+    assert root.headers["x-content-type-options"] == "nosniff"
+    assert root.headers["referrer-policy"] == "no-referrer"
+    assert root.headers["permissions-policy"] == (
+        "camera=(), microphone=(), geolocation=()"
+    )
+
+    assert javascript.status_code == 200
+    assert javascript.headers["content-type"].startswith("text/javascript")
+    assert javascript.headers["cache-control"] == (
+        "public, max-age=31536000, immutable"
+    )
+    assert javascript.headers["content-security-policy"] == content_security_policy
+    assert stylesheet.status_code == 200
+    assert stylesheet.headers["content-type"].startswith("text/css")
+    assert stylesheet.headers["cache-control"] == (
+        "public, max-age=31536000, immutable"
+    )
+    assert favicon.status_code == 200
+    assert favicon.headers["cache-control"] == "no-cache"
+
+    assert missing.status_code == 404
+    assert missing.headers["cache-control"] == "no-cache"
+    assert directory.status_code == 404
+    assert traversal.status_code == 404
+    assert symlink.status_code == 404
+    assert outside.read_text() not in symlink.text
+    assert api.status_code == 404
+    assert api.content != index
+    assert history.status_code == 200
+    assert "CEO Agent Audit" in history.text
+    assert tasks.status_code == 200
+    assert workers.status_code == 200
+    assert settings.status_code == 200
+
+
+def test_workbench_root_rejects_index_symlink_outside_asset_directory(
+    tmp_path: Path,
+):
+    asset_dir = tmp_path / "assets"
+    asset_dir.mkdir()
+    outside = tmp_path / "outside.html"
+    outside.write_text("outside secret")
+    (asset_dir / "index.html").symlink_to(outside)
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    complete_setup_wizard(store)
+
+    with TestClient(
+        create_audit_app(
+            store.path,
+            workbench_asset_dir=asset_dir,
+            workbench_workspace=tmp_path,
+        )
+    ) as client:
+        response = client.get("/")
+
+    assert response.status_code == 503
+    assert "outside secret" not in response.text
+
+
+def test_workbench_root_never_reads_index_swapped_after_path_validation(
+    tmp_path: Path,
+    monkeypatch,
+):
+    asset_dir = tmp_path / "assets"
+    asset_dir.mkdir()
+    index = asset_dir / "index.html"
+    expected = b"<!doctype html><title>Safe workbench</title>"
+    index.write_bytes(expected)
+    outside = tmp_path / "outside.html"
+    outside.write_text("outside secret")
+    original_open = audit_web_module._open_workbench_index
+
+    def swap_after_open(path: Path) -> tuple[int, int] | None:
+        opened = original_open(path)
+        if path == asset_dir and opened is not None:
+            index.unlink()
+            index.symlink_to(outside)
+        return opened
+
+    monkeypatch.setattr(audit_web_module, "_open_workbench_index", swap_after_open)
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    complete_setup_wizard(store)
+
+    with TestClient(
+        create_audit_app(
+            store.path,
+            workbench_asset_dir=asset_dir,
+            workbench_workspace=tmp_path,
+        )
+    ) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.content == expected
+    assert b"outside secret" not in response.content
 
 
 def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):

@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "httpx>=0.28",
+  "playwright>=1.50,<2",
   "pytest>=8.3"
 ]
 reader-build = [
@@ -36,6 +37,7 @@ ceo-agent = "app.cli:main"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
+  "browser: real browser integration tests (set WORKBENCH_BROWSER_TESTS=1)",
   "live: explicit opt-in tests that may call real dws, Codex, or DingTalk"
 ]
 

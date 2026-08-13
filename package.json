@@ -12,7 +12,10 @@
     "@tigrisdata/storage": "^3.13.0"
   },
   "scripts": {
+    "build:workbench": "npm run build --prefix frontend",
     "dev:local": "ceo-agent run",
-    "test:local": "pytest"
+    "test": "npm run test:local && npm run test:workbench",
+    "test:local": ".venv/bin/python -m pytest",
+    "test:workbench": "npm run test --prefix frontend -- --run"
   }
 }

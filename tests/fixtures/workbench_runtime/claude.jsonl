@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"session-claude-456","model":"claude-test"}
+{"type":"assistant","session_id":"session-claude-456","message":{"content":[{"type":"text","text":"I will inspect the workspace."}]}}
+{"type":"assistant","session_id":"session-claude-456","message":{"content":[{"type":"tool_use","id":"toolu-claude-1","name":"Bash","input":{"command":"pwd"}}]}}
+{"type":"user","session_id":"session-claude-456","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-claude-1","content":"/workspace"}]}}
+{"type":"assistant","session_id":"session-claude-456","message":{"content":[{"type":"text","text":"The workspace is ready."}]}}
+{"type":"result","subtype":"success","session_id":"session-claude-456","result":"The workspace is ready."}
