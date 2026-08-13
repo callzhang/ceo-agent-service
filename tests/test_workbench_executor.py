@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 import app.agent_cli as agent_cli
+import app.workbench.store as workbench_store_module
 from app.agent_result import EffectKind
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.workbench.executor import WorkbenchExecutor
@@ -126,6 +127,125 @@ def _pending_confirmation(store: WorkbenchStore):
         proposer_run_id=store.execution_run_id_for_executor(turn.id, owner="seed"),
     )
     return task, turn, confirmation
+
+
+def _duplicate_confirmation_candidates(
+    store: WorkbenchStore,
+    confirmation_id: str,
+    *,
+    count: int,
+    category: str,
+) -> None:
+    with store._connect() as db:
+        source = db.execute(
+            "select * from workbench_confirmations where id=?", (confirmation_id,)
+        ).fetchone()
+        columns = tuple(source.keys())
+        placeholders = ",".join("?" for _ in columns)
+        for index in range(count):
+            values = dict(source)
+            values["id"] = f"00000000-0000-4000-8000-{index + 1:012d}"
+            values["result_json"] = ""
+            if category == "proposer":
+                values["status"] = ConfirmationStatus.PENDING.value
+                values["proposer_run_id"] = ""
+                values["proposer_owner"] = ""
+                values["proposer_lease_expires_at"] = ""
+                values["proposer_quiesced_at"] = ""
+            else:
+                values["status"] = ConfirmationStatus.CONFIRMED.value
+                values["execution_owner"] = ""
+                values["execution_lease_expires_at"] = ""
+            if index == 0:
+                db.execute(
+                    "delete from workbench_confirmations where id=?",
+                    (confirmation_id,),
+                )
+            db.execute(
+                f"insert into workbench_confirmations ({','.join(columns)}) "
+                f"values ({placeholders})",
+                tuple(values[column] for column in columns),
+            )
+
+
+class _TrackingRecoveryStore(WorkbenchStore):
+    def __init__(self, path: Path):
+        self.proposer_batches: list[tuple[str, ...]] = []
+        self.confirmed_batches: list[tuple[str, ...]] = []
+        self.recovery_now_values = []
+        super().__init__(path)
+
+    def reconcile_unquiesced_proposer_batch(self, *, now=None):
+        self.recovery_now_values.append(now)
+        result = super().reconcile_unquiesced_proposer_batch(now=now)
+        self.proposer_batches.append(result)
+        return result
+
+    def reconcile_confirmed_without_result_batch(self, *, now=None):
+        self.recovery_now_values.append(now)
+        result = super().reconcile_confirmed_without_result_batch(now=now)
+        self.confirmed_batches.append(result)
+        return result
+
+
+@pytest.mark.parametrize("category", ["proposer", "confirmed"])
+@pytest.mark.parametrize("count", [101, 201])
+def test_recover_drains_every_bounded_confirmation_batch(
+    tmp_path: Path, category: str, count: int
+):
+    store = _TrackingRecoveryStore(tmp_path / "workbench.sqlite3")
+    _, turn, confirmation = _pending_confirmation(store)
+    _duplicate_confirmation_candidates(
+        store, confirmation.id, count=count, category=category
+    )
+    executor = WorkbenchExecutor(store, RuntimeRegistry(), workspace=tmp_path)
+
+    assert executor.recover() == count
+    batches = (
+        store.proposer_batches if category == "proposer" else store.confirmed_batches
+    )
+    assert [len(batch) for batch in batches] == (
+        [100, 1] if count == 101 else [100, 100, 1]
+    )
+    assert all(
+        len(batch) <= workbench_store_module.WORKBENCH_RECOVERY_BATCH_LIMIT
+        for batch in batches
+    )
+    assert len({item for batch in batches for item in batch}) == count
+    with store._connect() as db:
+        remaining = db.execute(
+            """
+            select count(*) from workbench_confirmations
+            where status in ('pending', 'confirmed')
+            """
+        ).fetchone()[0]
+    assert remaining == 0
+    assert store.get_turn(turn.id).status is TurnStatus.FAILED
+    assert len(set(store.recovery_now_values)) == 1
+    assert store.recovery_now_values[0] is not None
+    assert executor.recover() == 0
+    executor.close()
+
+
+def test_recover_fails_safe_when_full_batch_makes_no_progress(
+    tmp_path: Path, monkeypatch
+):
+    store = _store(tmp_path)
+    repeated = tuple(f"confirmation-{index}" for index in range(100))
+    calls = 0
+
+    def stuck_batch(*, now=None):
+        nonlocal calls
+        calls += 1
+        return repeated
+
+    monkeypatch.setattr(store, "reconcile_unquiesced_proposer_batch", stuck_batch)
+    executor = WorkbenchExecutor(store, RuntimeRegistry(), workspace=tmp_path)
+
+    with pytest.raises(RuntimeError, match="made no progress"):
+        executor.recover()
+    assert calls == 2
+    executor.close()
 
 
 def test_run_once_persists_stream_session_and_one_terminal_event(tmp_path: Path):

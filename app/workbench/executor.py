@@ -20,6 +20,7 @@ from app.agent_cli import (
 from app.history import safe_observability_error
 from app.leak_check import assert_no_credentials
 from app.native_cli_metadata import NativeCliMetadataClassifier
+from app.store import _utc_store_time
 from app.workbench.models import (
     ConfirmationStatus,
     TurnStatus,
@@ -33,7 +34,7 @@ from app.workbench.runtime import (
     RuntimeRequest,
     RuntimeResult,
 )
-from app.workbench.store import WorkbenchStore
+from app.workbench.store import WORKBENCH_RECOVERY_BATCH_LIMIT, WorkbenchStore
 
 
 _MAX_CLAIMS = 2
@@ -110,9 +111,36 @@ class WorkbenchExecutor:
         self._closed = False
 
     def recover(self, *, now=None) -> int:
-        proposer_failures = self.store.reconcile_unquiesced_proposers(now=now)
-        ambiguous = self.store.reconcile_confirmed_without_result(now=now)
-        return proposer_failures + ambiguous + self.store.recover_expired_turns(now=now)
+        recovery_now, _ = _utc_store_time(now)
+        proposer_failures = self._drain_recovery_batches(
+            self.store.reconcile_unquiesced_proposer_batch,
+            now=recovery_now,
+        )
+        ambiguous = self._drain_recovery_batches(
+            self.store.reconcile_confirmed_without_result_batch,
+            now=recovery_now,
+        )
+        return (
+            proposer_failures
+            + ambiguous
+            + self.store.recover_expired_turns(now=recovery_now)
+        )
+
+    @staticmethod
+    def _drain_recovery_batches(operation, *, now) -> int:
+        processed_ids: list[str] = []
+        seen_ids: set[str] = set()
+        while True:
+            batch = tuple(operation(now=now))
+            if len(batch) > WORKBENCH_RECOVERY_BATCH_LIMIT:
+                raise RuntimeError("workbench recovery batch exceeded its safe limit")
+            unique_batch = set(batch)
+            if len(unique_batch) != len(batch) or seen_ids.intersection(unique_batch):
+                raise RuntimeError("workbench recovery batch made no progress")
+            processed_ids.extend(batch)
+            seen_ids.update(unique_batch)
+            if len(batch) < WORKBENCH_RECOVERY_BATCH_LIMIT:
+                return len(processed_ids)
 
     def run_once(self, *, max_turns: int = _MAX_CLAIMS) -> list[str]:
         if max_turns < 1 or max_turns > _MAX_CLAIMS:

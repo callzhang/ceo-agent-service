@@ -40,7 +40,7 @@ _TURN_TRANSITIONS = {
     TurnStatus.FAILED: set(),
 }
 
-_RECOVERY_BATCH_LIMIT = 100
+WORKBENCH_RECOVERY_BATCH_LIMIT = 100
 
 LEGACY_PENDING_PROPOSER_RECOVERY_SQL = """
 select * from workbench_confirmations
@@ -813,16 +813,21 @@ class WorkbenchStore(AutoReplyStore):
     def reconcile_unquiesced_proposers(
         self, *, now: str | datetime | None = None
     ) -> int:
+        return len(self.reconcile_unquiesced_proposer_batch(now=now))
+
+    def reconcile_unquiesced_proposer_batch(
+        self, *, now: str | datetime | None = None
+    ) -> tuple[str, ...]:
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
             db.execute("begin immediate")
             rows = list(
                 db.execute(
                     LEGACY_PENDING_PROPOSER_RECOVERY_SQL,
-                    ("", _RECOVERY_BATCH_LIMIT),
+                    ("", WORKBENCH_RECOVERY_BATCH_LIMIT),
                 ).fetchall()
             )
-            remaining = _RECOVERY_BATCH_LIMIT - len(rows)
+            remaining = WORKBENCH_RECOVERY_BATCH_LIMIT - len(rows)
             if remaining:
                 rows.extend(
                     db.execute(
@@ -890,7 +895,7 @@ class WorkbenchStore(AutoReplyStore):
                         ),
                         clear_lease=True,
                     )
-            return len(rows)
+            return tuple(row["id"] for row in rows)
 
     def list_confirmations(self, task_id: str) -> list[WorkbenchConfirmation]:
         with self._connect() as db:
@@ -1244,6 +1249,11 @@ class WorkbenchStore(AutoReplyStore):
     def reconcile_confirmed_without_result(
         self, *, now: str | datetime | None = None
     ) -> int:
+        return len(self.reconcile_confirmed_without_result_batch(now=now))
+
+    def reconcile_confirmed_without_result_batch(
+        self, *, now: str | datetime | None = None
+    ) -> tuple[str, ...]:
         """Fail crash-ambiguous writes without executing or replaying them."""
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
@@ -1251,10 +1261,10 @@ class WorkbenchStore(AutoReplyStore):
             rows = list(
                 db.execute(
                     LEGACY_CONFIRMED_OWNER_RECOVERY_SQL,
-                    ("", _RECOVERY_BATCH_LIMIT),
+                    ("", WORKBENCH_RECOVERY_BATCH_LIMIT),
                 ).fetchall()
             )
-            remaining = _RECOVERY_BATCH_LIMIT - len(rows)
+            remaining = WORKBENCH_RECOVERY_BATCH_LIMIT - len(rows)
             if remaining:
                 rows.extend(
                     db.execute(
@@ -1262,7 +1272,7 @@ class WorkbenchStore(AutoReplyStore):
                         ("", remaining),
                     ).fetchall()
                 )
-            remaining = _RECOVERY_BATCH_LIMIT - len(rows)
+            remaining = WORKBENCH_RECOVERY_BATCH_LIMIT - len(rows)
             if remaining:
                 rows.extend(
                     db.execute(
@@ -1332,7 +1342,7 @@ class WorkbenchStore(AutoReplyStore):
                             "confirmation_status": ConfirmationStatus.FAILED.value,
                         },
                     )
-            return len(rows)
+            return tuple(row["id"] for row in rows)
 
     def complete_turn(
         self,
