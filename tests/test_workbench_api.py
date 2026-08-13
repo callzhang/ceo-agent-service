@@ -86,6 +86,28 @@ def test_task_turn_and_event_replay(tmp_path: Path):
     assert response.json()[0]["payload"] == {"status": "queued"}
 
 
+def test_first_turn_derives_default_task_title_in_timeline(tmp_path: Path):
+    with _client(tmp_path) as client:
+        task_response = client.post(
+            "/api/workbench/tasks",
+            json={"title": "新任务", "runtime_kind": "codex"},
+        )
+        task = task_response.json()
+        turn_response = client.post(
+            f"/api/workbench/tasks/{task['id']}/turns",
+            json={
+                "text": "检查今天的重要事项",
+                "client_request_id": "derive-title-api",
+            },
+        )
+        timeline = client.get(f"/api/workbench/tasks/{task['id']}/timeline")
+
+    assert task_response.status_code == 201
+    assert turn_response.status_code == 201
+    assert timeline.status_code == 200
+    assert timeline.json()["task"]["title"] == "检查今天的重要事项"
+
+
 def test_cross_origin_mutation_is_rejected(tmp_path: Path):
     with _client(tmp_path) as client:
         response = client.post(

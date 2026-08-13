@@ -947,6 +947,91 @@ def test_create_task_and_idempotent_turn_request(tmp_path: Path):
     assert store.get_task(task.id) == task
 
 
+def test_first_turn_derives_default_title_and_idempotently_replays(tmp_path: Path):
+    store = _store(tmp_path)
+    task = store.create_task(title="新任务", runtime_kind="codex")
+    user_text = "  今天有哪些 \n\t 值得我关注的事项？  "
+
+    first = store.create_turn(
+        task.id,
+        user_text=user_text,
+        client_request_id="derive-default-title",
+    )
+    replayed = store.create_turn(
+        task.id,
+        user_text=user_text,
+        client_request_id="derive-default-title",
+    )
+
+    assert replayed == first
+    assert replayed.user_text == "今天有哪些 \n\t 值得我关注的事项？"
+    assert store.get_task(task.id).title == "今天有哪些 值得我关注的事项？"
+
+
+def test_first_turn_does_not_overwrite_manually_renamed_default_title(tmp_path: Path):
+    store = _store(tmp_path)
+    task = store.create_task(title="新任务", runtime_kind="codex")
+    store.rename_task(task.id, title="每日关注")
+
+    store.create_turn(
+        task.id,
+        user_text="检查今天的重要事项",
+        client_request_id="manual-title",
+    )
+
+    assert store.get_task(task.id).title == "每日关注"
+
+
+def test_second_turn_never_derives_title_after_title_is_restored_to_default(tmp_path: Path):
+    store = _store(tmp_path)
+    task = store.create_task(title="项目复盘", runtime_kind="codex")
+    first = store.create_turn(
+        task.id,
+        user_text="总结昨天的进展",
+        client_request_id="completed-first-turn",
+    )
+    claimed = store.claim_next_turn(
+        owner="worker-1", lease_seconds=30, now="2026-08-13T00:00:00Z"
+    )
+    assert claimed is not None and claimed.id == first.id
+    completed = store.complete_turn(
+        first.id,
+        status=TurnStatus.COMPLETED,
+        owner="worker-1",
+        now="2026-08-13T00:00:01Z",
+    )
+    assert completed.status is TurnStatus.COMPLETED
+    store.rename_task(task.id, title="新任务")
+
+    store.create_turn(
+        task.id,
+        user_text="检查今天的重要事项",
+        client_request_id="second-turn-after-restore",
+    )
+
+    assert store.get_task(task.id).title == "新任务"
+
+
+def test_derived_default_title_truncates_to_unicode_boundary(tmp_path: Path):
+    store = _store(tmp_path)
+    task = store.create_task(title="新任务", runtime_kind="codex")
+    user_text = "请帮我整理今天与人工智能、产品、客户和团队相关的重要事项，并指出需要我立即处理的风险和机会"
+
+    store.create_turn(
+        task.id,
+        user_text=user_text,
+        client_request_id="truncated-derived-title",
+    )
+
+    title = store.get_task(task.id).title
+    assert len(title) == 32
+    assert title[-1] == "…"
+    assert title == user_text[:31].rstrip() + "…"
+    assert title.encode("utf-8").decode("utf-8") == title
+    assert all(not 0xD800 <= ord(character) <= 0xDFFF for character in title)
+    assert "人工智能" in title
+
+
 def test_create_turn_rejects_second_active_request_for_task(tmp_path: Path):
     store = _store(tmp_path)
     task = store.create_task(title="Analyse sales", runtime_kind="codex")
