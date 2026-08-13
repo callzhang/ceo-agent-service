@@ -1322,14 +1322,14 @@ def test_render_attempt_list_paginates_attempts(tmp_path: Path):
     assert '<option value="sent" selected>sent</option>' in first_page
     assert '<option value="1" selected>1/页</option>' in first_page
     assert '<span class="table-toolbar-total">共 2 条</span>' in first_page
-    assert 'href="/?page=2&amp;limit=1&amp;q=question&amp;type=sent"' in first_page
+    assert 'href="/history?page=2&amp;limit=1&amp;q=question&amp;type=sent"' in first_page
     assert 'aria-label="上一页"' in first_page
     assert 'aria-label="下一页"' in first_page
     assert 'class="table-page-link active" aria-current="page">1</span>' in first_page
     assert 'class="table-page-arrow disabled" aria-label="上一页"' in first_page
     assert f"/attempts/{older_id}" in second_page
     assert f"/attempts/{newer_id}" not in second_page
-    assert 'href="/?limit=1&amp;q=question&amp;type=sent"' in second_page
+    assert 'href="/history?limit=1&amp;q=question&amp;type=sent"' in second_page
     assert 'class="table-page-link active" aria-current="page">2</span>' in second_page
     assert 'class="table-page-arrow disabled" aria-label="下一页"' in second_page
 
@@ -1386,7 +1386,7 @@ def test_history_route_reads_page_query(tmp_path: Path):
     app = create_audit_app(store.path)
     client = loopback_test_client(app)
 
-    response = client.get("/?page=2&limit=50")
+    response = client.get("/history?page=2&limit=50")
 
     assert response.status_code == 200
     assert f"/attempts/{first_id}" in response.text
@@ -1429,7 +1429,7 @@ def test_history_route_reads_multi_type_query(tmp_path: Path):
     app = create_audit_app(store.path)
     client = loopback_test_client(app)
 
-    response = client.get("/?type=sent&type=reacted&limit=1")
+    response = client.get("/history?type=sent&type=reacted&limit=1")
 
     assert response.status_code == 200
     assert f"/attempts/{reacted_id}" in response.text
@@ -1486,7 +1486,7 @@ def test_render_attempt_list_filters_by_type_and_preserves_query(tmp_path: Path)
     assert '<option value="sent">sent</option>' in html
     assert '<option value="reacted">reacted</option>' in html
     assert '<option value="skipped">skipped</option>' in html
-    assert 'href="/?page=2&amp;limit=1&amp;type=sent&amp;type=reacted"' in html
+    assert 'href="/history?page=2&amp;limit=1&amp;type=sent&amp;type=reacted"' in html
     assert "共 2 条" in html
 
 
@@ -2131,7 +2131,7 @@ def test_tutorial_is_hidden_after_setup_completes(tmp_path: Path):
     response = client.get("/tutorial", follow_redirects=False)
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/history"
 
 
 def test_tutorial_status_route_returns_json(tmp_path: Path):
@@ -2164,7 +2164,7 @@ def test_history_route_returns_busy_page_when_database_is_locked(
     monkeypatch.setattr(audit_web_module, "render_attempt_list", locked_attempt_list)
     with TestClient(create_audit_app(db_path)) as client:
         assert rendered.wait(timeout=1)
-        response = client.get("/")
+        response = client.get("/history")
 
     assert response.status_code == 200
     assert "History is temporarily busy" in response.text
@@ -2177,7 +2177,7 @@ def test_history_route_renders_chart_on_default_page(tmp_path: Path):
     complete_setup_wizard(AutoReplyStore(db_path))
     client = TestClient(create_audit_app(db_path))
 
-    response = client.get("/")
+    response = client.get("/history")
 
     assert response.status_code == 200
     assert "CEO Agent Audit" in response.text
@@ -2198,9 +2198,9 @@ def test_history_route_reuses_recent_default_render(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(audit_web_module, "render_attempt_list", render_once)
     client = TestClient(create_audit_app(db_path))
 
-    first = client.get("/")
-    second = client.get("/")
-    filtered = client.get("/?object_type=meeting")
+    first = client.get("/history")
+    second = client.get("/history")
+    filtered = client.get("/history?object_type=meeting")
 
     assert first.text == "render-1"
     assert second.text == "render-1"
@@ -2244,7 +2244,7 @@ def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp
         with TestClient(create_audit_app(db_path)) as client:
             assert time.monotonic() - started_at < 0.2
             assert render_started.wait(timeout=1)
-            response = client.get("/")
+            response = client.get("/history")
             assert "History is temporarily busy" in response.text
     finally:
         release_render.set()
@@ -4084,7 +4084,7 @@ def test_config_route_is_available(tmp_path: Path):
 def test_render_page_brand_links_to_history():
     html = render_config_page()
 
-    assert '<a class="brand brand-home" href="/" aria-label="History home">' in html
+    assert '<a class="brand brand-home" href="/history" aria-label="History home">' in html
 
 
 def test_render_developer_prompt_editor_shows_template_and_preview(
@@ -4927,7 +4927,7 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
     assert "状态：</strong>需要你处理" in html
     assert "原因：</strong>Current task did not complete" in html
     assert "外部副作用：</strong>未执行任何外部动作" in html
-    assert f'action="/attempts/{attempt_id}/rerun?return_to=/"' in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/history"' in html
     assert ">重试当前任务</button>" in html
     assert ">暂不处理</button>" in html
     assert ">人工处理</a>" in html
@@ -5056,7 +5056,7 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
 
     assert "A. 同意当前方案" in html
     assert "B. 要求补充材料" in html
-    assert f'action="/attempts/{attempt_id}/human-decision?return_to=/"' in html
+    assert f'action="/attempts/{attempt_id}/human-decision?return_to=/history"' in html
 
 
 def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
@@ -5504,7 +5504,7 @@ def test_fastapi_app_serves_history_routes(tmp_path: Path):
     app = create_audit_app(store.path)
     client = TestClient(app)
 
-    response = client.get("/")
+    response = client.get("/history")
     detail_response = client.get(f"/attempts/{attempt_id}")
 
     assert response.status_code == 200

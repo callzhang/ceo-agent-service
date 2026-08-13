@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlparse
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (
+    FileResponse,
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
@@ -760,7 +761,7 @@ def render_page(
         f"<title>{escape(title)}</title>"
         f"<link rel=\"icon\" href=\"{FAVICON_HREF}\">"
         f"<style>{CSS}</style>{head_extra}</head><body>"
-        "<header><div class=\"shell topbar\"><a class=\"brand brand-home\" href=\"/\" aria-label=\"History home\">"
+        "<header><div class=\"shell topbar\"><a class=\"brand brand-home\" href=\"/history\" aria-label=\"History home\">"
         "<div class=\"brand-mark\"></div><div>"
         f"<h1>{escape(title)}</h1><div class=\"eyebrow\">Local audit console</div>"
         "</div></a>"
@@ -1833,7 +1834,7 @@ def _top_nav(
     user_feedback_pending_count: int | None = None,
 ) -> str:
     items = [
-        ("history", "History", "/"),
+        ("history", "History", "/history"),
         ("tasks", "Tasks", "/tasks"),
         ("user-feedback", "用户反馈", "/user-feedback"),
         ("service-bugfix", "服务修复", "/service-bugfix-candidates"),
@@ -4265,7 +4266,7 @@ def _render_attempt_list(
             actions_html=_reply_history_attention_actions(
                 attempt,
                 attention,
-                return_to="/",
+                return_to="/history",
             ),
         )
         recovery_state = _attempt_recovery_display_state(
@@ -4307,7 +4308,7 @@ def _render_attempt_list(
         chart_html = _render_history_chart(store) if include_chart else ""
         body = (
             f"{chart_html}"
-            f"{_history_table_header(base_path='/', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query, search_object_types=object_types)}"
+            f"{_history_table_header(base_path='/history', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query, search_object_types=object_types)}"
             "<div data-live-search-region=\"history\">"
             f"{session_search_html}"
             "<section class=\"card\"><p class=\"muted\">No reply attempts recorded.</p>"
@@ -4319,7 +4320,7 @@ def _render_attempt_list(
         chart_html = _render_history_chart(store) if include_chart else ""
         bugfix_html = _pending_service_bugfix_card(store)
         header = _history_table_header(
-            base_path="/",
+            base_path="/history",
             page=page,
             limit=limit,
             total_count=total_count,
@@ -7603,7 +7604,36 @@ def create_audit_app(
     db_path: Path,
     ding_robot_code: str | None = None,
     ding_robot_name: str | None = None,
+    *,
+    workbench_asset_dir: Path | None = None,
+    workbench_workspace: Path | None = None,
+    workbench_runtime_registry=None,
+    workbench_executor=None,
 ) -> FastAPI:
+    from app.workbench.api import register_workbench_routes
+    from app.workbench.codex_runtime import CodexRuntime
+    from app.workbench.executor import WorkbenchExecutor
+    from app.workbench.runtime import RuntimeRegistry
+    from app.workbench.store import WorkbenchStore
+
+    asset_dir = Path(
+        workbench_asset_dir
+        or Path(__file__).resolve().parent / "static" / "workbench"
+    )
+    workbench_store = WorkbenchStore(db_path)
+    effective_workspace = Path(workbench_workspace or workspace_path()).resolve()
+    runtime_registry = workbench_runtime_registry or RuntimeRegistry(
+        [CodexRuntime(workspace=effective_workspace)]
+    )
+    executor = workbench_executor or WorkbenchExecutor(
+        workbench_store,
+        runtime_registry,
+        workspace=effective_workspace,
+    )
+
+    def close_workbench_routes() -> None:
+        return None
+
     default_attempt_list_cache = _RecentHtmlCache(
         DEFAULT_HISTORY_CACHE_TTL_SECONDS
     )
@@ -7626,9 +7656,24 @@ def create_audit_app(
     async def audit_lifespan(_app: FastAPI):
         default_attempt_list_cache.get_or_render(_render_history_busy_page)
         default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
-        yield
+        executor.recover()
+        try:
+            yield
+        finally:
+            close_workbench_routes()
+            executor.close()
 
     app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
+
+    close_workbench_routes = register_workbench_routes(
+        app,
+        workbench_store,
+        executor,
+        runtime_registry,
+        asset_dir,
+        mutation_guard=_require_trusted_json_mutation,
+        stream_guard=_require_trusted_mutation,
+    )
 
     @app.middleware("http")
     async def require_trusted_requests(request: Request, call_next):
@@ -7678,8 +7723,7 @@ def create_audit_app(
         writer_factory=_wechat_memory_writer,
     )
 
-    @app.get("/", response_class=HTMLResponse)
-    def attempt_list(request: Request) -> Response:
+    def history_response(request: Request) -> Response:
         if not request.query_params and not _tutorial_is_complete(_audit_store(db_path)):
             return RedirectResponse("/tutorial", status_code=303)
         query = str(request.query_params.get("q", ""))
@@ -7713,6 +7757,28 @@ def create_audit_app(
                 return _render_history_busy_page()
             raise
 
+    @app.get("/history", response_class=HTMLResponse)
+    def attempt_list(request: Request) -> Response:
+        return history_response(request)
+
+    @app.get("/", response_class=HTMLResponse)
+    def workbench_home() -> Response:
+        if not _tutorial_is_complete(_audit_store(db_path)):
+            return RedirectResponse("/tutorial", status_code=303)
+        index_path = asset_dir / "index.html"
+        if index_path.is_file():
+            return FileResponse(
+                index_path,
+                media_type="text/html",
+                headers={"Cache-Control": "no-cache"},
+            )
+        return HTMLResponse(
+            """<!doctype html><html><head><meta charset="utf-8"><title>Workbench unavailable</title></head>
+            <body><h1>Workbench assets are missing</h1><p>Run <code>npm run build:workbench</code> and reload this page.</p></body></html>""",
+            status_code=503,
+            headers={"Cache-Control": "no-cache"},
+        )
+
     @app.get("/user-feedback", response_class=HTMLResponse)
     def user_feedback_list(request: Request) -> str:
         return render_user_feedback_list(
@@ -7728,7 +7794,7 @@ def create_audit_app(
     def tutorial_page() -> Response:
         store = AutoReplyStore(db_path)
         if _tutorial_is_complete(store):
-            return RedirectResponse("/", status_code=303)
+            return RedirectResponse("/history", status_code=303)
         return HTMLResponse(render_tutorial_page(store=store))
 
     @app.get("/tutorial/status")

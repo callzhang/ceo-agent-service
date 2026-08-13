@@ -326,6 +326,32 @@ def test_public_turn_excludes_private_resume_context(tmp_path: Path):
     )
 
 
+def test_create_turn_persists_initial_status_event_and_lists_nested_resources(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    task = store.create_task(title="Analyse sales", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id,
+        user_text="Compare regions",
+        client_request_id="request-1",
+    )
+
+    assert store.list_turns(task.id) == [turn]
+    assert [event.payload for event in store.events_after(turn.id, limit=1)] == [
+        {"status": "queued"}
+    ]
+    assert store.list_artifacts(task.id) == []
+
+
+def test_confirmation_quiescence_exposes_only_truthful_public_boolean(tmp_path: Path):
+    store = _store(tmp_path)
+    _, _, confirmation = _waiting_confirmation(store)
+
+    assert store.confirmation_is_quiesced(confirmation.id) is True
+    assert store.confirmation_is_quiesced("00000000-0000-4000-8000-000000000099") is None
+
+
 def test_workbench_query_indexes_exist(tmp_path: Path):
     store = _store(tmp_path)
     with store._connect() as db:
@@ -496,7 +522,7 @@ def test_events_replay_in_id_order_and_reject_duplicate_sequence(tmp_path: Path)
     with pytest.raises(ValueError, match="event sequence must be next"):
         store.append_event(
             turn_id,
-            sequence=2,
+            sequence=3,
             event_type="text_delta",
             payload={"text": "South"},
             owner="worker-1",
@@ -504,7 +530,7 @@ def test_events_replay_in_id_order_and_reject_duplicate_sequence(tmp_path: Path)
         )
     first = store.append_event(
         turn_id,
-        sequence=1,
+        sequence=2,
         event_type="text_delta",
         payload={"text": "North"},
         owner="worker-1",
@@ -513,7 +539,7 @@ def test_events_replay_in_id_order_and_reject_duplicate_sequence(tmp_path: Path)
     with pytest.raises(ValueError, match="event sequence must be next"):
         store.append_event(
             turn_id,
-            sequence=3,
+            sequence=4,
             event_type="text_delta",
             payload={"text": "gap"},
             owner="worker-1",
@@ -522,7 +548,7 @@ def test_events_replay_in_id_order_and_reject_duplicate_sequence(tmp_path: Path)
     with pytest.raises(ValueError, match="event sequence must be next"):
         store.append_event(
             turn_id,
-            sequence=1,
+            sequence=2,
             event_type="text_delta",
             payload={"text": "duplicate"},
             owner="worker-1",
@@ -530,7 +556,7 @@ def test_events_replay_in_id_order_and_reject_duplicate_sequence(tmp_path: Path)
         )
     second = store.append_event(
         turn_id,
-        sequence=2,
+        sequence=3,
         event_type="text_delta",
         payload={"text": "South"},
         owner="worker-1",
@@ -1085,8 +1111,9 @@ def test_confirmation_creation_and_control_events_are_atomic(tmp_path: Path):
         for event in store.events_after(turn_id)
     ]
     assert events == [
+        (1, "status_changed", {"status": "queued"}),
         (
-            1,
+            2,
             "confirmation_required",
             {
                 "action_kind": "send_message",
@@ -1106,6 +1133,7 @@ def test_stop_and_terminal_completion_append_atomic_control_events(tmp_path: Pat
     stopped = store.request_stop(queued.id, now="2026-08-13T00:00:01Z")
     assert stopped.status is TurnStatus.STOPPED
     assert [event.event_type for event in store.events_after(queued.id)] == [
+        "status_changed",
         "turn_completed"
     ]
 
@@ -1117,10 +1145,11 @@ def test_stop_and_terminal_completion_append_atomic_control_events(tmp_path: Pat
     assert stop_requested.status is TurnStatus.STOPPED
     assert stop_requested.stop_requested is True
     assert [event.event_type for event in store.events_after(running.id)] == [
+        "status_changed",
         "turn_completed"
     ]
     assert store.request_stop(running.id) == stop_requested
-    assert len(store.events_after(running.id)) == 1
+    assert len(store.events_after(running.id)) == 2
 
     failing = store.create_turn(
         task.id, user_text="Compare channels", client_request_id="request-3"
@@ -1135,6 +1164,7 @@ def test_stop_and_terminal_completion_append_atomic_control_events(tmp_path: Pat
     )
     assert failed.status is TurnStatus.FAILED
     assert [event.event_type for event in store.events_after(failing.id)] == [
+        "status_changed",
         "turn_failed"
     ]
 
@@ -1210,7 +1240,7 @@ def test_independent_stores_allow_one_next_sequence_insert(tmp_path: Path):
             barrier.wait()
             return "ok", store.append_event(
                 turn_id,
-                sequence=1,
+                sequence=2,
                 event_type="text_delta",
                 payload={"text": "North"},
                 owner="worker-1",
@@ -1224,7 +1254,7 @@ def test_independent_stores_allow_one_next_sequence_insert(tmp_path: Path):
 
     assert [result[0] for result in results].count("ok") == 1
     assert [result[0] for result in results].count("error") == 1
-    assert [event.sequence for event in first.events_after(turn_id)] == [1]
+    assert [event.sequence for event in first.events_after(turn_id)] == [1, 2]
 
 
 def test_independent_stores_linearize_stop_against_terminal_completion(tmp_path: Path):
@@ -1255,8 +1285,8 @@ def test_independent_stores_linearize_stop_against_terminal_completion(tmp_path:
     persisted = first.get_turn(turn_id)
     assert persisted.status in {TurnStatus.STOPPED, TurnStatus.COMPLETED}
     events = first.events_after(turn_id)
-    assert [event.sequence for event in events] == [1]
-    assert events[0].event_type == "turn_completed"
+    assert [event.sequence for event in events] == [1, 2]
+    assert events[1].event_type == "turn_completed"
 
 
 def test_running_stop_is_immediately_terminal_on_both_recovery_paths(
@@ -1268,6 +1298,7 @@ def test_running_stop_is_immediately_terminal_on_both_recovery_paths(
     assert store.recover_expired_turns(now="2026-08-13T00:00:11Z") == 0
     assert store.get_turn(first_turn_id).status is TurnStatus.STOPPED
     assert [event.event_type for event in store.events_after(first_turn_id)] == [
+        "status_changed",
         "turn_completed"
     ]
     assert store.claim_next_turn(owner="worker-2", now="2026-08-13T00:00:12Z") is None
@@ -1286,6 +1317,7 @@ def test_running_stop_is_immediately_terminal_on_both_recovery_paths(
     assert store.claim_next_turn(owner="worker-2", now="2026-08-13T00:01:02Z") is None
     assert store.get_turn(second_turn.id).status is TurnStatus.STOPPED
     assert [event.event_type for event in store.events_after(second_turn.id)] == [
+        "status_changed",
         "turn_completed"
     ]
 

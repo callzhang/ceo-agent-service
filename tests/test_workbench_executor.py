@@ -267,8 +267,9 @@ def test_run_once_persists_stream_session_and_one_terminal_event(tmp_path: Path)
     assert store.get_task(task.id).provider_session_ref == "session-1"
     events = store.events_after(turn.id)
     assert [(event.sequence, event.event_type) for event in events] == [
-        (1, "text_delta"),
-        (2, "turn_completed"),
+        (1, "status_changed"),
+        (2, "text_delta"),
+        (3, "turn_completed"),
     ]
     executor.close()
 
@@ -342,7 +343,9 @@ def test_lost_lease_stops_runtime_and_does_not_write_after_loss(tmp_path: Path):
     executor.run_once()
 
     assert runtime.stop_calls == 1
-    assert store.events_after(turn.id) == []
+    assert [event.event_type for event in store.events_after(turn.id)] == [
+        "status_changed"
+    ]
     assert store.get_turn(turn.id).status is TurnStatus.RUNNING
     executor.close()
 
@@ -594,6 +597,7 @@ def test_confirmation_event_atomically_waits_and_runtime_completion_cannot_overw
     assert confirmations[0].arguments_json == ""
     assert runtime.stop_calls == 1
     assert [event.event_type for event in store.events_after(turn.id)] == [
+        "status_changed",
         "confirmation_required"
     ]
     executor.close()

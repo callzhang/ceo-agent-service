@@ -15,6 +15,7 @@ from app.workbench.models import (
     ConfirmationStatus,
     TurnStatus,
     WorkbenchAttachment,
+    WorkbenchArtifact,
     WorkbenchConfirmation,
     WorkbenchEvent,
     WorkbenchTask,
@@ -325,6 +326,12 @@ class WorkbenchStore(AutoReplyStore):
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("task already has an active turn") from exc
+            self._append_control_event(
+                db,
+                turn_id,
+                event_type="status_changed",
+                payload={"status": TurnStatus.QUEUED.value},
+            )
             return self._turn_from_row(self._require_turn(db, turn_id))
 
     def get_turn(self, turn_id: str) -> WorkbenchTurn | None:
@@ -333,6 +340,18 @@ class WorkbenchStore(AutoReplyStore):
                 "select * from workbench_turns where id=?", (turn_id,)
             ).fetchone()
             return None if row is None else self._turn_from_row(row)
+
+    def list_turns(self, task_id: str) -> list[WorkbenchTurn]:
+        with self._connect() as db:
+            self._require_task(db, task_id)
+            rows = db.execute(
+                """
+                select * from workbench_turns
+                where task_id=? order by created_at, id
+                """,
+                (task_id,),
+            ).fetchall()
+            return [self._turn_from_row(row) for row in rows]
 
     def resume_context_for_executor(
         self,
@@ -559,20 +578,131 @@ class WorkbenchStore(AutoReplyStore):
                 raise RuntimeError("event insert did not create a row")
             return self._event_from_row(event)
 
-    def events_after(self, turn_id: str, after_id: int = 0) -> list[WorkbenchEvent]:
+    def events_after(
+        self, turn_id: str, after_id: int = 0, *, limit: int | None = None
+    ) -> list[WorkbenchEvent]:
         if after_id < 0:
             raise ValueError("after_id must not be negative")
+        if limit is not None and (limit < 1 or limit > 1000):
+            raise ValueError("limit must be between 1 and 1000")
         with self._connect() as db:
             self._require_turn(db, turn_id)
+            query = """
+                select * from workbench_events
+                where turn_id=? and id>? order by id
+            """
+            parameters: tuple[Any, ...] = (turn_id, after_id)
+            if limit is not None:
+                query += " limit ?"
+                parameters += (limit,)
+            rows = db.execute(query, parameters).fetchall()
+            return [self._event_from_row(row) for row in rows]
+
+    def list_artifacts(self, task_id: str) -> list[WorkbenchArtifact]:
+        with self._connect() as db:
+            self._require_task(db, task_id)
             rows = db.execute(
                 """
-                select * from workbench_events
-                where turn_id=? and id>?
-                order by id
+                select artifacts.*
+                from workbench_artifacts as artifacts
+                join workbench_turns as turns on turns.id=artifacts.turn_id
+                where turns.task_id=? order by artifacts.created_at, artifacts.id
                 """,
-                (turn_id, after_id),
+                (task_id,),
             ).fetchall()
-            return [self._event_from_row(row) for row in rows]
+            return [self._artifact_from_row(row) for row in rows]
+
+    def get_artifact(self, artifact_id: str) -> WorkbenchArtifact | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from workbench_artifacts where id=?", (artifact_id,)
+            ).fetchone()
+            return None if row is None else self._artifact_from_row(row)
+
+    def workbench_stats(self) -> dict[str, Any]:
+        with self._connect() as db:
+            task_row = db.execute(
+                """
+                select count(*) as total,
+                       sum(case when archived_at='' then 1 else 0 end) as active,
+                       sum(case when archived_at<>'' then 1 else 0 end) as archived
+                from workbench_tasks
+                """
+            ).fetchone()
+            turn_counts = {status.value: 0 for status in TurnStatus}
+            turn_counts.update(
+                {
+                    row["status"]: int(row["count"])
+                    for row in db.execute(
+                        "select status, count(*) as count from workbench_turns group by status"
+                    )
+                }
+            )
+            confirmation_counts = {status.value: 0 for status in ConfirmationStatus}
+            confirmation_counts.update(
+                {
+                    row["status"]: int(row["count"])
+                    for row in db.execute(
+                        """
+                        select status, count(*) as count
+                        from workbench_confirmations group by status
+                        """
+                    )
+                }
+            )
+            event_counts = {
+                event_type: 0
+                for event_type in WorkbenchEvent.model_fields[
+                    "event_type"
+                ].annotation.__args__
+            }
+            event_counts.update(
+                {
+                    row["event_type"]: int(row["count"])
+                    for row in db.execute(
+                        """
+                        select event_type, count(*) as count
+                        from workbench_events group by event_type
+                        """
+                    )
+                }
+            )
+            duration = db.execute(
+                """
+                select count(*) as completed_count,
+                       coalesce(sum(julianday(completed_at) - julianday(started_at)), 0)
+                           * 86400.0 as total_seconds
+                from workbench_turns
+                where started_at<>'' and completed_at<>''
+                """
+            ).fetchone()
+            completed_count = int(duration["completed_count"] or 0)
+            total_seconds = max(0.0, float(duration["total_seconds"] or 0.0))
+            attachments = int(
+                db.execute("select count(*) from workbench_attachments").fetchone()[0]
+            )
+            artifacts = int(
+                db.execute("select count(*) from workbench_artifacts").fetchone()[0]
+            )
+        return {
+            "tasks": {
+                "total": int(task_row["total"] or 0),
+                "active": int(task_row["active"] or 0),
+                "archived": int(task_row["archived"] or 0),
+            },
+            "turns": turn_counts,
+            "confirmations": confirmation_counts,
+            "events": event_counts,
+            "attachments": attachments,
+            "artifacts": artifacts,
+            "duration": {
+                "completed_count": completed_count,
+                "total_seconds": total_seconds,
+                "average_seconds": (
+                    total_seconds / completed_count if completed_count else 0.0
+                ),
+            },
+        }
 
     def set_provider_session(
         self,
@@ -925,6 +1055,27 @@ class WorkbenchStore(AutoReplyStore):
                 if row is None
                 else self._confirmation_from_row(row, redact_arguments=True)
             )
+
+    def confirmation_is_quiesced(self, confirmation_id: str) -> bool | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select confirmations.proposer_quiesced_at,
+                       confirmations.proposer_run_id,
+                       turns.runtime_quiesced_run_id
+                from workbench_confirmations as confirmations
+                join workbench_turns as turns on turns.id=confirmations.turn_id
+                where confirmations.id=?
+                """,
+                (confirmation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return bool(
+            row["proposer_quiesced_at"]
+            and row["proposer_run_id"]
+            and row["proposer_run_id"] == row["runtime_quiesced_run_id"]
+        )
 
     def requested_quiesced_confirmation_ids(
         self, *, limit: int = 2
@@ -1858,6 +2009,12 @@ class WorkbenchStore(AutoReplyStore):
     def _attachment_from_row(row: sqlite3.Row) -> WorkbenchAttachment:
         return WorkbenchAttachment.model_validate(
             {key: row[key] for key in WorkbenchAttachment.model_fields}
+        )
+
+    @staticmethod
+    def _artifact_from_row(row: sqlite3.Row) -> WorkbenchArtifact:
+        return WorkbenchArtifact.model_validate(
+            {key: row[key] for key in WorkbenchArtifact.model_fields}
         )
 
     @staticmethod
