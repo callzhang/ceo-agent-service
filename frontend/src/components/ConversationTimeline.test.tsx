@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactList } from "./ArtifactList";
 import { ConfirmationCard } from "./ConfirmationCard";
-import { ConversationTimeline } from "./ConversationTimeline";
+import { assistantTurnKey, ConversationTimeline } from "./ConversationTimeline";
 import { TurnInspector } from "./TurnInspector";
 import type { Timeline } from "../types";
 
@@ -37,6 +37,10 @@ const timeline: Timeline = {
 };
 
 describe("ConversationTimeline", () => {
+  it("uses the exact stable assistant item key contract", () => {
+    expect(assistantTurnKey(turn)).toBe("turn:turn-1:assistant");
+  });
+
   it("renders ordered safe markdown, execution, confirmation and artifact blocks", () => {
     render(<ConversationTimeline timeline={timeline} activeTurnId={turn.id} onConfirm={vi.fn()} onCancel={vi.fn()} />);
 
@@ -72,6 +76,45 @@ describe("ConversationTimeline", () => {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
   });
+
+  it("uses authoritative final text when persisted deltas are only a partial page", () => {
+    const completed = { ...turn, status: "completed" as const, final_text: "完整的最终答案" };
+    render(
+      <ConversationTimeline
+        timeline={{
+          ...timeline,
+          turns: [completed],
+          events: [{ id: 20, turn_id: completed.id, sequence: 20, event_type: "text_delta", payload: { text: "不完整片段" }, created_at: "" }],
+          events_has_more: true,
+        }}
+        activeTurnId={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("完整的最终答案")).toBeInTheDocument();
+    expect(screen.queryByText("不完整片段")).not.toBeInTheDocument();
+  });
+
+  it("renders streamed deltas only for nonterminal turns", () => {
+    const stopped = { ...turn, status: "stopped" as const, final_text: "停止前的完整文本" };
+    render(
+      <ConversationTimeline
+        timeline={{
+          ...timeline,
+          turns: [stopped],
+          events: [{ id: 21, turn_id: stopped.id, sequence: 21, event_type: "text_delta", payload: { text: "分页片段" }, created_at: "" }],
+        }}
+        activeTurnId={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("停止前的完整文本")).toBeInTheDocument();
+    expect(screen.queryByText("分页片段")).not.toBeInTheDocument();
+  });
 });
 
 describe("ConfirmationCard", () => {
@@ -97,6 +140,57 @@ describe("ConfirmationCard", () => {
     expect(confirm).toBeEnabled();
     await user.click(confirm);
     expect(onConfirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts one decision intent before proposer quiescence", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ConfirmationCard
+        confirmation={{ ...timeline.confirmations[0], decision_requested: "", proposer_quiesced: false }}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const confirm = screen.getByRole("button", { name: "确认执行" });
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
+    await user.click(confirm);
+    expect(onConfirm).toHaveBeenCalledOnce();
+  });
+
+  it("describes persisted confirm and cancel intents according to quiescence", () => {
+    const { rerender } = render(
+      <ConfirmationCard
+        confirmation={{ ...timeline.confirmations[0], decision_requested: "confirm", proposer_quiesced: true }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("正在执行已确认操作")).toBeInTheDocument();
+    rerender(
+      <ConfirmationCard
+        confirmation={{ ...timeline.confirmations[0], decision_requested: "cancel", proposer_quiesced: true }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("正在取消操作")).toBeInTheDocument();
+  });
+
+  it("shows persisted confirmation outcomes instead of an in-progress label", () => {
+    render(
+      <ConfirmationCard
+        confirmation={{ ...timeline.confirmations[0], status: "executed", decision_requested: "confirm", proposer_quiesced: true }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("操作已执行")).toBeInTheDocument();
+    expect(screen.queryByText("正在执行已确认操作")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认执行" })).toBeDisabled();
   });
 });
 

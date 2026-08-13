@@ -110,6 +110,69 @@ function mergeTimeline(current: Timeline, incoming: Timeline, mode: "recent" | "
   };
 }
 
+type ResourcePageKind = "events" | "artifacts" | "confirmations" | "attachments";
+interface ResourcePageCursor {
+  before: string;
+  cursor: string | number;
+}
+type ResourcePageQueues = Record<ResourcePageKind, ResourcePageCursor[]>;
+
+function emptyResourcePageQueues(): ResourcePageQueues {
+  return { events: [], artifacts: [], confirmations: [], attachments: [] };
+}
+
+function resourceCursor(timeline: Timeline, kind: ResourcePageKind): string | number {
+  if (kind === "events") return timeline.events_next_cursor;
+  if (kind === "artifacts") return timeline.artifacts_next_cursor;
+  if (kind === "confirmations") return timeline.confirmations_next_cursor;
+  return timeline.attachments_next_cursor;
+}
+
+function resourceHasMore(timeline: Timeline, kind: ResourcePageKind): boolean {
+  if (kind === "events") return timeline.events_has_more;
+  if (kind === "artifacts") return timeline.artifacts_has_more;
+  if (kind === "confirmations") return timeline.confirmations_has_more;
+  return timeline.attachments_has_more;
+}
+
+function applyResourceQueue(timeline: Timeline, kind: ResourcePageKind, queue: ResourcePageCursor[]): Timeline {
+  const next = queue[0]?.cursor;
+  if (kind === "events") return { ...timeline, events_has_more: queue.length > 0, events_next_cursor: typeof next === "number" ? next : 0 };
+  if (kind === "artifacts") return { ...timeline, artifacts_has_more: queue.length > 0, artifacts_next_cursor: typeof next === "string" ? next : "" };
+  if (kind === "confirmations") return { ...timeline, confirmations_has_more: queue.length > 0, confirmations_next_cursor: typeof next === "string" ? next : "" };
+  return { ...timeline, attachments_has_more: queue.length > 0, attachments_next_cursor: typeof next === "string" ? next : "" };
+}
+
+function mergeResourcePage(current: Timeline, incoming: Timeline, kind: ResourcePageKind): Timeline {
+  if (kind === "events") return {
+    ...current,
+    task: incoming.task,
+    turns: mergeById(current.turns, incoming.turns),
+    events: Array.from(new Map([...current.events, ...incoming.events].map((event) => [event.id, event])).values())
+      .sort((left, right) => left.id - right.id),
+    events_has_more: incoming.events_has_more,
+    events_next_cursor: incoming.events_next_cursor,
+  };
+  if (kind === "artifacts") return {
+    ...current,
+    artifacts: mergeById(current.artifacts, incoming.artifacts),
+    artifacts_has_more: incoming.artifacts_has_more,
+    artifacts_next_cursor: incoming.artifacts_next_cursor,
+  };
+  if (kind === "confirmations") return {
+    ...current,
+    confirmations: mergeById(current.confirmations, incoming.confirmations),
+    confirmations_has_more: incoming.confirmations_has_more,
+    confirmations_next_cursor: incoming.confirmations_next_cursor,
+  };
+  return {
+    ...current,
+    attachments: mergeById(current.attachments, incoming.attachments),
+    attachments_has_more: incoming.attachments_has_more,
+    attachments_next_cursor: incoming.attachments_next_cursor,
+  };
+}
+
 const turnStatuses: readonly TurnStatus[] = ["queued", "running", "waiting_confirmation", "completed", "stopped", "failed"];
 const activeTurnStatuses: readonly TurnStatus[] = ["queued", "running", "waiting_confirmation"];
 
@@ -136,6 +199,8 @@ export function App() {
   const [timelineError, setTimelineError] = useState("");
   const [connectionError, setConnectionError] = useState("");
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [loadingResource, setLoadingResource] = useState<ResourcePageKind | null>(null);
+  const [resourceQueues, setResourceQueues] = useState<ResourcePageQueues>(emptyResourcePageQueues);
   const [capabilities, setCapabilities] = useState<RuntimeCapabilities[] | null>(null);
   const [stats, setStats] = useState<WorkbenchStats | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -167,6 +232,8 @@ export function App() {
   const archiveRequestsRef = useRef(new Map<string, { id: number; controller: AbortController }>());
   const timelineRef = useRef<Timeline | null>(null);
   const timelineRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
+  const resourceLoadingRef = useRef<{ kind: ResourcePageKind; requestId: number } | null>(null);
+  const resourceQueuesRef = useRef<ResourcePageQueues>(emptyResourcePageQueues());
   const loadedOlderTimelineRef = useRef(false);
   const streamRef = useRef<EventStreamConnection | null>(null);
   const confirmationMutationsRef = useRef(new Set<string>());
@@ -186,6 +253,29 @@ export function App() {
     setTimeline(next);
     return next;
   }, []);
+
+  const writeResourceQueues = useCallback((update: ResourcePageQueues | ((current: ResourcePageQueues) => ResourcePageQueues)) => {
+    const next = typeof update === "function" ? update(resourceQueuesRef.current) : update;
+    resourceQueuesRef.current = next;
+    setResourceQueues(next);
+    return next;
+  }, []);
+
+  const registerResourcePages = useCallback((loaded: Timeline, before: string, replace: boolean) => {
+    writeResourceQueues((current) => {
+      const next = replace
+        ? emptyResourcePageQueues()
+        : Object.fromEntries(Object.entries(current).map(([kind, pages]) => [kind, [...pages]])) as ResourcePageQueues;
+      for (const kind of ["events", "artifacts", "confirmations", "attachments"] as const) {
+        if (!resourceHasMore(loaded, kind)) continue;
+        // Attachments belong to the task, not an individual turn window. The API
+        // therefore ignores `before` for this cursor; keep one global queue entry.
+        const entry = { before: kind === "attachments" ? "" : before, cursor: resourceCursor(loaded, kind) };
+        if (!next[kind].some((page) => page.before === entry.before && page.cursor === entry.cursor)) next[kind].push(entry);
+      }
+      return next;
+    });
+  }, [writeResourceQueues]);
 
   function nextRequest(controller: AbortController) {
     const id = ++requestSequenceRef.current;
@@ -546,6 +636,8 @@ export function App() {
     before = "",
   ) => {
     timelineRequestRef.current?.controller.abort();
+    resourceLoadingRef.current = null;
+    setLoadingResource(null);
     const controller = new AbortController();
     const requestId = ++requestSequenceRef.current;
     timelineRequestRef.current = { id: requestId, controller };
@@ -565,6 +657,7 @@ export function App() {
         || timelineRequestRef.current?.id !== requestId
         || selectedTaskIdRef.current !== taskId
       ) return;
+      registerResourcePages(loaded, before, mode === "initial");
       writeTimeline((current) => {
         if (!current || current.task.id !== taskId || mode === "initial") return loaded;
         const merged = mergeTimeline(current, loaded, mode === "older" ? "older" : "recent");
@@ -588,7 +681,52 @@ export function App() {
         if (mode === "older") setLoadingOlder(false);
       }
     }
-  }, [applyTaskSnapshot, writeTimeline]);
+  }, [applyTaskSnapshot, registerResourcePages, writeTimeline]);
+
+  const loadTimelineResource = useCallback(async (taskId: string, kind: ResourcePageKind) => {
+    if (resourceLoadingRef.current || selectedTaskIdRef.current !== taskId) return;
+    const current = timelineRef.current;
+    if (!current || current.task.id !== taskId) return;
+    const page = resourceQueuesRef.current[kind][0];
+    if (!page) return;
+    const options = kind === "events"
+      ? { eventBefore: page.cursor as number }
+      : kind === "artifacts"
+        ? { artifactAfter: page.cursor as string }
+        : kind === "confirmations"
+          ? { confirmationAfter: page.cursor as string }
+          : { attachmentAfter: page.cursor as string };
+    timelineRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    const requestId = ++requestSequenceRef.current;
+    timelineRequestRef.current = { id: requestId, controller };
+    controllersRef.current.add(controller);
+    resourceLoadingRef.current = { kind, requestId };
+    setLoadingResource(kind);
+    setTimelineError("");
+    try {
+      const loaded = await getTimeline(taskId, { turnLimit: 100, eventLimit: 1000, ...(page.before ? { before: page.before } : {}), ...options, signal: controller.signal });
+      if (!mountedRef.current || selectedTaskIdRef.current !== taskId || timelineRequestRef.current?.id !== requestId) return;
+      const remaining = resourceQueuesRef.current[kind].slice(1);
+      const nextQueue = resourceHasMore(loaded, kind)
+        ? [{ before: page.before, cursor: resourceCursor(loaded, kind) }, ...remaining]
+        : remaining;
+      writeResourceQueues((queues) => ({ ...queues, [kind]: nextQueue }));
+      writeTimeline((value) => value && value.task.id === taskId
+        ? applyResourceQueue(mergeResourcePage(value, loaded, kind), kind, nextQueue)
+        : value);
+    } catch (error) {
+      if (mountedRef.current && selectedTaskIdRef.current === taskId && !(error instanceof DOMException && error.name === "AbortError")) {
+        setTimelineError("资源加载失败，请重试");
+      }
+    } finally {
+      finishRequest(controller);
+      if (resourceLoadingRef.current?.requestId === requestId) {
+        resourceLoadingRef.current = null;
+        if (mountedRef.current) setLoadingResource(null);
+      }
+    }
+  }, [writeResourceQueues, writeTimeline]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -621,6 +759,9 @@ export function App() {
     setConnectionError("");
     setTimelineError("");
     setLoadingOlder(false);
+    setLoadingResource(null);
+    resourceLoadingRef.current = null;
+    writeResourceQueues(emptyResourcePageQueues());
     loadedOlderTimelineRef.current = false;
     if (!selectedTaskId) {
       writeTimeline(null);
@@ -634,7 +775,7 @@ export function App() {
       streamRef.current?.close();
       streamRef.current = null;
     };
-  }, [loadSelectedTimeline, selectedTaskId, writeTimeline]);
+  }, [loadSelectedTimeline, selectedTaskId, writeResourceQueues, writeTimeline]);
 
   useEffect(() => {
     function handlePopState() {
@@ -710,6 +851,10 @@ export function App() {
   const activeTurn = useMemo(
     () => timeline?.turns.find((turn) => activeTurnStatuses.includes(turn.status)) ?? null,
     [timeline],
+  );
+  const selectedRuntimeCapabilities = useMemo(
+    () => capabilities?.find((runtime) => runtime.kind === selectedTask?.runtime_kind)?.capabilities ?? null,
+    [capabilities, selectedTask?.runtime_kind],
   );
 
   useEffect(() => {
@@ -1041,6 +1186,12 @@ export function App() {
             ) : timeline ? (
               <>
                 <div className="conversation-body">
+                  <div className="resource-pagination" aria-label="对话资源分页">
+                    {resourceQueues.events.length > 0 && <button type="button" className="secondary-button" disabled={Boolean(loadingResource)} onClick={() => void loadTimelineResource(selectedTask.id, "events")}>加载更多事件</button>}
+                    {resourceQueues.artifacts.length > 0 && <button type="button" className="secondary-button" disabled={Boolean(loadingResource)} onClick={() => void loadTimelineResource(selectedTask.id, "artifacts")}>加载更多产物</button>}
+                    {resourceQueues.confirmations.length > 0 && <button type="button" className="secondary-button" disabled={Boolean(loadingResource)} onClick={() => void loadTimelineResource(selectedTask.id, "confirmations")}>加载更多确认</button>}
+                    {resourceQueues.attachments.length > 0 && <button type="button" className="secondary-button" disabled={Boolean(loadingResource)} onClick={() => void loadTimelineResource(selectedTask.id, "attachments")}>加载更多附件</button>}
+                  </div>
                   {timeline.has_more && (
                     <button
                       type="button"
@@ -1070,6 +1221,7 @@ export function App() {
                   taskId={selectedTask.id}
                   activeTurn={activeTurn}
                   attachments={timeline.attachments}
+                  capabilities={selectedRuntimeCapabilities}
                   onTurnCreated={handleTurnCreated}
                   onTurnStopped={handleTurnStopped}
                 />

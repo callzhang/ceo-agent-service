@@ -737,6 +737,157 @@ describe("App", () => {
     expect(api.getTimeline).toHaveBeenNthCalledWith(2, first.id, expect.objectContaining({ before: "older-page", signal: expect.any(AbortSignal) }));
   });
 
+  it("keeps a resource cursor bound to the older turn window that produced it", async () => {
+    const user = userEvent.setup();
+    const recent: Turn = { id: "recent", task_id: first.id, client_request_id: "r", user_text: "最近", status: "completed", stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "" };
+    const older: Turn = { ...recent, id: "older", client_request_id: "o", user_text: "更早" };
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline
+      .mockResolvedValueOnce({ ...emptyTimeline(first, [recent]), next_cursor: "older-page", has_more: true })
+      .mockResolvedValueOnce({ ...emptyTimeline(first, [older]), artifacts_has_more: true, artifacts_next_cursor: "older-artifacts" })
+      .mockResolvedValueOnce(emptyTimeline(first, [older]));
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "加载更早对话" }));
+    await user.click(await screen.findByRole("button", { name: "加载更多产物" }));
+
+    expect(api.getTimeline).toHaveBeenNthCalledWith(3, first.id, expect.objectContaining({
+      before: "older-page",
+      artifactAfter: "older-artifacts",
+    }));
+  });
+
+  it("does not enqueue the same task-wide attachment cursor for every turn window", async () => {
+    const user = userEvent.setup();
+    const recent: Turn = { id: "recent", task_id: first.id, client_request_id: "r", user_text: "最近", status: "completed", stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "" };
+    const older: Turn = { ...recent, id: "older", client_request_id: "o", user_text: "更早" };
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline
+      .mockResolvedValueOnce({
+        ...emptyTimeline(first, [recent]),
+        next_cursor: "older-page",
+        has_more: true,
+        attachments_has_more: true,
+        attachments_next_cursor: "shared-attachments",
+      })
+      .mockResolvedValueOnce({
+        ...emptyTimeline(first, [older]),
+        attachments_has_more: true,
+        attachments_next_cursor: "shared-attachments",
+      })
+      .mockResolvedValueOnce(emptyTimeline(first, [recent, older]));
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "加载更早对话" }));
+    await user.click(await screen.findByRole("button", { name: "加载更多附件" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "加载更多附件" })).not.toBeInTheDocument());
+    expect(api.getTimeline).toHaveBeenNthCalledWith(3, first.id, expect.objectContaining({
+      attachmentAfter: "shared-attachments",
+    }));
+  });
+
+  it("progressively loads every truncated timeline resource with its public cursor", async () => {
+    const user = userEvent.setup();
+    const stopped: Turn = {
+      id: "turn-paged", task_id: first.id, client_request_id: "paged", user_text: "分页资源", status: "stopped",
+      stop_requested: true, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+    };
+    const initial: Timeline = {
+      ...emptyTimeline(first, [stopped]),
+      events: [{ id: 100, turn_id: stopped.id, sequence: 100, event_type: "thinking_summary", payload: { summary: "最新事件" }, created_at: "" }],
+      events_has_more: true,
+      events_next_cursor: 90,
+      artifacts_has_more: true,
+      artifacts_next_cursor: "artifact-cursor",
+      confirmations_has_more: true,
+      confirmations_next_cursor: "confirmation-cursor",
+      attachments_has_more: true,
+      attachments_next_cursor: "attachment-cursor",
+    };
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce({
+        ...emptyTimeline(first, [stopped]),
+        events: [{ id: 80, turn_id: stopped.id, sequence: 80, event_type: "thinking_summary", payload: { summary: "更早事件" }, created_at: "" }],
+      })
+      .mockResolvedValueOnce({
+        ...emptyTimeline(first, [stopped]),
+        artifacts: [{ id: "artifact-page-2", turn_id: stopped.id, label: "第二页产物", media_type: "text/plain", created_at: "", download_url: "/ignored" }],
+      })
+      .mockResolvedValueOnce({
+        ...emptyTimeline(first, [stopped]),
+        confirmations: [{
+          id: "confirmation-page-2", turn_id: stopped.id, action_kind: "send", target: "群", summary: "发送", risk: "外部可见",
+          canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "executed",
+          decision_requested: "confirm", decision_requested_at: "", proposer_quiesced: true, created_at: "", decided_at: "",
+        }],
+      })
+      .mockResolvedValueOnce({
+        ...emptyTimeline(first, [stopped]),
+        attachments: [{ id: "attachment-page-2", task_id: first.id, filename: "image.png", media_type: "image/png", size_bytes: 10, created_at: "" }],
+      });
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "加载更多事件" }));
+    expect(await screen.findByText("更早事件")).toBeInTheDocument();
+    expect(api.getTimeline).toHaveBeenNthCalledWith(2, first.id, expect.objectContaining({ eventBefore: 90 }));
+
+    await user.click(screen.getByRole("button", { name: "加载更多产物" }));
+    await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(3, first.id, expect.objectContaining({ artifactAfter: "artifact-cursor" })));
+
+    await user.click(screen.getByRole("button", { name: "加载更多确认" }));
+    await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(4, first.id, expect.objectContaining({ confirmationAfter: "confirmation-cursor" })));
+
+    await user.click(screen.getByRole("button", { name: "加载更多附件" }));
+    await waitFor(() => expect(api.getTimeline).toHaveBeenNthCalledWith(5, first.id, expect.objectContaining({ attachmentAfter: "attachment-cursor" })));
+    expect(await screen.findByText("任务已有 1 个附件")).toBeInTheDocument();
+  });
+
+  it("applies the confirmation response immediately without requiring a manual refresh", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("EventSource", class {
+      onopen = null;
+      onerror = null;
+      addEventListener() {}
+      close() {}
+    });
+    const waiting: Turn = {
+      id: "turn-confirm", task_id: first.id, client_request_id: "confirm", user_text: "发送消息", status: "waiting_confirmation",
+      stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+    };
+    const confirmation = {
+      id: "confirmation-1", turn_id: waiting.id, action_kind: "send", target: "群", summary: "发送", risk: "外部可见",
+      canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "pending" as const,
+      decision_requested: "", decision_requested_at: "", proposer_quiesced: false, created_at: "", decided_at: "",
+    };
+    const refresh = deferred<Timeline>();
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline
+      .mockResolvedValueOnce({
+        ...emptyTimeline(first, [waiting]),
+        confirmations: [confirmation],
+        events: [{ id: 1, turn_id: waiting.id, sequence: 1, event_type: "confirmation_required", payload: { confirmation_id: confirmation.id }, created_at: "" }],
+      })
+      .mockReturnValueOnce(refresh.promise);
+    api.confirmAction.mockResolvedValue({ ...confirmation, decision_requested: "confirm" });
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    const confirm = await screen.findByRole("button", { name: "确认执行" });
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
+    await user.click(confirm);
+
+    expect(api.confirmAction).toHaveBeenCalledOnce();
+    expect(await screen.findByText("等待执行器安全停稳")).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
+  });
+
   it("aborts a stale selected-task timeline and never paints it after switching", async () => {
     const user = userEvent.setup();
     const stale = deferred<Timeline>();

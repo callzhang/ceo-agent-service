@@ -52,9 +52,9 @@ describe("workbench event reducer", () => {
 
     expect(state.lastEventId).toBe(5);
     expect(timelineBlocks("turn-1", state.events).map((block) => [block.kind, block.key, block.text])).toEqual([
-      ["markdown", "event:2:text", "AB"],
-      ["tool", "tool:turn-1:call-1", undefined],
-      ["markdown", "event:5:text", "C"],
+      ["markdown", "event:2", "AB"],
+      ["tool", "event:4", undefined],
+      ["markdown", "event:5", "C"],
     ]);
   });
 
@@ -67,7 +67,7 @@ describe("workbench event reducer", () => {
     ]);
 
     const blocks = timelineBlocks("turn-1", state.events);
-    expect(blocks.map((block) => block.key)).toEqual(["tool:turn-1:a", "tool:turn-1:b"]);
+    expect(blocks.map((block) => block.key)).toEqual(["event:1", "event:2"]);
     expect(blocks.map((block) => block.status)).toEqual(["failed", "completed"]);
   });
 
@@ -83,6 +83,24 @@ describe("workbench event reducer", () => {
       ["tool", undefined],
       ["markdown", "before"],
       ["markdown", "after"],
+    ]);
+  });
+
+  it("uses exact event IDs for stable rendered block keys", () => {
+    const blocks = timelineBlocks("turn-1", createEventState([
+      event(10, "text_delta", { text: "A" }),
+      event(11, "text_delta", { text: "B" }),
+      event(12, "tool_started", { tool: "read", tool_call_id: "call-1" }),
+      event(13, "tool_completed", { tool: "read", tool_call_id: "call-1", status: "completed" }),
+      event(14, "artifact_created", { artifact_id: "artifact-1" }),
+      event(15, "confirmation_required", { confirmation_id: "confirmation-1" }),
+    ]).events);
+
+    expect(blocks.map((block) => block.key)).toEqual([
+      "event:10",
+      "event:12",
+      "event:14",
+      "confirmation:confirmation-1",
     ]);
   });
 

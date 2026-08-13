@@ -231,6 +231,10 @@ h1, h2, h3, p { margin-top: 0; }
 .conversation-body { position: relative; min-height: 0; overflow: hidden; }
 .conversation-timeline, .conversation-virtuoso { height: 100%; }
 .load-older-button { position: absolute; z-index: 4; top: 10px; left: 50%; min-height: 32px; padding: 4px 12px; transform: translateX(-50%); font-size: 0.76rem; }
+.resource-pagination { position: absolute; z-index: 5; top: 10px; right: 12px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; max-width: calc(100% - 24px); }
+.conversation-body:has(.load-older-button) .resource-pagination { top: 48px; }
+.resource-pagination:empty { display: none; }
+.resource-pagination button { min-height: 30px; padding: 3px 9px; font-size: 0.7rem; }
 .conversation-turn { width: min(780px, calc(100% - 38px)); margin: 0 auto; padding: 25px 0 8px; }
 .user-message { display: flex; justify-content: flex-end; }
 .user-message p { max-width: min(620px, 88%); margin: 0; padding: 11px 15px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--accent-soft); border: 1px solid #cfe0d8; border-radius: 16px 16px 4px 16px; }

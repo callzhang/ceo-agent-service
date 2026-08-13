@@ -113,7 +113,7 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[]): Timeli
         const previous = blocks[adjacentTextBlock];
         previous.text = `${previous.text ?? ""}${text}`;
       } else {
-        blocks.push({ kind: "markdown", key: `event:${event.id}:text`, eventId: event.id, text });
+        blocks.push({ kind: "markdown", key: `event:${event.id}`, eventId: event.id, text });
         adjacentTextBlock = blocks.length - 1;
       }
       continue;
@@ -121,7 +121,7 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[]): Timeli
     adjacentTextBlock = null;
     if (event.event_type === "thinking_summary") {
       const text = payloadText(event.payload, "summary") || payloadText(event.payload, "text");
-      if (text) blocks.push({ kind: "thinking", key: `event:${event.id}:thinking`, eventId: event.id, text });
+      if (text) blocks.push({ kind: "thinking", key: `event:${event.id}`, eventId: event.id, text });
       continue;
     }
     if (event.event_type === "tool_started" || event.event_type === "tool_completed") {
@@ -136,7 +136,7 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[]): Timeli
         tools.set(callId, blocks.length);
         blocks.push({
           kind: "tool",
-          key: `tool:${turnId}:${callId}`,
+          key: `event:${event.id}`,
           eventId: event.id,
           status,
           payload: event.payload,
@@ -145,7 +145,7 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[]): Timeli
       continue;
     }
     if (event.event_type === "file_changed") {
-      blocks.push({ kind: "file", key: `event:${event.id}:file`, eventId: event.id, status: payloadText(event.payload, "status"), payload: event.payload });
+      blocks.push({ kind: "file", key: `event:${event.id}`, eventId: event.id, status: payloadText(event.payload, "status"), payload: event.payload });
       continue;
     }
     if (event.event_type === "confirmation_required") {
@@ -155,7 +155,7 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[]): Timeli
     }
     if (event.event_type === "artifact_created") {
       const artifactId = payloadText(event.payload, "artifact_id");
-      if (artifactId) blocks.push({ kind: "artifact", key: `artifact:${artifactId}`, eventId: event.id, artifactId });
+      if (artifactId) blocks.push({ kind: "artifact", key: `event:${event.id}`, eventId: event.id, artifactId });
     }
   }
   return blocks;

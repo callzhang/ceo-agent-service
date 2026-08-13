@@ -12,6 +12,17 @@ vi.mock("../api", () => api);
 
 import { Composer } from "./Composer";
 
+const imageCapabilities = {
+  session_resume: true,
+  streamed_text: true,
+  structured_tools: true,
+  image_input: true,
+  model_selection: true,
+  mcp_configuration: true,
+  stoppable: true,
+  recoverable: true,
+};
+
 const activeTurn = {
   id: "turn-1", task_id: "task-1", client_request_id: "req", user_text: "run", status: "running" as const,
   stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
@@ -23,7 +34,7 @@ describe("Composer", () => {
   it("sends trimmed text on Enter with a UUID while preserving Shift+Enter and IME composition", async () => {
     const user = userEvent.setup();
     api.createTurn.mockResolvedValue({ ...activeTurn, status: "queued" });
-    render(<Composer taskId="task-1" activeTurn={null} attachments={[]} onTurnCreated={vi.fn()} />);
+    render(<Composer taskId="task-1" activeTurn={null} attachments={[]} capabilities={imageCapabilities} onTurnCreated={vi.fn()} />);
     const input = screen.getByRole("textbox", { name: "发送消息" });
 
     await user.type(input, "  hello");
@@ -41,16 +52,16 @@ describe("Composer", () => {
   it("keeps a failed upload visible, blocks send, and retries before creating the turn", async () => {
     const user = userEvent.setup();
     api.uploadAttachment.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({
-      id: "attachment-1", task_id: "task-1", filename: "notes.txt", media_type: "text/plain", size_bytes: 5, created_at: "",
+      id: "attachment-1", task_id: "task-1", filename: "notes.png", media_type: "image/png", size_bytes: 5, created_at: "",
     });
     api.createTurn.mockResolvedValue({ ...activeTurn, status: "queued" });
-    render(<Composer taskId="task-1" activeTurn={null} attachments={[]} onTurnCreated={vi.fn()} />);
+    render(<Composer taskId="task-1" activeTurn={null} attachments={[]} capabilities={imageCapabilities} onTurnCreated={vi.fn()} />);
 
-    fireEvent.change(screen.getByLabelText("添加附件"), { target: { files: [new File(["notes"], "notes.txt", { type: "text/plain" })] } });
+    fireEvent.change(screen.getByLabelText("添加图片"), { target: { files: [new File(["notes"], "notes.png", { type: "image/png" })] } });
     expect(await screen.findByText("上传失败")).toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "发送消息" }), "review");
     expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "重试上传 notes.txt" }));
+    await user.click(screen.getByRole("button", { name: "重试上传 notes.png" }));
     expect(await screen.findByText("已上传")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "发送" }));
 
@@ -60,10 +71,10 @@ describe("Composer", () => {
 
   it("rejects unsupported and over-total-limit files before upload", async () => {
     const user = userEvent.setup();
-    render(<Composer taskId="task-1" activeTurn={null} attachments={[]} onTurnCreated={vi.fn()} />);
-    const input = screen.getByLabelText("添加附件");
+    render(<Composer taskId="task-1" activeTurn={null} attachments={[]} capabilities={imageCapabilities} onTurnCreated={vi.fn()} />);
+    const input = screen.getByLabelText("添加图片");
     fireEvent.change(input, { target: { files: [new File(["bad"], "script.bin", { type: "application/octet-stream" })] } });
-    expect(await screen.findByRole("alert")).toHaveTextContent("不支持的文件类型");
+    expect(await screen.findByRole("alert")).toHaveTextContent("仅支持");
     expect(api.uploadAttachment).not.toHaveBeenCalled();
   });
 
@@ -71,7 +82,7 @@ describe("Composer", () => {
     const user = userEvent.setup();
     let resolveStop!: (value: typeof activeTurn) => void;
     api.stopTurn.mockReturnValue(new Promise((resolve) => { resolveStop = resolve; }));
-    render(<Composer taskId="task-1" activeTurn={activeTurn} attachments={[]} onTurnCreated={vi.fn()} />);
+    render(<Composer taskId="task-1" activeTurn={activeTurn} attachments={[]} capabilities={imageCapabilities} onTurnCreated={vi.fn()} />);
 
     const stop = screen.getByRole("button", { name: "停止执行" });
     await user.click(stop);
@@ -87,7 +98,7 @@ describe("Composer", () => {
     api.createTurn.mockResolvedValue({ ...activeTurn, id: "turn-strict", status: "queued" });
     render(
       <StrictMode>
-        <Composer taskId="task-1" activeTurn={null} attachments={[]} onTurnCreated={onTurnCreated} />
+        <Composer taskId="task-1" activeTurn={null} attachments={[]} capabilities={imageCapabilities} onTurnCreated={onTurnCreated} />
       </StrictMode>,
     );
 
@@ -95,5 +106,55 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() => expect(onTurnCreated).toHaveBeenCalledWith(expect.objectContaining({ id: "turn-strict" })));
+  });
+
+  it("reuses the same client request ID after a lost create response", async () => {
+    const user = userEvent.setup();
+    api.createTurn.mockRejectedValueOnce(new Error("lost response")).mockResolvedValueOnce({ ...activeTurn, status: "queued" });
+    render(<Composer taskId="task-1" activeTurn={null} attachments={[]} capabilities={imageCapabilities} onTurnCreated={vi.fn()} />);
+
+    await user.type(screen.getByRole("textbox", { name: "发送消息" }), "retry safely");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("消息发送失败");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(api.createTurn).toHaveBeenCalledTimes(2);
+    expect(api.createTurn.mock.calls[1][2]).toBe(api.createTurn.mock.calls[0][2]);
+  });
+
+  it("starts a new idempotency intent after the failed draft is edited", async () => {
+    const user = userEvent.setup();
+    api.createTurn.mockRejectedValueOnce(new Error("lost response")).mockResolvedValueOnce({ ...activeTurn, status: "queued" });
+    render(<Composer taskId="task-1" activeTurn={null} attachments={[]} capabilities={imageCapabilities} onTurnCreated={vi.fn()} />);
+
+    const editor = screen.getByRole("textbox", { name: "发送消息" });
+    await user.type(editor, "first intent");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("消息发送失败");
+    await user.type(editor, " revised");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(api.createTurn).toHaveBeenCalledTimes(2);
+    expect(api.createTurn.mock.calls[1][2]).not.toBe(api.createTurn.mock.calls[0][2]);
+  });
+
+  it("gates image upload and stop controls on runtime capabilities", () => {
+    const unsupportedAttachment = {
+      id: "attachment-1", task_id: "task-1", filename: "notes.txt", media_type: "text/plain", size_bytes: 5, created_at: "",
+    };
+    render(
+      <Composer
+        taskId="task-1"
+        activeTurn={activeTurn}
+        attachments={[unsupportedAttachment]}
+        capabilities={{ ...imageCapabilities, image_input: false, stoppable: false }}
+        onTurnCreated={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("添加图片")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "停止执行" })).not.toBeInTheDocument();
+    expect(screen.getByText(/不支持安全停止/)).toBeInTheDocument();
+    expect(screen.getByText(/现有附件与运行时能力不兼容/)).toBeInTheDocument();
   });
 });

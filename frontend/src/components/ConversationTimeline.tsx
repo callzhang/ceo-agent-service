@@ -16,6 +16,10 @@ interface ConversationTimelineProps {
   onCancel: (confirmation: Confirmation) => Promise<void>;
 }
 
+export function assistantTurnKey(turn: Turn) {
+  return `turn:${turn.id}:assistant`;
+}
+
 function safeWebHref(href?: string): string | undefined {
   if (!href) return undefined;
   try {
@@ -49,12 +53,14 @@ const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
 function TurnItem({ turn, timeline, active, onConfirm, onCancel }: { turn: Turn; timeline: Timeline; active: boolean; onConfirm: ConversationTimelineProps["onConfirm"]; onCancel: ConversationTimelineProps["onCancel"] }) {
   const blocks = useMemo(() => timelineBlocks(turn.id, timeline.events), [timeline.events, turn.id]);
   const renderedText = blocks.some((block) => block.kind === "markdown");
+  const nonterminal = ["queued", "running", "waiting_confirmation"].includes(turn.status);
+  const authoritativeFinalText = !nonterminal && Boolean(turn.final_text);
   return (
     <article className="conversation-turn" data-status={turn.status} data-active={active || undefined}>
       <div className="user-message"><p>{turn.user_text}</p></div>
       <div className="assistant-message">
         {blocks.map((block) => {
-          if (block.kind === "markdown") return <MarkdownBlock key={block.key} text={block.text ?? ""} />;
+          if (block.kind === "markdown") return !authoritativeFinalText ? <MarkdownBlock key={block.key} text={block.text ?? ""} /> : null;
           if (block.kind === "thinking") return <details className="thinking-block" key={block.key}><summary>思考摘要</summary><p>{block.text}</p></details>;
           if (block.kind === "tool" || block.kind === "file") return <ExecutionStep key={block.key} kind={block.kind} status={block.status} payload={block.payload} />;
           if (block.kind === "confirmation") {
@@ -64,7 +70,8 @@ function TurnItem({ turn, timeline, active, onConfirm, onCancel }: { turn: Turn;
           const artifact = timeline.artifacts.find((item) => item.id === block.artifactId && item.turn_id === turn.id);
           return artifact ? <ArtifactList key={block.key} taskId={timeline.task.id} turnId={turn.id} artifacts={[artifact]} /> : null;
         })}
-        {!renderedText && turn.final_text && <MarkdownBlock text={turn.final_text} />}
+        {authoritativeFinalText && <MarkdownBlock text={turn.final_text} />}
+        {!authoritativeFinalText && !renderedText && turn.final_text && <MarkdownBlock text={turn.final_text} />}
         {turn.status === "queued" && <p className="turn-state" role="status">已排队</p>}
         {turn.status === "running" && <p className="turn-state" role="status">执行中</p>}
         {turn.status === "waiting_confirmation" && <p className="turn-state" role="status">等待确认</p>}
@@ -96,7 +103,7 @@ export function ConversationTimeline({ timeline, activeTurnId, onConfirm, onCanc
         firstItemIndex={firstItemIndex.current}
         initialItemCount={turns.length}
         followOutput={activeTurnId ? "smooth" : false}
-        computeItemKey={(_index, turn) => `turn:${turn.id}`}
+        computeItemKey={(_index, turn) => assistantTurnKey(turn)}
         itemContent={(_index, turn) => <TurnItem turn={turn} timeline={timeline} active={turn.id === activeTurnId} onConfirm={onConfirm} onCancel={onCancel} />}
       />
     </div>

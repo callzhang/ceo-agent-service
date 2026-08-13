@@ -22,9 +22,18 @@ export function ConfirmationCard({ confirmation, onConfirm, onCancel }: Confirma
   const undecided = confirmation.status === "pending";
   const waitingForQuiescence = undecided && Boolean(confirmation.decision_requested) && !confirmation.proposer_quiesced;
   const persistedIntent = Boolean(confirmation.decision_requested);
+  const outcomeLabel = confirmation.status === "executed"
+    ? "操作已执行"
+    : confirmation.status === "cancelled"
+      ? "操作已取消"
+      : confirmation.status === "failed"
+        ? "操作执行失败"
+        : confirmation.status === "confirmed"
+          ? "正在执行已确认操作"
+          : "";
 
   async function decide(kind: "confirm" | "cancel") {
-    if (inFlight.current || pending || !undecided || persistedIntent || !confirmation.proposer_quiesced) return;
+    if (inFlight.current || pending || !undecided || persistedIntent) return;
     inFlight.current = true;
     setPending(kind);
     setError("");
@@ -49,11 +58,16 @@ export function ConfirmationCard({ confirmation, onConfirm, onCancel }: Confirma
         <div><dt>风险</dt><dd>{safeDisplayText(confirmation.risk, "未说明")} <small>运行时提供，未验证</small></dd></div>
       </dl>
       {waitingForQuiescence && <p className="confirmation-wait" role="status">等待执行器安全停稳</p>}
-      {persistedIntent && confirmation.proposer_quiesced && <p className="confirmation-wait" role="status">决定已提交，等待执行结果</p>}
+      {undecided && persistedIntent && confirmation.proposer_quiesced && (
+        <p className="confirmation-wait" role="status">
+          {confirmation.decision_requested === "cancel" ? "正在取消操作" : "正在执行已确认操作"}
+        </p>
+      )}
+      {outcomeLabel && <p className="confirmation-wait" role="status">{outcomeLabel}</p>}
       {error && <p className="inline-alert" role="alert">{error}</p>}
       <div className="confirmation-actions">
-        <button type="button" className="primary-button" disabled={Boolean(pending) || !undecided || persistedIntent || !confirmation.proposer_quiesced} onClick={() => void decide("confirm")}>确认执行</button>
-        <button type="button" className="secondary-button" disabled={Boolean(pending) || !undecided || persistedIntent || !confirmation.proposer_quiesced} onClick={() => void decide("cancel")}>取消</button>
+        <button type="button" className="primary-button" disabled={Boolean(pending) || !undecided || persistedIntent} onClick={() => void decide("confirm")}>确认执行</button>
+        <button type="button" className="secondary-button" disabled={Boolean(pending) || !undecided || persistedIntent} onClick={() => void decide("cancel")}>取消</button>
       </div>
     </section>
   );
