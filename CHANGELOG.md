@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Material reading and local parsing
+
+- Made the default downloaded-material reader detect OOXML workbooks by their
+  file content, so extensionless downloads no longer fail after being treated
+  as UTF-8 text.
+
 ### Skill-first Agent runtime
 
 - Added seven distributable CEO business Skills for message triage, calendar invitations, document review,

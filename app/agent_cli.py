@@ -210,7 +210,7 @@ def read_spreadsheet(
 
 
 def read_text_file(path: str) -> dict[str, object]:
-    """Read one bounded UTF-8 material file without granting shell access."""
+    """Read one bounded text or OOXML workbook material without shell access."""
     material_path = Path(path).expanduser().resolve(strict=True)
     if not any(material_path.is_relative_to(root) for root in TEXT_MATERIAL_ROOTS):
         raise AgentReadOnlyViolationError("text_material_path_forbidden")
@@ -221,7 +221,26 @@ def read_text_file(path: str) -> dict[str, object]:
         if not stat.S_ISREG(file_stat.st_mode):
             raise AgentReadOnlyViolationError("text_material_file_not_regular")
         if file_stat.st_size > MAX_TEXT_MATERIAL_BYTES:
-            raise AgentReadOnlyViolationError("text_material_file_too_large")
+            if file_stat.st_size > MAX_SPREADSHEET_BYTES:
+                raise AgentReadOnlyViolationError("material_file_too_large")
+        material_file.seek(0)
+        if zipfile.is_zipfile(material_file):
+            material_file.seek(0)
+            try:
+                with zipfile.ZipFile(material_file) as workbook:
+                    if {"[Content_Types].xml", "xl/workbook.xml"}.issubset(
+                        workbook.namelist()
+                    ):
+                        return _read_xlsx_workbook(
+                            workbook,
+                            max_rows=MAX_SPREADSHEET_ROWS,
+                            max_columns=MAX_SPREADSHEET_COLUMNS,
+                        )
+            except zipfile.BadZipFile as exc:
+                raise AgentReadOnlyViolationError("spreadsheet_file_invalid") from exc
+            except ElementTree.ParseError as exc:
+                raise AgentReadOnlyViolationError("spreadsheet_xml_invalid") from exc
+        material_file.seek(0)
         content_bytes = material_file.read(MAX_TEXT_MATERIAL_BYTES + 1)
     if len(content_bytes) > MAX_TEXT_MATERIAL_BYTES:
         raise AgentReadOnlyViolationError("text_material_file_too_large")

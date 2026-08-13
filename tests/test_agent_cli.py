@@ -1,5 +1,6 @@
 import asyncio
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,29 @@ def test_read_text_file_rejects_non_utf8_material(tmp_path: Path):
         match="text_material_invalid_utf8",
     ):
         agent_cli.read_text_file(str(material))
+
+
+def test_read_text_file_detects_xlsx_without_filename_extension(tmp_path: Path):
+    material = tmp_path / "downloaded-material"
+    with zipfile.ZipFile(material, "w") as workbook:
+        workbook.writestr("[Content_Types].xml", "<Types/>")
+        workbook.writestr(
+            "xl/workbook.xml",
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" r:id="rId1"/></sheets></workbook>',
+        )
+        workbook.writestr(
+            "xl/_rels/workbook.xml.rels",
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+        )
+        workbook.writestr(
+            "xl/worksheets/sheet1.xml",
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Verified</t></is></c></row></sheetData></worksheet>',
+        )
+
+    result = agent_cli.read_text_file(str(material))
+
+    assert result["format"] == "xlsx"
+    assert result["sheets"][0]["rows"][0]["cells"] == {"A": "Verified"}
 
 
 def test_read_skill_allows_markdown_referenced_by_an_installed_skill(
