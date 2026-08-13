@@ -2296,7 +2296,11 @@ def test_crash_after_write_uses_fresh_read_only_recovery_and_confirms_without_re
 
 def test_recovery_keeps_a_specific_audit_failure_code(setup, monkeypatch):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
-    runner = AuditAgentRunner(store=store, workspace=Path("/workspace"))
+    runner = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        owner="audit-agent",
+    )
 
     def fail_reconciliation(*args, **kwargs):
         raise RuntimeError("audit_reconciliation_result_invalid")
@@ -4379,6 +4383,26 @@ def test_invalid_absent_recovery_candidate_rotates_consumer_generation(setup):
     assert requeued is not None and requeued.status == "pending"
     assert requeued.execution_generation != task.execution_generation
     assert executor.commands == []
+
+
+def test_recovery_event_limit_is_suspended_for_new_evidence(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    claim = store.claim_unknown_agent_run(run.id, owner="audit-agent")
+    assert claim.claimed
+    runner = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        owner="audit-agent",
+    )
+
+    runner._defer_claimed_unknown_recovery(
+        claim.run,
+        ValueError("agent run reconciliation event limit exceeded"),
+    )
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.reconciliation_suspended is True
+    assert json.loads(persisted.structured_error_json)["retryable"] is False
 
 
 def test_persisted_absence_resumes_execute_phase_without_reconciling_again(setup):

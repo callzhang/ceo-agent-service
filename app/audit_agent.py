@@ -45,6 +45,7 @@ RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
+RECONCILIATION_EVENT_LIMIT_ERROR = "agent run reconciliation event limit exceeded"
 
 
 class AuditAgentRunner:
@@ -778,14 +779,25 @@ class AuditAgentRunner:
             or persisted.lease_owner != self.owner
         ):
             return
+        event_limit_reached = str(exc).strip() == RECONCILIATION_EVENT_LIMIT_ERROR
+        structured_error = {
+            "code": _audit_recovery_error_code(exc),
+            "retryable": not event_limit_reached,
+        }
+        if event_limit_reached:
+            structured_error["reason"] = (
+                "Controlled reconciliation evidence reached its bounded event limit; "
+                "new configuration or a manual readback is required before another retry."
+            )
         self.store.defer_unknown_agent_run_reconciliation(
             run.id,
-            {"code": _audit_recovery_error_code(exc), "retryable": True},
+            structured_error,
             owner=self.owner,
             expected_execution_generation=run.execution_generation,
             next_attempt_at=unknown_reconciliation_retry_at(
                 persisted.reconciliation_attempts
             ),
+            suspended=event_limit_reached,
         )
 
 
