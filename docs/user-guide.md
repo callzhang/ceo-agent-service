@@ -40,7 +40,7 @@ Agent 运行时，文本会逐段出现，工具调用会显示开始和完成�
 | `waiting_confirmation` | 已提出受审阅动作，等待确认或取消 | 核对动作、规范化目标和风险 |
 | `completed` | 本轮正常结束，最终文本已保存 | 查看结果、下载产物或继续同一任务 |
 | `stopped` | 用户停止或 runtime 确认停止，属于终态 | 可在同一任务中新建一轮 |
-| `failed` | 本轮无法安全完成 | 根据错误和诊断页排查后再决定是否重试 |
+| `failed` | 本轮无法安全完成 | 根据当前任务时间线和检查器中的错误排查后再决定是否重试 |
 
 “停止”是对当前 runtime 的一次幂等取消请求：重复点击不会重复发送停止信号，终态只记录一次。停止不会撤销
 已经完成的外部动作；如果写操作结果不明确，系统必须先只读核对，不能把停止当作“确定没有发生”。
@@ -70,8 +70,9 @@ Agent 运行时，文本会逐段出现，工具调用会显示开始和完成�
 [Agent Installation Runbook](agent-installation-runbook.md) 安装前端依赖并构建工作台；普通使用者不需要在
 页面中运行构建命令。常用入口：`/history` 查看钉钉/OA 等既有处理记录和工具回执，`/workers` 查看后台投递
 和作业 worker，`/tasks` 查看项目与 TODO，`/settings` 查看配置、Channel gate 和日志。工作台任务失败时，
-先在当前任务确认终态和事件，再通过 `/history` 查看持久化事件；仍无法判断时，由管理员使用 SQLite 只读检查
-和回读工具排查。`/workers` 不显示工作台执行器或 lease。不要直接修改 SQLite 状态。
+在当前任务的时间线和检查器中查看持久化事件、终态和错误；如果怀疑 lease 或确认状态卡住，可请管理员对
+SQLite 做只读检查。`/history` 只记录钉钉、OA 和后台流程，不列出 Workbench 事件；`/workers` 也不显示
+工作台执行器或 lease。不要直接修改 SQLite 状态。
 
 ## 角色速查
 
@@ -293,7 +294,7 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 | 页面 | 用途 |
 | --- | --- |
 | `/` | Agent 工作台；创建、继续和停止持久任务，查看流式进度、确认卡与产物 |
-| `/history` | 钉钉、OA 等既有处理记录、状态筛选和最近任务 |
+| `/history` | 钉钉、OA 和后台流程的处理记录、状态筛选和最近任务；不列出 Workbench 事件 |
 | `/attempts/{id}` | 单次 trigger、回复、证据、工具事件和回执；从此处打开 Consumer/Audit 执行记录，不显示内部会话标识 |
 | `/oa-approvals/{process_instance_id}` | OA 详情、评论和历史处理结果 |
 | `/tasks` | 项目、TODO 和 follow-up |
