@@ -45,7 +45,7 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-13.7"
+STORE_SCHEMA_VERSION = "2026-08-13.8"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "workbench_tasks",
@@ -54,6 +54,15 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "workbench_attachments",
     "workbench_artifacts",
     "workbench_confirmations",
+)
+STORE_SCHEMA_REQUIRED_INDEXES = (
+    "idx_workbench_events_turn_id_id",
+    "idx_workbench_artifacts_turn_created_id",
+    "idx_workbench_turns_task_created_id",
+    "idx_workbench_tasks_updated_id",
+    "idx_workbench_confirmations_turn_created_id",
+    "idx_workbench_attachments_task_created_id",
+    "idx_workbench_events_event_type",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
@@ -722,12 +731,19 @@ class AutoReplyStore:
                         "select name from sqlite_master where type='table'"
                     )
                 }
+                present_indexes = {
+                    str(item["name"])
+                    for item in db.execute(
+                        "select name from sqlite_master where type='index'"
+                    )
+                }
         except sqlite3.OperationalError as exc:
             if _is_sqlite_lock_error(exc):
                 raise
             return False
         return (
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
+            and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
             and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
         )
 
@@ -1624,8 +1640,16 @@ class AutoReplyStore:
                 "on workbench_confirmations(created_at, id, turn_id)"
             )
             db.execute(
+                "create index if not exists idx_workbench_confirmations_turn_created_id "
+                "on workbench_confirmations(turn_id, created_at, id)"
+            )
+            db.execute(
                 "create index if not exists idx_workbench_attachments_task_created_id "
                 "on workbench_attachments(task_id, created_at, id)"
+            )
+            db.execute(
+                "create index if not exists idx_workbench_events_event_type "
+                "on workbench_events(event_type)"
             )
             db.execute("drop index if exists idx_workbench_confirmations_recovery")
             db.execute(

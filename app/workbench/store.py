@@ -155,6 +155,21 @@ class WorkbenchStore(AutoReplyStore):
             ).fetchone()
             return None if row is None else self._task_from_row(row)
 
+    def get_task_summary(self, task_id: str) -> tuple[WorkbenchTask, str] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select tasks.*,
+                       coalesce((select status from workbench_turns
+                                 where task_id=tasks.id
+                                 order by created_at desc,id desc limit 1), 'idle')
+                           as latest_state
+                from workbench_tasks tasks where tasks.id=?
+                """,
+                (task_id,),
+            ).fetchone()
+            return None if row is None else (self._task_from_row(row), row["latest_state"])
+
     def list_tasks(self, *, include_archived: bool = False) -> list[WorkbenchTask]:
         with self._connect() as db:
             query = "select * from workbench_tasks"
@@ -750,7 +765,16 @@ class WorkbenchStore(AutoReplyStore):
             return [self._artifact_from_row(row) for row in rows]
 
     def timeline_snapshot(
-        self, task_id: str, *, turn_limit: int = 100, event_limit: int = 1000
+        self,
+        task_id: str,
+        *,
+        turn_limit: int = 100,
+        event_limit: int = 1000,
+        before: tuple[str, str] | None = None,
+        event_before: int | None = None,
+        artifact_after: tuple[str, str] | None = None,
+        confirmation_after: tuple[str, str] | None = None,
+        attachment_after: tuple[str, str] | None = None,
     ) -> tuple[
         WorkbenchTask,
         list[WorkbenchTurn],
@@ -758,44 +782,104 @@ class WorkbenchStore(AutoReplyStore):
         list[WorkbenchAttachment],
         list[WorkbenchArtifact],
         list[WorkbenchConfirmation],
+        dict[str, Any],
     ]:
         if turn_limit < 1 or turn_limit > 100 or event_limit < 1 or event_limit > 1000:
             raise ValueError("invalid timeline limit")
         with self._connect() as db:
             task_row = self._require_task(db, task_id)
+            cursor_sql = ""
+            turn_parameters: list[Any] = [task_id]
+            if before is not None:
+                cursor_sql = "and (created_at<? or (created_at=? and id<?))"
+                turn_parameters.extend((before[0], before[0], before[1]))
+            turn_parameters.append(turn_limit + 1)
             turn_rows = db.execute(
-                """select * from workbench_turns where task_id=?
-                   order by created_at desc, id desc limit ?""",
-                (task_id, turn_limit),
+                f"""select * from workbench_turns where task_id=? {cursor_sql}
+                    order by created_at desc,id desc limit ?""",
+                tuple(turn_parameters),
             ).fetchall()
-            event_rows = db.execute(
-                """select events.* from workbench_events events
-                   indexed by idx_workbench_events_id_turn_id
-                   join workbench_turns turns on turns.id=events.turn_id
-                   where turns.task_id=? order by events.id desc limit ?""",
-                (task_id, event_limit),
-            ).fetchall()
+            has_more = len(turn_rows) > turn_limit
+            turn_rows = turn_rows[:turn_limit]
+            turn_ids = [row["id"] for row in turn_rows]
+            placeholders = ",".join("?" for _ in turn_ids)
+            if turn_ids:
+                event_cursor_sql = ""
+                event_parameters: list[Any] = list(turn_ids)
+                if event_before is not None:
+                    event_cursor_sql = "and id<?"
+                    event_parameters.append(event_before)
+                event_parameters.append(event_limit + 1)
+                event_rows = db.execute(
+                    f"""select * from workbench_events where turn_id in ({placeholders})
+                        {event_cursor_sql} order by id desc limit ?""",
+                    tuple(event_parameters),
+                ).fetchall()
+                artifact_cursor_sql = ""
+                artifact_parameters: list[Any] = list(turn_ids)
+                if artifact_after is not None:
+                    artifact_cursor_sql = (
+                        "and (created_at>? or (created_at=? and id>?))"
+                    )
+                    artifact_parameters.extend(
+                        (artifact_after[0], artifact_after[0], artifact_after[1])
+                    )
+                artifact_rows = db.execute(
+                    f"""select * from workbench_artifacts where turn_id in ({placeholders})
+                        {artifact_cursor_sql} order by created_at,id limit 101""",
+                    tuple(artifact_parameters),
+                ).fetchall()
+                confirmation_cursor_sql = ""
+                confirmation_parameters: list[Any] = list(turn_ids)
+                if confirmation_after is not None:
+                    confirmation_cursor_sql = (
+                        "and (created_at>? or (created_at=? and id>?))"
+                    )
+                    confirmation_parameters.extend(
+                        (
+                            confirmation_after[0],
+                            confirmation_after[0],
+                            confirmation_after[1],
+                        )
+                    )
+                confirmation_rows = db.execute(
+                    f"""select * from workbench_confirmations
+                        where turn_id in ({placeholders})
+                        {confirmation_cursor_sql} order by created_at,id limit 101""",
+                    tuple(confirmation_parameters),
+                ).fetchall()
+            else:
+                event_rows, artifact_rows, confirmation_rows = [], [], []
+            attachment_cursor_sql = ""
+            attachment_parameters: list[Any] = [task_id]
+            if attachment_after is not None:
+                attachment_cursor_sql = (
+                    "and (created_at>? or (created_at=? and id>?))"
+                )
+                attachment_parameters.extend(
+                    (attachment_after[0], attachment_after[0], attachment_after[1])
+                )
             attachment_rows = db.execute(
-                """select * from workbench_attachments where task_id=?
-                   order by created_at,id limit 100""",
-                (task_id,),
+                f"""select * from workbench_attachments where task_id=?
+                   {attachment_cursor_sql} order by created_at,id limit 101""",
+                tuple(attachment_parameters),
             ).fetchall()
-            artifact_rows = db.execute(
-                """select artifacts.* from workbench_artifacts artifacts
-                   indexed by idx_workbench_artifacts_created_id_turn
-                   join workbench_turns turns on turns.id=artifacts.turn_id
-                   where turns.task_id=? order by artifacts.created_at,artifacts.id
-                   limit 100""",
-                (task_id,),
-            ).fetchall()
-            confirmation_rows = db.execute(
-                """select confirmations.* from workbench_confirmations confirmations
-                   indexed by idx_workbench_confirmations_created_id_turn
-                   join workbench_turns turns on turns.id=confirmations.turn_id
-                   where turns.task_id=? order by confirmations.created_at,confirmations.id
-                   limit 100""",
-                (task_id,),
-            ).fetchall()
+            events_has_more = len(event_rows) > event_limit
+            artifacts_has_more = len(artifact_rows) > 100
+            confirmations_has_more = len(confirmation_rows) > 100
+            attachments_has_more = len(attachment_rows) > 100
+            events_next_cursor = (
+                event_rows[event_limit - 1]["id"] if events_has_more else None
+            )
+            event_rows = event_rows[:event_limit]
+            artifact_rows = artifact_rows[:100]
+            confirmation_rows = confirmation_rows[:100]
+            attachment_rows = attachment_rows[:100]
+            next_cursor = (
+                (turn_rows[-1]["created_at"], turn_rows[-1]["id"])
+                if has_more and turn_rows
+                else None
+            )
             return (
                 self._task_from_row(task_row),
                 [self._turn_from_row(row) for row in reversed(turn_rows)],
@@ -803,6 +887,15 @@ class WorkbenchStore(AutoReplyStore):
                 [self._attachment_from_row(row) for row in attachment_rows],
                 [self._artifact_from_row(row) for row in artifact_rows],
                 [self._confirmation_from_row(row) for row in confirmation_rows],
+                {
+                    "has_more": has_more,
+                    "next_cursor": next_cursor,
+                    "events_has_more": events_has_more,
+                    "events_next_cursor": events_next_cursor,
+                    "artifacts_has_more": artifacts_has_more,
+                    "confirmations_has_more": confirmations_has_more,
+                    "attachments_has_more": attachments_has_more,
+                },
             )
 
     def get_artifact(self, artifact_id: str) -> WorkbenchArtifact | None:
@@ -1270,17 +1363,20 @@ class WorkbenchStore(AutoReplyStore):
             and row["proposer_run_id"] == row["runtime_quiesced_run_id"]
         )
 
-    def confirmation_quiescence_for_task(self, task_id: str) -> dict[str, bool]:
+    def confirmation_quiescence(self, confirmation_ids: list[str]) -> dict[str, bool]:
+        if not confirmation_ids:
+            return {}
+        placeholders = ",".join("?" for _ in confirmation_ids)
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select confirmations.id, confirmations.proposer_quiesced_at,
                        confirmations.proposer_run_id, turns.runtime_quiesced_run_id
                 from workbench_confirmations confirmations
                 join workbench_turns turns on turns.id=confirmations.turn_id
-                where turns.task_id=?
+                where confirmations.id in ({placeholders})
                 """,
-                (task_id,),
+                tuple(confirmation_ids),
             ).fetchall()
         return {
             row["id"]: bool(

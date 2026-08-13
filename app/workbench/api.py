@@ -156,6 +156,16 @@ class PublicTimeline(_StrictModel):
     attachments: list[WorkbenchAttachment]
     artifacts: list[PublicArtifact]
     confirmations: list[PublicConfirmation]
+    next_cursor: str = ""
+    has_more: bool = False
+    events_has_more: bool = False
+    events_next_cursor: int = 0
+    artifacts_has_more: bool = False
+    artifacts_next_cursor: str = ""
+    confirmations_has_more: bool = False
+    confirmations_next_cursor: str = ""
+    attachments_has_more: bool = False
+    attachments_next_cursor: str = ""
 
 
 class RuntimeCapabilitiesResponse(_StrictModel):
@@ -374,34 +384,49 @@ async def _request_model(
         raise HTTPException(status_code=400, detail="Invalid JSON request") from exc
 
 
-def _public_task(store: WorkbenchStore, task: WorkbenchTask) -> PublicTask:
-    turns = store.list_turns(task.id)
-    state = turns[-1].status.value if turns else "idle"
-    return PublicTask(
-        id=task.id,
-        title=task.title,
-        runtime_kind=task.runtime_kind,
-        archived_at=task.archived_at,
-        state=state,
-        created_at=task.created_at,
-        updated_at=task.updated_at,
+def _public_task(
+    store: WorkbenchStore, task: WorkbenchTask, workspace: Path | None = None
+) -> PublicTask:
+    summary = store.get_task_summary(task.id)
+    return _public_task_with_state(
+        task, summary[1] if summary else "idle", workspace
     )
 
 
-def _public_task_with_state(task: WorkbenchTask, state: str) -> PublicTask:
-    return PublicTask(
-        id=task.id,
-        title=task.title,
-        runtime_kind=task.runtime_kind,
-        archived_at=task.archived_at,
-        state=state,
-        created_at=task.created_at,
-        updated_at=task.updated_at,
+def _public_task_with_state(
+    task: WorkbenchTask, state: str, workspace: Path | None = None
+) -> PublicTask:
+    workspace = workspace or Path.cwd()
+    return PublicTask.model_validate(
+        _safe_public_record(
+            {
+                "id": task.id,
+                "title": task.title,
+                "runtime_kind": task.runtime_kind,
+                "archived_at": task.archived_at,
+                "state": state,
+                "created_at": task.created_at,
+                "updated_at": task.updated_at,
+            },
+            workspace,
+        )
     )
 
 
 def _task_cursor(task: WorkbenchTask) -> str:
     raw = json.dumps([task.updated_at, task.id], separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _turn_cursor(turn: WorkbenchTurn) -> str:
+    raw = json.dumps([turn.created_at, turn.id], separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _resource_cursor(resource: Any) -> str:
+    raw = json.dumps(
+        [resource.created_at, resource.id], separators=(",", ":")
+    ).encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
@@ -421,8 +446,34 @@ def _parse_task_cursor(cursor: str | None) -> tuple[str, str] | None:
         raise HTTPException(status_code=400, detail="Invalid task cursor") from exc
 
 
-def _public_turn(turn: WorkbenchTurn) -> PublicTurn:
-    return PublicTurn.model_validate(turn.model_dump())
+def _parse_turn_cursor(cursor: str | None) -> tuple[str, str] | None:
+    try:
+        return _parse_task_cursor(cursor)
+    except HTTPException as exc:
+        raise HTTPException(status_code=400, detail="Invalid timeline cursor") from exc
+
+
+def _parse_resource_cursor(cursor: str | None) -> tuple[str, str] | None:
+    try:
+        return _parse_task_cursor(cursor)
+    except HTTPException as exc:
+        raise HTTPException(status_code=400, detail="Invalid resource cursor") from exc
+
+
+def _safe_public_string(value: str, *, key: str, workspace: Path) -> str:
+    projected = _safe_public_value(value, key=key, workspace=workspace)
+    return projected if isinstance(projected, str) else "[redacted]"
+
+
+def _safe_public_record(values: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    return {
+        key: _safe_public_value(value, key=key, workspace=workspace)
+        for key, value in values.items()
+    }
+
+
+def _public_turn(turn: WorkbenchTurn, workspace: Path) -> PublicTurn:
+    return PublicTurn.model_validate(_safe_public_record(turn.model_dump(), workspace))
 
 
 _PUBLIC_EVENT_FIELDS: dict[str, frozenset[str]] = {
@@ -619,32 +670,57 @@ def _public_event(event: WorkbenchEvent, workspace: Path) -> PublicEvent:
         for key, value in event.payload.items()
         if key in allowed and not is_sensitive_field_name(key)
     }
-    return PublicEvent(
-        id=event.id,
-        turn_id=event.turn_id,
-        sequence=event.sequence,
-        event_type=event.event_type,
-        payload=payload,
-        created_at=event.created_at,
+    return PublicEvent.model_validate(
+        _safe_public_record(
+            {
+                "id": event.id,
+                "turn_id": event.turn_id,
+                "sequence": event.sequence,
+                "event_type": event.event_type,
+                "payload": payload,
+                "created_at": event.created_at,
+            },
+            workspace,
+        )
     )
 
 
-def _public_artifact(task_id: str, artifact: WorkbenchArtifact) -> PublicArtifact:
-    return PublicArtifact(
-        id=artifact.id,
-        turn_id=artifact.turn_id,
-        label=artifact.label,
-        media_type=(
-            artifact.media_type
-            if _media_type_permitted(artifact.media_type)
-            else "application/octet-stream"
-        ),
-        created_at=artifact.created_at,
-        download_url=(
-            f"/api/workbench/tasks/{task_id}/turns/{artifact.turn_id}"
-            f"/artifacts/{artifact.id}/download"
-        ),
+def _public_artifact(
+    task_id: str, artifact: WorkbenchArtifact, workspace: Path | None = None
+) -> PublicArtifact:
+    workspace = workspace or Path.cwd()
+    return PublicArtifact.model_validate(
+        _safe_public_record(
+            {
+                "id": artifact.id,
+                "turn_id": artifact.turn_id,
+                "label": artifact.label,
+                "media_type": (
+                    artifact.media_type
+                    if _media_type_permitted(artifact.media_type)
+                    else "application/octet-stream"
+                ),
+                "created_at": artifact.created_at,
+                "download_url": (
+                    f"/api/workbench/tasks/{task_id}/turns/{artifact.turn_id}"
+                    f"/artifacts/{artifact.id}/download"
+                ),
+            },
+            workspace,
+        )
     )
+
+
+def _public_attachment(
+    attachment: WorkbenchAttachment, workspace: Path
+) -> WorkbenchAttachment:
+    values = attachment.model_dump()
+    values["media_type"] = (
+        attachment.media_type
+        if _media_type_permitted(attachment.media_type)
+        else "application/octet-stream"
+    )
+    return WorkbenchAttachment.model_validate(_safe_public_record(values, workspace))
 
 
 def _public_confirmation(
@@ -652,7 +728,9 @@ def _public_confirmation(
     confirmation: WorkbenchConfirmation,
     *,
     proposer_quiesced: bool | None = None,
+    workspace: Path | None = None,
 ) -> PublicConfirmation:
+    workspace = workspace or Path.cwd()
     try:
         canonical_targets = json.loads(confirmation.canonical_targets_json)
     except json.JSONDecodeError:
@@ -661,26 +739,31 @@ def _public_confirmation(
         isinstance(item, str) for item in canonical_targets
     ):
         canonical_targets = []
-    return PublicConfirmation(
-        id=confirmation.id,
-        turn_id=confirmation.turn_id,
-        action_kind=confirmation.action_kind,
-        target=confirmation.target,
-        summary=confirmation.summary,
-        risk=confirmation.risk,
-        canonical_capability=confirmation.canonical_capability,
-        canonical_operation=confirmation.canonical_operation,
-        canonical_targets=canonical_targets,
-        status=confirmation.status,
-        decision_requested=confirmation.decision_requested,
-        decision_requested_at=confirmation.decision_requested_at,
-        proposer_quiesced=(
-            bool(store.confirmation_is_quiesced(confirmation.id))
-            if proposer_quiesced is None
-            else proposer_quiesced
-        ),
-        created_at=confirmation.created_at,
-        decided_at=confirmation.decided_at,
+    return PublicConfirmation.model_validate(
+        _safe_public_record(
+            {
+                "id": confirmation.id,
+                "turn_id": confirmation.turn_id,
+                "action_kind": confirmation.action_kind,
+                "target": confirmation.target,
+                "summary": confirmation.summary,
+                "risk": confirmation.risk,
+                "canonical_capability": confirmation.canonical_capability,
+                "canonical_operation": confirmation.canonical_operation,
+                "canonical_targets": canonical_targets,
+                "status": confirmation.status,
+                "decision_requested": confirmation.decision_requested,
+                "decision_requested_at": confirmation.decision_requested_at,
+                "proposer_quiesced": (
+                    bool(store.confirmation_is_quiesced(confirmation.id))
+                    if proposer_quiesced is None
+                    else proposer_quiesced
+                ),
+                "created_at": confirmation.created_at,
+                "decided_at": confirmation.decided_at,
+            },
+            workspace,
+        )
     )
 
 
@@ -877,7 +960,10 @@ def register_workbench_routes(
         if len(rows) > limit:
             response.headers["X-Next-Cursor"] = _task_cursor(rows[limit - 1][0])
             rows = rows[:limit]
-        return [_public_task_with_state(task, state) for task, state in rows]
+        return [
+            _public_task_with_state(task, state, executor.workspace)
+            for task, state in rows
+        ]
 
     @app.post("/api/workbench/tasks", response_model=PublicTask, status_code=201)
     async def create_task(request: Request) -> PublicTask:
@@ -894,6 +980,7 @@ def register_workbench_routes(
                     store.create_task(
                         title=payload.title, runtime_kind=payload.runtime_kind
                     ),
+                    executor.workspace,
                 )
             )
         except ValueError as exc:
@@ -901,10 +988,10 @@ def register_workbench_routes(
 
     @app.get("/api/workbench/tasks/{task_id}", response_model=PublicTask)
     def get_task(task_id: UUID) -> PublicTask:
-        task = store.get_task(_uuid_text(task_id))
-        if task is None:
+        summary = store.get_task_summary(_uuid_text(task_id))
+        if summary is None:
             raise _not_found()
-        return _public_task(store, task)
+        return _public_task_with_state(*summary, executor.workspace)
 
     @app.patch("/api/workbench/tasks/{task_id}", response_model=PublicTask)
     async def rename_task(task_id: UUID, request: Request) -> PublicTask:
@@ -917,7 +1004,9 @@ def register_workbench_routes(
         try:
             return await anyio.to_thread.run_sync(
                 lambda: _public_task(
-                    store, store.rename_task(_uuid_text(task_id), title=payload.title)
+                    store,
+                    store.rename_task(_uuid_text(task_id), title=payload.title),
+                    executor.workspace,
                 )
             )
         except ValueError as exc:
@@ -930,7 +1019,11 @@ def register_workbench_routes(
             raise _not_found()
         try:
             return await anyio.to_thread.run_sync(
-                lambda: _public_task(store, store.archive_task(_uuid_text(task_id)))
+                lambda: _public_task(
+                    store,
+                    store.archive_task(_uuid_text(task_id)),
+                    executor.workspace,
+                )
             )
         except WorkbenchConflictError as exc:
             raise _public_error(409, exc.code) from exc
@@ -943,7 +1036,10 @@ def register_workbench_routes(
     )
     def list_attachments(task_id: UUID) -> list[WorkbenchAttachment]:
         try:
-            return store.list_attachments(_uuid_text(task_id))
+            return [
+                _public_attachment(attachment, executor.workspace)
+                for attachment in store.list_attachments(_uuid_text(task_id))
+            ]
         except ValueError as exc:
             raise _not_found() from exc
 
@@ -966,7 +1062,7 @@ def register_workbench_routes(
             if len(payload.content_base64) > _MAX_ATTACHMENT_BASE64_LENGTH:
                 raise ValueError("attachment encoded content is too large")
             content = await anyio.to_thread.run_sync(_decode_attachment, payload)
-            return await anyio.to_thread.run_sync(
+            saved = await anyio.to_thread.run_sync(
                 lambda: store.save_attachment(
                     _uuid_text(task_id),
                     filename=payload.filename,
@@ -975,6 +1071,7 @@ def register_workbench_routes(
                 ),
                 abandon_on_cancel=False,
             )
+            return _public_attachment(saved, executor.workspace)
         except ValueError as exc:
             raise _public_error(400, "attachment_invalid") from exc
 
@@ -1001,7 +1098,7 @@ def register_workbench_routes(
             )
             broker.notify(turn.id)
             scheduler.wake()
-            return _public_turn(turn)
+            return _public_turn(turn, executor.workspace)
         except WorkbenchConflictError as exc:
             raise _public_error(409, exc.code) from exc
         except ValueError as exc:
@@ -1013,7 +1110,8 @@ def register_workbench_routes(
     )
     def get_nested_turn(task_id: UUID, turn_id: UUID) -> PublicTurn:
         return _public_turn(
-            _owned_turn(store, _uuid_text(task_id), _uuid_text(turn_id))
+            _owned_turn(store, _uuid_text(task_id), _uuid_text(turn_id)),
+            executor.workspace,
         )
 
     @app.get("/api/workbench/turns/{turn_id}", response_model=PublicTurn)
@@ -1021,7 +1119,7 @@ def register_workbench_routes(
         turn = store.get_turn(_uuid_text(turn_id))
         if turn is None:
             raise _not_found()
-        return _public_turn(turn)
+        return _public_turn(turn, executor.workspace)
 
     @app.post(
         "/api/workbench/tasks/{task_id}/turns/{turn_id}/stop",
@@ -1038,7 +1136,7 @@ def register_workbench_routes(
                 executor.stop, turn_id_text, abandon_on_cancel=False
             )
             broker.notify(turn_id_text)
-            return _public_turn(result)
+            return _public_turn(result, executor.workspace)
         except ValueError as exc:
             raise _public_error(409, "unknown") from exc
 
@@ -1063,26 +1161,45 @@ def register_workbench_routes(
         task_id: UUID,
         turn_limit: int = Query(default=100, ge=1, le=100),
         event_limit: int = Query(default=1000, ge=1, le=1000),
+        before: str | None = None,
+        event_before: int | None = Query(default=None, ge=1),
+        artifact_after: str | None = None,
+        confirmation_after: str | None = None,
+        attachment_after: str | None = None,
     ) -> PublicTimeline:
         task_id_text = _uuid_text(task_id)
         try:
-            task, turns, events, attachments, artifacts, confirmations = (
+            task, turns, events, attachments, artifacts, confirmations, page = (
                 store.timeline_snapshot(
-                    task_id_text, turn_limit=turn_limit, event_limit=event_limit
+                    task_id_text,
+                    turn_limit=turn_limit,
+                    event_limit=event_limit,
+                    before=_parse_turn_cursor(before),
+                    event_before=event_before,
+                    artifact_after=_parse_resource_cursor(artifact_after),
+                    confirmation_after=_parse_resource_cursor(confirmation_after),
+                    attachment_after=_parse_resource_cursor(attachment_after),
                 )
             )
-            quiescence = store.confirmation_quiescence_for_task(task_id_text)
+            quiescence = store.confirmation_quiescence(
+                [confirmation.id for confirmation in confirmations]
+            )
         except ValueError:
             raise _not_found()
         return PublicTimeline(
             task=_public_task_with_state(
-                task, turns[-1].status.value if turns else "idle"
+                task,
+                (store.get_task_summary(task_id_text) or (task, "idle"))[1],
+                executor.workspace,
             ),
-            turns=[_public_turn(turn) for turn in turns],
+            turns=[_public_turn(turn, executor.workspace) for turn in turns],
             events=[_public_event(event, executor.workspace) for event in events],
-            attachments=attachments,
+            attachments=[
+                _public_attachment(attachment, executor.workspace)
+                for attachment in attachments
+            ],
             artifacts=[
-                _public_artifact(task_id_text, artifact)
+                _public_artifact(task_id_text, artifact, executor.workspace)
                 for artifact in artifacts
             ],
             confirmations=[
@@ -1090,9 +1207,34 @@ def register_workbench_routes(
                     store,
                     confirmation,
                     proposer_quiesced=quiescence.get(confirmation.id, False),
+                    workspace=executor.workspace,
                 )
                 for confirmation in confirmations
             ],
+            next_cursor=(
+                _turn_cursor(turns[0]) if page["has_more"] and turns else ""
+            ),
+            has_more=page["has_more"],
+            events_has_more=page["events_has_more"],
+            events_next_cursor=page["events_next_cursor"] or 0,
+            artifacts_has_more=page["artifacts_has_more"],
+            artifacts_next_cursor=(
+                _resource_cursor(artifacts[-1])
+                if page["artifacts_has_more"] and artifacts
+                else ""
+            ),
+            confirmations_has_more=page["confirmations_has_more"],
+            confirmations_next_cursor=(
+                _resource_cursor(confirmations[-1])
+                if page["confirmations_has_more"] and confirmations
+                else ""
+            ),
+            attachments_has_more=page["attachments_has_more"],
+            attachments_next_cursor=(
+                _resource_cursor(attachments[-1])
+                if page["attachments_has_more"] and attachments
+                else ""
+            ),
         )
 
     @app.post(
@@ -1118,7 +1260,9 @@ def register_workbench_routes(
             broker.notify(_uuid_text(turn_id))
             scheduler.wake()
             return await anyio.to_thread.run_sync(
-                _public_confirmation, store, result
+                lambda: _public_confirmation(
+                    store, result, workspace=executor.workspace
+                )
             )
         except ValueError as exc:
             raise _public_error(409, "unknown") from exc
@@ -1146,7 +1290,9 @@ def register_workbench_routes(
             broker.notify(_uuid_text(turn_id))
             scheduler.wake()
             return await anyio.to_thread.run_sync(
-                _public_confirmation, store, result
+                lambda: _public_confirmation(
+                    store, result, workspace=executor.workspace
+                )
             )
         except ValueError as exc:
             raise _public_error(409, "unknown") from exc
@@ -1157,7 +1303,9 @@ def register_workbench_routes(
     def runtime_capabilities() -> list[RuntimeCapabilitiesResponse]:
         return [
             RuntimeCapabilitiesResponse(
-                kind=kind,
+                kind=_safe_public_string(
+                    kind, key="runtime_kind", workspace=executor.workspace
+                ),
                 capabilities=asdict(runtime_registry.get(kind).capabilities()),
             )
             for kind in runtime_registry.kinds()
@@ -1180,7 +1328,10 @@ def register_workbench_routes(
         if artifact is None or artifact.turn_id != turn_id_text:
             raise _not_found()
         opened = _open_artifact_fd(artifact.path, roots)
-        filename = Path(artifact.label).name.strip() or opened.basename
+        safe_label = _safe_public_string(
+            artifact.label, key="filename", workspace=executor.workspace
+        )
+        filename = Path(safe_label).name.strip() or opened.basename
         if any(ord(char) < 32 for char in filename):
             filename = opened.basename
         disposition = f"attachment; filename*=UTF-8''{quote(filename, safe='')}"

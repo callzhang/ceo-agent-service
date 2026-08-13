@@ -83,6 +83,64 @@ def test_store_migrates_resume_context_without_losing_existing_turns(tmp_path: P
     assert "resume_context" in columns
 
 
+def test_store_upgrades_real_point_seven_schema_with_point_eight_indexes(tmp_path: Path):
+    db_path = tmp_path / "workbench.sqlite3"
+    store = WorkbenchStore(db_path)
+    task = store.create_task(title="Upgrade", runtime_kind="codex")
+    with store._connect() as db:
+        for index in (
+            "idx_workbench_events_turn_id_id",
+            "idx_workbench_artifacts_turn_created_id",
+            "idx_workbench_turns_task_created_id",
+            "idx_workbench_tasks_updated_id",
+            "idx_workbench_events_id_turn_id",
+            "idx_workbench_artifacts_created_id_turn",
+            "idx_workbench_confirmations_created_id_turn",
+            "idx_workbench_confirmations_turn_created_id",
+            "idx_workbench_attachments_task_created_id",
+            "idx_workbench_events_event_type",
+        ):
+            db.execute(f"drop index if exists {index}")
+        db.execute(
+            "update service_state set value='2026-08-13.7' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = WorkbenchStore(db_path)
+    with upgraded._connect() as db:
+        indexes = {
+            row["name"]
+            for row in db.execute(
+                "select name from sqlite_master where type='index'"
+            )
+        }
+
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-13.8"
+    assert "idx_workbench_events_event_type" in indexes
+    assert "idx_workbench_events_turn_id_id" in indexes
+    assert "idx_workbench_confirmations_turn_created_id" in indexes
+    snapshot = upgraded.timeline_snapshot(task.id)
+    assert snapshot[0].id == task.id
+
+
+def test_store_repairs_missing_required_point_eight_index(tmp_path: Path):
+    db_path = tmp_path / "workbench.sqlite3"
+    store = WorkbenchStore(db_path)
+    with store._connect() as db:
+        db.execute("drop index idx_workbench_events_event_type")
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    repaired = WorkbenchStore(db_path)
+
+    with repaired._connect() as db:
+        index = db.execute(
+            """select name from sqlite_master
+               where type='index' and name='idx_workbench_events_event_type'"""
+        ).fetchone()
+    assert index is not None
+
+
 def test_store_migrates_confirmation_execution_claim_without_losing_data(
     tmp_path: Path,
 ):
@@ -481,7 +539,9 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
         "idx_workbench_events_id_turn_id",
         "idx_workbench_artifacts_created_id_turn",
         "idx_workbench_confirmations_created_id_turn",
+        "idx_workbench_confirmations_turn_created_id",
         "idx_workbench_attachments_task_created_id",
+        "idx_workbench_events_event_type",
     } <= indexes
     with store._connect() as db:
         plan = " ".join(
@@ -497,29 +557,34 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
         )
     assert "idx_workbench_confirmations_turn_status" in plan
     with store._connect() as db:
-        timeline_plans = (
-            db.execute(
-                """explain query plan
-                select events.* from workbench_events events
-                indexed by idx_workbench_events_id_turn_id
-                join workbench_turns turns on turns.id=events.turn_id
-                where turns.task_id=? order by events.id desc limit ?""",
-                ("task-id", 1000),
+        timeline_plans = {
+            "events": db.execute(
+                """explain query plan select * from workbench_events
+                   where turn_id in (?,?) order by id desc limit ?""",
+                ("turn-1", "turn-2", 1001),
             ).fetchall(),
-            db.execute(
-                """explain query plan
-                select artifacts.* from workbench_artifacts artifacts
-                indexed by idx_workbench_artifacts_created_id_turn
-                join workbench_turns turns on turns.id=artifacts.turn_id
-                where turns.task_id=?
-                order by artifacts.created_at,artifacts.id limit 100""",
-                ("task-id",),
+            "artifacts": db.execute(
+                """explain query plan select * from workbench_artifacts
+                   where turn_id in (?,?) order by created_at,id limit 101""",
+                ("turn-1", "turn-2"),
             ).fetchall(),
-        )
-    assert all(
-        "TEMP B-TREE" not in " ".join(row["detail"] for row in rows)
-        for rows in timeline_plans
-    )
+            "confirmations": db.execute(
+                """explain query plan select * from workbench_confirmations
+                   where turn_id in (?,?) order by created_at,id limit 101""",
+                ("turn-1", "turn-2"),
+            ).fetchall(),
+        }
+        stats_plan = db.execute(
+            """explain query plan select event_type,count(*)
+               from workbench_events group by event_type"""
+        ).fetchall()
+    for table, rows in timeline_plans.items():
+        rendered = " ".join(row["detail"] for row in rows)
+        assert f"SEARCH workbench_{table}" in rendered
+        assert "turn_id=?" in rendered
+    rendered_stats_plan = " ".join(row["detail"] for row in stats_plan)
+    assert "COVERING INDEX idx_workbench_events_event_type" in rendered_stats_plan
+    assert "TEMP B-TREE" not in rendered_stats_plan
     with store._connect() as db:
         ready_plan = " ".join(
             row["detail"]
@@ -580,6 +645,101 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
         assert "SCAN confirmations" not in recovery_plan
         assert "SCAN workbench_confirmations" not in recovery_plan
         assert "USE TEMP B-TREE" not in recovery_plan
+
+
+def test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events(
+    tmp_path: Path, monkeypatch
+):
+    store = _store(tmp_path)
+    selected_task = store.create_task(title="Selected", runtime_kind="codex")
+    selected_turn = store.create_turn(
+        selected_task.id,
+        user_text="selected",
+        client_request_id="selected-request",
+    )
+    store.request_stop(selected_turn.id)
+    unrelated_task = store.create_task(title="Unrelated", runtime_kind="codex")
+    unrelated_turn_id = "00000000-0000-4000-8000-000000000050"
+    with store._connect() as db:
+        db.execute(
+            """insert into workbench_turns
+               (id,task_id,client_request_id,user_text,status)
+               values(?,?,?,?,?)""",
+            (
+                unrelated_turn_id,
+                unrelated_task.id,
+                "unrelated-request",
+                "unrelated",
+                "completed",
+            ),
+        )
+        db.executemany(
+            """insert into workbench_events
+               (turn_id,sequence,event_type,payload_json)
+               values(?,?,'text_delta','{"text":"noise"}')""",
+            ((unrelated_turn_id, sequence) for sequence in range(1, 50_001)),
+        )
+
+    progress_calls = 0
+    original_open = store._open_connection
+
+    def counted_connection():
+        nonlocal progress_calls
+        connection = original_open()
+
+        def progress():
+            nonlocal progress_calls
+            progress_calls += 1
+            return 0
+
+        connection.set_progress_handler(progress, 100)
+        return connection
+
+    monkeypatch.setattr(store, "_open_connection", counted_connection)
+
+    snapshot = store.timeline_snapshot(selected_task.id)
+
+    assert [turn.id for turn in snapshot[1]] == [selected_turn.id]
+    assert {event.turn_id for event in snapshot[2]} == {selected_turn.id}
+    assert progress_calls * 100 < 20_000
+
+
+def test_get_task_summary_uses_latest_turn_index_and_limit_one(tmp_path: Path):
+    store = _store(tmp_path)
+    task = store.create_task(title="Summary", runtime_kind="codex")
+    with store._connect() as db:
+        for index in range(1_000):
+            created_at = f"2026-08-{1 + index // 24:02d} {index % 24:02d}:00:00"
+            db.execute(
+                """insert into workbench_turns
+                   (id,task_id,client_request_id,user_text,status,created_at,updated_at)
+                   values(?,?,?,?,?,?,?)""",
+                (
+                    f"00000000-0000-4000-8000-{index:012d}",
+                    task.id,
+                    f"summary-{index}",
+                    "summary",
+                    "completed" if index < 999 else "failed",
+                    created_at,
+                    created_at,
+                ),
+            )
+        plan = " ".join(
+            row["detail"]
+            for row in db.execute(
+                """explain query plan
+                   select status from workbench_turns where task_id=?
+                   order by created_at desc,id desc limit 1""",
+                (task.id,),
+            ).fetchall()
+        )
+
+    summary = store.get_task_summary(task.id)
+
+    assert summary is not None
+    assert summary[1] == "failed"
+    assert "idx_workbench_turns_task_created_id" in plan
+    assert "TEMP B-TREE" not in plan
 
 
 def test_stale_prior_run_quiescence_cannot_unlock_confirmation(tmp_path: Path):

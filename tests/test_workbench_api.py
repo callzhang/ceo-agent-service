@@ -219,6 +219,270 @@ def test_task_list_is_bounded_and_cursor_paginates_without_duplicates(tmp_path: 
     assert second.headers.get("x-next-cursor")
 
 
+def test_single_task_mutation_responses_never_load_full_turn_history(
+    tmp_path: Path, monkeypatch
+):
+    with _client(tmp_path) as client:
+        created = client.post(
+            "/api/workbench/tasks",
+            json={"title": "Summary only", "runtime_kind": "codex"},
+        )
+        task_id = created.json()["id"]
+
+        def fail_list_turns(*_args, **_kwargs):
+            raise AssertionError("single-task response must not load all turns")
+
+        monkeypatch.setattr(WorkbenchStore, "list_turns", fail_list_turns)
+        fetched = client.get(f"/api/workbench/tasks/{task_id}")
+        renamed = client.patch(
+            f"/api/workbench/tasks/{task_id}", json={"title": "Renamed"}
+        )
+        archived = client.post(f"/api/workbench/tasks/{task_id}/archive", json={})
+
+    assert created.status_code == 201
+    assert fetched.status_code == renamed.status_code == archived.status_code == 200
+    assert fetched.json()["state"] == "idle"
+
+
+def test_timeline_turn_cursor_keeps_nested_resources_on_the_selected_page(
+    tmp_path: Path,
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    _complete_setup(store)
+    task = store.create_task(title="Long history", runtime_kind="codex")
+    turn_ids: list[str] = []
+    with store._connect() as db:
+        for index in range(101):
+            turn_id = str(uuid4())
+            turn_ids.append(turn_id)
+            created_at = f"2026-08-13 00:{index // 60:02d}:{index % 60:02d}"
+            db.execute(
+                """insert into workbench_turns
+                   (id,task_id,client_request_id,user_text,status,created_at,updated_at)
+                   values(?,?,?,?,?,?,?)""",
+                (
+                    turn_id,
+                    task.id,
+                    f"page-{index}",
+                    f"turn {index}",
+                    "completed",
+                    created_at,
+                    created_at,
+                ),
+            )
+            db.execute(
+                """insert into workbench_events
+                   (turn_id,sequence,event_type,payload_json,created_at)
+                   values(?,1,'turn_completed','{"status":"completed"}',?)""",
+                (turn_id, created_at),
+            )
+        for index in (0, 100):
+            db.execute(
+                """insert into workbench_artifacts
+                   (id,turn_id,label,path,media_type,created_at)
+                   values(?,?,?,?,?,?)""",
+                (
+                    str(uuid4()),
+                    turn_ids[index],
+                    f"artifact {index}",
+                    str(tmp_path / f"artifact-{index}.txt"),
+                    "text/plain",
+                    f"2026-08-13 00:{index // 60:02d}:{index % 60:02d}",
+                ),
+            )
+
+    with _client(tmp_path) as client:
+        first = client.get(
+            f"/api/workbench/tasks/{task.id}/timeline", params={"turn_limit": 100}
+        )
+        first_body = first.json()
+        second = client.get(
+            f"/api/workbench/tasks/{task.id}/timeline",
+            params={"turn_limit": 100, "before": first_body["next_cursor"]},
+        )
+        second_body = second.json()
+
+    first_turn_ids = {turn["id"] for turn in first_body["turns"]}
+    second_turn_ids = {turn["id"] for turn in second_body["turns"]}
+    assert first.status_code == second.status_code == 200
+    assert len(first_turn_ids) == 100
+    assert len(second_turn_ids) == 1
+    assert first_body["has_more"] is True
+    assert second_body["has_more"] is False
+    assert first_turn_ids.isdisjoint(second_turn_ids)
+    assert first_turn_ids | second_turn_ids == set(turn_ids)
+    for body, selected_ids in (
+        (first_body, first_turn_ids),
+        (second_body, second_turn_ids),
+    ):
+        assert {event["turn_id"] for event in body["events"]} <= selected_ids
+        assert {artifact["turn_id"] for artifact in body["artifacts"]} <= selected_ids
+
+
+def test_timeline_exposes_usable_resource_cursors(tmp_path: Path):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    _complete_setup(store)
+    task = store.create_task(title="Paged resources", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="resources", client_request_id="resource-cursors"
+    )
+    store.request_stop(turn.id)
+    with store._connect() as db:
+        for sequence in range(3, 105):
+            db.execute(
+                """insert into workbench_events
+                   (turn_id,sequence,event_type,payload_json)
+                   values(?,?,'text_delta',?)""",
+                (turn.id, sequence, json.dumps({"text": str(sequence)})),
+            )
+
+    with _client(tmp_path) as client:
+        first = client.get(
+            f"/api/workbench/tasks/{task.id}/timeline", params={"event_limit": 100}
+        )
+        first_body = first.json()
+        second = client.get(
+            f"/api/workbench/tasks/{task.id}/timeline",
+            params={
+                "event_limit": 100,
+                "event_before": first_body["events_next_cursor"],
+            },
+        )
+        second_body = second.json()
+
+    assert first.status_code == second.status_code == 200
+    assert first_body["events_has_more"] is True
+    assert first_body["events_next_cursor"] > 0
+    assert {event["id"] for event in first_body["events"]}.isdisjoint(
+        event["id"] for event in second_body["events"]
+    )
+    assert second_body["events_has_more"] is False
+
+
+def test_all_timeline_public_strings_redact_legacy_paths_and_credentials(
+    tmp_path: Path,
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    _complete_setup(store)
+    task = store.create_task(title="safe", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="safe", client_request_id="privacy-boundary"
+    )
+    store.request_stop(turn.id)
+    attachment_id = str(uuid4())
+    artifact_id = str(uuid4())
+    confirmation_id = str(uuid4())
+    with store._connect() as db:
+        db.execute(
+            """update workbench_tasks
+               set title=?,runtime_kind=?,created_at=?,updated_at=? where id=?""",
+            (
+                "Bearer legacy-secret /private/task.db",
+                "runtime=/opt/provider/config",
+                "Bearer created-secret",
+                "updated=/etc/task.db",
+                task.id,
+            ),
+        )
+        db.execute(
+            """update workbench_turns
+               set client_request_id=?,user_text=?,final_text=?,error_code=?,error_detail=?,
+                   started_at=?,completed_at=?,created_at=?,updated_at=?
+               where id=?""",
+            (
+                "Bearer client-secret",
+                "read /Users/derek/private.txt",
+                "result=/custom/mount/result.txt",
+                "token=legacy-secret",
+                "failed at C:\\private\\secret.txt",
+                "started=/root/secret",
+                "Bearer completed-secret",
+                "created=/home/secret",
+                "updated=/opt/secret",
+                turn.id,
+            ),
+        )
+        db.execute(
+            """insert into workbench_attachments
+               (id,task_id,filename,media_type,size_bytes,storage_path)
+               values(?,?,?,?,?,?)""",
+            (
+                attachment_id,
+                task.id,
+                "/etc/private.txt",
+                "text/plain",
+                0,
+                str(tmp_path / "internal-attachment"),
+            ),
+        )
+        db.execute(
+            """insert into workbench_artifacts
+               (id,turn_id,label,path,media_type)
+               values(?,?,?,?,?)""",
+            (
+                artifact_id,
+                turn.id,
+                "Bearer artifact-secret /root/report.txt",
+                str(tmp_path / "internal-artifact"),
+                "text/plain",
+            ),
+        )
+        db.execute(
+            """insert into workbench_confirmations
+               (id,turn_id,action_kind,target,summary,risk,
+                canonical_capability,canonical_operation,canonical_targets_json,
+                arguments_json,status,decision_requested)
+               values(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                confirmation_id,
+                turn.id,
+                "tool=/usr/bin/send",
+                "Bearer target-secret",
+                "write /home/private/message.txt",
+                "api_key=legacy-secret",
+                "cap=/Volumes/private/cap",
+                "op=/Applications/private/op",
+                json.dumps(["/dev/private", "Bearer canonical-secret"]),
+                "{}",
+                "pending",
+                "",
+            ),
+        )
+
+    with _client(tmp_path) as client:
+        timeline = client.get(f"/api/workbench/tasks/{task.id}/timeline")
+        nested_turn = client.get(
+            f"/api/workbench/tasks/{task.id}/turns/{turn.id}"
+        )
+        task_response = client.get(f"/api/workbench/tasks/{task.id}")
+
+    rendered = json.dumps(
+        [timeline.json(), nested_turn.json(), task_response.json()],
+        ensure_ascii=False,
+    )
+    assert timeline.status_code == nested_turn.status_code == task_response.status_code == 200
+    for forbidden in (
+        "/private/",
+        "/opt/",
+        "/Users/",
+        "/custom/",
+        "/root/",
+        "/home/",
+        "/Volumes/",
+        "/Applications/",
+        "/dev/",
+        "C:\\private",
+        "legacy-secret",
+        "created-secret",
+        "completed-secret",
+        "client-secret",
+        "target-secret",
+        "artifact-secret",
+        "canonical-secret",
+    ):
+        assert forbidden not in rendered
+
+
 def test_streaming_json_collector_stops_at_cap_without_consuming_remaining_chunks():
     chunks = [b'{"title":"', b"x" * 20, b'","runtime_kind":"codex"}', b"unused"]
     consumed = 0
@@ -585,7 +849,13 @@ def test_artifact_download_checks_nested_ownership_and_does_not_expose_path(
             insert into workbench_artifacts (id, turn_id, label, path, media_type)
             values (?, ?, ?, ?, ?)
             """,
-            (artifact_id, turn.id, "Report", str(artifact_path), "text/💥"),
+            (
+                artifact_id,
+                turn.id,
+                "Bearer artifact-download-secret",
+                str(artifact_path),
+                "text/💥",
+            ),
         )
 
     with _client(tmp_path) as client:
@@ -603,6 +873,7 @@ def test_artifact_download_checks_nested_ownership_and_does_not_expose_path(
     assert download.status_code == 200
     assert download.text == "report"
     assert download.headers["content-type"] == "application/octet-stream"
+    assert "artifact-download-secret" not in download.headers["content-disposition"]
     assert cross_task.status_code == 404
 
 
