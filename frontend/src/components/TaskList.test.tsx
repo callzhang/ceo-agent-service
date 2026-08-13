@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -160,6 +160,44 @@ describe("TaskList", () => {
     }
   });
 
+  it("shows recent activity and regroups tasks when local midnight passes", () => {
+    vi.stubEnv("TZ", "Asia/Shanghai");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-13T15:59:59Z"));
+
+    try {
+      render(
+        <TaskList
+          tasks={[
+            task("near-midnight", "午夜任务", "idle", "2026-08-13 15:30:00"),
+            task("earlier", "更早任务", "idle", "2026-08-01 01:00:00"),
+          ]}
+          activeTaskId={null}
+          onSelect={() => undefined}
+          onNewTask={() => undefined}
+          onRename={() => undefined}
+          onArchive={() => undefined}
+        />,
+      );
+
+      const today = screen.getByRole("heading", { name: "今天" }).closest("section");
+      expect(within(today!).getByText("午夜任务")).toBeInTheDocument();
+      const recentActivity = within(today!).getByText("23:30");
+      expect(recentActivity.tagName).toBe("TIME");
+      expect(recentActivity).toHaveAttribute("dateTime", "2026-08-13T15:30:00.000Z");
+      expect(screen.getByText("2026/08/01").tagName).toBe("TIME");
+
+      act(() => vi.advanceTimersByTime(1_001));
+
+      const yesterday = screen.getByRole("heading", { name: "昨天" }).closest("section");
+      expect(within(yesterday!).getByText("午夜任务")).toBeInTheDocument();
+      expect(within(yesterday!).getByText("23:30")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("renders every public lifecycle state without inventing state", () => {
     render(
       <TaskList
@@ -213,5 +251,64 @@ describe("TaskList", () => {
     expect(confirm).toHaveBeenCalled();
     expect(onArchive).toHaveBeenCalledWith("t1");
     confirm.mockRestore();
+  });
+
+  it("keeps a thousand loaded tasks in a bounded virtualized DOM", () => {
+    const tasks = Array.from({ length: 1000 }, (_, index) =>
+      task(`task-${index}`, `Task ${index}`, "idle", localTimestamp(0)),
+    );
+
+    render(
+      <TaskList
+        tasks={tasks}
+        activeTaskId={null}
+        onSelect={() => undefined}
+        onNewTask={() => undefined}
+        onRename={() => undefined}
+        onArchive={() => undefined}
+      />,
+    );
+
+    const renderedRows = screen.getAllByTestId("virtual-task-row");
+    expect(renderedRows.length).toBeGreaterThan(0);
+    expect(renderedRows.length).toBeLessThan(100);
+  });
+
+  it("labels search as local while more server pages remain", () => {
+    render(
+      <TaskList
+        tasks={[task("loaded", "Loaded", "idle", localTimestamp(0))]}
+        activeTaskId={null}
+        hasMore
+        loadingMore={false}
+        onLoadMore={() => undefined}
+        onSelect={() => undefined}
+        onNewTask={() => undefined}
+        onRename={() => undefined}
+        onArchive={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText("仅搜索已加载的任务")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "加载更多任务" })).toBeEnabled();
+  });
+
+  it("announces a pending rename while allowing it to supersede and blocking archive", () => {
+    render(
+      <TaskList
+        tasks={[task("t1", "Pending", "idle", localTimestamp(0))]}
+        activeTaskId="t1"
+        pendingOperations={{ t1: "rename" }}
+        onSelect={() => undefined}
+        onNewTask={() => undefined}
+        onRename={() => undefined}
+        onArchive={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText("保存中…")).toHaveAttribute("role", "status");
+    expect(screen.getByRole("article")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "重命名 Pending" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "归档 Pending" })).toBeDisabled();
   });
 });
