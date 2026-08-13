@@ -19,6 +19,7 @@ import { TurnInspector } from "./components/TurnInspector";
 import { applyWorkbenchEvent, createEventState, EventStreamConnection } from "./events";
 import type {
   Confirmation,
+  ConfirmationStatus,
   RuntimeCapabilities,
   Task,
   TaskPage,
@@ -175,6 +176,7 @@ function mergeResourcePage(current: Timeline, incoming: Timeline, kind: Resource
 
 const turnStatuses: readonly TurnStatus[] = ["queued", "running", "waiting_confirmation", "completed", "stopped", "failed"];
 const activeTurnStatuses: readonly TurnStatus[] = ["queued", "running", "waiting_confirmation"];
+const confirmationStatuses: readonly ConfirmationStatus[] = ["pending", "confirmed", "cancelled", "executed", "failed"];
 
 function statusFromEvent(event: WorkbenchEvent): TurnStatus | null {
   if (event.event_type === "turn_completed") return "completed";
@@ -182,6 +184,17 @@ function statusFromEvent(event: WorkbenchEvent): TurnStatus | null {
   if (event.event_type !== "status_changed") return null;
   const value = event.payload.status;
   return typeof value === "string" && turnStatuses.includes(value as TurnStatus) ? value as TurnStatus : null;
+}
+
+function confirmationProgressFromEvent(event: WorkbenchEvent): { id: string; status: ConfirmationStatus | null } | null {
+  if (event.event_type !== "status_changed") return null;
+  const rawId = event.payload.confirmation_id;
+  const id = typeof rawId === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(rawId) ? rawId : "";
+  const rawStatus = event.payload.confirmation_status;
+  const status = typeof rawStatus === "string" && confirmationStatuses.includes(rawStatus as ConfirmationStatus)
+    ? rawStatus as ConfirmationStatus
+    : null;
+  return id || status ? { id, status } : null;
 }
 
 export function App() {
@@ -232,6 +245,8 @@ export function App() {
   const archiveRequestsRef = useRef(new Map<string, { id: number; controller: AbortController }>());
   const timelineRef = useRef<Timeline | null>(null);
   const timelineRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
+  const timelineRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timelineRefreshTaskRef = useRef<string | null>(null);
   const resourceLoadingRef = useRef<{ kind: ResourcePageKind; requestId: number } | null>(null);
   const resourceQueuesRef = useRef<ResourcePageQueues>(emptyResourcePageQueues());
   const loadedOlderTimelineRef = useRef(false);
@@ -728,6 +743,29 @@ export function App() {
     }
   }, [writeResourceQueues, writeTimeline]);
 
+  const cancelScheduledTimelineRefresh = useCallback(() => {
+    if (timelineRefreshTimerRef.current) clearTimeout(timelineRefreshTimerRef.current);
+    timelineRefreshTimerRef.current = null;
+    timelineRefreshTaskRef.current = null;
+  }, []);
+
+  const scheduleSelectedTimelineRefresh = useCallback((taskId: string) => {
+    if (!mountedRef.current || selectedTaskIdRef.current !== taskId) return;
+    if (timelineRefreshTimerRef.current && timelineRefreshTaskRef.current !== taskId) {
+      clearTimeout(timelineRefreshTimerRef.current);
+      timelineRefreshTimerRef.current = null;
+    }
+    timelineRefreshTaskRef.current = taskId;
+    if (timelineRefreshTimerRef.current) return;
+    timelineRefreshTimerRef.current = setTimeout(() => {
+      timelineRefreshTimerRef.current = null;
+      const scheduledTaskId = timelineRefreshTaskRef.current;
+      timelineRefreshTaskRef.current = null;
+      if (!mountedRef.current || scheduledTaskId !== taskId || selectedTaskIdRef.current !== taskId) return;
+      void loadSelectedTimeline(taskId, "recent");
+    }, 40);
+  }, [loadSelectedTimeline]);
+
   useEffect(() => {
     mountedRef.current = true;
     void load();
@@ -743,6 +781,7 @@ export function App() {
     ]).finally(() => finishRequest(controller));
     return () => {
       mountedRef.current = false;
+      cancelScheduledTimelineRefresh();
       streamRef.current?.close();
       streamRef.current = null;
       cancelActiveChase();
@@ -750,9 +789,10 @@ export function App() {
       for (const controller of controllersRef.current) controller.abort();
       controllersRef.current.clear();
     };
-  }, [cancelActiveChase, cancelPageRequests, load]);
+  }, [cancelActiveChase, cancelPageRequests, cancelScheduledTimelineRefresh, load]);
 
   useEffect(() => {
+    cancelScheduledTimelineRefresh();
     streamRef.current?.close();
     streamRef.current = null;
     timelineRequestRef.current?.controller.abort();
@@ -775,7 +815,7 @@ export function App() {
       streamRef.current?.close();
       streamRef.current = null;
     };
-  }, [loadSelectedTimeline, selectedTaskId, writeResourceQueues, writeTimeline]);
+  }, [cancelScheduledTimelineRefresh, loadSelectedTimeline, selectedTaskId, writeResourceQueues, writeTimeline]);
 
   useEffect(() => {
     function handlePopState() {
@@ -876,6 +916,7 @@ export function App() {
       onEvent: (event) => {
         if (selectedTaskIdRef.current !== taskId || event.turn_id !== turnId) return;
         const nextStatus = statusFromEvent(event);
+        const confirmationProgress = confirmationProgressFromEvent(event);
         const terminal = nextStatus !== null && ["completed", "stopped", "failed"].includes(nextStatus);
         writeTimeline((current) => {
           if (!current || current.task.id !== taskId) return current;
@@ -885,18 +926,24 @@ export function App() {
           const turns = nextStatus
             ? current.turns.map((turn) => turn.id === turnId ? { ...turn, status: nextStatus } : turn)
             : current.turns;
+          const confirmations = confirmationProgress?.id && confirmationProgress.status
+            ? current.confirmations.map((confirmation) => confirmation.id === confirmationProgress.id
+              ? { ...confirmation, status: confirmationProgress.status as ConfirmationStatus }
+              : confirmation)
+            : current.confirmations;
           return {
             ...current,
             events: eventState.events,
             turns,
+            confirmations,
             task: nextStatus ? { ...current.task, state: nextStatus } : current.task,
           };
         });
         if (nextStatus) {
           writeTasks((current) => current.map((task) => task.id === taskId ? { ...task, state: nextStatus } : task));
         }
-        if (event.event_type === "confirmation_required" || event.event_type === "artifact_created" || terminal) {
-          void loadSelectedTimeline(taskId, "recent");
+        if (event.event_type === "confirmation_required" || event.event_type === "artifact_created" || confirmationProgress || terminal) {
+          scheduleSelectedTimelineRefresh(taskId);
         }
         if (terminal) {
           const controller = new AbortController();
@@ -913,7 +960,7 @@ export function App() {
       connection.close();
       if (streamRef.current === connection) streamRef.current = null;
     };
-  }, [activeTurn?.id, loadSelectedTimeline, selectedTaskId, writeTasks, writeTimeline]);
+  }, [activeTurn?.id, scheduleSelectedTimelineRefresh, selectedTaskId, writeTasks, writeTimeline]);
 
   async function decideConfirmation(confirmation: Confirmation, decision: "confirm" | "cancel") {
     const taskId = selectedTaskIdRef.current;

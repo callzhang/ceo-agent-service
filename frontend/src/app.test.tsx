@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -886,6 +886,123 @@ describe("App", () => {
     expect(api.confirmAction).toHaveBeenCalledOnce();
     expect(await screen.findByText("等待执行器安全停稳")).toBeInTheDocument();
     expect(confirm).toBeDisabled();
+  });
+
+  it("coalesces a confirmation progress event into an authoritative timeline refresh", async () => {
+    const user = userEvent.setup();
+    const sources: ProgressSource[] = [];
+    class ProgressSource {
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      private listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+      constructor(readonly url: string) { sources.push(this); }
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener as (event: MessageEvent) => void]);
+      }
+      close() {}
+      emit(type: string, id: number, turnId: string, payload: Record<string, unknown>) {
+        const message = new MessageEvent(type, {
+          data: JSON.stringify({ id, turn_id: turnId, sequence: id, event_type: type, payload, created_at: "" }),
+          lastEventId: String(id),
+        });
+        for (const listener of this.listeners.get(type) ?? []) listener(message);
+      }
+    }
+    vi.stubGlobal("EventSource", ProgressSource);
+    const waiting: Turn = {
+      id: "turn-progress", task_id: first.id, client_request_id: "progress", user_text: "发送消息", status: "waiting_confirmation",
+      stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+    };
+    const pending = {
+      id: "confirmation-progress", turn_id: waiting.id, action_kind: "send", target: "群", summary: "发送", risk: "外部可见",
+      canonical_capability: "chat", canonical_operation: "发送消息", canonical_targets: ["群"], status: "pending" as const,
+      decision_requested: "", decision_requested_at: "", proposer_quiesced: false, created_at: "", decided_at: "",
+    };
+    const afterClick = { ...pending, decision_requested: "confirm" };
+    const authoritative = deferred<Timeline>();
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline
+      .mockResolvedValueOnce({
+        ...emptyTimeline(first, [waiting]),
+        confirmations: [pending],
+        events: [{ id: 1, turn_id: waiting.id, sequence: 1, event_type: "confirmation_required", payload: { confirmation_id: pending.id }, created_at: "" }],
+      })
+      .mockResolvedValueOnce({ ...emptyTimeline(first, [waiting]), confirmations: [afterClick] })
+      .mockReturnValueOnce(authoritative.promise);
+    api.confirmAction.mockResolvedValue(afterClick);
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "确认执行" }));
+    expect(await screen.findByText("等待执行器安全停稳")).toBeInTheDocument();
+
+    sources[0].emit("status_changed", 2, waiting.id, {
+      status: "queued",
+      confirmation_id: pending.id,
+      confirmation_status: "executed",
+    });
+    sources[0].emit("status_changed", 3, waiting.id, {
+      status: "running",
+      confirmation_id: pending.id,
+    });
+
+    expect(await screen.findByText("操作已执行")).toBeInTheDocument();
+    expect(screen.queryByText("等待执行器安全停稳")).not.toBeInTheDocument();
+    await waitFor(() => expect(api.getTimeline).toHaveBeenCalledTimes(3));
+    await act(async () => authoritative.resolve({
+      ...emptyTimeline({ ...first, state: "running" }, [{ ...waiting, status: "running" }]),
+      confirmations: [{ ...afterClick, status: "executed", proposer_quiesced: true }],
+    }));
+
+    await waitFor(() => expect(within(screen.getByRole("button", { name: "打开任务 销售策略" })).getByText("执行中")).toBeInTheDocument());
+    expect(screen.getByText("操作已执行")).toBeInTheDocument();
+  });
+
+  it("drops a scheduled confirmation refresh after switching tasks", async () => {
+    const sources: SwitchSource[] = [];
+    class SwitchSource {
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      private listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+      constructor(readonly url: string) { sources.push(this); }
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener as (event: MessageEvent) => void]);
+      }
+      close() {}
+      emit(type: string, id: number, turnId: string, payload: Record<string, unknown>) {
+        const message = new MessageEvent(type, {
+          data: JSON.stringify({ id, turn_id: turnId, sequence: id, event_type: type, payload, created_at: "" }),
+        });
+        for (const listener of this.listeners.get(type) ?? []) listener(message);
+      }
+    }
+    vi.stubGlobal("EventSource", SwitchSource);
+    const waiting: Turn = {
+      id: "turn-stale-progress", task_id: first.id, client_request_id: "stale-progress", user_text: "会切换的等待回合", status: "waiting_confirmation",
+      stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+    };
+    const staleRefresh = deferred<Timeline>();
+    let firstTaskCalls = 0;
+    api.listTasks.mockResolvedValue({ items: [first, second], nextCursor: "" });
+    api.getTimeline.mockImplementation((taskId: string) => {
+      if (taskId === first.id) {
+        firstTaskCalls += 1;
+        if (firstTaskCalls === 1) return Promise.resolve(emptyTimeline(first, [waiting]));
+        return staleRefresh.promise;
+      }
+      return Promise.resolve(emptyTimeline(second));
+    });
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await screen.findByText("会切换的等待回合");
+    sources[0].emit("status_changed", 1, waiting.id, { status: "queued", confirmation_id: "confirmation-stale" });
+    fireEvent.click(screen.getByRole("button", { name: "打开任务 产品规划" }));
+    await screen.findByText("开始新的对话");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
+
+    expect(api.getTimeline).toHaveBeenCalledTimes(2);
+    expect(firstTaskCalls).toBe(1);
   });
 
   it("aborts a stale selected-task timeline and never paints it after switching", async () => {
