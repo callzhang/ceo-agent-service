@@ -1,13 +1,15 @@
 import react from "@vitejs/plugin-react";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+
+const frontendDirectory = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   base: "/workbench-assets/",
   plugins: [react()],
   build: {
-    outDir: decodeURIComponent(
-      new URL("../app/static/workbench", import.meta.url).pathname,
-    ),
+    outDir: resolve(frontendDirectory, "../app/static/workbench"),
     emptyOutDir: true,
     manifest: true,
   },

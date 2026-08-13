@@ -2261,6 +2261,55 @@ class AutoReplyStore:
             )
 
     @staticmethod
+    @contextmanager
+    def _foreign_key_rebuild(
+        db: sqlite3.Connection,
+        *,
+        migration_name: str,
+    ) -> Iterator[None]:
+        """Run a table rebuild with foreign keys verifiably disabled."""
+        if db.in_transaction:
+            db.commit()
+        if db.in_transaction:
+            raise sqlite3.IntegrityError(
+                f"{migration_name} migration could not finish prior transaction"
+            )
+        try:
+            db.execute("pragma foreign_keys=off")
+            if db.execute("pragma foreign_keys").fetchone()[0] != 0:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration could not disable foreign keys"
+                )
+            yield
+            if not db.in_transaction:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration transaction is missing"
+                )
+            violations = db.execute("pragma foreign_key_check").fetchall()
+            if violations:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration broke foreign keys"
+                )
+            db.commit()
+            violations = db.execute("pragma foreign_key_check").fetchall()
+            if violations:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration broke foreign keys"
+                )
+        except Exception:
+            if db.in_transaction:
+                db.rollback()
+            raise
+        finally:
+            if db.in_transaction:
+                db.rollback()
+            db.execute("pragma foreign_keys=on")
+            if db.execute("pragma foreign_keys").fetchone()[0] != 1:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration could not restore foreign keys"
+                )
+
+    @staticmethod
     def _migrate_agent_run_turn_identity(db: sqlite3.Connection) -> None:
         columns = {
             row["name"] for row in db.execute("pragma table_info(agent_runs)").fetchall()
@@ -2303,10 +2352,10 @@ class AutoReplyStore:
             else "'audit', 0, 0, null, ''"
         )
 
-        if db.in_transaction:
-            db.commit()
-        db.execute("pragma foreign_keys=off")
-        try:
+        with AutoReplyStore._foreign_key_rebuild(
+            db,
+            migration_name="agent_runs",
+        ):
             db.executescript(
                 f"""
                 begin immediate;
@@ -2378,18 +2427,6 @@ class AutoReplyStore:
                     on agent_runs(status, reconciliation_next_attempt_at, id);
                 """
             )
-            violations = db.execute("pragma foreign_key_check").fetchall()
-            if violations:
-                raise sqlite3.IntegrityError(
-                    "agent_runs migration broke foreign keys"
-                )
-            db.commit()
-        except Exception:
-            if db.in_transaction:
-                db.rollback()
-            raise
-        finally:
-            db.execute("pragma foreign_keys=on")
 
     @staticmethod
     def _migrate_removed_runtime(db: sqlite3.Connection) -> None:
@@ -2817,8 +2854,10 @@ class AutoReplyStore:
             if "execution_generation" in columns
             else "'initial'"
         )
-        db.execute("pragma foreign_keys=off")
-        try:
+        with AutoReplyStore._foreign_key_rebuild(
+            db,
+            migration_name="reply_tasks",
+        ):
             db.executescript(
                 f"""
                 begin immediate;
@@ -2866,18 +2905,8 @@ class AutoReplyStore:
                 drop table reply_tasks;
                 alter table reply_tasks_channel_migration rename to reply_tasks;
                 create index idx_reply_tasks_status on reply_tasks(status, id);
-                commit;
                 """
             )
-        except Exception:
-            if db.in_transaction:
-                db.rollback()
-            raise
-        finally:
-            db.execute("pragma foreign_keys=on")
-        violations = db.execute("pragma foreign_key_check").fetchall()
-        if violations:
-            raise sqlite3.IntegrityError("reply_tasks migration broke foreign keys")
 
     @staticmethod
     def _reply_task_from_row(row: sqlite3.Row) -> ReplyTask:

@@ -35,6 +35,9 @@ def _run_installer_fixture(
     tmp_path: Path,
     *,
     index_html: str | None = None,
+    asset_files: dict[str, str] | None = None,
+    symlink_assets: dict[str, str] | None = None,
+    include_source_plist: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     repository = tmp_path / "repository"
     scripts_dir = repository / "scripts"
@@ -50,6 +53,20 @@ def _run_installer_fixture(
         asset_dir = repository / "app" / "static" / "workbench"
         asset_dir.mkdir(parents=True)
         (asset_dir / "index.html").write_text(index_html)
+        for relative_path, content in (asset_files or {}).items():
+            asset_path = asset_dir / relative_path
+            asset_path.parent.mkdir(parents=True, exist_ok=True)
+            asset_path.write_text(content)
+        for relative_path, content in (symlink_assets or {}).items():
+            outside = repository / f"outside-{Path(relative_path).name}"
+            outside.write_text(content)
+            asset_path = asset_dir / relative_path
+            asset_path.parent.mkdir(parents=True, exist_ok=True)
+            asset_path.symlink_to(outside)
+    if include_source_plist:
+        launchd_dir = repository / "launchd"
+        launchd_dir.mkdir()
+        (launchd_dir / "com.ceo-agent-service.main.plist").write_text("<plist/>")
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -182,6 +199,72 @@ def test_installer_rejects_index_with_missing_assets_before_service_mutation(
         "workbench assets missing; run npm install --prefix frontend && "
         "npm run build:workbench"
     )
+    assert not (fake_home / "Library" / "LaunchAgents").exists()
+    assert not (fake_home / "Library" / "Logs" / "ceo-agent-service").exists()
+    assert not launchctl_log.exists()
+
+
+def test_installer_rejects_empty_index_before_service_mutation(tmp_path: Path):
+    completed, fake_home, launchctl_log = _run_installer_fixture(
+        tmp_path,
+        index_html="<!doctype html><html><body></body></html>",
+        include_source_plist=True,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stderr.strip() == (
+        "workbench assets missing; run npm install --prefix frontend && "
+        "npm run build:workbench"
+    )
+    assert not (fake_home / "Library" / "LaunchAgents").exists()
+    assert not (fake_home / "Library" / "Logs" / "ceo-agent-service").exists()
+    assert not launchctl_log.exists()
+
+
+def test_installer_rejects_symlinked_referenced_asset_before_service_mutation(
+    tmp_path: Path,
+):
+    completed, fake_home, launchctl_log = _run_installer_fixture(
+        tmp_path,
+        index_html=(
+            '<!doctype html><link rel="stylesheet" '
+            'href="/workbench-assets/assets/index.css">'
+            '<script type="module" '
+            'src="/workbench-assets/assets/index.js"></script>'
+        ),
+        asset_files={"assets/index.js": "document.body.dataset.ready = '1';"},
+        symlink_assets={"assets/index.css": "body {}"},
+        include_source_plist=True,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stderr.strip() == (
+        "workbench assets missing; run npm install --prefix frontend && "
+        "npm run build:workbench"
+    )
+    assert not (fake_home / "Library" / "LaunchAgents").exists()
+    assert not (fake_home / "Library" / "Logs" / "ceo-agent-service").exists()
+    assert not launchctl_log.exists()
+
+
+def test_installer_validates_source_plist_before_service_mutation(tmp_path: Path):
+    completed, fake_home, launchctl_log = _run_installer_fixture(
+        tmp_path,
+        index_html=(
+            '<!doctype html><link rel="stylesheet" '
+            'href="/workbench-assets/assets/index.css">'
+            '<script type="module" '
+            'src="/workbench-assets/assets/index.js"></script>'
+        ),
+        asset_files={
+            "assets/index.css": "body {}",
+            "assets/index.js": "document.body.dataset.ready = '1';",
+        },
+    )
+
+    assert completed.returncode == 1
+    assert "install prerequisite missing:" in completed.stderr
+    assert "launchd/com.ceo-agent-service.main.plist" in completed.stderr
     assert not (fake_home / "Library" / "LaunchAgents").exists()
     assert not (fake_home / "Library" / "Logs" / "ceo-agent-service").exists()
     assert not launchctl_log.exists()

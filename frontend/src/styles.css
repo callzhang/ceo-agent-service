@@ -62,8 +62,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 }
 
 .task-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
   border-right: 1px solid var(--line);
   padding: 22px 16px;
+  overflow: hidden;
 }
 
 .brand-header, .conversation-header {
@@ -142,8 +147,10 @@ h1, h2, h3, p { margin-top: 0; }
 .task-search input::placeholder { color: #8a8d85; }
 .search-scope { margin: 7px 2px 0; color: var(--ink-soft); font-size: 0.7rem; }
 
-.task-items { margin-top: 18px; }
-.task-virtuoso { height: min(62vh, 640px); }
+.task-list { display: flex; flex: 1 1 0%; flex-direction: column; min-height: 0; }
+.task-items { flex: 1 1 0%; min-height: 0; margin-top: 18px; overflow: auto; }
+.task-items:has(.task-virtuoso) { overflow: hidden; }
+.task-virtuoso { height: 100%; min-height: 180px; }
 .virtual-group-heading { margin: 10px 7px 7px; color: var(--ink-soft); font-size: 0.7rem; letter-spacing: 0.06em; }
 .task-group + .task-group { margin-top: 18px; }
 .task-group h3 { margin: 0 7px 7px; color: var(--ink-soft); font-size: 0.7rem; letter-spacing: 0.06em; }
@@ -354,6 +361,7 @@ h1, h2, h3, p { margin-top: 0; }
 @media (max-width: 679px) {
   .workbench-shell { display: block; }
   .task-panel, .conversation-panel { min-height: 100vh; }
+  .task-panel { height: 100vh; }
   .workbench-shell.has-selection .task-panel { display: none; }
   .workbench-shell:not(.has-selection) .conversation-panel { display: none; }
   .mobile-back {

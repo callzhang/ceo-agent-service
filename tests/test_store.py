@@ -669,6 +669,8 @@ def test_reply_task_channel_identity_migration_rolls_back_on_rebuild_failure(
             "execution_generation": "gen-active",
             "status": "processing",
         }
+        assert db.in_transaction is False
+        assert db.execute("pragma foreign_keys").fetchone()[0] == 1
 
 
 def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):

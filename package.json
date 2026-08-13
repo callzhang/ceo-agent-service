@@ -15,7 +15,7 @@
     "build:workbench": "npm run build --prefix frontend",
     "dev:local": "ceo-agent run",
     "test": "npm run test:local && npm run test:workbench",
-    "test:local": "pytest",
+    "test:local": ".venv/bin/python -m pytest",
     "test:workbench": "npm run test --prefix frontend -- --run"
   }
 }

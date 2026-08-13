@@ -1,4 +1,6 @@
 import sqlite3
+from multiprocessing import get_context
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +10,25 @@ from app.wechat.models import WechatReplyScope
 
 def _store(tmp_path):
     return AutoReplyStore(tmp_path / "worker.sqlite3")
+
+
+def _open_legacy_store_in_process(db_path, barrier, results):
+    try:
+        barrier.wait()
+        store = AutoReplyStore(Path(db_path))
+        with store._connect() as db:
+            results.put(
+                (
+                    "ok",
+                    db.execute("pragma foreign_keys").fetchone()[0],
+                    db.execute("pragma foreign_key_check").fetchall(),
+                    db.execute(
+                        "select client_request_id from workbench_attachments"
+                    ).fetchone()[0],
+                )
+            )
+    except BaseException as exc:
+        results.put(("error", type(exc).__name__, str(exc)))
 
 
 def test_store_round_trips_wechat_scope(tmp_path):
@@ -651,6 +672,25 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
             updated_at text not null default current_timestamp,
             foreign key(reply_task_id) references reply_tasks(id)
         );
+        create table workbench_tasks (
+            id text primary key,
+            title text not null,
+            runtime_kind text not null,
+            provider_session_ref text not null default '',
+            archived_at text not null default '',
+            created_at text not null default current_timestamp,
+            updated_at text not null default current_timestamp
+        );
+        create table workbench_attachments (
+            id text primary key,
+            task_id text not null,
+            filename text not null,
+            media_type text not null,
+            size_bytes integer not null check(size_bytes >= 0),
+            storage_path text not null,
+            created_at text not null default current_timestamp,
+            foreign key(task_id) references workbench_tasks(id)
+        );
         insert into reply_tasks (
             id, conversation_id, conversation_title, single_chat,
             trigger_message_id, trigger_create_time, trigger_sender, trigger_text
@@ -662,9 +702,39 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
             reply_task_id, account_id, target_type, target_id, conversation_id,
             reply_text
         ) values (7, 'acct-1', 'direct', 'friend-1', 'same-conversation', 'hi');
+        insert into workbench_tasks (id, title, runtime_kind)
+        values ('workbench-legacy', 'Legacy attachment', 'codex');
+        insert into workbench_attachments (
+            id, task_id, filename, media_type, size_bytes, storage_path
+        ) values (
+            'attachment-legacy', 'workbench-legacy', 'legacy.txt',
+            'text/plain', 6, '/tmp/legacy.txt'
+        );
         """
     )
     db.close()
+
+    context = get_context("spawn")
+    barrier = context.Barrier(2)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_open_legacy_store_in_process,
+            args=(str(db_path), barrier, results),
+        )
+        for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=20)
+        assert process.exitcode == 0
+
+    outcomes = [results.get(timeout=2) for _ in processes]
+    assert outcomes == [
+        ("ok", 1, [], "attachment-legacy"),
+        ("ok", 1, [], "attachment-legacy"),
+    ]
 
     store = AutoReplyStore(db_path)
 

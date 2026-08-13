@@ -12,6 +12,7 @@ from html import escape
 from itertools import count, zip_longest
 import os
 from pathlib import Path
+import stat
 import subprocess
 from typing import TypedDict
 from urllib.parse import parse_qs, quote, urlencode, urlparse
@@ -19,7 +20,6 @@ from urllib.parse import parse_qs, quote, urlencode, urlparse
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (
-    FileResponse,
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
@@ -7616,6 +7616,42 @@ def _workbench_asset_dir() -> Path:
     return Path(__file__).resolve().parent / "static" / "workbench"
 
 
+def _open_workbench_index(asset_dir: Path) -> tuple[int, int] | None:
+    directory_fd = None
+    index_fd = None
+    try:
+        directory_fd = os.open(
+            asset_dir,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        index_fd = os.open(
+            "index.html",
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=directory_fd,
+        )
+        metadata = os.fstat(index_fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            return None
+        opened = (index_fd, metadata.st_size)
+        index_fd = None
+        return opened
+    except OSError:
+        return None
+    finally:
+        if index_fd is not None:
+            os.close(index_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
+def _workbench_index_chunks(file_descriptor: int):
+    try:
+        while chunk := os.read(file_descriptor, 64 * 1024):
+            yield chunk
+    finally:
+        os.close(file_descriptor)
+
+
 def create_audit_app(
     db_path: Path,
     ding_robot_code: str | None = None,
@@ -7819,12 +7855,16 @@ def create_audit_app(
     def workbench_home() -> Response:
         if not _tutorial_is_complete(_audit_store(db_path)):
             return RedirectResponse("/tutorial", status_code=303)
-        index_path = asset_dir / "index.html"
-        if index_path.is_file():
-            return FileResponse(
-                index_path,
+        opened_index = _open_workbench_index(asset_dir)
+        if opened_index is not None:
+            file_descriptor, size = opened_index
+            return StreamingResponse(
+                _workbench_index_chunks(file_descriptor),
                 media_type="text/html",
-                headers={"Cache-Control": "no-cache"},
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Content-Length": str(size),
+                },
             )
         return HTMLResponse(
             """<!doctype html><html><head><meta charset="utf-8"><title>Workbench unavailable</title></head>

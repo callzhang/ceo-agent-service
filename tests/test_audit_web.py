@@ -5607,6 +5607,68 @@ def test_fastapi_app_serves_built_workbench_assets_with_secure_boundaries(
     assert settings.status_code == 200
 
 
+def test_workbench_root_rejects_index_symlink_outside_asset_directory(
+    tmp_path: Path,
+):
+    asset_dir = tmp_path / "assets"
+    asset_dir.mkdir()
+    outside = tmp_path / "outside.html"
+    outside.write_text("outside secret")
+    (asset_dir / "index.html").symlink_to(outside)
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    complete_setup_wizard(store)
+
+    with TestClient(
+        create_audit_app(
+            store.path,
+            workbench_asset_dir=asset_dir,
+            workbench_workspace=tmp_path,
+        )
+    ) as client:
+        response = client.get("/")
+
+    assert response.status_code == 503
+    assert "outside secret" not in response.text
+
+
+def test_workbench_root_never_reads_index_swapped_after_path_validation(
+    tmp_path: Path,
+    monkeypatch,
+):
+    asset_dir = tmp_path / "assets"
+    asset_dir.mkdir()
+    index = asset_dir / "index.html"
+    expected = b"<!doctype html><title>Safe workbench</title>"
+    index.write_bytes(expected)
+    outside = tmp_path / "outside.html"
+    outside.write_text("outside secret")
+    original_open = audit_web_module._open_workbench_index
+
+    def swap_after_open(path: Path) -> tuple[int, int] | None:
+        opened = original_open(path)
+        if path == asset_dir and opened is not None:
+            index.unlink()
+            index.symlink_to(outside)
+        return opened
+
+    monkeypatch.setattr(audit_web_module, "_open_workbench_index", swap_after_open)
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    complete_setup_wizard(store)
+
+    with TestClient(
+        create_audit_app(
+            store.path,
+            workbench_asset_dir=asset_dir,
+            workbench_workspace=tmp_path,
+        )
+    ) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.content == expected
+    assert b"outside secret" not in response.content
+
+
 def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)

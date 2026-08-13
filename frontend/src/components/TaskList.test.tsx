@@ -2,7 +2,20 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import workbenchStyles from "../styles.css?raw";
 import { TaskList } from "./TaskList";
+
+function styleFor(selector: string) {
+  const style = document.createElement("style");
+  style.textContent = workbenchStyles;
+  document.head.append(style);
+  const rule = Array.from(style.sheet?.cssRules ?? [])
+    .filter((candidate): candidate is CSSStyleRule => "selectorText" in candidate)
+    .find((candidate) => candidate.selectorText === selector);
+  style.remove();
+  expect(rule, `missing CSS rule for ${selector}`).toBeDefined();
+  return rule!.style;
+}
 
 function task(
   id: string,
@@ -272,6 +285,32 @@ describe("TaskList", () => {
     const renderedRows = screen.getAllByTestId("virtual-task-row");
     expect(renderedRows.length).toBeGreaterThan(0);
     expect(renderedRows.length).toBeLessThan(100);
+  });
+
+  it("gives the virtualized task list a bounded viewport through explicit flex ancestors", () => {
+    const panel = styleFor(".task-panel");
+    expect(panel.display).toBe("flex");
+    expect(panel.flexDirection).toBe("column");
+    expect(panel.height).toBe("100vh");
+    expect(panel.minHeight).toBe("0px");
+
+    const list = styleFor(".task-list");
+    expect(list.display).toBe("flex");
+    expect(list.flexDirection).toBe("column");
+    expect(list.flex).toBe("1 1 0%");
+    expect(list.minHeight).toBe("0px");
+
+    const items = styleFor(".task-items");
+    expect(items.flex).toBe("1 1 0%");
+    expect(items.minHeight).toBe("0px");
+    expect(items.overflow).toBe("auto");
+
+    const virtualItems = styleFor(".task-items:has(.task-virtuoso)");
+    expect(virtualItems.overflow).toBe("hidden");
+
+    const virtuoso = styleFor(".task-virtuoso");
+    expect(virtuoso.height).toBe("100%");
+    expect(virtuoso.minHeight).toBe("180px");
   });
 
   it("labels search as local while more server pages remain", () => {

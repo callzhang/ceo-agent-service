@@ -576,7 +576,7 @@ cd /path/to/ceo-agent-service
 npm test
 ```
 
-`npm test` 依次运行现有 Python 测试和 Workbench 前端测试。修改 Workbench 后的本地集成流程是：
+`npm test` 使用仓库的 `.venv/bin/python -m pytest` 运行 Python 测试，然后运行 Workbench 前端测试。修改 Workbench 后的本地集成流程是：
 
 ```bash
 npm install --prefix frontend
@@ -586,6 +586,12 @@ npm run build:workbench
 ```
 
 构建产物写入被 Git 忽略的 `app/static/workbench/`；FastAPI 在 `/` 精确返回其 `index.html`，并从 `/workbench-assets/` 提供带哈希的 JS/CSS。在构建之前启动页面会明确返回 503，安装脚本也不会自动下载依赖或构建。
+
+安装了 Chrome 和 Python `dev` 依赖后，可针对生产构建运行真实浏览器布局回归：
+
+```bash
+WORKBENCH_BROWSER_TESTS=1 .venv/bin/python -m pytest tests/test_workbench_browser.py -q
+```
 
 只跑相关测试：
 
