@@ -23,6 +23,7 @@ from app.agent_contracts import (
 from app.agent_effects import EffectKind, McpToolEffectRegistry
 from app.agent_result import ResultParseError
 from app.agent_turn_runner import (
+    _action_completion_accounting,
     _action_receipt_operation_id,
     _is_dingtalk_chat_send_argv,
     _json_digest,
@@ -3106,6 +3107,58 @@ def test_named_direct_message_readback_keeps_the_completed_write_receipt():
     assert _actions_have_required_readbacks(
         events, (action,), McpToolEffectRegistry.default()
     )
+
+
+def test_named_direct_message_readback_closes_duplicate_replayed_write_events():
+    action = {
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "chat +dm",
+        "capability": "agent_cli.dws",
+        "arguments_digest": "write-1",
+        "target_identifiers": {},
+        "readback_target_identifiers": {"open-dingtalk-id": "recipient-1"},
+    }
+    events = [
+        {
+            "type": event_type,
+            "item": {
+                "id": f"write-{index}",
+                "metadata": {
+                    **action,
+                    "effect": "effectful",
+                    "operation_id": "proposal-1",
+                },
+            },
+        }
+        for index in range(2)
+        for event_type in ("item.started", "item.completed")
+    ] + [
+        {
+            "type": "item.completed",
+            "item": {
+                "metadata": {
+                    "effect": "read_only",
+                    "reviewed_server": "agent_cli",
+                    "reviewed_tool": "execute_reviewed_read",
+                    "operation": "chat +chat-messages",
+                    "target_identifiers": {"open-dingtalk-id": "recipient-1"},
+                    "result_digest": "read-1",
+                }
+            },
+        }
+    ]
+
+    completed, all_closed = _action_completion_accounting(
+        events,
+        (),
+        (action,),
+        operation_id="proposal-1",
+        registry=McpToolEffectRegistry.default(),
+    )
+
+    assert completed == {0}
+    assert all_closed
 
 
 def test_native_command_contract_uses_parsed_cli_not_consumer_label():

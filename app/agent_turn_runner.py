@@ -1731,6 +1731,7 @@ def _matching_read_digest(
     after_index: int = -1,
     registry: McpToolEffectRegistry,
 ) -> str:
+    readback_action = _readback_action_metadata(action, action)
     for index, event in enumerate(events):
         if index < event_start or index <= after_index or event.get("type") != "item.completed":
             continue
@@ -1738,7 +1739,7 @@ def _matching_read_digest(
         if metadata is None or metadata.get("effect") != EffectKind.READ_ONLY.value:
             continue
         digest = metadata.get("result_digest")
-        if _read_matches_action(metadata, action, registry) and isinstance(digest, str):
+        if _read_matches_action(metadata, readback_action, registry) and isinstance(digest, str):
             return digest
     return ""
 
