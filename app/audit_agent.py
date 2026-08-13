@@ -152,6 +152,30 @@ class AuditAgentRunner:
                 return self._complete_persisted_direct_delivery_recovery(
                     claim.run,
                 )
+            expected_effect_actions = tuple(
+                _expected_effect_action(action, self.effects, action_index=index)
+                for index, action in enumerate(context.proposal.actions)
+            )
+            completed, all_effects_closed = _action_completion_accounting(
+                claim.run.tool_events,
+                self.store.list_agent_execution_receipts(claim.run.id),
+                expected_effect_actions,
+                operation_id=claim.run.operation_id,
+                registry=self.effects,
+            )
+            if (
+                completed == set(range(len(expected_effect_actions)))
+                and all_effects_closed
+                and _actions_have_required_readbacks(
+                    claim.run.tool_events,
+                    expected_effect_actions,
+                    self.effects,
+                )
+            ):
+                return self._complete_verified_effect_recovery(
+                    claim.run,
+                    completed=completed,
+                )
             if skill_failure := self._skill_receipt_gate(
                 task,
                 context,
@@ -261,6 +285,51 @@ class AuditAgentRunner:
             result=result,
             transcript_start_line=run.transcript_end_line,
             transcript_end_line=completed.transcript_end_line,
+        )
+
+    def _complete_verified_effect_recovery(
+        self,
+        run: AgentRun,
+        *,
+        completed: set[int],
+    ) -> AgentTurnRunResult[AuditAgentResult]:
+        """Complete a crashed write only after its controlled evidence closes."""
+        result = AuditAgentResult(
+            outcome=AuditOutcome.EXECUTED,
+            summary=(
+                "Completed tool events and target-matched live readbacks cover "
+                "every approved action."
+            ),
+            proposal_revision=run.proposal_revision,
+            side_effect_state=SideEffectState.CONFIRMED,
+            feedback=None,
+            external_result={
+                "operation_id": run.operation_id,
+                "verification_summary": (
+                    "Persisted controlled write events and live readbacks confirm "
+                    "every approved action."
+                ),
+                "live_result_reference": {
+                    "recovery_action_indexes": sorted(completed),
+                    "evidence": "completed_tool_events_and_readbacks",
+                },
+            },
+            reconciliation=(),
+            error=AgentError(),
+        )
+        completed_run = self.store.complete_agent_run(
+            run.id,
+            result.model_dump(mode="json"),
+            owner=self.owner,
+            side_effect_state=SideEffectState.CONFIRMED.value,
+            transcript_end_line=run.transcript_end_line,
+            expected_status="unknown",
+        )
+        return AgentTurnRunResult(
+            run_id=completed_run.id,
+            result=result,
+            transcript_start_line=run.transcript_end_line,
+            transcript_end_line=completed_run.transcript_end_line,
         )
 
     def execute_recovery(

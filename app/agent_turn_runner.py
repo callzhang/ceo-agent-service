@@ -1938,6 +1938,24 @@ def _action_completion_accounting(
         ):
             successes[int(action_index)] += 1
 
+    # An interrupted write may be followed by a later, independently recorded
+    # successful write and its target-matched readback. The readback closes the
+    # interrupted lifecycle as well; otherwise recovery keeps retrying an
+    # already verified effect forever.
+    for start in starts:
+        action_index = start["action_index"]
+        if (
+            not start["closed"]
+            and action_index is not None
+            and _matching_read_digest(
+                events,
+                actions[int(action_index)],
+                after_index=int(start["event_index"]),
+                registry=registry,
+            )
+        ):
+            start["closed"] = True
+
     used_receipts: set[int] = set()
     for action_index, action in enumerate(actions):
         expected_receipt_id = _action_receipt_operation_id(

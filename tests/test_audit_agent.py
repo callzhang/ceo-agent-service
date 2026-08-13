@@ -2680,6 +2680,95 @@ def test_completed_recovery_action_overrides_older_absent_reconciliation(setup):
     assert executor.commands == []
 
 
+def test_recovery_completes_verified_persisted_effects_without_model_reconciliation(
+    setup,
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    claim = store.claim_unknown_agent_run(run.id, owner="verified-effect")
+    assert claim.claimed
+    expected = _expected_effect_action(
+        audit_context.proposal.actions[0],
+        McpToolEffectRegistry.default(),
+        action_index=0,
+    )
+    write_metadata = {
+        **expected,
+        "effect": "effectful",
+        "operation_id": run.operation_id,
+        "action_index": 0,
+        "native_cli": "dws",
+    }
+    for event_type in ("item.started", "item.completed"):
+        store.append_unknown_agent_run_event(
+            run.id,
+            {
+                "type": event_type,
+                "item": {
+                    "type": "mcp_tool_call",
+                    "id": "verified-write",
+                    "server": "agent_cli",
+                    "tool": "execute_reviewed_write",
+                    "status": "completed" if event_type == "item.completed" else "in_progress",
+                    "metadata": write_metadata,
+                },
+            },
+            owner="verified-effect",
+        )
+    read_descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                "dws", "chat", "message", "list", "--group", "cid-agent",
+                "--time", "2026-08-06",
+            ],
+        }
+    )
+    assert read_descriptor is not None
+    read_metadata = {
+        "effect": "read_only",
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_read",
+        "capability": "agent_cli.dws",
+        "operation": read_descriptor.command_path,
+        "target_identifiers": read_descriptor.target_identifiers,
+        "result_digest": "verified-post-write-read",
+    }
+    for event_type in ("item.started", "item.completed"):
+        store.append_unknown_agent_run_event(
+            run.id,
+            {
+                "type": event_type,
+                "item": {
+                    "type": "mcp_tool_call",
+                    "id": "verified-read",
+                    "server": "agent_cli",
+                    "tool": "execute_reviewed_read",
+                    "status": "completed" if event_type == "item.completed" else "in_progress",
+                    "metadata": read_metadata,
+                },
+            },
+            owner="verified-effect",
+        )
+    store.persist_unknown_agent_run_result(
+        run.id,
+        {"outcome": "reconciled"},
+        owner="verified-effect",
+        transcript_end_line=run.transcript_end_line,
+    )
+
+    executor = CapturingExecutor("")
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, audit_context, run=store.get_agent_run(run.id))
+
+    assert result.result.outcome.value == "executed"
+    assert result.result.side_effect_state.value == "confirmed"
+    assert store.get_agent_run(run.id).status == "completed"
+    assert executor.commands == []
+
+
 def test_controlled_receipt_uses_command_digest_not_display_operation_name():
     action = {
         "capability": "agent_cli.dws",
