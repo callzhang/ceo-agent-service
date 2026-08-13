@@ -284,22 +284,6 @@ class _CodexNormalizer:
         if not isinstance(item, Mapping):
             item = {}
         item_type = item.get("type")
-        known_item_types = {
-            "command_execution",
-            "mcp_tool_call",
-            "assistant_message",
-            "agent_message",
-        }
-        if event_type in {"item.started", "item.completed", "item.delta"} and (
-            item_type not in known_item_types
-        ):
-            try:
-                assert_no_credentials(item)
-            except ValueError as exc:
-                raise _AdapterFailure(
-                    "sensitive_provider_output", "provider output contained sensitive data"
-                ) from exc
-            return
         if event_type == "item.started" and item_type in {
             "command_execution",
             "mcp_tool_call",
@@ -421,17 +405,17 @@ class _CodexNormalizer:
         )
 
     def _complete_tool(self, item: Mapping[str, Any]) -> None:
-        proposal: dict[str, object] | None = None
-        failed = _native_tool_failed(item)
-        if item.get("type") == "mcp_tool_call":
-            if _is_confirmation_call(item) and not failed:
-                proposal = _extract_confirmation(item.get("result"))
         native_id = _required_native_item_id(item)
         correlation_id = self._tool_call_ids.pop(native_id, None)
         if correlation_id is None:
             raise _AdapterFailure(
                 "invalid_provider_output", "provider tool completion was not correlated"
             )
+        proposal: dict[str, object] | None = None
+        failed = _native_tool_failed(item)
+        if item.get("type") == "mcp_tool_call":
+            if _is_confirmation_call(item) and not failed:
+                proposal = _extract_confirmation(item.get("result"))
         self._emit(
             "tool_completed",
             {

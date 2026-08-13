@@ -19,6 +19,7 @@ from app.workbench.codex_runtime import (
     _CancellableProcessExecutor,
     _config_without_confirmation_server,
     _isolated_codex_environment,
+    _safe_tool_name,
 )
 from app.workbench.confirmation_mcp import request_reviewed_action
 from app.workbench.runtime import RuntimeRequest, _runtime_owner
@@ -1217,7 +1218,7 @@ def test_native_turn_failed_and_post_terminal_data_fail_safely(tmp_path: Path):
                 {"type": "thread.started", "thread_id": SESSION_ID},
                 {"type": "item.completed", "item": {"api_token": "opaque"}},
             ],
-            "sensitive_provider_output",
+            "incomplete_provider_output",
         ),
         (
                 [
@@ -1387,6 +1388,39 @@ def test_credential_in_ignored_command_metadata_never_enters_events(tmp_path: Pa
     assert credential not in repr(events)
 
 
+def test_unsupported_private_item_is_ignored_without_leaking(tmp_path: Path):
+    cursor = "opaque-pagination-value"
+    credential = "sk-proj-privateitemcredential1234"
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "reasoning",
+                "private": {
+                    "next_page_token": cursor,
+                    "credential": credential,
+                },
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": "完成"},
+        },
+        {"type": "turn.completed"},
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    assert result.status == "completed"
+    assert cursor not in repr(events)
+    assert credential not in repr(events)
+    assert cursor not in result.error_detail
+    assert credential not in result.error_detail
+
+
 def test_confirmation_argv_credential_value_is_rejected_without_leak(tmp_path: Path):
     credential = "sk-proj-confirmationcredential1234"
     confirmation = {
@@ -1400,8 +1434,18 @@ def test_confirmation_argv_credential_value_is_rejected_without_leak(tmp_path: P
     records = [
         {"type": "thread.started", "thread_id": SESSION_ID},
         {
+            "type": "item.started",
+            "item": {
+                "id": "confirm-credential",
+                "type": "mcp_tool_call",
+                "server": "workbench_confirmation",
+                "tool": "request_reviewed_action",
+            },
+        },
+        {
             "type": "item.completed",
             "item": {
+                "id": "confirm-credential",
                 "type": "mcp_tool_call",
                 "server": "workbench_confirmation",
                 "tool": "request_reviewed_action",
@@ -1418,6 +1462,92 @@ def test_confirmation_argv_credential_value_is_rejected_without_leak(tmp_path: P
     assert result.error_code == "sensitive_provider_output"
     assert credential not in result.error_detail
     assert credential not in repr(events)
+
+
+def test_uncorrelated_confirmation_completion_fails_before_inspecting_result(
+    tmp_path: Path,
+):
+    credential = "sk-proj-unrelatedconfirmationcredential1234"
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "unstarted-confirmation",
+                "type": "mcp_tool_call",
+                "server": "workbench_confirmation",
+                "tool": "request_reviewed_action",
+                "result": {
+                    "structuredContent": {
+                        "kind": "reviewed_cli",
+                        "argv": ["tool", "--value", credential],
+                        "target": "target",
+                        "summary": "summary",
+                        "risk": "risk",
+                        "executed": False,
+                    }
+                },
+            },
+        },
+    ]
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=lambda _event: None))
+
+    assert result.status == "failed"
+    assert result.error_code == "invalid_provider_output"
+    assert credential not in result.error_detail
+
+
+@pytest.mark.parametrize(
+    ("item", "expected_label", "private_names"),
+    [
+        ({"type": "command_execution"}, "本地命令", ()),
+        (
+            {
+                "type": "mcp_tool_call",
+                "server": "codex_apps",
+                "tool": "google_calendar.search_events",
+            },
+            "Google 日历查询",
+            ("codex_apps", "google_calendar.search_events"),
+        ),
+        (
+            {
+                "type": "mcp_tool_call",
+                "server": "codex_apps",
+                "tool": "gmail.search_emails",
+            },
+            "邮件查询",
+            ("codex_apps", "gmail.search_emails"),
+        ),
+        (
+            {
+                "type": "mcp_tool_call",
+                "server": "workbench_confirmation",
+                "tool": "request_reviewed_action",
+            },
+            "操作确认",
+            ("workbench_confirmation", "request_reviewed_action"),
+        ),
+        (
+            {
+                "type": "mcp_tool_call",
+                "server": "private-provider",
+                "tool": "private.search_records",
+            },
+            "MCP 工具",
+            ("private-provider", "private.search_records"),
+        ),
+    ],
+)
+def test_safe_tool_name_uses_only_application_owned_labels(
+    item: dict[str, str], expected_label: str, private_names: tuple[str, ...]
+):
+    label = _safe_tool_name(item)
+
+    assert label == expected_label
+    assert all(private_name not in label for private_name in private_names)
 
 
 def test_bounded_preamble_is_allowed_but_oversized_line_and_output_fail(tmp_path: Path):
