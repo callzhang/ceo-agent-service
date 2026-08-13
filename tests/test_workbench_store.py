@@ -116,7 +116,7 @@ def test_store_upgrades_point_seven_schema_with_current_indexes(tmp_path: Path):
             )
         }
 
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-13.9"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-13.10"
     assert "idx_workbench_events_event_type" in indexes
     assert "idx_workbench_events_turn_id_id" in indexes
     assert "idx_workbench_turns_task_sequence" in indexes
@@ -139,6 +139,44 @@ def test_store_repairs_missing_required_point_nine_index(tmp_path: Path):
             """select name from sqlite_master
                where type='index' and name='idx_workbench_events_event_type'"""
         ).fetchone()
+    assert index is not None
+
+
+def test_store_upgrades_point_nine_attachments_with_idempotency_columns(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "workbench.sqlite3"
+    store = WorkbenchStore(db_path)
+    task = store.create_task(title="Attachment upgrade", runtime_kind="codex")
+    attachment = store.save_attachment(
+        task.id,
+        filename="legacy.png",
+        media_type="image/png",
+        content=b"legacy",
+    )
+    with store._connect() as db:
+        db.execute("drop index idx_workbench_attachments_task_request")
+        db.execute("alter table workbench_attachments drop column content_sha256")
+        db.execute("alter table workbench_attachments drop column client_request_id")
+        db.execute(
+            "update service_state set value='2026-08-13.9' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = WorkbenchStore(db_path)
+    with upgraded._connect() as db:
+        row = db.execute(
+            "select client_request_id, content_sha256 from workbench_attachments where id=?",
+            (attachment.id,),
+        ).fetchone()
+        index = db.execute(
+            """select name from sqlite_master
+               where type='index' and name='idx_workbench_attachments_task_request'"""
+        ).fetchone()
+
+    assert row["client_request_id"] == attachment.id
+    assert row["content_sha256"] == ""
     assert index is not None
 
 
@@ -174,7 +212,7 @@ def test_store_upgrades_point_eight_turns_with_stable_per_task_sequence(
     upgraded = WorkbenchStore(db_path)
     turns = upgraded.list_turns(task.id)
 
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-13.9"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-13.10"
     assert [(turn.id, turn.task_sequence) for turn in turns] == [
         (second_id, 2),
         (first_id, 1),
@@ -1559,16 +1597,19 @@ def test_attachment_reconciliation_removes_generated_orphans(tmp_path: Path):
         db.execute(
             """
             insert into workbench_attachments (
-                id, task_id, filename, media_type, size_bytes, storage_path
-            ) values (?, ?, ?, ?, ?, ?)
+                id, task_id, client_request_id, filename, media_type,
+                size_bytes, storage_path, content_sha256
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 missing_id,
                 task.id,
+                missing_id,
                 "missing.txt",
                 "text/plain",
                 0,
                 str(directory / missing_id),
+                "0" * 64,
             ),
         )
 

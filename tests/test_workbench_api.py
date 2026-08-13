@@ -1,6 +1,7 @@
 import json
 import os
 import asyncio
+import sqlite3
 from pathlib import Path
 import threading
 import time
@@ -144,6 +145,7 @@ def test_attachment_is_strict_bounded_and_has_no_storage_path(tmp_path: Path):
         uploaded = client.post(
             f"/api/workbench/tasks/{task['id']}/attachments",
             json={
+                "client_request_id": "11111111-1111-4111-8111-111111111111",
                 "filename": "notes.txt",
                 "media_type": "text/plain",
                 "content_base64": "aGVsbG8=",
@@ -152,6 +154,7 @@ def test_attachment_is_strict_bounded_and_has_no_storage_path(tmp_path: Path):
         invalid = client.post(
             f"/api/workbench/tasks/{task['id']}/attachments",
             json={
+                "client_request_id": "22222222-2222-4222-8222-222222222222",
                 "filename": "notes.txt",
                 "media_type": "text/plain",
                 "content_base64": "%%%",
@@ -160,6 +163,7 @@ def test_attachment_is_strict_bounded_and_has_no_storage_path(tmp_path: Path):
         whitespace = client.post(
             f"/api/workbench/tasks/{task['id']}/attachments",
             json={
+                "client_request_id": "33333333-3333-4333-8333-333333333333",
                 "filename": "notes.txt",
                 "media_type": "text/plain",
                 "content_base64": " aGVsbG8=",
@@ -168,6 +172,7 @@ def test_attachment_is_strict_bounded_and_has_no_storage_path(tmp_path: Path):
         emoji_media_type = client.post(
             f"/api/workbench/tasks/{task['id']}/attachments",
             json={
+                "client_request_id": "44444444-4444-4444-8444-444444444444",
                 "filename": "notes.txt",
                 "media_type": "text/💥",
                 "content_base64": "aGVsbG8=",
@@ -180,6 +185,46 @@ def test_attachment_is_strict_bounded_and_has_no_storage_path(tmp_path: Path):
     assert invalid.status_code == 400
     assert whitespace.status_code == 400
     assert emoji_media_type.status_code == 400
+
+
+def test_attachment_upload_retry_is_idempotent_and_collision_is_fixed(tmp_path: Path):
+    request_id = "5e270a4d-9085-4461-a23d-53fa7ef82948"
+    with _client(tmp_path) as client:
+        task = client.post(
+            "/api/workbench/tasks",
+            json={"title": "Retry image", "runtime_kind": "codex"},
+        ).json()
+        endpoint = f"/api/workbench/tasks/{task['id']}/attachments"
+        payload = {
+            "client_request_id": request_id,
+            "filename": "chart.png",
+            "media_type": "image/png",
+            "content_base64": "aW1hZ2U=",
+        }
+
+        created = client.post(endpoint, json=payload)
+        retried = client.post(endpoint, json=payload)
+        collision = client.post(
+            endpoint,
+            json={**payload, "content_base64": "ZGlmZmVyZW50"},
+        )
+
+    assert created.status_code == 201
+    assert retried.status_code == 201
+    assert retried.json() == created.json()
+    assert collision.status_code == 409
+    assert collision.json() == {
+        "detail": "Client request ID conflicts with an existing attachment"
+    }
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 1
+        row = db.execute(
+            "select client_request_id, content_sha256 from workbench_attachments"
+        ).fetchone()
+    assert row[0] == request_id
+    assert len(row[1]) == 64
+    files = list((tmp_path / "workbench" / "attachments" / task["id"]).iterdir())
+    assert len(files) == 1
 
 
 def test_task_archive_filter_is_explicit(tmp_path: Path):
@@ -495,15 +540,17 @@ def test_all_timeline_public_strings_redact_legacy_paths_and_credentials(
         )
         db.execute(
             """insert into workbench_attachments
-               (id,task_id,filename,media_type,size_bytes,storage_path)
-               values(?,?,?,?,?,?)""",
+               (id,task_id,client_request_id,filename,media_type,size_bytes,storage_path,content_sha256)
+               values(?,?,?,?,?,?,?,?)""",
             (
                 attachment_id,
                 task.id,
+                attachment_id,
                 "/etc/private.txt",
                 "text/plain",
                 0,
                 str(tmp_path / "internal-attachment"),
+                "0" * 64,
             ),
         )
         db.execute(
@@ -770,6 +817,7 @@ def test_attachment_fsync_does_not_block_unrelated_async_request(
                 client.post(
                     f"/api/workbench/tasks/{task.id}/attachments",
                     json={
+                        "client_request_id": "55555555-5555-4555-8555-555555555555",
                         "filename": "report.txt",
                         "media_type": "text/plain",
                         "content_base64": "cmVwb3J0",

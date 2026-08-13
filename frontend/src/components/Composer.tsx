@@ -5,12 +5,14 @@ import { createTurn, stopTurn, uploadAttachment } from "../api";
 import type { Attachment, RuntimeCapabilities, Turn } from "../types";
 
 const maxAttachmentBytes = 20 * 1024 * 1024;
+const maxAttachmentFiles = 8;
 const maxMessageLength = 100_000;
 
 type PendingStatus = "uploading" | "uploaded" | "failed";
 
 interface PendingFile {
   key: string;
+  uploadRequestId: string;
   file: File;
   status: PendingStatus;
   error: string;
@@ -21,9 +23,10 @@ interface ComposerProps {
   taskId: string | null;
   activeTurn: Turn | null;
   attachments: Attachment[];
-  capabilities: RuntimeCapabilities["capabilities"] | null;
+  capabilities?: RuntimeCapabilities["capabilities"] | null;
   onTurnCreated: (turn: Turn) => void | Promise<void>;
   onTurnStopped?: (turn: Turn) => void | Promise<void>;
+  onAttachmentUploaded?: (attachment: Attachment) => void | Promise<void>;
 }
 
 const imageExtensions = new Set(["avif", "bmp", "gif", "heic", "jpeg", "jpg", "png", "tif", "tiff", "webp"]);
@@ -33,29 +36,27 @@ function permittedImage(filename: string, mediaType: string) {
   return mediaType.toLowerCase().startsWith("image/") && imageExtensions.has(extension);
 }
 
-function fileAsBase64(file: File, signal: AbortSignal): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    const abort = () => reader.abort();
-    signal.addEventListener("abort", abort, { once: true });
-    reader.onerror = () => reject(new Error("read failed"));
-    reader.onabort = () => reject(new DOMException("Aborted", "AbortError"));
-    reader.onload = () => {
-      signal.removeEventListener("abort", abort);
-      const result = typeof reader.result === "string" ? reader.result : "";
-      const separator = result.indexOf(",");
-      if (separator < 0) reject(new Error("read failed"));
-      else resolve(result.slice(separator + 1));
-    };
-    reader.readAsDataURL(file);
-  });
+async function fileAsBase64(file: File, signal: AbortSignal): Promise<string> {
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  const buffer = typeof file.arrayBuffer === "function"
+    ? await file.arrayBuffer()
+    : await new Response(file).arrayBuffer();
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  const bytes = new Uint8Array(buffer);
+  const chunks: string[] = [];
+  const chunkSize = 32_766;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    chunks.push(btoa(String.fromCharCode(...chunk)));
+  }
+  return chunks.join("");
 }
 
 function nonterminal(turn: Turn | null) {
   return Boolean(turn && ["queued", "running", "waiting_confirmation"].includes(turn.status));
 }
 
-export function Composer({ taskId, activeTurn, attachments, capabilities, onTurnCreated, onTurnStopped }: ComposerProps) {
+export function Composer({ taskId, activeTurn, attachments, capabilities, onTurnCreated, onTurnStopped, onAttachmentUploaded }: ComposerProps) {
   const [text, setText] = useState("");
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [error, setError] = useState("");
@@ -111,12 +112,18 @@ export function Composer({ taskId, activeTurn, attachments, capabilities, onTurn
     try {
       const content = await fileAsBase64(item.file, controller.signal);
       const uploaded = await uploadAttachment(selectedTask, {
+        client_request_id: item.uploadRequestId,
         filename: item.file.name,
         media_type: item.file.type,
         content_base64: content,
       }, { signal: controller.signal });
       if (!mounted.current || taskIdRef.current !== selectedTask || uploadControllers.current.get(item.key) !== controller) return;
       updatePending(item.key, (current) => ({ ...current, status: "uploaded", attachment: uploaded, error: "" }));
+      try {
+        void Promise.resolve(onAttachmentUploaded?.(uploaded)).catch(() => undefined);
+      } catch {
+        // The upload is already persisted; supplementary UI callbacks cannot undo it.
+      }
     } catch (uploadError) {
       if (!mounted.current || taskIdRef.current !== selectedTask || controller.signal.aborted) return;
       updatePending(item.key, (current) => ({ ...current, status: "failed", error: "上传失败" }));
@@ -137,13 +144,17 @@ export function Composer({ taskId, activeTurn, attachments, capabilities, onTurn
       setError("仅支持带有效图片扩展名的 image/* 文件");
       return;
     }
+    if (pendingFiles.length + selected.length > maxAttachmentFiles) {
+      setError(`一次最多选择 ${maxAttachmentFiles} 个图片文件`);
+      return;
+    }
     if (selected.some((file) => file.size > maxAttachmentBytes) || existingBytes + selected.reduce((total, file) => total + file.size, 0) > maxAttachmentBytes) {
       setError("附件单个及本次选择总量均不能超过 20 MiB");
       return;
     }
     setError("");
     invalidateSubmissionIdentity();
-    const additions = selected.map((file) => ({ key: crypto.randomUUID(), file, status: "uploading" as const, error: "" }));
+    const additions = selected.map((file) => ({ key: crypto.randomUUID(), uploadRequestId: crypto.randomUUID(), file, status: "uploading" as const, error: "" }));
     setPendingFiles((current) => [...current, ...additions]);
     for (const item of additions) void beginUpload(item);
   }
@@ -161,13 +172,13 @@ export function Composer({ taskId, activeTurn, attachments, capabilities, onTurn
     const unsupportedAttachments = [
       ...attachments,
       ...pendingFiles.flatMap((item) => item.attachment ? [item.attachment] : []),
-    ].some((attachment) => !capabilities?.image_input || !permittedImage(attachment.filename, attachment.media_type));
-    if (!selectedTask || !message || message.length > maxMessageLength || sendController.current || sending || nonterminal(activeTurn) || unsupportedAttachments || pendingFiles.some((item) => item.status !== "uploaded")) return;
+    ].some((attachment) => capabilities !== undefined && (!capabilities?.image_input || !permittedImage(attachment.filename, attachment.media_type)));
+    if (!selectedTask || !capabilities?.streamed_text || !message || message.length > maxMessageLength || sendController.current || sending || nonterminal(activeTurn) || unsupportedAttachments || pendingFiles.some((item) => item.status !== "uploaded")) return;
     const attachmentIds = Array.from(new Set([
       ...attachments.map((attachment) => attachment.id),
       ...pendingFiles.flatMap((item) => item.attachment ? [item.attachment.id] : []),
-    ])).sort();
-    const signature = JSON.stringify([selectedTask, text, attachmentIds]);
+    ]));
+    const signature = JSON.stringify([selectedTask, message, attachmentIds]);
     if (!submissionIdentity.current || submissionIdentity.current.signature !== signature) {
       submissionIdentity.current = { signature, clientRequestId: crypto.randomUUID() };
     }
@@ -216,13 +227,15 @@ export function Composer({ taskId, activeTurn, attachments, capabilities, onTurn
   const unsupportedAttachments = [
     ...attachments,
     ...pendingFiles.flatMap((item) => item.attachment ? [item.attachment] : []),
-  ].some((attachment) => !capabilities?.image_input || !permittedImage(attachment.filename, attachment.media_type));
-  const sendDisabled = !taskId || !text.trim() || text.trim().length > maxMessageLength || sending || nonterminal(activeTurn) || uploadBlocked || unsupportedAttachments;
+  ].some((attachment) => capabilities !== undefined && (!capabilities?.image_input || !permittedImage(attachment.filename, attachment.media_type)));
+  const sendDisabled = !taskId || !capabilities?.streamed_text || !text.trim() || text.trim().length > maxMessageLength || sending || nonterminal(activeTurn) || uploadBlocked || unsupportedAttachments;
   return (
     <section className="composer" aria-label="消息编辑器">
       {attachments.length > 0 && <p className="existing-attachments">任务已有 {attachments.length} 个附件</p>}
       {unsupportedAttachments && <p className="inline-alert" role="alert">现有附件与运行时能力不兼容，无法开始新回合。</p>}
-      {!capabilities?.image_input && <p className="runtime-control-note">当前运行时未声明图片输入能力，图片上传已禁用。</p>}
+      {capabilities === undefined && <p className="runtime-control-note">正在加载执行器能力</p>}
+      {capabilities === null && <p className="runtime-control-note">当前执行器不可用</p>}
+      {capabilities && !capabilities.image_input && <p className="runtime-control-note">当前运行时未声明图片输入能力，图片上传已禁用。</p>}
       {nonterminal(activeTurn) && !capabilities?.stoppable && <p className="runtime-control-note">当前运行时不支持安全停止，请等待回合结束。</p>}
       {pendingFiles.length > 0 && (
         <ul className="pending-files">
@@ -248,7 +261,7 @@ export function Composer({ taskId, activeTurn, attachments, capabilities, onTurn
           placeholder={taskId ? (nonterminal(activeTurn) ? "当前回合结束后可继续发送" : "输入消息，Enter 发送") : "请先选择或创建任务"}
           value={text}
           disabled={!taskId}
-          onChange={(event) => { invalidateSubmissionIdentity(); setText(event.target.value); }}
+          onChange={(event) => setText(event.target.value)}
           onCompositionStart={() => { composing.current = true; }}
           onCompositionEnd={() => { composing.current = false; }}
           onKeyDown={(event) => {

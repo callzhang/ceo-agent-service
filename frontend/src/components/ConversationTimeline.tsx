@@ -4,7 +4,7 @@ import { Virtuoso } from "react-virtuoso";
 import remarkGfm from "remark-gfm";
 
 import { timelineBlocks } from "../events";
-import type { Confirmation, Timeline, Turn } from "../types";
+import type { Artifact, Confirmation, Timeline, Turn, WorkbenchEvent } from "../types";
 import { ArtifactList } from "./ArtifactList";
 import { ConfirmationCard } from "./ConfirmationCard";
 import { ExecutionStep, safeDisplayText } from "./ExecutionStep";
@@ -44,14 +44,24 @@ const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
               ? <a href={safe} target="_blank" rel="noopener noreferrer">{children}</a>
               : <span>{children}</span>;
           },
+          img: ({ alt }) => <span role="note">[图片已阻止：{alt || "未命名"}]</span>,
         }}
       >{text}</ReactMarkdown>
     </div>
   );
 });
 
-function TurnItem({ turn, timeline, active, onConfirm, onCancel }: { turn: Turn; timeline: Timeline; active: boolean; onConfirm: ConversationTimelineProps["onConfirm"]; onCancel: ConversationTimelineProps["onCancel"] }) {
-  const blocks = useMemo(() => timelineBlocks(turn.id, timeline.events), [timeline.events, turn.id]);
+function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, active, onConfirm, onCancel }: {
+  turn: Turn;
+  events: WorkbenchEvent[];
+  confirmationsById: Map<string, Confirmation>;
+  artifactsById: Map<string, Artifact>;
+  taskId: string;
+  active: boolean;
+  onConfirm: ConversationTimelineProps["onConfirm"];
+  onCancel: ConversationTimelineProps["onCancel"];
+}) {
+  const blocks = useMemo(() => timelineBlocks(turn.id, events), [events, turn.id]);
   const renderedText = blocks.some((block) => block.kind === "markdown");
   const nonterminal = ["queued", "running", "waiting_confirmation"].includes(turn.status);
   const authoritativeFinalText = !nonterminal && Boolean(turn.final_text);
@@ -64,11 +74,11 @@ function TurnItem({ turn, timeline, active, onConfirm, onCancel }: { turn: Turn;
           if (block.kind === "thinking") return <details className="thinking-block" key={block.key}><summary>思考摘要</summary><p>{block.text}</p></details>;
           if (block.kind === "tool" || block.kind === "file") return <ExecutionStep key={block.key} kind={block.kind} status={block.status} payload={block.payload} />;
           if (block.kind === "confirmation") {
-            const confirmation = timeline.confirmations.find((item) => item.id === block.confirmationId && item.turn_id === turn.id);
-            return confirmation ? <ConfirmationCard key={block.key} confirmation={confirmation} onConfirm={onConfirm} onCancel={onCancel} /> : null;
+            const confirmation = confirmationsById.get(block.confirmationId ?? "");
+            return confirmation?.turn_id === turn.id ? <ConfirmationCard key={block.key} confirmation={confirmation} onConfirm={onConfirm} onCancel={onCancel} /> : null;
           }
-          const artifact = timeline.artifacts.find((item) => item.id === block.artifactId && item.turn_id === turn.id);
-          return artifact ? <ArtifactList key={block.key} taskId={timeline.task.id} turnId={turn.id} artifacts={[artifact]} /> : null;
+          const artifact = artifactsById.get(block.artifactId ?? "");
+          return artifact?.turn_id === turn.id ? <ArtifactList key={block.key} taskId={taskId} turnId={turn.id} artifacts={[artifact]} /> : null;
         })}
         {authoritativeFinalText && <MarkdownBlock text={turn.final_text} />}
         {!authoritativeFinalText && !renderedText && turn.final_text && <MarkdownBlock text={turn.final_text} />}
@@ -85,6 +95,23 @@ function TurnItem({ turn, timeline, active, onConfirm, onCancel }: { turn: Turn;
 
 export function ConversationTimeline({ timeline, activeTurnId, onConfirm, onCancel }: ConversationTimelineProps) {
   const turns = useMemo(() => [...timeline.turns].reverse(), [timeline.turns]);
+  const eventsByTurn = useMemo(() => {
+    const indexed = new Map<string, WorkbenchEvent[]>();
+    for (const event of timeline.events) {
+      const existing = indexed.get(event.turn_id);
+      if (existing) existing.push(event);
+      else indexed.set(event.turn_id, [event]);
+    }
+    return indexed;
+  }, [timeline.events]);
+  const confirmationsById = useMemo(
+    () => new Map(timeline.confirmations.map((confirmation) => [confirmation.id, confirmation])),
+    [timeline.confirmations],
+  );
+  const artifactsById = useMemo(
+    () => new Map(timeline.artifacts.map((artifact) => [artifact.id, artifact])),
+    [timeline.artifacts],
+  );
   const firstItemIndex = useRef(999_900);
   const priorOldestTurnId = useRef<string | null>(null);
   if (turns.length) {
@@ -101,10 +128,21 @@ export function ConversationTimeline({ timeline, activeTurnId, onConfirm, onCanc
         className="conversation-virtuoso"
         data={turns}
         firstItemIndex={firstItemIndex.current}
-        initialItemCount={turns.length}
+        initialItemCount={Math.min(turns.length, 12)}
         followOutput={activeTurnId ? "smooth" : false}
         computeItemKey={(_index, turn) => assistantTurnKey(turn)}
-        itemContent={(_index, turn) => <TurnItem turn={turn} timeline={timeline} active={turn.id === activeTurnId} onConfirm={onConfirm} onCancel={onCancel} />}
+        itemContent={(_index, turn) => (
+          <TurnItem
+            turn={turn}
+            events={eventsByTurn.get(turn.id) ?? []}
+            confirmationsById={confirmationsById}
+            artifactsById={artifactsById}
+            taskId={timeline.task.id}
+            active={turn.id === activeTurnId}
+            onConfirm={onConfirm}
+            onCancel={onCancel}
+          />
+        )}
       />
     </div>
   );

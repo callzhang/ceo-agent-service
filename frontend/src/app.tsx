@@ -112,6 +112,7 @@ function mergeTimeline(current: Timeline, incoming: Timeline, mode: "recent" | "
 }
 
 type ResourcePageKind = "events" | "artifacts" | "confirmations" | "attachments";
+type TimelineRequestChannel = "turns" | "refresh" | ResourcePageKind;
 interface ResourcePageCursor {
   before: string;
   cursor: string | number;
@@ -212,7 +213,7 @@ export function App() {
   const [timelineError, setTimelineError] = useState("");
   const [connectionError, setConnectionError] = useState("");
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [loadingResource, setLoadingResource] = useState<ResourcePageKind | null>(null);
+  const [loadingResources, setLoadingResources] = useState<ReadonlySet<ResourcePageKind>>(() => new Set());
   const [resourceQueues, setResourceQueues] = useState<ResourcePageQueues>(emptyResourcePageQueues);
   const [capabilities, setCapabilities] = useState<RuntimeCapabilities[] | null>(null);
   const [stats, setStats] = useState<WorkbenchStats | null>(null);
@@ -244,10 +245,11 @@ export function App() {
   const renameRequestsRef = useRef(new Map<string, { id: number; controller: AbortController }>());
   const archiveRequestsRef = useRef(new Map<string, { id: number; controller: AbortController }>());
   const timelineRef = useRef<Timeline | null>(null);
-  const timelineRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
+  const timelineRequestsRef = useRef(new Map<TimelineRequestChannel, { id: number; controller: AbortController }>());
   const timelineRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timelineRefreshTaskRef = useRef<string | null>(null);
-  const resourceLoadingRef = useRef<{ kind: ResourcePageKind; requestId: number } | null>(null);
+  const statsRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
+  const statsRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resourceQueuesRef = useRef<ResourcePageQueues>(emptyResourcePageQueues());
   const loadedOlderTimelineRef = useRef(false);
   const streamRef = useRef<EventStreamConnection | null>(null);
@@ -300,6 +302,14 @@ export function App() {
 
   function finishRequest(controller: AbortController) {
     controllersRef.current.delete(controller);
+  }
+
+  function startTimelineRequest(channel: TimelineRequestChannel, controller: AbortController) {
+    timelineRequestsRef.current.get(channel)?.controller.abort();
+    const id = ++requestSequenceRef.current;
+    timelineRequestsRef.current.set(channel, { id, controller });
+    controllersRef.current.add(controller);
+    return id;
   }
 
   function writeNextCursor(cursor: string) {
@@ -650,13 +660,9 @@ export function App() {
     mode: "initial" | "recent" | "older" = "recent",
     before = "",
   ) => {
-    timelineRequestRef.current?.controller.abort();
-    resourceLoadingRef.current = null;
-    setLoadingResource(null);
+    const channel: TimelineRequestChannel = mode === "recent" ? "refresh" : "turns";
     const controller = new AbortController();
-    const requestId = ++requestSequenceRef.current;
-    timelineRequestRef.current = { id: requestId, controller };
-    controllersRef.current.add(controller);
+    const requestId = startTimelineRequest(channel, controller);
     if (mode === "initial") setTimelineLoading(true);
     if (mode === "older") setLoadingOlder(true);
     setTimelineError("");
@@ -669,7 +675,7 @@ export function App() {
       });
       if (
         !mountedRef.current
-        || timelineRequestRef.current?.id !== requestId
+        || timelineRequestsRef.current.get(channel)?.id !== requestId
         || selectedTaskIdRef.current !== taskId
       ) return;
       registerResourcePages(loaded, before, mode === "initial");
@@ -685,13 +691,17 @@ export function App() {
     } catch (error) {
       if (
         mountedRef.current
-        && timelineRequestRef.current?.id === requestId
+        && timelineRequestsRef.current.get(channel)?.id === requestId
         && selectedTaskIdRef.current === taskId
         && !(error instanceof DOMException && error.name === "AbortError")
       ) setTimelineError(mode === "older" ? "更早对话加载失败，请重试" : "对话加载失败，请重试");
     } finally {
       finishRequest(controller);
-      if (timelineRequestRef.current?.id === requestId && mountedRef.current) {
+      const ownsChannel = timelineRequestsRef.current.get(channel)?.id === requestId;
+      if (ownsChannel) {
+        timelineRequestsRef.current.delete(channel);
+      }
+      if (mountedRef.current && ownsChannel) {
         if (mode === "initial") setTimelineLoading(false);
         if (mode === "older") setLoadingOlder(false);
       }
@@ -699,7 +709,7 @@ export function App() {
   }, [applyTaskSnapshot, registerResourcePages, writeTimeline]);
 
   const loadTimelineResource = useCallback(async (taskId: string, kind: ResourcePageKind) => {
-    if (resourceLoadingRef.current || selectedTaskIdRef.current !== taskId) return;
+    if (timelineRequestsRef.current.has(kind) || selectedTaskIdRef.current !== taskId) return;
     const current = timelineRef.current;
     if (!current || current.task.id !== taskId) return;
     const page = resourceQueuesRef.current[kind][0];
@@ -711,17 +721,13 @@ export function App() {
         : kind === "confirmations"
           ? { confirmationAfter: page.cursor as string }
           : { attachmentAfter: page.cursor as string };
-    timelineRequestRef.current?.controller.abort();
     const controller = new AbortController();
-    const requestId = ++requestSequenceRef.current;
-    timelineRequestRef.current = { id: requestId, controller };
-    controllersRef.current.add(controller);
-    resourceLoadingRef.current = { kind, requestId };
-    setLoadingResource(kind);
+    const requestId = startTimelineRequest(kind, controller);
+    setLoadingResources((current) => new Set(current).add(kind));
     setTimelineError("");
     try {
       const loaded = await getTimeline(taskId, { turnLimit: 100, eventLimit: 1000, ...(page.before ? { before: page.before } : {}), ...options, signal: controller.signal });
-      if (!mountedRef.current || selectedTaskIdRef.current !== taskId || timelineRequestRef.current?.id !== requestId) return;
+      if (!mountedRef.current || selectedTaskIdRef.current !== taskId || timelineRequestsRef.current.get(kind)?.id !== requestId) return;
       const remaining = resourceQueuesRef.current[kind].slice(1);
       const nextQueue = resourceHasMore(loaded, kind)
         ? [{ before: page.before, cursor: resourceCursor(loaded, kind) }, ...remaining]
@@ -736,9 +742,13 @@ export function App() {
       }
     } finally {
       finishRequest(controller);
-      if (resourceLoadingRef.current?.requestId === requestId) {
-        resourceLoadingRef.current = null;
-        if (mountedRef.current) setLoadingResource(null);
+      if (timelineRequestsRef.current.get(kind)?.id === requestId) {
+        timelineRequestsRef.current.delete(kind);
+        if (mountedRef.current) setLoadingResources((current) => {
+          const next = new Set(current);
+          next.delete(kind);
+          return next;
+        });
       }
     }
   }, [writeResourceQueues, writeTimeline]);
@@ -766,22 +776,53 @@ export function App() {
     }, 40);
   }, [loadSelectedTimeline]);
 
+  const refreshStats = useCallback(async () => {
+    statsRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    const requestId = ++requestSequenceRef.current;
+    statsRequestRef.current = { id: requestId, controller };
+    controllersRef.current.add(controller);
+    try {
+      const value = await getStats({ signal: controller.signal });
+      if (mountedRef.current && statsRequestRef.current?.id === requestId) setStats(value);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        // Global statistics are supplementary; the task workflow remains usable.
+      }
+    } finally {
+      controllersRef.current.delete(controller);
+      if (statsRequestRef.current?.id === requestId) statsRequestRef.current = null;
+    }
+  }, []);
+
+  const cancelScheduledStatsRefresh = useCallback(() => {
+    if (statsRefreshTimerRef.current) clearTimeout(statsRefreshTimerRef.current);
+    statsRefreshTimerRef.current = null;
+  }, []);
+
+  const scheduleStatsRefresh = useCallback(() => {
+    if (!mountedRef.current || statsRefreshTimerRef.current) return;
+    statsRefreshTimerRef.current = setTimeout(() => {
+      statsRefreshTimerRef.current = null;
+      if (mountedRef.current) void refreshStats();
+    }, 40);
+  }, [refreshStats]);
+
   useEffect(() => {
     mountedRef.current = true;
     void load();
     const controller = new AbortController();
     controllersRef.current.add(controller);
-    void Promise.allSettled([
-      runtimeCapabilities({ signal: controller.signal }).then((value) => {
-        if (mountedRef.current && !controller.signal.aborted) setCapabilities(value);
-      }),
-      getStats({ signal: controller.signal }).then((value) => {
-        if (mountedRef.current && !controller.signal.aborted) setStats(value);
-      }),
-    ]).finally(() => finishRequest(controller));
+    void runtimeCapabilities({ signal: controller.signal }).then((value) => {
+      if (mountedRef.current && !controller.signal.aborted) setCapabilities(value);
+    }).catch((error) => {
+      if (mountedRef.current && !(error instanceof DOMException && error.name === "AbortError")) setCapabilities([]);
+    }).finally(() => finishRequest(controller));
+    void refreshStats();
     return () => {
       mountedRef.current = false;
       cancelScheduledTimelineRefresh();
+      cancelScheduledStatsRefresh();
       streamRef.current?.close();
       streamRef.current = null;
       cancelActiveChase();
@@ -789,18 +830,18 @@ export function App() {
       for (const controller of controllersRef.current) controller.abort();
       controllersRef.current.clear();
     };
-  }, [cancelActiveChase, cancelPageRequests, cancelScheduledTimelineRefresh, load]);
+  }, [cancelActiveChase, cancelPageRequests, cancelScheduledStatsRefresh, cancelScheduledTimelineRefresh, load, refreshStats]);
 
   useEffect(() => {
     cancelScheduledTimelineRefresh();
     streamRef.current?.close();
     streamRef.current = null;
-    timelineRequestRef.current?.controller.abort();
+    for (const request of timelineRequestsRef.current.values()) request.controller.abort();
+    timelineRequestsRef.current.clear();
     setConnectionError("");
     setTimelineError("");
     setLoadingOlder(false);
-    setLoadingResource(null);
-    resourceLoadingRef.current = null;
+    setLoadingResources(new Set());
     writeResourceQueues(emptyResourcePageQueues());
     loadedOlderTimelineRef.current = false;
     if (!selectedTaskId) {
@@ -811,7 +852,8 @@ export function App() {
     writeTimeline(null);
     void loadSelectedTimeline(selectedTaskId, "initial");
     return () => {
-      timelineRequestRef.current?.controller.abort();
+      for (const request of timelineRequestsRef.current.values()) request.controller.abort();
+      timelineRequestsRef.current.clear();
       streamRef.current?.close();
       streamRef.current = null;
     };
@@ -893,7 +935,9 @@ export function App() {
     [timeline],
   );
   const selectedRuntimeCapabilities = useMemo(
-    () => capabilities?.find((runtime) => runtime.kind === selectedTask?.runtime_kind)?.capabilities ?? null,
+    () => capabilities === null
+      ? undefined
+      : capabilities.find((runtime) => runtime.kind === selectedTask?.runtime_kind)?.capabilities ?? null,
     [capabilities, selectedTask?.runtime_kind],
   );
 
@@ -945,13 +989,7 @@ export function App() {
         if (event.event_type === "confirmation_required" || event.event_type === "artifact_created" || confirmationProgress || terminal) {
           scheduleSelectedTimelineRefresh(taskId);
         }
-        if (terminal) {
-          const controller = new AbortController();
-          controllersRef.current.add(controller);
-          void getStats({ signal: controller.signal })
-            .then((value) => { if (mountedRef.current && selectedTaskIdRef.current === taskId) setStats(value); })
-            .finally(() => finishRequest(controller));
-        }
+        if (event.event_type === "artifact_created" || terminal) scheduleStatsRefresh();
       },
     });
     streamRef.current = connection;
@@ -960,7 +998,7 @@ export function App() {
       connection.close();
       if (streamRef.current === connection) streamRef.current = null;
     };
-  }, [activeTurn?.id, scheduleSelectedTimelineRefresh, selectedTaskId, writeTasks, writeTimeline]);
+  }, [activeTurn?.id, scheduleSelectedTimelineRefresh, scheduleStatsRefresh, selectedTaskId, writeTasks, writeTimeline]);
 
   async function decideConfirmation(confirmation: Confirmation, decision: "confirm" | "cancel") {
     const taskId = selectedTaskIdRef.current;
@@ -977,6 +1015,7 @@ export function App() {
         ...current,
         confirmations: current.confirmations.map((item) => item.id === decided.id ? decided : item),
       } : current);
+      scheduleStatsRefresh();
       await loadSelectedTimeline(taskId, "recent");
     } catch (error) {
       if (selectedTaskIdRef.current === taskId) await loadSelectedTimeline(taskId, "recent");
@@ -995,6 +1034,7 @@ export function App() {
       turns: [turn, ...current.turns.filter((item) => item.id !== turn.id)],
     } : current);
     writeTasks((current) => current.map((task) => task.id === taskId ? { ...task, state: turn.status } : task));
+    scheduleStatsRefresh();
     await loadSelectedTimeline(taskId, "recent");
   }
 
@@ -1007,6 +1047,7 @@ export function App() {
       task: { ...current.task, state: turn.status },
     } : current);
     writeTasks((current) => current.map((task) => task.id === taskId ? { ...task, state: turn.status } : task));
+    scheduleStatsRefresh();
   }
 
   function selectTask(taskId: string) {
@@ -1036,6 +1077,7 @@ export function App() {
       if (createRequestRef.current?.id !== requestId || !mountedRef.current) return;
       recordCreatedTask(created);
       writeTasks((current) => [created, ...current.filter((task) => task.id !== created.id)]);
+      scheduleStatsRefresh();
       if (
         selectedTaskIdRef.current === selectionAtStart &&
         selectionVersionRef.current === selectionVersionAtStart
@@ -1107,6 +1149,7 @@ export function App() {
       archiveTombstonesRef.current.set(taskId, revision);
       taskMutationOwnershipRef.current.delete(taskId);
       writeTasks((current) => current.filter((task) => task.id !== taskId));
+      scheduleStatsRefresh();
       if (selectedTaskIdRef.current === taskId) {
         commitSelection(null, "replace");
         setInspectorOpen(false);
@@ -1234,10 +1277,10 @@ export function App() {
               <>
                 <div className="conversation-body">
                   <div className="resource-pagination" aria-label="对话资源分页">
-                    {resourceQueues.events.length > 0 && <button type="button" className="secondary-button" disabled={Boolean(loadingResource)} onClick={() => void loadTimelineResource(selectedTask.id, "events")}>加载更多事件</button>}
-                    {resourceQueues.artifacts.length > 0 && <button type="button" className="secondary-button" disabled={Boolean(loadingResource)} onClick={() => void loadTimelineResource(selectedTask.id, "artifacts")}>加载更多产物</button>}
-                    {resourceQueues.confirmations.length > 0 && <button type="button" className="secondary-button" disabled={Boolean(loadingResource)} onClick={() => void loadTimelineResource(selectedTask.id, "confirmations")}>加载更多确认</button>}
-                    {resourceQueues.attachments.length > 0 && <button type="button" className="secondary-button" disabled={Boolean(loadingResource)} onClick={() => void loadTimelineResource(selectedTask.id, "attachments")}>加载更多附件</button>}
+                    {resourceQueues.events.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("events")} onClick={() => void loadTimelineResource(selectedTask.id, "events")}>加载更多事件</button>}
+                    {resourceQueues.artifacts.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("artifacts")} onClick={() => void loadTimelineResource(selectedTask.id, "artifacts")}>加载更多产物</button>}
+                    {resourceQueues.confirmations.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("confirmations")} onClick={() => void loadTimelineResource(selectedTask.id, "confirmations")}>加载更多确认</button>}
+                    {resourceQueues.attachments.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("attachments")} onClick={() => void loadTimelineResource(selectedTask.id, "attachments")}>加载更多附件</button>}
                   </div>
                   {timeline.has_more && (
                     <button
@@ -1269,6 +1312,7 @@ export function App() {
                   activeTurn={activeTurn}
                   attachments={timeline.attachments}
                   capabilities={selectedRuntimeCapabilities}
+                  onAttachmentUploaded={scheduleStatsRefresh}
                   onTurnCreated={handleTurnCreated}
                   onTurnStopped={handleTurnStopped}
                 />

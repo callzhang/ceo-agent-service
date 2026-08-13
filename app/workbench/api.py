@@ -75,6 +75,7 @@ class _CreateTurn(_StrictModel):
 
 
 class _AttachmentUpload(_StrictModel):
+    client_request_id: UUID
     filename: str = Field(min_length=1, max_length=255)
     media_type: str = Field(min_length=1, max_length=100)
     content_base64: str = Field(min_length=1, max_length=_MAX_ATTACHMENT_BASE64_LENGTH)
@@ -339,6 +340,7 @@ _PUBLIC_ERROR_DETAILS = {
     "task_has_active_turn": "Tasks with active turns cannot be archived",
     "task_archived": "Archived tasks cannot accept new turns",
     "client_request_conflict": "Client request ID conflicts with an existing turn",
+    "attachment_request_conflict": "Client request ID conflicts with an existing attachment",
     "attachment_invalid": "Attachment data is invalid",
 }
 
@@ -1082,6 +1084,7 @@ def register_workbench_routes(
             saved = await anyio.to_thread.run_sync(
                 lambda: store.save_attachment(
                     _uuid_text(task_id),
+                    client_request_id=str(payload.client_request_id),
                     filename=payload.filename,
                     media_type=payload.media_type,
                     content=content,
@@ -1089,6 +1092,8 @@ def register_workbench_routes(
                 abandon_on_cancel=False,
             )
             return _public_attachment(saved, executor.workspace)
+        except WorkbenchConflictError as exc:
+            raise _public_error(409, exc.code) from exc
         except ValueError as exc:
             raise _public_error(400, "attachment_invalid") from exc
 

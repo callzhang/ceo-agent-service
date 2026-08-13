@@ -180,6 +180,7 @@ export interface EventStreamOptions {
 export class EventStreamConnection {
   private source: EventSourceLike | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private stabilityTimer: ReturnType<typeof setTimeout> | null = null;
   private cursor: number;
   private retryCount = 0;
   private stopped = false;
@@ -195,7 +196,11 @@ export class EventStreamConnection {
     this.source = source;
     source.onopen = () => {
       if (this.source !== source || this.stopped) return;
-      this.retryCount = 0;
+      if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
+      this.stabilityTimer = setTimeout(() => {
+        this.stabilityTimer = null;
+        if (this.source === source && !this.stopped) this.retryCount = 0;
+      }, 10_000);
       this.options.onOpen?.();
     };
     for (const eventType of eventTypes) {
@@ -207,6 +212,9 @@ export class EventStreamConnection {
           return;
         }
         this.cursor = event.id;
+        this.retryCount = 0;
+        if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
+        this.stabilityTimer = null;
         this.options.onEvent(event);
         const status = event.payload.status;
         if (
@@ -220,6 +228,8 @@ export class EventStreamConnection {
       if (this.source !== source || this.stopped) return;
       source.close();
       this.source = null;
+      if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
+      this.stabilityTimer = null;
       this.options.onConnectionError("实时连接中断，正在恢复");
       const delay = Math.min(8_000, 500 * (2 ** this.retryCount));
       this.retryCount += 1;
@@ -235,6 +245,8 @@ export class EventStreamConnection {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
+    this.stabilityTimer = null;
     this.source?.close();
     this.source = null;
   }

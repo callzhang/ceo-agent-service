@@ -45,7 +45,7 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-13.9"
+STORE_SCHEMA_VERSION = "2026-08-13.10"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "workbench_tasks",
@@ -63,6 +63,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_workbench_tasks_updated_id",
     "idx_workbench_confirmations_turn_created_id",
     "idx_workbench_attachments_task_created_id",
+    "idx_workbench_attachments_task_request",
     "idx_workbench_events_event_type",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
@@ -1507,9 +1508,11 @@ class AutoReplyStore:
                 create table if not exists workbench_attachments (
                     id text primary key,
                     task_id text not null,
+                    client_request_id text not null,
                     filename text not null,
                     media_type text not null,
                     size_bytes integer not null check(size_bytes >= 0),
+                    content_sha256 text not null,
                     storage_path text not null,
                     created_at text not null default current_timestamp,
                     foreign key(task_id) references workbench_tasks(id)
@@ -1623,6 +1626,26 @@ class AutoReplyStore:
                         "alter table workbench_confirmations add column "
                         f"{column} text not null default {default}"
                     )
+            workbench_attachment_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(workbench_attachments)"
+                ).fetchall()
+            }
+            if "client_request_id" not in workbench_attachment_columns:
+                db.execute(
+                    "alter table workbench_attachments add column "
+                    "client_request_id text not null default ''"
+                )
+            if "content_sha256" not in workbench_attachment_columns:
+                db.execute(
+                    "alter table workbench_attachments add column "
+                    "content_sha256 text not null default ''"
+                )
+            db.execute(
+                "update workbench_attachments set client_request_id=id "
+                "where client_request_id=''"
+            )
             db.execute(
                 "create index if not exists idx_workbench_turns_queue "
                 "on workbench_turns(status, created_at, id)"
@@ -1674,6 +1697,10 @@ class AutoReplyStore:
             db.execute(
                 "create index if not exists idx_workbench_attachments_task_created_id "
                 "on workbench_attachments(task_id, created_at, id)"
+            )
+            db.execute(
+                "create unique index if not exists idx_workbench_attachments_task_request "
+                "on workbench_attachments(task_id, client_request_id)"
             )
             db.execute(
                 "create index if not exists idx_workbench_events_event_type "

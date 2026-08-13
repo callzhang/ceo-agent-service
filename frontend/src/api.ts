@@ -84,6 +84,7 @@ export interface TimelineOptions extends RequestOptions {
 }
 
 export interface AttachmentUpload {
+  client_request_id: string;
   filename: string;
   media_type: string;
   content_base64: string;

@@ -1,7 +1,8 @@
+import fcntl
+import hashlib
 import json
 import os
 import sqlite3
-import fcntl
 import stat
 from contextlib import contextmanager
 from collections.abc import Iterator
@@ -265,6 +266,7 @@ class WorkbenchStore(AutoReplyStore):
         self,
         task_id: str,
         *,
+        client_request_id: str = "",
         filename: str,
         media_type: str,
         content: bytes,
@@ -278,10 +280,33 @@ class WorkbenchStore(AutoReplyStore):
         if not media_type:
             raise ValueError("media_type must be non-empty")
         task_id = self._canonical_uuid(task_id, field="task_id")
+        client_request_id = self._canonical_uuid(
+            client_request_id or str(uuid4()), field="client_request_id"
+        )
+        content_sha256 = hashlib.sha256(content).hexdigest()
         with self._connect() as db:
             self._require_task(db, task_id)
         attachment_id = str(uuid4())
         with self._attachment_lock(create_workbench=True):
+            with self._connect() as db:
+                self._require_task(db, task_id)
+                existing = db.execute(
+                    """select * from workbench_attachments
+                       where task_id=? and client_request_id=?""",
+                    (task_id, client_request_id),
+                ).fetchone()
+                if existing is not None:
+                    if (
+                        existing["filename"] == filename
+                        and existing["media_type"] == media_type
+                        and existing["size_bytes"] == len(content)
+                        and existing["content_sha256"] == content_sha256
+                    ):
+                        return self._attachment_from_row(existing)
+                    raise WorkbenchConflictError(
+                        "attachment_request_conflict",
+                        "client request ID conflicts with an existing attachment",
+                    )
             directory = self._attachment_task_directory(task_id, create=True)
             if directory is None:
                 raise RuntimeError("attachment directory was not created")
@@ -297,15 +322,18 @@ class WorkbenchStore(AutoReplyStore):
                     db.execute(
                         """
                         insert into workbench_attachments (
-                            id, task_id, filename, media_type, size_bytes, storage_path
-                        ) values (?, ?, ?, ?, ?, ?)
+                            id, task_id, client_request_id, filename, media_type,
+                            size_bytes, content_sha256, storage_path
+                        ) values (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             attachment_id,
                             task_id,
+                            client_request_id,
                             filename,
                             media_type,
                             len(content),
+                            content_sha256,
                             str(storage_path),
                         ),
                     )

@@ -170,4 +170,48 @@ describe("EventStreamConnection", () => {
     expect(sources).toHaveLength(1);
     vi.useRealTimers();
   });
+
+  it("backs off across open-error flaps and resets only after a valid event", () => {
+    vi.useFakeTimers();
+    const sources: FakeEventSource[] = [];
+    const connection = new EventStreamConnection({
+      turnId: "turn-1",
+      after: 0,
+      eventSourceFactory: (url) => {
+        const source = new FakeEventSource(url);
+        sources.push(source);
+        return source;
+      },
+      onEvent: vi.fn(),
+      onConnectionError: vi.fn(),
+    });
+
+    connection.start();
+    sources[0].onopen?.();
+    sources[0].onerror?.();
+    vi.advanceTimersByTime(500);
+    expect(sources).toHaveLength(2);
+
+    sources[1].onopen?.();
+    sources[1].onerror?.();
+    vi.advanceTimersByTime(500);
+    expect(sources).toHaveLength(2);
+    vi.advanceTimersByTime(500);
+    expect(sources).toHaveLength(3);
+
+    sources[2].onopen?.();
+    sources[2].onerror?.();
+    vi.advanceTimersByTime(1_000);
+    expect(sources).toHaveLength(3);
+    vi.advanceTimersByTime(1_000);
+    expect(sources).toHaveLength(4);
+
+    sources[3].emit(event(1, "text_delta", { text: "stable" }));
+    sources[3].onerror?.();
+    vi.advanceTimersByTime(500);
+    expect(sources).toHaveLength(5);
+
+    connection.close();
+    vi.useRealTimers();
+  });
 });

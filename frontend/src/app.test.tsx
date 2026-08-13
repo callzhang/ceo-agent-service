@@ -21,7 +21,7 @@ vi.mock("./api", () => api);
 
 import { App } from "./app";
 import styles from "./styles.css?raw";
-import type { Task, Timeline, Turn } from "./types";
+import type { RuntimeCapabilities, Task, Timeline, Turn } from "./types";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -277,6 +277,27 @@ describe("App", () => {
 
     expect(await screen.findByText("等待中")).toBeInTheDocument();
     expect(screen.queryByText("空闲")).not.toBeInTheDocument();
+  });
+
+  it("refreshes global stats after creating a task", async () => {
+    const user = userEvent.setup();
+    api.listTasks.mockResolvedValue({ items: [], nextCursor: "" });
+    api.createTask.mockResolvedValue({ ...second, title: "新任务" });
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "新任务" }));
+    await waitFor(() => expect(api.getStats).toHaveBeenCalledTimes(2));
+  });
+
+  it("refreshes global stats after archiving a task", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.archiveTask.mockResolvedValue({ ...first, archived_at: "2026-08-13 12:00:00" });
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "归档 销售策略" }));
+    await waitFor(() => expect(api.getStats).toHaveBeenCalledTimes(2));
   });
 
   it("adopts authoritative lifecycle state when the server confirms a rename", async () => {
@@ -720,6 +741,41 @@ describe("App", () => {
     expect(api.getStats).toHaveBeenCalled();
   });
 
+  it("keeps sending disabled while capabilities load and when the selected runtime is missing", async () => {
+    const user = userEvent.setup();
+    const pendingCapabilities = deferred<RuntimeCapabilities[]>();
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline.mockResolvedValue(emptyTimeline(first));
+    api.runtimeCapabilities.mockReturnValue(pendingCapabilities.promise);
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await user.type(await screen.findByRole("textbox", { name: "发送消息" }), "不能发送");
+    expect(screen.getByText("正在加载执行器能力")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+
+    await act(async () => pendingCapabilities.resolve([]));
+    expect(await screen.findByText("当前执行器不可用")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(api.createTurn).not.toHaveBeenCalled();
+  });
+
+  it("refreshes global stats after a successful image upload", async () => {
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline.mockResolvedValue(emptyTimeline(first));
+    api.uploadAttachment.mockResolvedValue({
+      id: "uploaded-stats", task_id: first.id, filename: "stats.png", media_type: "image/png", size_bytes: 5, created_at: "",
+    });
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    const input = await screen.findByLabelText("添加图片");
+    fireEvent.change(input, { target: { files: [new File(["image"], "stats.png", { type: "image/png" })] } });
+
+    await screen.findByText("已上传");
+    await waitFor(() => expect(api.getStats).toHaveBeenCalledTimes(2));
+  });
+
   it("loads older turns without duplicating the selected timeline", async () => {
     const user = userEvent.setup();
     const recent: Turn = { id: "recent", task_id: first.id, client_request_id: "r", user_text: "最近", status: "completed", stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "" };
@@ -756,6 +812,76 @@ describe("App", () => {
       before: "older-page",
       artifactAfter: "older-artifacts",
     }));
+  });
+
+  it("lets older-turn and artifact pages overlap without aborting either channel", async () => {
+    const user = userEvent.setup();
+    const recent: Turn = { id: "recent-overlap", task_id: first.id, client_request_id: "recent-overlap", user_text: "最近窗口", status: "completed", stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "" };
+    const older: Turn = { ...recent, id: "older-overlap", client_request_id: "older-overlap", user_text: "并行较早窗口" };
+    const olderPage = deferred<Timeline>();
+    const artifactPage = deferred<Timeline>();
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline
+      .mockResolvedValueOnce({
+        ...emptyTimeline(first, [recent]),
+        next_cursor: "older-window",
+        has_more: true,
+        artifacts_has_more: true,
+        artifacts_next_cursor: "artifact-window",
+        events: [{ id: 50, turn_id: recent.id, sequence: 50, event_type: "artifact_created", payload: { artifact_id: "parallel-artifact" }, created_at: "" }],
+      })
+      .mockReturnValueOnce(olderPage.promise)
+      .mockReturnValueOnce(artifactPage.promise);
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "加载更早对话" }));
+    await user.click(screen.getByRole("button", { name: "加载更多产物" }));
+    expect((api.getTimeline.mock.calls[1][1].signal as AbortSignal).aborted).toBe(false);
+    expect((api.getTimeline.mock.calls[2][1].signal as AbortSignal).aborted).toBe(false);
+
+    await act(async () => artifactPage.resolve({
+      ...emptyTimeline(first, [recent]),
+      artifacts: [{ id: "parallel-artifact", turn_id: recent.id, label: "并行产物", media_type: "text/plain", created_at: "", download_url: "/ignored" }],
+    }));
+    await act(async () => olderPage.resolve({ ...emptyTimeline(first, [older]), has_more: true, next_cursor: "even-older" }));
+
+    expect(await screen.findByText("并行较早窗口")).toBeInTheDocument();
+    expect(screen.getByText("并行产物")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "加载更多产物" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "加载更早对话" })).toBeEnabled();
+  });
+
+  it("aborts every selected-task timeline channel when switching tasks", async () => {
+    const user = userEvent.setup();
+    const recent: Turn = { id: "recent-switch", task_id: first.id, client_request_id: "recent-switch", user_text: "切换前窗口", status: "completed", stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "" };
+    const olderPage = deferred<Timeline>();
+    const artifactPage = deferred<Timeline>();
+    api.listTasks.mockResolvedValue({ items: [first, second], nextCursor: "" });
+    api.getTimeline
+      .mockResolvedValueOnce({
+        ...emptyTimeline(first, [recent]),
+        next_cursor: "older-switch",
+        has_more: true,
+        artifacts_has_more: true,
+        artifacts_next_cursor: "artifact-switch",
+      })
+      .mockReturnValueOnce(olderPage.promise)
+      .mockReturnValueOnce(artifactPage.promise)
+      .mockResolvedValueOnce(emptyTimeline(second));
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "加载更早对话" }));
+    await user.click(screen.getByRole("button", { name: "加载更多产物" }));
+    const olderSignal = api.getTimeline.mock.calls[1][1].signal as AbortSignal;
+    const artifactSignal = api.getTimeline.mock.calls[2][1].signal as AbortSignal;
+
+    await user.click(screen.getByRole("button", { name: "打开任务 产品规划" }));
+
+    expect(olderSignal.aborted).toBe(true);
+    expect(artifactSignal.aborted).toBe(true);
+    expect(await screen.findByRole("heading", { name: "产品规划" })).toBeInTheDocument();
   });
 
   it("does not enqueue the same task-wide attachment cursor for every turn window", async () => {

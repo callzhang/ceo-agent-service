@@ -41,6 +41,25 @@ describe("ConversationTimeline", () => {
     expect(assistantTurnKey(turn)).toBe("turn:turn-1:assistant");
   });
 
+  it("bounds the initial virtualized mount for a 100-turn page", () => {
+    const turns = Array.from({ length: 100 }, (_, index) => ({
+      ...turn,
+      id: `turn-${index}`,
+      client_request_id: `request-${index}`,
+      user_text: `message-${index}`,
+    }));
+    render(
+      <ConversationTimeline
+        timeline={{ ...timeline, turns, events: [], confirmations: [], artifacts: [] }}
+        activeTurnId={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(document.querySelectorAll(".conversation-turn").length).toBeLessThanOrEqual(12);
+  });
+
   it("renders ordered safe markdown, execution, confirmation and artifact blocks", () => {
     render(<ConversationTimeline timeline={timeline} activeTurnId={turn.id} onConfirm={vi.fn()} onCancel={vi.fn()} />);
 
@@ -95,6 +114,33 @@ describe("ConversationTimeline", () => {
 
     expect(screen.getByText("完整的最终答案")).toBeInTheDocument();
     expect(screen.queryByText("不完整片段")).not.toBeInTheDocument();
+  });
+
+  it("blocks remote markdown images while preserving ordinary web links", () => {
+    render(
+      <ConversationTimeline
+        timeline={{
+          ...timeline,
+          events: [{
+            id: 30,
+            turn_id: turn.id,
+            sequence: 30,
+            event_type: "text_delta",
+            payload: { text: "![tracking pixel](https://tracker.example/pixel.png) [documentation](https://example.com/docs)" },
+            created_at: "",
+          }],
+          confirmations: [],
+          artifacts: [],
+        }}
+        activeTurnId={turn.id}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByText("[图片已阻止：tracking pixel]")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "documentation" })).toHaveAttribute("href", "https://example.com/docs");
   });
 
   it("renders streamed deltas only for nonterminal turns", () => {
