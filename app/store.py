@@ -45,7 +45,7 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-13.6"
+STORE_SCHEMA_VERSION = "2026-08-13.7"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "workbench_tasks",
@@ -1599,8 +1599,9 @@ class AutoReplyStore:
             db.execute(
                 """
                 create index idx_workbench_confirmations_recovery
-                on workbench_confirmations(execution_lease_expires_at, turn_id)
+                on workbench_confirmations(execution_lease_expires_at, id)
                 where status='confirmed' and result_json=''
+                  and execution_owner<>'' and execution_lease_expires_at<>''
                 """
             )
             db.execute(
@@ -1617,6 +1618,32 @@ class AutoReplyStore:
                 on workbench_confirmations(proposer_lease_expires_at, id)
                 where status='pending' and proposer_run_id<>''
                   and proposer_quiesced_at=''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists
+                    idx_workbench_confirmations_legacy_proposer_recovery
+                on workbench_confirmations(id)
+                where status='pending' and proposer_run_id=''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists
+                    idx_workbench_confirmations_legacy_execution_owner_recovery
+                on workbench_confirmations(id)
+                where status='confirmed' and result_json=''
+                  and execution_owner=''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists
+                    idx_workbench_confirmations_legacy_execution_lease_recovery
+                on workbench_confirmations(id)
+                where status='confirmed' and result_json=''
+                  and execution_owner<>'' and execution_lease_expires_at=''
                 """
             )
             self._reconcile_legacy_workbench_confirmations(db)

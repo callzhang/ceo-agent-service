@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import app.store as store_module
+import app.workbench.store as workbench_store_module
 from app.workbench.models import ConfirmationStatus, TurnStatus
 from app.workbench.store import WorkbenchStore
 
@@ -92,6 +93,13 @@ def test_store_migrates_confirmation_execution_claim_without_losing_data(
         db.execute("drop index idx_workbench_confirmations_recovery")
         db.execute("drop index idx_workbench_confirmations_ready_intents")
         db.execute("drop index idx_workbench_confirmations_proposer_recovery")
+        db.execute("drop index idx_workbench_confirmations_legacy_proposer_recovery")
+        db.execute(
+            "drop index idx_workbench_confirmations_legacy_execution_owner_recovery"
+        )
+        db.execute(
+            "drop index idx_workbench_confirmations_legacy_execution_lease_recovery"
+        )
         for column in (
             "execution_owner",
             "execution_lease_expires_at",
@@ -213,6 +221,7 @@ def test_migration_fails_legacy_pending_confirmations_once_across_turn_states(
         )
         db.execute("drop index idx_workbench_confirmations_ready_intents")
         db.execute("drop index idx_workbench_confirmations_proposer_recovery")
+        db.execute("drop index idx_workbench_confirmations_legacy_proposer_recovery")
         for column in (
             "proposer_run_id",
             "proposer_owner",
@@ -333,6 +342,9 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
         "idx_workbench_confirmations_turn_status",
         "idx_workbench_confirmations_ready_intents",
         "idx_workbench_confirmations_proposer_recovery",
+        "idx_workbench_confirmations_legacy_proposer_recovery",
+        "idx_workbench_confirmations_legacy_execution_owner_recovery",
+        "idx_workbench_confirmations_legacy_execution_lease_recovery",
     } <= indexes
     with store._connect() as db:
         plan = " ".join(
@@ -360,22 +372,53 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
                 """
             ).fetchall()
         )
-        recovery_plan = " ".join(
-            row["detail"]
-            for row in db.execute(
-                """
-                explain query plan select id from workbench_confirmations
-                where status='pending' and proposer_run_id<>''
-                  and proposer_quiesced_at='' and proposer_lease_expires_at<=?
-                order by proposer_lease_expires_at, id
-                """,
-                ("2099-01-01 00:00:00",),
-            ).fetchall()
+        recovery_queries = (
+            (
+                workbench_store_module.LEGACY_PENDING_PROPOSER_RECOVERY_SQL,
+                ("", 10),
+                "idx_workbench_confirmations_legacy_proposer_recovery",
+            ),
+            (
+                workbench_store_module.EXPIRED_PENDING_PROPOSER_RECOVERY_SQL,
+                ("2099-01-01 00:00:00", 10),
+                "idx_workbench_confirmations_proposer_recovery",
+            ),
+            (
+                workbench_store_module.LEGACY_CONFIRMED_OWNER_RECOVERY_SQL,
+                ("", 10),
+                "idx_workbench_confirmations_legacy_execution_owner_recovery",
+            ),
+            (
+                workbench_store_module.LEGACY_CONFIRMED_LEASE_RECOVERY_SQL,
+                ("", 10),
+                "idx_workbench_confirmations_legacy_execution_lease_recovery",
+            ),
+            (
+                workbench_store_module.EXPIRED_CONFIRMED_EXECUTION_RECOVERY_SQL,
+                ("2099-01-01 00:00:00", 10),
+                "idx_workbench_confirmations_recovery",
+            ),
         )
+        recovery_plans = [
+            (
+                " ".join(
+                    row["detail"]
+                    for row in db.execute(
+                        f"explain query plan {sql}", parameters
+                    ).fetchall()
+                ),
+                index_name,
+            )
+            for sql, parameters, index_name in recovery_queries
+        ]
+        assert all(" or " not in sql.lower() for sql, _, _ in recovery_queries)
     assert "idx_workbench_confirmations_ready_intents" in ready_plan
     assert "USE TEMP B-TREE" not in ready_plan
-    assert "idx_workbench_confirmations_proposer_recovery" in recovery_plan
-    assert "USE TEMP B-TREE" not in recovery_plan
+    for recovery_plan, index_name in recovery_plans:
+        assert index_name in recovery_plan
+        assert "SCAN confirmations" not in recovery_plan
+        assert "SCAN workbench_confirmations" not in recovery_plan
+        assert "USE TEMP B-TREE" not in recovery_plan
 
 
 def test_stale_prior_run_quiescence_cannot_unlock_confirmation(tmp_path: Path):

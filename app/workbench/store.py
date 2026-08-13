@@ -40,6 +40,53 @@ _TURN_TRANSITIONS = {
     TurnStatus.FAILED: set(),
 }
 
+_RECOVERY_BATCH_LIMIT = 100
+
+LEGACY_PENDING_PROPOSER_RECOVERY_SQL = """
+select * from workbench_confirmations
+where status='pending' and proposer_run_id='' and id>?
+order by id limit ?
+"""
+
+EXPIRED_PENDING_PROPOSER_RECOVERY_SQL = """
+select * from workbench_confirmations
+where status='pending' and proposer_run_id<>'' and proposer_quiesced_at=''
+  and proposer_lease_expires_at<=?
+order by proposer_lease_expires_at, id limit ?
+"""
+
+LEGACY_CONFIRMED_OWNER_RECOVERY_SQL = """
+select confirmations.*, turns.status as turn_status
+from workbench_confirmations as confirmations
+join workbench_turns as turns on turns.id=confirmations.turn_id
+where confirmations.status='confirmed' and confirmations.result_json=''
+  and confirmations.execution_owner=''
+  and confirmations.id>?
+order by confirmations.id limit ?
+"""
+
+LEGACY_CONFIRMED_LEASE_RECOVERY_SQL = """
+select confirmations.*, turns.status as turn_status
+from workbench_confirmations as confirmations
+join workbench_turns as turns on turns.id=confirmations.turn_id
+where confirmations.status='confirmed' and confirmations.result_json=''
+  and confirmations.execution_owner<>''
+  and confirmations.execution_lease_expires_at=''
+  and confirmations.id>?
+order by confirmations.id limit ?
+"""
+
+EXPIRED_CONFIRMED_EXECUTION_RECOVERY_SQL = """
+select confirmations.*, turns.status as turn_status
+from workbench_confirmations as confirmations
+join workbench_turns as turns on turns.id=confirmations.turn_id
+where confirmations.status='confirmed' and confirmations.result_json=''
+  and confirmations.execution_owner<>''
+  and confirmations.execution_lease_expires_at<>''
+  and confirmations.execution_lease_expires_at<=?
+order by confirmations.execution_lease_expires_at, confirmations.id limit ?
+"""
+
 
 def _json_object_text(value: dict[str, Any] | str, *, field: str) -> str:
     if isinstance(value, str):
@@ -769,20 +816,20 @@ class WorkbenchStore(AutoReplyStore):
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
             db.execute("begin immediate")
-            rows = db.execute(
-                """
-                select * from workbench_confirmations
-                where status='pending' and (
-                    proposer_run_id=''
-                    or (
-                        proposer_run_id<>'' and proposer_quiesced_at=''
-                        and proposer_lease_expires_at<=?
-                    )
+            rows = list(
+                db.execute(
+                    LEGACY_PENDING_PROPOSER_RECOVERY_SQL,
+                    ("", _RECOVERY_BATCH_LIMIT),
+                ).fetchall()
+            )
+            remaining = _RECOVERY_BATCH_LIMIT - len(rows)
+            if remaining:
+                rows.extend(
+                    db.execute(
+                        EXPIRED_PENDING_PROPOSER_RECOVERY_SQL,
+                        (now_text, remaining),
+                    ).fetchall()
                 )
-                order by id
-                """,
-                (now_text,),
-            ).fetchall()
             for row in rows:
                 code = (
                     "legacy_proposer_state_unknown"
@@ -1201,21 +1248,28 @@ class WorkbenchStore(AutoReplyStore):
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
             db.execute("begin immediate")
-            rows = db.execute(
-                """
-                select confirmations.*, turns.status as turn_status
-                from workbench_confirmations as confirmations
-                join workbench_turns as turns on turns.id=confirmations.turn_id
-                where confirmations.status='confirmed' and confirmations.result_json=''
-                  and (
-                    confirmations.execution_owner=''
-                    or confirmations.execution_lease_expires_at=''
-                    or confirmations.execution_lease_expires_at<=?
-                  )
-                order by confirmations.id
-                """,
-                (now_text,),
-            ).fetchall()
+            rows = list(
+                db.execute(
+                    LEGACY_CONFIRMED_OWNER_RECOVERY_SQL,
+                    ("", _RECOVERY_BATCH_LIMIT),
+                ).fetchall()
+            )
+            remaining = _RECOVERY_BATCH_LIMIT - len(rows)
+            if remaining:
+                rows.extend(
+                    db.execute(
+                        LEGACY_CONFIRMED_LEASE_RECOVERY_SQL,
+                        ("", remaining),
+                    ).fetchall()
+                )
+            remaining = _RECOVERY_BATCH_LIMIT - len(rows)
+            if remaining:
+                rows.extend(
+                    db.execute(
+                        EXPIRED_CONFIRMED_EXECUTION_RECOVERY_SQL,
+                        (now_text, remaining),
+                    ).fetchall()
+                )
             for row in rows:
                 recovery_result = _json_object_text(
                     {
