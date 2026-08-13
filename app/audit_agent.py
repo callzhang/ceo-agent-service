@@ -726,8 +726,13 @@ def _expected_effect_action(
         # executable contract, and native metadata derives its canonical path
         # and target identifiers. Requiring both spellings to match made a
         # harmless label reject a valid command before Audit could review it.
+        expected_capability = (
+            f"agent_cli.{descriptor.cli}"
+            if legacy_argv is not None
+            else action.capability
+        )
         expected["operation_contract_valid"] = (
-            action.capability == f"agent_cli.{descriptor.cli}"
+            expected_capability == f"agent_cli.{descriptor.cli}"
             and (
                 descriptor.cli != "dws"
                 or (argv is not None and has_noninteractive_confirmation(argv))

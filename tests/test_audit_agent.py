@@ -2816,6 +2816,7 @@ def test_legacy_direct_dingtalk_chat_candidate_normalizes_for_reconciliation():
 
     assert expected["capability"] == "agent_cli.dws"
     assert expected["operation"] == "chat +messages-send"
+    assert expected["operation_contract_valid"] is True
     assert expected["target_identifiers"] == {"open-dingtalk-id": "recipient-1"}
     assert _read_matches_action(
         {
