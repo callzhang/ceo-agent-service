@@ -6690,7 +6690,6 @@ class AutoReplyStore:
                 """
                 update reply_tasks
                 set status='pending',
-                    attempts=max(attempts - 1, 0),
                     locked_at=null,
                     available_at=?,
                     error=?,

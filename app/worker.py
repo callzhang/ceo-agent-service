@@ -1562,8 +1562,49 @@ class DingTalkAutoReplyWorker:
                         not capacity_exhausted
                         and task.error.strip() != authorization_wait_error
                     )
-                    if self._dws_authorization_required_scopes(exc):
+                    required_scopes = self._dws_authorization_required_scopes(exc)
+                    authorization_requested = bool(required_scopes) and (
                         self._ensure_dws_pat_authorization(exc)
+                    )
+                    authorization_cannot_start = (
+                        not provider_recovery
+                        and not capacity_exhausted
+                        and self._is_authorization_error(exc)
+                        and not authorization_requested
+                    )
+                    terminal_authorization_error = (
+                        f"{authorization_wait_error}: authorization request has no "
+                        "actionable scopes"
+                        if authorization_cannot_start
+                        else authorization_wait_error
+                    )
+                    if (
+                        not provider_recovery
+                        and not capacity_exhausted
+                        and (
+                            authorization_cannot_start
+                            or task.attempts >= self.max_task_attempts
+                        )
+                    ):
+                        task_status, attempt_id = self._record_agent_runtime_failure_attempt(
+                            task,
+                            terminal_authorization_error,
+                            retryable=False,
+                            prior_run_snapshot=run_snapshot,
+                        )
+                        self.store.record_error(
+                            task.conversation_id,
+                            task.trigger_message_id,
+                            "reply_task_authorization_exhausted",
+                            terminal_authorization_error,
+                        )
+                        self._notify_problem_attempt(
+                            task,
+                            attempt_id=attempt_id,
+                            send_status="failed",
+                            message=terminal_authorization_error,
+                        )
+                        continue
                     try:
                         self.store.defer_reply_task_for_authorization(
                             task.id,

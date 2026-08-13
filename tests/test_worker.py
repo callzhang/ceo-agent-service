@@ -5582,6 +5582,38 @@ def test_old_worker_cannot_write_context_or_authorization_failure_after_rotation
     assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
 
 
+def test_queued_task_fails_when_authorization_has_no_actionable_scopes(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 请处理这个文档")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    worker.produce_once()
+
+    class AuthorizationFailure(RuntimeError):
+        needs_authorization = True
+
+    def fail_for_missing_scope(_conversation, _task):
+        raise AuthorizationFailure("dws_forbidden_accessDenied")
+
+    monkeypatch.setattr(worker, "_process_queued_task", fail_for_missing_scope)
+
+    assert worker.consume_once(max_tasks=1) == 0
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "failed"
+    assert task.attempts == 1
+    assert "authorization request has no actionable scopes" in task.error
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert "authorization request has no actionable scopes" in attempt.send_error
+
+
 def test_active_run_defer_cannot_overwrite_rotated_generation(
     tmp_path: Path, monkeypatch
 ):

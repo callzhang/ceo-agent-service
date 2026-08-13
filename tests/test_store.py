@@ -1102,6 +1102,26 @@ def test_forced_manual_rerun_rotates_failed_pending_generation(tmp_path: Path):
     assert rerun.status == "pending"
 
 
+def test_authorization_defer_preserves_claim_attempt_count(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    original = store.get_reply_task(task_id)
+    assert original is not None
+    assert original.status == "processing" and original.attempts == 1
+
+    store.defer_reply_task_for_authorization(
+        task_id,
+        "dws_forbidden_accessDenied",
+        expected_execution_generation=original.execution_generation,
+        available_at="2026-08-13 16:00:00",
+    )
+
+    deferred = store.get_reply_task(task_id)
+    assert deferred is not None
+    assert deferred.status == "pending"
+    assert deferred.attempts == 1
+
+
 def test_forced_manual_rerun_does_not_supersede_active_agent_run(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

@@ -4,6 +4,11 @@
 
 ### Audit reconciliation
 
+- Close delivery-ledger-backed native `chat +dm` Audit recoveries without a
+  duplicate external send, and terminate authorization waits immediately when
+  DingTalk supplies no actionable scope to request. Authorization waits with a
+  valid scope retain their retry accounting and bounded retry limit.
+
 - Close an unknown Audit run directly when every approved controlled write has
   a completed lifecycle and a target-matched post-write readback. This avoids
   indefinite reconciliation caused by a malformed recovery summary while
