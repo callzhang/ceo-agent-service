@@ -210,6 +210,78 @@ describe("App", () => {
     expect(screen.queryByText("销售策略")).not.toBeInTheDocument();
   });
 
+  it("adopts authoritative lifecycle state when the server confirms a created task", async () => {
+    const user = userEvent.setup();
+    const serverQueued = {
+      ...second,
+      state: "queued" as const,
+      updated_at: "2026-08-13 11:00:00",
+    };
+    api.listTasks
+      .mockResolvedValueOnce({ items: [], nextCursor: "" })
+      .mockResolvedValueOnce({ items: [serverQueued], nextCursor: "" });
+    api.createTask.mockResolvedValue(second);
+    render(<App />);
+
+    await screen.findByText("还没有任务");
+    await user.click(screen.getByRole("button", { name: "新任务" }));
+    expect(await screen.findByText("空闲")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "刷新任务" }));
+
+    expect(await screen.findByText("等待中")).toBeInTheDocument();
+    expect(screen.queryByText("空闲")).not.toBeInTheDocument();
+  });
+
+  it("adopts authoritative lifecycle state when the server confirms a rename", async () => {
+    const user = userEvent.setup();
+    const renamed = { ...first, title: "确认后的名称" };
+    const serverCompleted = {
+      ...renamed,
+      state: "completed" as const,
+      updated_at: "2026-08-13 11:00:00",
+    };
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "" })
+      .mockResolvedValueOnce({ items: [serverCompleted], nextCursor: "" });
+    api.renameTask.mockResolvedValue(renamed);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "重命名 销售策略" }));
+    await user.clear(screen.getByRole("textbox", { name: "任务名称" }));
+    await user.type(screen.getByRole("textbox", { name: "任务名称" }), "确认后的名称");
+    await user.click(screen.getByRole("button", { name: "保存名称" }));
+    await user.click(screen.getByRole("button", { name: "刷新任务" }));
+
+    expect(await screen.findByText("已完成")).toBeInTheDocument();
+    expect(screen.queryByText("执行中")).not.toBeInTheDocument();
+  });
+
+  it("keeps an unconfirmed rename title while adopting authoritative lifecycle state", async () => {
+    const user = userEvent.setup();
+    const renamed = { ...first, title: "仍待确认的名称" };
+    const staleServer = {
+      ...first,
+      state: "completed" as const,
+      updated_at: "2026-08-13 11:00:00",
+    };
+    api.listTasks
+      .mockResolvedValueOnce({ items: [first], nextCursor: "" })
+      .mockResolvedValueOnce({ items: [staleServer], nextCursor: "" });
+    api.renameTask.mockResolvedValue(renamed);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "重命名 销售策略" }));
+    await user.clear(screen.getByRole("textbox", { name: "任务名称" }));
+    await user.type(screen.getByRole("textbox", { name: "任务名称" }), "仍待确认的名称");
+    await user.click(screen.getByRole("button", { name: "保存名称" }));
+    await user.click(screen.getByRole("button", { name: "刷新任务" }));
+
+    expect(await screen.findByText("仍待确认的名称")).toBeInTheDocument();
+    expect(screen.queryByText("销售策略")).not.toBeInTheDocument();
+    expect(screen.getByText("已完成")).toBeInTheDocument();
+    expect(screen.queryByText("执行中")).not.toBeInTheDocument();
+  });
+
   it("paints page one while chasing a deep-link target in the background", async () => {
     const pendingDeepPage = deferred<{ items: typeof deep[]; nextCursor: string }>();
     api.listTasks

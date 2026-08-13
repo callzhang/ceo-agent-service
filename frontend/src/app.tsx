@@ -15,6 +15,14 @@ interface SharedPageRequest {
   applied: boolean;
 }
 
+interface TaskMutationOwnership {
+  revision: number;
+  kind: "create" | "rename";
+  title: string;
+  runtimeKind?: string;
+  protectsExistence: boolean;
+}
+
 function taskTimestamp(value: string) {
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
     ? `${value.slice(0, 10)}T${value.slice(11)}Z`
@@ -25,14 +33,6 @@ function taskTimestamp(value: string) {
 
 function sortTasks(tasks: Task[]) {
   return [...tasks].sort((left, right) => taskTimestamp(right.updated_at) - taskTimestamp(left.updated_at));
-}
-
-function serverConfirmsLocal(server: Task, local: Task) {
-  return server.title === local.title
-    && server.runtime_kind === local.runtime_kind
-    && server.archived_at === local.archived_at
-    && server.state === local.state
-    && taskTimestamp(server.updated_at) >= taskTimestamp(local.updated_at);
 }
 
 function taskIdFromUrl(): string | null {
@@ -94,7 +94,7 @@ export function App() {
   const tasksRef = useRef<Task[]>([]);
   const nextCursorRef = useRef("");
   const dataRevisionRef = useRef(0);
-  const taskMutationRevisionsRef = useRef(new Map<string, number>());
+  const taskMutationOwnershipRef = useRef(new Map<string, TaskMutationOwnership>());
   const archiveTombstonesRef = useRef(new Map<string, number>());
   const controllersRef = useRef(new Set<AbortController>());
   const loadRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
@@ -135,9 +135,28 @@ export function App() {
     setNextCursor(cursor);
   }
 
-  function recordTaskMutation(taskId: string) {
+  function recordCreatedTask(task: Task) {
     const revision = ++dataRevisionRef.current;
-    taskMutationRevisionsRef.current.set(taskId, revision);
+    taskMutationOwnershipRef.current.set(task.id, {
+      revision,
+      kind: "create",
+      title: task.title,
+      runtimeKind: task.runtime_kind,
+      protectsExistence: true,
+    });
+    return revision;
+  }
+
+  function recordRenamedTask(task: Task) {
+    const revision = ++dataRevisionRef.current;
+    const prior = taskMutationOwnershipRef.current.get(task.id);
+    taskMutationOwnershipRef.current.set(task.id, {
+      revision,
+      kind: "rename",
+      title: task.title,
+      runtimeKind: prior?.runtimeKind,
+      protectsExistence: prior?.protectsExistence ?? false,
+    });
     return revision;
   }
 
@@ -164,21 +183,35 @@ export function App() {
     for (const incoming of incomingTasks) {
       if (archiveTombstonesRef.current.has(incoming.id)) continue;
       const local = currentById.get(incoming.id);
-      const localRevision = taskMutationRevisionsRef.current.get(incoming.id);
-      if (local && localRevision !== undefined) {
-        if (localRevision > startRevision || !serverConfirmsLocal(incoming, local)) {
-          nextById.set(incoming.id, local);
-          continue;
+      const ownership = taskMutationOwnershipRef.current.get(incoming.id);
+      if (local && ownership) {
+        const titleConfirmed = incoming.title === ownership.title;
+        const runtimeConfirmed = ownership.runtimeKind === undefined
+          || incoming.runtime_kind === ownership.runtimeKind;
+        if (titleConfirmed && runtimeConfirmed) {
+          taskMutationOwnershipRef.current.delete(incoming.id);
+          nextById.set(incoming.id, incoming);
+        } else {
+          nextById.set(incoming.id, {
+            ...incoming,
+            title: ownership.title,
+            runtime_kind: ownership.runtimeKind ?? incoming.runtime_kind,
+          });
         }
-        taskMutationRevisionsRef.current.delete(incoming.id);
+        continue;
       }
       nextById.set(incoming.id, incoming);
     }
 
     if (mode === "replace") {
-      for (const [taskId, revision] of taskMutationRevisionsRef.current) {
+      for (const [taskId, ownership] of taskMutationOwnershipRef.current) {
         const local = currentById.get(taskId);
-        if (local && !archiveTombstonesRef.current.has(taskId) && (!incomingIds.has(taskId) || revision > startRevision)) {
+        if (
+          ownership.protectsExistence
+          && local
+          && !archiveTombstonesRef.current.has(taskId)
+          && !incomingIds.has(taskId)
+        ) {
           nextById.set(taskId, local);
         }
       }
@@ -533,7 +566,7 @@ export function App() {
     try {
       const created = await createTask("新任务", "codex", { signal: controller.signal });
       if (createRequestRef.current?.id !== requestId || !mountedRef.current) return;
-      recordTaskMutation(created.id);
+      recordCreatedTask(created);
       writeTasks((current) => [created, ...current.filter((task) => task.id !== created.id)]);
       if (
         selectedTaskIdRef.current === selectionAtStart &&
@@ -567,7 +600,7 @@ export function App() {
     try {
       const renamed = await renameTask(taskId, title, { signal: controller.signal });
       if (renameRequestsRef.current.get(taskId)?.id !== requestId || !mountedRef.current) return;
-      recordTaskMutation(taskId);
+      recordRenamedTask(renamed);
       writeTasks((current) => current.map((task) => (task.id === taskId ? renamed : task)));
     } catch (error) {
       if (
@@ -604,7 +637,7 @@ export function App() {
       if (archiveRequestsRef.current.get(taskId)?.id !== requestId || !mountedRef.current) return;
       const revision = ++dataRevisionRef.current;
       archiveTombstonesRef.current.set(taskId, revision);
-      taskMutationRevisionsRef.current.delete(taskId);
+      taskMutationOwnershipRef.current.delete(taskId);
       writeTasks((current) => current.filter((task) => task.id !== taskId));
       if (selectedTaskIdRef.current === taskId) {
         commitSelection(null, "replace");
