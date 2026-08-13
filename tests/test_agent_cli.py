@@ -69,6 +69,22 @@ def test_read_text_file_detects_xlsx_without_filename_extension(tmp_path: Path):
     assert result["sheets"][0]["rows"][0]["cells"] == {"A": "Verified"}
 
 
+def test_read_text_file_detects_pptx_without_filename_extension(tmp_path: Path):
+    material = tmp_path / "downloaded-deck"
+    with zipfile.ZipFile(material, "w") as presentation:
+        presentation.writestr("[Content_Types].xml", "<Types/>")
+        presentation.writestr("ppt/presentation.xml", "<presentation/>")
+        presentation.writestr(
+            "ppt/slides/slide1.xml",
+            '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:t>Verified deck</p:t></p:sld>',
+        )
+
+    result = agent_cli.read_text_file(str(material))
+
+    assert result["format"] == "pptx"
+    assert result["slides"] == [{"index": 1, "text": "Verified deck"}]
+
+
 def test_read_skill_allows_markdown_referenced_by_an_installed_skill(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

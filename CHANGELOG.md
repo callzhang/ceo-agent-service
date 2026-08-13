@@ -7,6 +7,8 @@
 - Made the default downloaded-material reader detect OOXML workbooks by their
   file content, so extensionless downloads no longer fail after being treated
   as UTF-8 text.
+- Added bounded PPTX text previews and fixed Audit parent validation after a
+  retrying Consumer run, so a successful retry can continue into Audit.
 
 ### Skill-first Agent runtime
 

@@ -348,14 +348,15 @@ class AgentOrchestrator:
     ) -> tuple[LoadedSkillReceipt, ...]:
         if parent_run_id is None:
             raise RuntimeError("audit_consumer_parent_invalid")
-        parent = self.store.get_agent_run_for_turn(
-            task.id,
-            task.execution_generation,
-            role=AgentRole.CONSUMER,
-            proposal_revision=proposal_revision,
-            turn_attempt=0,
-        )
-        if parent is None or parent.id != parent_run_id:
+        parent = self.store.get_agent_run(parent_run_id)
+        if (
+            parent is None
+            or parent.reply_task_id != task.id
+            or parent.execution_generation != task.execution_generation
+            or parent.role is not AgentRole.CONSUMER
+            or parent.proposal_revision != proposal_revision
+            or parent.status != "completed"
+        ):
             raise RuntimeError("audit_consumer_parent_invalid")
         return loaded_skill_receipts(parent.tool_events)
 

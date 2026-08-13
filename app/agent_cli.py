@@ -236,6 +236,8 @@ def read_text_file(path: str) -> dict[str, object]:
                             max_rows=MAX_SPREADSHEET_ROWS,
                             max_columns=MAX_SPREADSHEET_COLUMNS,
                         )
+                    if "ppt/presentation.xml" in workbook.namelist():
+                        return _read_presentation_workbook(workbook)
             except zipfile.BadZipFile as exc:
                 raise AgentReadOnlyViolationError("spreadsheet_file_invalid") from exc
             except ElementTree.ParseError as exc:
@@ -279,6 +281,32 @@ def _read_xlsx_workbook(
         if remaining_chars == 0:
             break
     return {"format": "xlsx", "sheets": previews}
+
+
+def _read_presentation_workbook(workbook: zipfile.ZipFile) -> dict[str, object]:
+    """Return bounded visible text from an OOXML presentation package."""
+    slides: list[dict[str, object]] = []
+    remaining_chars = MAX_SPREADSHEET_PREVIEW_CHARS
+    slide_names = sorted(
+        name
+        for name in workbook.namelist()
+        if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+    )
+    for index, name in enumerate(slide_names, start=1):
+        root = ElementTree.fromstring(workbook.read(name))
+        text = "\n".join(
+            node.text or "" for node in root.iter() if node.tag.endswith("}t") and node.text
+        )
+        text = text[:remaining_chars]
+        remaining_chars -= len(text)
+        slides.append({"index": index, "text": text})
+        if remaining_chars == 0:
+            break
+    return {
+        "format": "pptx",
+        "slides": slides,
+        "truncated": len(slides) < len(slide_names),
+    }
 
 
 def _xlsx_shared_strings(workbook: zipfile.ZipFile) -> list[str]:
@@ -555,7 +583,7 @@ def read_skill_tool(path: str) -> dict[str, str]:
     ),
 )
 def read_text_file_tool(path: str) -> dict[str, object]:
-    """Read a downloaded UTF-8 text material from the service temp directory."""
+    """Read bounded text, workbook, or presentation material from the temp directory."""
     return read_text_file(path)
 
 

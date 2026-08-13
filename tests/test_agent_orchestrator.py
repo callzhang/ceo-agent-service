@@ -770,6 +770,32 @@ def test_normal_audit_state_with_invalid_parent_defers_without_invoking_audit(
     assert audit.calls == []
 
 
+def test_audit_accepts_completed_retrying_consumer_parent(store):
+    task = _task(store)
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=1,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="retrying-consumer",
+    )
+    store.complete_agent_run(
+        claim.run.id,
+        _consumer_result("proposal").model_dump(mode="json"),
+        owner="retrying-consumer",
+    )
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ScriptedConsumer(store),
+        audit=ScriptedAudit(store),
+    )
+
+    assert orchestrator._consumer_skills(task, claim.run.id, 0) == ()
+
+
 def test_unknown_audit_recovery_receives_exact_parent_consumer_skill(store):
     pending = _task(store)
     task = store.claim_reply_task(pending.id)
