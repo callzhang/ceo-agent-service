@@ -45,7 +45,7 @@ SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-13.8"
+STORE_SCHEMA_VERSION = "2026-08-13.9"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_events",
     "workbench_tasks",
@@ -59,6 +59,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_workbench_events_turn_id_id",
     "idx_workbench_artifacts_turn_created_id",
     "idx_workbench_turns_task_created_id",
+    "idx_workbench_turns_task_sequence",
     "idx_workbench_tasks_updated_id",
     "idx_workbench_confirmations_turn_created_id",
     "idx_workbench_attachments_task_created_id",
@@ -1464,6 +1465,7 @@ class AutoReplyStore:
                     id text primary key,
                     task_id text not null,
                     client_request_id text not null unique,
+                    task_sequence integer not null check(task_sequence > 0),
                     user_text text not null,
                     status text not null check(status in (
                         'queued', 'running', 'waiting_confirmation',
@@ -1564,6 +1566,28 @@ class AutoReplyStore:
                     "alter table workbench_turns add column "
                     "resume_context text not null default ''"
                 )
+            if "task_sequence" not in workbench_turn_columns:
+                db.execute(
+                    "alter table workbench_turns add column "
+                    "task_sequence integer not null default 0"
+                )
+            db.execute(
+                """
+                with ranked as (
+                    select rowid as row_id,
+                           row_number() over (
+                               partition by task_id order by created_at,rowid
+                           ) as sequence
+                    from workbench_turns
+                )
+                update workbench_turns
+                set task_sequence=(
+                    select sequence from ranked
+                    where ranked.row_id=workbench_turns.rowid
+                )
+                where task_sequence=0
+                """
+            )
             for column in ("execution_run_id", "runtime_quiesced_run_id"):
                 if column not in workbench_turn_columns:
                     db.execute(
@@ -1622,6 +1646,10 @@ class AutoReplyStore:
             db.execute(
                 "create index if not exists idx_workbench_turns_task_created_id "
                 "on workbench_turns(task_id, created_at, id)"
+            )
+            db.execute(
+                "create unique index if not exists idx_workbench_turns_task_sequence "
+                "on workbench_turns(task_id, task_sequence desc)"
             )
             db.execute(
                 "create index if not exists idx_workbench_tasks_updated_id "

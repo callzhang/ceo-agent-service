@@ -31,6 +31,7 @@ class WorkbenchTurn(StrictModel):
     id: str
     task_id: str
     client_request_id: str
+    task_sequence: int = Field(ge=1)
     user_text: str
     status: TurnStatus
     stop_requested: bool = False

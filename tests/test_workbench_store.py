@@ -83,7 +83,7 @@ def test_store_migrates_resume_context_without_losing_existing_turns(tmp_path: P
     assert "resume_context" in columns
 
 
-def test_store_upgrades_real_point_seven_schema_with_point_eight_indexes(tmp_path: Path):
+def test_store_upgrades_point_seven_schema_with_current_indexes(tmp_path: Path):
     db_path = tmp_path / "workbench.sqlite3"
     store = WorkbenchStore(db_path)
     task = store.create_task(title="Upgrade", runtime_kind="codex")
@@ -116,15 +116,16 @@ def test_store_upgrades_real_point_seven_schema_with_point_eight_indexes(tmp_pat
             )
         }
 
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-13.8"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-13.9"
     assert "idx_workbench_events_event_type" in indexes
     assert "idx_workbench_events_turn_id_id" in indexes
+    assert "idx_workbench_turns_task_sequence" in indexes
     assert "idx_workbench_confirmations_turn_created_id" in indexes
     snapshot = upgraded.timeline_snapshot(task.id)
     assert snapshot[0].id == task.id
 
 
-def test_store_repairs_missing_required_point_eight_index(tmp_path: Path):
+def test_store_repairs_missing_required_point_nine_index(tmp_path: Path):
     db_path = tmp_path / "workbench.sqlite3"
     store = WorkbenchStore(db_path)
     with store._connect() as db:
@@ -139,6 +140,114 @@ def test_store_repairs_missing_required_point_eight_index(tmp_path: Path):
                where type='index' and name='idx_workbench_events_event_type'"""
         ).fetchone()
     assert index is not None
+
+
+def test_store_upgrades_point_eight_turns_with_stable_per_task_sequence(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "workbench.sqlite3"
+    store = WorkbenchStore(db_path)
+    task = store.create_task(title="Legacy order", runtime_kind="codex")
+    first_id = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    second_id = "00000000-0000-4000-8000-000000000001"
+    with store._connect() as db:
+        db.execute(
+            """insert into workbench_turns
+               (id,task_id,client_request_id,user_text,status,task_sequence,created_at)
+               values(?,?,?,?,?,?,?)""",
+            (first_id, task.id, "legacy-first", "first", "completed", 1, "2026-08-13 00:00:00"),
+        )
+        db.execute(
+            """insert into workbench_turns
+               (id,task_id,client_request_id,user_text,status,task_sequence,created_at)
+               values(?,?,?,?,?,?,?)""",
+            (second_id, task.id, "legacy-second", "second", "failed", 2, "2026-08-13 00:00:00"),
+        )
+        db.execute("drop index idx_workbench_turns_task_sequence")
+        db.execute("alter table workbench_turns drop column task_sequence")
+        db.execute(
+            "update service_state set value='2026-08-13.8' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = WorkbenchStore(db_path)
+    turns = upgraded.list_turns(task.id)
+
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-13.9"
+    assert [(turn.id, turn.task_sequence) for turn in turns] == [
+        (second_id, 2),
+        (first_id, 1),
+    ]
+    assert upgraded.get_task_summary(task.id)[1] == "failed"
+
+
+def test_concurrent_turn_creation_allocates_unique_monotonic_task_sequences(
+    tmp_path: Path,
+):
+    first = _store(tmp_path)
+    second = WorkbenchStore(first.path)
+    task = first.create_task(title="Concurrent", runtime_kind="codex")
+
+    def create_and_stop(index: int):
+        selected = first if index % 2 else second
+        while True:
+            try:
+                turn = selected.create_turn(
+                    task.id,
+                    user_text=f"turn {index}",
+                    client_request_id=f"concurrent-{index}",
+                )
+            except ValueError as exc:
+                assert str(exc) == "task already has an active turn"
+                continue
+            selected.request_stop(turn.id)
+            return turn.id
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        created_ids = set(executor.map(create_and_stop, range(12)))
+
+    turns = first.list_turns(task.id)
+    assert {turn.id for turn in turns} == created_ids
+    assert [turn.task_sequence for turn in turns] == list(range(12, 0, -1))
+
+
+def test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition(
+    tmp_path: Path, monkeypatch
+):
+    store = _store(tmp_path)
+    writer = WorkbenchStore(store.path)
+    with store._connect() as db:
+        db.execute("pragma journal_mode=wal")
+    task = store.create_task(title="Snapshot", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="snapshot", client_request_id="snapshot-race"
+    )
+    snapshot_started = threading.Event()
+    allow_snapshot = threading.Event()
+    original_require_task = store._require_task
+
+    def pause_after_first_read(db, task_id):
+        row = original_require_task(db, task_id)
+        snapshot_started.set()
+        assert allow_snapshot.wait(2)
+        return row
+
+    monkeypatch.setattr(store, "_require_task", pause_after_first_read)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        snapshot_future = executor.submit(store.timeline_snapshot, task.id)
+        assert snapshot_started.wait(2)
+        stopped = writer.request_stop(turn.id)
+        allow_snapshot.set()
+        snapshot = snapshot_future.result(timeout=2)
+
+    _, turns, events, _, _, _, page = snapshot
+    assert stopped.status is TurnStatus.STOPPED
+    assert [(item.status, item.task_sequence) for item in turns] == [
+        (TurnStatus.QUEUED, 1)
+    ]
+    assert [event.event_type for event in events] == ["status_changed"]
+    assert page["task_state"] == TurnStatus.QUEUED.value
 
 
 def test_store_migrates_confirmation_execution_claim_without_losing_data(
@@ -535,6 +644,7 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
         "idx_workbench_events_turn_id_id",
         "idx_workbench_artifacts_turn_created_id",
         "idx_workbench_turns_task_created_id",
+        "idx_workbench_turns_task_sequence",
         "idx_workbench_tasks_updated_id",
         "idx_workbench_events_id_turn_id",
         "idx_workbench_artifacts_created_id_turn",
@@ -663,12 +773,13 @@ def test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events(
     with store._connect() as db:
         db.execute(
             """insert into workbench_turns
-               (id,task_id,client_request_id,user_text,status)
-               values(?,?,?,?,?)""",
+               (id,task_id,client_request_id,task_sequence,user_text,status)
+               values(?,?,?,?,?,?)""",
             (
                 unrelated_turn_id,
                 unrelated_task.id,
                 "unrelated-request",
+                1,
                 "unrelated",
                 "completed",
             ),
@@ -712,12 +823,14 @@ def test_get_task_summary_uses_latest_turn_index_and_limit_one(tmp_path: Path):
             created_at = f"2026-08-{1 + index // 24:02d} {index % 24:02d}:00:00"
             db.execute(
                 """insert into workbench_turns
-                   (id,task_id,client_request_id,user_text,status,created_at,updated_at)
-                   values(?,?,?,?,?,?,?)""",
+                   (id,task_id,client_request_id,task_sequence,user_text,status,
+                    created_at,updated_at)
+                   values(?,?,?,?,?,?,?,?)""",
                 (
                     f"00000000-0000-4000-8000-{index:012d}",
                     task.id,
                     f"summary-{index}",
+                    index + 1,
                     "summary",
                     "completed" if index < 999 else "failed",
                     created_at,
@@ -729,7 +842,7 @@ def test_get_task_summary_uses_latest_turn_index_and_limit_one(tmp_path: Path):
             for row in db.execute(
                 """explain query plan
                    select status from workbench_turns where task_id=?
-                   order by created_at desc,id desc limit 1""",
+                   order by task_sequence desc limit 1""",
                 (task.id,),
             ).fetchall()
         )
@@ -738,7 +851,7 @@ def test_get_task_summary_uses_latest_turn_index_and_limit_one(tmp_path: Path):
 
     assert summary is not None
     assert summary[1] == "failed"
-    assert "idx_workbench_turns_task_created_id" in plan
+    assert "idx_workbench_turns_task_sequence" in plan
     assert "TEMP B-TREE" not in plan
 
 
@@ -791,6 +904,7 @@ def test_create_task_and_idempotent_turn_request(tmp_path: Path):
     )
 
     assert first == second
+    assert first.task_sequence == second.task_sequence == 1
     assert first.status is TurnStatus.QUEUED
     assert store.get_task(task.id) == task
 

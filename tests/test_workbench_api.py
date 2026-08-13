@@ -258,12 +258,14 @@ def test_timeline_turn_cursor_keeps_nested_resources_on_the_selected_page(
             created_at = f"2026-08-13 00:{index // 60:02d}:{index % 60:02d}"
             db.execute(
                 """insert into workbench_turns
-                   (id,task_id,client_request_id,user_text,status,created_at,updated_at)
-                   values(?,?,?,?,?,?,?)""",
+                   (id,task_id,client_request_id,task_sequence,user_text,status,
+                    created_at,updated_at)
+                   values(?,?,?,?,?,?,?,?)""",
                 (
                     turn_id,
                     task.id,
                     f"page-{index}",
+                    index + 1,
                     f"turn {index}",
                     "completed",
                     created_at,
@@ -317,6 +319,95 @@ def test_timeline_turn_cursor_keeps_nested_resources_on_the_selected_page(
     ):
         assert {event["turn_id"] for event in body["events"]} <= selected_ids
         assert {artifact["turn_id"] for artifact in body["artifacts"]} <= selected_ids
+
+
+def test_same_timestamp_public_turns_keep_creation_order_and_latest_state(
+    tmp_path: Path,
+):
+    with _client(tmp_path) as client:
+        task = client.post(
+            "/api/workbench/tasks",
+            json={"title": "Monotonic", "runtime_kind": "codex"},
+        ).json()
+        first = client.post(
+            f"/api/workbench/tasks/{task['id']}/turns",
+            json={"text": "first", "client_request_id": "monotonic-first"},
+        ).json()
+        client.post(
+            f"/api/workbench/tasks/{task['id']}/turns/{first['id']}/stop", json={}
+        )
+        second = client.post(
+            f"/api/workbench/tasks/{task['id']}/turns",
+            json={"text": "second", "client_request_id": "monotonic-second"},
+        ).json()
+        store = WorkbenchStore(tmp_path / "worker.sqlite3")
+        with store._connect() as db:
+            db.execute(
+                """update workbench_turns set created_at='2026-08-13 00:00:00'
+                   where task_id=?""",
+                (task["id"],),
+            )
+        summary = client.get(f"/api/workbench/tasks/{task['id']}")
+        timeline = client.get(f"/api/workbench/tasks/{task['id']}/timeline")
+
+    assert summary.status_code == timeline.status_code == 200
+    assert summary.json()["state"] == "queued"
+    assert [turn["id"] for turn in timeline.json()["turns"]] == [
+        second["id"],
+        first["id"],
+    ]
+    assert "task_sequence" not in timeline.json()["turns"][0]
+
+
+def test_timeline_cursor_is_bound_to_issuing_task(tmp_path: Path):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    _complete_setup(store)
+    first_task = store.create_task(title="First", runtime_kind="codex")
+    second_task = store.create_task(title="Second", runtime_kind="codex")
+    for index in range(2):
+        turn = store.create_turn(
+            first_task.id,
+            user_text=f"first {index}",
+            client_request_id=f"first-cursor-{index}",
+        )
+        store.request_stop(turn.id)
+    second_turn = store.create_turn(
+        second_task.id,
+        user_text="second",
+        client_request_id="second-cursor",
+    )
+    store.request_stop(second_turn.id)
+
+    with _client(tmp_path) as client:
+        first_page = client.get(
+            f"/api/workbench/tasks/{first_task.id}/timeline",
+            params={"turn_limit": 1},
+        )
+        cross_task = client.get(
+            f"/api/workbench/tasks/{second_task.id}/timeline",
+            params={"before": first_page.json()["next_cursor"]},
+        )
+
+    assert first_page.status_code == 200
+    assert cross_task.status_code == 400
+
+
+def test_timeline_does_not_read_confirmation_quiescence_after_snapshot(
+    tmp_path: Path, monkeypatch
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    _complete_setup(store)
+    task = store.create_task(title="Snapshot confirmations", runtime_kind="codex")
+
+    def fail_separate_read(*_args, **_kwargs):
+        raise AssertionError("quiescence must come from timeline snapshot")
+
+    monkeypatch.setattr(WorkbenchStore, "confirmation_quiescence", fail_separate_read)
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/workbench/tasks/{task.id}/timeline")
+
+    assert response.status_code == 200
 
 
 def test_timeline_exposes_usable_resource_cursors(tmp_path: Path):

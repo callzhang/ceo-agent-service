@@ -418,8 +418,10 @@ def _task_cursor(task: WorkbenchTask) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def _turn_cursor(turn: WorkbenchTurn) -> str:
-    raw = json.dumps([turn.created_at, turn.id], separators=(",", ":")).encode()
+def _turn_cursor(task_id: str, turn: WorkbenchTurn) -> str:
+    raw = json.dumps(
+        [task_id, turn.task_sequence], separators=(",", ":")
+    ).encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
@@ -446,10 +448,23 @@ def _parse_task_cursor(cursor: str | None) -> tuple[str, str] | None:
         raise HTTPException(status_code=400, detail="Invalid task cursor") from exc
 
 
-def _parse_turn_cursor(cursor: str | None) -> tuple[str, str] | None:
+def _parse_turn_cursor(cursor: str | None, *, task_id: str) -> int | None:
+    if cursor is None:
+        return None
     try:
-        return _parse_task_cursor(cursor)
-    except HTTPException as exc:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        value = json.loads(base64.b64decode(padded, altchars=b"-_", validate=True))
+        if (
+            not isinstance(value, list)
+            or len(value) != 2
+            or value[0] != task_id
+            or not isinstance(value[1], int)
+            or isinstance(value[1], bool)
+            or value[1] < 1
+        ):
+            raise ValueError
+        return value[1]
+    except (ValueError, TypeError, binascii.Error, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid timeline cursor") from exc
 
 
@@ -473,7 +488,9 @@ def _safe_public_record(values: dict[str, Any], workspace: Path) -> dict[str, An
 
 
 def _public_turn(turn: WorkbenchTurn, workspace: Path) -> PublicTurn:
-    return PublicTurn.model_validate(_safe_public_record(turn.model_dump(), workspace))
+    return PublicTurn.model_validate(
+        _safe_public_record(turn.model_dump(exclude={"task_sequence"}), workspace)
+    )
 
 
 _PUBLIC_EVENT_FIELDS: dict[str, frozenset[str]] = {
@@ -1174,22 +1191,19 @@ def register_workbench_routes(
                     task_id_text,
                     turn_limit=turn_limit,
                     event_limit=event_limit,
-                    before=_parse_turn_cursor(before),
+                    before_sequence=_parse_turn_cursor(before, task_id=task_id_text),
                     event_before=event_before,
                     artifact_after=_parse_resource_cursor(artifact_after),
                     confirmation_after=_parse_resource_cursor(confirmation_after),
                     attachment_after=_parse_resource_cursor(attachment_after),
                 )
             )
-            quiescence = store.confirmation_quiescence(
-                [confirmation.id for confirmation in confirmations]
-            )
         except ValueError:
             raise _not_found()
         return PublicTimeline(
             task=_public_task_with_state(
                 task,
-                (store.get_task_summary(task_id_text) or (task, "idle"))[1],
+                page["task_state"],
                 executor.workspace,
             ),
             turns=[_public_turn(turn, executor.workspace) for turn in turns],
@@ -1206,13 +1220,17 @@ def register_workbench_routes(
                 _public_confirmation(
                     store,
                     confirmation,
-                    proposer_quiesced=quiescence.get(confirmation.id, False),
+                    proposer_quiesced=page["confirmation_quiescence"].get(
+                        confirmation.id, False
+                    ),
                     workspace=executor.workspace,
                 )
                 for confirmation in confirmations
             ],
             next_cursor=(
-                _turn_cursor(turns[0]) if page["has_more"] and turns else ""
+                _turn_cursor(task_id_text, turns[-1])
+                if page["has_more"] and turns
+                else ""
             ),
             has_more=page["has_more"],
             events_has_more=page["events_has_more"],

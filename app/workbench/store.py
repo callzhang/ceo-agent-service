@@ -162,7 +162,7 @@ class WorkbenchStore(AutoReplyStore):
                 select tasks.*,
                        coalesce((select status from workbench_turns
                                  where task_id=tasks.id
-                                 order by created_at desc,id desc limit 1), 'idle')
+                                 order by task_sequence desc limit 1), 'idle')
                            as latest_state
                 from workbench_tasks tasks where tasks.id=?
                 """,
@@ -205,7 +205,7 @@ class WorkbenchStore(AutoReplyStore):
                 select tasks.*,
                        coalesce((select status from workbench_turns
                                  where task_id=tasks.id
-                                 order by created_at desc, id desc limit 1), 'idle')
+                                 order by task_sequence desc limit 1), 'idle')
                            as latest_state
                 from workbench_tasks as tasks
                 {where}
@@ -389,17 +389,25 @@ class WorkbenchStore(AutoReplyStore):
             if active is not None:
                 raise ValueError("task already has an active turn")
             turn_id = str(uuid4())
+            task_sequence = int(
+                db.execute(
+                    """select coalesce(max(task_sequence),0)+1
+                       from workbench_turns where task_id=?""",
+                    (task_id,),
+                ).fetchone()[0]
+            )
             try:
                 db.execute(
                     """
                     insert into workbench_turns (
-                        id, task_id, client_request_id, user_text, status
-                    ) values (?, ?, ?, ?, ?)
+                        id, task_id, client_request_id, task_sequence, user_text, status
+                    ) values (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         turn_id,
                         task_id,
                         client_request_id,
+                        task_sequence,
                         user_text,
                         TurnStatus.QUEUED.value,
                     ),
@@ -427,7 +435,7 @@ class WorkbenchStore(AutoReplyStore):
             rows = db.execute(
                 """
                 select * from workbench_turns
-                where task_id=? order by created_at, id
+                where task_id=? order by task_sequence desc
                 """,
                 (task_id,),
             ).fetchall()
@@ -770,7 +778,7 @@ class WorkbenchStore(AutoReplyStore):
         *,
         turn_limit: int = 100,
         event_limit: int = 1000,
-        before: tuple[str, str] | None = None,
+        before_sequence: int | None = None,
         event_before: int | None = None,
         artifact_after: tuple[str, str] | None = None,
         confirmation_after: tuple[str, str] | None = None,
@@ -787,16 +795,23 @@ class WorkbenchStore(AutoReplyStore):
         if turn_limit < 1 or turn_limit > 100 or event_limit < 1 or event_limit > 1000:
             raise ValueError("invalid timeline limit")
         with self._connect() as db:
+            db.execute("begin")
             task_row = self._require_task(db, task_id)
+            state_row = db.execute(
+                """select status from workbench_turns where task_id=?
+                   order by task_sequence desc limit 1""",
+                (task_id,),
+            ).fetchone()
+            task_state = state_row["status"] if state_row is not None else "idle"
             cursor_sql = ""
             turn_parameters: list[Any] = [task_id]
-            if before is not None:
-                cursor_sql = "and (created_at<? or (created_at=? and id<?))"
-                turn_parameters.extend((before[0], before[0], before[1]))
+            if before_sequence is not None:
+                cursor_sql = "and task_sequence<?"
+                turn_parameters.append(before_sequence)
             turn_parameters.append(turn_limit + 1)
             turn_rows = db.execute(
                 f"""select * from workbench_turns where task_id=? {cursor_sql}
-                    order by created_at desc,id desc limit ?""",
+                    order by task_sequence desc limit ?""",
                 tuple(turn_parameters),
             ).fetchall()
             has_more = len(turn_rows) > turn_limit
@@ -875,14 +890,26 @@ class WorkbenchStore(AutoReplyStore):
             artifact_rows = artifact_rows[:100]
             confirmation_rows = confirmation_rows[:100]
             attachment_rows = attachment_rows[:100]
+            runtime_quiesced_runs = {
+                row["id"]: row["runtime_quiesced_run_id"] for row in turn_rows
+            }
+            confirmation_quiescence = {
+                row["id"]: bool(
+                    row["proposer_quiesced_at"]
+                    and row["proposer_run_id"]
+                    and row["proposer_run_id"]
+                    == runtime_quiesced_runs.get(row["turn_id"], "")
+                )
+                for row in confirmation_rows
+            }
             next_cursor = (
-                (turn_rows[-1]["created_at"], turn_rows[-1]["id"])
+                turn_rows[-1]["task_sequence"]
                 if has_more and turn_rows
                 else None
             )
             return (
                 self._task_from_row(task_row),
-                [self._turn_from_row(row) for row in reversed(turn_rows)],
+                [self._turn_from_row(row) for row in turn_rows],
                 [self._event_from_row(row) for row in reversed(event_rows)],
                 [self._attachment_from_row(row) for row in attachment_rows],
                 [self._artifact_from_row(row) for row in artifact_rows],
@@ -890,10 +917,12 @@ class WorkbenchStore(AutoReplyStore):
                 {
                     "has_more": has_more,
                     "next_cursor": next_cursor,
+                    "task_state": task_state,
                     "events_has_more": events_has_more,
                     "events_next_cursor": events_next_cursor,
                     "artifacts_has_more": artifacts_has_more,
                     "confirmations_has_more": confirmations_has_more,
+                    "confirmation_quiescence": confirmation_quiescence,
                     "attachments_has_more": attachments_has_more,
                 },
             )
