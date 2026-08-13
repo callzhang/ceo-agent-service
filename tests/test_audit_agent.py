@@ -2380,6 +2380,43 @@ def test_direct_chat_user_target_without_delivery_record_rotates_generation(setu
     assert executor.commands == []
 
 
+def test_legacy_direct_chat_without_delivery_record_rotates_generation(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    legacy_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send direct result",
+            "actions": [
+                {
+                    "description": "Send direct message",
+                    "capability": "dingtalk-chat",
+                    "operation": "dws chat +messages-send --open-dingtalk-id user-1",
+                    "target": {"recipient_open_dingtalk_id": "user-1"},
+                    "payload": {"text": "done"},
+                    "expected_verification": "Message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Requested by Derek",
+        }
+    )
+    executor = CapturingExecutor("")
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, replace(audit_context, proposal=legacy_proposal), run=run)
+
+    persisted = store.get_agent_run(run.id)
+    requeued = store.get_reply_task(task.id)
+    assert result.result.error is not None
+    assert result.result.error.code == "persisted_delivery_absent"
+    assert persisted is not None and persisted.status == "failed"
+    assert requeued is not None and requeued.status == "pending"
+    assert requeued.execution_generation != task.execution_generation
+    assert executor.commands == []
+
+
 def test_controlled_group_chat_without_delivery_record_rotates_generation(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     group_proposal = ConsumerProposal.model_validate(

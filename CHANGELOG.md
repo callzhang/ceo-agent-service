@@ -7,6 +7,9 @@
 - Registered the current direct-message send/read pair for audit reconciliation,
   while retaining target-scoped matching so a read from another recipient cannot
   confirm or suppress a pending delivery.
+- Applied the same delivery-ledger recovery to persisted legacy direct-message
+  actions, so a missing local delivery record requeues a new generation instead
+  of attempting an unnecessary external reconciliation.
 
 ### Material reading and local parsing
 

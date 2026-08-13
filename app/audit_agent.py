@@ -762,10 +762,17 @@ def _database_delivery_absence_reconciliation(
 def _is_direct_chat_send(action: object) -> bool:
     capability = getattr(action, "capability", "")
     payload = getattr(action, "payload", None)
-    if capability != "agent_cli.dws" or not isinstance(payload, dict):
+    if not isinstance(payload, dict):
         return False
     descriptor = describe_native_command({"type": "command_execution", **payload})
+    legacy_argv = _legacy_dingtalk_chat_send_argv(action)
+    if descriptor is None and legacy_argv is not None:
+        descriptor = describe_native_command(
+            {"type": "command_execution", "argv": legacy_argv}
+        )
     if descriptor is None or descriptor.cli != "dws":
+        return False
+    if capability != "agent_cli.dws" and legacy_argv is None:
         return False
     target = getattr(action, "target", None)
     target_keys = set(descriptor.target_identifiers)
