@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.agent_turn_runner import AgentTurnProcess
+from app.native_cli_metadata import describe_native_command
 from app.store import AgentRole, AgentRunLeaseLostError, AutoReplyStore
 
 
@@ -180,6 +181,57 @@ def _normalize_read_skill_event(store, task, payload):
         workspace=Path("/workspace"),
         owner="consumer",
     )._normalized_effect_event(payload, read_only=True, operation_id="")
+
+
+def test_normal_audit_write_receipt_does_not_require_recovery_authorization(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    argv = [
+        "dws", "chat", "+messages-send", "--open-dingtalk-id", "recipient-1",
+        "--text", "done", "--yes", "--format", "json",
+    ]
+    descriptor = describe_native_command(
+        {"type": "command_execution", "argv": argv}
+    )
+    assert descriptor is not None
+    payload = {
+        "type": "item.completed",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "server": "agent_cli",
+            "tool": "execute_reviewed_write",
+            "arguments": {"argv": argv, "authorization_id": "not-a-recovery-id"},
+            "status": "completed",
+            "result": {
+                "structuredContent": {
+                    "cli": "dws",
+                    "operation": descriptor.command_path,
+                    "operation_digest": descriptor.command_digest,
+                    "target_identifiers": descriptor.target_identifiers,
+                    "result_digest": "result-digest",
+                    "stdout": "{}",
+                },
+                "isError": False,
+            },
+        },
+    }
+
+    event = AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=Path("/workspace"),
+        owner="audit",
+    )._normalized_effect_event(
+        payload,
+        read_only=False,
+        operation_id="operation-1",
+    )
+
+    assert event is not None
+    assert event["type"] == "item.completed"
 
 
 def _read_skill_payload(

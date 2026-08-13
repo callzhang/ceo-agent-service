@@ -10,6 +10,9 @@
 - Applied the same delivery-ledger recovery to persisted legacy direct-message
   actions, so a missing local delivery record requeues a new generation instead
   of attempting an unnecessary external reconciliation.
+- Restored omitted direct-delivery ledger rows from the original Audit run's
+  validated controlled receipt, while keeping recovery-only authorization
+  checks restricted to recovery execution.
 
 ### Material reading and local parsing
 

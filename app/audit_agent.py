@@ -27,8 +27,10 @@ from app.agent_turn_runner import (
     _action_completion_accounting,
     _actions_have_required_readbacks,
     _agent_process_error_code,
+    _metadata_matches_action,
     unknown_reconciliation_retry_at,
 )
+from app.codex_history import extract_codex_mcp_tool_results_from_session
 from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import (
     describe_native_command,
@@ -148,6 +150,11 @@ class AuditAgentRunner:
                 recovery_phase="reconcile",
             ):
                 return skill_failure
+            self._backfill_persisted_direct_delivery_receipt(
+                task,
+                context,
+                claim.run,
+            )
             database_absence = _database_delivery_absence_reconciliation(
                 self.store,
                 task,
@@ -166,6 +173,53 @@ class AuditAgentRunner:
         except Exception as exc:
             self._defer_claimed_unknown_recovery(claim.run, exc)
             raise
+
+    def _backfill_persisted_direct_delivery_receipt(
+        self,
+        task: ReplyTask,
+        context: AuditTurnContext,
+        run: AgentRun,
+    ) -> None:
+        """Restore an omitted direct-delivery ledger only from its own receipt."""
+        if not run.codex_session_id or self.store.has_sent_reply_for_trigger(
+            task.conversation_id,
+            task.trigger_message_id,
+        ):
+            return
+        expected_actions = tuple(
+            _expected_effect_action(action, self.effects, action_index=index)
+            for index, action in enumerate(context.proposal.actions)
+        )
+        process = AgentTurnProcess(
+            store=self.store,
+            task=task,
+            workspace=self.workspace,
+            owner=self.owner,
+            executor=self.executor,
+            codex_bin=self.codex_bin,
+            mcp_effect_registry=self.effects,
+        )
+        for payload in extract_codex_mcp_tool_results_from_session(
+            run.codex_session_id,
+        ):
+            event = process._normalized_effect_event(
+                payload,
+                read_only=False,
+                operation_id=run.operation_id,
+            )
+            item = event.get("item") if event is not None else None
+            metadata = item.get("metadata") if isinstance(item, dict) else None
+            if not isinstance(metadata, dict) or not any(
+                _metadata_matches_action(metadata, action)
+                for action in expected_actions
+            ):
+                continue
+            process._record_direct_send_receipt(event, payload, run=run)
+            if self.store.has_sent_reply_for_trigger(
+                task.conversation_id,
+                task.trigger_message_id,
+            ):
+                return
 
     def execute_recovery(
         self,
@@ -791,7 +845,10 @@ def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:
     if not isinstance(text, str) or not text:
         return None
     target = action.target
-    recipient = target.get("recipient_open_dingtalk_id")
+    recipient = (
+        target.get("recipient_open_dingtalk_id")
+        or target.get("sender_open_dingtalk_id")
+    )
     if isinstance(recipient, str) and recipient:
         return [
             "dws", "chat", "+messages-send", "--open-dingtalk-id", recipient,
