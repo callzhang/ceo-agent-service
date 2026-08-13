@@ -471,6 +471,8 @@ def _has_path_traversal_component(value: str) -> bool:
 
 
 def _is_canonical_safe_public_url_path(value: str) -> bool:
+    if not value.startswith("/") or value.startswith("//"):
+        return False
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
         return False
     if "\\" in value:
@@ -506,7 +508,8 @@ def _is_canonical_safe_public_url_path(value: str) -> bool:
 def _redact_local_path_segment(value: str) -> str:
     local_path_pattern = re.compile(
         rf"(?P<prefix>{_LOCAL_PATH_BOUNDARY})(?P<path>"
-        rf"/(?!/){_LOCAL_PATH_END}"
+        rf"file://{_LOCAL_PATH_END}"
+        rf"|/+{_LOCAL_PATH_END}"
         rf"|[A-Za-z]:[\\/]{_LOCAL_PATH_END}"
         rf"|\\\\[^\\/\s]+[\\/]{_LOCAL_PATH_END}"
         rf")"

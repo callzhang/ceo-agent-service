@@ -646,6 +646,56 @@ def test_public_event_projection_only_allows_canonical_public_url_paths(
     assert summary["safe"] == safe_paths
 
 
+def test_public_event_projection_redacts_repeated_slashes_and_file_uris(
+    tmp_path: Path,
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    task = store.create_task(title="Repeated slashes", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="Paths", client_request_id="repeated-slash-request"
+    )
+    unsafe_paths = [
+        "//etc/passwd",
+        "///etc/passwd",
+        "//api/workbench/tasks/123",
+        "///workbench-assets/index.js",
+        "file:///etc/passwd",
+        "file://localhost/etc/passwd",
+        "file://host/private/file",
+    ]
+    safe_url = "https://example.com///etc/passwd"
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into workbench_events (turn_id, sequence, event_type, payload_json)
+            values (?, 2, 'tool_started', ?)
+            """,
+            (
+                turn.id,
+                json.dumps(
+                    {
+                        "tool": "reader",
+                        "summary": {
+                            "unsafe": unsafe_paths,
+                            "embedded": "x=//etc file=file:///etc/passwd",
+                            "safe": safe_url,
+                        },
+                        "tool_call_id": "tool-repeated-slashes",
+                    }
+                ),
+            ),
+        )
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/workbench/turns/{turn.id}/events?after=0&limit=10")
+
+    summary = response.json()[1]["payload"]["summary"]
+    assert response.status_code == 200
+    assert summary["unsafe"] == ["[local path]"] * len(unsafe_paths)
+    assert summary["embedded"] == "x=[local path] file=[local path]"
+    assert summary["safe"] == safe_url
+
+
 def test_sse_replays_persisted_events_with_last_event_id_precedence(tmp_path: Path):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
     task = store.create_task(title="Replay", runtime_kind="codex")
