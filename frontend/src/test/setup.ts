@@ -19,3 +19,8 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: () => false,
   }),
 });
+
+Object.defineProperty(HTMLElement.prototype, "scrollBy", {
+  configurable: true,
+  value: () => undefined,
+});

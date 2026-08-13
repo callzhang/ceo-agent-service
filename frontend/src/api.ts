@@ -14,6 +14,7 @@ import type {
   WorkbenchEvent,
   WorkbenchStats,
 } from "./types";
+import { isPublicEventPayload } from "./events";
 
 const basePath = "/api/workbench";
 const genericErrorDetail = "请求失败，请稍后重试";
@@ -174,12 +175,18 @@ function parseTurn(value: unknown): Turn {
 
 function parseEvent(value: unknown): WorkbenchEvent {
   if (!isRecord(value)) throwInvalidResponse();
+  const id = integerField(value, "id");
+  const sequence = integerField(value, "sequence");
+  if (id <= 0 || sequence <= 0) throwInvalidResponse();
+  const eventType = enumField(value, "event_type", eventTypes);
+  const payload = recordField(value, "payload");
+  if (!isPublicEventPayload(eventType, payload)) throwInvalidResponse();
   return {
-    id: integerField(value, "id"),
+    id,
     turn_id: stringField(value, "turn_id"),
-    sequence: integerField(value, "sequence"),
-    event_type: enumField(value, "event_type", eventTypes),
-    payload: recordField(value, "payload"),
+    sequence,
+    event_type: eventType,
+    payload,
     created_at: stringField(value, "created_at"),
   };
 }

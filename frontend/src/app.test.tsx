@@ -1,18 +1,27 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   listTasks: vi.fn(),
   createTask: vi.fn(),
   renameTask: vi.fn(),
   archiveTask: vi.fn(),
+  getTimeline: vi.fn(),
+  getStats: vi.fn(),
+  runtimeCapabilities: vi.fn(),
+  confirmAction: vi.fn(),
+  cancelAction: vi.fn(),
+  uploadAttachment: vi.fn(),
+  createTurn: vi.fn(),
+  stopTurn: vi.fn(),
 }));
 
 vi.mock("./api", () => api);
 
 import { App } from "./app";
 import styles from "./styles.css?raw";
+import type { Task, Timeline, Turn } from "./types";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -46,10 +55,48 @@ const deep = {
   state: "completed" as const,
 };
 
+function emptyTimeline(task: Task = first, turns: Turn[] = []): Timeline {
+  return {
+    task,
+    turns,
+    events: [],
+    attachments: [],
+    artifacts: [],
+    confirmations: [],
+    next_cursor: "",
+    has_more: false,
+    events_has_more: false,
+    events_next_cursor: 0,
+    artifacts_has_more: false,
+    artifacts_next_cursor: "",
+    confirmations_has_more: false,
+    confirmations_next_cursor: "",
+    attachments_has_more: false,
+    attachments_next_cursor: "",
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  api.getTimeline.mockImplementation((taskId: string) => {
+    const task = taskId === second.id ? second : taskId === deep.id ? deep : first;
+    return Promise.resolve(emptyTimeline(task));
+  });
+  api.runtimeCapabilities.mockResolvedValue([{ kind: "codex", capabilities: {
+    session_resume: true, streamed_text: true, structured_tools: true, image_input: true,
+    model_selection: true, mcp_configuration: true, stoppable: true, recoverable: true,
+  } }]);
+  api.getStats.mockResolvedValue({
+    tasks: { total: 2, active: 2, archived: 0 },
+    turns: { queued: 0, running: 0, waiting_confirmation: 0, completed: 0, stopped: 0, failed: 0 },
+    confirmations: { pending: 0, confirmed: 0, cancelled: 0, executed: 0, failed: 0 },
+    events: {}, attachments: 0, artifacts: 0,
+    duration: { completed_count: 0, total_seconds: 0, average_seconds: 0 },
+  });
   window.history.replaceState({}, "", "/");
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 function setCompactViewport(compact: boolean) {
   Object.defineProperty(window, "matchMedia", {
@@ -649,5 +696,149 @@ describe("App", () => {
     expect(inspectorToggle).toHaveFocus();
     expect(screen.getByRole("heading", { name: "销售策略" })).toBeInTheDocument();
     await waitFor(() => expect(api.listTasks).toHaveBeenCalledOnce());
+  });
+
+  it("loads and renders the selected persisted timeline with runtime details", async () => {
+    const completedTurn: Turn = {
+      id: "turn-completed", task_id: first.id, client_request_id: "request", user_text: "生成周报", status: "completed",
+      stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "2026-08-13 10:00:00",
+      completed_at: "2026-08-13 10:00:02", created_at: "2026-08-13 10:00:00", updated_at: "2026-08-13 10:00:02",
+    };
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline.mockResolvedValue({
+      ...emptyTimeline({ ...first, state: "completed" }, [completedTurn]),
+      events: [{ id: 8, turn_id: completedTurn.id, sequence: 2, event_type: "text_delta", payload: { text: "周报已完成" }, created_at: "" }],
+    });
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    expect(await screen.findByText("生成周报")).toBeInTheDocument();
+    expect(screen.getByText("周报已完成")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "发送消息" })).toBeEnabled();
+    expect(api.getTimeline).toHaveBeenCalledWith(first.id, expect.objectContaining({ turnLimit: 100, eventLimit: 1000, signal: expect.any(AbortSignal) }));
+    expect(api.runtimeCapabilities).toHaveBeenCalled();
+    expect(api.getStats).toHaveBeenCalled();
+  });
+
+  it("loads older turns without duplicating the selected timeline", async () => {
+    const user = userEvent.setup();
+    const recent: Turn = { id: "recent", task_id: first.id, client_request_id: "r", user_text: "最近", status: "completed", stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "" };
+    const older: Turn = { ...recent, id: "older", client_request_id: "o", user_text: "更早" };
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline
+      .mockResolvedValueOnce({ ...emptyTimeline(first, [recent]), next_cursor: "older-page", has_more: true })
+      .mockResolvedValueOnce(emptyTimeline(first, [older]));
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "加载更早对话" }));
+    expect(await screen.findByText("更早")).toBeInTheDocument();
+    expect(screen.getAllByText("最近")).toHaveLength(1);
+    expect(api.getTimeline).toHaveBeenNthCalledWith(2, first.id, expect.objectContaining({ before: "older-page", signal: expect.any(AbortSignal) }));
+  });
+
+  it("aborts a stale selected-task timeline and never paints it after switching", async () => {
+    const user = userEvent.setup();
+    const stale = deferred<Timeline>();
+    api.listTasks.mockResolvedValue({ items: [first, second], nextCursor: "" });
+    api.getTimeline
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce(emptyTimeline(second, [{
+        id: "second-turn", task_id: second.id, client_request_id: "second", user_text: "第二任务内容", status: "completed",
+        stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+      }]));
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "打开任务 产品规划" }));
+    expect(await screen.findByText("第二任务内容")).toBeInTheDocument();
+    expect((api.getTimeline.mock.calls[0][1].signal as AbortSignal).aborted).toBe(true);
+    await act(async () => stale.resolve(emptyTimeline(first, [{
+      id: "stale", task_id: first.id, client_request_id: "stale", user_text: "不应出现", status: "completed",
+      stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+    }])));
+    expect(screen.queryByText("不应出现")).not.toBeInTheDocument();
+  });
+
+  it("closes the active task event source when switching tasks", async () => {
+    const user = userEvent.setup();
+    const sources: Array<{ url: string; closed: boolean }> = [];
+    class FakeSource {
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      closed = false;
+      constructor(readonly url: string) { sources.push(this); }
+      addEventListener() {}
+      close() { this.closed = true; }
+    }
+    vi.stubGlobal("EventSource", FakeSource);
+    const running: Turn = {
+      id: "running-turn", task_id: first.id, client_request_id: "running", user_text: "持续执行", status: "running",
+      stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+    };
+    api.listTasks.mockResolvedValue({ items: [first, second], nextCursor: "" });
+    api.getTimeline
+      .mockResolvedValueOnce(emptyTimeline(first, [running]))
+      .mockResolvedValueOnce(emptyTimeline(second));
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await screen.findByRole("button", { name: "停止执行" });
+    expect(sources[0].url).toContain("/running-turn/events/stream?after=0");
+    await user.click(screen.getByRole("button", { name: "打开任务 产品规划" }));
+    await screen.findByText("开始新的对话");
+    expect(sources[0].closed).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps tool status scoped to its step and applies terminal SSE state to the task", async () => {
+    class ControllableSource {
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      closed = false;
+      private listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+
+      constructor(readonly url: string) { sources.push(this); }
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener as (event: MessageEvent) => void]);
+      }
+      close() { this.closed = true; }
+      emit(type: string, id: number, payload: Record<string, unknown>) {
+        const event = new MessageEvent(type, {
+          data: JSON.stringify({ id, turn_id: "running-turn", sequence: id, event_type: type, payload, created_at: "" }),
+          lastEventId: String(id),
+        });
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+    const sources: ControllableSource[] = [];
+    vi.stubGlobal("EventSource", ControllableSource);
+    const running: Turn = {
+      id: "running-turn", task_id: first.id, client_request_id: "running", user_text: "持续执行", status: "running",
+      stop_requested: false, final_text: "", error_code: "", error_detail: "", started_at: "", completed_at: "", created_at: "", updated_at: "",
+    };
+    const terminalRefresh = deferred<Timeline>();
+    api.listTasks.mockResolvedValue({ items: [first], nextCursor: "" });
+    api.getTimeline
+      .mockResolvedValueOnce(emptyTimeline(first, [running]))
+      .mockReturnValueOnce(terminalRefresh.promise);
+    window.history.replaceState({}, "", `/?task=${first.id}`);
+    render(<App />);
+
+    await screen.findByRole("button", { name: "停止执行" });
+    sources[0].emit("tool_completed", 1, {
+      tool_call_id: "tool-1",
+      tool: "search",
+      status: "completed",
+      summary: "检索完成",
+    });
+
+    await waitFor(() => expect(screen.getByText("检索完成")).toBeInTheDocument());
+    expect(sources[0].closed).toBe(false);
+    expect(screen.getByRole("button", { name: "停止执行" })).toBeEnabled();
+
+    sources[0].emit("status_changed", 2, { status: "completed" });
+    await waitFor(() => expect(within(screen.getByRole("button", { name: "打开任务 销售策略" })).getByText("已完成")).toBeInTheDocument());
+    expect(sources[0].closed).toBe(true);
   });
 });

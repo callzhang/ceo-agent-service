@@ -1,9 +1,33 @@
 import { ChevronLeft, PanelRight, RefreshCw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { archiveTask, createTask, listTasks, renameTask } from "./api";
+import {
+  archiveTask,
+  cancelAction,
+  confirmAction,
+  createTask,
+  getStats,
+  getTimeline,
+  listTasks,
+  renameTask,
+  runtimeCapabilities,
+} from "./api";
+import { Composer } from "./components/Composer";
+import { ConversationTimeline } from "./components/ConversationTimeline";
 import { TaskList } from "./components/TaskList";
-import type { Task, TaskPage } from "./types";
+import { TurnInspector } from "./components/TurnInspector";
+import { applyWorkbenchEvent, createEventState, EventStreamConnection } from "./events";
+import type {
+  Confirmation,
+  RuntimeCapabilities,
+  Task,
+  TaskPage,
+  Timeline,
+  Turn,
+  TurnStatus,
+  WorkbenchEvent,
+  WorkbenchStats,
+} from "./types";
 
 interface SharedPageRequest {
   controller: AbortController;
@@ -62,15 +86,39 @@ function useMediaQuery(query: string) {
   return matches;
 }
 
-function InspectorDetails({ task }: { task: Task | null }) {
-  return task ? (
-    <dl className="detail-list">
-      <div><dt>运行时</dt><dd>{task.runtime_kind}</dd></div>
-      <div><dt>最近更新</dt><dd>{task.updated_at}</dd></div>
-    </dl>
-  ) : (
-    <p className="inspector-empty">选择任务后，这里会显示执行信息。</p>
-  );
+function mergeById<T extends { id: string }>(first: T[], second: T[]) {
+  return Array.from(new Map([...first, ...second].map((item) => [item.id, item])).values());
+}
+
+function mergeTimeline(current: Timeline, incoming: Timeline, mode: "recent" | "older"): Timeline {
+  const turns = mode === "older"
+    ? mergeById(current.turns, incoming.turns)
+    : [...incoming.turns, ...current.turns.filter((turn) => !incoming.turns.some((candidate) => candidate.id === turn.id))];
+  const events = Array.from(new Map([...current.events, ...incoming.events].map((event) => [event.id, event])).values())
+    .sort((left, right) => left.id - right.id);
+  return {
+    ...incoming,
+    turns,
+    events,
+    attachments: mergeById(current.attachments, incoming.attachments),
+    artifacts: mergeById(current.artifacts, incoming.artifacts),
+    confirmations: mergeById(current.confirmations, incoming.confirmations),
+    events_has_more: current.events_has_more || incoming.events_has_more,
+    artifacts_has_more: current.artifacts_has_more || incoming.artifacts_has_more,
+    confirmations_has_more: current.confirmations_has_more || incoming.confirmations_has_more,
+    attachments_has_more: current.attachments_has_more || incoming.attachments_has_more,
+  };
+}
+
+const turnStatuses: readonly TurnStatus[] = ["queued", "running", "waiting_confirmation", "completed", "stopped", "failed"];
+const activeTurnStatuses: readonly TurnStatus[] = ["queued", "running", "waiting_confirmation"];
+
+function statusFromEvent(event: WorkbenchEvent): TurnStatus | null {
+  if (event.event_type === "turn_completed") return "completed";
+  if (event.event_type === "turn_failed") return "failed";
+  if (event.event_type !== "status_changed") return null;
+  const value = event.payload.status;
+  return typeof value === "string" && turnStatuses.includes(value as TurnStatus) ? value as TurnStatus : null;
 }
 
 export function App() {
@@ -83,6 +131,13 @@ export function App() {
   const [mutationError, setMutationError] = useState("");
   const [creating, setCreating] = useState(false);
   const [pendingOperations, setPendingOperations] = useState<Record<string, "rename" | "archive">>({});
+  const [timeline, setTimeline] = useState<Timeline | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState("");
+  const [connectionError, setConnectionError] = useState("");
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [capabilities, setCapabilities] = useState<RuntimeCapabilities[] | null>(null);
+  const [stats, setStats] = useState<WorkbenchStats | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const inspectorIsDrawer = useMediaQuery("(max-width: 939px)");
   const inspectorToggleRef = useRef<HTMLButtonElement>(null);
@@ -110,6 +165,11 @@ export function App() {
   const createRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
   const renameRequestsRef = useRef(new Map<string, { id: number; controller: AbortController }>());
   const archiveRequestsRef = useRef(new Map<string, { id: number; controller: AbortController }>());
+  const timelineRef = useRef<Timeline | null>(null);
+  const timelineRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
+  const loadedOlderTimelineRef = useRef(false);
+  const streamRef = useRef<EventStreamConnection | null>(null);
+  const confirmationMutationsRef = useRef(new Set<string>());
 
   const closeInspector = useCallback(() => setInspectorOpen(false), []);
 
@@ -117,6 +177,13 @@ export function App() {
     const next = typeof update === "function" ? update(tasksRef.current) : update;
     tasksRef.current = next;
     setTasks(next);
+    return next;
+  }, []);
+
+  const writeTimeline = useCallback((update: Timeline | null | ((current: Timeline | null) => Timeline | null)) => {
+    const next = typeof update === "function" ? update(timelineRef.current) : update;
+    timelineRef.current = next;
+    setTimeline(next);
     return next;
   }, []);
 
@@ -159,6 +226,18 @@ export function App() {
     });
     return revision;
   }
+
+  const applyTaskSnapshot = useCallback((snapshot: Task) => {
+    writeTasks((current) => current.map((task) => {
+      if (task.id !== snapshot.id) return task;
+      const ownership = taskMutationOwnershipRef.current.get(task.id);
+      return ownership ? {
+        ...snapshot,
+        title: ownership.title,
+        runtime_kind: ownership.runtimeKind ?? snapshot.runtime_kind,
+      } : snapshot;
+    }));
+  }, [writeTasks]);
 
   const commitSelection = useCallback(
     (taskId: string | null, mode?: "push" | "replace") => {
@@ -461,17 +540,101 @@ export function App() {
     }
   }
 
+  const loadSelectedTimeline = useCallback(async (
+    taskId: string,
+    mode: "initial" | "recent" | "older" = "recent",
+    before = "",
+  ) => {
+    timelineRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    const requestId = ++requestSequenceRef.current;
+    timelineRequestRef.current = { id: requestId, controller };
+    controllersRef.current.add(controller);
+    if (mode === "initial") setTimelineLoading(true);
+    if (mode === "older") setLoadingOlder(true);
+    setTimelineError("");
+    try {
+      const loaded = await getTimeline(taskId, {
+        turnLimit: 100,
+        eventLimit: 1000,
+        ...(before ? { before } : {}),
+        signal: controller.signal,
+      });
+      if (
+        !mountedRef.current
+        || timelineRequestRef.current?.id !== requestId
+        || selectedTaskIdRef.current !== taskId
+      ) return;
+      writeTimeline((current) => {
+        if (!current || current.task.id !== taskId || mode === "initial") return loaded;
+        const merged = mergeTimeline(current, loaded, mode === "older" ? "older" : "recent");
+        return mode === "recent" && loadedOlderTimelineRef.current
+          ? { ...merged, next_cursor: current.next_cursor, has_more: current.has_more }
+          : merged;
+      });
+      if (mode === "older") loadedOlderTimelineRef.current = true;
+      applyTaskSnapshot(loaded.task);
+    } catch (error) {
+      if (
+        mountedRef.current
+        && timelineRequestRef.current?.id === requestId
+        && selectedTaskIdRef.current === taskId
+        && !(error instanceof DOMException && error.name === "AbortError")
+      ) setTimelineError(mode === "older" ? "更早对话加载失败，请重试" : "对话加载失败，请重试");
+    } finally {
+      finishRequest(controller);
+      if (timelineRequestRef.current?.id === requestId && mountedRef.current) {
+        if (mode === "initial") setTimelineLoading(false);
+        if (mode === "older") setLoadingOlder(false);
+      }
+    }
+  }, [applyTaskSnapshot, writeTimeline]);
+
   useEffect(() => {
     mountedRef.current = true;
     void load();
+    const controller = new AbortController();
+    controllersRef.current.add(controller);
+    void Promise.allSettled([
+      runtimeCapabilities({ signal: controller.signal }).then((value) => {
+        if (mountedRef.current && !controller.signal.aborted) setCapabilities(value);
+      }),
+      getStats({ signal: controller.signal }).then((value) => {
+        if (mountedRef.current && !controller.signal.aborted) setStats(value);
+      }),
+    ]).finally(() => finishRequest(controller));
     return () => {
       mountedRef.current = false;
+      streamRef.current?.close();
+      streamRef.current = null;
       cancelActiveChase();
       cancelPageRequests();
       for (const controller of controllersRef.current) controller.abort();
       controllersRef.current.clear();
     };
   }, [cancelActiveChase, cancelPageRequests, load]);
+
+  useEffect(() => {
+    streamRef.current?.close();
+    streamRef.current = null;
+    timelineRequestRef.current?.controller.abort();
+    setConnectionError("");
+    setTimelineError("");
+    setLoadingOlder(false);
+    loadedOlderTimelineRef.current = false;
+    if (!selectedTaskId) {
+      writeTimeline(null);
+      setTimelineLoading(false);
+      return;
+    }
+    writeTimeline(null);
+    void loadSelectedTimeline(selectedTaskId, "initial");
+    return () => {
+      timelineRequestRef.current?.controller.abort();
+      streamRef.current?.close();
+      streamRef.current = null;
+    };
+  }, [loadSelectedTimeline, selectedTaskId, writeTimeline]);
 
   useEffect(() => {
     function handlePopState() {
@@ -544,6 +707,115 @@ export function App() {
     () => tasks.find((task) => task.id === selectedTaskId) ?? null,
     [selectedTaskId, tasks],
   );
+  const activeTurn = useMemo(
+    () => timeline?.turns.find((turn) => activeTurnStatuses.includes(turn.status)) ?? null,
+    [timeline],
+  );
+
+  useEffect(() => {
+    streamRef.current?.close();
+    streamRef.current = null;
+    if (!selectedTaskId || !activeTurn) return;
+    const taskId = selectedTaskId;
+    const turnId = activeTurn.id;
+    const after = timeline?.events.reduce((maximum, event) => Math.max(maximum, event.id), 0) ?? 0;
+    const connection = new EventStreamConnection({
+      turnId,
+      after,
+      onOpen: () => {
+        if (selectedTaskIdRef.current === taskId) setConnectionError("");
+      },
+      onConnectionError: (message) => {
+        if (selectedTaskIdRef.current === taskId) setConnectionError(message);
+      },
+      onEvent: (event) => {
+        if (selectedTaskIdRef.current !== taskId || event.turn_id !== turnId) return;
+        const nextStatus = statusFromEvent(event);
+        const terminal = nextStatus !== null && ["completed", "stopped", "failed"].includes(nextStatus);
+        writeTimeline((current) => {
+          if (!current || current.task.id !== taskId) return current;
+          const currentEventState = createEventState(current.events);
+          if (event.id <= currentEventState.lastEventId) return current;
+          const eventState = applyWorkbenchEvent(currentEventState, event);
+          const turns = nextStatus
+            ? current.turns.map((turn) => turn.id === turnId ? { ...turn, status: nextStatus } : turn)
+            : current.turns;
+          return {
+            ...current,
+            events: eventState.events,
+            turns,
+            task: nextStatus ? { ...current.task, state: nextStatus } : current.task,
+          };
+        });
+        if (nextStatus) {
+          writeTasks((current) => current.map((task) => task.id === taskId ? { ...task, state: nextStatus } : task));
+        }
+        if (event.event_type === "confirmation_required" || event.event_type === "artifact_created" || terminal) {
+          void loadSelectedTimeline(taskId, "recent");
+        }
+        if (terminal) {
+          const controller = new AbortController();
+          controllersRef.current.add(controller);
+          void getStats({ signal: controller.signal })
+            .then((value) => { if (mountedRef.current && selectedTaskIdRef.current === taskId) setStats(value); })
+            .finally(() => finishRequest(controller));
+        }
+      },
+    });
+    streamRef.current = connection;
+    connection.start();
+    return () => {
+      connection.close();
+      if (streamRef.current === connection) streamRef.current = null;
+    };
+  }, [activeTurn?.id, loadSelectedTimeline, selectedTaskId, writeTasks, writeTimeline]);
+
+  async function decideConfirmation(confirmation: Confirmation, decision: "confirm" | "cancel") {
+    const taskId = selectedTaskIdRef.current;
+    if (!taskId || confirmationMutationsRef.current.has(confirmation.id)) return;
+    confirmationMutationsRef.current.add(confirmation.id);
+    try {
+      const decided = await (decision === "confirm" ? confirmAction : cancelAction)(
+        taskId,
+        confirmation.turn_id,
+        confirmation.id,
+      );
+      if (selectedTaskIdRef.current !== taskId) return;
+      writeTimeline((current) => current && current.task.id === taskId ? {
+        ...current,
+        confirmations: current.confirmations.map((item) => item.id === decided.id ? decided : item),
+      } : current);
+      await loadSelectedTimeline(taskId, "recent");
+    } catch (error) {
+      if (selectedTaskIdRef.current === taskId) await loadSelectedTimeline(taskId, "recent");
+      throw error;
+    } finally {
+      confirmationMutationsRef.current.delete(confirmation.id);
+    }
+  }
+
+  async function handleTurnCreated(turn: Turn) {
+    const taskId = selectedTaskIdRef.current;
+    if (!taskId || turn.task_id !== taskId) return;
+    writeTimeline((current) => current && current.task.id === taskId ? {
+      ...current,
+      task: { ...current.task, state: turn.status },
+      turns: [turn, ...current.turns.filter((item) => item.id !== turn.id)],
+    } : current);
+    writeTasks((current) => current.map((task) => task.id === taskId ? { ...task, state: turn.status } : task));
+    await loadSelectedTimeline(taskId, "recent");
+  }
+
+  async function handleTurnStopped(turn: Turn) {
+    const taskId = selectedTaskIdRef.current;
+    if (!taskId || turn.task_id !== taskId) return;
+    writeTimeline((current) => current && current.task.id === taskId ? {
+      ...current,
+      turns: current.turns.map((item) => item.id === turn.id ? turn : item),
+      task: { ...current.task, state: turn.status },
+    } : current);
+    writeTasks((current) => current.map((task) => task.id === taskId ? { ...task, state: turn.status } : task));
+  }
 
   function selectTask(taskId: string) {
     cancelActiveChase();
@@ -731,7 +1003,7 @@ export function App() {
         inert={inspectorIsDrawer && inspectorOpen ? true : undefined}
       >
         {selectedTask ? (
-          <section className="conversation-placeholder" aria-labelledby="conversation-title">
+          <section className="conversation-workspace" aria-labelledby="conversation-title">
             <header className="conversation-header">
               <button className="mobile-back" type="button" onClick={returnToTaskList} aria-label="返回任务列表">
                 <ChevronLeft aria-hidden="true" size={19} />
@@ -755,11 +1027,54 @@ export function App() {
                 </button>
               )}
             </header>
-            <div className="conversation-empty">
-              <Sparkles aria-hidden="true" size={26} />
-              <h3>对话即将就绪</h3>
-              <p>任务已安全载入。消息、执行进度和附件将在下一阶段接入。</p>
+            <div className="stream-slot">
+              {connectionError && <p className="stream-alert" role="alert">{connectionError}</p>}
             </div>
+            {timelineLoading ? (
+              <div className="conversation-empty" role="status"><p>正在加载对话…</p></div>
+            ) : timelineError && !timeline ? (
+              <div className="conversation-empty" role="alert">
+                <h3>对话加载失败</h3>
+                <p>{timelineError}</p>
+                <button type="button" className="secondary-button" onClick={() => void loadSelectedTimeline(selectedTask.id, "initial")}>重试</button>
+              </div>
+            ) : timeline ? (
+              <>
+                <div className="conversation-body">
+                  {timeline.has_more && (
+                    <button
+                      type="button"
+                      className="load-older-button secondary-button"
+                      disabled={loadingOlder}
+                      aria-label="加载更早对话"
+                      onClick={() => void loadSelectedTimeline(selectedTask.id, "older", timeline.next_cursor)}
+                    >{loadingOlder ? "正在加载…" : "加载更早对话"}</button>
+                  )}
+                  {timelineError && <p className="inline-alert" role="alert">{timelineError}</p>}
+                  {timeline.turns.length ? (
+                    <ConversationTimeline
+                      timeline={timeline}
+                      activeTurnId={activeTurn?.id ?? null}
+                      onConfirm={(confirmation) => decideConfirmation(confirmation, "confirm")}
+                      onCancel={(confirmation) => decideConfirmation(confirmation, "cancel")}
+                    />
+                  ) : (
+                    <div className="conversation-empty">
+                      <Sparkles aria-hidden="true" size={26} />
+                      <h3>开始新的对话</h3>
+                      <p>发送消息后，回复、执行步骤和产物会显示在这里。</p>
+                    </div>
+                  )}
+                </div>
+                <Composer
+                  taskId={selectedTask.id}
+                  activeTurn={activeTurn}
+                  attachments={timeline.attachments}
+                  onTurnCreated={handleTurnCreated}
+                  onTurnStopped={handleTurnStopped}
+                />
+              </>
+            ) : null}
           </section>
         ) : (
           <section className="welcome-panel" aria-labelledby="welcome-title">
@@ -790,7 +1105,7 @@ export function App() {
             <p className="eyebrow">INSPECTOR</p>
             <h2>任务详情</h2>
           </div>
-          <InspectorDetails task={selectedTask} />
+          <TurnInspector task={selectedTask} timeline={timeline} capabilities={capabilities} stats={stats} />
         </aside>
       )}
       {inspectorIsDrawer && inspectorOpen && (
@@ -813,7 +1128,7 @@ export function App() {
                 <X aria-hidden="true" size={18} />
               </button>
             </div>
-            <InspectorDetails task={selectedTask} />
+            <TurnInspector task={selectedTask} timeline={timeline} capabilities={capabilities} stats={stats} />
           </div>
         </>
       )}

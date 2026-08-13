@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, createTask, listTasks } from "./api";
+import { ApiError, createTask, getTimeline, listTasks } from "./api";
 
 const publicTask = {
   id: "1b8a4717-07fe-45e7-950c-df5bbc56d8aa",
@@ -127,5 +127,21 @@ describe("workbench API", () => {
       code: "invalid_response",
       detail: "服务返回的数据格式无效",
     });
+  });
+
+  it("rejects non-positive persisted event IDs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        task: publicTask,
+        turns: [],
+        events: [{ id: 0, turn_id: "turn", sequence: 1, event_type: "text_delta", payload: { text: "bad" }, created_at: "" }],
+        attachments: [], artifacts: [], confirmations: [], next_cursor: "", has_more: false,
+        events_has_more: false, events_next_cursor: 0, artifacts_has_more: false, artifacts_next_cursor: "",
+        confirmations_has_more: false, confirmations_next_cursor: "", attachments_has_more: false, attachments_next_cursor: "",
+      }), { status: 200, headers: { "Content-Type": "application/json" } })),
+    );
+
+    await expect(getTimeline(publicTask.id)).rejects.toMatchObject({ code: "invalid_response" });
   });
 });
