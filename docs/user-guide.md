@@ -68,9 +68,10 @@ Agent 运行时，文本会逐段出现，工具调用会显示开始和完成�
 
 首次安装或升级后，安装 Agent 需要按
 [Agent Installation Runbook](agent-installation-runbook.md) 安装前端依赖并构建工作台；普通使用者不需要在
-页面中运行构建命令。常用入口：`/history` 查看钉钉/OA 等既有处理记录和工具回执，`/workers` 查看执行器，
-`/tasks` 查看项目与 TODO，`/settings` 查看配置、Channel gate 和日志。工作台任务失败时，先在当前任务确认
-终态和事件，再用这些页面交叉检查，不要直接修改 SQLite 状态。
+页面中运行构建命令。常用入口：`/history` 查看钉钉/OA 等既有处理记录和工具回执，`/workers` 查看后台投递
+和作业 worker，`/tasks` 查看项目与 TODO，`/settings` 查看配置、Channel gate 和日志。工作台任务失败时，
+先在当前任务确认终态和事件，再通过 `/history` 查看持久化事件；仍无法判断时，由管理员使用 SQLite 只读检查
+和回读工具排查。`/workers` 不显示工作台执行器或 lease。不要直接修改 SQLite 状态。
 
 ## 角色速查
 
@@ -296,7 +297,7 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 | `/attempts/{id}` | 单次 trigger、回复、证据、工具事件和回执；从此处打开 Consumer/Audit 执行记录，不显示内部会话标识 |
 | `/oa-approvals/{process_instance_id}` | OA 详情、评论和历史处理结果 |
 | `/tasks` | 项目、TODO 和 follow-up |
-| `/workers` | Workbench 和后台 worker 的运行状态与恢复诊断 |
+| `/workers` | 后台投递和作业 worker 的运行状态；不显示工作台执行器或 lease |
 | `/settings` | `Config`、`Workers`、`Logs` 标签页；系统参数、路由、Channel gate、队列和运行记录 |
 | `/errors` | 需要处理的系统错误 |
 | `/tutorial` | 初始化未完成时的默认首页；全部完成后自动隐藏并回到 History |
