@@ -412,6 +412,23 @@ def _check_reply_attempts(
     )
     _add(attention, source="reply_attempts", code="recovery_in_progress", count=recovering,
          severity="info", detail="a newer task is recovering the latest failed attempt")
+    _add(
+        attention,
+        source="reply_attempts",
+        code="needs_human",
+        count=_count(
+            db,
+            latest + """
+                select count(*) from latest
+                where ordinal=1 and lower(send_status)='needs_human'
+            """,
+        ),
+        severity="info",
+        detail=(
+            "latest trigger requires a concrete Derek decision or explicit "
+            "authorization; inspect the persisted proposal and reason"
+        ),
+    )
 
 
 def _check_agent_runs(

@@ -7,6 +7,9 @@
 - Fix audit validation so a valid parsed native command is normalized to its
   controlled CLI contract instead of being rejected because the Consumer used
   a non-canonical capability label.
+- Include every current `needs_human` trigger in hourly quality attention, so
+  the repair heartbeat must inspect and explain its concrete action instead of
+  reporting only an aggregate count.
 
 - Registered the current direct-message send/read pair for audit reconciliation,
   while retaining target-scoped matching so a read from another recipient cannot

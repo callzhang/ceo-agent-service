@@ -38,7 +38,7 @@ violation 或必需数据源不可检查。
 | 事实源 | violation | attention |
 | --- | --- | --- |
 | `reply_tasks` | `failed`、超过 30 分钟的 `processing`、已到期且超过 15 分钟未领取的 `pending` | 新鲜 `pending` / `processing` |
-| `reply_attempts` | 最新 trigger 的 `failed` / `blocked` 没有活动恢复任务；24 小时内最新结果仍为 `dry_run` | 有 `pending` / `processing` recovery task |
+| `reply_attempts` | 最新 trigger 的 `failed` / `blocked` 没有活动恢复任务；24 小时内最新结果仍为 `dry_run` | 有 `pending` / `processing` recovery task；每个最新 `needs_human`，必须逐条读取具体待决动作 |
 | `agent_runs` | `unknown` 副作用、超过 30 分钟的 `pending` / `running` | 新鲜 `pending` / `running` |
 | `work_summary_inputs` | `failed`、超过 21 分钟的 `processing` | `pending` / `processing` |
 | `follow_up_drafts` | `failed`、计划时间已过且超过 15 分钟仍为 `draft` / `approved` | 未来计划的 follow-up |
@@ -105,6 +105,18 @@ attempt 开始。Attention 中同一 reply trigger 只保留一条 `Reply task` 
 因此 Attention 的红色记录是小时修复的输入清单，不是展示性计数。任何未完成的
 `Reply task`、`work item`、`meeting` 或外部投递失败都必须在报告中逐类说明其恢复、
 对账或不可执行原因。
+
+每小时还必须对每个最新 `needs_human` 读取对应 attempt、Consumer proposal 与 Audit
+结果。报告必须写明具体待执行动作、是否会发送消息/接受日程/创建待办/执行审批，以及
+为什么 Agent 不能安全自动完成；不得只写“有 N 项问题”。如果 `needs_human` 的原因是
+命令契约、Skill receipt、材料读取、History 缺行、通知无法定位或其他服务机制问题，先
+按服务错误修复并补回归测试，不能把它误报为 Derek 的业务决策。只有动作本身会代表
+Derek 作出新的承诺、选择或外部写入且当前授权不足时，才保留为真实待决项。
+
+每次巡检还要核对 `/workers` Attention、History 列表、attempt 详情和浏览器通知是否对
+同一最新 trigger 给出一致的状态、具体理由与下一步。出现 failed / pending reconciliation
+但 History 没有该当前记录，或详情没有脱敏原因、进度、外部副作用说明时，按可见性故障
+处理并修复；不得只以图表的红色计数结案。
 
 Attention 只显示实际失败、排队或处理中的工作。未来计划或正常草稿状态的 follow-up 不属于
 故障，保留在其业务列表而不占用 Attention。对于外部写入失败，巡检显示渠道原始错误码和

@@ -259,6 +259,32 @@ def test_quality_gate_deduplicates_historical_attempts_after_a_later_success(tmp
     assert not [item for item in report.violations if item.source == "reply_attempts"]
 
 
+def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        for status, message, updated_at in (
+            ("needs_human", "current", "2026-08-07 00:30:00"),
+            ("needs_human", "recovered", "2026-08-07 00:00:00"),
+            ("completed", "recovered", "2026-08-07 00:30:00"),
+        ):
+            db.execute(
+                """insert into reply_attempts (
+                    channel, conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    codex_reason, send_status, updated_at
+                ) values ('dingtalk', 'conversation', 'group', ?, 'sender', 'trigger',
+                    'agent_run', 'normal', 'specific action required', ?, ?)""",
+                (message, status, updated_at),
+            )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert ("reply_attempts", "needs_human", 1) in {
+        (item.source, item.code, item.count) for item in report.attention
+    }
+
+
 def test_quality_gate_deduplicates_failed_delivery_after_sent_reply_receipt(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
