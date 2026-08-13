@@ -1271,7 +1271,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
                 ".venv/bin/python -m app.cli audit-web --reload --host 127.0.0.1 --port 8765",
                 "CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message",
             ],
-            "links": [("History", "/"), ("Logs", "/logs"), ("Tasks", "/tasks")],
+            "links": [("History", "/history"), ("Logs", "/logs"), ("Tasks", "/tasks")],
         },
         {
             "phase": "Phase 8",
@@ -1288,7 +1288,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
                 "launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'",
                 "CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 .venv/bin/ceo-agent send-attempt --attempt-id <reviewed-attempt-id>",
             ],
-            "links": [("History", "/"), ("Logs", "/logs")],
+            "links": [("History", "/history"), ("Logs", "/logs")],
         },
     ]
 
@@ -7609,6 +7609,7 @@ def create_audit_app(
     workbench_workspace: Path | None = None,
     workbench_runtime_registry=None,
     workbench_executor=None,
+    workbench_scheduler_interval_seconds: float = 1.0,
 ) -> FastAPI:
     from app.workbench.api import register_workbench_routes
     from app.workbench.codex_runtime import CodexRuntime
@@ -7631,8 +7632,7 @@ def create_audit_app(
         workspace=effective_workspace,
     )
 
-    def close_workbench_routes() -> None:
-        return None
+    workbench_lifecycle = None
 
     default_attempt_list_cache = _RecentHtmlCache(
         DEFAULT_HISTORY_CACHE_TTL_SECONDS
@@ -7656,16 +7656,20 @@ def create_audit_app(
     async def audit_lifespan(_app: FastAPI):
         default_attempt_list_cache.get_or_render(_render_history_busy_page)
         default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
-        executor.recover()
         try:
+            executor.recover()
+            if workbench_lifecycle is None:
+                raise RuntimeError("workbench lifecycle is unavailable")
+            workbench_lifecycle.start()
             yield
         finally:
-            close_workbench_routes()
+            if workbench_lifecycle is not None:
+                workbench_lifecycle.close()
             executor.close()
 
     app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
 
-    close_workbench_routes = register_workbench_routes(
+    workbench_lifecycle = register_workbench_routes(
         app,
         workbench_store,
         executor,
@@ -7673,6 +7677,7 @@ def create_audit_app(
         asset_dir,
         mutation_guard=_require_trusted_json_mutation,
         stream_guard=_require_trusted_mutation,
+        scheduler_interval_seconds=workbench_scheduler_interval_seconds,
     )
 
     @app.middleware("http")

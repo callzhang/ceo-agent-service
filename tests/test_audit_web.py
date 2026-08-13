@@ -1986,6 +1986,8 @@ def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
     assert "/settings?tab=config&amp;config_tab=system" in html
     assert "/settings?tab=logs" in html
     assert "/tasks" in html
+    assert 'href="/history"' in html
+    assert 'href="/"' not in html
     assert "Tutorial" in html
     assert "Landing page" not in html
 

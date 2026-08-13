@@ -43,6 +43,13 @@ _TURN_TRANSITIONS = {
 
 WORKBENCH_RECOVERY_BATCH_LIMIT = 100
 
+
+class WorkbenchConflictError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 LEGACY_PENDING_PROPOSER_RECOVERY_SQL = """
 select * from workbench_confirmations
 where status='pending' and proposer_run_id='' and id>?
@@ -177,6 +184,20 @@ class WorkbenchStore(AutoReplyStore):
     ) -> WorkbenchTask:
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
+            db.execute("begin immediate")
+            self._require_task(db, task_id)
+            active = db.execute(
+                """
+                select 1 from workbench_turns
+                where task_id=? and status in ('queued', 'running', 'waiting_confirmation')
+                limit 1
+                """,
+                (task_id,),
+            ).fetchone()
+            if active is not None:
+                raise WorkbenchConflictError(
+                    "task_has_active_turn", "workbench task has an active turn"
+                )
             if db.execute(
                 """
                 update workbench_tasks
@@ -287,7 +308,11 @@ class WorkbenchStore(AutoReplyStore):
             raise ValueError("client_request_id must be non-empty")
         with self._connect() as db:
             db.execute("begin immediate")
-            self._require_task(db, task_id)
+            task = self._require_task(db, task_id)
+            if task["archived_at"]:
+                raise WorkbenchConflictError(
+                    "task_archived", "workbench task is archived"
+                )
             existing = db.execute(
                 "select * from workbench_turns where client_request_id=?",
                 (client_request_id,),

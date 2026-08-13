@@ -344,6 +344,67 @@ def test_create_turn_persists_initial_status_event_and_lists_nested_resources(
     assert store.list_artifacts(task.id) == []
 
 
+def test_archived_task_rejects_new_turn_and_active_task_rejects_archive(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    archived = store.create_task(title="Archived", runtime_kind="codex")
+    store.archive_task(archived.id)
+
+    with pytest.raises(ValueError, match="workbench task is archived"):
+        store.create_turn(
+            archived.id,
+            user_text="Must not run",
+            client_request_id="archived-request",
+        )
+
+    active = store.create_task(title="Active", runtime_kind="codex")
+    store.create_turn(
+        active.id,
+        user_text="Still running",
+        client_request_id="active-request",
+    )
+    with pytest.raises(ValueError, match="workbench task has an active turn"):
+        store.archive_task(active.id)
+    assert store.get_task(active.id).archived_at == ""
+
+
+def test_archive_and_create_turn_race_has_one_valid_outcome(tmp_path: Path):
+    first = _store(tmp_path)
+    second = WorkbenchStore(first.path)
+    task = first.create_task(title="Race", runtime_kind="codex")
+    barrier = threading.Barrier(2)
+
+    def archive():
+        barrier.wait()
+        try:
+            return "archived", second.archive_task(task.id)
+        except ValueError as exc:
+            return "rejected", str(exc)
+
+    def create():
+        barrier.wait()
+        try:
+            return "created", first.create_turn(
+                task.id,
+                user_text="Race turn",
+                client_request_id="race-request",
+            )
+        except ValueError as exc:
+            return "rejected", str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        archive_result, create_result = executor.map(
+            lambda operation: operation(), (archive, create)
+        )
+
+    outcomes = {archive_result[0], create_result[0]}
+    assert outcomes in ({"archived", "rejected"}, {"created", "rejected"})
+    persisted_task = first.get_task(task.id)
+    turns = first.list_turns(task.id)
+    assert (bool(persisted_task.archived_at), len(turns)) in {(True, 0), (False, 1)}
+
+
 def test_confirmation_quiescence_exposes_only_truthful_public_boolean(tmp_path: Path):
     store = _store(tmp_path)
     _, _, confirmation = _waiting_confirmation(store)

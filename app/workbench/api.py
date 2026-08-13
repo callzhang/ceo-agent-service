@@ -6,20 +6,28 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import os
+import re
 import stat
 import threading
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
-from pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path, PureWindowsPath
 from typing import Any, Literal
 from uuid import UUID
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.leak_check import (
+    contains_credential,
+    contains_local_runtime_leak,
+    is_sensitive_field_name,
+)
 from app.workbench.executor import WorkbenchExecutor
 from app.workbench.models import (
     ConfirmationStatus,
@@ -32,7 +40,7 @@ from app.workbench.models import (
     WorkbenchTurn,
 )
 from app.workbench.runtime import RuntimeRegistry
-from app.workbench.store import WorkbenchStore
+from app.workbench.store import WorkbenchConflictError, WorkbenchStore
 
 
 _MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -44,6 +52,7 @@ _TERMINAL_TURN_STATUSES = {
     TurnStatus.STOPPED,
     TurnStatus.FAILED,
 }
+_LOGGER = logging.getLogger(__name__)
 
 
 class _StrictModel(BaseModel):
@@ -234,47 +243,58 @@ class EventBroker:
             return sum(len(items) for items in self._subscribers.values())
 
 
-class _ExecutionScheduler:
-    def __init__(self, executor: WorkbenchExecutor) -> None:
+class WorkbenchScheduler:
+    def __init__(
+        self, executor: WorkbenchExecutor, *, interval_seconds: float = 1.0
+    ) -> None:
+        if interval_seconds < 0.01 or interval_seconds > 60:
+            raise ValueError("scheduler interval must be between 0.01 and 60 seconds")
         self._executor = executor
-        self._pool = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="workbench-api-scheduler"
-        )
+        self._interval_seconds = interval_seconds
+        self._stop = threading.Event()
+        self._wake = threading.Event()
         self._lock = threading.Lock()
-        self._requested = False
-        self._running = False
-        self._closed = False
+        self._thread = threading.Thread(
+            target=self._run,
+            name="workbench-api-scheduler",
+            daemon=False,
+        )
 
-    def schedule(self) -> None:
+    def start(self) -> None:
         with self._lock:
-            if self._closed:
+            if self._stop.is_set():
                 raise RuntimeError("workbench scheduler is closed")
-            self._requested = True
-            if self._running:
+            if self._thread.is_alive():
                 return
-            self._running = True
-            self._pool.submit(self._drain)
+            self._thread.start()
 
-    def _drain(self) -> None:
-        try:
-            while True:
-                with self._lock:
-                    self._requested = False
-                claimed = self._executor.run_once()
-                with self._lock:
-                    if not claimed and not self._requested:
-                        return
-        finally:
-            with self._lock:
-                self._running = False
-                if self._requested and not self._closed:
-                    self._running = True
-                    self._pool.submit(self._drain)
+    def wake(self) -> None:
+        if not self._stop.is_set():
+            self._wake.set()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._executor.run_once()
+            except Exception:
+                _LOGGER.warning(
+                    "workbench scheduler cycle failed",
+                    extra={"error_code": "executor_cycle_failed"},
+                )
+            self._wake.wait(self._interval_seconds)
+            self._wake.clear()
 
     def close(self) -> None:
         with self._lock:
-            self._closed = True
-        self._pool.shutdown(wait=False, cancel_futures=True)
+            self._stop.set()
+            self._wake.set()
+            started = self._thread.ident is not None
+        if started and self._thread is not threading.current_thread():
+            self._thread.join()
+
+    @property
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
 
 
 def _uuid_text(value: UUID) -> str:
@@ -285,30 +305,20 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=404, detail="Workbench resource not found")
 
 
-def _conflict(exc: Exception) -> HTTPException:
-    return HTTPException(status_code=409, detail=_safe_error_detail(exc))
+_PUBLIC_ERROR_DETAILS = {
+    "task_has_active_turn": "Tasks with active turns cannot be archived",
+    "task_archived": "Archived tasks cannot accept new turns",
+    "attachment_invalid": "Attachment data is invalid",
+}
 
 
-def _bad_request(exc: Exception) -> HTTPException:
-    return HTTPException(status_code=400, detail=_safe_error_detail(exc))
-
-
-def _safe_error_detail(exc: Exception) -> str:
-    message = str(exc)
-    safe_fragments = (
-        "non-empty",
-        "conflicts",
-        "active turn",
-        "transition",
-        "already been decided",
-        "conflicting decision intent",
-        "not waiting",
-        "unsupported runtime",
-    )
-    return (
-        message
-        if any(fragment in message for fragment in safe_fragments)
-        else "Request could not be completed"
+def _public_error(status_code: int, code: str) -> HTTPException:
+    _LOGGER.info("workbench API request rejected", extra={"error_code": code})
+    return HTTPException(
+        status_code=status_code,
+        detail=_PUBLIC_ERROR_DETAILS.get(
+            code, "request conflicts with current resource state"
+        ),
     )
 
 
@@ -361,8 +371,10 @@ _PUBLIC_EVENT_FIELDS: dict[str, frozenset[str]] = {
     "thinking_summary": frozenset({"text", "summary"}),
     "tool_started": frozenset({"tool", "summary", "tool_call_id"}),
     "tool_completed": frozenset({"tool", "summary", "status", "tool_call_id"}),
-    "file_changed": frozenset({"filename", "change", "status"}),
-    "artifact_created": frozenset({"artifact_id", "label", "media_type"}),
+    "file_changed": frozenset({"filename", "path", "change", "status"}),
+    "artifact_created": frozenset(
+        {"artifact_id", "label", "filename", "path", "media_type"}
+    ),
     "confirmation_required": frozenset(
         {"action_kind", "confirmation_id", "target", "summary", "risk"}
     ),
@@ -374,9 +386,92 @@ _PUBLIC_EVENT_FIELDS: dict[str, frozenset[str]] = {
 }
 
 
-def _public_event(event: WorkbenchEvent) -> PublicEvent:
+_PATH_FIELD_NAMES = frozenset(
+    {
+        "path",
+        "file",
+        "filepath",
+        "file_path",
+        "filename",
+        "file_name",
+        "directory",
+        "dir",
+    }
+)
+
+
+def _is_path_field_name(key: str) -> bool:
+    snake_case = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key)
+    tokens = re.split(r"[^a-z0-9]+", snake_case.casefold())
+    return any(token in _PATH_FIELD_NAMES for token in tokens)
+
+
+def _safe_path_display(value: str, workspace: Path) -> str:
+    if value.casefold().startswith("file://"):
+        value = urlparse(value).path
+    candidate = Path(value)
+    windows_candidate = PureWindowsPath(value)
+    if windows_candidate.is_absolute():
+        return windows_candidate.name
+    if ".." in windows_candidate.parts:
+        return windows_candidate.name
+    if candidate.is_absolute():
+        try:
+            return candidate.resolve(strict=False).relative_to(workspace).as_posix()
+        except ValueError:
+            return candidate.name
+    if ".." in candidate.parts:
+        return candidate.name
+    if "\\" in value:
+        return windows_candidate.as_posix()
+    return candidate.as_posix()
+
+
+def _contains_absolute_path_fragment(value: str) -> bool:
+    boundary_characters = "'\"`()[]{}<>,:;"
+    return any(
+        (
+            Path(fragment.strip(boundary_characters)).is_absolute()
+            or PureWindowsPath(fragment.strip(boundary_characters)).is_absolute()
+            or fragment.strip(boundary_characters).casefold().startswith("file://")
+        )
+        for fragment in value.split()
+        if fragment.strip(boundary_characters)
+    )
+
+
+def _safe_public_value(value: Any, *, key: str, workspace: Path) -> Any:
+    if isinstance(value, dict):
+        return {
+            child_key: _safe_public_value(
+                child_value, key=child_key, workspace=workspace
+            )
+            for child_key, child_value in value.items()
+            if not is_sensitive_field_name(child_key)
+        }
+    if isinstance(value, list):
+        return [
+            _safe_public_value(item, key=key, workspace=workspace) for item in value
+        ]
+    if isinstance(value, str):
+        if _is_path_field_name(key):
+            return _safe_path_display(value, workspace)
+        if (
+            contains_credential(value)
+            or contains_local_runtime_leak(value)
+            or _contains_absolute_path_fragment(value)
+        ):
+            return "[redacted]"
+    return value
+
+
+def _public_event(event: WorkbenchEvent, workspace: Path) -> PublicEvent:
     allowed = _PUBLIC_EVENT_FIELDS.get(event.event_type, frozenset())
-    payload = {key: value for key, value in event.payload.items() if key in allowed}
+    payload = {
+        key: _safe_public_value(value, key=key, workspace=workspace)
+        for key, value in event.payload.items()
+        if key in allowed and not is_sensitive_field_name(key)
+    }
     return PublicEvent(
         id=event.id,
         turn_id=event.turn_id,
@@ -495,42 +590,79 @@ def _parse_event_cursor(request: Request) -> int:
     return cursor
 
 
-def _safe_artifact_path(path: str, roots: Sequence[Path]) -> Path:
+@dataclass(frozen=True, slots=True)
+class _OpenedArtifact:
+    fd: int
+    size: int
+    basename: str
+
+
+def _open_artifact_fd(path: str, roots: Sequence[Path]) -> _OpenedArtifact:
     candidate = Path(path)
     if not candidate.is_absolute() or ".." in candidate.parts:
         raise _not_found()
-    try:
-        candidate_metadata = os.lstat(candidate)
-    except OSError as exc:
-        raise _not_found() from exc
-    if stat.S_ISLNK(candidate_metadata.st_mode) or not stat.S_ISREG(
-        candidate_metadata.st_mode
-    ):
-        raise _not_found()
-    try:
-        resolved = candidate.resolve(strict=True)
-    except OSError as exc:
-        raise _not_found() from exc
     matching_root = next(
-        (
-            root
-            for root in roots
-            if (candidate == root or root in candidate.parents)
-            and (resolved == root or root in resolved.parents)
-        ),
+        (root for root in roots if root in candidate.parents),
         None,
     )
     if matching_root is None:
         raise _not_found()
-    current = matching_root
-    for component in candidate.relative_to(matching_root).parts:
-        current = current / component
+    parts = candidate.relative_to(matching_root).parts
+    if not parts:
+        raise _not_found()
+    directory_fd = None
+    artifact_fd = None
+    try:
+        directory_fd = os.open(
+            matching_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        for component in parts[:-1]:
+            child_fd = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=directory_fd,
+            )
+            os.close(directory_fd)
+            directory_fd = child_fd
+        artifact_fd = os.open(
+            parts[-1],
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=directory_fd,
+        )
+        metadata = os.fstat(artifact_fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise _not_found()
+        result = _OpenedArtifact(
+            fd=artifact_fd,
+            size=metadata.st_size,
+            basename=parts[-1],
+        )
+        artifact_fd = None
+        return result
+    except (OSError, HTTPException) as exc:
+        if isinstance(exc, HTTPException):
+            raise
+        raise _not_found() from exc
+    finally:
+        if artifact_fd is not None:
+            os.close(artifact_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
+def _artifact_chunks(fd: int, *, chunk_size: int = 64 * 1024):
+    try:
+        while True:
+            chunk = os.read(fd, chunk_size)
+            if not chunk:
+                return
+            yield chunk
+    finally:
         try:
-            if stat.S_ISLNK(os.lstat(current).st_mode):
-                raise _not_found()
-        except OSError as exc:
-            raise _not_found() from exc
-    return resolved
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def register_workbench_routes(
@@ -545,12 +677,15 @@ def register_workbench_routes(
     artifact_roots: Sequence[Path] = (),
     sse_poll_seconds: float = 1.0,
     sse_keepalive_seconds: float = 15.0,
-) -> Callable[[], None]:
+    scheduler_interval_seconds: float = 1.0,
+) -> WorkbenchScheduler:
     del asset_dir
     if sse_poll_seconds <= 0 or sse_keepalive_seconds < 15:
         raise ValueError("invalid SSE timing")
     broker = EventBroker()
-    scheduler = _ExecutionScheduler(executor)
+    scheduler = WorkbenchScheduler(
+        executor, interval_seconds=scheduler_interval_seconds
+    )
     roots = tuple(
         dict.fromkeys(
             Path(root).resolve()
@@ -562,6 +697,7 @@ def register_workbench_routes(
         )
     )
     app.state.workbench_event_broker = broker
+    app.state.workbench_scheduler = scheduler
 
     @app.get("/api/workbench/tasks", response_model=list[PublicTask])
     def list_tasks(
@@ -598,7 +734,7 @@ def register_workbench_routes(
                 ),
             )
         except ValueError as exc:
-            raise _bad_request(exc) from exc
+            raise _public_error(400, "unknown") from exc
 
     @app.get("/api/workbench/tasks/{task_id}", response_model=PublicTask)
     def get_task(task_id: UUID) -> PublicTask:
@@ -620,7 +756,7 @@ def register_workbench_routes(
                 store, store.rename_task(_uuid_text(task_id), title=payload.title)
             )
         except ValueError as exc:
-            raise _bad_request(exc) from exc
+            raise _public_error(400, "unknown") from exc
 
     @app.post("/api/workbench/tasks/{task_id}/archive", response_model=PublicTask)
     async def archive_task(task_id: UUID, request: Request) -> PublicTask:
@@ -629,8 +765,10 @@ def register_workbench_routes(
             raise _not_found()
         try:
             return _public_task(store, store.archive_task(_uuid_text(task_id)))
+        except WorkbenchConflictError as exc:
+            raise _public_error(409, exc.code) from exc
         except ValueError as exc:
-            raise _conflict(exc) from exc
+            raise _public_error(409, "unknown") from exc
 
     @app.get(
         "/api/workbench/tasks/{task_id}/attachments",
@@ -666,7 +804,7 @@ def register_workbench_routes(
                 content=content,
             )
         except ValueError as exc:
-            raise _bad_request(exc) from exc
+            raise _public_error(400, "attachment_invalid") from exc
 
     @app.post(
         "/api/workbench/tasks/{task_id}/turns",
@@ -688,10 +826,12 @@ def register_workbench_routes(
                 client_request_id=payload.client_request_id,
             )
             broker.notify(turn.id)
-            scheduler.schedule()
+            scheduler.wake()
             return _public_turn(turn)
+        except WorkbenchConflictError as exc:
+            raise _public_error(409, exc.code) from exc
         except ValueError as exc:
-            raise _conflict(exc) from exc
+            raise _public_error(409, "unknown") from exc
 
     @app.get(
         "/api/workbench/tasks/{task_id}/turns/{turn_id}",
@@ -722,7 +862,7 @@ def register_workbench_routes(
             broker.notify(turn_id_text)
             return _public_turn(result)
         except ValueError as exc:
-            raise _conflict(exc) from exc
+            raise _public_error(409, "unknown") from exc
 
     @app.get("/api/workbench/turns/{turn_id}/events", response_model=list[PublicEvent])
     def replay_events(
@@ -732,7 +872,7 @@ def register_workbench_routes(
     ) -> list[PublicEvent]:
         try:
             return [
-                _public_event(event)
+                _public_event(event, executor.workspace)
                 for event in store.events_after(
                     _uuid_text(turn_id), after_id=after, limit=limit
                 )
@@ -753,7 +893,7 @@ def register_workbench_routes(
         return PublicTimeline(
             task=_public_task(store, task),
             turns=[_public_turn(turn) for turn in turns],
-            events=[_public_event(event) for event in events],
+            events=[_public_event(event, executor.workspace) for event in events],
             attachments=store.list_attachments(task_id_text),
             artifacts=[
                 _public_artifact(task_id_text, artifact)
@@ -780,10 +920,10 @@ def register_workbench_routes(
         try:
             result = executor.confirm(confirmation_id_text)
             broker.notify(_uuid_text(turn_id))
-            scheduler.schedule()
+            scheduler.wake()
             return _public_confirmation(store, result)
         except ValueError as exc:
-            raise _conflict(exc) from exc
+            raise _public_error(409, "unknown") from exc
 
     @app.post(
         "/api/workbench/tasks/{task_id}/turns/{turn_id}/confirmations/{confirmation_id}/cancel",
@@ -800,10 +940,10 @@ def register_workbench_routes(
         try:
             result = executor.cancel(confirmation_id_text)
             broker.notify(_uuid_text(turn_id))
-            scheduler.schedule()
+            scheduler.wake()
             return _public_confirmation(store, result)
         except ValueError as exc:
-            raise _conflict(exc) from exc
+            raise _public_error(409, "unknown") from exc
 
     @app.get(
         "/api/workbench/runtimes", response_model=list[RuntimeCapabilitiesResponse]
@@ -826,22 +966,36 @@ def register_workbench_routes(
     )
     def download_artifact(
         task_id: UUID, turn_id: UUID, artifact_id: UUID
-    ) -> FileResponse:
+    ) -> StreamingResponse:
         task_id_text = _uuid_text(task_id)
         turn_id_text = _uuid_text(turn_id)
         _owned_turn(store, task_id_text, turn_id_text)
         artifact = store.get_artifact(_uuid_text(artifact_id))
         if artifact is None or artifact.turn_id != turn_id_text:
             raise _not_found()
-        path = _safe_artifact_path(artifact.path, roots)
-        filename = Path(artifact.label).name.strip() or path.name
+        opened = _open_artifact_fd(artifact.path, roots)
+        filename = Path(artifact.label).name.strip() or opened.basename
         if any(ord(char) < 32 for char in filename):
-            filename = path.name
-        return FileResponse(
-            path,
-            media_type=artifact.media_type or "application/octet-stream",
-            filename=filename,
+            filename = opened.basename
+        disposition = f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
+        media_type = (
+            artifact.media_type
+            if _media_type_permitted(artifact.media_type)
+            else "application/octet-stream"
         )
+        try:
+            return StreamingResponse(
+                _artifact_chunks(opened.fd),
+                media_type=media_type,
+                headers={
+                    "Content-Disposition": disposition,
+                    "Content-Length": str(opened.size),
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+        except Exception:
+            os.close(opened.fd)
+            raise
 
     @app.get("/api/workbench/turns/{turn_id}/events/stream")
     async def event_stream(turn_id: UUID, request: Request) -> StreamingResponse:
@@ -860,7 +1014,7 @@ def register_workbench_routes(
             try:
                 initial = store.events_after(turn_id_text, cursor, limit=1000)
                 for event in initial:
-                    public = _public_event(event)
+                    public = _public_event(event, executor.workspace)
                     yield encode_sse(public)
                     cursor = event.id
                     last_activity = loop.time()
@@ -868,7 +1022,7 @@ def register_workbench_routes(
                 while True:
                     persisted = store.events_after(turn_id_text, cursor, limit=1000)
                     for event in persisted:
-                        public = _public_event(event)
+                        public = _public_event(event, executor.workspace)
                         yield encode_sse(public)
                         cursor = event.id
                         last_activity = loop.time()
@@ -904,7 +1058,4 @@ def register_workbench_routes(
             },
         )
 
-    def close() -> None:
-        scheduler.close()
-
-    return close
+    return scheduler

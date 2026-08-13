@@ -1,3 +1,5 @@
+import json
+import os
 from pathlib import Path
 import threading
 import time
@@ -7,10 +9,12 @@ import pytest
 
 from fastapi.testclient import TestClient
 
+import app.workbench.api as workbench_api_module
 from app.audit_web import create_audit_app
 from app.setup_wizard import SETUP_WIZARD_STEPS
 from app.store import AutoReplyStore
-from app.workbench.api import _ExecutionScheduler
+from app.workbench.api import WorkbenchScheduler
+from app.workbench.models import TurnStatus
 from app.workbench.store import WorkbenchStore
 
 
@@ -179,6 +183,45 @@ def test_task_archive_filter_is_explicit(tmp_path: Path):
     assert [item["id"] for item in all_list.json()] == [task["id"]]
 
 
+def test_archived_task_and_active_turn_archive_return_fixed_conflicts(tmp_path: Path):
+    with _client(tmp_path) as client:
+        archived = client.post(
+            "/api/workbench/tasks",
+            json={"title": "Archived", "runtime_kind": "codex"},
+        ).json()
+        assert (
+            client.post(
+                f"/api/workbench/tasks/{archived['id']}/archive", json={}
+            ).status_code
+            == 200
+        )
+        create_on_archived = client.post(
+            f"/api/workbench/tasks/{archived['id']}/turns",
+            json={"text": "Blocked", "client_request_id": "blocked-request"},
+        )
+
+        active = client.post(
+            "/api/workbench/tasks",
+            json={"title": "Active", "runtime_kind": "codex"},
+        ).json()
+        client.post(
+            f"/api/workbench/tasks/{active['id']}/turns",
+            json={"text": "Running", "client_request_id": "active-request"},
+        )
+        archive_active = client.post(
+            f"/api/workbench/tasks/{active['id']}/archive", json={}
+        )
+
+    assert create_on_archived.status_code == 409
+    assert create_on_archived.json() == {
+        "detail": "Archived tasks cannot accept new turns"
+    }
+    assert archive_active.status_code == 409
+    assert archive_active.json() == {
+        "detail": "Tasks with active turns cannot be archived"
+    }
+
+
 def test_nested_turn_and_confirmation_resources_do_not_leak_across_tasks(
     tmp_path: Path,
 ):
@@ -326,6 +369,100 @@ def test_artifact_download_rejects_symlinked_parent(tmp_path: Path):
     assert response.status_code == 404
 
 
+def test_artifact_download_streams_opened_descriptor_across_path_swap(
+    tmp_path: Path, monkeypatch
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    task = store.create_task(title="Artifacts", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="Create report", client_request_id="swap-request"
+    )
+    artifact_path = tmp_path / "report.txt"
+    artifact_path.write_text("original", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside-secret", encoding="utf-8")
+    artifact_id = str(uuid4())
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into workbench_artifacts (id, turn_id, label, path, media_type)
+            values (?, ?, ?, ?, ?)
+            """,
+            (artifact_id, turn.id, "Report", str(artifact_path), "text/plain"),
+        )
+
+    opened_fd = []
+    original_open = workbench_api_module._open_artifact_fd
+
+    def open_then_swap(path, roots):
+        result = original_open(path, roots)
+        opened_fd.append(result.fd)
+        artifact_path.unlink()
+        artifact_path.symlink_to(outside)
+        return result
+
+    monkeypatch.setattr(workbench_api_module, "_open_artifact_fd", open_then_swap)
+    with _client(tmp_path) as client:
+        response = client.get(
+            f"/api/workbench/tasks/{task.id}/turns/{turn.id}/artifacts/{artifact_id}/download"
+        )
+
+    assert response.status_code == 200
+    assert response.text == "original"
+    assert "outside-secret" not in response.text
+    with pytest.raises(OSError):
+        os.fstat(opened_fd[0])
+
+
+def test_public_event_projection_redacts_nested_paths_and_credentials(tmp_path: Path):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    task = store.create_task(title="Events", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="Events", client_request_id="public-event-request"
+    )
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into workbench_events (turn_id, sequence, event_type, payload_json)
+            values (?, 2, 'tool_started', ?)
+            """,
+            (
+                turn.id,
+                json.dumps(
+                    {
+                        "tool": "reader",
+                        "summary": {
+                            "path": str(tmp_path / "safe" / "report.md"),
+                            "nested": {
+                                "filename": "../../outside.txt",
+                                "outputFile": str(
+                                    tmp_path / "safe" / "result.json"
+                                ),
+                                "note": "Bearer abcdefghijklmnop",
+                                "other": "Read /etc/passwd before continuing",
+                            },
+                        },
+                        "tool_call_id": "tool-1",
+                    }
+                ),
+            ),
+        )
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/workbench/turns/{turn.id}/events?after=0&limit=10")
+
+    encoded = json.dumps(response.json(), ensure_ascii=False)
+    payload = response.json()[1]["payload"]
+    assert response.status_code == 200
+    assert str(tmp_path) not in encoded
+    assert "../../" not in encoded
+    assert "abcdefghijklmnop" not in encoded
+    assert "/etc/passwd" not in encoded
+    assert payload["summary"]["path"] == "safe/report.md"
+    assert payload["summary"]["nested"]["filename"] == "outside.txt"
+    assert payload["summary"]["nested"]["outputFile"] == "safe/result.json"
+
+
 def test_sse_replays_persisted_events_with_last_event_id_precedence(tmp_path: Path):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
     task = store.create_task(title="Replay", runtime_kind="codex")
@@ -409,26 +546,138 @@ def test_sse_rejects_cross_origin_and_unknown_turn(tmp_path: Path):
     assert unknown.status_code == 404
 
 
-def test_background_scheduler_recovers_after_executor_error():
+def test_scheduler_polls_without_overlap_and_recovers_with_sanitized_log(caplog):
     class FlakyExecutor:
         def __init__(self):
             self.calls = 0
+            self.concurrent = 0
+            self.max_concurrent = 0
+            self.third_call = threading.Event()
+
+        def run_once(self):
+            self.calls += 1
+            self.concurrent += 1
+            self.max_concurrent = max(self.max_concurrent, self.concurrent)
+            if self.calls == 1:
+                self.concurrent -= 1
+                raise RuntimeError("/Users/derek/private/provider.log")
+            if self.calls >= 3:
+                self.third_call.set()
+            self.concurrent -= 1
+            return []
+
+    executor = FlakyExecutor()
+    scheduler = WorkbenchScheduler(executor, interval_seconds=0.02)
+    scheduler.start()
+
+    assert executor.third_call.wait(1)
+    scheduler.close()
+    assert executor.max_concurrent == 1
+    assert scheduler.is_alive is False
+    assert "/Users/derek" not in caplog.text
+
+
+def test_scheduler_wakeup_runs_before_next_poll_interval():
+    class TrackingExecutor:
+        def __init__(self):
+            self.calls = 0
+            self.first_call = threading.Event()
             self.second_call = threading.Event()
 
         def run_once(self):
             self.calls += 1
             if self.calls == 1:
-                raise RuntimeError("failed run")
-            self.second_call.set()
+                self.first_call.set()
+            if self.calls == 2:
+                self.second_call.set()
             return []
 
-    executor = FlakyExecutor()
-    scheduler = _ExecutionScheduler(executor)
-    scheduler.schedule()
-    deadline = time.monotonic() + 1
-    while executor.calls < 1 and time.monotonic() < deadline:
-        time.sleep(0.01)
-    scheduler.schedule()
+    executor = TrackingExecutor()
+    scheduler = WorkbenchScheduler(executor, interval_seconds=60)
+    scheduler.start()
+    assert executor.first_call.wait(1)
 
-    assert executor.second_call.wait(1)
+    scheduler.wake()
+
+    assert executor.second_call.wait(0.2)
     scheduler.close()
+
+
+def test_app_startup_recovers_then_runs_persisted_queue_and_shutdown_joins(
+    tmp_path: Path,
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    for step in SETUP_WIZARD_STEPS:
+        store.upsert_setup_wizard_step(
+            step_id=step.id, status="done", summary="complete"
+        )
+    task = store.create_task(title="Persisted", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="Resume", client_request_id="persisted-request"
+    )
+    calls = []
+    completed = threading.Event()
+
+    class TrackingExecutor:
+        workspace = tmp_path
+
+        def recover(self):
+            calls.append("recover")
+            return 0
+
+        def run_once(self):
+            calls.append("run")
+            claimed = store.claim_next_turn(owner="scheduler")
+            if claimed is None:
+                return []
+            store.complete_turn(
+                claimed.id,
+                status=TurnStatus.COMPLETED,
+                final_text="done",
+                owner="scheduler",
+            )
+            completed.set()
+            return [claimed.id]
+
+        def close(self):
+            calls.append("executor_close")
+            return True
+
+    executor = TrackingExecutor()
+    app = create_audit_app(
+        store.path,
+        workbench_asset_dir=tmp_path / "assets",
+        workbench_workspace=tmp_path,
+        workbench_executor=executor,
+        workbench_scheduler_interval_seconds=0.02,
+    )
+    with TestClient(app):
+        assert completed.wait(1)
+        assert store.get_turn(turn.id).status is TurnStatus.COMPLETED
+        assert calls[:2] == ["recover", "run"]
+
+    assert app.state.workbench_scheduler.is_alive is False
+    assert calls[-1] == "executor_close"
+
+
+def test_unknown_store_error_never_reflects_exception_text(tmp_path: Path, monkeypatch):
+    with _client(tmp_path) as client:
+        task = client.post(
+            "/api/workbench/tasks",
+            json={"title": "Rename", "runtime_kind": "codex"},
+        ).json()
+
+        def fail_with_private_path(*args, **kwargs):
+            del args, kwargs
+            raise ValueError("database failed at /Users/derek/private.sqlite3")
+
+        monkeypatch.setattr(WorkbenchStore, "rename_task", fail_with_private_path)
+        response = client.patch(
+            f"/api/workbench/tasks/{task['id']}", json={"title": "Updated"}
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "request conflicts with current resource state"
+    }
+    assert "/Users/derek" not in response.text
