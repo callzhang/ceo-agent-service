@@ -1959,6 +1959,7 @@ def _top_nav(
     user_feedback_pending_count: int | None = None,
 ) -> str:
     items = [
+        ("agent", "Agent", "/"),
         ("history", "History", "/history"),
         ("tasks", "Tasks", "/tasks"),
         ("user-feedback", "用户反馈", "/user-feedback"),
