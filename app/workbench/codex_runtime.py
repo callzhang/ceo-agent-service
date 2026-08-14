@@ -44,11 +44,6 @@ _DEFAULT_IDLE_TIMEOUT_SECONDS = 900
 MAX_PROMPT_BYTES = 1024 * 1024
 _CONFIRMATION_SERVER = "workbench_confirmation"
 _CONFIRMATION_TOOL = "request_reviewed_action"
-_SAFE_MCP_TOOL_NAMES = {
-    ("codex_apps", "google_calendar.search_events"): "Google 日历查询",
-    ("codex_apps", "gmail.search_emails"): "邮件查询",
-    (_CONFIRMATION_SERVER, _CONFIRMATION_TOOL): "操作确认",
-}
 _DEVELOPER_INSTRUCTIONS = """
 You are running inside the local Agent Workbench. Preserve the user's configured
 Codex skills, rules, plugins, and authenticated read tools. You may perform local,
@@ -238,7 +233,7 @@ class _CodexNormalizer:
         self._text_states: dict[str, str] = {}
         self._idless_text_key = ""
         self._text_sequence = 0
-        self._tool_call_ids: dict[str, str] = {}
+        self._tool_calls: dict[str, tuple[str, dict[str, Any]]] = {}
         self._tool_sequence = 0
 
     def accept_line(self, line: str) -> None:
@@ -388,29 +383,25 @@ class _CodexNormalizer:
 
     def _start_tool(self, item: Mapping[str, Any]) -> None:
         native_id = _required_native_item_id(item)
-        if native_id in self._tool_call_ids or len(self._tool_call_ids) >= 128:
+        if native_id in self._tool_calls or len(self._tool_calls) >= 128:
             raise _AdapterFailure(
                 "invalid_provider_output", "provider tool start was invalid"
             )
         self._tool_sequence += 1
         correlation_id = f"tool-call-{self._tool_sequence}"
-        self._tool_call_ids[native_id] = correlation_id
-        self._emit(
-            "tool_started",
-            {
-                "tool": _safe_tool_name(item),
-                "summary": "执行中",
-                "tool_call_id": correlation_id,
-            },
-        )
+        snapshot = _tool_payload(item, correlation_id=correlation_id, status="running")
+        self._tool_calls[native_id] = (correlation_id, dict(item))
+        self._emit("tool_started", snapshot)
 
     def _complete_tool(self, item: Mapping[str, Any]) -> None:
         native_id = _required_native_item_id(item)
-        correlation_id = self._tool_call_ids.pop(native_id, None)
-        if correlation_id is None:
+        started = self._tool_calls.pop(native_id, None)
+        if started is None:
             raise _AdapterFailure(
                 "invalid_provider_output", "provider tool completion was not correlated"
             )
+        correlation_id, started_item = started
+        provider_item = {**started_item, **dict(item)}
         proposal: dict[str, object] | None = None
         failed = _native_tool_failed(item)
         if item.get("type") == "mcp_tool_call":
@@ -418,19 +409,21 @@ class _CodexNormalizer:
                 proposal = _extract_confirmation(item.get("result"))
         self._emit(
             "tool_completed",
-            {
-                "tool": _safe_tool_name(item),
-                "summary": "执行失败" if failed else "已完成",
-                "status": "failed" if failed else "completed",
-                "tool_call_id": correlation_id,
-            },
+            _tool_payload(
+                provider_item,
+                correlation_id=correlation_id,
+                status="failed" if failed else "completed",
+            ),
         )
         if proposal is not None:
             self._emit("confirmation_required", proposal)
 
     def _emit(self, event_type: str, payload: Mapping[str, Any]) -> None:
         try:
-            assert_no_credentials(payload)
+            if event_type in {"tool_started", "tool_completed"}:
+                _assert_no_credential_values(payload)
+            else:
+                assert_no_credentials(payload)
         except ValueError as exc:
             raise _AdapterFailure(
                 "sensitive_provider_output", "provider output contained sensitive data"
@@ -440,12 +433,67 @@ class _CodexNormalizer:
 
 def _safe_tool_name(item: Mapping[str, Any]) -> str:
     if item.get("type") == "command_execution":
-        return "本地命令"
+        command = item.get("command")
+        if isinstance(command, str) and command.strip():
+            return command.strip().split(maxsplit=1)[0]
+        return "command_execution"
     server = item.get("server")
     tool = item.get("tool")
     if isinstance(server, str) and isinstance(tool, str):
-        return _SAFE_MCP_TOOL_NAMES.get((server, tool), "MCP 工具")
-    return "MCP 工具"
+        return f"{server}.{tool}"
+    if isinstance(tool, str) and tool:
+        return tool
+    if isinstance(server, str) and server:
+        return server
+    return "mcp_tool_call"
+
+
+def _tool_payload(
+    item: Mapping[str, Any], *, correlation_id: str, status: str
+) -> dict[str, Any]:
+    native_id = _required_native_item_id(item)
+    item_type = item.get("type")
+    kind = "command" if item_type == "command_execution" else "mcp"
+    payload: dict[str, Any] = {
+        "tool_call_id": correlation_id,
+        "kind": kind,
+        "name": _safe_tool_name(item),
+        "native_id": native_id,
+        "status": status,
+    }
+    if kind == "command":
+        fields = {
+            "command": "command",
+            "cwd": "cwd",
+            "exit_code": "exit_code",
+            "aggregated_output": "output",
+        }
+    else:
+        fields = {
+            "server": "server",
+            "tool": "tool",
+            "arguments": "arguments",
+            "result": "result",
+        }
+    for source, target in fields.items():
+        if source in item:
+            payload[target] = item[source]
+    payload["provider_item"] = dict(item)
+    return payload
+
+
+def _assert_no_credential_values(value: object) -> None:
+    if isinstance(value, str):
+        if contains_credential(value):
+            raise ValueError("credential-bearing tool value")
+        return
+    if isinstance(value, Mapping):
+        for child in value.values():
+            _assert_no_credential_values(child)
+        return
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for child in value:
+            _assert_no_credential_values(child)
 
 
 def _required_native_item_id(item: Mapping[str, Any]) -> str:
