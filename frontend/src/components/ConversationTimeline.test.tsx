@@ -5,7 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactList } from "./ArtifactList";
 import { ConfirmationCard } from "./ConfirmationCard";
-import { activeTurnScrollIndex, assistantTurnKey, ConversationTimeline } from "./ConversationTimeline";
+import {
+  activeTurnScrollIndex,
+  assistantTurnKey,
+  ConversationTimeline,
+  latestTurnScrollIndex,
+} from "./ConversationTimeline";
 import { TurnInspector } from "./TurnInspector";
 import type { Timeline, TurnStatus } from "../types";
 
@@ -49,6 +54,8 @@ describe("ConversationTimeline", () => {
 
     expect(activeTurnScrollIndex(turns, "turn-19", 999_900)).toBe(999_919);
     expect(activeTurnScrollIndex(turns, "missing", 999_900)).toBeNull();
+    expect(latestTurnScrollIndex(turns, 999_900)).toBe(999_919);
+    expect(latestTurnScrollIndex([], 999_900)).toBeNull();
   });
 
   it("bounds the initial virtualized mount for a 100-turn page", () => {
