@@ -2,7 +2,7 @@ import { ShieldAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { Confirmation } from "../types";
-import { safeDisplayText } from "./ExecutionStep";
+import { displayText } from "./ExecutionStep";
 
 interface ConfirmationCardProps {
   confirmation: Confirmation;
@@ -52,10 +52,10 @@ export function ConfirmationCard({ confirmation, onConfirm, onCancel }: Confirma
     <section className="confirmation-card" aria-label="需要确认">
       <div className="confirmation-title"><ShieldAlert aria-hidden="true" size={18} /><strong>需要确认</strong></div>
       <dl>
-        <div><dt>操作</dt><dd>{safeDisplayText(confirmation.canonical_operation || confirmation.action_kind, "未说明")}</dd></div>
-        <div><dt>目标</dt><dd>{confirmation.canonical_targets.length ? confirmation.canonical_targets.map((item) => safeDisplayText(item, "未说明")).join("、") : safeDisplayText(confirmation.target, "未说明")}</dd></div>
-        <div><dt>效果</dt><dd>{safeDisplayText(confirmation.summary, "未说明")} <small>运行时提供，未验证</small></dd></div>
-        <div><dt>风险</dt><dd>{safeDisplayText(confirmation.risk, "未说明")} <small>运行时提供，未验证</small></dd></div>
+        <div><dt>操作</dt><dd>{displayText(confirmation.canonical_operation || confirmation.action_kind, "未说明")}</dd></div>
+        <div><dt>目标</dt><dd>{confirmation.canonical_targets.length ? confirmation.canonical_targets.map((item) => displayText(item, "未说明")).join("、") : displayText(confirmation.target, "未说明")}</dd></div>
+        <div><dt>效果</dt><dd>{displayText(confirmation.summary, "未说明")} <small>运行时提供，未验证</small></dd></div>
+        <div><dt>风险</dt><dd>{displayText(confirmation.risk, "未说明")} <small>运行时提供，未验证</small></dd></div>
       </dl>
       {waitingForQuiescence && <p className="confirmation-wait" role="status">等待执行器安全停稳</p>}
       {undecided && persistedIntent && confirmation.proposer_quiesced && (

@@ -129,6 +129,8 @@ class CodexRunner:
         developer_instructions: str | None = None,
         use_approval_bypass: bool = True,
         preserve_native_model_config: bool = False,
+        preserve_native_instructions: bool = False,
+        preserve_native_approval_config: bool = False,
     ) -> list[str]:
         if approval_policy not in {"untrusted", "never"}:
             raise ValueError("unsupported approval policy")
@@ -149,6 +151,32 @@ class CodexRunner:
             schema_options = ["--output-schema", str(output_schema_path)]
         else:
             schema_options = ["--output-schema", str(CODEX_DECISION_SCHEMA_PATH)]
+        instruction_options = (
+            []
+            if preserve_native_instructions
+            else [
+                "-c",
+                _config_string(
+                    "developer_instructions",
+                    effective_developer_instructions,
+                ),
+                "-c",
+                "include_permissions_instructions=false",
+            ]
+        )
+        approval_options = (
+            []
+            if preserve_native_approval_config
+            else [
+                "-c",
+                _config_string("approval_policy", approval_policy),
+                *(
+                    ["-c", 'approvals_reviewer="auto_review"']
+                    if approval_policy == "untrusted"
+                    else []
+                ),
+            ]
+        )
         common_options = [
             "--json",
             *(
@@ -156,20 +184,8 @@ class CodexRunner:
                 if preserve_native_model_config
                 else codex_model_config_options()
             ),
-            "-c",
-            _config_string("approval_policy", approval_policy),
-            *(
-                ["-c", 'approvals_reviewer="auto_review"']
-                if approval_policy == "untrusted"
-                else []
-            ),
-            "-c",
-            _config_string(
-                "developer_instructions",
-                effective_developer_instructions,
-            ),
-            "-c",
-            "include_permissions_instructions=false",
+            *approval_options,
+            *instruction_options,
         ]
         if session_id:
             return [

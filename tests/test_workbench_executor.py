@@ -424,13 +424,29 @@ def test_unknown_runtime_and_malformed_event_fail_safely(tmp_path: Path):
     executor2.close()
 
 
-def test_sensitive_runtime_result_is_not_persisted(tmp_path: Path):
+def test_white_box_runtime_result_and_tool_payload_are_persisted_exactly(
+    tmp_path: Path,
+):
     store = _store(tmp_path)
     task, turn = _queued(store)
     runtime = FakeRuntime(
+        events=[
+            RuntimeEvent(
+                "tool_completed",
+                {
+                    "tool_call_id": "tool-call-1",
+                    "kind": "command",
+                    "name": "printf",
+                    "native_id": "native-1",
+                    "status": "completed",
+                    "command": "/usr/bin/printf api_token=local-value",
+                    "output": "api_token=local-value",
+                },
+            )
+        ],
         result=RuntimeResult(
             status="completed",
-            final_text="Bearer abcdefghijklmnop",
+            final_text="Bearer local-workbench-value",
             provider_session_ref="session-safe",
         )
     )
@@ -439,9 +455,16 @@ def test_sensitive_runtime_result_is_not_persisted(tmp_path: Path):
     executor.run_once(max_turns=1)
 
     persisted = store.get_turn(turn.id)
-    assert persisted.status is TurnStatus.FAILED
-    assert "Bearer" not in persisted.final_text
-    assert store.get_task(task.id).provider_session_ref == ""
+    assert persisted.status is TurnStatus.COMPLETED
+    assert persisted.final_text == "Bearer local-workbench-value"
+    assert store.get_task(task.id).provider_session_ref == "session-safe"
+    [tool_event] = [
+        event
+        for event in store.events_after(turn.id)
+        if event.event_type == "tool_completed"
+    ]
+    assert tool_event.payload["command"] == "/usr/bin/printf api_token=local-value"
+    assert tool_event.payload["output"] == "api_token=local-value"
     executor.close()
 
 
@@ -1021,7 +1044,9 @@ def test_cancel_never_runs_and_conflicting_decision_rejects(tmp_path: Path):
     executor.close()
 
 
-def test_known_runtime_limit_is_explained_transparently(tmp_path: Path):
+def test_runtime_failure_detail_is_persisted_without_workbench_rewriting(
+    tmp_path: Path,
+):
     store = _store(tmp_path)
     _, turn = _queued(store)
     runtime = FakeRuntime(
@@ -1038,9 +1063,7 @@ def test_known_runtime_limit_is_explained_transparently(tmp_path: Path):
     persisted = store.get_turn(turn.id)
     assert persisted.status is TurnStatus.FAILED
     assert persisted.error_code == "provider_output_limit"
-    assert persisted.error_detail == (
-        "Codex provider output exceeded the 16 MiB Workbench safety limit."
-    )
+    assert persisted.error_detail == "provider output exceeded the safe limit"
     executor.close()
 
 

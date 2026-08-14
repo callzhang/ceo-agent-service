@@ -88,7 +88,7 @@ describe("ConversationTimeline", () => {
     expect(screen.getByText("const ok = true")).toBeInTheDocument();
     expect(screen.queryByText("raw")).not.toBeInTheDocument();
     expect(screen.getByText(/\/Users\/private\/secret/)).toBeInTheDocument();
-    expect(screen.queryByText(/visible-secret/)).not.toBeInTheDocument();
+    expect(screen.getByText(/visible-secret/)).toBeInTheDocument();
     expect(screen.getByText("发送群消息")).toBeInTheDocument();
     expect(screen.getByText("等待执行器安全停稳")).toBeInTheDocument();
     const artifact = screen.getByRole("link", { name: /结果.txt/ });

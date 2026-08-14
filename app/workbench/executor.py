@@ -39,7 +39,7 @@ from app.workbench.store import WORKBENCH_RECOVERY_BATCH_LIMIT, WorkbenchStore
 
 
 _MAX_CLAIMS = 2
-_SAFE_RUNTIME_FAILURE = "Runtime execution could not be completed safely."
+_RUNTIME_FAILURE = "Runtime execution could not be completed."
 _KNOWN_RUNTIME_FAILURE_DETAILS = {
     "provider_output_limit": (
         "Codex provider output exceeded the 16 MiB Workbench safety limit."
@@ -59,7 +59,7 @@ _KNOWN_RUNTIME_FAILURE_DETAILS = {
 
 
 def _public_runtime_failure_detail(error_code: str) -> str:
-    return _KNOWN_RUNTIME_FAILURE_DETAILS.get(error_code, _SAFE_RUNTIME_FAILURE)
+    return _KNOWN_RUNTIME_FAILURE_DETAILS.get(error_code, _RUNTIME_FAILURE)
 
 
 @dataclass
@@ -202,10 +202,14 @@ class WorkbenchExecutor:
                 claimed.append(turn)
                 try:
                     futures.append(self._pool.submit(self._execute_turn_reserved, turn))
-                except Exception:
+                except Exception as exc:
                     self._reserved_turns -= 1
                     self._reserved_turn_ids.discard(turn.id)
-                    self._fail_claimed(turn.id, "executor_submit_failed")
+                    self._fail_claimed(
+                        turn.id,
+                        "executor_submit_failed",
+                        detail=f"{type(exc).__name__}: {exc}",
+                    )
         for future in futures:
             future.result()
         return [turn.id for turn in claimed]
@@ -469,9 +473,14 @@ class WorkbenchExecutor:
                     self._stop_state_once(state)
                 result = runtime.wait(handle)
                 self._finish_runtime(state, result)
-            except Exception:
+            except Exception as exc:
                 self._stop_state_once(state)
-                self._fail_claimed(turn.id, "runtime_failure", state=state)
+                self._fail_claimed(
+                    turn.id,
+                    "runtime_failure",
+                    detail=f"{type(exc).__name__}: {exc}",
+                    state=state,
+                )
             finally:
                 state.heartbeat_stop.set()
                 heartbeat.join(timeout=max(1.0, self.heartbeat_interval_seconds * 2))
@@ -564,7 +573,6 @@ class WorkbenchExecutor:
             if event.event_type in {"turn_completed", "turn_failed"}:
                 return
             payload = event.payload_json_value()
-            assert_no_credentials(payload)
             if event.event_type == "confirmation_required":
                 try:
                     self._create_confirmation(state, payload)
@@ -683,8 +691,6 @@ class WorkbenchExecutor:
     def _finish_runtime(self, state: _RunState, result: RuntimeResult) -> None:
         if not isinstance(result, RuntimeResult):
             raise ValueError("malformed runtime result")
-        assert_no_credentials(result.final_text)
-        assert_no_credentials(result.provider_session_ref)
         current = self.store.get_turn(state.turn_id)
         if (
             current is None
@@ -712,7 +718,8 @@ class WorkbenchExecutor:
                 else ""
             ),
             error_detail=(
-                _public_runtime_failure_detail(result.error_code or "runtime_failure")
+                result.error_detail
+                or _public_runtime_failure_detail(result.error_code or "runtime_failure")
                 if target is TurnStatus.FAILED
                 else ""
             ),
@@ -721,7 +728,12 @@ class WorkbenchExecutor:
         )
 
     def _fail_claimed(
-        self, turn_id: str, code: str, *, state: _RunState | None = None
+        self,
+        turn_id: str,
+        code: str,
+        *,
+        detail: str = "",
+        state: _RunState | None = None,
     ) -> None:
         if state is not None and state.lease_lost:
             return
@@ -738,7 +750,7 @@ class WorkbenchExecutor:
                 error_detail=(
                     ""
                     if current.stop_requested
-                    else _public_runtime_failure_detail(code)
+                    else detail or _public_runtime_failure_detail(code)
                 ),
                 owner=self.owner,
             )

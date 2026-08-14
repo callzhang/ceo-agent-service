@@ -520,7 +520,7 @@ def test_timeline_exposes_usable_resource_cursors(tmp_path: Path):
     assert second_body["events_has_more"] is False
 
 
-def test_all_timeline_public_strings_preserve_paths_and_redact_credentials(
+def test_all_timeline_public_strings_preserve_exact_local_evidence(
     tmp_path: Path,
 ):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
@@ -624,7 +624,7 @@ def test_all_timeline_public_strings_preserve_paths_and_redact_credentials(
         ensure_ascii=False,
     )
     assert timeline.status_code == nested_turn.status_code == task_response.status_code == 200
-    for forbidden in (
+    for preserved in (
         "legacy-secret",
         "created-secret",
         "completed-secret",
@@ -633,14 +633,14 @@ def test_all_timeline_public_strings_preserve_paths_and_redact_credentials(
         "artifact-secret",
         "canonical-secret",
     ):
-        assert forbidden not in rendered
+        assert preserved in rendered
 
     assert "read /Users/derek/private.txt" in rendered
     assert "result=/custom/mount/result.txt" in rendered
     assert nested_turn.json()["error_detail"] == r"failed at C:\private\secret.txt"
 
 
-def test_public_turn_preserves_exact_local_paths_but_redacts_credentials(
+def test_public_turn_preserves_exact_local_paths_and_credential_shaped_text(
     tmp_path: Path,
 ):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
@@ -672,7 +672,7 @@ def test_public_turn_preserves_exact_local_paths_but_redacts_credentials(
     )
     assert body["final_text"] == "检查结果位于 /private/tmp/ceo-agent/report.json"
     assert "/usr/bin/printf" in body["error_detail"]
-    assert "credential-value-1234" not in body["error_detail"]
+    assert "credential-value-1234" in body["error_detail"]
 
 
 def test_streaming_json_collector_stops_at_cap_without_consuming_remaining_chunks():
@@ -1066,7 +1066,7 @@ def test_artifact_download_checks_nested_ownership_and_does_not_expose_path(
     assert download.status_code == 200
     assert download.text == "report"
     assert download.headers["content-type"] == "application/octet-stream"
-    assert "artifact-download-secret" not in download.headers["content-disposition"]
+    assert "artifact-download-secret" in download.headers["content-disposition"]
     assert cross_task.status_code == 404
 
 
@@ -1179,7 +1179,7 @@ def test_artifact_download_streams_opened_descriptor_across_path_swap(
         os.fstat(opened_fd[0])
 
 
-def test_public_event_projection_preserves_nested_paths_and_redacts_credentials(
+def test_public_event_projection_preserves_nested_local_evidence(
     tmp_path: Path,
 ):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
@@ -1223,7 +1223,7 @@ def test_public_event_projection_preserves_nested_paths_and_redacts_credentials(
     assert response.status_code == 200
     assert str(tmp_path) in encoded
     assert "../../outside.txt" in encoded
-    assert "abcdefghijklmnop" not in encoded
+    assert "abcdefghijklmnop" in encoded
     assert "/etc/passwd" in encoded
     assert payload["summary"]["path"] == str(tmp_path / "safe" / "report.md")
     assert payload["summary"]["nested"]["filename"] == "../../outside.txt"
@@ -1347,7 +1347,7 @@ def test_white_box_tool_event_preserves_exact_action_and_nested_result(tmp_path:
     assert timeline_response.json()["events"][1]["payload"] == payload
 
 
-def test_white_box_tool_event_redacts_only_credential_values(tmp_path: Path):
+def test_white_box_tool_event_preserves_exact_provider_values(tmp_path: Path):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
     task = store.create_task(title="White box credentials", runtime_kind="codex")
     turn = store.create_turn(
@@ -1384,11 +1384,11 @@ def test_white_box_tool_event_redacts_only_credential_values(tmp_path: Path):
     assert response.status_code == 200
     assert projected["arguments"] == {
         "query": "管理问题",
-        "access_token": "[redacted]",
+        "access_token": "short-secret",
     }
     assert projected["result"] == {
         "source": "/Users/derek/.codex/memories/MEMORY.md",
-        "summary": "[redacted]",
+        "summary": "api_key=credential-value-1234",
     }
 
 

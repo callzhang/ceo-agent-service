@@ -71,4 +71,20 @@ describe("ExecutionStep", () => {
 
     expect(screen.getByText("历史事件未记录命令详情")).toBeInTheDocument();
   });
+
+  it("renders credential-shaped local evidence unchanged", () => {
+    render(
+      <ExecutionStep
+        kind="file"
+        status="completed"
+        payload={{
+          filename: "/Users/derek/Documents/private.env",
+          change: "api_key=local-workbench-value",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("/Users/derek/Documents/private.env")).toBeInTheDocument();
+    expect(screen.getByText("api_key=local-workbench-value")).toBeInTheDocument();
+  });
 });
