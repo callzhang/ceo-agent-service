@@ -498,8 +498,44 @@ def _public_turn(turn: WorkbenchTurn, workspace: Path) -> PublicTurn:
 _PUBLIC_EVENT_FIELDS: dict[str, frozenset[str]] = {
     "text_delta": frozenset({"text"}),
     "thinking_summary": frozenset({"text", "summary"}),
-    "tool_started": frozenset({"tool", "summary", "tool_call_id"}),
-    "tool_completed": frozenset({"tool", "summary", "status", "tool_call_id"}),
+    "tool_started": frozenset(
+        {
+            "tool_call_id",
+            "kind",
+            "name",
+            "native_id",
+            "status",
+            "summary",
+            "command",
+            "cwd",
+            "exit_code",
+            "output",
+            "server",
+            "tool",
+            "arguments",
+            "result",
+            "provider_item",
+        }
+    ),
+    "tool_completed": frozenset(
+        {
+            "tool_call_id",
+            "kind",
+            "name",
+            "native_id",
+            "status",
+            "summary",
+            "command",
+            "cwd",
+            "exit_code",
+            "output",
+            "server",
+            "tool",
+            "arguments",
+            "result",
+            "provider_item",
+        }
+    ),
     "file_changed": frozenset({"filename", "path", "change", "status"}),
     "artifact_created": frozenset(
         {"artifact_id", "label", "filename", "path", "media_type"}
@@ -684,23 +720,30 @@ def _safe_public_value(value: Any, *, key: str, workspace: Path) -> Any:
 
 def _public_event(event: WorkbenchEvent, workspace: Path) -> PublicEvent:
     allowed = _PUBLIC_EVENT_FIELDS.get(event.event_type, frozenset())
+    white_box_tool = event.event_type in {"tool_started", "tool_completed"} and (
+        event.payload.get("kind") in {"command", "mcp"}
+    )
     payload = {
-        key: _safe_public_value(value, key=key, workspace=workspace)
-        for key, value in event.payload.items()
-        if key in allowed and not is_sensitive_field_name(key)
-    }
-    return PublicEvent.model_validate(
-        _safe_public_record(
-            {
-                "id": event.id,
-                "turn_id": event.turn_id,
-                "sequence": event.sequence,
-                "event_type": event.event_type,
-                "payload": payload,
-                "created_at": event.created_at,
-            },
-            workspace,
+        key: (
+            value
+            if white_box_tool
+            else _safe_public_value(value, key=key, workspace=workspace)
         )
+        for key, value in event.payload.items()
+        if key in allowed and (white_box_tool or not is_sensitive_field_name(key))
+    }
+    values = {
+        "id": event.id,
+        "turn_id": event.turn_id,
+        "sequence": event.sequence,
+        "event_type": event.event_type,
+        "payload": payload,
+        "created_at": event.created_at,
+    }
+    if white_box_tool:
+        return PublicEvent.model_validate(values)
+    return PublicEvent.model_validate(
+        _safe_public_record(values, workspace)
     )
 
 

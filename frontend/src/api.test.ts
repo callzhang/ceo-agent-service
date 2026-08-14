@@ -144,4 +144,34 @@ describe("workbench API", () => {
 
     await expect(getTimeline(publicTask.id)).rejects.toMatchObject({ code: "invalid_response" });
   });
+
+  it("keeps nested white-box tool details in timeline responses", async () => {
+    const payload = {
+      tool_call_id: "tool-call-1",
+      kind: "command",
+      name: "rg",
+      native_id: "native-1",
+      status: "completed",
+      command: "rg --files frontend/src",
+      cwd: "/Users/derek/Documents/Projects/ceo-agent-service",
+      exit_code: 0,
+      output: "frontend/src/app.tsx\n",
+      provider_item: { id: "native-1", type: "command_execution", exit_code: 0 },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        task: publicTask,
+        turns: [],
+        events: [{ id: 1, turn_id: "turn", sequence: 1, event_type: "tool_completed", payload, created_at: "2026-08-14 00:00:02" }],
+        attachments: [], artifacts: [], confirmations: [], next_cursor: "", has_more: false,
+        events_has_more: false, events_next_cursor: 0, artifacts_has_more: false, artifacts_next_cursor: "",
+        confirmations_has_more: false, confirmations_next_cursor: "", attachments_has_more: false, attachments_next_cursor: "",
+      }), { status: 200, headers: { "Content-Type": "application/json" } })),
+    );
+
+    const timeline = await getTimeline(publicTask.id);
+
+    expect(timeline.events[0].payload).toEqual(payload);
+  });
 });

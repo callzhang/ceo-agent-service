@@ -165,6 +165,25 @@ describe("workbench event reducer", () => {
     expect(parseStreamEvent(JSON.stringify(event(1, "tool_started", { tool: "read", env: "secret" })), "tool_started")).toBeNull();
     expect(parseStreamEvent(JSON.stringify(event(1, "text_delta", { text: "safe" })), "text_delta")).toEqual(event(1, "text_delta", { text: "safe" }));
   });
+
+  it("accepts bounded nested white-box tool JSON", () => {
+    const payload = {
+      tool_call_id: "tool-call-1",
+      kind: "mcp",
+      name: "codex_apps.google_calendar.search_events",
+      native_id: "native-1",
+      status: "completed",
+      server: "codex_apps",
+      tool: "google_calendar.search_events",
+      arguments: { calendars: ["primary"], time_min: "2026-08-14T00:00:00+08:00" },
+      result: { structuredContent: { events: [], next_page_token: "next-1" } },
+      provider_item: { id: "native-1", type: "mcp_tool_call" },
+    };
+    const value = event(22, "tool_completed", payload);
+
+    expect(parseStreamEvent(JSON.stringify(value), "tool_completed")).toEqual(value);
+    expect(parseStreamEvent(JSON.stringify(event(23, "tool_completed", { ...payload, unexpected: true })), "tool_completed")).toBeNull();
+  });
 });
 
 describe("EventStreamConnection", () => {
