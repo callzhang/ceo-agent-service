@@ -1,6 +1,6 @@
-import { memo, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
-import { Virtuoso } from "react-virtuoso";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import remarkGfm from "remark-gfm";
 
 import { timelineBlocks } from "../events";
@@ -18,6 +18,16 @@ interface ConversationTimelineProps {
 
 export function assistantTurnKey(turn: Turn) {
   return `turn:${turn.id}:assistant`;
+}
+
+export function activeTurnScrollIndex(
+  turns: Turn[],
+  activeTurnId: string | null,
+  firstItemIndex: number,
+): number | null {
+  if (!activeTurnId) return null;
+  const position = turns.findIndex((turn) => turn.id === activeTurnId);
+  return position < 0 ? null : firstItemIndex + position;
 }
 
 function safeWebHref(href?: string): string | undefined {
@@ -95,6 +105,7 @@ function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, acti
 
 export function ConversationTimeline({ timeline, activeTurnId, onConfirm, onCancel }: ConversationTimelineProps) {
   const turns = useMemo(() => [...timeline.turns].reverse(), [timeline.turns]);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const eventsByTurn = useMemo(() => {
     const indexed = new Map<string, WorkbenchEvent[]>();
     for (const event of timeline.events) {
@@ -122,9 +133,19 @@ export function ConversationTimeline({ timeline, activeTurnId, onConfirm, onCanc
     }
     priorOldestTurnId.current = turns[0].id;
   }
+  useEffect(() => {
+    const index = activeTurnScrollIndex(
+      turns,
+      activeTurnId,
+      firstItemIndex.current,
+    );
+    if (index === null) return;
+    virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: "auto" });
+  }, [activeTurnId, timeline.task.id, turns.length]);
   return (
     <div className="conversation-timeline" data-testid="conversation-timeline">
       <Virtuoso
+        ref={virtuosoRef}
         className="conversation-virtuoso"
         data={turns}
         firstItemIndex={firstItemIndex.current}
