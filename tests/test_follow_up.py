@@ -2004,6 +2004,48 @@ def test_follow_up_failure_marks_failed_and_records_error(tmp_path):
     assert "send failed" in failed.send_result_json
 
 
+def test_direct_target_rejection_is_clear_non_delivery_failure(tmp_path):
+    from app.dws_client import DwsError
+
+    class DirectTargetRejectedDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            self.sent.append(kwargs)
+            raise DwsError(
+                "dws command failed; operation: chat/send_personal_message",
+                code="ERROR",
+            )
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Recruiting", category="HR")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        target_kind="direct",
+        question_text="请确认候选人流程状态。",
+        risk_check_json=json.dumps({"owner_in_group": False, "sensitive": True}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+
+    assert process_due_follow_ups(
+        store,
+        DirectTargetRejectedDws(),
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    ) == 0
+
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    result = json.loads(draft.send_result_json)
+    assert draft.status == "failed"
+    assert result["reason"] == "direct_message_target_rejected"
+    assert result["delivery_state"] == "not_sent"
+    assert "no message was delivered" in result["error"]
+    [error] = store.list_errors()
+    assert error.detail == result["error"]
+
+
 def test_dws_login_required_defers_follow_up_without_marking_failed(tmp_path):
     from app.dws_client import DwsError
 

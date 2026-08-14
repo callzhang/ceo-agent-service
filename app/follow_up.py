@@ -263,6 +263,29 @@ def _recoverable_retry_at(now: str) -> str:
     return (current + RECOVERABLE_AUTH_RETRY_DELAY).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _follow_up_delivery_failure(draft, exc: Exception) -> dict[str, str]:
+    """Return an auditable failure without retaining outbound message content."""
+    detail = str(exc)
+    if (
+        draft.target_kind == "direct"
+        and isinstance(exc, DwsError)
+        and "operation: chat/send_personal_message" in detail
+    ):
+        return {
+            "reason": "direct_message_target_rejected",
+            "delivery_state": "not_sent",
+            "error": (
+                "DingTalk rejected the direct recipient; no message was delivered. "
+                "Refresh the recipient identity before creating a new follow-up."
+            ),
+        }
+    return {
+        "reason": "delivery_failed",
+        "delivery_state": "not_sent",
+        "error": detail,
+    }
+
+
 def _lease_until(now: str, duration: timedelta) -> str:
     current = _parse_follow_up_datetime(now) or datetime.now(timezone.utc).replace(
         tzinfo=None
@@ -1286,9 +1309,10 @@ def process_due_follow_ups(
                 )
                 continue
             if claim_token:
+                failure = _follow_up_delivery_failure(draft, exc)
                 failed_result_json = json.dumps(
                     {
-                        "error": str(exc),
+                        **failure,
                         "claimed_revision": draft.revision,
                         "idempotency_uuid": revision_uuid,
                     },
@@ -1319,7 +1343,7 @@ def process_due_follow_ups(
                 draft.target_conversation_id,
                 None,
                 "follow_up",
-                str(exc),
+                _follow_up_delivery_failure(draft, exc)["error"],
             )
             continue
         finalized = store.update_claimed_follow_up_draft(

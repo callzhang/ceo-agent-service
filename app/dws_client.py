@@ -3629,6 +3629,10 @@ class DwsClient:
 
     @classmethod
     def _sanitize_command(cls, command: list[str]) -> str:
+        if len(command) >= 4 and command[1:4] == ["chat", "message", "send"]:
+            # A failed outbound message must remain diagnosable without
+            # persisting its recipient, title, body, or idempotency key.
+            return " ".join(command[:4]) + " <outbound arguments redacted>"
         sanitized: list[str] = []
         redact_next = False
         for token in command:

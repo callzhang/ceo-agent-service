@@ -14846,6 +14846,31 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def redact_and_resolve_error(
+        self,
+        error_id: int,
+        *,
+        detail: str,
+        resolution: str,
+    ) -> bool:
+        """Replace an unsafe historical detail while retaining its audit outcome."""
+        if error_id <= 0:
+            return False
+        if not detail.strip() or not resolution.strip():
+            raise ValueError("redacted detail and resolution must be non-empty")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors
+                set detail=?,
+                    resolved_at=current_timestamp,
+                    resolution=?
+                where id=? and coalesce(resolved_at, '')=''
+                """,
+                (detail.strip(), resolution.strip(), error_id),
+            )
+            return cursor.rowcount == 1
+
     def resolve_errors_recovered_by_reply_attempts(self) -> int:
         """Close errors whose trigger has a later verified terminal outcome."""
         terminal_statuses = (

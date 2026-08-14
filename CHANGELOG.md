@@ -4,6 +4,10 @@
 
 ### Audit reconciliation
 
+- Redact every failed outbound chat-send command before persistence, and record
+  direct-recipient rejection as an explicit no-delivery terminal result so an
+  inactive recipient is not retried or reported as an ambiguous service error.
+
 - Close delivery-ledger-backed native `chat +dm` Audit recoveries without a
   duplicate external send, and terminate authorization waits immediately when
   DingTalk supplies no actionable scope to request. Authorization waits with a

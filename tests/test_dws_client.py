@@ -1744,6 +1744,27 @@ def test_send_message_command_supports_dws_idempotency_uuid():
     )
 
 
+def test_sanitize_command_redacts_all_outbound_message_arguments():
+    command = [
+        "dws",
+        "chat",
+        "message",
+        "send",
+        "--open-dingtalk-id",
+        "recipient-open-id",
+        "--title",
+        "Sensitive title",
+        "--uuid",
+        "delivery-uuid",
+        "--text",
+        "Sensitive body and feedback link",
+    ]
+
+    assert DwsClient._sanitize_command(command) == (
+        "dws chat message send <outbound arguments redacted>"
+    )
+
+
 def test_build_mail_reply_command_shape():
     client = DwsClient(dws_bin="dws")
 
@@ -5889,7 +5910,8 @@ def test_run_json_error_includes_sanitized_command_and_output_previews(monkeypat
         )
 
     message = str(exc_info.value)
-    assert "command=dws chat message send --robot-code <redacted>" in message
+    assert "command=dws chat message send <outbound arguments redacted>" in message
+    assert "secret-code" not in message
     assert "stderr=raw stderr" in message
     assert "stdout=raw stdout" in message
     assert "secret-code" not in message

@@ -5821,6 +5821,23 @@ def test_resolve_errors_keeps_history_with_a_resolution(tmp_path: Path):
     assert resolved.resolution == "recovered by queue retry"
 
 
+def test_redact_and_resolve_error_replaces_unsafe_historical_detail(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error(None, None, "follow_up", "outbound message body")
+    [error] = store.list_errors()
+
+    assert store.redact_and_resolve_error(
+        error.id,
+        detail="direct recipient rejected; message not sent",
+        resolution="target is no longer available",
+    )
+
+    [resolved] = store.list_errors()
+    assert resolved.detail == "direct recipient rejected; message not sent"
+    assert resolved.resolved_at
+    assert resolved.resolution == "target is no longer available"
+
+
 def test_resolve_errors_recovered_by_later_terminal_reply_attempt(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("cid-1", "msg-1", "reply_task", "temporary failure")
