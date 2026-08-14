@@ -1021,6 +1021,29 @@ def test_cancel_never_runs_and_conflicting_decision_rejects(tmp_path: Path):
     executor.close()
 
 
+def test_known_runtime_limit_is_explained_transparently(tmp_path: Path):
+    store = _store(tmp_path)
+    _, turn = _queued(store)
+    runtime = FakeRuntime(
+        result=RuntimeResult(
+            status="failed",
+            error_code="provider_output_limit",
+            error_detail="provider output exceeded the safe limit",
+        )
+    )
+    executor = WorkbenchExecutor(store, RuntimeRegistry([runtime]), workspace=tmp_path)
+
+    executor.run_once(max_turns=1)
+
+    persisted = store.get_turn(turn.id)
+    assert persisted.status is TurnStatus.FAILED
+    assert persisted.error_code == "provider_output_limit"
+    assert persisted.error_detail == (
+        "Codex provider output exceeded the 16 MiB Workbench safety limit."
+    )
+    executor.close()
+
+
 def test_writer_failure_is_sanitized_and_requeued_for_agent_report(
     tmp_path: Path, monkeypatch
 ):

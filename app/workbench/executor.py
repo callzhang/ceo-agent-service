@@ -40,6 +40,26 @@ from app.workbench.store import WORKBENCH_RECOVERY_BATCH_LIMIT, WorkbenchStore
 
 _MAX_CLAIMS = 2
 _SAFE_RUNTIME_FAILURE = "Runtime execution could not be completed safely."
+_KNOWN_RUNTIME_FAILURE_DETAILS = {
+    "provider_output_limit": (
+        "Codex provider output exceeded the 16 MiB Workbench safety limit."
+    ),
+    "provider_timeout": "Codex provider exceeded the Workbench execution timeout.",
+    "provider_process_failed": "Codex provider process exited unsuccessfully.",
+    "provider_turn_failed": "Codex provider reported that the turn failed.",
+    "incomplete_provider_output": (
+        "Codex provider exited without a terminal completion event."
+    ),
+    "missing_provider_session": (
+        "Codex provider completed without returning a session identifier."
+    ),
+    "invalid_provider_output": "Codex provider returned invalid JSONL output.",
+    "runtime_unavailable": "The requested runtime is not available in this service.",
+}
+
+
+def _public_runtime_failure_detail(error_code: str) -> str:
+    return _KNOWN_RUNTIME_FAILURE_DETAILS.get(error_code, _SAFE_RUNTIME_FAILURE)
 
 
 @dataclass
@@ -691,7 +711,11 @@ class WorkbenchExecutor:
                 if target is TurnStatus.FAILED
                 else ""
             ),
-            error_detail=(_SAFE_RUNTIME_FAILURE if target is TurnStatus.FAILED else ""),
+            error_detail=(
+                _public_runtime_failure_detail(result.error_code or "runtime_failure")
+                if target is TurnStatus.FAILED
+                else ""
+            ),
             event_payload={"status": target.value},
             owner=self.owner,
         )
@@ -711,7 +735,11 @@ class WorkbenchExecutor:
                     TurnStatus.STOPPED if current.stop_requested else TurnStatus.FAILED
                 ),
                 error_code=("" if current.stop_requested else code),
-                error_detail=("" if current.stop_requested else _SAFE_RUNTIME_FAILURE),
+                error_detail=(
+                    ""
+                    if current.stop_requested
+                    else _public_runtime_failure_detail(code)
+                ),
                 owner=self.owner,
             )
         except ValueError:
