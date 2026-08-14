@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import codecs
-import contextlib
 import json
 import os
 import re
@@ -22,14 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from app.codex_runner import CodexRunner
-from app.leak_check import (
-    assert_no_credentials,
-    contains_credential,
-    redact_credentials_in_value,
-)
 from app.process_runner import ProcessRunResult
-from app.workbench.confirmation_mcp import _validate_argv
-from app.workbench.isolated_home import IsolatedCodexHome, create_isolated_codex_home
 from app.workbench.runtime import (
     RuntimeCapabilities,
     RuntimeEvent,
@@ -46,123 +38,9 @@ _DEFAULT_TOTAL_TIMEOUT_SECONDS = 1200
 _DEFAULT_IDLE_TIMEOUT_SECONDS = 900
 _MAX_PROVIDER_OUTPUT_BYTES = 16 * 1024 * 1024
 MAX_PROMPT_BYTES = 1024 * 1024
-_CONFIRMATION_SERVER = "workbench_confirmation"
-_CONFIRMATION_TOOL = "request_reviewed_action"
 _WORKBENCH_MCP_STARTUP_TIMEOUT_SECONDS = 120
-_DEVELOPER_INSTRUCTIONS = """
-You are running inside the local Agent Workbench. Preserve the user's configured
-Codex skills, rules, plugins, and authenticated read tools. You may perform local,
-reversible work directly. For every reviewed external write, deletion, destructive
-operation, important overwrite, approval decision, or message send, call
-workbench_confirmation.request_reviewed_action with the proposed argv, target,
-summary, and risk. Never execute such an action directly. The confirmation tool
-only records a proposal and never performs the action.
-""".strip()
-
-
-def _toml_value(value: object) -> str:
-    if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
-    if isinstance(value, Mapping):
-        return "{ " + ", ".join(
-            f"{key} = {_toml_value(item)}" for key, item in value.items()
-        ) + " }"
-    raise TypeError("unsupported TOML overlay value")
-
-
-def _confirmation_server_overlay() -> str:
-    server = {
-        "command": sys.executable,
-        "args": ["-m", "app.workbench.confirmation_mcp"],
-        "cwd": str(Path(__file__).resolve().parents[2]),
-        "enabled": True,
-        "enabled_tools": [_CONFIRMATION_TOOL],
-    }
-    return f"mcp_servers.{_CONFIRMATION_SERVER}={_toml_value(server)}"
-
-
-_TOML_TABLE_HEADER = re.compile(r"^\s*\[\[?([^\[\]]+)\]\]?\s*(?:#.*)?$")
-_CONFIRMATION_ASSIGNMENT = re.compile(
-    r"^\s*(?:mcp_servers\s*\.\s*)?[\"']?workbench_confirmation[\"']?\s*="
-)
 _MCP_SERVER_CONFIG_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 _MAX_CODEX_CONFIG_BYTES = 4 * 1024 * 1024
-
-
-def _toml_table_path(header: str) -> tuple[str, ...]:
-    return tuple(part.strip().strip("\"'") for part in header.split("."))
-
-
-def _toml_fragment_is_complete(fragment: str, *, in_mcp_table: bool) -> bool:
-    candidate = f"[mcp_servers]\n{fragment}" if in_mcp_table else fragment
-    try:
-        tomllib.loads(candidate)
-    except tomllib.TOMLDecodeError:
-        return False
-    return True
-
-
-def _config_without_confirmation_server(source: str) -> str:
-    """Remove exactly one inherited server definition while preserving source text."""
-    # Reject invalid input before transforming it, without ever echoing its contents.
-    parsed = tomllib.loads(source)
-    servers = parsed.get("mcp_servers")
-    if not isinstance(servers, Mapping) or _CONFIRMATION_SERVER not in servers:
-        return source
-
-    output: list[str] = []
-    current_table: tuple[str, ...] = ()
-    suppress_section = False
-    assignment_fragment: list[str] | None = None
-    assignment_in_mcp_table = False
-    for line in source.splitlines(keepends=True):
-        if assignment_fragment is not None:
-            assignment_fragment.append(line)
-            fragment = "".join(assignment_fragment)
-            if _toml_fragment_is_complete(
-                fragment, in_mcp_table=assignment_in_mcp_table
-            ):
-                assignment_fragment = None
-            continue
-
-        header_match = _TOML_TABLE_HEADER.match(line)
-        if header_match:
-            current_table = _toml_table_path(header_match.group(1))
-            suppress_section = current_table[:2] == (
-                "mcp_servers",
-                _CONFIRMATION_SERVER,
-            )
-            if not suppress_section:
-                output.append(line)
-            continue
-        if suppress_section:
-            continue
-
-        in_mcp_table = current_table == ("mcp_servers",)
-        root_assignment = not current_table and re.match(
-            r"^\s*mcp_servers\s*\.\s*[\"']?workbench_confirmation[\"']?\s*=",
-            line,
-        )
-        parent_assignment = in_mcp_table and _CONFIRMATION_ASSIGNMENT.match(line)
-        if root_assignment or parent_assignment:
-            if not _toml_fragment_is_complete(line, in_mcp_table=in_mcp_table):
-                assignment_fragment = [line]
-                assignment_in_mcp_table = in_mcp_table
-            continue
-        output.append(line)
-
-    if assignment_fragment is not None:
-        raise ValueError("Codex configuration could not be isolated safely")
-    sanitized = "".join(output)
-    sanitized_parsed = tomllib.loads(sanitized)
-    sanitized_servers = sanitized_parsed.get("mcp_servers")
-    if isinstance(sanitized_servers, Mapping) and _CONFIRMATION_SERVER in sanitized_servers:
-        raise ValueError("Codex configuration could not be isolated safely")
-    return sanitized
 
 
 def _mcp_startup_timeout_overlays(config_path: Path) -> list[str]:
@@ -171,17 +49,17 @@ def _mcp_startup_timeout_overlays(config_path: Path) -> list[str]:
         if not config_path.is_file():
             return []
         if config_path.stat().st_size > _MAX_CODEX_CONFIG_BYTES:
-            raise ValueError("Codex configuration could not be isolated safely")
+            raise ValueError("Codex configuration could not be read")
         parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
-        raise ValueError("Codex configuration could not be isolated safely") from exc
+        raise ValueError("Codex configuration could not be read") from exc
 
     servers = parsed.get("mcp_servers")
     if not isinstance(servers, Mapping):
         return []
     overlays: list[str] = []
     for name, configuration in sorted(servers.items()):
-        if name == _CONFIRMATION_SERVER or not isinstance(configuration, Mapping):
+        if not isinstance(configuration, Mapping):
             continue
         if not _MCP_SERVER_CONFIG_KEY.fullmatch(str(name)):
             continue
@@ -211,61 +89,6 @@ def _command_with_mcp_startup_timeouts(
     insert_at = 3 if len(effective) > 2 and effective[2] == "resume" else 2
     effective[insert_at:insert_at] = arguments
     return effective
-
-
-@contextlib.contextmanager
-def _isolated_codex_environment(
-    base_env: Mapping[str, str],
-    *,
-    provider_session_ref: str = "",
-):
-    """Isolate a conflicting MCP definition while retaining user-owned Codex state."""
-    env = dict(base_env)
-    codex_home = Path(env.get("CODEX_HOME", "~/.codex")).expanduser()
-    config_path = codex_home / "config.toml"
-    try:
-        if not config_path.is_file():
-            sanitized = None
-        else:
-            if config_path.stat().st_size > _MAX_CODEX_CONFIG_BYTES:
-                raise ValueError("Codex configuration could not be isolated safely")
-            source = config_path.read_text(encoding="utf-8")
-            sanitized_source = _config_without_confirmation_server(source)
-            sanitized = None if sanitized_source == source else sanitized_source
-    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
-        raise ValueError("Codex configuration could not be isolated safely") from exc
-
-    if sanitized is None:
-        yield _CodexProcessEnvironment(env)
-        return
-
-    try:
-        isolated_home = create_isolated_codex_home(
-            codex_home,
-            sanitized,
-            provider_session_ref=provider_session_ref,
-        )
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise ValueError("Codex configuration could not be isolated safely") from exc
-
-    isolated_env = dict(env)
-    isolated_env["CODEX_HOME"] = str(isolated_home.path)
-    process_environment = _CodexProcessEnvironment(isolated_env, isolated_home)
-    try:
-        yield process_environment
-    finally:
-        isolated_home.cleanup(sync_sessions=process_environment.sync_sessions)
-
-
-class _CodexProcessEnvironment(dict[str, str]):
-    def __init__(
-        self,
-        values: Mapping[str, str],
-        isolated_home: IsolatedCodexHome | None = None,
-    ):
-        super().__init__(values)
-        self.isolated_home = isolated_home
-        self.sync_sessions = False
 
 
 class _AdapterFailure(ValueError):
@@ -389,7 +212,6 @@ class _CodexNormalizer:
         value = item.get("text")
         if not isinstance(value, str) or not value:
             return
-        _reject_credential_bearing_text(value)
         key = self._text_key(item, completing=False)
         text = self._text_states.get(key, "") + value
         self._text_states[key] = text
@@ -400,7 +222,6 @@ class _CodexNormalizer:
         value = item.get("text")
         if not isinstance(value, str) or not value:
             return
-        _reject_credential_bearing_text(value)
         key = self._text_key(item, completing=True)
         streamed = self._text_states.pop(key, "")
         if value.startswith(streamed):
@@ -414,7 +235,6 @@ class _CodexNormalizer:
             self._idless_text_key = ""
 
     def _accept_terminal_text(self, value: str) -> None:
-        _reject_credential_bearing_text(value)
         if value != self.final_text:
             self._emit("text_delta", {"text": value})
         self.final_text = value
@@ -459,11 +279,7 @@ class _CodexNormalizer:
             )
         correlation_id, started_item = started
         provider_item = {**started_item, **dict(item)}
-        proposal: dict[str, object] | None = None
         failed = _native_tool_failed(item)
-        if item.get("type") == "mcp_tool_call":
-            if _is_confirmation_call(item) and not failed:
-                proposal = _extract_confirmation(item.get("result"))
         self._emit(
             "tool_completed",
             _tool_payload(
@@ -472,19 +288,8 @@ class _CodexNormalizer:
                 status="failed" if failed else "completed",
             ),
         )
-        if proposal is not None:
-            self._emit("confirmation_required", proposal)
 
     def _emit(self, event_type: str, payload: Mapping[str, Any]) -> None:
-        try:
-            if event_type in {"tool_started", "tool_completed"}:
-                payload = redact_credentials_in_value(payload)
-            else:
-                assert_no_credentials(payload)
-        except ValueError as exc:
-            raise _AdapterFailure(
-                "sensitive_provider_output", "provider output contained sensitive data"
-            ) from exc
         self._on_event(RuntimeEvent(event_type, payload))
 
 
@@ -589,80 +394,6 @@ def _documented_wrapper_failed(value: Mapping[str, object]) -> bool:
     }
 
 
-def _is_confirmation_call(item: Mapping[str, Any]) -> bool:
-    return (
-        item.get("server") == _CONFIRMATION_SERVER
-        and item.get("tool") == _CONFIRMATION_TOOL
-    )
-
-
-def _reject_credential_bearing_text(value: str) -> None:
-    if contains_credential(value):
-        raise _AdapterFailure(
-            "sensitive_provider_output", "provider output contained sensitive text"
-        )
-
-
-def _extract_confirmation(native_result: object) -> dict[str, object]:
-    candidate: object = native_result
-    if isinstance(candidate, Mapping):
-        for key in ("structuredContent", "structured_content"):
-            structured = candidate.get(key)
-            if isinstance(structured, Mapping):
-                candidate = structured.get("result", structured)
-                break
-        else:
-            content = candidate.get("content")
-            if isinstance(content, Sequence) and not isinstance(content, (str, bytes)):
-                for entry in content:
-                    if isinstance(entry, Mapping) and isinstance(entry.get("text"), str):
-                        try:
-                            decoded = json.loads(entry["text"])
-                        except (TypeError, ValueError):
-                            continue
-                        candidate = (
-                            decoded.get("result", decoded)
-                            if isinstance(decoded, Mapping)
-                            else decoded
-                        )
-                        break
-    if not isinstance(candidate, Mapping):
-        raise _AdapterFailure("invalid_confirmation", "confirmation proposal was invalid")
-    expected_fields = {"kind", "argv", "target", "summary", "risk", "executed"}
-    if set(candidate) != expected_fields:
-        raise _AdapterFailure("invalid_confirmation", "confirmation proposal was invalid")
-    try:
-        assert_no_credentials(candidate)
-    except ValueError as exc:
-        raise _AdapterFailure(
-            "sensitive_provider_output", "confirmation proposal contained sensitive data"
-        ) from exc
-    try:
-        argv = _validate_argv(candidate.get("argv"))
-    except ValueError as exc:
-        raise _AdapterFailure("invalid_confirmation", "confirmation proposal was invalid") from exc
-    fields = ("target", "summary", "risk")
-    if (
-        candidate.get("kind") != "reviewed_cli"
-        or candidate.get("executed") is not False
-        or any(
-            not isinstance(candidate.get(field), str) or not candidate[field].strip()
-            for field in fields
-        )
-    ):
-        raise _AdapterFailure("invalid_confirmation", "confirmation proposal was invalid")
-    for text_field in fields:
-        _reject_credential_bearing_text(candidate[text_field])
-    return {
-        "kind": "reviewed_cli",
-        "argv": argv,
-        "target": candidate["target"].strip(),
-        "summary": candidate["summary"].strip(),
-        "risk": candidate["risk"].strip(),
-        "executed": False,
-    }
-
-
 @dataclass
 class _RuntimeOwner:
     executor: Any
@@ -686,13 +417,6 @@ class _CancellableProcessExecutor:
         self._owned_pgid: int | None = None
         self._watchdog_write_fd: int | None = None
         self._stop_requested = False
-        self._isolated_home: IsolatedCodexHome | None = None
-
-    def set_isolated_home(self, isolated_home: IsolatedCodexHome) -> None:
-        with self._lock:
-            if self._process is not None:
-                raise RuntimeError("process cleanup ownership was attached too late")
-            self._isolated_home = isolated_home
 
     def stop(self) -> None:
         with self._lock:
@@ -756,20 +480,7 @@ class _CancellableProcessExecutor:
         line_buffer = ""
         parent_read_fd, parent_write_fd = os.pipe()
         identity = str(uuid.uuid4())
-        with self._lock:
-            isolated_home = self._isolated_home
-        cleanup_options: list[str] = []
         inherited_fds = [parent_read_fd]
-        if isolated_home is not None and isolated_home.lock_fd >= 0:
-            cleanup_options = [
-                "--cleanup-home",
-                str(isolated_home.path),
-                "--cleanup-marker",
-                isolated_home.marker_token,
-                "--cleanup-lock-fd",
-                str(isolated_home.lock_fd),
-            ]
-            inherited_fds.append(isolated_home.lock_fd)
         wrapped_command = [
             sys.executable,
             str(Path(__file__).with_name("process_watchdog.py")),
@@ -777,7 +488,6 @@ class _CancellableProcessExecutor:
             str(parent_read_fd),
             "--identity",
             identity,
-            *cleanup_options,
             "--",
             *command,
         ]
@@ -997,12 +707,13 @@ class CodexRuntime:
             image_paths=validated_images,
             use_output_schema=False,
             approval_policy="untrusted",
-            developer_instructions=_DEVELOPER_INSTRUCTIONS,
-            use_approval_bypass=False,
+            use_approval_bypass=True,
             preserve_native_model_config=True,
+            preserve_native_instructions=True,
+            preserve_native_approval_config=True,
         )
         insert_at = 3 if provider_session_ref else 2
-        overlay = ["-c", _confirmation_server_overlay()]
+        overlay: list[str] = []
         if model.strip():
             overlay[0:0] = ["-m", model.strip()]
         command[insert_at:insert_at] = overlay
@@ -1079,36 +790,21 @@ class CodexRuntime:
                 workspace=owner.request.workspace,
                 codex_bin=self.codex_bin,
             ).build_env(preserve_local_cli_auth=True)
-            with _isolated_codex_environment(
-                base_env,
-                provider_session_ref=owner.request.provider_session_ref,
-            ) as process_env:
-                if process_env.isolated_home is not None:
-                    attach_cleanup = getattr(owner.executor, "set_isolated_home", None)
-                    if callable(attach_cleanup):
-                        attach_cleanup(process_env.isolated_home)
-                command = _command_with_mcp_startup_timeouts(
-                    owner.command,
-                    Path(process_env.get("CODEX_HOME", "~/.codex")).expanduser()
-                    / "config.toml",
-                )
-                process_result = owner.executor(
-                    command,
-                    prompt=owner.request.prompt,
-                    env=process_env,
-                    total_timeout_seconds=self.total_timeout_seconds,
-                    idle_timeout_seconds=self.idle_timeout_seconds,
-                    on_stdout_line=owner.normalizer.accept_line,
-                )
-                with owner.lock:
-                    stopped = owner.stop_requested
-                process_env.sync_sessions = bool(
-                    not stopped
-                    and process_result.returncode == 0
-                    and not process_result.timed_out
-                    and owner.normalizer.terminal_status == "completed"
-                    and owner.normalizer.provider_session_ref
-                )
+            command = _command_with_mcp_startup_timeouts(
+                owner.command,
+                Path(base_env.get("CODEX_HOME", "~/.codex")).expanduser()
+                / "config.toml",
+            )
+            process_result = owner.executor(
+                command,
+                prompt=owner.request.prompt,
+                env=base_env,
+                total_timeout_seconds=self.total_timeout_seconds,
+                idle_timeout_seconds=self.idle_timeout_seconds,
+                on_stdout_line=owner.normalizer.accept_line,
+            )
+            with owner.lock:
+                stopped = owner.stop_requested
             if stopped:
                 result = RuntimeResult(status="stopped")
             elif process_result.timed_out:
@@ -1121,7 +817,11 @@ class CodexRuntime:
                 result = RuntimeResult(
                     status="failed",
                     error_code="provider_process_failed",
-                    error_detail="provider execution failed",
+                    error_detail=(
+                        process_result.stderr.strip()
+                        or process_result.stdout.strip()
+                        or f"provider process exited with code {process_result.returncode}"
+                    ),
                 )
             elif owner.normalizer.terminal_status == "failed":
                 result = RuntimeResult(
@@ -1153,11 +853,11 @@ class CodexRuntime:
                 error_code=exc.code,
                 error_detail=exc.detail,
             )
-        except Exception:
+        except Exception as exc:
             result = RuntimeResult(
                 status="failed",
                 error_code="runtime_failure",
-                error_detail="provider execution could not be completed safely",
+                error_detail=f"{type(exc).__name__}: {exc}",
             )
         owner.result = result
         owner.done.set()

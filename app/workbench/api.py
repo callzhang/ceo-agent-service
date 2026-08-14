@@ -24,7 +24,6 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from app.leak_check import redact_credentials_in_value
 from app.workbench.executor import WorkbenchExecutor
 from app.workbench.models import (
     ConfirmationStatus,
@@ -396,7 +395,7 @@ def _public_task_with_state(
 ) -> PublicTask:
     workspace = workspace or Path.cwd()
     return PublicTask.model_validate(
-        _safe_public_record(
+        _public_record(
             {
                 "id": task.id,
                 "title": task.title,
@@ -473,21 +472,19 @@ def _parse_resource_cursor(cursor: str | None) -> tuple[str, str] | None:
         raise HTTPException(status_code=400, detail="Invalid resource cursor") from exc
 
 
-def _safe_public_string(value: str, *, key: str, workspace: Path) -> str:
-    projected = _safe_public_value(value, key=key, workspace=workspace)
-    return projected if isinstance(projected, str) else "[redacted]"
+def _public_string(value: str, *, key: str, workspace: Path) -> str:
+    del key, workspace
+    return value
 
 
-def _safe_public_record(values: dict[str, Any], workspace: Path) -> dict[str, Any]:
-    return {
-        key: _safe_public_value(value, key=key, workspace=workspace)
-        for key, value in values.items()
-    }
+def _public_record(values: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    del workspace
+    return dict(values)
 
 
 def _public_turn(turn: WorkbenchTurn, workspace: Path) -> PublicTurn:
     return PublicTurn.model_validate(
-        _safe_public_record(turn.model_dump(exclude={"task_sequence"}), workspace)
+        _public_record(turn.model_dump(exclude={"task_sequence"}), workspace)
     )
 
 
@@ -547,15 +544,11 @@ _PUBLIC_EVENT_FIELDS: dict[str, frozenset[str]] = {
 }
 
 
-def _safe_public_value(value: Any, *, key: str, workspace: Path) -> Any:
-    del key, workspace
-    return redact_credentials_in_value(value, "[redacted]")
-
-
 def _public_event(event: WorkbenchEvent, workspace: Path) -> PublicEvent:
+    del workspace
     allowed = _PUBLIC_EVENT_FIELDS.get(event.event_type, frozenset())
     payload = {
-        key: _safe_public_value(value, key=key, workspace=workspace)
+        key: value
         for key, value in event.payload.items()
         if key in allowed
     }
@@ -567,9 +560,7 @@ def _public_event(event: WorkbenchEvent, workspace: Path) -> PublicEvent:
         "payload": payload,
         "created_at": event.created_at,
     }
-    return PublicEvent.model_validate(
-        _safe_public_record(values, workspace)
-    )
+    return PublicEvent.model_validate(values)
 
 
 def _public_artifact(
@@ -577,7 +568,7 @@ def _public_artifact(
 ) -> PublicArtifact:
     workspace = workspace or Path.cwd()
     return PublicArtifact.model_validate(
-        _safe_public_record(
+        _public_record(
             {
                 "id": artifact.id,
                 "turn_id": artifact.turn_id,
@@ -607,7 +598,7 @@ def _public_attachment(
         if _media_type_permitted(attachment.media_type)
         else "application/octet-stream"
     )
-    return WorkbenchAttachment.model_validate(_safe_public_record(values, workspace))
+    return WorkbenchAttachment.model_validate(_public_record(values, workspace))
 
 
 def _public_confirmation(
@@ -627,7 +618,7 @@ def _public_confirmation(
     ):
         canonical_targets = []
     return PublicConfirmation.model_validate(
-        _safe_public_record(
+        _public_record(
             {
                 "id": confirmation.id,
                 "turn_id": confirmation.turn_id,
@@ -1194,7 +1185,7 @@ def register_workbench_routes(
     def runtime_capabilities() -> list[RuntimeCapabilitiesResponse]:
         return [
             RuntimeCapabilitiesResponse(
-                kind=_safe_public_string(
+                kind=_public_string(
                     kind, key="runtime_kind", workspace=executor.workspace
                 ),
                 capabilities=asdict(runtime_registry.get(kind).capabilities()),
@@ -1219,7 +1210,7 @@ def register_workbench_routes(
         if artifact is None or artifact.turn_id != turn_id_text:
             raise _not_found()
         opened = _open_artifact_fd(artifact.path, roots)
-        safe_label = _safe_public_string(
+        safe_label = _public_string(
             artifact.label, key="filename", workspace=executor.workspace
         )
         filename = Path(safe_label).name.strip() or opened.basename

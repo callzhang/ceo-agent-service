@@ -9,15 +9,11 @@ const legacySummaries: Record<string, string> = {
   "Tool failed": "执行失败",
 };
 
-export function safeDisplayText(value: unknown, fallback: string): string {
+export function displayText(value: unknown, fallback: string): string {
   if (typeof value !== "string") return fallback;
   const cleaned = Array.from(value).filter((character) => character.charCodeAt(0) >= 32 || character === "\n").join("").trim();
   if (!cleaned) return fallback;
-  const redacted = cleaned
-    .replace(/\bBearer\s+\S+/gi, "Bearer [已隐藏凭据]")
-    .replace(/\b(api[_-]?key|token|secret|password)\s*[:=]\s*\S+/gi, "$1=[已隐藏凭据]")
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, "[已隐藏凭据]");
-  return redacted;
+  return cleaned;
 }
 
 export interface ExecutionStepProps {
@@ -63,12 +59,12 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
   const Icon = kind === "file" ? FilePenLine : failed ? XCircle : completed ? CheckCircle2 : aborted ? CircleSlash2 : CircleEllipsis;
   const whiteBox = kind === "tool" && (payload.kind === "command" || payload.kind === "mcp");
   const name = kind === "file"
-    ? safeDisplayText(payload.filename, "文件变更")
+    ? displayText(payload.filename, "文件变更")
     : whiteBox
       ? exactText(payload.kind === "command" ? payload.command : payload.name, exactText(payload.name, "工具调用"))
       : executionName(payload.tool);
   const rawSummary = payload.summary ?? payload.change;
-  const summary = safeDisplayText(
+  const summary = displayText(
     typeof rawSummary === "string" && Object.prototype.hasOwnProperty.call(legacySummaries, rawSummary)
       ? legacySummaries[rawSummary]
       : rawSummary,

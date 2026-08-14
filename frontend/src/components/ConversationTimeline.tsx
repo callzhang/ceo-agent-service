@@ -7,7 +7,7 @@ import { timelineBlocks } from "../events";
 import type { Artifact, Confirmation, Timeline, Turn, WorkbenchEvent } from "../types";
 import { ArtifactList } from "./ArtifactList";
 import { ConfirmationCard } from "./ConfirmationCard";
-import { ExecutionStep, safeDisplayText } from "./ExecutionStep";
+import { displayText, ExecutionStep } from "./ExecutionStep";
 
 interface ConversationTimelineProps {
   timeline: Timeline;
@@ -104,7 +104,7 @@ function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, acti
         {turn.status === "waiting_confirmation" && <p className="turn-state" role="status">等待确认</p>}
         {turn.status === "completed" && <p className="turn-state">已完成</p>}
         {turn.status === "stopped" && <p className="turn-state">已停止</p>}
-        {turn.status === "failed" && <p className="turn-error" role="alert">执行失败：{safeDisplayText(turn.error_detail || turn.error_code, "未知错误")}</p>}
+        {turn.status === "failed" && <p className="turn-error" role="alert">执行失败：{displayText(turn.error_detail || turn.error_code, "未知错误")}</p>}
       </div>
     </article>
   );
