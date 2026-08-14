@@ -23,7 +23,11 @@ from typing import Any
 
 from app.bounded_process import MAX_PROCESS_OUTPUT_BYTES
 from app.codex_runner import CodexRunner
-from app.leak_check import assert_no_credentials, contains_credential
+from app.leak_check import (
+    assert_no_credentials,
+    contains_credential,
+    redact_credentials_in_value,
+)
 from app.process_runner import ProcessRunResult
 from app.workbench.confirmation_mcp import _validate_argv
 from app.workbench.isolated_home import IsolatedCodexHome, create_isolated_codex_home
@@ -421,7 +425,7 @@ class _CodexNormalizer:
     def _emit(self, event_type: str, payload: Mapping[str, Any]) -> None:
         try:
             if event_type in {"tool_started", "tool_completed"}:
-                _assert_no_credential_values(payload)
+                payload = redact_credentials_in_value(payload)
             else:
                 assert_no_credentials(payload)
         except ValueError as exc:
@@ -478,22 +482,17 @@ def _tool_payload(
     for source, target in fields.items():
         if source in item:
             payload[target] = item[source]
+    if (
+        status == "failed"
+        and kind == "command"
+        and not isinstance(payload.get("exit_code"), int)
+        and not payload.get("output")
+    ):
+        payload["summary"] = (
+            "Codex Provider 报告命令失败，但未返回退出码或诊断输出。"
+        )
     payload["provider_item"] = dict(item)
     return payload
-
-
-def _assert_no_credential_values(value: object) -> None:
-    if isinstance(value, str):
-        if contains_credential(value):
-            raise ValueError("credential-bearing tool value")
-        return
-    if isinstance(value, Mapping):
-        for child in value.values():
-            _assert_no_credential_values(child)
-        return
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        for child in value:
-            _assert_no_credential_values(child)
 
 
 def _required_native_item_id(item: Mapping[str, Any]) -> str:

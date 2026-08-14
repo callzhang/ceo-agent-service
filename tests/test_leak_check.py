@@ -5,6 +5,7 @@ from app.leak_check import (
     assert_no_credentials,
     contains_credential,
     redact_credentials,
+    redact_credentials_in_value,
 )
 
 
@@ -78,6 +79,24 @@ def test_redact_credentials_removes_secret_without_changing_benign_text():
 
     assert secret not in redacted
     assert "summary remains readable" in redacted
+
+
+def test_redact_credentials_in_value_preserves_shape_paths_and_page_tokens():
+    value = {
+        "source": "/Users/derek/Documents/memory/report.md",
+        "access_token": "short-secret",
+        "next_page_token": "opaque-pagination-value",
+        "nested": ["api_key=credential-value-1234", {"status": "ok"}],
+    }
+
+    redacted = redact_credentials_in_value(value)
+
+    assert redacted == {
+        "source": "/Users/derek/Documents/memory/report.md",
+        "access_token": "[REDACTED]",
+        "next_page_token": "opaque-pagination-value",
+        "nested": ["[REDACTED]", {"status": "ok"}],
+    }
 
 
 @pytest.mark.parametrize(

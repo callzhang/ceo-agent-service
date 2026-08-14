@@ -223,6 +223,67 @@ def redact_credentials(
     )
 
 
+def redact_credentials_in_value(
+    value: Any,
+    replacement: str = "[REDACTED]",
+    *,
+    credential_context: bool = False,
+) -> Any:
+    """Redact credentials in JSON-like data while preserving its visible shape.
+
+    Tool events are diagnostic records: a secret-bearing leaf must not make the
+    whole tool call disappear.  Field names stay visible, pagination tokens stay
+    usable, and only credential values are replaced.
+    """
+    if isinstance(value, Mapping):
+        projected: dict[Any, Any] = {}
+        for key, item in value.items():
+            key_text = key if isinstance(key, str) else ""
+            child_context = credential_context or (
+                bool(key_text)
+                and is_sensitive_field_name(key_text)
+                and not _is_pagination_token_field_name(key_text)
+            )
+            safe_key = (
+                redact_credentials(key_text, replacement)
+                if isinstance(key, str)
+                else key
+            )
+            projected[safe_key] = redact_credentials_in_value(
+                item,
+                replacement,
+                credential_context=child_context,
+            )
+        return projected
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [
+            redact_credentials_in_value(
+                item,
+                replacement,
+                credential_context=credential_context,
+            )
+            for item in value
+        ]
+    if isinstance(value, str):
+        if credential_context and value:
+            return replacement
+        return redact_credentials(value, replacement)
+    if credential_context and value is not None:
+        return replacement
+    return value
+
+
+def _is_pagination_token_field_name(value: str) -> bool:
+    normalized = "".join(character for character in value.casefold() if character.isalnum())
+    return normalized in {
+        "continuationtoken",
+        "nextpagetoken",
+        "pagetoken",
+        "previouspagetoken",
+        "prevpagetoken",
+    }
+
+
 def is_sensitive_field_name(value: str) -> bool:
     normalized = "".join(character for character in value.casefold() if character.isalnum())
     return (

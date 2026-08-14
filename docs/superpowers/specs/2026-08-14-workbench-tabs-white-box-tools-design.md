@@ -93,7 +93,7 @@ The UI header uses `server.tool`. It never falls back to `MCP 工具` when eithe
 
 - Tool fields accept JSON objects, arrays, strings, numbers, booleans, and null.
 - Existing provider line-size and event-size limits remain resource-safety boundaries. Rejected oversized or malformed provider records continue to fail closed.
-- The Workbench does not add content-based masking to tool events. Exact local paths and exact provider-supplied action data remain visible.
+- Exact local paths and provider-supplied action data remain visible. Recognizable credential values are replaced in place while their field names remain visible, so one credential-bearing leaf cannot erase or fail the whole diagnostic event.
 - The adapter does not dump the process environment, Codex session files, reasoning items, or unrelated provider records into tool events.
 - Confirmation authorization remains a separate capability. Making a proposed write visible does not bypass the existing confirmation or exactly-once execution rules.
 

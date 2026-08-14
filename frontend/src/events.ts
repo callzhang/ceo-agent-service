@@ -52,6 +52,7 @@ export interface TimelineBlock {
 
 const terminalTurnStatuses = new Set<TurnStatus>(["completed", "stopped", "failed"]);
 const abortedToolSummary = "任务已结束，未收到工具完成事件。";
+const stoppedCommandSummary = "任务已停止，命令未返回退出码。";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -199,9 +200,21 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[], turnSta
     }
   }
   if (!turnStatus || !terminalTurnStatuses.has(turnStatus)) return blocks;
-  return blocks.map((block) => block.kind === "tool" && block.status === "running"
-    ? { ...block, status: "aborted", payload: { ...block.payload, summary: abortedToolSummary } }
-    : block);
+  return blocks.map((block) => {
+    if (block.kind !== "tool") return block;
+    if (block.status === "running") {
+      return { ...block, status: "aborted", payload: { ...block.payload, summary: abortedToolSummary } };
+    }
+    if (
+      turnStatus === "stopped"
+      && block.status === "failed"
+      && block.payload?.kind === "command"
+      && typeof block.payload?.exit_code !== "number"
+    ) {
+      return { ...block, status: "aborted", payload: { ...(block.payload ?? {}), summary: stoppedCommandSummary } };
+    }
+    return block;
+  });
 }
 
 interface EventSourceLike {
