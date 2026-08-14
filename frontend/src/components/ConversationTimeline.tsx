@@ -30,6 +30,13 @@ export function activeTurnScrollIndex(
   return position < 0 ? null : firstItemIndex + position;
 }
 
+export function latestTurnScrollIndex(
+  turns: Turn[],
+  firstItemIndex: number,
+): number | null {
+  return turns.length ? firstItemIndex + turns.length - 1 : null;
+}
+
 function safeWebHref(href?: string): string | undefined {
   if (!href) return undefined;
   try {
@@ -125,6 +132,7 @@ export function ConversationTimeline({ timeline, activeTurnId, onConfirm, onCanc
   );
   const firstItemIndex = useRef(999_900);
   const priorOldestTurnId = useRef<string | null>(null);
+  const openedTaskId = useRef<string | null>(null);
   if (turns.length) {
     if (priorOldestTurnId.current) {
       const priorOldestPosition = turns.findIndex((turn) => turn.id === priorOldestTurnId.current);
@@ -142,6 +150,13 @@ export function ConversationTimeline({ timeline, activeTurnId, onConfirm, onCanc
     if (index === null) return;
     virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: "auto" });
   }, [activeTurnId, timeline.task.id, turns.length]);
+  useEffect(() => {
+    if (openedTaskId.current === timeline.task.id) return;
+    openedTaskId.current = timeline.task.id;
+    const index = latestTurnScrollIndex(turns, firstItemIndex.current);
+    if (index === null) return;
+    virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: "auto" });
+  }, [timeline.task.id]);
   return (
     <div className="conversation-timeline" data-testid="conversation-timeline">
       <Virtuoso
