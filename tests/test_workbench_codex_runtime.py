@@ -19,6 +19,7 @@ from app.workbench.codex_runtime import (
     _CancellableProcessExecutor,
     _config_without_confirmation_server,
     _isolated_codex_environment,
+    _mcp_startup_timeout_overlays,
     _safe_tool_name,
 )
 from app.workbench.confirmation_mcp import request_reviewed_action
@@ -441,6 +442,45 @@ def test_runtime_uses_and_cleans_isolated_codex_configuration(
     assert result.status == "completed"
     assert observed_home is not None
     assert not observed_home.exists()
+
+
+def test_runtime_guarantees_cold_start_time_for_enabled_native_mcp_servers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[mcp_servers.memory_connector]",
+                'url = "https://memory.example/mcp"',
+                "",
+                "[mcp_servers.already_patient]",
+                'url = "https://patient.example/mcp"',
+                "startup_timeout_sec = 180",
+                "",
+                "[mcp_servers.disabled_server]",
+                'url = "https://disabled.example/mcp"',
+                "enabled = false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    executor = FakeProcessExecutor(happy_records())
+    runtime = CodexRuntime(workspace=tmp_path, executor=executor)
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=lambda _event: None))
+
+    assert result.status == "completed"
+    command = executor.commands[0]
+    assert "mcp_servers.memory_connector.startup_timeout_sec=120" in command
+    assert all("already_patient" not in option for option in command)
+    assert all("disabled_server" not in option for option in command)
+    assert all(
+        "workbench_confirmation" not in option
+        for option in _mcp_startup_timeout_overlays(codex_home / "config.toml")
+    )
 
 
 def test_runtime_failure_cleans_isolated_home_without_exposing_config(
