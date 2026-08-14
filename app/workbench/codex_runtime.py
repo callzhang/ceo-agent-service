@@ -48,6 +48,7 @@ _DEFAULT_IDLE_TIMEOUT_SECONDS = 900
 MAX_PROMPT_BYTES = 1024 * 1024
 _CONFIRMATION_SERVER = "workbench_confirmation"
 _CONFIRMATION_TOOL = "request_reviewed_action"
+_WORKBENCH_MCP_STARTUP_TIMEOUT_SECONDS = 120
 _DEVELOPER_INSTRUCTIONS = """
 You are running inside the local Agent Workbench. Preserve the user's configured
 Codex skills, rules, plugins, and authenticated read tools. You may perform local,
@@ -88,6 +89,7 @@ _TOML_TABLE_HEADER = re.compile(r"^\s*\[\[?([^\[\]]+)\]\]?\s*(?:#.*)?$")
 _CONFIRMATION_ASSIGNMENT = re.compile(
     r"^\s*(?:mcp_servers\s*\.\s*)?[\"']?workbench_confirmation[\"']?\s*="
 )
+_MCP_SERVER_CONFIG_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 _MAX_CODEX_CONFIG_BYTES = 4 * 1024 * 1024
 
 
@@ -161,6 +163,54 @@ def _config_without_confirmation_server(source: str) -> str:
     if isinstance(sanitized_servers, Mapping) and _CONFIRMATION_SERVER in sanitized_servers:
         raise ValueError("Codex configuration could not be isolated safely")
     return sanitized
+
+
+def _mcp_startup_timeout_overlays(config_path: Path) -> list[str]:
+    """Give enabled native MCP servers enough time for a cold Workbench start."""
+    try:
+        if not config_path.is_file():
+            return []
+        if config_path.stat().st_size > _MAX_CODEX_CONFIG_BYTES:
+            raise ValueError("Codex configuration could not be isolated safely")
+        parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError("Codex configuration could not be isolated safely") from exc
+
+    servers = parsed.get("mcp_servers")
+    if not isinstance(servers, Mapping):
+        return []
+    overlays: list[str] = []
+    for name, configuration in sorted(servers.items()):
+        if name == _CONFIRMATION_SERVER or not isinstance(configuration, Mapping):
+            continue
+        if not _MCP_SERVER_CONFIG_KEY.fullmatch(str(name)):
+            continue
+        if configuration.get("enabled", True) is False:
+            continue
+        configured_timeout = configuration.get("startup_timeout_sec")
+        if (
+            isinstance(configured_timeout, (int, float))
+            and not isinstance(configured_timeout, bool)
+            and configured_timeout >= _WORKBENCH_MCP_STARTUP_TIMEOUT_SECONDS
+        ):
+            continue
+        overlays.append(
+            f"mcp_servers.{name}.startup_timeout_sec="
+            f"{_WORKBENCH_MCP_STARTUP_TIMEOUT_SECONDS}"
+        )
+    return overlays
+
+
+def _command_with_mcp_startup_timeouts(
+    command: Sequence[str], config_path: Path
+) -> list[str]:
+    effective = list(command)
+    arguments: list[str] = []
+    for overlay in _mcp_startup_timeout_overlays(config_path):
+        arguments.extend(("-c", overlay))
+    insert_at = 3 if len(effective) > 2 and effective[2] == "resume" else 2
+    effective[insert_at:insert_at] = arguments
+    return effective
 
 
 @contextlib.contextmanager
@@ -1034,8 +1084,13 @@ class CodexRuntime:
                     attach_cleanup = getattr(owner.executor, "set_isolated_home", None)
                     if callable(attach_cleanup):
                         attach_cleanup(process_env.isolated_home)
-                process_result = owner.executor(
+                command = _command_with_mcp_startup_timeouts(
                     owner.command,
+                    Path(process_env.get("CODEX_HOME", "~/.codex")).expanduser()
+                    / "config.toml",
+                )
+                process_result = owner.executor(
+                    command,
                     prompt=owner.request.prompt,
                     env=process_env,
                     total_timeout_seconds=self.total_timeout_seconds,
