@@ -1816,15 +1816,33 @@ def test_bounded_preamble_is_allowed_but_oversized_line_and_output_fail(tmp_path
     preamble_result = preamble_runtime.wait(
         preamble_runtime.start(request(tmp_path), on_event=lambda _event: None)
     )
+    realistic_research_runtime = CodexRuntime(
+        workspace=tmp_path,
+        executor=FakeProcessExecutor(
+            [
+                {
+                    "type": "unrecognized.provider.event",
+                    "payload": "x" * (2 * 1024 * 1024 + 1),
+                },
+                *happy_records(),
+            ]
+        ),
+    )
+    realistic_research_result = realistic_research_runtime.wait(
+        realistic_research_runtime.start(
+            request(tmp_path), on_event=lambda _event: None
+        )
+    )
     oversized_runtime = CodexRuntime(
         workspace=tmp_path,
-        executor=FakeProcessExecutor(["x" * (2 * 1024 * 1024 + 1)]),
+        executor=FakeProcessExecutor(["x" * (16 * 1024 * 1024 + 1)]),
     )
     oversized_result = oversized_runtime.wait(
         oversized_runtime.start(request(tmp_path), on_event=lambda _event: None)
     )
 
     assert preamble_result.status == "completed"
+    assert realistic_research_result.status == "completed"
     assert oversized_result.status == "failed"
     assert oversized_result.error_code == "provider_output_limit"
     assert len(oversized_result.error_detail) < 200

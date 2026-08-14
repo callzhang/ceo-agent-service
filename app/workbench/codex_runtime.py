@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.bounded_process import MAX_PROCESS_OUTPUT_BYTES
 from app.codex_runner import CodexRunner
 from app.leak_check import (
     assert_no_credentials,
@@ -45,6 +44,7 @@ from app.workbench.runtime import (
 _MAX_PREAMBLE_BYTES = 8 * 1024
 _DEFAULT_TOTAL_TIMEOUT_SECONDS = 1200
 _DEFAULT_IDLE_TIMEOUT_SECONDS = 900
+_MAX_PROVIDER_OUTPUT_BYTES = 16 * 1024 * 1024
 MAX_PROMPT_BYTES = 1024 * 1024
 _CONFIRMATION_SERVER = "workbench_confirmation"
 _CONFIRMATION_TOOL = "request_reviewed_action"
@@ -293,7 +293,10 @@ class _CodexNormalizer:
     def accept_line(self, line: str) -> None:
         line_bytes = len(line.encode("utf-8")) + 1
         self._output_bytes += line_bytes
-        if line_bytes > MAX_PROCESS_OUTPUT_BYTES or self._output_bytes > MAX_PROCESS_OUTPUT_BYTES:
+        if (
+            line_bytes > _MAX_PROVIDER_OUTPUT_BYTES
+            or self._output_bytes > _MAX_PROVIDER_OUTPUT_BYTES
+        ):
             raise _AdapterFailure(
                 "provider_output_limit", "provider output exceeded the safe limit"
             )
@@ -856,7 +859,7 @@ class _CancellableProcessExecutor:
                         selector.unregister(key.fileobj)
                         continue
                     assert isinstance(target, bytearray)
-                    if len(target) + len(chunk) > MAX_PROCESS_OUTPUT_BYTES:
+                    if len(target) + len(chunk) > _MAX_PROVIDER_OUTPUT_BYTES:
                         raise _AdapterFailure(
                             "provider_output_limit",
                             "provider output exceeded the safe limit",
