@@ -72,7 +72,7 @@ function TurnItem({ turn, events, confirmationsById, artifactsById, taskId, acti
         {blocks.map((block) => {
           if (block.kind === "markdown") return !authoritativeFinalText ? <MarkdownBlock key={block.key} text={block.text ?? ""} /> : null;
           if (block.kind === "thinking") return <details className="thinking-block" key={block.key}><summary>思考摘要</summary><p>{block.text}</p></details>;
-          if (block.kind === "tool" || block.kind === "file") return <ExecutionStep key={block.key} kind={block.kind} status={block.status} payload={block.payload} />;
+          if (block.kind === "tool" || block.kind === "file") return <ExecutionStep key={block.key} kind={block.kind} status={block.status} payload={block.payload} startedAt={block.startedAt} completedAt={block.completedAt} />;
           if (block.kind === "confirmation") {
             const confirmation = confirmationsById.get(block.confirmationId ?? "");
             return confirmation?.turn_id === turn.id ? <ConfirmationCard key={block.key} confirmation={confirmation} onConfirm={onConfirm} onCancel={onCancel} /> : null;

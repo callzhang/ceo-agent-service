@@ -14,6 +14,7 @@ import {
 } from "./api";
 import { Composer } from "./components/Composer";
 import { ConversationTimeline } from "./components/ConversationTimeline";
+import { GlobalNav } from "./components/GlobalNav";
 import { TaskList } from "./components/TaskList";
 import { TurnInspector } from "./components/TurnInspector";
 import { applyWorkbenchEvent, createEventState, EventStreamConnection } from "./events";
@@ -1195,7 +1196,9 @@ export function App() {
   }
 
   return (
-    <div className={`workbench-shell${selectedTask ? " has-selection" : ""}`}>
+    <div className="workbench-root">
+      <GlobalNav />
+      <div className={`workbench-shell${selectedTask ? " has-selection" : ""}`}>
       <aside
         className="task-panel"
         aria-label="任务列表"
@@ -1392,6 +1395,7 @@ export function App() {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

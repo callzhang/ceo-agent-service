@@ -142,6 +142,47 @@ describe("workbench event reducer", () => {
     ]);
   });
 
+  it("merges completion details and timestamps without losing the started action", () => {
+    const blocks = timelineBlocks("turn-1", createEventState([
+      event(1, "tool_started", {
+        tool_call_id: "call-1", kind: "command", name: "rg", native_id: "native-1",
+        status: "running", command: "rg --files frontend/src", cwd: "/workspace",
+        provider_item: { id: "native-1", type: "command_execution", command: "rg --files frontend/src" },
+      }),
+      { ...event(2, "tool_completed", {
+        tool_call_id: "call-1", kind: "command", name: "rg", native_id: "native-1",
+        status: "completed", output: "frontend/src/app.tsx\n", exit_code: 0,
+        provider_item: { id: "native-1", type: "command_execution", exit_code: 0 },
+      }), created_at: "2026-08-13 10:00:02" },
+    ]).events);
+
+    expect(blocks[0]).toMatchObject({
+      startedAt: "2026-08-13 10:00:00",
+      completedAt: "2026-08-13 10:00:02",
+      payload: {
+        command: "rg --files frontend/src",
+        cwd: "/workspace",
+        output: "frontend/src/app.tsx\n",
+        exit_code: 0,
+      },
+    });
+  });
+
+  it("keeps white-box details when a running tool becomes terminally aborted", () => {
+    const [block] = timelineBlocks("turn-1", createEventState([
+      event(1, "tool_started", {
+        tool_call_id: "call-1", kind: "mcp", name: "server.search", native_id: "native-1",
+        status: "running", server: "server", tool: "search", arguments: { query: "today" },
+        provider_item: { id: "native-1", type: "mcp_tool_call" },
+      }),
+    ]).events, "failed");
+
+    expect(block).toMatchObject({
+      status: "aborted",
+      payload: { name: "server.search", arguments: { query: "today" } },
+    });
+  });
+
   it("uses exact event IDs for stable rendered block keys", () => {
     const blocks = timelineBlocks("turn-1", createEventState([
       event(10, "text_delta", { text: "A" }),
@@ -164,6 +205,25 @@ describe("workbench event reducer", () => {
     expect(parseStreamEvent(JSON.stringify(event(1, "text_delta", { text: 42 })), "text_delta")).toBeNull();
     expect(parseStreamEvent(JSON.stringify(event(1, "tool_started", { tool: "read", env: "secret" })), "tool_started")).toBeNull();
     expect(parseStreamEvent(JSON.stringify(event(1, "text_delta", { text: "safe" })), "text_delta")).toEqual(event(1, "text_delta", { text: "safe" }));
+  });
+
+  it("accepts bounded nested white-box tool JSON", () => {
+    const payload = {
+      tool_call_id: "tool-call-1",
+      kind: "mcp",
+      name: "codex_apps.google_calendar.search_events",
+      native_id: "native-1",
+      status: "completed",
+      server: "codex_apps",
+      tool: "google_calendar.search_events",
+      arguments: { calendars: ["primary"], time_min: "2026-08-14T00:00:00+08:00" },
+      result: { structuredContent: { events: [], next_page_token: "next-1" } },
+      provider_item: { id: "native-1", type: "mcp_tool_call" },
+    };
+    const value = event(22, "tool_completed", payload);
+
+    expect(parseStreamEvent(JSON.stringify(value), "tool_completed")).toEqual(value);
+    expect(parseStreamEvent(JSON.stringify(event(23, "tool_completed", { ...payload, unexpected: true })), "tool_completed")).toBeNull();
   });
 });
 

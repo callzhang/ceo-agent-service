@@ -16,8 +16,14 @@ const eventTypes: readonly EventType[] = [
 const payloadFields: Record<EventType, ReadonlySet<string>> = {
   text_delta: new Set(["text"]),
   thinking_summary: new Set(["text", "summary"]),
-  tool_started: new Set(["tool", "summary", "tool_call_id"]),
-  tool_completed: new Set(["tool", "summary", "status", "tool_call_id"]),
+  tool_started: new Set([
+    "tool_call_id", "kind", "name", "native_id", "status", "summary", "command", "cwd",
+    "exit_code", "output", "server", "tool", "arguments", "result", "provider_item",
+  ]),
+  tool_completed: new Set([
+    "tool_call_id", "kind", "name", "native_id", "status", "summary", "command", "cwd",
+    "exit_code", "output", "server", "tool", "arguments", "result", "provider_item",
+  ]),
   file_changed: new Set(["filename", "path", "change", "status"]),
   artifact_created: new Set(["artifact_id", "label", "filename", "path", "media_type"]),
   confirmation_required: new Set(["action_kind", "confirmation_id", "target", "summary", "risk"]),
@@ -40,6 +46,8 @@ export interface TimelineBlock {
   payload?: Record<string, unknown>;
   confirmationId?: string;
   artifactId?: string;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 const terminalTurnStatuses = new Set<TurnStatus>(["completed", "stopped", "failed"]);
@@ -51,13 +59,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function isPublicEventPayload(eventType: EventType, payload: Record<string, unknown>): boolean {
   const keys = Object.keys(payload);
-  if (keys.some((key) => !payloadFields[eventType].has(key)) || keys.some((key) => typeof payload[key] !== "string")) return false;
+  if (keys.some((key) => !payloadFields[eventType].has(key))) return false;
+  if (eventType === "tool_started" || eventType === "tool_completed") {
+    if (!keys.every((key) => isBoundedJson(payload[key]))) return false;
+    if (typeof payload.tool_call_id !== "string") return false;
+    if (payload.kind !== undefined && payload.kind !== "command" && payload.kind !== "mcp") return false;
+    if (payload.status !== undefined && typeof payload.status !== "string") return false;
+    return true;
+  }
+  if (keys.some((key) => typeof payload[key] !== "string")) return false;
   if (eventType === "text_delta") return typeof payload.text === "string";
   if (eventType === "thinking_summary") return typeof payload.text === "string" || typeof payload.summary === "string";
   if (eventType === "artifact_created") return typeof payload.artifact_id === "string";
   if (eventType === "confirmation_required") return typeof payload.confirmation_id === "string";
   if (["status_changed", "turn_completed", "turn_failed"].includes(eventType)) return typeof payload.status === "string";
   return true;
+}
+
+function isBoundedJson(value: unknown): boolean {
+  let remaining = 2048;
+  const visit = (candidate: unknown, depth: number): boolean => {
+    remaining -= 1;
+    if (remaining < 0 || depth > 12) return false;
+    if (candidate === null || typeof candidate === "string" || typeof candidate === "boolean") return true;
+    if (typeof candidate === "number") return Number.isFinite(candidate);
+    if (Array.isArray(candidate)) return candidate.every((item) => visit(item, depth + 1));
+    if (!isRecord(candidate)) return false;
+    return Object.entries(candidate).every(([key, item]) => key.length <= 256 && visit(item, depth + 1));
+  };
+  return visit(value, 0);
 }
 
 function validEvent(value: unknown): value is WorkbenchEvent {
@@ -134,7 +164,12 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[], turnSta
         ? "running"
         : payloadText(event.payload, "status") || "completed";
       if (existing !== undefined) {
-        blocks[existing] = { ...blocks[existing], status, payload: event.payload };
+        blocks[existing] = {
+          ...blocks[existing],
+          status,
+          payload: { ...blocks[existing].payload, ...event.payload },
+          completedAt: event.event_type === "tool_completed" ? event.created_at : blocks[existing].completedAt,
+        };
       } else {
         tools.set(callId, blocks.length);
         blocks.push({
@@ -143,6 +178,8 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[], turnSta
           eventId: event.id,
           status,
           payload: event.payload,
+          startedAt: event.event_type === "tool_started" ? event.created_at : undefined,
+          completedAt: event.event_type === "tool_completed" ? event.created_at : undefined,
         });
       }
       continue;

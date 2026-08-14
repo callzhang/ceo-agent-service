@@ -120,6 +120,111 @@ def test_codex_runtime_streams_text_tools_and_session(tmp_path: Path):
         _runtime_owner(handle)
 
 
+def test_command_events_publish_white_box_action_and_result(tmp_path: Path):
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {
+            "type": "item.started",
+            "item": {
+                "id": "command-white-box",
+                "type": "command_execution",
+                "command": "rg --files frontend/src",
+                "cwd": str(tmp_path),
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "command-white-box",
+                "type": "command_execution",
+                "aggregated_output": "frontend/src/app.tsx\n",
+                "exit_code": 0,
+            },
+        },
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "Done"}},
+        {"type": "turn.completed"},
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    started = next(event for event in events if event.event_type == "tool_started")
+    completed = next(event for event in events if event.event_type == "tool_completed")
+    assert result.status == "completed"
+    assert started.payload_json_value() == {
+        "tool_call_id": "tool-call-1",
+        "kind": "command",
+        "name": "rg",
+        "native_id": "command-white-box",
+        "status": "running",
+        "command": "rg --files frontend/src",
+        "cwd": str(tmp_path),
+        "provider_item": records[1]["item"],
+    }
+    assert completed.payload["command"] == "rg --files frontend/src"
+    assert completed.payload["cwd"] == str(tmp_path)
+    assert completed.payload["output"] == "frontend/src/app.tsx\n"
+    assert completed.payload["exit_code"] == 0
+    assert completed.payload["status"] == "completed"
+    assert completed.payload_json_value()["provider_item"] == {
+        **records[1]["item"],
+        **records[2]["item"],
+    }
+
+
+def test_mcp_events_publish_exact_identity_arguments_and_result(tmp_path: Path):
+    arguments = {"time_min": "2026-08-14T00:00:00+08:00", "calendars": ["primary"]}
+    result_payload = {"structuredContent": {"events": [], "next_page_token": "next-1"}}
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {
+            "type": "item.started",
+            "item": {
+                "id": "calendar-white-box",
+                "type": "mcp_tool_call",
+                "server": "codex_apps",
+                "tool": "google_calendar.search_events",
+                "arguments": arguments,
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "calendar-white-box",
+                "type": "mcp_tool_call",
+                "server": "codex_apps",
+                "tool": "google_calendar.search_events",
+                "result": result_payload,
+            },
+        },
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "Done"}},
+        {"type": "turn.completed"},
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    started = next(event for event in events if event.event_type == "tool_started")
+    completed = next(event for event in events if event.event_type == "tool_completed")
+    started_payload = started.payload_json_value()
+    completed_payload = completed.payload_json_value()
+    assert result.status == "completed"
+    assert started_payload["kind"] == "mcp"
+    assert started_payload["name"] == "codex_apps.google_calendar.search_events"
+    assert started_payload["server"] == "codex_apps"
+    assert started_payload["tool"] == "google_calendar.search_events"
+    assert started_payload["arguments"] == arguments
+    assert completed_payload["arguments"] == arguments
+    assert completed_payload["result"] == result_payload
+    assert completed_payload["name"] == "codex_apps.google_calendar.search_events"
+    assert completed_payload["provider_item"] == {
+        **records[1]["item"],
+        **records[2]["item"],
+    }
+
+
 def test_codex_resume_command_keeps_provider_reference_process_private(tmp_path: Path):
     executor = FakeProcessExecutor(happy_records())
     runtime = CodexRuntime(workspace=tmp_path, executor=executor)
@@ -1013,7 +1118,10 @@ def test_failed_ordinary_mcp_is_correlated_and_does_not_abort_successful_turn(
     assert result.final_text == "Recovered"
     assert completed.payload["status"] == "failed"
     assert completed.payload["tool_call_id"] == started.payload["tool_call_id"]
-    assert "native detail" not in repr(events)
+    assert completed.payload_json_value()["result"] == {
+        "status": "failed",
+        "error": {"message": "native detail"},
+    }
 
 
 def test_confirmation_structured_content_rejects_extra_business_fields(tmp_path: Path):
@@ -1137,8 +1245,12 @@ def test_tool_events_use_correlated_opaque_ids_for_interleaved_calls(tmp_path: P
     assert ids[0] == ids[3]
     assert ids[1] == ids[2]
     assert ids[0] != ids[1]
-    assert "native-a" not in repr(tool_events)
-    assert "native-b" not in repr(tool_events)
+    assert [event.payload["native_id"] for event in tool_events] == [
+        "native-a",
+        "native-b",
+        "native-b",
+        "native-a",
+    ]
     assert result.status == "completed"
 
 
@@ -1296,7 +1408,7 @@ def test_credential_bearing_assistant_text_never_enters_events_or_errors(
     assert "credential-value-1234" not in repr(events)
 
 
-def test_calendar_result_cursor_is_ignored_before_public_event_emission(tmp_path: Path):
+def test_calendar_result_cursor_is_preserved_in_white_box_event(tmp_path: Path):
     cursor = "opaque-pagination-value"
     records = [
         {"type": "thread.started", "thread_id": SESSION_ID},
@@ -1338,22 +1450,16 @@ def test_calendar_result_cursor_is_ignored_before_public_event_emission(tmp_path
     result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
 
     assert result.status == "completed"
-    assert [
+    [completed] = [
         event.payload_json_value()
         for event in events
         if event.event_type == "tool_completed"
-    ] == [
-        {
-            "tool": "Google 日历查询",
-            "summary": "已完成",
-            "status": "completed",
-            "tool_call_id": "tool-call-1",
-        }
     ]
-    assert cursor not in repr(events)
+    assert completed["name"] == "codex_apps.google_calendar.search_events"
+    assert completed["result"]["Ok"]["structuredContent"]["next_page_token"] == cursor
 
 
-def test_credential_in_ignored_command_metadata_never_enters_events(tmp_path: Path):
+def test_credential_in_white_box_command_fails_without_entering_events(tmp_path: Path):
     credential = "sk-proj-nativecredential1234"
     records = [
         {"type": "thread.started", "thread_id": SESSION_ID},
@@ -1384,8 +1490,10 @@ def test_credential_in_ignored_command_metadata_never_enters_events(tmp_path: Pa
 
     result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
 
-    assert result.status == "completed"
+    assert result.status == "failed"
+    assert result.error_code == "sensitive_provider_output"
     assert credential not in repr(events)
+    assert credential not in result.error_detail
 
 
 def test_unsupported_private_item_is_ignored_without_leaking(tmp_path: Path):
@@ -1502,14 +1610,14 @@ def test_uncorrelated_confirmation_completion_fails_before_inspecting_result(
 @pytest.mark.parametrize(
     ("item", "expected_label", "private_names"),
     [
-        ({"type": "command_execution"}, "本地命令", ()),
+        ({"type": "command_execution"}, "command_execution", ()),
         (
             {
                 "type": "mcp_tool_call",
                 "server": "codex_apps",
                 "tool": "google_calendar.search_events",
             },
-            "Google 日历查询",
+            "codex_apps.google_calendar.search_events",
             ("codex_apps", "google_calendar.search_events"),
         ),
         (
@@ -1518,7 +1626,7 @@ def test_uncorrelated_confirmation_completion_fails_before_inspecting_result(
                 "server": "codex_apps",
                 "tool": "gmail.search_emails",
             },
-            "邮件查询",
+            "codex_apps.gmail.search_emails",
             ("codex_apps", "gmail.search_emails"),
         ),
         (
@@ -1527,7 +1635,7 @@ def test_uncorrelated_confirmation_completion_fails_before_inspecting_result(
                 "server": "workbench_confirmation",
                 "tool": "request_reviewed_action",
             },
-            "操作确认",
+            "workbench_confirmation.request_reviewed_action",
             ("workbench_confirmation", "request_reviewed_action"),
         ),
         (
@@ -1536,18 +1644,18 @@ def test_uncorrelated_confirmation_completion_fails_before_inspecting_result(
                 "server": "private-provider",
                 "tool": "private.search_records",
             },
-            "MCP 工具",
+            "private-provider.private.search_records",
             ("private-provider", "private.search_records"),
         ),
     ],
 )
-def test_safe_tool_name_uses_only_application_owned_labels(
+def test_safe_tool_name_exposes_exact_provider_identity(
     item: dict[str, str], expected_label: str, private_names: tuple[str, ...]
 ):
     label = _safe_tool_name(item)
 
     assert label == expected_label
-    assert all(private_name not in label for private_name in private_names)
+    assert all(private_name in label for private_name in private_names)
 
 
 def test_bounded_preamble_is_allowed_but_oversized_line_and_output_fail(tmp_path: Path):

@@ -1268,6 +1268,52 @@ def test_public_event_projection_redacts_delimited_paths_but_preserves_web_urls(
     assert projected["relative"] == "docs/report.md"
 
 
+def test_white_box_tool_event_preserves_exact_action_and_nested_result(tmp_path: Path):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    task = store.create_task(title="White box", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="Inspect", client_request_id="white-box-public-event"
+    )
+    payload = {
+        "tool_call_id": "tool-call-1",
+        "kind": "command",
+        "name": "rg",
+        "native_id": "native-command-1",
+        "status": "completed",
+        "command": "rg --files frontend/src",
+        "cwd": str(tmp_path),
+        "exit_code": 0,
+        "output": "frontend/src/app.tsx\n",
+        "provider_item": {
+            "id": "native-command-1",
+            "type": "command_execution",
+            "command": "rg --files frontend/src",
+            "cwd": str(tmp_path),
+            "aggregated_output": "frontend/src/app.tsx\n",
+            "exit_code": 0,
+        },
+    }
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into workbench_events (turn_id, sequence, event_type, payload_json)
+            values (?, 2, 'tool_completed', ?)
+            """,
+            (turn.id, json.dumps(payload)),
+        )
+
+    with _client(tmp_path) as client:
+        events_response = client.get(
+            f"/api/workbench/turns/{turn.id}/events?after=0&limit=10"
+        )
+        timeline_response = client.get(f"/api/workbench/tasks/{task.id}/timeline")
+
+    assert events_response.status_code == 200
+    assert timeline_response.status_code == 200
+    assert events_response.json()[1]["payload"] == payload
+    assert timeline_response.json()["events"][1]["payload"] == payload
+
+
 def test_public_event_projection_only_allows_canonical_public_url_paths(
     tmp_path: Path,
 ):

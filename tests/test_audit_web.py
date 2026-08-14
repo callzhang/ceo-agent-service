@@ -1971,6 +1971,9 @@ def test_top_nav_highlights_current_page_and_disables_current_link(
     tasks_html = render_tasks_page(store)
     workers_html = render_workers_page(store)
 
+    assert history_html.index('<a class="nav-item" href="/">Agent</a>') < history_html.index(
+        '<span class="nav-item active" aria-current="page">History</span>'
+    )
     assert '<span class="nav-item active" aria-current="page">History</span>' in history_html
     assert '<a class="nav-item" href="/">History</a>' not in history_html
     assert '<a class="nav-item" href="/user-feedback">用户反馈</a>' in history_html
@@ -2018,7 +2021,7 @@ def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
     assert "/settings?tab=logs" in html
     assert "/tasks" in html
     assert 'href="/history"' in html
-    assert 'href="/"' not in html
+    assert '<a class="nav-item" href="/">Agent</a>' in html
     assert "Tutorial" in html
     assert "Landing page" not in html
 
