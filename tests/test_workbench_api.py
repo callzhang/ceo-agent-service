@@ -520,7 +520,7 @@ def test_timeline_exposes_usable_resource_cursors(tmp_path: Path):
     assert second_body["events_has_more"] is False
 
 
-def test_all_timeline_public_strings_redact_legacy_paths_and_credentials(
+def test_all_timeline_public_strings_preserve_paths_and_redact_credentials(
     tmp_path: Path,
 ):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
@@ -625,16 +625,6 @@ def test_all_timeline_public_strings_redact_legacy_paths_and_credentials(
     )
     assert timeline.status_code == nested_turn.status_code == task_response.status_code == 200
     for forbidden in (
-        "/private/",
-        "/opt/",
-        "/Users/",
-        "/custom/",
-        "/root/",
-        "/home/",
-        "/Volumes/",
-        "/Applications/",
-        "/dev/",
-        "C:\\private",
         "legacy-secret",
         "created-secret",
         "completed-secret",
@@ -644,6 +634,45 @@ def test_all_timeline_public_strings_redact_legacy_paths_and_credentials(
         "canonical-secret",
     ):
         assert forbidden not in rendered
+
+    assert "read /Users/derek/private.txt" in rendered
+    assert "result=/custom/mount/result.txt" in rendered
+    assert nested_turn.json()["error_detail"] == r"failed at C:\private\secret.txt"
+
+
+def test_public_turn_preserves_exact_local_paths_but_redacts_credentials(
+    tmp_path: Path,
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    _complete_setup(store)
+    task = store.create_task(title="White box paths", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id,
+        user_text="读取 /Users/derek/Documents/Projects/ceo-agent-service/README.md",
+        client_request_id="white-box-turn-paths",
+    )
+    with store._connect() as db:
+        db.execute(
+            """update workbench_turns
+               set status='failed',
+                   final_text='检查结果位于 /private/tmp/ceo-agent/report.json',
+                   error_code='provider_failed',
+                   error_detail='执行 /usr/bin/printf 失败；api_key=credential-value-1234'
+               where id=?""",
+            (turn.id,),
+        )
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/workbench/tasks/{task.id}/turns/{turn.id}")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["user_text"] == (
+        "读取 /Users/derek/Documents/Projects/ceo-agent-service/README.md"
+    )
+    assert body["final_text"] == "检查结果位于 /private/tmp/ceo-agent/report.json"
+    assert "/usr/bin/printf" in body["error_detail"]
+    assert "credential-value-1234" not in body["error_detail"]
 
 
 def test_streaming_json_collector_stops_at_cap_without_consuming_remaining_chunks():
@@ -1150,7 +1179,9 @@ def test_artifact_download_streams_opened_descriptor_across_path_swap(
         os.fstat(opened_fd[0])
 
 
-def test_public_event_projection_redacts_nested_paths_and_credentials(tmp_path: Path):
+def test_public_event_projection_preserves_nested_paths_and_redacts_credentials(
+    tmp_path: Path,
+):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
     task = store.create_task(title="Events", runtime_kind="codex")
     turn = store.create_turn(
@@ -1190,16 +1221,18 @@ def test_public_event_projection_redacts_nested_paths_and_credentials(tmp_path: 
     encoded = json.dumps(response.json(), ensure_ascii=False)
     payload = response.json()[1]["payload"]
     assert response.status_code == 200
-    assert str(tmp_path) not in encoded
-    assert "../../" not in encoded
+    assert str(tmp_path) in encoded
+    assert "../../outside.txt" in encoded
     assert "abcdefghijklmnop" not in encoded
-    assert "/etc/passwd" not in encoded
-    assert payload["summary"]["path"] == "safe/report.md"
-    assert payload["summary"]["nested"]["filename"] == "outside.txt"
-    assert payload["summary"]["nested"]["outputFile"] == "safe/result.json"
+    assert "/etc/passwd" in encoded
+    assert payload["summary"]["path"] == str(tmp_path / "safe" / "report.md")
+    assert payload["summary"]["nested"]["filename"] == "../../outside.txt"
+    assert payload["summary"]["nested"]["outputFile"] == str(
+        tmp_path / "safe" / "result.json"
+    )
 
 
-def test_public_event_projection_redacts_delimited_paths_but_preserves_web_urls(
+def test_public_event_projection_preserves_delimited_paths_and_web_urls(
     tmp_path: Path,
 ):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
@@ -1246,11 +1279,11 @@ def test_public_event_projection_redacts_delimited_paths_but_preserves_web_urls(
     projected = response.json()[1]["payload"]["summary"]
     encoded = json.dumps(projected)
     assert response.status_code == 200
-    assert projected["message"].count("/etc/passwd") == 1
-    assert "/opt/private/file" not in encoded
-    assert "/private/tmp/secret.json" not in encoded
-    assert str(tmp_path) not in encoded
-    assert r"C:\\Users\\Derek\\secret.txt" not in encoded
+    assert projected["message"].count("/etc/passwd") == 2
+    assert "/opt/private/file" in encoded
+    assert "/private/tmp/secret.json" in encoded
+    assert str(tmp_path) in encoded
+    assert r"C:\\Users\\Derek\\secret.txt" in encoded
     for local_path in (
         "/usr/local/bin/private-tool",
         "/home/alice/private/report.csv",
@@ -1260,7 +1293,7 @@ def test_public_event_projection_redacts_delimited_paths_but_preserves_web_urls(
         "/dev/disk4",
         "/custom/mount/private-file",
     ):
-        assert local_path not in encoded
+        assert local_path in encoded
     assert "https://example.com/docs/path?q=/etc/passwd" in projected["message"]
     assert "https://example.com/tmp/public-report" in projected["message"]
     assert "/api/workbench/tasks/123" in projected["message"]
@@ -1314,7 +1347,52 @@ def test_white_box_tool_event_preserves_exact_action_and_nested_result(tmp_path:
     assert timeline_response.json()["events"][1]["payload"] == payload
 
 
-def test_public_event_projection_only_allows_canonical_public_url_paths(
+def test_white_box_tool_event_redacts_only_credential_values(tmp_path: Path):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    task = store.create_task(title="White box credentials", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="Inspect", client_request_id="white-box-credential-event"
+    )
+    payload = {
+        "tool_call_id": "tool-call-credential",
+        "kind": "mcp",
+        "name": "memory_connector.memory_recall",
+        "native_id": "native-memory-1",
+        "status": "completed",
+        "server": "memory_connector",
+        "tool": "memory_recall",
+        "arguments": {"query": "管理问题", "access_token": "short-secret"},
+        "result": {
+            "source": "/Users/derek/.codex/memories/MEMORY.md",
+            "summary": "api_key=credential-value-1234",
+        },
+        "provider_item": {"id": "native-memory-1", "type": "mcp_tool_call"},
+    }
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into workbench_events (turn_id, sequence, event_type, payload_json)
+            values (?, 2, 'tool_completed', ?)
+            """,
+            (turn.id, json.dumps(payload)),
+        )
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/workbench/turns/{turn.id}/events?after=0&limit=10")
+
+    projected = response.json()[1]["payload"]
+    assert response.status_code == 200
+    assert projected["arguments"] == {
+        "query": "管理问题",
+        "access_token": "[redacted]",
+    }
+    assert projected["result"] == {
+        "source": "/Users/derek/.codex/memories/MEMORY.md",
+        "summary": "[redacted]",
+    }
+
+
+def test_public_event_projection_preserves_all_diagnostic_path_strings(
     tmp_path: Path,
 ):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
@@ -1376,11 +1454,11 @@ def test_public_event_projection_only_allows_canonical_public_url_paths(
 
     summary = response.json()[1]["payload"]["summary"]
     assert response.status_code == 200
-    assert summary["unsafe"] == ["[local path]"] * len(unsafe_paths)
+    assert summary["unsafe"] == unsafe_paths
     assert summary["safe"] == safe_paths
 
 
-def test_public_event_projection_redacts_repeated_slashes_and_file_uris(
+def test_public_event_projection_preserves_repeated_slashes_and_file_uris(
     tmp_path: Path,
 ):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
@@ -1425,8 +1503,8 @@ def test_public_event_projection_redacts_repeated_slashes_and_file_uris(
 
     summary = response.json()[1]["payload"]["summary"]
     assert response.status_code == 200
-    assert summary["unsafe"] == ["[local path]"] * len(unsafe_paths)
-    assert summary["embedded"] == "x=[local path] file=[local path]"
+    assert summary["unsafe"] == unsafe_paths
+    assert summary["embedded"] == "x=//etc file=file:///etc/passwd"
     assert summary["safe"] == safe_url
 
 

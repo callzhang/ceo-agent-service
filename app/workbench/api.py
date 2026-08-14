@@ -14,21 +14,17 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
-from urllib.parse import quote, unquote, urlparse, urlsplit
+from urllib.parse import quote
 
 import anyio
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from app.leak_check import (
-    contains_credential,
-    contains_local_runtime_leak,
-    is_sensitive_field_name,
-)
+from app.leak_check import redact_credentials_in_value
 from app.workbench.executor import WorkbenchExecutor
 from app.workbench.models import (
     ConfirmationStatus,
@@ -551,186 +547,17 @@ _PUBLIC_EVENT_FIELDS: dict[str, frozenset[str]] = {
 }
 
 
-_PATH_FIELD_NAMES = frozenset(
-    {
-        "path",
-        "file",
-        "filepath",
-        "file_path",
-        "filename",
-        "file_name",
-        "directory",
-        "dir",
-    }
-)
-
-
-def _is_path_field_name(key: str) -> bool:
-    snake_case = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key)
-    tokens = re.split(r"[^a-z0-9]+", snake_case.casefold())
-    return any(token in _PATH_FIELD_NAMES for token in tokens)
-
-
-def _safe_path_display(value: str, workspace: Path) -> str:
-    if value.casefold().startswith("file://"):
-        value = urlparse(value).path
-    candidate = Path(value)
-    windows_candidate = PureWindowsPath(value)
-    if windows_candidate.is_absolute():
-        return windows_candidate.name
-    if ".." in windows_candidate.parts:
-        return windows_candidate.name
-    if candidate.is_absolute():
-        try:
-            return candidate.resolve(strict=False).relative_to(workspace).as_posix()
-        except ValueError:
-            return candidate.name
-    if ".." in candidate.parts:
-        return candidate.name
-    if "\\" in value:
-        return windows_candidate.as_posix()
-    return candidate.as_posix()
-
-
-_WEB_URL_PATTERN = re.compile(r"https?://[^\s'\"`<>\[\]{}(),;|]+", re.IGNORECASE)
-_LOCAL_PATH_BOUNDARY = r"(?:^|[\s=:'\"`\[\]{}(),;<>|])"
-_LOCAL_PATH_END = r"[^ \t\r\n\f\v'\"`<>|]*"
-_SAFE_PUBLIC_PATH_PREFIXES = ("/api", "/workbench-assets")
-
-
-def _bounded_unquote(value: str) -> str | None:
-    current = value
-    for _ in range(3):
-        try:
-            decoded = unquote(current, errors="strict")
-        except (UnicodeDecodeError, ValueError):
-            return None
-        if decoded == current:
-            return decoded
-        current = decoded
-    return None
-
-
-def _has_path_traversal_component(value: str) -> bool:
-    return any(part in {".", ".."} for part in re.split(r"[/=&;:]+", value))
-
-
-def _is_canonical_safe_public_url_path(value: str) -> bool:
-    if not value.startswith("/") or value.startswith("//"):
-        return False
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        return False
-    if "\\" in value:
-        return False
-    decoded = _bounded_unquote(value)
-    if decoded is None or decoded != value or "%" in value:
-        return False
-    try:
-        parsed = urlsplit(value)
-    except ValueError:
-        return False
-    if parsed.scheme or parsed.netloc:
-        return False
-    path = parsed.path
-    if not any(
-        path.startswith(f"{prefix}/") for prefix in _SAFE_PUBLIC_PATH_PREFIXES
-    ):
-        return False
-    if re.fullmatch(r"/[A-Za-z0-9._~/-]+", path) is None:
-        return False
-    if "//" in path or PurePosixPath(path).as_posix() != path:
-        return False
-    if any(part in {"", ".", ".."} for part in path.split("/")[1:]):
-        return False
-    return not (
-        "/" in parsed.query
-        or "/" in parsed.fragment
-        or _has_path_traversal_component(parsed.query)
-        or _has_path_traversal_component(parsed.fragment)
-    )
-
-
-def _redact_local_path_segment(value: str) -> str:
-    local_path_pattern = re.compile(
-        rf"(?P<prefix>{_LOCAL_PATH_BOUNDARY})(?P<path>"
-        rf"file://{_LOCAL_PATH_END}"
-        rf"|/+{_LOCAL_PATH_END}"
-        rf"|[A-Za-z]:[\\/]{_LOCAL_PATH_END}"
-        rf"|\\\\[^\\/\s]+[\\/]{_LOCAL_PATH_END}"
-        rf")"
-    )
-
-    def replace(match: re.Match[str]) -> str:
-        path = match.group("path")
-        if path.startswith("/") and _is_canonical_safe_public_url_path(path):
-            return match.group(0)
-        return f"{match.group('prefix')}[local path]"
-
-    return local_path_pattern.sub(replace, value)
-
-
-def _redact_local_path_substrings(value: str) -> str:
-    pieces: list[str] = []
-    cursor = 0
-    for match in _WEB_URL_PATTERN.finditer(value):
-        pieces.append(_redact_local_path_segment(value[cursor : match.start()]))
-        pieces.append(match.group(0))
-        cursor = match.end()
-    pieces.append(_redact_local_path_segment(value[cursor:]))
-    return "".join(pieces)
-
-
-def _contains_local_runtime_leak_outside_web_urls(value: str) -> bool:
-    cursor = 0
-    for match in _WEB_URL_PATTERN.finditer(value):
-        if contains_local_runtime_leak(value[cursor : match.start()]):
-            return True
-        cursor = match.end()
-    return contains_local_runtime_leak(value[cursor:])
-
-
 def _safe_public_value(value: Any, *, key: str, workspace: Path) -> Any:
-    if isinstance(value, dict):
-        return {
-            child_key: _safe_public_value(
-                child_value, key=child_key, workspace=workspace
-            )
-            for child_key, child_value in value.items()
-            if not is_sensitive_field_name(child_key)
-        }
-    if isinstance(value, list):
-        return [
-            _safe_public_value(item, key=key, workspace=workspace) for item in value
-        ]
-    if isinstance(value, str):
-        if _is_path_field_name(key):
-            candidate = Path(value)
-            if candidate.is_absolute() or PureWindowsPath(value).is_absolute():
-                return _safe_path_display(value, workspace)
-        if contains_credential(value):
-            return "[redacted]"
-        safe_value = _redact_local_path_substrings(value)
-        if _contains_local_runtime_leak_outside_web_urls(safe_value):
-            return "[redacted]"
-        if _is_path_field_name(key):
-            return _safe_path_display(safe_value, workspace)
-        return safe_value
-    return value
+    del key, workspace
+    return redact_credentials_in_value(value, "[redacted]")
 
 
 def _public_event(event: WorkbenchEvent, workspace: Path) -> PublicEvent:
     allowed = _PUBLIC_EVENT_FIELDS.get(event.event_type, frozenset())
-    white_box_tool = event.event_type in {"tool_started", "tool_completed"} and (
-        event.payload.get("kind") in {"command", "mcp"}
-    )
     payload = {
-        key: (
-            value
-            if white_box_tool
-            else _safe_public_value(value, key=key, workspace=workspace)
-        )
+        key: _safe_public_value(value, key=key, workspace=workspace)
         for key, value in event.payload.items()
-        if key in allowed and (white_box_tool or not is_sensitive_field_name(key))
+        if key in allowed
     }
     values = {
         "id": event.id,
@@ -740,8 +567,6 @@ def _public_event(event: WorkbenchEvent, workspace: Path) -> PublicEvent:
         "payload": payload,
         "created_at": event.created_at,
     }
-    if white_box_tool:
-        return PublicEvent.model_validate(values)
     return PublicEvent.model_validate(
         _safe_public_record(values, workspace)
     )

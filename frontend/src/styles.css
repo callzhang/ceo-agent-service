@@ -325,6 +325,7 @@ h1, h2, h3, p { margin-top: 0; }
 .execution-details h4 { margin: 0 0 5px; color: var(--ink); font-size: 0.74rem; }
 .execution-details pre { max-height: 320px; margin: 0; padding: 10px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface); font: 0.74rem/1.55 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .execution-aborted-note { margin: 10px 0 0; color: var(--ink-soft); }
+.execution-failure-note { margin: 10px 0 0; color: var(--danger); }
 .execution-running summary > svg:first-child { color: var(--warning); }
 .execution-completed summary > svg:first-child { color: var(--accent); }
 .execution-failed summary > svg:first-child { color: var(--danger); }

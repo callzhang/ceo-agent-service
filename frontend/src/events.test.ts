@@ -97,18 +97,32 @@ describe("workbench event reducer", () => {
     expect(blocks).toMatchObject([{ status: "completed", payload: { summary: "读取完成" } }]);
   });
 
-  it("keeps correlated failed tool completions authoritative on terminal turns", () => {
+  it("derives a stopped command with no exit code as aborted", () => {
     const events = createEventState([
-      event(1, "tool_started", { tool: "shell", tool_call_id: "call-1", summary: "运行命令" }),
-      event(2, "tool_completed", { tool: "shell", tool_call_id: "call-1", status: "failed", summary: "命令失败" }),
+      event(1, "tool_started", { kind: "command", command: "sleep 60", tool_call_id: "call-1", summary: "运行命令" }),
+      event(2, "tool_completed", { kind: "command", command: "sleep 60", tool_call_id: "call-1", status: "failed", exit_code: null, summary: "命令失败" }),
     ]).events;
 
-    for (const status of ["stopped", "completed"] as const) {
-      expect(timelineBlocks("turn-1", events, status)[0]).toMatchObject({
-        status: "failed",
-        payload: { summary: "命令失败" },
-      });
-    }
+    expect(timelineBlocks("turn-1", events, "stopped")[0]).toMatchObject({
+      status: "aborted",
+      payload: { summary: "任务已停止，命令未返回退出码。" },
+    });
+    expect(timelineBlocks("turn-1", events, "completed")[0]).toMatchObject({
+      status: "failed",
+      payload: { summary: "命令失败" },
+    });
+  });
+
+  it("keeps a real nonzero exit authoritative when the turn is stopped", () => {
+    const events = createEventState([
+      event(1, "tool_started", { kind: "command", command: "check", tool_call_id: "call-1" }),
+      event(2, "tool_completed", { kind: "command", command: "check", tool_call_id: "call-1", status: "failed", exit_code: 1 }),
+    ]).events;
+
+    expect(timelineBlocks("turn-1", events, "stopped")[0]).toMatchObject({
+      status: "failed",
+      payload: { exit_code: 1 },
+    });
   });
 
   it("leaves text and file blocks unchanged when deriving aborted tools", () => {

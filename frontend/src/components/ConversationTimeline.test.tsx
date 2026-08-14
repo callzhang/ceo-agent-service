@@ -70,7 +70,7 @@ describe("ConversationTimeline", () => {
     expect(screen.getByText("坏链接")).not.toHaveAttribute("href");
     expect(screen.getByText("const ok = true")).toBeInTheDocument();
     expect(screen.queryByText("raw")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Users\/private/)).not.toBeInTheDocument();
+    expect(screen.getByText(/\/Users\/private\/secret/)).toBeInTheDocument();
     expect(screen.queryByText(/visible-secret/)).not.toBeInTheDocument();
     expect(screen.getByText("发送群消息")).toBeInTheDocument();
     expect(screen.getByText("等待执行器安全停稳")).toBeInTheDocument();
@@ -217,6 +217,27 @@ describe("ConversationTimeline", () => {
     expect(within(execution as HTMLElement).getByText("已中止")).toBeInTheDocument();
     expect(within(execution as HTMLElement).getByText("任务已结束，未收到工具完成事件。")).toBeInTheDocument();
     expect(within(execution as HTMLElement).queryByText("执行中")).not.toBeInTheDocument();
+  });
+
+  it("shows local paths verbatim in a transparent failure", () => {
+    const failed = {
+      ...turn,
+      status: "failed" as const,
+      error_detail: "读取 /Users/derek/Documents/Projects/ceo-agent-service/README.md 失败",
+    };
+    render(
+      <ConversationTimeline
+        timeline={{ ...timeline, turns: [failed], events: [], confirmations: [], artifacts: [] }}
+        activeTurnId={null}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "/Users/derek/Documents/Projects/ceo-agent-service/README.md",
+    );
+    expect(screen.queryByText(/已隐藏本地路径/)).not.toBeInTheDocument();
   });
 
   it("updates unmatched tool presentation when the same turn becomes terminal", () => {

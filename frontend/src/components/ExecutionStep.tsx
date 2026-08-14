@@ -14,11 +14,10 @@ export function safeDisplayText(value: unknown, fallback: string): string {
   const cleaned = Array.from(value).filter((character) => character.charCodeAt(0) >= 32 || character === "\n").join("").trim();
   if (!cleaned) return fallback;
   const redacted = cleaned
-    .replace(/(^|[\s=:'"`[\]{}(),;<>|])(?:file:\/\/|\/|~\/|[A-Za-z]:[\\/]|\\\\)\S*/g, "$1[已隐藏本地路径]")
     .replace(/\bBearer\s+\S+/gi, "Bearer [已隐藏凭据]")
     .replace(/\b(api[_-]?key|token|secret|password)\s*[:=]\s*\S+/gi, "$1=[已隐藏凭据]")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, "[已隐藏凭据]");
-  return redacted.slice(0, 240);
+  return redacted;
 }
 
 export interface ExecutionStepProps {
@@ -111,6 +110,7 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
           {payload.result !== undefined && <section><h4>结果</h4><pre>{detailText(payload.result)}</pre></section>}
           {payload.provider_item !== undefined && <section><h4>原始工具事件</h4><pre>{detailText(payload.provider_item)}</pre></section>}
           {status === "aborted" && <p className="execution-aborted-note">{summary}</p>}
+          {failed && <p className="execution-failure-note">{summary}</p>}
         </div>
       ) : (
         <div className="execution-legacy-detail">

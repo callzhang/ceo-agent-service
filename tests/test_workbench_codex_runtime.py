@@ -1459,7 +1459,111 @@ def test_calendar_result_cursor_is_preserved_in_white_box_event(tmp_path: Path):
     assert completed["result"]["Ok"]["structuredContent"]["next_page_token"] == cursor
 
 
-def test_credential_in_white_box_command_fails_without_entering_events(tmp_path: Path):
+def test_credential_shaped_mcp_result_is_redacted_without_failing_turn(
+    tmp_path: Path,
+):
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {
+            "type": "item.started",
+            "item": {
+                "id": "memory-1",
+                "type": "mcp_tool_call",
+                "server": "memory_connector",
+                "tool": "memory_recall",
+                "arguments": {"query": "最近的管理话题"},
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "memory-1",
+                "type": "mcp_tool_call",
+                "server": "memory_connector",
+                "tool": "memory_recall",
+                "result": {
+                    "structuredContent": {
+                        "summary": "配置示例 api_key=credential-value-1234",
+                        "access_token": "short-secret-value",
+                        "source": "/Users/derek/.codex/memories/MEMORY.md",
+                    }
+                },
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": "完成"},
+        },
+        {"type": "turn.completed"},
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    assert result.status == "completed"
+    [completed] = [
+        event.payload_json_value()
+        for event in events
+        if event.event_type == "tool_completed"
+    ]
+    encoded = json.dumps(completed)
+    assert "credential-value-1234" not in encoded
+    assert "short-secret-value" not in encoded
+    assert "[REDACTED]" in encoded
+    assert "/Users/derek/.codex/memories/MEMORY.md" in encoded
+
+
+def test_failed_command_without_provider_diagnostics_explains_the_boundary(
+    tmp_path: Path,
+):
+    records = [
+        {"type": "thread.started", "thread_id": SESSION_ID},
+        {
+            "type": "item.started",
+            "item": {
+                "id": "command-rejected",
+                "type": "command_execution",
+                "command": "/usr/bin/printf opaque",
+                "cwd": str(tmp_path),
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "command-rejected",
+                "type": "command_execution",
+                "aggregated_output": "",
+                "exit_code": None,
+                "status": "failed",
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": "命令未执行"},
+        },
+        {"type": "turn.completed"},
+    ]
+    events = []
+    runtime = CodexRuntime(workspace=tmp_path, executor=FakeProcessExecutor(records))
+
+    result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
+
+    assert result.status == "completed"
+    completed = next(
+        event.payload_json_value()
+        for event in events
+        if event.event_type == "tool_completed"
+    )
+    assert completed["status"] == "failed"
+    assert completed["summary"] == (
+        "Codex Provider 报告命令失败，但未返回退出码或诊断输出。"
+    )
+
+
+def test_credential_in_white_box_command_is_redacted_without_failing_turn(
+    tmp_path: Path,
+):
     credential = "sk-proj-nativecredential1234"
     records = [
         {"type": "thread.started", "thread_id": SESSION_ID},
@@ -1490,10 +1594,16 @@ def test_credential_in_white_box_command_fails_without_entering_events(tmp_path:
 
     result = runtime.wait(runtime.start(request(tmp_path), on_event=events.append))
 
-    assert result.status == "failed"
-    assert result.error_code == "sensitive_provider_output"
+    assert result.status == "completed"
     assert credential not in repr(events)
     assert credential not in result.error_detail
+    tool_events = [
+        event.payload_json_value()
+        for event in events
+        if event.event_type in {"tool_started", "tool_completed"}
+    ]
+    assert len(tool_events) == 2
+    assert all("[REDACTED]" in json.dumps(event) for event in tool_events)
 
 
 def test_unsupported_private_item_is_ignored_without_leaking(tmp_path: Path):
