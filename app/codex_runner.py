@@ -137,11 +137,14 @@ class CodexRunner:
         effective_approval_bypass = (
             use_approval_bypass and approval_policy != "never"
         )
-        effective_developer_instructions = (
-            developer_instructions
-            if developer_instructions is not None
-            else codex_developer_instructions()
-        )
+        if preserve_native_instructions:
+            effective_developer_instructions = ""
+        else:
+            effective_developer_instructions = (
+                developer_instructions
+                if developer_instructions is not None
+                else codex_developer_instructions()
+            )
         image_options: list[str] = []
         for image_path in image_paths or []:
             image_options.extend(["--image", str(image_path)])

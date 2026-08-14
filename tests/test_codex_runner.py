@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import app.codex_runner as codex_runner_module
 from app.codex_runner import (
     AGENT_ENVELOPE_SCHEMA_PATH,
     CODEX_DECISION_SCHEMA_PATH,
@@ -166,6 +167,27 @@ def test_codex_command_can_preserve_native_model_config(tmp_path: Path, monkeypa
     assert "MiniMax" not in command_text
     assert "minimax" not in command_text
     assert "model_provider" not in command_text
+
+
+def test_preserving_native_instructions_does_not_read_workbench_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    def unexpected_prompt_read() -> str:
+        raise AssertionError("native instruction mode must not read Workbench prompt")
+
+    monkeypatch.setattr(
+        codex_runner_module,
+        "codex_developer_instructions",
+        unexpected_prompt_read,
+    )
+
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="hello",
+        session_id=None,
+        preserve_native_instructions=True,
+    )
+
+    assert not any(item.startswith("developer_instructions=") for item in command)
 
 
 def test_codex_command_does_not_require_reasoning_summary_support(tmp_path: Path):
