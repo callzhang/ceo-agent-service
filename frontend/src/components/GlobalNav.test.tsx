@@ -35,6 +35,10 @@ describe("GlobalNav", () => {
   });
 
   it("centers a consistently sized tab group using the workbench accent", () => {
+    const nav = styleFor(".global-nav");
+    expect(nav.width).toBe("100%");
+    expect(nav.minWidth).toBe("0px");
+
     const track = styleFor(".global-nav-track");
     expect(track.justifyContent).toBe("center");
 
