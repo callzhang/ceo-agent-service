@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactList } from "./ArtifactList";
 import { ConfirmationCard } from "./ConfirmationCard";
-import { assistantTurnKey, ConversationTimeline } from "./ConversationTimeline";
+import { activeTurnScrollIndex, assistantTurnKey, ConversationTimeline } from "./ConversationTimeline";
 import { TurnInspector } from "./TurnInspector";
 import type { Timeline, TurnStatus } from "../types";
 
@@ -39,6 +39,16 @@ const timeline: Timeline = {
 describe("ConversationTimeline", () => {
   it("uses the exact stable assistant item key contract", () => {
     expect(assistantTurnKey(turn)).toBe("turn:turn-1:assistant");
+  });
+
+  it("targets a newly active turn at the end of a long virtualized conversation", () => {
+    const turns = Array.from({ length: 20 }, (_, index) => ({
+      ...turn,
+      id: `turn-${index}`,
+    }));
+
+    expect(activeTurnScrollIndex(turns, "turn-19", 999_900)).toBe(999_919);
+    expect(activeTurnScrollIndex(turns, "missing", 999_900)).toBeNull();
   });
 
   it("bounds the initial virtualized mount for a 100-turn page", () => {
