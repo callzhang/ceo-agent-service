@@ -46,6 +46,8 @@ export interface TimelineBlock {
   payload?: Record<string, unknown>;
   confirmationId?: string;
   artifactId?: string;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 const terminalTurnStatuses = new Set<TurnStatus>(["completed", "stopped", "failed"]);
@@ -162,7 +164,12 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[], turnSta
         ? "running"
         : payloadText(event.payload, "status") || "completed";
       if (existing !== undefined) {
-        blocks[existing] = { ...blocks[existing], status, payload: event.payload };
+        blocks[existing] = {
+          ...blocks[existing],
+          status,
+          payload: { ...blocks[existing].payload, ...event.payload },
+          completedAt: event.event_type === "tool_completed" ? event.created_at : blocks[existing].completedAt,
+        };
       } else {
         tools.set(callId, blocks.length);
         blocks.push({
@@ -171,6 +178,8 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[], turnSta
           eventId: event.id,
           status,
           payload: event.payload,
+          startedAt: event.event_type === "tool_started" ? event.created_at : undefined,
+          completedAt: event.event_type === "tool_completed" ? event.created_at : undefined,
         });
       }
       continue;

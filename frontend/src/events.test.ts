@@ -142,6 +142,47 @@ describe("workbench event reducer", () => {
     ]);
   });
 
+  it("merges completion details and timestamps without losing the started action", () => {
+    const blocks = timelineBlocks("turn-1", createEventState([
+      event(1, "tool_started", {
+        tool_call_id: "call-1", kind: "command", name: "rg", native_id: "native-1",
+        status: "running", command: "rg --files frontend/src", cwd: "/workspace",
+        provider_item: { id: "native-1", type: "command_execution", command: "rg --files frontend/src" },
+      }),
+      { ...event(2, "tool_completed", {
+        tool_call_id: "call-1", kind: "command", name: "rg", native_id: "native-1",
+        status: "completed", output: "frontend/src/app.tsx\n", exit_code: 0,
+        provider_item: { id: "native-1", type: "command_execution", exit_code: 0 },
+      }), created_at: "2026-08-13 10:00:02" },
+    ]).events);
+
+    expect(blocks[0]).toMatchObject({
+      startedAt: "2026-08-13 10:00:00",
+      completedAt: "2026-08-13 10:00:02",
+      payload: {
+        command: "rg --files frontend/src",
+        cwd: "/workspace",
+        output: "frontend/src/app.tsx\n",
+        exit_code: 0,
+      },
+    });
+  });
+
+  it("keeps white-box details when a running tool becomes terminally aborted", () => {
+    const [block] = timelineBlocks("turn-1", createEventState([
+      event(1, "tool_started", {
+        tool_call_id: "call-1", kind: "mcp", name: "server.search", native_id: "native-1",
+        status: "running", server: "server", tool: "search", arguments: { query: "today" },
+        provider_item: { id: "native-1", type: "mcp_tool_call" },
+      }),
+    ]).events, "failed");
+
+    expect(block).toMatchObject({
+      status: "aborted",
+      payload: { name: "server.search", arguments: { query: "today" } },
+    });
+  });
+
   it("uses exact event IDs for stable rendered block keys", () => {
     const blocks = timelineBlocks("turn-1", createEventState([
       event(10, "text_delta", { text: "A" }),

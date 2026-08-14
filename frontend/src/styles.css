@@ -314,6 +314,17 @@ h1, h2, h3, p { margin-top: 0; }
 .execution-chevron { transition: transform 120ms ease; }
 .execution-step[open] .execution-chevron { transform: rotate(90deg); }
 .execution-step > p { margin: 0; padding: 0 12px 11px 36px; color: var(--ink-soft); font-size: 0.78rem; line-height: 1.5; overflow-wrap: anywhere; }
+.execution-details, .execution-legacy-detail { padding: 2px 12px 13px 36px; color: var(--ink-soft); font-size: 0.78rem; }
+.execution-legacy-detail strong { color: var(--ink); }
+.execution-legacy-detail p { margin: 5px 0 0; }
+.execution-metadata { display: grid; gap: 6px; margin: 0 0 12px; }
+.execution-metadata > div { display: grid; grid-template-columns: minmax(110px, 150px) minmax(0, 1fr); gap: 10px; }
+.execution-metadata dt { color: var(--ink-soft); font-weight: 650; }
+.execution-metadata dd { min-width: 0; margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.execution-details section + section { margin-top: 10px; }
+.execution-details h4 { margin: 0 0 5px; color: var(--ink); font-size: 0.74rem; }
+.execution-details pre { max-height: 320px; margin: 0; padding: 10px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface); font: 0.74rem/1.55 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.execution-aborted-note { margin: 10px 0 0; color: var(--ink-soft); }
 .execution-running summary > svg:first-child { color: var(--warning); }
 .execution-completed summary > svg:first-child { color: var(--accent); }
 .execution-failed summary > svg:first-child { color: var(--danger); }
