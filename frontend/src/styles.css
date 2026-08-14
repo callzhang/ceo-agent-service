@@ -68,6 +68,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .global-nav-track {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   width: max-content;
   min-width: 100%;
@@ -78,6 +79,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .global-nav-item {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-width: 84px;
   min-height: 34px;
   padding: 0 13px;
   border: 1px solid var(--line);
@@ -90,8 +93,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   white-space: nowrap;
 }
 
-.global-nav-item:hover { color: var(--ink); border-color: var(--line-strong); }
-.global-nav-item.active { color: white; border-color: var(--ink); background: var(--ink); }
+.global-nav-item:hover { color: var(--accent-hover); border-color: var(--accent); background: var(--accent-soft); }
+.global-nav-item.active { color: white; border-color: var(--accent); background: var(--accent); }
 
 .workbench-shell {
   display: grid;
