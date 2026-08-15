@@ -2002,6 +2002,22 @@ def test_top_nav_highlights_current_page_and_disables_current_link(
     assert '<span class="nav-item active" aria-current="page">Settings</span>' in workers_html
 
 
+def test_legacy_top_nav_uses_a_centered_three_column_header():
+    css = audit_web_module.CSS
+
+    assert (
+        ".topbar{display:grid;grid-template-columns:minmax(0,1fr) auto "
+        "minmax(0,1fr);align-items:center;gap:24px;min-height:72px}"
+    ) in css
+    assert ".topbar>.nav{grid-column:2;justify-self:center}" in css
+    assert ".nav{display:flex;align-items:center;justify-content:center;" in css
+    assert (
+        "@media (max-width:960px){.topbar{grid-template-columns:minmax(0,1fr);"
+        "align-items:start;gap:14px;padding:14px 0}.topbar>.nav{grid-column:1;"
+        "justify-self:center}"
+    ) in css
+
+
 def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_setup_wizard_step(

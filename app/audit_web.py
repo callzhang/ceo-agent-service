@@ -177,7 +177,9 @@ body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;ma
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 header{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.94);border-bottom:1px solid var(--hairline);backdrop-filter:saturate(180%) blur(12px)}
 .shell{width:100%;margin:0 auto;padding:0 24px}
-.topbar{display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:72px}
+.topbar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:24px;min-height:72px}
+.topbar>.brand{justify-self:start;min-width:0}
+.topbar>.nav{grid-column:2;justify-self:center}
 .brand{display:flex;align-items:center;gap:12px;min-width:0}
 .brand-home:hover{text-decoration:none}
 .brand-mark{width:28px;height:28px;border-radius:8px;background:var(--ink);box-shadow:inset 0 -8px 0 rgba(0,212,164,.26)}
@@ -494,11 +496,12 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-info::after{content:attr(data-tooltip);display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:max-content;max-width:min(320px,calc(100vw - 48px));padding:7px 9px;border-radius:6px;background:#1f2937;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:12px;font-weight:500;line-height:1.4;text-align:left;white-space:normal}
 .attempt-info::before{content:"";display:none;position:absolute;left:4px;bottom:calc(100% + 3px);z-index:31;border:5px solid transparent;border-top-color:#1f2937}
 .attempt-info:hover::after,.attempt-info:focus::after,.attempt-info:hover::before,.attempt-info:focus::before{display:block}
-.nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.nav{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
 .nav-item{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--steel);font-size:14px;font-weight:500}
 a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .nav-item.active{background:var(--ink);border-color:var(--ink);color:#fff;cursor:default}
 .nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;margin-left:7px;padding:0 5px;border-radius:999px;background:#d45656;color:#fff;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:800;line-height:1}
+@media (max-width:960px){.topbar{grid-template-columns:minmax(0,1fr);align-items:start;gap:14px;padding:14px 0}.topbar>.nav{grid-column:1;justify-self:center}}
 .prompt-tabs{display:inline-flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);margin:0 0 12px}
 .prompt-tab{display:inline-flex;align-items:center;height:32px;padding:0 13px;border-radius:999px;color:var(--steel);font-size:13px;font-weight:600}
 .prompt-tab:hover{text-decoration:none;color:var(--ink)}
