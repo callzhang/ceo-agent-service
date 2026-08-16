@@ -5578,6 +5578,27 @@ def test_worker_attention_excludes_healthy_follow_up_drafts(tmp_path: Path):
     assert all(row["category"] != "Follow-up" for row in payload["attention_rows"])
 
 
+def test_worker_attention_uses_work_input_summary_instead_of_internal_reference(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    work_input_id = store.enqueue_work_summary_input(
+        "ai_minutes",
+        "opaque-internal-reference",
+        '{"summary":"Review the current meeting follow-up."}',
+    )
+
+    payload = build_worker_status_payload(store)
+    row = next(
+        item
+        for item in payload["attention_rows"]
+        if item["category"] == "Work item" and item["id"] == str(work_input_id)
+    )
+
+    assert row["context"] == "ai_minutes"
+    assert row["summary"] == "Review the current meeting follow-up."
+
+
 def test_worker_status_uses_wechat_delivery_outcome_not_raw_failed_status(
     tmp_path: Path,
 ):

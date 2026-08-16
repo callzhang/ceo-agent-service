@@ -9,6 +9,12 @@
   attachments. Native DingTalk media and download-code images still require an
   authenticated local file and fail closed when one is unavailable.
 
+### Audit visibility
+
+- Show an active work item's persisted summary in Workers Attention instead of
+  its opaque internal source reference, while retaining the source type and
+  underlying error state for diagnosis.
+
 ### Task-agent recovery
 
 - Preserve the initial task-agent receipt when a proposed owner lacks a stable

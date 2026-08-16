@@ -2337,7 +2337,16 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
     }
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dict[str, str]]:
     specs = [
-        ("Work item", "work_summary_inputs", "status", "source_type", "source_ref", "updated_at", "error", ("pending", "processing", "failed")),
+        (
+            "Work item",
+            "work_summary_inputs",
+            "status",
+            "source_type",
+            "coalesce(nullif(json_extract(payload_json, '$.summary'), ''), source_ref)",
+            "updated_at",
+            "error",
+            ("pending", "processing", "failed"),
+        ),
         ("Follow-up", "follow_up_drafts", "status", "owner_name", "question_text", "updated_at", "suppressed_reason", ("failed",)),
         ("Meeting", "meeting_alignment_jobs", "status", "title", "target_title", "updated_at", "error", ("pending", "processing", "failed")),
         ("OKR", "okr_review_requests", "status", "conversation_title", "trigger_text", "updated_at", "error", ("pending", "processing", "failed")),
