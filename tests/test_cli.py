@@ -3018,7 +3018,8 @@ def test_build_work_profile_command_can_skip_live_sources(tmp_path, monkeypatch)
     assert calls == []
 
 
-def test_settings_defaults_point_to_memory_home():
+def test_settings_defaults_point_to_memory_home(monkeypatch):
+    monkeypatch.delenv("CEO_MAX_BATCHES", raising=False)
     parser = build_parser()
     args = parser.parse_args(["run-once"])
 
@@ -4983,6 +4984,7 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
             sleep=sleep,
             monotonic=lambda: next(times),
             network_ready=lambda: True,
+            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
         )
 
     assert calls == [
@@ -5063,6 +5065,7 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             monotonic=lambda: 10.0,
             network_ready=lambda: True,
+            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
         )
 
     assert calls == [
@@ -5146,6 +5149,7 @@ def test_task_maintenance_loop_does_not_block_follow_up_delivery(
             sleep=sleep,
             monotonic=lambda: next(times),
             network_ready=lambda: True,
+            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
         )
 
     assert calls == [
@@ -5250,6 +5254,7 @@ def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
             monotonic=lambda: 10.0,
             network_ready=lambda: True,
+            wall_clock=lambda: datetime(2026, 8, 11, 10, 0).astimezone(),
         )
 
     assert calls == [

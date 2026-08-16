@@ -37,6 +37,12 @@
   the bounded owner-repair decision, rather than failing before persistence;
   unrecoverable owners still remove owner-dependent TODOs and follow-ups.
 
+### Test reliability
+
+- Isolate CLI default and task-maintenance tests from developer environment
+  variables and the current calendar date, so local full-suite results do not
+  change when a batch limit is configured or the weekly OKR window is open.
+
 ### Audit reconciliation
 
 - Redact every failed outbound chat-send command before persistence, and record
