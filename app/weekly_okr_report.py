@@ -359,27 +359,29 @@ class DwsWeeklyOkrGateway:
         self.dws = dws
 
     def resolve_group_roster(self, group_name: str) -> GroupRoster:
-        groups_payload = self.dws.run_json(
+        conversations_payload = self.dws.run_json(
             [
                 self.dws.dws_bin,
                 "chat",
-                "+chat-search",
-                "--query",
-                group_name,
+                "+conversation-list",
+                "--page-all",
                 "--limit",
-                "20",
+                "100",
                 "--format",
                 "json",
             ]
         )
-        groups = _nested_list(groups_payload, "groups")
-        exact_groups = [group for group in groups if group.get("title") == group_name]
-        chosen = exact_groups if exact_groups else groups
-        if len(chosen) != 1:
+        conversations = _nested_list(conversations_payload, "conversations")
+        exact_groups = [
+            conversation
+            for conversation in conversations
+            if conversation.get("conversationName") == group_name
+        ]
+        if len(exact_groups) != 1:
             raise DwsError(
                 f"unable to resolve exactly one DingTalk group named {group_name!r}"
             )
-        group = chosen[0]
+        group = exact_groups[0]
         conversation_id = str(group.get("openConversationId") or "").strip()
         if not conversation_id:
             raise DwsError("resolved DingTalk group is missing openConversationId")
@@ -388,15 +390,17 @@ class DwsWeeklyOkrGateway:
             [
                 self.dws.dws_bin,
                 "chat",
-                "+group-members",
-                "--group",
-                group_name,
+                "+chat-members-list",
+                "--conversation-id",
+                conversation_id,
+                "--member-types",
+                "user",
                 "--format",
                 "json",
             ],
             timeout_seconds=120,
         )
-        members = _nested_list(members_payload, "members")
+        members = _nested_list(members_payload, "users")
         if not members:
             raise DwsError(f"DingTalk group {group_name!r} has no readable members")
 
@@ -448,7 +452,7 @@ class DwsWeeklyOkrGateway:
                 )
             )
         return GroupRoster(
-            name=str(group.get("title") or group_name),
+            name=str(group.get("conversationName") or group_name),
             conversation_id=conversation_id,
             managers=managers,
         )

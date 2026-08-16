@@ -52,6 +52,48 @@ class FakeDws:
         return self.payload
 
 
+class CurrentDwsRoster:
+    dws_bin = "dws"
+
+    def __init__(self):
+        self.commands = []
+
+    def run_json(self, command, **_kwargs):
+        self.commands.append(command)
+        if command[1:3] == ["chat", "+conversation-list"]:
+            return {
+                "complete": True,
+                "conversations": [
+                    {
+                        "conversationName": "CEO-2 管理群",
+                        "openConversationId": "cid-ceo-2",
+                    }
+                ],
+            }
+        if command[1:3] == ["chat", "+chat-members-list"]:
+            return {
+                "complete": True,
+                "users": [
+                    {"name": "甲", "openDingtalkId": "open-1"},
+                    {"name": "乙", "openDingtalkId": "open-2"},
+                ],
+            }
+        if command[1:3] == ["contact", "+search-user"]:
+            name = command[command.index("--query") + 1]
+            suffix = "1" if name == "甲" else "2"
+            return {
+                "users": [
+                    {
+                        "name": name,
+                        "openDingTalkId": f"open-{suffix}",
+                        "userId": f"user-{suffix}",
+                        "title": "总监",
+                    }
+                ]
+            }
+        raise AssertionError(command)
+
+
 class CreateDecodeRecoveryDws:
     dws_bin = "dws"
 
@@ -543,6 +585,40 @@ def test_resolve_wiki_lists_spaces_for_exact_emoji_name():
     assert DwsWeeklyOkrGateway(dws).resolve_wiki("🎯  目标与执行") == "wiki-target"
     assert dws.commands == [
         ["dws", "wiki", "space", "list", "--limit", "50", "--format", "json"]
+    ]
+
+
+def test_resolve_group_roster_uses_current_dws_conversation_contract():
+    dws = CurrentDwsRoster()
+
+    roster = DwsWeeklyOkrGateway(dws).resolve_group_roster("CEO-2 管理群")
+
+    assert roster.name == "CEO-2 管理群"
+    assert roster.conversation_id == "cid-ceo-2"
+    assert [(item.name, item.user_id, item.title) for item in roster.managers] == [
+        ("甲", "user-1", "总监"),
+        ("乙", "user-2", "总监"),
+    ]
+    assert dws.commands[0] == [
+        "dws",
+        "chat",
+        "+conversation-list",
+        "--page-all",
+        "--limit",
+        "100",
+        "--format",
+        "json",
+    ]
+    assert dws.commands[1] == [
+        "dws",
+        "chat",
+        "+chat-members-list",
+        "--conversation-id",
+        "cid-ceo-2",
+        "--member-types",
+        "user",
+        "--format",
+        "json",
     ]
 
 

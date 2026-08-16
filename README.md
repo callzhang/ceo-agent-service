@@ -177,6 +177,8 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 - Agoal 模式从 `~/.dingtalk-skills/config` 或 `.env` 读取应用凭证；如果规则列表为空或不唯一，
   设置 `CEO_OKR_OBJECTIVE_RULE_ID`，否则服务会直接报错。
 - 实时 API 获取失败时，服务会记录 history 并回复“现在无法获取实时 OKR 数据”，不会静默改用历史导出文件。
+- 周报发布前通过 DWS 的 `chat +conversation-list --page-all` 按群名精确解析 CEO-2 管理群，再用
+  `chat +chat-members-list --conversation-id ... --member-types user` 读取当前成员；群不可唯一解析或成员无法映射到通讯录时任务会停止，不会向其他群发布。
 
 ## Agent 安装入口
 
