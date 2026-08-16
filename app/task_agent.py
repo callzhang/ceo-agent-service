@@ -226,8 +226,11 @@ Required evidence sequence for every non-discard decision:
 - Memory is stable background, not proof of the current external state. Use
   the applicable live DWS read for current people, ownership, task, meeting,
   or document state before creating, updating, or following up on work.
-- When memory_recall is unavailable, record that runtime condition in
-  project.memory_context and use live evidence; do not claim that recall ran.
+- When memory_recall is unavailable after tool discovery, set
+  project.memory_context.memories[].source exactly to
+  "memory_connector_runtime_unavailable", explain the unavailable condition
+  in its summary, and use live evidence; set memory_recall_used=false and do
+  not claim that recall ran.
 
 Current Work Item JSON:
 {work_item_json}

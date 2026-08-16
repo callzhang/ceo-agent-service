@@ -11,6 +11,9 @@
   sending a message.
 - Require every non-discard task decision to call `memory_recall` when it is
   available, while retaining live DWS reads as the proof of current state.
+- Define the task-agent's memory-tool-unavailable receipt value in the prompt,
+  so a completed tool-discovery check can continue with recorded live evidence
+  instead of failing on an undocumented output-contract mismatch.
 
 ### Audit reconciliation
 

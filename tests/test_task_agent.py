@@ -3337,6 +3337,7 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
     assert "# CEO Work Tracking" in prompt
     assert '"title": "TaskAgentDecision"' in prompt
     assert "Memory connector status facts" in prompt
+    assert "memory_connector_runtime_unavailable" in prompt
     assert '"summary":' in prompt
 
 
