@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Task-agent recovery
+
+- Preserve the initial task-agent receipt when a proposed owner lacks a stable
+  identity, then make one bounded repair pass using live directory evidence.
+  If the owner remains unresolved, retain only an unassigned project update and
+  omit owner-dependent TODOs and follow-ups instead of failing the work item or
+  sending a message.
+
 ### Audit reconciliation
 
 - Redact every failed outbound chat-send command before persistence, and record

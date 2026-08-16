@@ -70,6 +70,26 @@ class TaskAgentRunner:
             session_id=None,
         )
 
+    def repair_owner_assignment(
+        self,
+        work_item: WorkItem,
+        candidate_prompt: str,
+        decision: TaskAgentDecision,
+        *,
+        validation_error: str,
+        memory_issue: str = "",
+    ) -> TaskAgentDecision:
+        return self.codex.decide(
+            prompt=build_owner_resolution_prompt(
+                work_item,
+                candidate_prompt,
+                decision,
+                validation_error=validation_error,
+                memory_issue=memory_issue,
+            ),
+            session_id=getattr(self.codex, "last_session_id", None),
+        )
+
 
 class TaskAgentCodexRunner:
     def __init__(
@@ -248,6 +268,55 @@ def build_candidate_context_prompt(
     )
 
 
+def build_owner_resolution_prompt(
+    work_item: WorkItem,
+    candidate_prompt: str,
+    decision: TaskAgentDecision,
+    *,
+    validation_error: str,
+    memory_issue: str = "",
+) -> str:
+    skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
+    decision_schema = json.dumps(
+        TaskAgentDecision.model_json_schema(),
+        ensure_ascii=False,
+        indent=2,
+    )
+    return f"""Repair the previous CEO Agent task decision. Return exactly one complete
+TaskAgentDecision JSON object that satisfies the supplied Pydantic schema.
+
+The previous decision was rejected before any project, TODO, follow-up, or
+external message was created because: {validation_error}
+
+{skill_text}
+
+Use the existing memory context only as stable background. For any owner you
+keep, perform a focused live directory/contact read and include the stable
+owner_user_id plus source, reason, and description in owner_evidence. Do not
+infer an owner from an author, speaker, participant, or name-only match.
+
+If the source establishes a real work update but a responsible person cannot be
+uniquely resolved, keep the project owner fields and owner_evidence empty. Do
+not create a TODO or follow-up that depends on that unverified owner. Do not
+send a message while repairing this decision.
+
+Memory connector status facts:
+{_memory_connector_prompt_status(memory_issue)}
+
+Current Work Item JSON:
+{work_item.model_dump_json(indent=2)}
+
+Current candidate context:
+{candidate_prompt}
+
+Previous rejected decision JSON:
+{decision.model_dump_json(indent=2)}
+
+TaskAgentDecision Pydantic JSON schema:
+{decision_schema}
+"""
+
+
 def render_follow_up_candidate_prompt(
     candidates: list[RecentFollowUpCandidate],
 ) -> str:
@@ -367,7 +436,6 @@ def process_work_item(
             memory_runtime_unavailable=memory_runtime_unavailable,
             now=now,
         )
-        _validate_owner_changes(store, decision)
         store.record_task_agent_run(
             summary_input_id=work_input.id,
             codex_session_id=codex_session_id,
@@ -375,6 +443,50 @@ def process_work_item(
             audit_summary=decision.update_summary,
             memory_recall_used=decision.memory_recall_used,
         )
+        try:
+            _validate_owner_changes(store, decision)
+        except OwnerResolutionRequired as exc:
+            decision = runner.repair_owner_assignment(
+                work_item,
+                candidate_prompt,
+                decision,
+                validation_error=str(exc),
+                memory_issue=memory_issue,
+            )
+            codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
+            audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
+            memory_recall_attempted = (
+                memory_recall_attempted
+                or _audit_events_include_memory_recall(audit_tool_events)
+            )
+            memory_runtime_unavailable = (
+                memory_runtime_unavailable
+                or (
+                    _audit_events_include_memory_tool_discovery(audit_tool_events)
+                    and _decision_reports_memory_runtime_unavailable(decision)
+                )
+            )
+            _validate_memory_recall_tool_event(
+                decision,
+                audit_tool_events,
+                memory_issue=memory_issue,
+                memory_runtime_unavailable=memory_runtime_unavailable,
+            )
+            _validate_task_agent_decision(
+                decision,
+                memory_issue=memory_issue,
+                memory_recall_attempted=memory_recall_attempted,
+                memory_runtime_unavailable=memory_runtime_unavailable,
+                now=now,
+            )
+            store.record_task_agent_run(
+                summary_input_id=work_input.id,
+                codex_session_id=codex_session_id,
+                decision_json=_json_dumps(decision.model_dump(mode="json")),
+                audit_summary=decision.update_summary,
+                memory_recall_used=decision.memory_recall_used,
+            )
+            _validate_owner_changes(store, decision)
         apply_task_agent_decision(
             store,
             summary_input_id=work_input.id,
@@ -667,6 +779,10 @@ def _json_object(value: str) -> dict[str, object]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+class OwnerResolutionRequired(ValueError):
+    pass
+
+
 def _require_supported_owner(
     *,
     assigned: dict[str, object],
@@ -684,7 +800,7 @@ def _require_supported_owner(
         "",
     )
     if not stable_id:
-        raise ValueError(f"{label} requires a stable owner ID")
+        raise OwnerResolutionRequired(f"{label} requires a stable owner ID")
     _require_evidence_fields(
         evidence,
         label=label,
