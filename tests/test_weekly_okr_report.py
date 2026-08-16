@@ -818,6 +818,50 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
     assert [review.name for review in cached.manager_reviews] == ["甲", "乙"]
 
 
+def test_codex_agent_retries_incomplete_kr_coverage_once(tmp_path):
+    roster = managers()[:1]
+    source = FakeSource()
+    source_path = tmp_path / "live.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "managers": [
+                    {
+                        "manager": {"name": roster[0].name, "userId": roster[0].user_id},
+                        "liveOkr": source.fetch_user_okr(
+                            user_id=roster[0].user_id,
+                            period_label="2026 Q3",
+                        ),
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    prompts = []
+
+    def executor(_command, prompt, _env):
+        prompts.append(prompt)
+        payload = _weekly_payload_for("甲")
+        if len(prompts) == 1:
+            payload["manager_reviews"][0]["kr_reviews"] = []
+        return json.dumps(payload, ensure_ascii=False)
+
+    analysis = CodexWeeklyOkrAgent(workspace=tmp_path, executor=executor).analyze(
+        source_path=source_path,
+        managers=roster,
+        period_label="2026 Q3",
+        week_start=datetime(2026, 7, 27).date(),
+        week_end=datetime(2026, 7, 30).date(),
+    )
+
+    assert [review.name for review in analysis.manager_reviews] == ["甲"]
+    assert len(prompts) == 2
+    assert "必须返回恰好 1 条 kr_reviews" in prompts[0]
+    assert "上一轮输出未通过结构化校验" in prompts[1]
+
+
 def _weekly_payload_for(name):
     return {
         "executive_summary": f"{name}摘要",

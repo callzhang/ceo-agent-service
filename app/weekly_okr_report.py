@@ -309,6 +309,10 @@ class CodexWeeklyOkrAgent:
                 filtered_payload = json.loads(source_path.read_text(encoding="utf-8"))
                 _validate_kr_coverage(analysis, filtered_payload["managers"])
                 return analysis
+        filtered_payload = json.loads(source_path.read_text(encoding="utf-8"))
+        expected_kr_count = len(
+            _live_kr_rows(filtered_payload["managers"], manager.name)
+        )
         prompt = build_weekly_okr_prompt(
             source_path=source_path,
             managers=[manager],
@@ -316,42 +320,62 @@ class CodexWeeklyOkrAgent:
             week_start=week_start,
             week_end=week_end,
         )
-        command = self.runner.build_command(
-            prompt,
-            session_id=None,
-            output_schema_path=WEEKLY_OKR_REPORT_SCHEMA_PATH,
+        prompt += (
+            f"\n硬性输出校验：{manager.name} 必须返回恰好 {expected_kr_count} 条 "
+            "kr_reviews；少一条或多一条都不可提交。"
         )
         env = self.runner.build_env()
-        if self.executor is not None:
-            raw = self.executor(command, prompt, env)
-        else:
-            completed = run_process_with_idle_timeout(
-                command,
-                prompt=prompt,
-                env=env,
-                total_timeout_seconds=self.timeout_seconds,
-                idle_timeout_seconds=self.idle_timeout_seconds,
-            )
-            if completed.timed_out:
-                raise RuntimeError(completed.timeout_reason or "weekly OKR agent timed out")
-            if completed.returncode != 0:
-                raise RuntimeError(
-                    _subprocess_failure_reason(completed.stderr, completed.stdout)
+        validation_error = ""
+        for attempt in range(2):
+            attempt_prompt = prompt
+            if validation_error:
+                attempt_prompt += (
+                    "\n上一轮输出未通过结构化校验："
+                    f"{validation_error}。请完整重做该成员的全部 KR，不得只返回示例行。"
                 )
-            raw = completed.stdout
-        analysis = WeeklyOkrAnalysis.model_validate(_extract_report_payload(raw))
-        _validate_manager_coverage(analysis, [manager])
-        filtered_payload = json.loads(source_path.read_text(encoding="utf-8"))
-        _validate_kr_coverage(analysis, filtered_payload["managers"])
-        analysis_path.write_text(
-            json.dumps(
-                {"source_hash": source_hash, "analysis": analysis.model_dump()},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        return analysis
+            command = self.runner.build_command(
+                attempt_prompt,
+                session_id=None,
+                output_schema_path=WEEKLY_OKR_REPORT_SCHEMA_PATH,
+            )
+            if self.executor is not None:
+                raw = self.executor(command, attempt_prompt, env)
+            else:
+                completed = run_process_with_idle_timeout(
+                    command,
+                    prompt=attempt_prompt,
+                    env=env,
+                    total_timeout_seconds=self.timeout_seconds,
+                    idle_timeout_seconds=self.idle_timeout_seconds,
+                )
+                if completed.timed_out:
+                    raise RuntimeError(
+                        completed.timeout_reason or "weekly OKR agent timed out"
+                    )
+                if completed.returncode != 0:
+                    raise RuntimeError(
+                        _subprocess_failure_reason(completed.stderr, completed.stdout)
+                    )
+                raw = completed.stdout
+            try:
+                analysis = WeeklyOkrAnalysis.model_validate(_extract_report_payload(raw))
+                _validate_manager_coverage(analysis, [manager])
+                _validate_kr_coverage(analysis, filtered_payload["managers"])
+            except ValueError as exc:
+                if attempt == 0:
+                    validation_error = str(exc)
+                    continue
+                raise
+            analysis_path.write_text(
+                json.dumps(
+                    {"source_hash": source_hash, "analysis": analysis.model_dump()},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return analysis
+        raise AssertionError("weekly OKR validation retry exhausted")
 
 
 class DwsWeeklyOkrGateway:

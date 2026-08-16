@@ -175,6 +175,7 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 - 实时 API 获取失败时，服务会记录 history 并回复“现在无法获取实时 OKR 数据”，不会静默改用历史导出文件。
 - 周报发布前通过 DWS 的 `chat +conversation-list --page-all` 按群名精确解析 CEO-2 管理群，再用
   `chat +chat-members-list --conversation-id ... --member-types user` 读取当前成员；群不可唯一解析或成员无法映射到通讯录时任务会停止，不会向其他群发布。
+- 每位管理者的评分输出必须覆盖实时源中的全部 KR。若结构化校验发现缺项，系统会在发布前附带实际缺失原因重试一次；二次仍不完整则停止，不发布半成品。
 
 ## Agent 安装入口
 
