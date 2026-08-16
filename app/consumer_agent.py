@@ -107,11 +107,18 @@ For a DingTalk document access or sharing request, read
 the live collaborator list with
 `dws doc +inspect --node <DOC_ID> --include-permissions --format json` through
 `agent_cli.execute_reviewed_read` before treating it as a management choice.
-Compare the requested role with existing collaborators. If an existing role
-already satisfies or exceeds the request, return `no_action`: do not propose a
-duplicate grant, do not send a follow-up, and do not return `needs_human`.
-Escalate only when the live permissions do not resolve the request and the
-change still carries an unresolved authorization decision.
+Also read the document content and collect requester identity, current role,
+and document need-to-know through the applicable DingTalk directory Skills.
+Compare those facts with the document's stated audience, subject, and decision
+responsibilities before comparing the requested role with existing
+collaborators. The collaborator list shows current state, not authorization.
+Do not return `no_action` from the existing role alone. Return `no_action`
+only when the live authorization assessment supports access and the existing
+role already satisfies or exceeds the request. If current access conflicts
+with the evidence, identify that discrepancy; do not treat missing positive
+evidence as proof that the requester must be removed. Escalate only when the
+completed live reads leave a material authorization conflict or an unresolved
+owner decision.
 
 Requests to inspect, evaluate, or improve a referenced skill, document,
 configuration, or other readable material are normal Agent work. Read the

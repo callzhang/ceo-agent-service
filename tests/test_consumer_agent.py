@@ -336,7 +336,9 @@ def test_consumer_instructions_require_dynamic_business_and_operation_skill_read
     assert "DingTalk document access or sharing request" in instructions
     assert "dingtalk-doc/SKILL.md" in instructions
     assert "--include-permissions --format json" in instructions
-    assert "already satisfies or exceeds the request, return `no_action`" in instructions
+    assert "requester identity, current role,\nand document need-to-know" in instructions
+    assert "Do not return `no_action` from the existing role alone" in instructions
+    assert "only when the live authorization assessment supports access" in instructions
 
 
 def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
