@@ -2348,6 +2348,18 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
             ("pending", "processing", "failed"),
         ),
         ("Follow-up", "follow_up_drafts", "status", "owner_name", "question_text", "updated_at", "suppressed_reason", ("failed",)),
+        (
+            "WeChat delivery",
+            "wechat_deliveries",
+            "status",
+            "target_type",
+            "reply_text",
+            "updated_at",
+            "case when pre_action_failure=1 then "
+            "'The target could not be opened before send; no message was sent. "
+            "A fresh target check is required before retry.' else error end",
+            ("failed",),
+        ),
         ("Meeting", "meeting_alignment_jobs", "status", "title", "target_title", "updated_at", "error", ("pending", "processing", "failed")),
         ("OKR", "okr_review_requests", "status", "conversation_title", "trigger_text", "updated_at", "error", ("pending", "processing", "failed")),
     ]

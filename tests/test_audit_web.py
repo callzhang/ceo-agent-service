@@ -5655,6 +5655,33 @@ def test_worker_status_uses_wechat_delivery_outcome_not_raw_failed_status(
     assert unknown_queue["latest_error"] == "read_only_reconciliation_inconclusive"
 
 
+def test_worker_attention_explains_pre_action_wechat_delivery_failure(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_wechat_pending(store)
+    store.mark_wechat_delivery_sending(delivery_id)
+    store.set_wechat_delivery_status(
+        delivery_id,
+        "failed",
+        error="target_open_failed",
+        pre_action_failure=True,
+    )
+
+    payload = build_worker_status_payload(store)
+    row = next(
+        item
+        for item in payload["attention_rows"]
+        if item["category"] == "WeChat delivery" and item["id"] == str(delivery_id)
+    )
+
+    assert row["status"] == "failed"
+    assert row["error"] == (
+        "The target could not be opened before send; no message was sent. "
+        "A fresh target check is required before retry."
+    )
+
+
 def test_render_attempt_list_labels_explained_blocked_as_blocked(
     tmp_path: Path,
 ):
