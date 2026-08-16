@@ -368,7 +368,6 @@ DINGTALK_FILE_ID_PATTERN = re.compile(r"(?:^|\s)fileId:\s*(?P<file_id>\S+)")
 IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(
     r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)"
 )
-MARKDOWN_IMAGE_URL_PATTERN = re.compile(r"!\[[^\]]*]\((?P<url>https?://[^)]+)\)")
 DINGTALK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GROUP_CONTEXT_RECOVERY_WINDOW = timedelta(hours=24)
 RECENT_REPLY_WINDOW = timedelta(hours=24)
@@ -2482,10 +2481,7 @@ class DingTalkAutoReplyWorker:
         ):
             for _source_key, payload in self._message_image_sources(message):
                 kind = payload.get("kind", "")
-                if kind == "url":
-                    image_reference = payload.get("url", "")
-                    commands = ()
-                elif kind == "media_id":
+                if kind == "media_id":
                     media_id = payload.get("media_id", "")
                     image_reference = json.dumps(
                         {
@@ -4584,15 +4580,6 @@ class DingTalkAutoReplyWorker:
                         (
                             f"media:{message.open_message_id}:{media_id}",
                             {"kind": "media_id", "media_id": media_id},
-                        )
-                    )
-            for match in MARKDOWN_IMAGE_URL_PATTERN.finditer(text):
-                url = match.group("url").strip()
-                if url:
-                    sources.append(
-                        (
-                            f"url:{url}",
-                            {"kind": "url", "url": url},
                         )
                     )
         for download_code in self._download_codes_from_payload(message.raw_payload):

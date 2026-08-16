@@ -478,15 +478,16 @@ for a source-specific response shape. Consumer Agent A executes it unchanged
 before declaring the material unavailable; a similar command found in a skill
 is not a substitute.
 
-Image references are resolved to bounded local attachment files before an Agent
-turn. The same file path and SHA-256 are supplied through native Codex `--image`
-inputs to Consumer A and Audit B. A DingTalk media ID, URL, or other reference is
-only discovery metadata; if it cannot produce an actual local file, Consumer A
-fails with `image_dependency_unavailable` before making a content judgment.
-The service never fetches chat-supplied image URLs. It accepts only an
-authenticated DWS media download that produced a real `localPath`; URL-only and
-download-code-only responses remain unavailable. Local bytes must decode and
-fully load as a supported image before they are copied into the Agent task.
+Native DingTalk image attachments are resolved to bounded local files before an
+Agent turn. The same file path and SHA-256 are supplied through native Codex
+`--image` inputs to Consumer A and Audit B. Only an authenticated DingTalk media
+download or download-code response that produced a real `localPath` is a required
+image dependency. If it cannot produce an actual local file, Consumer A fails
+with `image_dependency_unavailable` before making a content judgment.
+The service never fetches chat-supplied image URLs. A URL is text metadata, not
+an attachment: it cannot block an otherwise text-complete task or be represented
+as inspected image content. Local attachment bytes must decode and fully load as
+a supported image before they are copied into the Agent task.
 Per-task directories and files use modes `0700` and `0600`; the worker deletes
 only the exact paths created for that task in a `finally` block after
 Consumer/Audit processing.

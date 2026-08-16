@@ -4951,13 +4951,6 @@ def test_invalid_image_fails_decode_before_agent_turn(
     ),
     [
         (
-            "direct",
-            "Review: ![image](https://images.example.test/input.png)",
-            None,
-            None,
-            "https://images.example.test/input.png",
-        ),
-        (
             "media_id",
             "Review: [图片消息](mediaId=@img-token-1)",
             None,
@@ -4973,7 +4966,7 @@ def test_invalid_image_fails_decode_before_agent_turn(
         ),
     ],
 )
-def test_image_url_without_dws_local_path_is_never_fetched(
+def test_required_dws_image_without_local_path_is_never_fetched(
     tmp_path: Path,
     monkeypatch,
     source_kind: str,
@@ -5079,7 +5072,7 @@ def test_task_image_is_removed_after_failed_consumer_turn(
     assert not Path(executor.image_inspections[0][0]).exists()
 
 
-def test_unresolved_image_fails_before_metadata_can_be_claimed_as_inspection(
+def test_url_image_reference_is_not_a_required_attachment(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -5090,12 +5083,16 @@ def test_unresolved_image_fails_before_metadata_can_be_claimed_as_inspection(
         ("dingtalk-shared", "dingtalk-chat"),
     )
 
-    trigger = _message("Review this image: ![image](https://example.test/missing.png)")
+    trigger = _message("Please confirm the text status.").model_copy(
+        update={
+            "quoted_content": "![avatar](https://images.example.test/avatar.png)",
+        }
+    )
     scenario = Task4BehaviorScenario(
-        name="missing_image",
-        outcome="proposal",
-        summary="This result must never be reached without image bytes.",
-        read_mode="image_input",
+        name="plain_acknowledgment",
+        outcome="no_action",
+        summary="The text request has no action after reviewing chat context.",
+        read_mode="chat_context",
     )
     executor = Task4BehaviorProtocolExecutor(skill_paths, scenario)
     worker, _dws = _worker_with_protocol_executor(
@@ -5106,20 +5103,17 @@ def test_unresolved_image_fails_before_metadata_can_be_claimed_as_inspection(
     )
     _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 1
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "failed"
-    assert attempt.send_error == "image_dependency_unavailable"
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == ""
     runs = _task4_agent_runs(worker)
     assert len(runs) == 1
     assert runs[0].role is AgentRole.CONSUMER
-    assert runs[0].status == "failed"
-    assert json.loads(runs[0].structured_error_json)["code"] == (
-        "image_dependency_unavailable"
-    )
-    assert executor.commands == []
+    assert runs[0].status == "completed"
+    assert executor.image_inspections == []
 
 
 def test_unavailable_decisive_material_returns_dependency_failure_without_invention(

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Material reading and local parsing
+
+- Treat URL-only Markdown images, including presentation avatars in quoted or
+  coalesced messages, as unreadable text metadata rather than required image
+  attachments. Native DingTalk media and download-code images still require an
+  authenticated local file and fail closed when one is unavailable.
+
 ### Task-agent recovery
 
 - Preserve the initial task-agent receipt when a proposed owner lacks a stable
