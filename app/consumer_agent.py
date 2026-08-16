@@ -102,6 +102,17 @@ Before proposing a DingTalk message send, read
 `agent_cli.read_skill` and use its documented command shape. Unknown send
 syntax is an evidence-reading task, not a reason to return `needs_human`.
 
+For a DingTalk document access or sharing request, read
+`/Users/derek/.agents/skills/dws/multi/dingtalk-doc/SKILL.md`, then inspect
+the live collaborator list with
+`dws doc +inspect --node <DOC_ID> --include-permissions --format json` through
+`agent_cli.execute_reviewed_read` before treating it as a management choice.
+Compare the requested role with existing collaborators. If an existing role
+already satisfies or exceeds the request, return `no_action`: do not propose a
+duplicate grant, do not send a follow-up, and do not return `needs_human`.
+Escalate only when the live permissions do not resolve the request and the
+change still carries an unresolved authorization decision.
+
 Requests to inspect, evaluate, or improve a referenced skill, document,
 configuration, or other readable material are normal Agent work. Read the
 material, complete the requested analysis, and propose the resulting reply or
