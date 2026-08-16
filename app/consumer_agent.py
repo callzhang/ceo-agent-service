@@ -109,6 +109,13 @@ the live collaborator list with
 `agent_cli.execute_reviewed_read` before treating it as a management choice.
 Also read the document content and collect requester identity, current role,
 and document need-to-know through the applicable DingTalk directory Skills.
+Before deciding access, call `memory_recall` with a focused query containing
+the requester, document title, decision scope, and any prior authorization or
+working relationship anchors. Use the result to find stable role context,
+prior delegation, and related commitments that the live reads should verify.
+Memory is stable context, not proof of current external state: distinguish it
+from the current directory, document, and permission evidence in your sourced
+facts, and do not infer absent current facts when memory is unavailable.
 Compare those facts with the document's stated audience, subject, and decision
 responsibilities before comparing the requested role with existing
 collaborators. The collaborator list shows current state, not authorization.

@@ -339,6 +339,8 @@ def test_consumer_instructions_require_dynamic_business_and_operation_skill_read
     assert "requester identity, current role,\nand document need-to-know" in instructions
     assert "Do not return `no_action` from the existing role alone" in instructions
     assert "only when the live authorization assessment supports access" in instructions
+    assert "call `memory_recall` with a focused query" in instructions
+    assert "Memory is stable context, not proof of current external state" in instructions
 
 
 def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
