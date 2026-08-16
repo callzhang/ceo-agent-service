@@ -9,6 +9,8 @@
   If the owner remains unresolved, retain only an unassigned project update and
   omit owner-dependent TODOs and follow-ups instead of failing the work item or
   sending a message.
+- Require every non-discard task decision to call `memory_recall` when it is
+  available, while retaining live DWS reads as the proof of current state.
 
 ### Audit reconciliation
 

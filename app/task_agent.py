@@ -218,6 +218,17 @@ TaskAgentDecision JSON object that satisfies the supplied Pydantic schema.
 Memory connector status facts:
 {memory_status}
 
+Required evidence sequence for every non-discard decision:
+- When memory_recall is available, call it with a focused query about the
+  work item, project, prior commitments, and owner context before deciding.
+  Set memory_recall_used=true only after that tool call is present in the
+  session receipt.
+- Memory is stable background, not proof of the current external state. Use
+  the applicable live DWS read for current people, ownership, task, meeting,
+  or document state before creating, updating, or following up on work.
+- When memory_recall is unavailable, record that runtime condition in
+  project.memory_context and use live evidence; do not claim that recall ran.
+
 Current Work Item JSON:
 {work_item_json}
 

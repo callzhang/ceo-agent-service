@@ -821,6 +821,8 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
     assert store.list_work_updates(project_id=projects[0].id)[0].summary == "创建售前知识库项目。"
     assert store.claim_work_summary_inputs(limit=1) == []
     assert "memory_recall" in codex.prompts[0]
+    assert "Required evidence sequence for every non-discard decision" in codex.prompts[0]
+    assert "applicable live DWS read" in codex.prompts[0]
     assert "候选项目" in codex.prompts[0]
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         input_row = db.execute(
@@ -3289,7 +3291,7 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
     memory_section = (
         codex.prompts[0]
         .split("Memory connector status facts:\n", 1)[1]
-        .split("\n\nCurrent Work Item JSON:", 1)[0]
+        .split("\n\nRequired evidence sequence", 1)[0]
     )
     assert memory_section == "不可用：memory connector token is expired"
     assert "继续处理" not in memory_section
