@@ -14,6 +14,9 @@
 - Show an active work item's persisted summary in Workers Attention instead of
   its opaque internal source reference, while retaining the source type and
   underlying error state for diagnosis.
+- Fall back to an active work item's persisted title before its source
+  reference, so queued AI minutes never expose raw structured payloads in
+  Workers Attention.
 
 ### Task-agent recovery
 

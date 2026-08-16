@@ -2342,7 +2342,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
             "work_summary_inputs",
             "status",
             "source_type",
-            "coalesce(nullif(json_extract(payload_json, '$.summary'), ''), source_ref)",
+            "coalesce(nullif(json_extract(payload_json, '$.summary'), ''), nullif(json_extract(payload_json, '$.title'), ''), source_ref)",
             "updated_at",
             "error",
             ("pending", "processing", "failed"),
