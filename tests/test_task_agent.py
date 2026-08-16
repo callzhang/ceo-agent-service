@@ -3491,7 +3491,7 @@ def test_process_work_item_failure_does_not_create_partial_project(tmp_path):
     assert run_count == (0,)
 
 
-def test_process_work_item_repairs_name_only_project_owner(tmp_path):
+def test_process_work_item_repairs_unsupported_project_owner_evidence(tmp_path):
     class RepairingCodex:
         last_session_id = "task-session-1"
         last_transcript_start_line = 0
@@ -3507,11 +3507,12 @@ def test_process_work_item_repairs_name_only_project_owner(tmp_path):
                     "project": {
                         "title": "售前知识库建设",
                         "category": "sales",
+                        "owner_user_id": "owner-1",
                         "owner_name": "Alex",
                         "owner_evidence": {
                             "source": "reply_attempt:1",
-                            "reason": "The source names Alex.",
-                            "description": "No stable directory identity was returned.",
+                            "reason": "The source assigns Alex.",
+                            "description": "The initial decision omitted evidence identity fields.",
                         },
                         "memory_context": _memory_context(),
                     },
@@ -3577,7 +3578,8 @@ def test_process_work_item_repairs_name_only_project_owner(tmp_path):
     assert project_row == ("", "", "{}")
     assert run_count == (2,)
     assert codex.session_ids == [None, "task-session-1"]
-    assert "requires a stable owner ID" in codex.prompts[1]
+    assert "does not support assigned owner identity" in codex.prompts[1]
+    assert "user_id and" in codex.prompts[1]
     assert "not create a TODO or follow-up" in codex.prompts[1]
 
 

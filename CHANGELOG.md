@@ -14,6 +14,9 @@
 - Define the task-agent's memory-tool-unavailable receipt value in the prompt,
   so a completed tool-discovery check can continue with recorded live evidence
   instead of failing on an undocumented output-contract mismatch.
+- Route a stable owner whose evidence omits the same identity fields through
+  the bounded owner-repair decision, rather than failing before persistence;
+  unrecoverable owners still remove owner-dependent TODOs and follow-ups.
 
 ### Audit reconciliation
 

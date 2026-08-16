@@ -306,8 +306,10 @@ external message was created because: {validation_error}
 
 Use the existing memory context only as stable background. For any owner you
 keep, perform a focused live directory/contact read and include the stable
-owner_user_id plus source, reason, and description in owner_evidence. Do not
-infer an owner from an author, speaker, participant, or name-only match.
+owner_user_id plus source, reason, and description in owner_evidence. The
+owner_evidence object itself must repeat that same identity as user_id and
+name, so the persisted evidence can be verified independently. Do not infer an
+owner from an author, speaker, participant, or name-only match.
 
 If the source establishes a real work update but a responsible person cannot be
 uniquely resolved, keep the project owner fields and owner_evidence empty. Do
@@ -821,7 +823,9 @@ def _require_supported_owner(
         fields=("source", "reason", "description"),
     )
     if not owner_identity_is_supported(assigned, evidence):
-        raise ValueError(f"{label} does not support assigned owner identity")
+        raise OwnerResolutionRequired(
+            f"{label} does not support assigned owner identity"
+        )
 
 
 def _validate_owner_changes(store: AutoReplyStore, decision: TaskAgentDecision) -> None:
