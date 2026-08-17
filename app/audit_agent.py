@@ -37,7 +37,13 @@ from app.native_cli_metadata import (
     has_noninteractive_confirmation,
     native_command_argv,
 )
-from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
+from app.store import (
+    RECONCILIATION_EVENT_LIMIT_ERROR,
+    AgentRole,
+    AgentRun,
+    AutoReplyStore,
+    ReplyTask,
+)
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
 
@@ -45,7 +51,6 @@ RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
-RECONCILIATION_EVENT_LIMIT_ERROR = "agent run reconciliation event limit exceeded"
 
 
 class AuditAgentRunner:

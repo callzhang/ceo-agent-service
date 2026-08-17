@@ -407,6 +407,9 @@ Failed read-only reconciliation attempts keep the external result unknown and
 use persisted exponential retry delays from one minute up to fifteen minutes.
 They are never immediately reclaimed in a hot loop, and the delay does not
 authorize replaying an approval, message, or other external action.
+When the bounded reconciliation-event ledger is full, the run is suspended
+instead of being retried. Its recorded reason requires a manual live readback;
+the worker neither starts another recovery turn nor replays the external action.
 If a required image is unavailable after either reconciliation or recovery
 execution claims the unknown run, the same formal deferral transition records
 `image_dependency_unavailable`, clears the recovery lease, and schedules the

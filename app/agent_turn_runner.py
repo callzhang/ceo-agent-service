@@ -64,7 +64,13 @@ from app.native_cli_metadata import (
     native_command_argv,
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
-from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
+from app.store import (
+    RECONCILIATION_EVENT_LIMIT_ERROR,
+    AgentRole,
+    AgentRun,
+    AutoReplyStore,
+    ReplyTask,
+)
 
 
 ResultT = TypeVar("ResultT")
@@ -1270,14 +1276,25 @@ class AgentTurnProcess(Generic[ResultT]):
             or persisted.lease_owner != self.owner
         ):
             return
+        reconciliation_limit_reached = code == RECONCILIATION_EVENT_LIMIT_ERROR
+        error = {
+            "code": code,
+            "retryable": not reconciliation_limit_reached,
+        }
+        if reconciliation_limit_reached:
+            error["reason"] = (
+                "Controlled reconciliation evidence reached its bounded event limit; "
+                "a manual readback is required before another retry."
+            )
         self.store.defer_unknown_agent_run_reconciliation(
             run.id,
-            {"code": code, "retryable": True},
+            error,
             owner=self.owner,
             expected_execution_generation=run.execution_generation,
             next_attempt_at=unknown_reconciliation_retry_at(
                 persisted.reconciliation_attempts
             ),
+            suspended=reconciliation_limit_reached,
         )
 
 

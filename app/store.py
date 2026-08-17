@@ -78,6 +78,7 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
+RECONCILIATION_EVENT_LIMIT_ERROR = "agent run reconciliation event limit exceeded"
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
 
@@ -4451,7 +4452,7 @@ class AutoReplyStore:
             if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
             if row["reconciliation_event_count"] >= MAX_RECONCILIATION_EVENTS:
-                raise ValueError("agent run reconciliation event limit exceeded")
+                raise ValueError(RECONCILIATION_EVENT_LIMIT_ERROR)
             sequence = db.execute(
                 "select coalesce(max(sequence), 0) + 1 from agent_run_events "
                 "where agent_run_id=?",
