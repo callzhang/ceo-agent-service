@@ -8,6 +8,7 @@ import pytest
 from app.agent_turn_runner import AgentTurnProcess
 from app.native_cli_metadata import describe_native_command
 from app.store import (
+    MAX_RECONCILIATION_EVENTS,
     RECONCILIATION_EVENT_LIMIT_ERROR,
     AgentRole,
     AgentRunLeaseLostError,
@@ -204,6 +205,26 @@ def test_unknown_reconciliation_event_limit_suspends_inner_recovery(tmp_path):
     error = json.loads(persisted.structured_error_json)
     assert error["code"] == RECONCILIATION_EVENT_LIMIT_ERROR
     assert error["retryable"] is False
+
+
+def test_event_limited_unknown_run_is_suspended_before_pending_claim(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="audit",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set reconciliation_event_count=? where id=?",
+            (MAX_RECONCILIATION_EVENTS, run.id),
+        )
+
+    assert store.suspend_reconciliation_event_limited_agent_runs() == 1
+    assert [item.id for item in store.list_suspended_unknown_agent_runs()] == [run.id]
+    assert store.peek_reply_tasks(limit=10) == []
 
 
 def _normalize_read_skill_event(store, task, payload):

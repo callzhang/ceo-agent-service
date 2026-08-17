@@ -5178,7 +5178,7 @@ class AutoReplyStore:
                 where agent_runs.status='unknown'
                   and agent_runs.role='audit'
                   and agent_runs.reconciliation_suspended=1
-                  and reply_tasks.status='processing'
+                  and reply_tasks.status in ('pending', 'processing', 'failed')
                   and reply_tasks.execution_generation=agent_runs.execution_generation
                 order by agent_runs.updated_at, agent_runs.id
                 limit ?
@@ -5186,6 +5186,51 @@ class AutoReplyStore:
                 (limit,),
             ).fetchall()
             return [self._agent_run_from_row(row, db=db) for row in rows]
+
+    def suspend_reconciliation_event_limited_agent_runs(
+        self,
+        *,
+        now: str | datetime | None = None,
+    ) -> int:
+        """Stop exhausted read-only recoveries before they can be reclaimed."""
+        structured_error = _json_object_text(
+            {
+                "code": RECONCILIATION_EVENT_LIMIT_ERROR,
+                "retryable": False,
+                "reason": (
+                    "Controlled reconciliation evidence reached its bounded event "
+                    "limit; a manual live readback is required before another retry."
+                ),
+            },
+            field="structured_error",
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            cursor = db.execute(
+                """
+                update agent_runs
+                set structured_error_json=?, reconciliation_suspended=1,
+                    reconciliation_next_attempt_at='', lease_owner='',
+                    lease_expires_at='', updated_at=?
+                where status='unknown' and role='audit'
+                  and reconciliation_suspended=0
+                  and reconciliation_event_count>=?
+                  and (lease_owner='' or lease_expires_at<=?)
+                  and exists (
+                      select 1 from reply_tasks
+                      where reply_tasks.id=agent_runs.reply_task_id
+                        and reply_tasks.execution_generation=
+                            agent_runs.execution_generation
+                        and reply_tasks.status in ('pending', 'processing', 'failed')
+                  )
+                """,
+                (
+                    structured_error,
+                    now_text,
+                    MAX_RECONCILIATION_EVENTS,
+                    now_text,
+                ),
+            )
+            return cursor.rowcount
 
     def resume_suspended_unknown_agent_run(
         self,
@@ -5654,6 +5699,14 @@ class AutoReplyStore:
             clauses = [
                 "status='pending'",
                 f"(available_at='' or available_at <= {now_expression})",
+                """not exists (
+                    select 1 from agent_runs as runs
+                    where runs.reply_task_id=reply_tasks.id
+                      and runs.execution_generation=reply_tasks.execution_generation
+                      and runs.role='audit'
+                      and runs.status='unknown'
+                      and runs.reconciliation_suspended=1
+                )""",
             ]
             args: list[str | int] = []
             if now is not None:

@@ -410,6 +410,8 @@ authorize replaying an approval, message, or other external action.
 When the bounded reconciliation-event ledger is full, the run is suspended
 instead of being retried. Its recorded reason requires a manual live readback;
 the worker neither starts another recovery turn nor replays the external action.
+This check runs before pending tasks are claimed, including legacy rows that had
+already been requeued by an earlier service version.
 If a required image is unavailable after either reconciliation or recovery
 execution claims the unknown run, the same formal deferral transition records
 `image_dependency_unavailable`, clears the recovery lease, and schedules the
