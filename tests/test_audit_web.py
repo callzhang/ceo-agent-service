@@ -680,6 +680,97 @@ def test_history_approval_workflow_results_keep_failure_attention_actions(
     assert ">重试当前任务</button>" in failed_card
 
 
+def test_history_recovered_approval_keeps_business_and_recovery_pills(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-history-recovered-approval",
+        conversation_title="Recovered approval",
+        single_chat=False,
+        trigger_message_id="msg-history-recovered-approval",
+        trigger_create_time="2026-08-18 10:00:00",
+        trigger_sender="Mina",
+        trigger_text="Recover this approval.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-recovered-approval",
+        oa_action="review",
+        send_status="failed",
+    )
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    card = _history_attempt_card(
+        render_attempt_list(
+            store,
+            include_chart=False,
+            search_object_types=("approval",),
+        ),
+        attempt_id,
+    )
+
+    assert "处理失败" in card
+    assert "↻ Recovered" in card
+    assert "🧾 review" not in card
+
+
+def test_history_superseded_approval_keeps_system_pill_without_raw_actions(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    failed_id = store.record_reply_attempt(
+        conversation_id="cid-history-superseded-approval",
+        conversation_title="Superseded approval",
+        trigger_message_id="msg-history-superseded-approval",
+        trigger_sender="Mina",
+        trigger_text="Process this approval.",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-superseded-approval",
+        oa_action="review",
+        send_status="failed",
+    )
+    later_id = store.record_reply_attempt(
+        conversation_id="cid-history-superseded-approval",
+        conversation_title="Superseded approval",
+        trigger_message_id="msg-history-superseded-approval",
+        trigger_sender="Mina",
+        trigger_text="Process this approval.",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-superseded-approval",
+        oa_action="review",
+        send_status="completed",
+    )
+
+    failed_attempt = store.get_reply_attempt(failed_id)
+    later_attempt = store.get_reply_attempt(later_id)
+    assert failed_attempt is not None
+    assert later_attempt is not None
+    pills = audit_web_module._history_approval_pills(
+        failed_attempt,
+        [],
+        later_attempt=later_attempt,
+        recovery_state="",
+    )
+
+    assert f'href="/attempts/{later_id}">🔁 已由 #{later_id} 后续处理</a>' in pills
+    assert "💬 Completed" not in pills
+    assert "💬 Skipped" not in pills
+    assert "🧾 review" not in pills
+
+
 def test_history_non_approval_sent_reply_keeps_reply_badge_and_sent_pill(
     tmp_path: Path,
 ):

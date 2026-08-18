@@ -4486,7 +4486,12 @@ def _render_attempt_list(
             reply_task_cache,
         )
         action_pills = (
-            _history_approval_result_pill(attempt, agent_runs)
+            _history_approval_pills(
+                attempt,
+                agent_runs,
+                later_attempt=later_attempt,
+                recovery_state=recovery_state,
+            )
             if approval_history
             else _attempt_action_pills(
                 attempt,
@@ -9743,6 +9748,29 @@ def _history_approval_result_pill(
         f'<span class="pill status-action history-approval-result '
         f'action-state-{state}">{escape(label)}</span>'
     )
+
+
+def _history_approval_pills(
+    attempt: ReplyAttempt,
+    agent_runs: list[AgentRun],
+    *,
+    later_attempt: ReplyAttempt | None,
+    recovery_state: str,
+) -> str:
+    pills = [_history_approval_result_pill(attempt, agent_runs)]
+    if recovery_state:
+        label, state = _recovery_action(recovery_state)
+        pills.append(
+            f'<span class="pill status-action {_action_state_class(state)}">'
+            f"{escape(label)}</span>"
+        )
+    if later_attempt is not None:
+        pills.append(
+            f'<a class="pill status-action action-state-superseded" '
+            f'href="/attempts/{later_attempt.id}">'
+            f"🔁 已由 #{later_attempt.id} 后续处理</a>"
+        )
+    return "".join(pills)
 
 
 def _attempt_recovery_display_state(
