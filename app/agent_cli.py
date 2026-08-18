@@ -20,7 +20,6 @@ from mcp.types import ToolAnnotations
 from app.agent_result import EffectKind
 from app.agent_skill_usage import resolve_authorized_skill_path
 from app.bounded_process import (
-    MAX_PROCESS_OUTPUT_BYTES,
     ProcessOutputLimitError,
     run_bounded_process,
 )
@@ -35,7 +34,9 @@ from app.native_cli_metadata import (
     prepare_material_output_root,
 )
 
-MAX_CLI_OUTPUT_BYTES = MAX_PROCESS_OUTPUT_BYTES
+# Codex truncates one MCP text block at 1 MiB. Keep command output below that
+# boundary even after JSON escaping so the controlled receipt remains valid.
+MAX_CLI_OUTPUT_BYTES = 128 * 1024
 MAX_SKILL_BYTES = 256 * 1024
 MAX_TEXT_MATERIAL_BYTES = 512 * 1024
 MAX_SPREADSHEET_BYTES = 20 * 1024 * 1024
