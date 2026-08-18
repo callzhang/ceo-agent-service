@@ -269,6 +269,127 @@ def seed_attempt(store: AutoReplyStore) -> int:
     return attempt_id
 
 
+def _history_attempt_card(html: str, attempt_id: int) -> str:
+    marker = f'data-history-detail-href="/attempts/{attempt_id}"'
+    marker_index = html.index(marker)
+    start = html.rfind("<article", 0, marker_index)
+    end = html.index("</article>", marker_index) + len("</article>")
+    return html[start:end]
+
+
+def _seed_confirmed_approval_attempt(store: AutoReplyStore) -> int:
+    store.enqueue_reply_task(
+        conversation_id="cid-history-confirmed-approval",
+        conversation_title="Confirmed approval",
+        single_chat=False,
+        trigger_message_id="msg-history-confirmed-approval",
+        trigger_create_time="2026-08-18 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="Approve the confirmed budget.",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="approval-consumer",
+    ).run
+    store.complete_agent_run(
+        consumer.id,
+        {
+            "outcome": "proposal",
+            "summary": "Approve the confirmed budget.",
+            "proposal": {
+                "objective": "Approve the confirmed budget.",
+                "actions": [
+                    {
+                        "description": "Approve the budget.",
+                        "capability": "dingtalk_oa",
+                        "operation": "oa approval approve",
+                        "target": {"process_instance_id": "proc-history-confirmed"},
+                        "payload": {},
+                        "expected_verification": "Read back the approval result.",
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "The budget meets the approved criteria.",
+            },
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        },
+        owner="approval-consumer",
+    )
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="oa-approval-approve-history",
+        owner="approval-audit",
+    ).run
+    audit = store.complete_agent_run(
+        audit.id,
+        {
+            "outcome": "executed",
+            "summary": "Approval execution was confirmed.",
+            "proposal_revision": 0,
+            "side_effect_state": "confirmed",
+            "feedback": None,
+            "external_result": {
+                "operation_id": "oa-approval-approve-history",
+                "verification_summary": "Approval state read back successfully.",
+                "live_result_reference": {
+                    "process_instance_id": "proc-history-confirmed"
+                },
+            },
+            "reconciliation": [],
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        },
+        owner="approval-audit",
+        side_effect_state="confirmed",
+    )
+    return store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=audit.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="Approval execution was confirmed.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="Approval execution was confirmed.",
+        send_status="completed",
+        send_error="",
+        channel="dingtalk",
+        oa_process_instance_id="proc-history-confirmed",
+        oa_task_id="task-history-confirmed",
+        oa_action="review",
+    )
+
+
 def seed_meeting_attempt(store: AutoReplyStore) -> int:
     job_id = store.upsert_meeting_alignment_job(
         meeting_id="minutes-history-1",
@@ -440,7 +561,138 @@ def test_render_attempt_list_marks_oa_history_type(tmp_path: Path):
         f'<article class="attempt-item history-kind-oa" role="link" tabindex="0" '
         f'data-history-detail-href="/attempts/{attempt_id}">'
     ) in html
-    assert '<span class="history-type-badge history-type-oa">OA</span>' in html
+    assert '<span class="history-type-badge history-type-oa">审批</span>' in html
+
+
+def test_history_approval_card_uses_confirmed_structured_business_result(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_confirmed_approval_attempt(store)
+
+    html = render_attempt_list(
+        store,
+        include_chart=False,
+        search_object_types=("approval",),
+    )
+    card = _history_attempt_card(html, attempt_id)
+
+    assert '<span class="history-type-badge history-type-oa">审批</span>' in card
+    assert "history-approval-result" in card
+    assert "✓ 已同意" in card
+    assert "💬 Completed" not in card
+    assert "🧾 review" not in card
+
+
+def test_history_approval_cards_show_direct_return_and_unknown_results(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    returned_id = store.record_reply_attempt(
+        conversation_id="cid-history-direct-return",
+        conversation_title="Direct return approval",
+        trigger_message_id="msg-history-direct-return",
+        trigger_sender="Mina",
+        trigger_text="Return this approval.",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-direct-return",
+        oa_action="退回",
+        oa_action_result_json='{"errcode": 0}',
+        send_status="commented",
+    )
+    unknown_id = store.record_reply_attempt(
+        conversation_id="cid-history-unknown-approval",
+        conversation_title="Unknown approval",
+        trigger_message_id="msg-history-unknown-approval",
+        trigger_sender="Mina",
+        trigger_text="Review this approval.",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-unknown",
+        oa_action="review",
+        send_status="completed",
+    )
+
+    html = render_attempt_list(
+        store,
+        include_chart=False,
+        search_object_types=("approval",),
+    )
+    returned_card = _history_attempt_card(html, returned_id)
+    unknown_card = _history_attempt_card(html, unknown_id)
+
+    assert "↩ 已退回" in returned_card
+    assert "结果未知" in unknown_card
+    assert "🧾" not in returned_card
+    assert "🧾" not in unknown_card
+    assert (
+        '<span class="pill status-action history-approval-result '
+        'action-state-unknown">结果未知</span>'
+    ) in unknown_card
+    assert "style=" not in unknown_card
+    assert (
+        ".action-state-unknown{background:var(--surface);color:var(--stone);"
+        "border-color:var(--hairline)}"
+    ) in html
+
+
+def test_history_approval_workflow_results_keep_failure_attention_actions(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    needs_human_id = store.record_reply_attempt(
+        conversation_id="cid-history-needs-human",
+        conversation_title="Needs human approval",
+        trigger_message_id="msg-history-needs-human",
+        trigger_sender="Mina",
+        trigger_text="Choose the approval outcome.",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-needs-human",
+        oa_action="review",
+        send_status="needs_human",
+    )
+    failed_id = store.record_reply_attempt(
+        conversation_id="cid-history-failed-approval",
+        conversation_title="Failed approval",
+        trigger_message_id="msg-history-failed-approval",
+        trigger_sender="Mina",
+        trigger_text="Process the failed approval.",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-failed",
+        oa_action="review",
+        audit_summary="Approval processing did not complete",
+        send_status="failed",
+    )
+
+    html = render_attempt_list(
+        store,
+        include_chart=False,
+        search_object_types=("approval",),
+    )
+    needs_human_card = _history_attempt_card(html, needs_human_id)
+    failed_card = _history_attempt_card(html, failed_id)
+
+    assert "待你处理" in needs_human_card
+    assert "处理失败" in failed_card
+    assert "原因：</strong>Approval processing did not complete" in failed_card
+    assert f'action="/attempts/{failed_id}/rerun?return_to=/history"' in failed_card
+    assert ">重试当前任务</button>" in failed_card
+
+
+def test_history_non_approval_sent_reply_keeps_reply_badge_and_sent_pill(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+
+    card = _history_attempt_card(
+        render_attempt_list(store, include_chart=False),
+        attempt_id,
+    )
+
+    assert '<span class="history-type-badge history-type-reply">Reply</span>' in card
+    assert "💬 Sent" in card
 
 
 def test_attempt_detail_links_oa_metadata_to_process_history(tmp_path: Path):

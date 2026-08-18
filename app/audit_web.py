@@ -35,6 +35,10 @@ from app.agent_contracts import (
     ConsumerOutcome,
     DecisionOption,
 )
+from app.approval_history import (
+    ApprovalHistoryResult,
+    resolve_approval_history_result,
+)
 from app.audit_rules import (
     audit_rules_template_path,
     read_audit_rules_template,
@@ -525,6 +529,7 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .status-action{background:var(--surface);color:var(--steel);border-color:var(--hairline)}
 .action-state-sent,.action-state-accepted,.action-state-approved,.action-state-resolved,.action-state-recovered{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .action-state-skipped{background:var(--surface);color:var(--stone);border-color:var(--hairline)}
+.action-state-unknown{background:var(--surface);color:var(--stone);border-color:var(--hairline)}
 .action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .action-state-needs-human,.action-state-tentative,.action-state-returned{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
 .action-state-failed,.action-state-blocked,.action-state-declined,.action-state-rejected{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
@@ -4417,6 +4422,12 @@ def _render_attempt_list(
         wechat_delivery_id = wechat_ready_delivery_by_attempt.get(attempt.id)
         detail_href = f"/attempts/{attempt.id}"
         history_type = _history_attempt_type(attempt)
+        approval_history = history_type[0] == "oa"
+        agent_runs = (
+            _agent_runs_for_attempt(store, attempt, agent_runs_cache)
+            if approval_history
+            else []
+        )
         attention = None
         later_attempt = None
         terminal_run = None
@@ -4433,11 +4444,12 @@ def _render_attempt_list(
                     if attention_status == "failed"
                     else None
                 )
-                agent_runs = _agent_runs_for_attempt(
-                    store,
-                    attempt,
-                    agent_runs_cache,
-                )
+                if not approval_history:
+                    agent_runs = _agent_runs_for_attempt(
+                        store,
+                        attempt,
+                        agent_runs_cache,
+                    )
                 terminal_run = next(
                     (run for run in agent_runs if run.id == attempt.agent_run_id),
                     None,
@@ -4473,6 +4485,15 @@ def _render_attempt_list(
             attempt,
             reply_task_cache,
         )
+        action_pills = (
+            _history_approval_result_pill(attempt, agent_runs)
+            if approval_history
+            else _attempt_action_pills(
+                attempt,
+                later_attempt=later_attempt,
+                recovery_state=recovery_state,
+            )
+        )
         items.append(
             f"<article class=\"attempt-item history-kind-{history_type[0]}\" role=\"link\" tabindex=\"0\" "
             f"data-history-detail-href=\"{escape(detail_href, quote=True)}\">"
@@ -4481,7 +4502,7 @@ def _render_attempt_list(
             f"<a class=\"attempt-id\" href=\"{escape(detail_href, quote=True)}\">#{attempt.id}</a>"
             f"{_history_type_badge(*history_type)}"
             f"{info_html}"
-            f"{_attempt_action_pills(attempt, later_attempt=later_attempt, recovery_state=recovery_state)}"
+            f"{action_pills}"
             f"<div class=\"attempt-main\">{_channel_badge(attempt.channel)}{escape(attempt.conversation_title)}</div>"
             f"<div class=\"attempt-meta\">{escape(attempt.trigger_sender)}</div>"
             "</div>"
@@ -4630,7 +4651,7 @@ def _history_attempt_type(attempt: ReplyAttempt) -> tuple[str, str]:
     action = (attempt.action or "").strip().lower()
     status = (attempt.send_status or "").strip().lower()
     if action == "oa_approval" or attempt.oa_process_instance_id.strip():
-        return ("oa", "OA")
+        return ("oa", "审批")
     if action in {"calendar_response", "calendar"} or attempt.calendar_response_status.strip():
         return ("calendar", "Calendar")
     if action == "memory_write":
@@ -9699,6 +9720,28 @@ def _attempt_action_pills(
         f"<span class=\"pill status-action {_action_state_class(state)}\">"
         f"{escape(label)}</span>"
         for label, state in actions
+    )
+
+
+def _history_approval_result_pill(
+    attempt: ReplyAttempt,
+    agent_runs: list[AgentRun],
+) -> str:
+    result = resolve_approval_history_result(attempt, agent_runs)
+    label, state = {
+        ApprovalHistoryResult.APPROVED: ("✓ 已同意", "approved"),
+        ApprovalHistoryResult.RETURNED: ("↩ 已退回", "returned"),
+        ApprovalHistoryResult.REJECTED: ("× 已拒绝", "rejected"),
+        ApprovalHistoryResult.COMMENTED_PENDING: ("✎ 已留言，仍待审批", "commented"),
+        ApprovalHistoryResult.NO_ACTION: ("无需处理", "skipped"),
+        ApprovalHistoryResult.NEEDS_HUMAN: ("待你处理", "needs-human"),
+        ApprovalHistoryResult.PROCESSING: ("处理中", "processing"),
+        ApprovalHistoryResult.FAILED: ("处理失败", "failed"),
+        ApprovalHistoryResult.UNKNOWN: ("结果未知", "unknown"),
+    }.get(result or ApprovalHistoryResult.UNKNOWN)
+    return (
+        f'<span class="pill status-action history-approval-result '
+        f'action-state-{state}">{escape(label)}</span>'
     )
 
 
