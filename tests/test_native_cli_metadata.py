@@ -336,6 +336,30 @@ def test_agent_cli_allows_native_command_to_run_for_fifteen_minutes(monkeypatch)
     assert observed_timeout == CLI_TIMEOUT_SECONDS
 
 
+def test_agent_cli_returns_valid_small_receipt_before_mcp_transport_truncation(
+    monkeypatch,
+):
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={("dws", "chat message get"): EffectKind.READ_ONLY}
+    )
+    monkeypatch.setattr("app.agent_cli.shutil.which", lambda _: "/bin/dws")
+
+    receipt = execute_reviewed_read(
+        ["dws", "chat", "message", "get"],
+        classifier=classifier,
+        process_runner=lambda argv, **_: subprocess.CompletedProcess(
+            argv,
+            0,
+            "x" * (256 * 1024),
+            "",
+        ),
+    )
+
+    assert receipt["stdout"] == ""
+    assert receipt["error"]["code"] == "agent_cli_output_limit_exceeded"
+    assert len(json.dumps(receipt, ensure_ascii=False).encode("utf-8")) < 64 * 1024
+
+
 def test_agent_cli_rejects_generic_local_read_without_launching(monkeypatch):
     argv = ["sed", "-n", "1p", "/tmp/public-key.pub"]
     monkeypatch.setattr(

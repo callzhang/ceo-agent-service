@@ -64,7 +64,6 @@ from app.native_cli_metadata import (
     native_command_argv,
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
-from app.bounded_process import MAX_PROCESS_OUTPUT_BYTES
 from app.store import (
     RECONCILIATION_EVENT_LIMIT_ERROR,
     AgentRole,
@@ -78,7 +77,6 @@ ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS = 60
 UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS = 15 * 60
-MAX_AGENT_CLI_RECEIPT_BYTES = MAX_PROCESS_OUTPUT_BYTES * 4 + 64 * 1024
 
 
 def unknown_reconciliation_retry_at(
@@ -1441,7 +1439,7 @@ def _agent_cli_receipt(
             encoded_size = len(value.encode("utf-8"))
         except (UnicodeError, MemoryError):
             return None
-        if encoded_size > MAX_AGENT_CLI_RECEIPT_BYTES:
+        if encoded_size > 64 * 1024:
             return None
         encoded = value.strip()
         if not encoded.startswith(("{", "[")):
@@ -1473,10 +1471,7 @@ def _agent_cli_receipt(
             if not isinstance(block, dict) or block.get("type") != "text":
                 continue
             text = block.get("text")
-            if (
-                not isinstance(text, str)
-                or len(text.encode("utf-8")) > MAX_AGENT_CLI_RECEIPT_BYTES
-            ):
+            if not isinstance(text, str) or len(text.encode("utf-8")) > 64 * 1024:
                 continue
             try:
                 candidates.append(json.loads(text))
