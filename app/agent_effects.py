@@ -536,6 +536,7 @@ def _normalized_shared_targets(
 ) -> dict[str, object] | None:
     normalized: dict[str, object] = {}
     conversation_keys = {
+        "chat-id",
         "conversation",
         "conversation-id",
         "group",

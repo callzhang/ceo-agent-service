@@ -4540,6 +4540,47 @@ def test_consume_once_prioritizes_pending_reconciliation(
     assert claimed_task_ids == [priority.id]
 
 
+def test_consume_once_recovers_unknown_runs_before_suspending_event_limited_runs(
+    tmp_path: Path, monkeypatch
+):
+    worker = make_worker(
+        tmp_path,
+        FakeDws([], {}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="unused")),
+        monkeypatch,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        worker,
+        "_backfill_confirmed_direct_reply_ledgers",
+        lambda *, limit: calls.append("backfill") or 0,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_recover_due_unknown_agent_reply_tasks",
+        lambda *, limit: calls.append("recover") or 0,
+    )
+    monkeypatch.setattr(
+        worker.store,
+        "suspend_reconciliation_event_limited_agent_runs",
+        lambda: calls.append("suspend") or 0,
+    )
+    monkeypatch.setattr(worker, "_recover_stale_agent_reply_tasks", lambda: None)
+    monkeypatch.setattr(
+        worker_module,
+        "recover_native_codex_auth_failures",
+        lambda *args, **kwargs: 0,
+    )
+    monkeypatch.setattr(
+        worker.store,
+        "active_codex_capacity_pause",
+        lambda **kwargs: True,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert calls == ["backfill", "recover", "suspend"]
+
+
 def test_due_unknown_audit_run_is_requeued_without_waiting_for_stale_timeout(
     tmp_path: Path, monkeypatch
 ):

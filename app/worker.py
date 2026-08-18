@@ -1481,8 +1481,8 @@ class DingTalkAutoReplyWorker:
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
         self._backfill_confirmed_direct_reply_ledgers(limit=limit)
-        self.store.suspend_reconciliation_event_limited_agent_runs()
         self._recover_due_unknown_agent_reply_tasks(limit=limit)
+        self.store.suspend_reconciliation_event_limited_agent_runs()
         self._recover_stale_agent_reply_tasks()
         recover_native_codex_auth_failures(self.store, channel="dingtalk")
         if self.store.active_codex_capacity_pause(now=self._now()):

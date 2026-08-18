@@ -89,6 +89,12 @@
 
 ### Audit reconciliation
 
+- Treat `chat-id` and the read-side conversation identifiers as the same
+  DingTalk conversation during controlled Audit readback matching. Event-limited
+  unknown runs now receive one evidence-only recovery pass before suspension,
+  preventing a completed multi-action approval from accumulating retries when
+  its source-chat readback uses a different canonical identifier label.
+
 - Redact every failed outbound chat-send command before persistence, and record
   direct-recipient rejection as an explicit no-delivery terminal result so an
   inactive recipient is not retried or reported as an ambiguous service error.

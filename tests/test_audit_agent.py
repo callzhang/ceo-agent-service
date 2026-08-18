@@ -3296,6 +3296,19 @@ def test_native_command_contract_uses_parsed_cli_not_consumer_label():
     assert expected["target_identifiers"] == {"open-dingtalk-id": "recipient-1"}
 
 
+def test_chat_id_readback_matches_conversation_id():
+    registry = McpToolEffectRegistry.default()
+
+    assert registry.readback_targets_match(
+        read_server="agent_cli",
+        read_tool="execute_reviewed_read",
+        write_server="agent_cli",
+        write_tool="execute_reviewed_write",
+        read_targets={"conversation-id": "cid-1"},
+        write_targets={"chat-id": "cid-1"},
+    )
+
+
 def test_ambiguous_recovery_requires_matching_live_read(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     executor = CapturingExecutor(
