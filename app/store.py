@@ -14096,6 +14096,8 @@ class AutoReplyStore:
             "status",
             "send_result_json",
             "evidence_check_json",
+            "reaction_status",
+            "reaction_summary",
             "suppressed_reason",
             "scheduled_at",
             "sent_at",
@@ -14458,6 +14460,28 @@ class AutoReplyStore:
                 order by attempts.draft_revision, attempts.id
                 """,
                 (draft_id, before_revision),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_prior_follow_up_send_attempts(
+        self,
+        *,
+        draft_id: int,
+        before_revision: int,
+        limit: int = 20,
+    ) -> list[dict[str, object]]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from follow_up_send_attempts
+                where draft_id=? and draft_revision < ?
+                order by draft_revision desc, id desc
+                limit ?
+                """,
+                (draft_id, before_revision, limit),
             ).fetchall()
             return [dict(row) for row in rows]
 
