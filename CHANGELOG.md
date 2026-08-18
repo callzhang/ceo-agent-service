@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Associate work-item execution errors with their exact input and close them
+  once that input reaches a terminal state, instead of retaining a generic
+  four-hour quality-gate failure after verified recovery.
+- Settle legacy unknown Audit runs when an exact channel, conversation, and
+  trigger match already has a persisted direct-delivery receipt. Completed
+  tasks no longer retain an unresolvable unknown-side-effect warning.
 - Fix meeting-alignment jobs created during the settling window so they become
   claimable when their eligibility time arrives, even if discovery does not
   encounter the same meeting again.

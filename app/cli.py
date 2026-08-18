@@ -1025,8 +1025,8 @@ def process_work_items_command(settings: WorkerSettings) -> int:
                 store.mark_work_summary_input_failed(work_input.id, error)
             if not capacity_exhausted or opened_capacity_pause:
                 store.record_error(
-                    None,
-                    None,
+                    "work_summary_input",
+                    str(work_input.id),
                     "codex_capacity_pause" if capacity_exhausted else "task_agent",
                     CODEX_CAPACITY_EXHAUSTED_MESSAGE if capacity_exhausted else error,
                 )
@@ -2405,6 +2405,7 @@ def run_task_maintenance_loop(
             lambda: (
                 store.resolve_errors_recovered_by_reply_attempts()
                 + store.resolve_errors_recovered_by_completed_reply_tasks()
+                + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
                 + store.resolve_closed_blocked_reply_attempts()
                 + store.resolve_unattributed_errors_after_quiet_period()
                 + store.resolve_inactive_trigger_errors_after_quiet_period()
@@ -2752,6 +2753,7 @@ def _resolve_recovered_errors_on_service_start(settings: WorkerSettings) -> int:
     return (
         store.resolve_errors_recovered_by_reply_attempts()
         + store.resolve_errors_recovered_by_completed_reply_tasks()
+        + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
         + store.resolve_closed_blocked_reply_attempts()
         + store.resolve_unattributed_errors_after_quiet_period()
         + store.resolve_inactive_trigger_errors_after_quiet_period()
@@ -2766,10 +2768,11 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
         + store.recover_effectful_audit_runs_after_service_restart()
         + store.resume_completed_agent_turns_after_service_restart()
     )
+    settled_deliveries = store.settle_done_unknown_audit_runs_with_sent_reply()
     released_reconciliations = (
         store.release_unknown_audit_reconciliation_leases_after_service_restart()
     )
-    return len(recovered_tasks) + len(released_reconciliations)
+    return len(recovered_tasks) + settled_deliveries + len(released_reconciliations)
 
 
 def _recover_okr_review_requests_on_service_start(settings: WorkerSettings) -> int:

@@ -1725,7 +1725,9 @@ class DingTalkAutoReplyWorker:
         return processed_tasks
 
     def _recover_due_unknown_agent_reply_tasks(self, *, limit: int) -> int:
-        recovered = 0
+        recovered = self.store.settle_done_unknown_audit_runs_with_sent_reply(
+            limit=limit
+        )
         for run in self.store.list_unknown_agent_runs(limit=limit):
             task = self.store.get_reply_task(run.reply_task_id)
             if task is None:

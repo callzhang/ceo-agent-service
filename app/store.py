@@ -5041,6 +5041,78 @@ class AutoReplyStore:
             row = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
             return self._agent_run_from_row(row, db=db)
 
+    def settle_done_unknown_audit_runs_with_sent_reply(
+        self,
+        *,
+        limit: int = 100,
+        now: str | datetime | None = None,
+    ) -> int:
+        """Close legacy unknown Audits only when the direct delivery ledger proves send."""
+        if limit <= 0:
+            return 0
+        final_result_json = _json_object_text(
+            {
+                "outcome": "completed",
+                "summary": "direct delivery confirmed from sent reply ledger",
+            },
+            field="final_result",
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            rows = db.execute(
+                """
+                select runs.id, runs.reply_task_id
+                from agent_runs as runs
+                join reply_tasks as tasks on tasks.id=runs.reply_task_id
+                where runs.role='audit'
+                  and runs.status='unknown'
+                  and runs.side_effect_state='unknown'
+                  and tasks.status='done'
+                  and tasks.execution_generation=runs.execution_generation
+                  and exists (
+                      select 1
+                      from sent_replies as replies
+                      where replies.channel=tasks.channel
+                        and replies.conversation_id=tasks.conversation_id
+                        and replies.trigger_message_id=tasks.trigger_message_id
+                  )
+                order by runs.updated_at, runs.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            settled = 0
+            for row in rows:
+                run_id = int(row["id"])
+                task_id = int(row["reply_task_id"])
+                cursor = db.execute(
+                    """
+                    update agent_runs
+                    set status='completed', final_result_json=?, structured_error_json='',
+                        side_effect_state='confirmed', reconciliation_suspended=0,
+                        reconciliation_next_attempt_at='', lease_owner='',
+                        lease_expires_at='', completed_at=?, updated_at=?
+                    where id=? and role='audit' and status='unknown'
+                      and side_effect_state='unknown'
+                      and exists (
+                          select 1
+                          from reply_tasks as tasks
+                          join sent_replies as replies
+                            on replies.channel=tasks.channel
+                           and replies.conversation_id=tasks.conversation_id
+                           and replies.trigger_message_id=tasks.trigger_message_id
+                          where tasks.id=agent_runs.reply_task_id
+                            and tasks.status='done'
+                            and tasks.execution_generation=
+                                agent_runs.execution_generation
+                      )
+                    """,
+                    (final_result_json, now_text, now_text, run_id),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                settled += 1
+            return settled
+
     def resolve_unknown_agent_run_absent(
         self,
         run_id: int,
@@ -15195,6 +15267,29 @@ class AutoReplyStore:
                             or lower(run.side_effect_state)='unknown'
                           )
                       )
+                  )
+                """
+            )
+            return cursor.rowcount
+
+    def resolve_errors_recovered_by_terminal_work_summary_inputs(self) -> int:
+        """Close a work-item incident only after that exact input is terminal."""
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors as incident
+                set resolved_at=current_timestamp,
+                    resolution='recovered by terminal work summary input'
+                where coalesce(incident.resolved_at, '')=''
+                  and incident.kind='task_agent'
+                  and incident.conversation_id='work_summary_input'
+                  and exists (
+                      select 1
+                      from work_summary_inputs as work_input
+                      where cast(work_input.id as text)=incident.message_id
+                        and lower(work_input.status) in ('done', 'discarded')
+                        and datetime(work_input.updated_at) >=
+                            datetime(incident.created_at)
                   )
                 """
             )

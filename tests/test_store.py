@@ -2771,6 +2771,41 @@ def test_unknown_agent_run_resolves_atomically_and_cannot_return_to_running(
         )
 
 
+def test_done_unknown_audit_with_sent_reply_is_settled_from_delivery_ledger(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task_id,
+        task.execution_generation,
+        owner="worker-1",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker-1",
+    )
+    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "delivered")
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='done' where id=?",
+            (task_id,),
+        )
+
+    assert store.settle_done_unknown_audit_runs_with_sent_reply() == 1
+
+    settled = store.get_agent_run(run.id)
+    assert settled is not None
+    assert settled.status == "completed"
+    assert settled.side_effect_state == "confirmed"
+    assert settled.reconciliation_suspended is False
+    assert store.get_reply_attempt(1) is None
+
+
 def test_unknown_agent_run_uses_explicit_reconciliation_event_path(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
@@ -7183,3 +7218,22 @@ def test_requeue_failed_work_summary_input_is_scoped_to_failed_record(tmp_path: 
         "available_at": "",
     }
     assert not store.requeue_failed_work_summary_input(input_id, "again")
+
+
+def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    input_id = store.enqueue_work_summary_input("local_file", "file:reference", "{}")
+    [claimed] = store.claim_work_summary_inputs(1)
+    store.mark_work_summary_input_discarded(claimed.id, "no usable material")
+    store.record_error(
+        "work_summary_input",
+        str(input_id),
+        "task_agent",
+        "validation failed",
+    )
+
+    assert store.resolve_errors_recovered_by_terminal_work_summary_inputs() == 1
+    with store._connect() as db:
+        row = db.execute("select resolved_at from errors").fetchone()
+    assert row is not None
+    assert row["resolved_at"]

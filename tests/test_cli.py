@@ -130,6 +130,40 @@ def test_service_start_releases_unknown_audit_reconciliation_lease(tmp_path: Pat
     assert persisted.lease_expires_at == ""
 
 
+def test_service_start_settles_done_unknown_audit_with_delivery_ledger(
+    tmp_path: Path,
+):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    store = AutoReplyStore(settings.db_path)
+    enqueue_trigger_task(store)
+    task = store.claim_reply_tasks(1)[0]
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="operation-1",
+        owner="stopped-worker",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="stopped-worker",
+    )
+    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "delivered")
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+
+    assert cli._recover_orphaned_reply_tasks_on_service_start(settings) == 1
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.status == "completed"
+    assert persisted.side_effect_state == "confirmed"
+
+
 def test_parser_requires_structured_agent_run_resolution():
     args = build_parser().parse_args(
         [
@@ -5012,9 +5046,12 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         resolve_errors_recovered_by_reply_attempts=lambda: (
             calls.append("resolve") or 0
         ),
-        resolve_errors_recovered_by_completed_reply_tasks=lambda: (
-            calls.append("resolve-completed-task") or 0
-        ),
+            resolve_errors_recovered_by_completed_reply_tasks=lambda: (
+                calls.append("resolve-completed-task") or 0
+            ),
+            resolve_errors_recovered_by_terminal_work_summary_inputs=lambda: (
+                calls.append("resolve-work-summary") or 0
+            ),
         resolve_closed_blocked_reply_attempts=lambda: (
             calls.append("resolve-blocked") or 0
         ),
@@ -5073,6 +5110,7 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         "okr",
         "resolve",
         "resolve-completed-task",
+        "resolve-work-summary",
         "resolve-blocked",
         "resolve-service",
         "resolve-inactive-trigger",
