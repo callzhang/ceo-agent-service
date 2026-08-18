@@ -1056,12 +1056,12 @@ def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> b
     normalized_error = _normalize_codex_stop_error_reason(error_text)
     if _is_terminal_codex_auth_failure(normalized_error):
         return False
+    if attempts >= WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS:
+        return False
     if isinstance(error, Exception) and is_external_dependency_error(error):
         return True
     if _is_codex_provider_recovery_wait_reason(normalized_error):
         return True
-    if attempts >= WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS:
-        return False
     normalized = error_text.lower()
     return any(marker in normalized for marker in WORK_SUMMARY_TRANSIENT_ERROR_MARKERS)
 

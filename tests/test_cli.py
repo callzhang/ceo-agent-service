@@ -1675,7 +1675,7 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
     assert row["available_at"] == ""
 
 
-def test_process_work_items_command_keeps_codex_transport_failure_pending_after_limit(
+def test_process_work_items_command_fails_codex_transport_failure_after_limit(
     tmp_path,
     monkeypatch,
     capsys,
@@ -1737,10 +1737,10 @@ def test_process_work_items_command_keeps_codex_transport_failure_pending_after_
             """,
             (input_id,),
         ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "failed"
     assert row["attempts"] == 4
     assert row["error"].startswith("codex_provider_unavailable:")
-    assert row["available_at"] > ""
+    assert row["available_at"] == ""
 
 
 def test_process_work_items_pauses_after_codex_capacity_exhaustion(
@@ -1804,7 +1804,7 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
     assert [error.kind for error in store.list_errors()] == ["codex_capacity_pause"]
 
 
-def test_process_work_items_command_keeps_typed_external_failure_pending_after_limit(
+def test_process_work_items_command_fails_typed_external_failure_after_limit(
     tmp_path,
     monkeypatch,
     capsys,
@@ -1863,9 +1863,9 @@ def test_process_work_items_command_keeps_typed_external_failure_pending_after_l
             "select status, error, available_at from work_summary_inputs where id=?",
             (input_id,),
         ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "failed"
     assert row["error"] == "remote context compaction unavailable"
-    assert row["available_at"] > ""
+    assert row["available_at"] == ""
 
 
 def test_process_work_items_command_backoffs_missing_memory_recall_tool_event(

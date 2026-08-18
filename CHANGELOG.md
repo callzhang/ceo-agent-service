@@ -36,6 +36,11 @@
 
 ### Task-agent recovery
 
+- Keep task-agent output on its native `TaskAgentDecision` contract instead of
+  injecting the message-consumer envelope. Bound a stalled task run to five
+  minutes total or 90 seconds without output, and stop automatic requeueing
+  after the configured transient retry limit so unavailable Codex runs cannot
+  consume the work queue indefinitely.
 - Preserve the initial task-agent receipt when a proposed owner lacks a stable
   identity, then make one bounded repair pass using live directory evidence.
   If the owner remains unresolved, retain only an unassigned project update and
