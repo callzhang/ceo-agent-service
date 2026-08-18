@@ -1,5 +1,9 @@
 # Changelog
 
+- Allow a complete weekly OKR manager review up to 15 minutes, while retaining
+  a three-minute no-output cutoff. This prevents valid evidence-heavy reviews
+  from failing at the generic five-minute limit before any publication occurs.
+
 - Recover a missed weekly OKR report after the scheduled Sunday window. The
   retry retains the missed Sunday as the report date and week end, rather than
   publishing a partial report for the recovery day.

@@ -29,8 +29,11 @@ LATEST_ARCHIVE_INDEX_NAME = "latest_company_okr_index.md"
 LATEST_ARCHIVE_RAW_NAME = "latest_company_okr_raw.json"
 DEFAULT_SCHEDULE_HOUR = 18
 DEFAULT_RETRY_SECONDS = 1800
-WEEKLY_OKR_AGENT_MAX_TIMEOUT_SECONDS = 300
-WEEKLY_OKR_AGENT_MAX_IDLE_TIMEOUT_SECONDS = 90
+# A complete manager review can require several DWS evidence reads before the
+# structured result is emitted. Keep the process bounded, but do not cut off a
+# valid review at the generic five-minute task limit.
+WEEKLY_OKR_AGENT_MAX_TIMEOUT_SECONDS = 900
+WEEKLY_OKR_AGENT_MAX_IDLE_TIMEOUT_SECONDS = 180
 WEEKLY_OKR_REPORT_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "weekly_okr_report.schema.json"
 )
