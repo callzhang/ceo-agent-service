@@ -897,6 +897,38 @@ def test_weekly_command_honors_configured_codex_deadlines(tmp_path, monkeypatch)
     assert captured["agent"].idle_timeout_seconds == 19
 
 
+def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run_weekly_okr_report(**kwargs):
+        captured["agent"] = kwargs["agent"]
+        return WeeklyOkrReportResult(status="dry_run", report_date="2026-08-17")
+
+    monkeypatch.setattr(
+        weekly_okr_report_module,
+        "run_weekly_okr_report",
+        fake_run_weekly_okr_report,
+    )
+    monkeypatch.setenv("CEO_OKR_LIVE_SOURCE_COMMAND", "echo")
+    settings = SimpleNamespace(
+        db_path=tmp_path / "auto-reply.sqlite3",
+        ding_robot_code="",
+        ding_robot_name="",
+        ding_receiver_user_id="",
+        dws_transient_retry_attempts=1,
+        dws_transient_retry_delay_seconds=0.1,
+        workspace=tmp_path,
+        codex_timeout_seconds=1200,
+        codex_idle_timeout_seconds=900,
+        dry_run=True,
+    )
+
+    weekly_okr_report_module.weekly_okr_report_command(settings, force=True)
+
+    assert captured["agent"].timeout_seconds == 300
+    assert captured["agent"].idle_timeout_seconds == 90
+
+
 def _weekly_payload_for(name):
     return {
         "executive_summary": f"{name}摘要",

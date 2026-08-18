@@ -29,6 +29,8 @@ LATEST_ARCHIVE_INDEX_NAME = "latest_company_okr_index.md"
 LATEST_ARCHIVE_RAW_NAME = "latest_company_okr_raw.json"
 DEFAULT_SCHEDULE_HOUR = 18
 DEFAULT_RETRY_SECONDS = 1800
+WEEKLY_OKR_AGENT_MAX_TIMEOUT_SECONDS = 300
+WEEKLY_OKR_AGENT_MAX_IDLE_TIMEOUT_SECONDS = 90
 WEEKLY_OKR_REPORT_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "weekly_okr_report.schema.json"
 )
@@ -1111,8 +1113,14 @@ def weekly_okr_report_command(
         source=source,
         agent=CodexWeeklyOkrAgent(
             workspace=settings.workspace,
-            timeout_seconds=settings.codex_timeout_seconds,
-            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+            timeout_seconds=min(
+                settings.codex_timeout_seconds,
+                WEEKLY_OKR_AGENT_MAX_TIMEOUT_SECONDS,
+            ),
+            idle_timeout_seconds=min(
+                settings.codex_idle_timeout_seconds,
+                WEEKLY_OKR_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+            ),
         ),
         workspace=settings.workspace,
         now=current,

@@ -4,10 +4,11 @@
 
 ### Weekly OKR reporting
 
-- Honor the configured Codex total and idle deadlines for each manager score.
-  A failed score now cancels queued managers instead of allowing the executor
-  to continue launching the full roster; valid per-manager caches remain
-  available for the next deduplicated run.
+- Bound each manager score to the configured deadline or five minutes,
+  whichever is sooner, and stop waiting after 90 seconds without Codex
+  output. A failed score now cancels queued managers instead of allowing the
+  executor to continue launching the full roster; valid per-manager caches
+  remain available for the next deduplicated run.
 
 ### Material reading and local parsing
 
