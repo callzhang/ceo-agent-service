@@ -960,7 +960,7 @@ def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):
     weekly_okr_report_module.weekly_okr_report_command(settings, force=True)
 
     assert captured["agent"].timeout_seconds == 900
-    assert captured["agent"].idle_timeout_seconds == 180
+    assert captured["agent"].idle_timeout_seconds == 900
 
 
 def _weekly_payload_for(name):

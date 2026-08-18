@@ -1,8 +1,8 @@
 # Changelog
 
-- Allow a complete weekly OKR manager review up to 15 minutes, while retaining
-  a three-minute no-output cutoff. This prevents valid evidence-heavy reviews
-  from failing at the generic five-minute limit before any publication occurs.
+- Allow a complete weekly OKR manager review up to 15 minutes. The structured
+  Codex CLI emits only on completion, so its no-output deadline matches the
+  total limit instead of terminating a valid evidence-heavy review early.
 
 - Recover a missed weekly OKR report after the scheduled Sunday window. The
   retry retains the missed Sunday as the report date and week end, rather than
