@@ -11,6 +11,7 @@ from app.agent_contracts import (
     AuditOutcome,
     ConsumerAgentResult,
     ConsumerOutcome,
+    ProposedAction,
 )
 from app.agent_result import SideEffectState
 from app.store import AgentRole, AgentRun, ReplyAttempt
@@ -63,9 +64,12 @@ def resolve_approval_history_result(
         return None
 
     consumers = [run for run in agent_runs if run.role is AgentRole.CONSUMER]
+    consumer_runs = {run.id: run for run in consumers}
     consumer_results = _consumer_results(consumers)
 
-    structured_results = _confirmed_structured_results(agent_runs, consumer_results)
+    structured_results = _confirmed_structured_results(
+        attempt, agent_runs, consumer_runs, consumer_results
+    )
     if len(structured_results) == 1:
         return next(iter(structured_results))
     if len(structured_results) > 1:
@@ -124,7 +128,9 @@ def _consumer_results(
 
 
 def _confirmed_structured_results(
+    attempt: ReplyAttempt,
     agent_runs: Sequence[AgentRun],
+    consumer_runs: dict[int, AgentRun],
     consumer_results: dict[int, ConsumerAgentResult],
 ) -> set[ApprovalHistoryResult]:
     results: set[ApprovalHistoryResult] = set()
@@ -136,19 +142,61 @@ def _confirmed_structured_results(
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
             continue
         if (
-            audit.outcome is not AuditOutcome.EXECUTED
+            _normalize(run.status) != "completed"
+            or audit.outcome is not AuditOutcome.EXECUTED
             or audit.side_effect_state is not SideEffectState.CONFIRMED
             or run.parent_agent_run_id not in consumer_results
+        ):
+            continue
+        consumer_run = consumer_runs[run.parent_agent_run_id]
+        if (
+            _normalize(consumer_run.status) != "completed"
+            or run.reply_task_id != consumer_run.reply_task_id
+            or run.execution_generation != consumer_run.execution_generation
+            or audit.proposal_revision != run.proposal_revision
+            or audit.proposal_revision != consumer_run.proposal_revision
+            or audit.external_result is None
+            or not audit.external_result.operation_id.strip()
+            or audit.external_result.operation_id != run.operation_id
         ):
             continue
         consumer = consumer_results[run.parent_agent_run_id]
         if consumer.outcome is not ConsumerOutcome.PROPOSAL or consumer.proposal is None:
             continue
+        approval_actions: list[ApprovalHistoryResult] = []
         for action in consumer.proposal.actions:
             result = _STRUCTURED_OPERATIONS.get(_normalize(action.operation))
             if result is not None:
-                results.add(result)
+                if not _approval_action_target_matches(attempt, action, audit):
+                    approval_actions = []
+                    break
+                approval_actions.append(result)
+        results.update(approval_actions)
     return results
+
+
+def _approval_action_target_matches(
+    attempt: ReplyAttempt,
+    action: ProposedAction,
+    audit: AuditAgentResult,
+) -> bool:
+    process_instance_id = attempt.oa_process_instance_id.strip()
+    if not process_instance_id:
+        return True
+    target_values = [
+        action.target[key]
+        for key in ("process_instance_id", "instance_id")
+        if key in action.target
+    ]
+    if (
+        not target_values
+        or any(type(value) is not str or value != process_instance_id for value in target_values)
+    ):
+        return False
+    live_reference = audit.external_result.live_result_reference if audit.external_result else {}
+    if "process_instance_id" in live_reference:
+        return live_reference["process_instance_id"] == process_instance_id
+    return True
 
 
 def _direct_result(attempt: ReplyAttempt) -> ApprovalHistoryResult | None:
@@ -168,15 +216,32 @@ def _direct_result(attempt: ReplyAttempt) -> ApprovalHistoryResult | None:
 
 
 def _receipt_proves_success(payload: dict[str, object]) -> bool:
-    if payload.get("success") is True:
-        return True
-    result = payload.get("result")
-    if isinstance(result, dict) and result.get("success") is True:
-        return True
-    dws_result = payload.get("dws_action_result")
-    if isinstance(dws_result, dict) and dws_result.get("success") is True:
-        return True
-    return payload.get("errcode") == 0
+    indicators: list[bool] = []
+
+    if "success" in payload:
+        success = payload["success"]
+        if type(success) is not bool:
+            return False
+        indicators.append(success)
+
+    for key in ("result", "dws_action_result"):
+        if key not in payload:
+            continue
+        nested = payload[key]
+        if not isinstance(nested, dict) or "success" not in nested:
+            continue
+        success = nested["success"]
+        if type(success) is not bool:
+            return False
+        indicators.append(success)
+
+    if "errcode" in payload:
+        errcode = payload["errcode"]
+        if type(errcode) is not int:
+            return False
+        indicators.append(errcode == 0)
+
+    return bool(indicators) and all(indicators)
 
 
 def _workflow_result(status: str) -> ApprovalHistoryResult:

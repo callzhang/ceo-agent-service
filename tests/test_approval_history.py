@@ -51,16 +51,19 @@ def _run(
     status: str = "completed",
     side_effect_state: str = "none",
     proposal_revision: int = 0,
+    reply_task_id: int = 1,
+    execution_generation: str = "initial",
+    operation_id: str | None = None,
 ) -> AgentRun:
     return AgentRun(
         id=run_id,
-        reply_task_id=1,
-        execution_generation="initial",
+        reply_task_id=reply_task_id,
+        execution_generation=execution_generation,
         role=role,
         proposal_revision=proposal_revision,
         turn_attempt=1,
         parent_agent_run_id=parent_agent_run_id,
-        operation_id=f"operation-{run_id}",
+        operation_id=operation_id or f"operation-{run_id}",
         status=status,
         final_result_json=result if isinstance(result, str) else result.model_dump_json(),
         side_effect_state=side_effect_state,
@@ -69,7 +72,12 @@ def _run(
     )
 
 
-def _consumer(operation: str | None = "oa approval approve", *, outcome: ConsumerOutcome = ConsumerOutcome.PROPOSAL) -> ConsumerAgentResult:
+def _consumer(
+    operation: str | None = "oa approval approve",
+    *,
+    outcome: ConsumerOutcome = ConsumerOutcome.PROPOSAL,
+    target_process: str | None = "process",
+) -> ConsumerAgentResult:
     proposal = None
     if operation is not None:
         proposal = ConsumerProposal(
@@ -79,7 +87,11 @@ def _consumer(operation: str | None = "oa approval approve", *, outcome: Consume
                     description="prose can disagree with operation",
                     capability="dingtalk_oa",
                     operation=operation,
-                    target={"process_instance_id": "process"},
+                    target=(
+                        {"process_instance_id": target_process}
+                        if target_process is not None
+                        else {"other": "target"}
+                    ),
                     payload={},
                     expected_verification="verification",
                 ),
@@ -95,7 +107,10 @@ def _consumer(operation: str | None = "oa approval approve", *, outcome: Consume
     )
 
 
-def _confirmed_audit() -> AuditAgentResult:
+def _confirmed_audit(
+    operation_id: str = "operation-2",
+    live_process: str | None = None,
+) -> AuditAgentResult:
     return AuditAgentResult(
         outcome=AuditOutcome.EXECUTED,
         summary="audit summary",
@@ -103,9 +118,11 @@ def _confirmed_audit() -> AuditAgentResult:
         side_effect_state=SideEffectState.CONFIRMED,
         feedback=None,
         external_result=AuditExternalResult(
-            operation_id="external-operation",
+            operation_id=operation_id,
             verification_summary="verified",
-            live_result_reference={"ok": True},
+            live_result_reference=(
+                {"process_instance_id": live_process} if live_process is not None else {}
+            ),
         ),
         error=AgentError(),
     )
@@ -246,7 +263,7 @@ def test_conflicting_confirmed_approval_actions_are_unknown():
     audit_reject = _run(
         4,
         AgentRole.AUDIT,
-        _confirmed_audit(),
+        _confirmed_audit(operation_id="operation-4"),
         parent_agent_run_id=consumer_reject.id,
         side_effect_state=SideEffectState.CONFIRMED,
     )
@@ -309,3 +326,97 @@ def test_confirmed_structured_action_precedes_workflow_status():
         side_effect_state=SideEffectState.CONFIRMED,
     )
     assert resolve_approval_history_result(_attempt(send_status="processing"), [consumer, audit]) is ApprovalHistoryResult.APPROVED
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"result": {"success": True}},
+        {"dws_action_result": {"success": True}},
+    ],
+)
+def test_nested_direct_receipt_success_shapes(payload):
+    assert (
+        resolve_approval_history_result(
+            _attempt(oa_action="approve", send_status="pending", oa_action_result_json=json.dumps(payload)),
+            [],
+        )
+        is ApprovalHistoryResult.APPROVED
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"success": False, "errcode": 0},
+        {"success": True, "errcode": 1},
+        {"errcode": False},
+        {"success": "true", "errcode": 0},
+        {"result": {"success": 1}, "errcode": 0},
+        {"dws_action_result": {"success": "true"}, "errcode": 0},
+        {"errcode": 1},
+    ],
+)
+def test_inconsistent_or_invalid_direct_receipts_do_not_confirm(payload):
+    assert (
+        resolve_approval_history_result(
+            _attempt(oa_action="approve", send_status="pending", oa_action_result_json=json.dumps(payload)),
+            [],
+        )
+        is ApprovalHistoryResult.PROCESSING
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "audit_not_completed",
+        "consumer_not_completed",
+        "task_mismatch",
+        "generation_mismatch",
+        "proposal_revision_mismatch",
+        "external_operation_mismatch",
+        "external_operation_empty",
+        "target_mismatch",
+        "target_missing",
+        "live_reference_mismatch",
+    ],
+)
+def test_confirmed_evidence_must_match_persisted_approval_invariants(case):
+    attempt = _attempt()
+    consumer = _run(1, AgentRole.CONSUMER, _consumer())
+    audit_result: object = _confirmed_audit()
+    audit_kwargs: dict[str, object] = {"parent_agent_run_id": consumer.id}
+
+    if case == "audit_not_completed":
+        audit_kwargs["status"] = "processing"
+    elif case == "consumer_not_completed":
+        consumer = consumer.model_copy(update={"status": "processing"})
+        audit_kwargs["parent_agent_run_id"] = consumer.id
+    elif case == "task_mismatch":
+        audit_kwargs["reply_task_id"] = 2
+    elif case == "generation_mismatch":
+        audit_kwargs["execution_generation"] = "recovery"
+    elif case == "proposal_revision_mismatch":
+        consumer = _run(1, AgentRole.CONSUMER, _consumer(), proposal_revision=1)
+        audit_kwargs["parent_agent_run_id"] = consumer.id
+    elif case == "external_operation_mismatch":
+        audit_result = _confirmed_audit(operation_id="different-operation")
+    elif case == "external_operation_empty":
+        audit_result = _confirmed_audit().model_dump_json().replace(
+            '"operation_id":"operation-2"', '"operation_id":""'
+        )
+    elif case == "target_mismatch":
+        attempt = _attempt(oa_process_instance_id="process")
+        consumer = _run(1, AgentRole.CONSUMER, _consumer(target_process="other"))
+        audit_kwargs["parent_agent_run_id"] = consumer.id
+    elif case == "target_missing":
+        attempt = _attempt(oa_process_instance_id="process")
+        consumer = _run(1, AgentRole.CONSUMER, _consumer(target_process=None))
+        audit_kwargs["parent_agent_run_id"] = consumer.id
+    elif case == "live_reference_mismatch":
+        attempt = _attempt(oa_process_instance_id="process")
+        audit_result = _confirmed_audit(live_process="other")
+
+    audit = _run(2, AgentRole.AUDIT, audit_result, **audit_kwargs)
+    assert resolve_approval_history_result(attempt, [consumer, audit]) is ApprovalHistoryResult.PROCESSING
