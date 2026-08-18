@@ -159,6 +159,9 @@ class TaskAgentCodexRunner:
             session_id,
             image_paths=None,
             use_output_schema=False,
+            # The task prompt carries its own TaskAgentDecision schema. The
+            # consumer AgentEnvelope developer contract is incompatible here.
+            preserve_native_instructions=True,
         )
         if self.executor is not None:
             return self.executor(command, prompt)

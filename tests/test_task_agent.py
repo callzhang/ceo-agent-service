@@ -3933,6 +3933,7 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     assert calls[0][1]["idle_timeout_seconds"] == 3
     assert "--output-schema" not in command
     assert "--ignore-user-config" not in command
+    assert not any("developer_instructions" in arg for arg in command)
     assert "--disable" not in command
 
 
