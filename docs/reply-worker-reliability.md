@@ -408,10 +408,17 @@ use persisted exponential retry delays from one minute up to fifteen minutes.
 They are never immediately reclaimed in a hot loop, and the delay does not
 authorize replaying an approval, message, or other external action.
 When the bounded reconciliation-event ledger is full, the run is suspended
-instead of being retried. Its recorded reason requires a manual live readback;
-the worker neither starts another recovery turn nor replays the external action.
-This check runs before pending tasks are claimed, including legacy rows that had
-already been requeued by an earlier service version.
+instead of being retried. The same transaction closes the queue row and creates
+one `needs_human` History item linked to the original Audit run; it does not leave
+the task in an unclaimable `pending` state. History and the attempt detail page
+offer only three safe resolutions after a manual live readback: confirm the action
+occurred, confirm it did not occur and reopen the same task, or stop with the
+unknown result preserved. No resolution creates a replacement business item or
+blindly replays the external action. This check runs before pending tasks are
+claimed, including legacy suspended rows that an earlier service version had
+already requeued. Re-running the closeout is idempotent and does not create a
+second History item. Reconciliation attempts inherit the original Agent run and
+OA process/task identity so History aggregation remains on the same business item.
 If a required image is unavailable after either reconciliation or recovery
 execution claims the unknown run, the same formal deferral transition records
 `image_dependency_unavailable`, clears the recovery lease, and schedules the

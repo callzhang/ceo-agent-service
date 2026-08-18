@@ -87,6 +87,7 @@ from app.embedding import EmbeddingClient
 from app.history import safe_observability_error
 from app.history_actions import (
     HistoryAttention,
+    follow_up_history_attention,
     meeting_history_attention,
     reply_history_attention,
     task_history_attention,
@@ -119,6 +120,7 @@ from app.feedback_events import (
     sync_feedback_events_for_context as sync_feedback_events_for_context_impl,
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
+from app.follow_up import resolve_failed_follow_up
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AgentRole,
@@ -4378,7 +4380,7 @@ def _render_attempt_list(
     latest_attempt_cache: dict[tuple[str, str, str], ReplyAttempt | None] = {}
     for history_item in history_items:
         if history_item.kind == "task":
-            items.append(_task_history_card(history_item))
+            items.append(_task_history_card(history_item, store))
             continue
         if history_item.kind == "meeting":
             items.append(_meeting_history_card(history_item, store))
@@ -4411,6 +4413,7 @@ def _render_attempt_list(
         history_type = _history_attempt_type(attempt)
         attention = None
         later_attempt = None
+        terminal_run = None
         attention_status = attempt.send_status.strip().lower()
         if attention_status in {"failed", "needs_human"}:
             later_attempt = _later_problem_attempt_for_history(
@@ -4442,6 +4445,9 @@ def _render_attempt_list(
                         if terminal_run is not None
                         else "none"
                     ),
+                    requires_reconciliation_resolution=(
+                        _is_suspended_unknown_reconciliation(terminal_run)
+                    ),
                 )
         attention_html = (
             _superseded_history_attention_html(later_attempt)
@@ -4452,6 +4458,7 @@ def _render_attempt_list(
                     attempt,
                     attention,
                     return_to="/history",
+                    agent_run=terminal_run,
                 ),
             )
         )
@@ -4743,15 +4750,24 @@ def _task_history_id_label(item) -> str:
     return f"#task-update-{item.source_id}"
 
 
-def _task_history_card(item) -> str:
+def _task_history_card(item, store: AutoReplyStore) -> str:
     status = item.status.strip().lower() or "done"
     detail_url = _task_history_detail_url(item)
     output_text = _task_history_output_text(item, status)
     status_label = _task_history_status_label(item, status)
     attention = task_history_attention(item)
+    follow_up = (
+        store.get_follow_up_draft(item.follow_up_id)
+        if item.follow_up_id > 0
+        else None
+    )
     attention_html = _history_attention_html(
         attention,
-        actions_html=_history_link_attention_actions(attention, detail_url),
+        actions_html=_task_history_attention_actions(
+            attention,
+            detail_url,
+            follow_up,
+        ),
     )
     return (
         '<article class="attempt-item history-kind-task" role="link" tabindex="0" '
@@ -4793,9 +4809,84 @@ def _history_link_attention_actions(
     return f'<div class="history-attention-actions">{links}</div>' if links else ""
 
 
+def _task_history_attention_actions(
+    attention: HistoryAttention | None,
+    detail_url: str,
+    follow_up,
+) -> str:
+    if attention is None:
+        return ""
+    if follow_up is not None and any(
+        action.key in {"repair_follow_up", "cancel_follow_up"}
+        for action in attention.actions
+    ):
+        return _follow_up_resolution_actions(
+            attention,
+            follow_up,
+            return_to="/history",
+            details_href=detail_url,
+        )
+    return _history_link_attention_actions(attention, detail_url)
+
+
+def _follow_up_resolution_actions(
+    attention: HistoryAttention,
+    follow_up,
+    *,
+    return_to: str,
+    details_href: str,
+) -> str:
+    items: list[str] = []
+    help_items: list[str] = []
+    for action in attention.actions:
+        if (
+            action.key in {"repair_follow_up", "cancel_follow_up"}
+        ):
+            resolution = (
+                "repair_target"
+                if action.key == "repair_follow_up"
+                else "cancel"
+            )
+            confirmation = (
+                ""
+                if resolution == "repair_target"
+                else " onsubmit=\"return confirm('确认取消本次跟进？不会发送消息。')\""
+            )
+            items.append(
+                f'<form method="post" action="/follow-ups/{follow_up.id}/resolution-form"{confirmation}>'
+                f'<input type="hidden" name="expected_revision" value="{follow_up.revision}">'
+                f'<input type="hidden" name="resolution" value="{resolution}">'
+                f'<input type="hidden" name="return_to" value="{escape(return_to, quote=True)}">'
+                f'<button type="submit">{escape(action.label)}</button></form>'
+            )
+            if action.consequence:
+                help_items.append(f"{action.label}：{action.consequence}")
+            continue
+        if action.key == "details":
+            items.append(
+                f'<a class="compact-button" href="{escape(details_href, quote=True)}">'
+                f'{escape(action.label)}</a>'
+            )
+    if not items:
+        return ""
+    help_html = (
+        '<div class="history-action-help">' + "；".join(help_items) + "。</div>"
+        if help_items
+        else ""
+    )
+    return '<div class="history-attention-actions">' + "".join(items) + "</div>" + help_html
+
+
 def _task_history_output_text(item, status: str) -> str:
     if item.action.strip().lower().startswith("follow_up_") and status == "pending":
         return _follow_up_schedule_label(item.output_text) or "Scheduled"
+    if item.action.strip().lower().startswith("follow_up_") and status == "failed":
+        try:
+            payload = json.loads(item.output_text or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            return str(payload.get("error") or payload.get("reason") or item.output_text)
     return item.output_text
 
 
@@ -5971,6 +6062,24 @@ def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) ->
         if scheduled
         else ""
     )
+    detail_url = f"/tasks/{draft.project_id}#follow-up-{draft.id}"
+    attention = follow_up_history_attention(
+        status=str(draft.status),
+        output_text=draft.send_result_json,
+    )
+    attention_html = _history_attention_html(
+        attention,
+        actions_html=(
+            _follow_up_resolution_actions(
+                attention,
+                draft,
+                return_to=detail_url,
+                details_href=detail_url,
+            )
+            if attention is not None
+            else ""
+        ),
+    )
     return (
         f"<li class=\"todo-followup-item\" id=\"follow-up-{draft.id}\">"
         "<div class=\"todo-followup-bubble\">"
@@ -5985,6 +6094,7 @@ def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) ->
         f"{meta}"
         f"<div class=\"todo-followup-target\">{escape(target)}</div>"
         "</div>"
+        f"{attention_html}"
         "</li>"
     )
 
@@ -6374,6 +6484,9 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         decision_options=_needs_human_decision_options(attempt, agent_runs),
         side_effect_state=(
             terminal_run.side_effect_state if terminal_run is not None else "none"
+        ),
+        requires_reconciliation_resolution=(
+            _is_suspended_unknown_reconciliation(terminal_run)
         ),
     )
     return 200, render_page(
@@ -7629,6 +7742,80 @@ def handle_agent_run_resolution_post(
     }
 
 
+def handle_agent_run_resolution_form_post(
+    store: AutoReplyStore,
+    run_id: int,
+    body: bytes,
+) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    return_to = parsed.get("return_to", [""])[0]
+    payload: dict[str, object] = {
+        "run_id": run_id,
+        "execution_generation": parsed.get("execution_generation", [""])[0],
+        "resolution": parsed.get("resolution", [""])[0],
+        "reason": parsed.get("reason", [""])[0],
+    }
+    try:
+        result = handle_agent_run_resolution_post(store, payload)
+    except (AgentRunLeaseLostError, TypeError, ValueError) as exc:
+        return (
+            409,
+            {},
+            render_page(
+                "Resolution unavailable",
+                f"<p>该事项已变化，不能重复提交：{escape(str(exc))}</p>",
+            ),
+        )
+    attempt_id = int(result["attempt_id"])
+    return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
+
+
+def handle_follow_up_resolution_form_post(
+    store: AutoReplyStore,
+    draft_id: int,
+    body: bytes,
+) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    return_to = parsed.get("return_to", [""])[0]
+    draft = store.get_follow_up_draft(draft_id)
+    try:
+        expected_revision = int(parsed.get("expected_revision", [""])[0])
+        resolved = resolve_failed_follow_up(
+            store,
+            draft_id,
+            expected_revision=expected_revision,
+            resolution=parsed.get("resolution", [""])[0],
+            now=datetime.now(timezone.utc).strftime(DISPLAY_TIME_FORMAT),
+        )
+    except (TypeError, ValueError) as exc:
+        return (
+            409,
+            {},
+            render_page(
+                "Resolution unavailable",
+                f"<p>该跟进不能执行所选动作：{escape(str(exc))}</p>",
+            ),
+        )
+    if not resolved:
+        return (
+            409,
+            {},
+            render_page(
+                "Resolution unavailable",
+                "<p>该跟进已经变化，请刷新 History 后再处理。</p>",
+            ),
+        )
+    detail_url = (
+        f"/tasks/{draft.project_id}#follow-up-{draft.id}"
+        if draft is not None
+        else "/tasks"
+    )
+    location = return_to.strip()
+    if location not in {"/history", detail_url}:
+        location = "/tasks"
+    return 303, {"Location": location}, ""
+
+
 def _is_valid_rerun_trigger_json(
     trigger_message_json: str, *, channel: str = "dingtalk",
 ) -> bool:
@@ -7646,6 +7833,7 @@ def _safe_action_return_to(return_to: str, attempt_id: int) -> str:
     cleaned = return_to.strip()
     if (
         cleaned == "/"
+        or cleaned == "/history"
         or cleaned.startswith("/codex/")
         or cleaned == f"/attempts/{attempt_id}"
     ):
@@ -8582,6 +8770,24 @@ def create_audit_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return JSONResponse(result)
 
+    @app.post("/agent-runs/{run_id}/resolution-form")
+    async def resolve_agent_run_form(run_id: int, request: Request):
+        status, headers, html = handle_agent_run_resolution_form_post(
+            AutoReplyStore(db_path),
+            run_id,
+            await request.body(),
+        )
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/follow-ups/{draft_id}/resolution-form")
+    async def resolve_follow_up_form(draft_id: int, request: Request):
+        status, headers, html = handle_follow_up_resolution_form_post(
+            AutoReplyStore(db_path),
+            draft_id,
+            await request.body(),
+        )
+        return _fastapi_post_response(status, headers, html)
+
     @app.post("/messages/reviewed-reply")
     async def reviewed_reply(request: Request):
         _require_trusted_json_mutation(request)
@@ -9178,6 +9384,12 @@ def _needs_human_decision_card(
 ) -> str:
     if attempt.send_status != "needs_human" or attempt.channel != "dingtalk":
         return ""
+    terminal_run = next(
+        (run for run in agent_runs if run.id == attempt.agent_run_id),
+        None,
+    )
+    if _is_suspended_unknown_reconciliation(terminal_run):
+        return _reconciliation_resolution_card(attempt, terminal_run)
     action = f"/attempts/{attempt.id}/human-decision"
     options = _needs_human_decision_options(attempt, agent_runs)
     option_forms = "".join(
@@ -9210,6 +9422,67 @@ def _needs_human_decision_card(
         '<textarea name="instruction" required placeholder="例如：采用方案二，并说明交付边界"></textarea>'
         '<button type="submit">执行并发布</button></form>'
         '</section>'
+    )
+
+
+def _is_suspended_unknown_reconciliation(run: AgentRun | None) -> bool:
+    return bool(
+        run is not None
+        and run.role is AgentRole.AUDIT
+        and run.status == "unknown"
+        and run.reconciliation_suspended
+        and run.side_effect_state == "unknown"
+    )
+
+
+def _reconciliation_resolution_card(
+    attempt: ReplyAttempt,
+    run: AgentRun,
+) -> str:
+    action = f"/agent-runs/{run.id}/resolution-form"
+    choices = (
+        (
+            "confirmed_occurred",
+            "确认已执行",
+            "确认外部动作已经发生，并结束当前任务。",
+        ),
+        (
+            "confirmed_not_occurred",
+            "确认未执行",
+            "确认外部动作没有发生，并安全重开同一个任务。",
+        ),
+        (
+            "terminate_unrecoverable",
+            "无法确认并停止",
+            "保留审计记录并停止处理，不会自动重放。",
+        ),
+    )
+    forms = "".join(
+        '<form method="post" action="%s">'
+        '<input type="hidden" name="execution_generation" value="%s">'
+        '<input type="hidden" name="resolution" value="%s">'
+        '<input type="hidden" name="reason" value="%s">'
+        '<input type="hidden" name="return_to" value="/attempts/%s">'
+        '<button class="needs-human-option" type="submit">'
+        '<strong>%s</strong><span>%s</span></button></form>'
+        % (
+            action,
+            escape(run.execution_generation, quote=True),
+            escape(resolution, quote=True),
+            escape(attempt.audit_summary or attempt.codex_reason, quote=True),
+            attempt.id,
+            escape(label),
+            escape(consequence),
+        )
+        for resolution, label, consequence in choices
+    )
+    return (
+        '<section class="card needs-human-card">'
+        '<h2>需要你确认外部结果</h2>'
+        '<p class="muted">系统无法取得可信回执，因此没有自动重放。'
+        '请先在外部系统核对实际结果，再选择：</p>'
+        f'<pre class="reply-pre">{escape(attempt.audit_summary or attempt.codex_reason)}</pre>'
+        f"{forms}</section>"
     )
 
 
@@ -9519,6 +9792,7 @@ def _reply_history_attention_actions(
     attention: HistoryAttention | None,
     *,
     return_to: str,
+    agent_run: AgentRun | None = None,
 ) -> str:
     if attention is None:
         return ""
@@ -9531,6 +9805,27 @@ def _reply_history_attention_actions(
     items: list[str] = []
     help_items: list[str] = []
     for action in attention.actions:
+        if (
+            action.key
+            in {
+                "confirmed_occurred",
+                "confirmed_not_occurred",
+                "terminate_unrecoverable",
+            }
+            and _is_suspended_unknown_reconciliation(agent_run)
+        ):
+            resolution_action = f"/agent-runs/{agent_run.id}/resolution-form"
+            items.append(
+                f'<form method="post" action="{resolution_action}">'
+                f'<input type="hidden" name="execution_generation" value="{escape(agent_run.execution_generation, quote=True)}">'
+                f'<input type="hidden" name="resolution" value="{escape(action.key, quote=True)}">'
+                f'<input type="hidden" name="reason" value="{escape(attention.reason, quote=True)}">'
+                f'<input type="hidden" name="return_to" value="{escape(return_to, quote=True)}">'
+                f'<button type="submit">{escape(action.label)}</button></form>'
+            )
+            if action.consequence:
+                help_items.append(f"{action.label}：{action.consequence}")
+            continue
         if action.key == "retry":
             items.append(
                 f'<form method="post" action="{detail_href}/rerun?return_to={return_to_query}" '

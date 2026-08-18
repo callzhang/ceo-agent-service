@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 
 from app.agent_contracts import DecisionOption
@@ -47,6 +48,7 @@ def reply_history_attention(
     task: ReplyTask | None,
     decision_options: tuple[DecisionOption, ...],
     side_effect_state: str,
+    requires_reconciliation_resolution: bool = False,
 ) -> HistoryAttention | None:
     external_effects = {
         "none": "未执行任何外部动作",
@@ -83,6 +85,30 @@ def reply_history_attention(
         )
 
     if status == "needs_human":
+        if requires_reconciliation_resolution:
+            return HistoryAttention(
+                kind="needs_manager",
+                reason=reason,
+                external_effect=external_effect,
+                actions=(
+                    HistoryAction(
+                        "confirmed_occurred",
+                        "确认已执行",
+                        consequence="确认外部动作已经发生，并结束当前任务。",
+                    ),
+                    HistoryAction(
+                        "confirmed_not_occurred",
+                        "确认未执行",
+                        consequence="确认外部动作没有发生，并安全重开同一个任务。",
+                    ),
+                    HistoryAction(
+                        "terminate_unrecoverable",
+                        "无法确认并停止",
+                        consequence="保留审计记录并停止处理，不会自动重放。",
+                    ),
+                    HistoryAction("details", "技术详情"),
+                ),
+            )
         choices = tuple(
             HistoryAction(
                 option.key,
@@ -183,6 +209,13 @@ def meeting_history_attention(
 def task_history_attention(item: HistoryItem) -> HistoryAttention | None:
     if item.status.strip().lower() != "failed":
         return None
+    if item.action.strip().lower().startswith("follow_up_"):
+        attention = follow_up_history_attention(
+            status=item.status,
+            output_text=item.output_text,
+        )
+        if attention is not None:
+            return attention
     return HistoryAttention(
         kind="needs_manager",
         reason=_readable_failure_reason(item.output_text.strip() or "任务动作未完成"),
@@ -192,6 +225,55 @@ def task_history_attention(item: HistoryItem) -> HistoryAttention | None:
             HistoryAction("details", "技术详情"),
         ),
     )
+
+
+def follow_up_history_attention(
+    *,
+    status: str,
+    output_text: str,
+) -> HistoryAttention | None:
+    if status.strip().lower() != "failed":
+        return None
+    payload = _json_dict(output_text)
+    confirmed_not_sent = (
+        str(payload.get("delivery_state") or "").strip().lower()
+        in {"not_sent", "failed"}
+        or str(payload.get("external_side_effect") or "").strip().lower()
+        == "none"
+    )
+    if not confirmed_not_sent:
+        return None
+    return HistoryAttention(
+        kind="needs_manager",
+        reason=_readable_failure_reason(
+            str(payload.get("error") or output_text or "发送失败")
+        ),
+        external_effect="已确认未发送跟进消息",
+        actions=(
+            HistoryAction(
+                "repair_follow_up",
+                "让 Agent 重新核验负责人",
+                consequence=(
+                    "Agent 会核验当前活跃负责人并修复原跟进，"
+                    "不会创建新的跟进事项。"
+                ),
+            ),
+            HistoryAction(
+                "cancel_follow_up",
+                "取消本次跟进",
+                consequence="停止原跟进，不发送消息。",
+            ),
+            HistoryAction("details", "技术详情"),
+        ),
+    )
+
+
+def _json_dict(value: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _readable_failure_reason(reason: str) -> str:
