@@ -1025,8 +1025,8 @@ def process_work_items_command(settings: WorkerSettings) -> int:
                 store.mark_work_summary_input_failed(work_input.id, error)
             if not capacity_exhausted or opened_capacity_pause:
                 store.record_error(
-                    None,
-                    None,
+                    "work_summary_input",
+                    str(work_input.id),
                     "codex_capacity_pause" if capacity_exhausted else "task_agent",
                     CODEX_CAPACITY_EXHAUSTED_MESSAGE if capacity_exhausted else error,
                 )
@@ -2405,6 +2405,7 @@ def run_task_maintenance_loop(
             lambda: (
                 store.resolve_errors_recovered_by_reply_attempts()
                 + store.resolve_errors_recovered_by_completed_reply_tasks()
+                + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
                 + store.resolve_closed_blocked_reply_attempts()
                 + store.resolve_unattributed_errors_after_quiet_period()
                 + store.resolve_inactive_trigger_errors_after_quiet_period()
@@ -2752,6 +2753,7 @@ def _resolve_recovered_errors_on_service_start(settings: WorkerSettings) -> int:
     return (
         store.resolve_errors_recovered_by_reply_attempts()
         + store.resolve_errors_recovered_by_completed_reply_tasks()
+        + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
         + store.resolve_closed_blocked_reply_attempts()
         + store.resolve_unattributed_errors_after_quiet_period()
         + store.resolve_inactive_trigger_errors_after_quiet_period()

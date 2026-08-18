@@ -5046,9 +5046,12 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         resolve_errors_recovered_by_reply_attempts=lambda: (
             calls.append("resolve") or 0
         ),
-        resolve_errors_recovered_by_completed_reply_tasks=lambda: (
-            calls.append("resolve-completed-task") or 0
-        ),
+            resolve_errors_recovered_by_completed_reply_tasks=lambda: (
+                calls.append("resolve-completed-task") or 0
+            ),
+            resolve_errors_recovered_by_terminal_work_summary_inputs=lambda: (
+                calls.append("resolve-work-summary") or 0
+            ),
         resolve_closed_blocked_reply_attempts=lambda: (
             calls.append("resolve-blocked") or 0
         ),
@@ -5107,6 +5110,7 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         "okr",
         "resolve",
         "resolve-completed-task",
+        "resolve-work-summary",
         "resolve-blocked",
         "resolve-service",
         "resolve-inactive-trigger",

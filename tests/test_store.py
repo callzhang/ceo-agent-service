@@ -7218,3 +7218,22 @@ def test_requeue_failed_work_summary_input_is_scoped_to_failed_record(tmp_path: 
         "available_at": "",
     }
     assert not store.requeue_failed_work_summary_input(input_id, "again")
+
+
+def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    input_id = store.enqueue_work_summary_input("local_file", "file:reference", "{}")
+    [claimed] = store.claim_work_summary_inputs(1)
+    store.mark_work_summary_input_discarded(claimed.id, "no usable material")
+    store.record_error(
+        "work_summary_input",
+        str(input_id),
+        "task_agent",
+        "validation failed",
+    )
+
+    assert store.resolve_errors_recovered_by_terminal_work_summary_inputs() == 1
+    with store._connect() as db:
+        row = db.execute("select resolved_at from errors").fetchone()
+    assert row is not None
+    assert row["resolved_at"]

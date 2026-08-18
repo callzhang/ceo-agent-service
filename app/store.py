@@ -15216,6 +15216,29 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def resolve_errors_recovered_by_terminal_work_summary_inputs(self) -> int:
+        """Close a work-item incident only after that exact input is terminal."""
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors as incident
+                set resolved_at=current_timestamp,
+                    resolution='recovered by terminal work summary input'
+                where coalesce(incident.resolved_at, '')=''
+                  and incident.kind='task_agent'
+                  and incident.conversation_id='work_summary_input'
+                  and exists (
+                      select 1
+                      from work_summary_inputs as work_input
+                      where cast(work_input.id as text)=incident.message_id
+                        and lower(work_input.status) in ('done', 'discarded')
+                        and datetime(work_input.updated_at) >=
+                            datetime(incident.created_at)
+                  )
+                """
+            )
+            return cursor.rowcount
+
     def resolve_closed_blocked_reply_attempts(self) -> int:
         """Close latest blocked attempts that have no remaining recovery work.
 
