@@ -250,6 +250,33 @@ def test_latest_valid_consumer_skips_malformed_newest_run():
     assert resolve_approval_history_result(_attempt(send_status="closed"), [valid, malformed]) is ApprovalHistoryResult.NO_ACTION
 
 
+@pytest.mark.parametrize("status", ["pending", "processing", "failed", "unknown"])
+def test_non_completed_no_action_consumer_does_not_resolve_terminal_no_action(status):
+    run = _run(
+        1,
+        AgentRole.CONSUMER,
+        _consumer(None, outcome=ConsumerOutcome.NO_ACTION),
+        status=status,
+    )
+    assert resolve_approval_history_result(_attempt(send_status="closed"), [run]) is ApprovalHistoryResult.UNKNOWN
+
+
+def test_latest_non_completed_no_action_consumer_falls_back_to_completed_evidence():
+    completed = _run(
+        1,
+        AgentRole.CONSUMER,
+        _consumer(None, outcome=ConsumerOutcome.NO_ACTION),
+        status="completed",
+    )
+    newest = _run(
+        2,
+        AgentRole.CONSUMER,
+        _consumer(None, outcome=ConsumerOutcome.NO_ACTION),
+        status="processing",
+    )
+    assert resolve_approval_history_result(_attempt(send_status="closed"), [completed, newest]) is ApprovalHistoryResult.NO_ACTION
+
+
 def test_conflicting_confirmed_approval_actions_are_unknown():
     consumer_approve = _run(1, AgentRole.CONSUMER, _consumer("oa approval approve"))
     consumer_reject = _run(3, AgentRole.CONSUMER, _consumer("oa approval reject"))

@@ -109,7 +109,11 @@ def _latest_consumer(
     valid_results: dict[int, ConsumerAgentResult] | None = None,
 ) -> AgentRun | None:
     if valid_results is not None:
-        consumers = [run for run in consumers if run.id in valid_results]
+        consumers = [
+            run
+            for run in consumers
+            if run.id in valid_results and _normalize(run.status) == "completed"
+        ]
     if not consumers:
         return None
     return max(consumers, key=lambda run: (run.created_at, run.id))
