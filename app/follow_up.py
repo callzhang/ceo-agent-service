@@ -872,6 +872,32 @@ def _persist_late_follow_up_result(
     return False
 
 
+def _rejected_direct_target_pending_repair(
+    store: AutoReplyStore,
+    draft,
+) -> dict[str, object] | None:
+    if draft.target_kind != "direct" or draft.reaction_status == "redirect_owner":
+        return None
+    for attempt in store.list_prior_follow_up_send_attempts(
+        draft_id=draft.id,
+        before_revision=draft.revision,
+    ):
+        if str(attempt.get("state") or "") not in {
+            "failed",
+            "not_sent",
+            "retryable",
+        }:
+            continue
+        result = _json_dict(str(attempt.get("result_json") or "{}"))
+        reason = str(result.get("reason") or "").strip()
+        error = str(result.get("error") or "")
+        if reason == "direct_message_target_rejected" or (
+            "operation: chat/send_personal_message" in error
+        ):
+            return attempt
+    return None
+
+
 def _recover_prior_follow_up_send_attempt(
     store: AutoReplyStore,
     draft,
@@ -1054,6 +1080,23 @@ def process_due_follow_ups(
         if draft.suppressed_reason == PRIOR_DELIVERY_REVIEW_REASON:
             continue
         if _recover_follow_up_send_attempt(store, draft, now=now):
+            continue
+        rejected_attempt = _rejected_direct_target_pending_repair(store, draft)
+        if rejected_attempt is not None:
+            _defer_follow_up_for_agent_review(
+                store,
+                draft,
+                now=now,
+                reason="direct_message_target_rejected_requires_agent_review",
+                additional_evidence={
+                    "prior_attempt_id": int(rejected_attempt.get("id") or 0),
+                    "prior_revision": int(
+                        rejected_attempt.get("draft_revision") or 0
+                    ),
+                    "prior_state": str(rejected_attempt.get("state") or ""),
+                    "delivery_state": "not_sent",
+                },
+            )
             continue
         if not _is_local_working_time(now):
             _defer_policy_follow_up(
@@ -1379,6 +1422,8 @@ def process_due_follow_ups(
                     attempt_result_json=failed_result_json,
                     status="failed",
                     send_result_json=failed_result_json,
+                    reaction_status="",
+                    reaction_summary="",
                 )
             else:
                 store.update_follow_up_draft_if_revision(

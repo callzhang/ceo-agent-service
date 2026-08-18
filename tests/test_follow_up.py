@@ -2046,6 +2046,120 @@ def test_direct_target_rejection_is_clear_non_delivery_failure(tmp_path):
     assert error.detail == result["error"]
 
 
+def test_requeued_rejected_direct_target_waits_for_agent_repair(tmp_path):
+    from app.dws_client import DwsError
+
+    class DirectTargetRejectedDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            self.sent.append(kwargs)
+            raise DwsError(
+                "dws command failed; operation: chat/send_personal_message",
+                code="ERROR",
+            )
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Recruiting", category="HR")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="inactive-owner",
+        owner_name="Former owner",
+        target_kind="direct",
+        question_text="请确认候选人流程状态。",
+        risk_check_json=json.dumps({"sensitive": True}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    rejected_dws = DirectTargetRejectedDws()
+    assert process_due_follow_ups(
+        store,
+        rejected_dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    ) == 0
+    rejected = store.get_follow_up_draft(draft_id)
+    assert rejected is not None and rejected.status == "failed"
+
+    store.update_follow_up_draft(
+        draft_id,
+        status="draft",
+        scheduled_at="2026-06-09 01:00:00",
+        send_result_json="{}",
+        suppressed_reason="",
+    )
+    live_dws = FakeDws()
+
+    assert process_due_follow_ups(
+        store,
+        live_dws,
+        now="2026-06-09 02:00:00",
+        auto_send=True,
+    ) == 0
+
+    deferred = store.get_follow_up_draft(draft_id)
+    assert deferred is not None and deferred.status == "draft"
+    assert deferred.suppressed_reason == (
+        "direct_message_target_rejected_requires_agent_review"
+    )
+    assert live_dws.sent == []
+    [review] = store.claim_work_summary_inputs(limit=1)
+    assert review.source_ref == f"follow-up-repair:{draft_id}"
+
+
+def test_reassigned_rejected_direct_target_can_send_new_revision(tmp_path):
+    from app.dws_client import DwsError
+
+    class DirectTargetRejectedDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            raise DwsError(
+                "dws command failed; operation: chat/send_personal_message",
+                code="ERROR",
+            )
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Recruiting", category="HR")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="inactive-owner",
+        owner_name="Former owner",
+        target_kind="direct",
+        question_text="请确认候选人流程状态。",
+        risk_check_json=json.dumps({"sensitive": True}),
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    assert process_due_follow_ups(
+        store,
+        DirectTargetRejectedDws(),
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    ) == 0
+    store.update_follow_up_draft(
+        draft_id,
+        status="draft",
+        owner_user_id="active-owner",
+        owner_name="Active owner",
+        reaction_status="redirect_owner",
+        scheduled_at="2026-06-09 01:00:00",
+        send_result_json="{}",
+        suppressed_reason="",
+    )
+    live_dws = FakeDws()
+
+    assert process_due_follow_ups(
+        store,
+        live_dws,
+        now="2026-06-09 02:00:00",
+        auto_send=True,
+    ) == 1
+
+    sent = store.get_follow_up_draft(draft_id)
+    assert sent is not None and sent.status == "sent"
+    assert live_dws.sent[0]["user_id"] is None
+    assert live_dws.sent[0]["open_dingtalk_id"] == "open-active-owner"
+
+
 def test_confirmed_not_sent_follow_up_can_repair_same_draft_once(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="Recruiting", category="HR")
