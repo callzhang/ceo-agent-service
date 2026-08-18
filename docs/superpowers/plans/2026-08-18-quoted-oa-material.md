@@ -23,7 +23,7 @@
 **Files:**
 - Modify: `tests/test_agent_runtime_worker.py`
 
-- [ ] **Step 1: Write the failing integration test**
+- [x] **Step 1: Write the failing integration test**
 
 在 `test_oa_material_does_not_recover_target_from_historical_context` 之前加入：
 
@@ -68,7 +68,7 @@ def test_oa_material_binds_exact_target_from_quoted_approval_card(tmp_path: Path
 
 该测试同时证明：worker 只交付精确引用和读取命令，没有在构建上下文时预读审批，也没有因为识别链接自动执行审批；测试 runner 返回 `no_action` 后任务正常完成。
 
-- [ ] **Step 2: Run the test to verify it fails for the missing material**
+- [x] **Step 2: Run the test to verify it fails for the missing material**
 
 Run:
 
@@ -80,7 +80,7 @@ Run:
 
 Expected: FAIL at `next(...)` with `StopIteration`, because current OA extraction only reads `message.content` or `task.oa_url`.
 
-- [ ] **Step 3: Commit the red regression test**
+- [x] **Step 3: Commit the red regression test**
 
 ```bash
 git add tests/test_agent_runtime_worker.py
@@ -93,7 +93,7 @@ git commit -m "test: reproduce quoted OA material gap"
 - Modify: `app/worker.py:2567-2624`
 - Test: `tests/test_agent_runtime_worker.py`
 
-- [ ] **Step 1: Add source precedence and quoted completeness checks**
+- [x] **Step 1: Add source precedence and quoted completeness checks**
 
 Replace the existing OA loop body with:
 
@@ -114,12 +114,16 @@ Replace the existing OA loop body with:
                 oa_url = message_oa_url
                 oa_source_message_id = message.open_message_id
                 oa_from_quote = False
-            else:
+            elif quoted_oa_url:
                 oa_url = quoted_oa_url
                 oa_source_message_id = (
                     message.quoted_message_id or message.open_message_id
                 )
-                oa_from_quote = bool(quoted_oa_url)
+                oa_from_quote = True
+            else:
+                oa_url = ""
+                oa_source_message_id = message.open_message_id
+                oa_from_quote = False
 
             process_instance_id = self._oa_process_instance_id_from_url(oa_url)
             task_id = self._oa_task_id_from_url(oa_url)
@@ -179,7 +183,7 @@ Replace the existing OA loop body with:
 
 Do not add a second parser, regex, storage field, or automatic approval action.
 
-- [ ] **Step 2: Run the red test and verify it passes**
+- [x] **Step 2: Run the red test and verify it passes**
 
 Run:
 
@@ -191,7 +195,7 @@ Run:
 
 Expected: `1 passed`.
 
-- [ ] **Step 3: Add precedence and incomplete-reference boundary tests**
+- [x] **Step 3: Add precedence and incomplete-reference boundary tests**
 
 Add after the success regression:
 
@@ -270,7 +274,7 @@ def test_oa_material_ignores_incomplete_quoted_target(tmp_path: Path):
     )
 ```
 
-- [ ] **Step 4: Run the focused OA material tests**
+- [x] **Step 4: Run the focused OA material tests**
 
 Run:
 
@@ -281,7 +285,7 @@ Run:
 
 Expected: all selected tests pass, including the existing historical-context and ambiguous direct-trigger regressions.
 
-- [ ] **Step 5: Run lint for changed Python files**
+- [x] **Step 5: Run lint for changed Python files**
 
 Run:
 
@@ -291,7 +295,7 @@ Run:
 
 Expected: no lint errors.
 
-- [ ] **Step 6: Commit the implementation and boundary tests**
+- [x] **Step 6: Commit the implementation and boundary tests**
 
 ```bash
 git add app/worker.py tests/test_agent_runtime_worker.py

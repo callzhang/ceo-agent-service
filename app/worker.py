@@ -2565,17 +2565,40 @@ class DingTalkAutoReplyWorker:
             )
 
         for message in (trigger,):
-            oa_url = (
+            task_oa_url = (
                 task.oa_url.strip()
                 if message.open_message_id == trigger.open_message_id
-                and task.oa_url.strip()
-                else extract_oa_url(message.content)
+                else ""
             )
+            message_oa_url = extract_oa_url(message.content)
+            quoted_oa_url = extract_oa_url(message.quoted_content or "")
+            if task_oa_url:
+                oa_url = task_oa_url
+                oa_source_message_id = message.open_message_id
+                oa_from_quote = False
+            elif message_oa_url:
+                oa_url = message_oa_url
+                oa_source_message_id = message.open_message_id
+                oa_from_quote = False
+            elif quoted_oa_url:
+                oa_url = quoted_oa_url
+                oa_source_message_id = (
+                    message.quoted_message_id or message.open_message_id
+                )
+                oa_from_quote = True
+            else:
+                oa_url = ""
+                oa_source_message_id = message.open_message_id
+                oa_from_quote = False
+
             process_instance_id = self._oa_process_instance_id_from_url(oa_url)
             task_id = self._oa_task_id_from_url(oa_url)
             raw_process_id, raw_task_id = self._raw_oa_identifiers(message.raw_payload)
-            process_instance_id = process_instance_id or raw_process_id
-            task_id = task_id or raw_task_id
+            if not oa_from_quote:
+                process_instance_id = process_instance_id or raw_process_id
+                task_id = task_id or raw_task_id
+            if oa_from_quote and not (process_instance_id and task_id):
+                continue
             if process_instance_id:
                 detail_command = (
                     ".venv/bin/python -m app.cli "
@@ -2599,7 +2622,7 @@ class DingTalkAutoReplyWorker:
                 add(
                     "dingtalk_oa",
                     reference,
-                    message.open_message_id,
+                    oa_source_message_id,
                     (detail_command, tasks_command),
                 )
             elif oa_url or self._is_oa_approval_message(message):
@@ -2616,7 +2639,7 @@ class DingTalkAutoReplyWorker:
                 add(
                     "dingtalk_oa",
                     reference,
-                    message.open_message_id,
+                    oa_source_message_id,
                     (),
                 )
         return tuple(references)
