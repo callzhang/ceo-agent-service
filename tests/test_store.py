@@ -2771,6 +2771,40 @@ def test_unknown_agent_run_resolves_atomically_and_cannot_return_to_running(
         )
 
 
+def test_done_unknown_audit_with_sent_reply_is_settled_from_delivery_ledger(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task_id,
+        task.execution_generation,
+        owner="worker-1",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker-1",
+    )
+    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "delivered")
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='done' where id=?",
+            (task_id,),
+        )
+
+    assert store.settle_done_unknown_audit_runs_with_sent_reply() == 1
+
+    settled = store.get_agent_run(run.id)
+    assert settled is not None
+    assert settled.status == "completed"
+    assert settled.side_effect_state == "confirmed"
+    assert settled.reconciliation_suspended is False
+
+
 def test_unknown_agent_run_uses_explicit_reconciliation_event_path(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
