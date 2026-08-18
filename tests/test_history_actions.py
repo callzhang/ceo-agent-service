@@ -1,3 +1,5 @@
+import json
+
 from app.agent_contracts import DecisionOption
 from app.history import HistoryItem
 from app.history_actions import (
@@ -241,3 +243,40 @@ def test_failed_follow_up_requires_manager_without_synthetic_retry():
     assert state.kind == "needs_manager"
     assert state.reason == "Follow-up delivery failed"
     assert [action.key for action in state.actions] == ["manual", "details"]
+
+
+def test_failed_follow_up_with_confirmed_non_delivery_offers_safe_resolution():
+    item = HistoryItem(
+        kind="task",
+        object_type="task",
+        source_id=3,
+        source_title="Hiring",
+        source_actor="Follow-up",
+        input_label="跟进",
+        input_text="Please provide the update.",
+        output_label="结果",
+        output_text=json.dumps(
+            {
+                "reason": "direct_message_target_rejected",
+                "delivery_state": "not_sent",
+                "error": "The recipient is inactive; no message was delivered.",
+                "external_side_effect": "none",
+            }
+        ),
+        action="follow_up_failed",
+        status="failed",
+        project_id=1,
+        follow_up_id=3,
+        created_at="2026-08-11 05:00:00",
+    )
+
+    state = task_history_attention(item)
+
+    assert state is not None
+    assert state.reason == "The recipient is inactive; no message was delivered."
+    assert state.external_effect == "已确认未发送跟进消息"
+    assert [action.key for action in state.actions] == [
+        "repair_follow_up",
+        "cancel_follow_up",
+        "details",
+    ]

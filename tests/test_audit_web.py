@@ -5476,6 +5476,81 @@ def test_failed_meeting_and_follow_up_expose_reason_and_safe_choices(
     )
 
 
+def test_confirmed_not_sent_follow_up_has_inline_actions_on_same_draft(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = store.create_work_project(
+        title="Hiring",
+        category="recruiting",
+        priority="P1",
+        risk_level="high",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Confirm candidate decision",
+        owner_user_id="inactive-owner",
+        owner_name="Former owner",
+        status="open",
+        priority="P1",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="inactive-owner",
+        owner_name="Former owner",
+        target_kind="direct",
+        question_text="Please confirm the candidate decision.",
+        scheduled_at="2026-08-11 05:00:00",
+        status="failed",
+        send_result_json=json.dumps(
+            {
+                "reason": "direct_message_target_rejected",
+                "delivery_state": "not_sent",
+                "error": "The recipient is inactive; no message was delivered.",
+                "external_side_effect": "none",
+            }
+        ),
+    )
+    draft = store.get_follow_up_draft(follow_up_id)
+    assert draft is not None
+
+    html = render_attempt_list(store, include_chart=False)
+
+    assert "The recipient is inactive; no message was delivered." in html
+    assert "direct_message_target_rejected" not in html
+    assert "已确认未发送跟进消息" in html
+    assert "让 Agent 重新核验负责人" in html
+    assert "取消本次跟进" in html
+    assert f'/follow-ups/{follow_up_id}/resolution-form' in html
+
+    status, detail_html = render_task_project_detail(store, project_id)
+    assert status == 200
+    assert "The recipient is inactive; no message was delivered." in detail_html
+    assert "你需要做什么" in detail_html
+    assert "让 Agent 重新核验负责人" in detail_html
+    assert "取消本次跟进" in detail_html
+
+    client = loopback_test_client(create_audit_app(store.path))
+    response = client.post(
+        f"/follow-ups/{follow_up_id}/resolution-form",
+        data={
+            "expected_revision": str(draft.revision),
+            "resolution": "repair_target",
+            "return_to": "/history",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == "/history"
+    repaired = store.get_follow_up_draft(follow_up_id)
+    assert repaired is not None
+    assert repaired.id == follow_up_id
+    assert repaired.status == "draft"
+    assert repaired.revision == draft.revision + 1
+
+
 def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     tmp_path: Path,
 ):

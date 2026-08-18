@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from app.dws_client import DwsUserProfile
-from app.follow_up import process_due_follow_ups
+from app.follow_up import process_due_follow_ups, resolve_failed_follow_up
 from app.store import AutoReplyStore
 from app.task_agent import apply_task_agent_decision
 from app.task_models import TaskAgentDecision, WorkItem
@@ -2044,6 +2044,110 @@ def test_direct_target_rejection_is_clear_non_delivery_failure(tmp_path):
     assert "no message was delivered" in result["error"]
     [error] = store.list_errors()
     assert error.detail == result["error"]
+
+
+def test_confirmed_not_sent_follow_up_can_repair_same_draft_once(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Recruiting", category="HR")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="inactive-owner",
+        owner_name="Former owner",
+        target_kind="direct",
+        question_text="请确认候选人流程状态。",
+        risk_check_json=json.dumps({"sensitive": True}),
+        scheduled_at="2026-06-07 09:00:00",
+        status="failed",
+        send_result_json=json.dumps(
+            {
+                "reason": "direct_message_target_rejected",
+                "delivery_state": "not_sent",
+                "external_side_effect": "none",
+            }
+        ),
+    )
+    before = store.get_follow_up_draft(draft_id)
+    assert before is not None
+
+    assert resolve_failed_follow_up(
+        store,
+        draft_id,
+        expected_revision=before.revision,
+        resolution="repair_target",
+        now="2026-06-08 02:00:00",
+    )
+
+    repaired = store.get_follow_up_draft(draft_id)
+    assert repaired is not None
+    assert repaired.id == draft_id
+    assert repaired.status == "draft"
+    assert repaired.revision == before.revision + 1
+    assert repaired.suppressed_reason == "manual_follow_up_target_repair_requested"
+    [review] = store.claim_work_summary_inputs(limit=1)
+    assert review.source_ref == f"follow-up-repair:{draft_id}"
+    assert not resolve_failed_follow_up(
+        store,
+        draft_id,
+        expected_revision=before.revision,
+        resolution="repair_target",
+        now="2026-06-08 02:00:01",
+    )
+
+
+def test_confirmed_not_sent_follow_up_can_be_cancelled_without_replay(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Recruiting", category="HR")
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="inactive-owner",
+        target_kind="direct",
+        question_text="请确认候选人流程状态。",
+        scheduled_at="2026-06-07 09:00:00",
+        status="failed",
+        send_result_json=json.dumps({"delivery_state": "not_sent"}),
+    )
+    before = store.get_follow_up_draft(draft_id)
+    assert before is not None
+
+    assert resolve_failed_follow_up(
+        store,
+        draft_id,
+        expected_revision=before.revision,
+        resolution="cancel",
+        now="2026-06-08 02:00:00",
+    )
+
+    cancelled = store.get_follow_up_draft(draft_id)
+    assert cancelled is not None and cancelled.status == "cancelled"
+    assert cancelled.suppressed_reason == "human_cancelled_after_delivery_failure"
+    assert store.claim_work_summary_inputs(limit=1) == []
+
+
+def test_unknown_follow_up_delivery_cannot_be_repaired_or_cancelled(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="Recruiting", category="HR")
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="owner-1",
+        target_kind="direct",
+        question_text="请确认候选人流程状态。",
+        scheduled_at="2026-06-07 09:00:00",
+        status="failed",
+        send_result_json=json.dumps({"delivery_state": "unknown"}),
+    )
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+
+    with pytest.raises(ValueError, match="delivery is not confirmed absent"):
+        resolve_failed_follow_up(
+            store,
+            draft_id,
+            expected_revision=draft.revision,
+            resolution="repair_target",
+            now="2026-06-08 02:00:00",
+        )
 
 
 def test_dws_login_required_defers_follow_up_without_marking_failed(tmp_path):

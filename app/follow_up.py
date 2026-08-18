@@ -716,6 +716,57 @@ def _defer_follow_up_for_agent_review(
     return True
 
 
+def resolve_failed_follow_up(
+    store: AutoReplyStore,
+    draft_id: int,
+    *,
+    expected_revision: int,
+    resolution: str,
+    now: str,
+) -> bool:
+    """Resolve a confirmed non-delivery without replacing the follow-up."""
+    if resolution not in {"repair_target", "cancel"}:
+        raise ValueError("invalid failed follow-up resolution")
+    draft = store.get_follow_up_draft(draft_id)
+    if (
+        draft is None
+        or str(draft.status) != "failed"
+        or draft.revision != expected_revision
+    ):
+        return False
+    failure = _json_dict(draft.send_result_json)
+    confirmed_not_sent = (
+        str(failure.get("delivery_state") or "").strip().casefold()
+        in {"not_sent", "failed"}
+        or str(failure.get("external_side_effect") or "").strip().casefold()
+        == "none"
+    )
+    if not confirmed_not_sent:
+        raise ValueError("follow-up delivery is not confirmed absent")
+    if resolution == "repair_target":
+        return _defer_follow_up_for_agent_review(
+            store,
+            draft,
+            now=now,
+            reason="manual_follow_up_target_repair_requested",
+            additional_evidence={"prior_failure": failure},
+        )
+    return store.update_follow_up_draft_if_revision(
+        draft.id,
+        draft.revision,
+        status="cancelled",
+        suppressed_reason="human_cancelled_after_delivery_failure",
+        evidence_check_json=json.dumps(
+            {
+                "resolution": "cancel",
+                "resolved_at": now,
+                "prior_failure": failure,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
 def _enqueue_prior_delivery_agent_review(
     store: AutoReplyStore,
     draft,

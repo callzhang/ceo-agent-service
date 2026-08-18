@@ -87,6 +87,7 @@ from app.embedding import EmbeddingClient
 from app.history import safe_observability_error
 from app.history_actions import (
     HistoryAttention,
+    follow_up_history_attention,
     meeting_history_attention,
     reply_history_attention,
     task_history_attention,
@@ -119,6 +120,7 @@ from app.feedback_events import (
     sync_feedback_events_for_context as sync_feedback_events_for_context_impl,
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
+from app.follow_up import resolve_failed_follow_up
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AgentRole,
@@ -4378,7 +4380,7 @@ def _render_attempt_list(
     latest_attempt_cache: dict[tuple[str, str, str], ReplyAttempt | None] = {}
     for history_item in history_items:
         if history_item.kind == "task":
-            items.append(_task_history_card(history_item))
+            items.append(_task_history_card(history_item, store))
             continue
         if history_item.kind == "meeting":
             items.append(_meeting_history_card(history_item, store))
@@ -4748,15 +4750,24 @@ def _task_history_id_label(item) -> str:
     return f"#task-update-{item.source_id}"
 
 
-def _task_history_card(item) -> str:
+def _task_history_card(item, store: AutoReplyStore) -> str:
     status = item.status.strip().lower() or "done"
     detail_url = _task_history_detail_url(item)
     output_text = _task_history_output_text(item, status)
     status_label = _task_history_status_label(item, status)
     attention = task_history_attention(item)
+    follow_up = (
+        store.get_follow_up_draft(item.follow_up_id)
+        if item.follow_up_id > 0
+        else None
+    )
     attention_html = _history_attention_html(
         attention,
-        actions_html=_history_link_attention_actions(attention, detail_url),
+        actions_html=_task_history_attention_actions(
+            attention,
+            detail_url,
+            follow_up,
+        ),
     )
     return (
         '<article class="attempt-item history-kind-task" role="link" tabindex="0" '
@@ -4798,9 +4809,84 @@ def _history_link_attention_actions(
     return f'<div class="history-attention-actions">{links}</div>' if links else ""
 
 
+def _task_history_attention_actions(
+    attention: HistoryAttention | None,
+    detail_url: str,
+    follow_up,
+) -> str:
+    if attention is None:
+        return ""
+    if follow_up is not None and any(
+        action.key in {"repair_follow_up", "cancel_follow_up"}
+        for action in attention.actions
+    ):
+        return _follow_up_resolution_actions(
+            attention,
+            follow_up,
+            return_to="/history",
+            details_href=detail_url,
+        )
+    return _history_link_attention_actions(attention, detail_url)
+
+
+def _follow_up_resolution_actions(
+    attention: HistoryAttention,
+    follow_up,
+    *,
+    return_to: str,
+    details_href: str,
+) -> str:
+    items: list[str] = []
+    help_items: list[str] = []
+    for action in attention.actions:
+        if (
+            action.key in {"repair_follow_up", "cancel_follow_up"}
+        ):
+            resolution = (
+                "repair_target"
+                if action.key == "repair_follow_up"
+                else "cancel"
+            )
+            confirmation = (
+                ""
+                if resolution == "repair_target"
+                else " onsubmit=\"return confirm('确认取消本次跟进？不会发送消息。')\""
+            )
+            items.append(
+                f'<form method="post" action="/follow-ups/{follow_up.id}/resolution-form"{confirmation}>'
+                f'<input type="hidden" name="expected_revision" value="{follow_up.revision}">'
+                f'<input type="hidden" name="resolution" value="{resolution}">'
+                f'<input type="hidden" name="return_to" value="{escape(return_to, quote=True)}">'
+                f'<button type="submit">{escape(action.label)}</button></form>'
+            )
+            if action.consequence:
+                help_items.append(f"{action.label}：{action.consequence}")
+            continue
+        if action.key == "details":
+            items.append(
+                f'<a class="compact-button" href="{escape(details_href, quote=True)}">'
+                f'{escape(action.label)}</a>'
+            )
+    if not items:
+        return ""
+    help_html = (
+        '<div class="history-action-help">' + "；".join(help_items) + "。</div>"
+        if help_items
+        else ""
+    )
+    return '<div class="history-attention-actions">' + "".join(items) + "</div>" + help_html
+
+
 def _task_history_output_text(item, status: str) -> str:
     if item.action.strip().lower().startswith("follow_up_") and status == "pending":
         return _follow_up_schedule_label(item.output_text) or "Scheduled"
+    if item.action.strip().lower().startswith("follow_up_") and status == "failed":
+        try:
+            payload = json.loads(item.output_text or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            return str(payload.get("error") or payload.get("reason") or item.output_text)
     return item.output_text
 
 
@@ -5976,6 +6062,24 @@ def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) ->
         if scheduled
         else ""
     )
+    detail_url = f"/tasks/{draft.project_id}#follow-up-{draft.id}"
+    attention = follow_up_history_attention(
+        status=str(draft.status),
+        output_text=draft.send_result_json,
+    )
+    attention_html = _history_attention_html(
+        attention,
+        actions_html=(
+            _follow_up_resolution_actions(
+                attention,
+                draft,
+                return_to=detail_url,
+                details_href=detail_url,
+            )
+            if attention is not None
+            else ""
+        ),
+    )
     return (
         f"<li class=\"todo-followup-item\" id=\"follow-up-{draft.id}\">"
         "<div class=\"todo-followup-bubble\">"
@@ -5990,6 +6094,7 @@ def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) ->
         f"{meta}"
         f"<div class=\"todo-followup-target\">{escape(target)}</div>"
         "</div>"
+        f"{attention_html}"
         "</li>"
     )
 
@@ -7665,6 +7770,52 @@ def handle_agent_run_resolution_form_post(
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
 
 
+def handle_follow_up_resolution_form_post(
+    store: AutoReplyStore,
+    draft_id: int,
+    body: bytes,
+) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    return_to = parsed.get("return_to", [""])[0]
+    draft = store.get_follow_up_draft(draft_id)
+    try:
+        expected_revision = int(parsed.get("expected_revision", [""])[0])
+        resolved = resolve_failed_follow_up(
+            store,
+            draft_id,
+            expected_revision=expected_revision,
+            resolution=parsed.get("resolution", [""])[0],
+            now=datetime.now(timezone.utc).strftime(DISPLAY_TIME_FORMAT),
+        )
+    except (TypeError, ValueError) as exc:
+        return (
+            409,
+            {},
+            render_page(
+                "Resolution unavailable",
+                f"<p>该跟进不能执行所选动作：{escape(str(exc))}</p>",
+            ),
+        )
+    if not resolved:
+        return (
+            409,
+            {},
+            render_page(
+                "Resolution unavailable",
+                "<p>该跟进已经变化，请刷新 History 后再处理。</p>",
+            ),
+        )
+    detail_url = (
+        f"/tasks/{draft.project_id}#follow-up-{draft.id}"
+        if draft is not None
+        else "/tasks"
+    )
+    location = return_to.strip()
+    if location not in {"/history", detail_url}:
+        location = "/tasks"
+    return 303, {"Location": location}, ""
+
+
 def _is_valid_rerun_trigger_json(
     trigger_message_json: str, *, channel: str = "dingtalk",
 ) -> bool:
@@ -8624,6 +8775,15 @@ def create_audit_app(
         status, headers, html = handle_agent_run_resolution_form_post(
             AutoReplyStore(db_path),
             run_id,
+            await request.body(),
+        )
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/follow-ups/{draft_id}/resolution-form")
+    async def resolve_follow_up_form(draft_id: int, request: Request):
+        status, headers, html = handle_follow_up_resolution_form_post(
+            AutoReplyStore(db_path),
+            draft_id,
             await request.body(),
         )
         return _fastapi_post_response(status, headers, html)
