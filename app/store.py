@@ -3470,6 +3470,46 @@ class AutoReplyStore:
             ).fetchall()
             return [self._agent_run_from_row(row, db=db) for row in rows]
 
+    def list_agent_run_summaries_for_terminal_runs(
+        self,
+        run_ids: list[int],
+    ) -> dict[int, list[AgentRun]]:
+        terminal_ids = list(
+            dict.fromkeys(
+                run_id for run_id in run_ids if type(run_id) is int and run_id > 0
+            )
+        )
+        if not terminal_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in terminal_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                with terminal_runs as (
+                    select id as terminal_id, reply_task_id, execution_generation
+                    from agent_runs
+                    where id in ({placeholders})
+                )
+                select terminal_runs.terminal_id, agent_runs.*
+                from terminal_runs
+                join agent_runs
+                  on agent_runs.reply_task_id=terminal_runs.reply_task_id
+                 and agent_runs.execution_generation=terminal_runs.execution_generation
+                order by terminal_runs.terminal_id,
+                         agent_runs.proposal_revision,
+                         case agent_runs.role when 'consumer' then 0 else 1 end,
+                         agent_runs.turn_attempt, agent_runs.id
+                """,
+                terminal_ids,
+            ).fetchall()
+            summaries: dict[int, list[AgentRun]] = {}
+            for row in rows:
+                terminal_id = int(row["terminal_id"])
+                summaries.setdefault(terminal_id, []).append(
+                    self._agent_run_from_row(row, db=db, load_events=False)
+                )
+            return summaries
+
     def agent_run_lease_is_active(
         self,
         run_id: int,

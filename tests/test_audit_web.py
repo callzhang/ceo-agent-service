@@ -277,12 +277,18 @@ def _history_attempt_card(html: str, attempt_id: int) -> str:
     return html[start:end]
 
 
-def _seed_confirmed_approval_attempt(store: AutoReplyStore) -> int:
+def _seed_confirmed_approval_attempt(
+    store: AutoReplyStore,
+    *,
+    suffix: str = "one",
+) -> int:
+    process_instance_id = f"proc-history-confirmed-{suffix}"
+    operation_id = f"oa-approval-approve-history-{suffix}"
     store.enqueue_reply_task(
-        conversation_id="cid-history-confirmed-approval",
-        conversation_title="Confirmed approval",
+        conversation_id=f"cid-history-confirmed-approval-{suffix}",
+        conversation_title=f"Confirmed approval {suffix}",
         single_chat=False,
-        trigger_message_id="msg-history-confirmed-approval",
+        trigger_message_id=f"msg-history-confirmed-approval-{suffix}",
         trigger_create_time="2026-08-18 09:00:00",
         trigger_sender="Mina",
         trigger_text="Approve the confirmed budget.",
@@ -296,7 +302,7 @@ def _seed_confirmed_approval_attempt(store: AutoReplyStore) -> int:
         turn_attempt=0,
         parent_agent_run_id=None,
         operation_id="",
-        owner="approval-consumer",
+        owner=f"approval-consumer-{suffix}",
     ).run
     store.complete_agent_run(
         consumer.id,
@@ -310,7 +316,7 @@ def _seed_confirmed_approval_attempt(store: AutoReplyStore) -> int:
                         "description": "Approve the budget.",
                         "capability": "dingtalk_oa",
                         "operation": "oa approval approve",
-                        "target": {"process_instance_id": "proc-history-confirmed"},
+                        "target": {"process_instance_id": process_instance_id},
                         "payload": {},
                         "expected_verification": "Read back the approval result.",
                     }
@@ -325,7 +331,7 @@ def _seed_confirmed_approval_attempt(store: AutoReplyStore) -> int:
                 "authorization_required": False,
             },
         },
-        owner="approval-consumer",
+        owner=f"approval-consumer-{suffix}",
     )
     audit = store.claim_agent_run(
         task.id,
@@ -334,8 +340,8 @@ def _seed_confirmed_approval_attempt(store: AutoReplyStore) -> int:
         proposal_revision=0,
         turn_attempt=0,
         parent_agent_run_id=consumer.id,
-        operation_id="oa-approval-approve-history",
-        owner="approval-audit",
+        operation_id=operation_id,
+        owner=f"approval-audit-{suffix}",
     ).run
     audit = store.complete_agent_run(
         audit.id,
@@ -346,10 +352,10 @@ def _seed_confirmed_approval_attempt(store: AutoReplyStore) -> int:
             "side_effect_state": "confirmed",
             "feedback": None,
             "external_result": {
-                "operation_id": "oa-approval-approve-history",
+                "operation_id": operation_id,
                 "verification_summary": "Approval state read back successfully.",
                 "live_result_reference": {
-                    "process_instance_id": "proc-history-confirmed"
+                    "process_instance_id": process_instance_id
                 },
             },
             "reconciliation": [],
@@ -360,7 +366,7 @@ def _seed_confirmed_approval_attempt(store: AutoReplyStore) -> int:
                 "authorization_required": False,
             },
         },
-        owner="approval-audit",
+        owner=f"approval-audit-{suffix}",
         side_effect_state="confirmed",
     )
     return store.finalize_orchestrated_reply_task(
@@ -384,8 +390,8 @@ def _seed_confirmed_approval_attempt(store: AutoReplyStore) -> int:
         send_status="completed",
         send_error="",
         channel="dingtalk",
-        oa_process_instance_id="proc-history-confirmed",
-        oa_task_id="task-history-confirmed",
+        oa_process_instance_id=process_instance_id,
+        oa_task_id=f"task-history-confirmed-{suffix}",
         oa_action="review",
     )
 
@@ -584,6 +590,55 @@ def test_history_approval_card_uses_confirmed_structured_business_result(
     assert "🧾 review" not in card
 
 
+def test_history_batches_structured_approval_run_summaries_once(
+    tmp_path: Path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first_id = _seed_confirmed_approval_attempt(store, suffix="first")
+    second_id = _seed_confirmed_approval_attempt(store, suffix="second")
+    first_attempt = store.get_reply_attempt(first_id)
+    second_attempt = store.get_reply_attempt(second_id)
+    assert first_attempt is not None and first_attempt.agent_run_id is not None
+    assert second_attempt is not None and second_attempt.agent_run_id is not None
+
+    bulk_calls: list[list[int]] = []
+    agent_run_calls: list[int] = []
+    bulk_method = getattr(store, "list_agent_run_summaries_for_terminal_runs", None)
+    original_agent_runs = audit_web_module._agent_runs_for_attempt
+
+    def track_bulk(run_ids: list[int]):
+        bulk_calls.append(run_ids)
+        return bulk_method(run_ids) if bulk_method is not None else {}
+
+    def track_legacy_agent_runs(*args, **kwargs):
+        agent_run_calls.append(args[1].id)
+        return original_agent_runs(*args, **kwargs)
+
+    monkeypatch.setattr(
+        store,
+        "list_agent_run_summaries_for_terminal_runs",
+        track_bulk,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "_agent_runs_for_attempt",
+        track_legacy_agent_runs,
+    )
+
+    html = render_attempt_list(
+        store,
+        include_chart=False,
+        search_object_types=("approval",),
+    )
+
+    assert html.count("✓ 已同意") == 2
+    assert len(bulk_calls) == 1
+    assert set(bulk_calls[0]) == {first_attempt.agent_run_id, second_attempt.agent_run_id}
+    assert agent_run_calls == []
+
+
 def test_history_approval_cards_show_direct_return_and_unknown_results(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     returned_id = store.record_reply_attempt(
@@ -632,6 +687,98 @@ def test_history_approval_cards_show_direct_return_and_unknown_results(tmp_path:
     assert (
         ".action-state-unknown{background:var(--surface);color:var(--stone);"
         "border-color:var(--hairline)}"
+    ) in html
+
+
+def test_history_neutral_approval_results_use_steel_text_contrast(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-history-no-action-approval",
+        conversation_title="No action approval",
+        single_chat=False,
+        trigger_message_id="msg-history-no-action-approval",
+        trigger_create_time="2026-08-18 11:00:00",
+        trigger_sender="Mina",
+        trigger_text="Check this completed approval.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="no-action-consumer",
+    ).run
+    consumer = store.complete_agent_run(
+        consumer.id,
+        {
+            "outcome": "no_action",
+            "summary": "The approval was already complete.",
+            "proposal": None,
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        },
+        owner="no-action-consumer",
+    )
+    no_action_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=consumer.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="The approval was already complete.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="The approval was already complete.",
+        send_status="skipped",
+        send_error="",
+        channel="dingtalk",
+        oa_process_instance_id="proc-history-no-action",
+        oa_task_id="task-history-no-action",
+        oa_action="review",
+    )
+    unknown_id = store.record_reply_attempt(
+        conversation_id="cid-history-unknown-contrast",
+        conversation_title="Unknown approval",
+        trigger_message_id="msg-history-unknown-contrast",
+        trigger_sender="Mina",
+        trigger_text="Review this approval.",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-unknown-contrast",
+        oa_action="review",
+        send_status="completed",
+    )
+
+    html = render_attempt_list(
+        store,
+        include_chart=False,
+        search_object_types=("approval",),
+    )
+    no_action_card = _history_attempt_card(html, no_action_id)
+    unknown_card = _history_attempt_card(html, unknown_id)
+
+    assert 'history-approval-result action-state-skipped">无需处理' in no_action_card
+    assert 'history-approval-result action-state-unknown">结果未知' in unknown_card
+    assert (
+        ".history-approval-result.action-state-skipped,"
+        ".history-approval-result.action-state-unknown{background:var(--surface);"
+        "color:var(--steel);border-color:var(--hairline)}"
     ) in html
 
 
@@ -737,7 +884,7 @@ def test_history_superseded_approval_keeps_system_pill_without_raw_actions(
         trigger_text="Process this approval.",
         action="agent_run",
         sensitivity_kind="general",
-        oa_process_instance_id="proc-history-superseded-approval",
+        oa_process_instance_id="proc-history-superseded-approval-old",
         oa_action="review",
         send_status="failed",
     )
@@ -749,26 +896,26 @@ def test_history_superseded_approval_keeps_system_pill_without_raw_actions(
         trigger_text="Process this approval.",
         action="agent_run",
         sensitivity_kind="general",
-        oa_process_instance_id="proc-history-superseded-approval",
+        oa_process_instance_id="proc-history-superseded-approval-new",
         oa_action="review",
         send_status="completed",
     )
 
-    failed_attempt = store.get_reply_attempt(failed_id)
-    later_attempt = store.get_reply_attempt(later_id)
-    assert failed_attempt is not None
-    assert later_attempt is not None
-    pills = audit_web_module._history_approval_pills(
-        failed_attempt,
-        [],
-        later_attempt=later_attempt,
-        recovery_state="",
+    failed_card = _history_attempt_card(
+        render_attempt_list(
+            store,
+            include_chart=False,
+            search_object_types=("approval",),
+        ),
+        failed_id,
     )
 
-    assert f'href="/attempts/{later_id}">🔁 已由 #{later_id} 后续处理</a>' in pills
-    assert "💬 Completed" not in pills
-    assert "💬 Skipped" not in pills
-    assert "🧾 review" not in pills
+    assert failed_card.count("history-approval-result") == 1
+    assert f'href="/attempts/{later_id}">🔁 已由 #{later_id} 后续处理</a>' in failed_card
+    assert '<section class="history-attention">' in failed_card
+    assert "💬 Completed" not in failed_card
+    assert "💬 Skipped" not in failed_card
+    assert "🧾 review" not in failed_card
 
 
 def test_history_non_approval_sent_reply_keeps_reply_badge_and_sent_pill(

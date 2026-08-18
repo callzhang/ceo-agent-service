@@ -94,6 +94,86 @@ def _enqueue_universal_reply_task(
     return store.claim_reply_tasks(limit=1)[0].id
 
 
+def test_list_agent_run_summaries_for_terminal_runs_batches_without_events(
+    tmp_path: Path,
+):
+    statements: list[str] = []
+
+    class TracedStore(AutoReplyStore):
+        def _open_connection(self):
+            connection = super()._open_connection()
+            connection.set_trace_callback(statements.append)
+            return connection
+
+    store = TracedStore(tmp_path / "worker.sqlite3")
+
+    def seed_generation(label: str, generation: str):
+        store.enqueue_reply_task(
+            conversation_id=f"cid-summary-{label}",
+            conversation_title=f"Summary {label}",
+            single_chat=False,
+            trigger_message_id=f"msg-summary-{label}",
+            trigger_create_time="2026-08-18 10:00:00",
+            trigger_sender="Derek",
+            trigger_text="Summarize the agent runs.",
+            execution_generation=generation,
+        )
+        [task] = store.claim_reply_tasks(limit=1)
+        consumer = store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner=f"consumer-{label}",
+        ).run
+        audit = _claim_audit_run(
+            store,
+            task.id,
+            task.execution_generation,
+            owner=f"audit-{label}",
+        ).run
+        store.append_agent_run_event(
+            audit.id,
+            {"type": "tool", "name": f"summary-{label}"},
+            owner=f"audit-{label}",
+        )
+        return consumer, audit
+
+    first_consumer, first_terminal = seed_generation("first", "generation-first")
+    second_consumer, second_terminal = seed_generation("second", "generation-second")
+    method = getattr(store, "list_agent_run_summaries_for_terminal_runs", None)
+    assert method is not None
+
+    statements.clear()
+    summaries = method(
+        [second_terminal.id, first_terminal.id, first_terminal.id, 0, -1, 999999]
+    )
+
+    assert set(summaries) == {first_terminal.id, second_terminal.id}
+    assert [run.id for run in summaries[first_terminal.id]] == [
+        first_consumer.id,
+        first_terminal.id,
+    ]
+    assert [run.id for run in summaries[second_terminal.id]] == [
+        second_consumer.id,
+        second_terminal.id,
+    ]
+    assert all(
+        run.tool_events == []
+        for summary_runs in summaries.values()
+        for run in summary_runs
+    )
+    normalized_statements = [statement.casefold() for statement in statements]
+    assert len(
+        [statement for statement in normalized_statements if "from agent_runs" in statement]
+    ) == 1
+    assert not any("agent_run_events" in statement for statement in normalized_statements)
+    assert method([]) == {}
+
+
 def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
     tmp_path: Path,
 ):

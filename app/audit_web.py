@@ -530,6 +530,7 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .action-state-sent,.action-state-accepted,.action-state-approved,.action-state-resolved,.action-state-recovered{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .action-state-skipped{background:var(--surface);color:var(--stone);border-color:var(--hairline)}
 .action-state-unknown{background:var(--surface);color:var(--stone);border-color:var(--hairline)}
+.history-approval-result.action-state-skipped,.history-approval-result.action-state-unknown{background:var(--surface);color:var(--steel);border-color:var(--hairline)}
 .action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .action-state-needs-human,.action-state-tentative,.action-state-returned{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
 .action-state-failed,.action-state-blocked,.action-state-declined,.action-state-rejected{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
@@ -4378,6 +4379,17 @@ def _render_attempt_list(
         [item.source_id for item in history_items if item.kind == "reply"]
     )
     attempts_by_id = {attempt.id: attempt for attempt in attempts}
+    approval_agent_run_summaries = store.list_agent_run_summaries_for_terminal_runs(
+        [
+            attempt.agent_run_id
+            for attempt in attempts
+            if attempt.agent_run_id
+            and (
+                attempt.action.strip().lower() == "oa_approval"
+                or attempt.oa_process_instance_id.strip()
+            )
+        ]
+    )
     wechat_ready_delivery_by_attempt = _wechat_ready_delivery_by_attempt(
         store, attempts
     )
@@ -4424,7 +4436,7 @@ def _render_attempt_list(
         history_type = _history_attempt_type(attempt)
         approval_history = history_type[0] == "oa"
         agent_runs = (
-            _agent_runs_for_attempt(store, attempt, agent_runs_cache)
+            approval_agent_run_summaries.get(attempt.agent_run_id, [])
             if approval_history
             else []
         )
