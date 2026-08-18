@@ -83,6 +83,18 @@ def test_store_migrates_resume_context_without_losing_existing_turns(tmp_path: P
     assert "resume_context" in columns
 
 
+def test_store_schema_check_rejects_missing_required_reply_attempt_column(
+    tmp_path: Path,
+):
+    store = store_module.AutoReplyStore(tmp_path / "worker.sqlite3")
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "alter table reply_attempts drop column human_decision_options_json"
+        )
+
+    assert store._schema_is_current() is False
+
+
 def test_store_upgrades_point_seven_schema_with_current_indexes(tmp_path: Path):
     db_path = tmp_path / "workbench.sqlite3"
     store = WorkbenchStore(db_path)
@@ -116,7 +128,7 @@ def test_store_upgrades_point_seven_schema_with_current_indexes(tmp_path: Path):
             )
         }
 
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-13.10"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-18.1"
     assert "idx_workbench_events_event_type" in indexes
     assert "idx_workbench_events_turn_id_id" in indexes
     assert "idx_workbench_turns_task_sequence" in indexes
@@ -212,7 +224,7 @@ def test_store_upgrades_point_eight_turns_with_stable_per_task_sequence(
     upgraded = WorkbenchStore(db_path)
     turns = upgraded.list_turns(task.id)
 
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-13.10"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-18.1"
     assert [(turn.id, turn.task_sequence) for turn in turns] == [
         (second_id, 2),
         (first_id, 1),
