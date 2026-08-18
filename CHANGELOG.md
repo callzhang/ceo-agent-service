@@ -49,6 +49,10 @@
 
 ### Audit visibility
 
+- Show each approval's verified business result directly on its History card
+  instead of exposing normal Agent Completed or Skipped states. Replace the
+  History object checkboxes with a single dropdown while preserving search,
+  status, page-size, pagination, and meeting-session filtering.
 - Require both Consumer and Audit `needs_human` results to include two to four
   actionable choices. Persist those choices on the History item itself so
   post-completion conflicts and non-Agent recovery paths remain actionable even
