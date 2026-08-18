@@ -85,6 +85,9 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     )
     assert "dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}" in command[2]
     env = plist["EnvironmentVariables"]
+    assert env["CEO_SERVICE_ROOT"] == (
+        "/Users/derek/Documents/Projects/ceo-agent-service-release"
+    )
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
     assert "HOME" not in env
     assert "CODEX_HOME" not in env

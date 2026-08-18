@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Runtime deployment
+
+- Persist the production release checkout as `CEO_SERVICE_ROOT` in the main
+  LaunchAgent. Reloading the job can no longer silently fall back to the
+  developer checkout after inherited shell variables are cleared.
+
 ### Weekly OKR reporting
 
 - Bound each manager score to the configured deadline or five minutes,

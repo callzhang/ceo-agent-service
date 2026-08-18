@@ -27,6 +27,8 @@
 
   <key>EnvironmentVariables</key>
   <dict>
+    <key>CEO_SERVICE_ROOT</key>
+    <string>/Users/derek/Documents/Projects/ceo-agent-service-release</string>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>PYTHONPATH</key>
