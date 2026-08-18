@@ -1,0 +1,246 @@
+import json
+
+import pytest
+
+from app.agent_contracts import (
+    AgentError,
+    AuditAgentResult,
+    AuditExternalResult,
+    AuditOutcome,
+    ConsumerAgentResult,
+    ConsumerOutcome,
+    ConsumerProposal,
+    ProposedAction,
+)
+from app.agent_result import SideEffectState
+from app.approval_history import ApprovalHistoryResult, resolve_approval_history_result
+from app.store import AgentRole, AgentRun, ReplyAttempt
+
+
+def _attempt(**overrides: object) -> ReplyAttempt:
+    values: dict[str, object] = {
+        "id": 1,
+        "conversation_id": "conversation",
+        "conversation_title": "title",
+        "trigger_message_id": "message",
+        "trigger_sender": "sender",
+        "trigger_text": "text",
+        "action": "oa_approval",
+        "sensitivity_kind": "normal",
+        "codex_reason": "",
+        "draft_reply_text": "",
+        "final_reply_text": "",
+        "permission_action": "",
+        "permission_reason": "",
+        "send_status": "pending",
+        "send_error": "",
+        "retry_count": 0,
+        "created_at": "2026-08-18T00:00:00Z",
+        "updated_at": "2026-08-18T00:00:00Z",
+    }
+    values.update(overrides)
+    return ReplyAttempt.model_validate(values)
+
+
+def _run(
+    run_id: int,
+    role: AgentRole,
+    result: object,
+    *,
+    parent_agent_run_id: int | None = None,
+    status: str = "completed",
+    side_effect_state: str = "none",
+    proposal_revision: int = 0,
+) -> AgentRun:
+    return AgentRun(
+        id=run_id,
+        reply_task_id=1,
+        execution_generation="initial",
+        role=role,
+        proposal_revision=proposal_revision,
+        turn_attempt=1,
+        parent_agent_run_id=parent_agent_run_id,
+        operation_id=f"operation-{run_id}",
+        status=status,
+        final_result_json=result if isinstance(result, str) else result.model_dump_json(),
+        side_effect_state=side_effect_state,
+        created_at=f"2026-08-18T00:00:0{run_id}Z",
+        updated_at=f"2026-08-18T00:00:0{run_id}Z",
+    )
+
+
+def _consumer(operation: str | None = "oa approval approve", *, outcome: ConsumerOutcome = ConsumerOutcome.PROPOSAL) -> ConsumerAgentResult:
+    proposal = None
+    if operation is not None:
+        proposal = ConsumerProposal(
+            objective="objective",
+            actions=(
+                ProposedAction(
+                    description="prose can disagree with operation",
+                    capability="dingtalk_oa",
+                    operation=operation,
+                    target={"process_instance_id": "process"},
+                    payload={},
+                    expected_verification="verification",
+                ),
+            ),
+            sourced_facts=(),
+            authored_judgment="judgment",
+        )
+    return ConsumerAgentResult(
+        outcome=outcome,
+        summary="summary",
+        proposal=proposal,
+        error=AgentError(),
+    )
+
+
+def _confirmed_audit() -> AuditAgentResult:
+    return AuditAgentResult(
+        outcome=AuditOutcome.EXECUTED,
+        summary="audit summary",
+        proposal_revision=0,
+        side_effect_state=SideEffectState.CONFIRMED,
+        feedback=None,
+        external_result=AuditExternalResult(
+            operation_id="external-operation",
+            verification_summary="verified",
+            live_result_reference={"ok": True},
+        ),
+        error=AgentError(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected"),
+    [
+        ("oa approval approve", ApprovalHistoryResult.APPROVED),
+        ("oa approval return", ApprovalHistoryResult.RETURNED),
+        ("oa approval reject", ApprovalHistoryResult.REJECTED),
+        ("oa approval comment", ApprovalHistoryResult.COMMENTED_PENDING),
+    ],
+)
+def test_confirmed_structured_approval_operations(operation, expected):
+    consumer = _run(1, AgentRole.CONSUMER, _consumer(operation))
+    audit = _run(
+        2,
+        AgentRole.AUDIT,
+        _confirmed_audit(),
+        parent_agent_run_id=consumer.id,
+        side_effect_state=SideEffectState.CONFIRMED,
+    )
+
+    assert resolve_approval_history_result(_attempt(), [consumer, audit]) is expected
+
+
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        ("approve", ApprovalHistoryResult.APPROVED),
+        ("approved", ApprovalHistoryResult.APPROVED),
+        ("同意", ApprovalHistoryResult.APPROVED),
+        ("通过", ApprovalHistoryResult.APPROVED),
+        ("return", ApprovalHistoryResult.RETURNED),
+        ("returned", ApprovalHistoryResult.RETURNED),
+        ("退回", ApprovalHistoryResult.RETURNED),
+        ("reject", ApprovalHistoryResult.REJECTED),
+        ("rejected", ApprovalHistoryResult.REJECTED),
+        ("拒绝", ApprovalHistoryResult.REJECTED),
+        ("comment", ApprovalHistoryResult.COMMENTED_PENDING),
+        ("commented", ApprovalHistoryResult.COMMENTED_PENDING),
+        ("评论", ApprovalHistoryResult.COMMENTED_PENDING),
+        ("留言", ApprovalHistoryResult.COMMENTED_PENDING),
+    ],
+)
+def test_successful_direct_chinese_actions(action, expected):
+    assert (
+        resolve_approval_history_result(
+            _attempt(
+                oa_action=action,
+                send_status="completed" if action in {"comment", "commented", "评论", "留言"} else "sent",
+                oa_action_result_json=json.dumps({"errcode": 0, "errmsg": "ok"}),
+            ),
+            [],
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("needs_human", ApprovalHistoryResult.NEEDS_HUMAN),
+        ("pending_reconciliation", ApprovalHistoryResult.PROCESSING),
+        ("processing", ApprovalHistoryResult.PROCESSING),
+        ("failed", ApprovalHistoryResult.FAILED),
+        ("blocked", ApprovalHistoryResult.FAILED),
+    ],
+)
+def test_workflow_statuses(status, expected):
+    assert resolve_approval_history_result(_attempt(send_status=status), []) is expected
+
+
+def test_structured_consumer_no_action_returns_no_action():
+    consumer = _run(1, AgentRole.CONSUMER, _consumer(None, outcome=ConsumerOutcome.NO_ACTION))
+    assert resolve_approval_history_result(_attempt(), [consumer]) is ApprovalHistoryResult.NO_ACTION
+
+
+def test_proposal_without_audit_confirmation_is_unknown():
+    consumer = _run(1, AgentRole.CONSUMER, _consumer())
+    assert resolve_approval_history_result(_attempt(), [consumer]) is ApprovalHistoryResult.UNKNOWN
+
+
+def test_malformed_consumer_json_is_unknown():
+    consumer = _run(1, AgentRole.CONSUMER, "not-json")
+    assert resolve_approval_history_result(_attempt(), [consumer]) is ApprovalHistoryResult.UNKNOWN
+
+
+def test_conflicting_confirmed_approval_actions_are_unknown():
+    consumer_approve = _run(1, AgentRole.CONSUMER, _consumer("oa approval approve"))
+    consumer_reject = _run(3, AgentRole.CONSUMER, _consumer("oa approval reject"))
+    audit_approve = _run(
+        2,
+        AgentRole.AUDIT,
+        _confirmed_audit(),
+        parent_agent_run_id=consumer_approve.id,
+        side_effect_state=SideEffectState.CONFIRMED,
+    )
+    audit_reject = _run(
+        4,
+        AgentRole.AUDIT,
+        _confirmed_audit(),
+        parent_agent_run_id=consumer_reject.id,
+        side_effect_state=SideEffectState.CONFIRMED,
+    )
+    assert resolve_approval_history_result(_attempt(), [consumer_approve, audit_approve, consumer_reject, audit_reject]) is ApprovalHistoryResult.UNKNOWN
+
+
+def test_non_approval_attempt_returns_none():
+    assert resolve_approval_history_result(_attempt(action="chat_message"), []) is None
+
+
+def test_failed_direct_receipt_does_not_yield_success():
+    assert (
+        resolve_approval_history_result(
+            _attempt(
+                oa_action="approve",
+                send_status="failed",
+                oa_action_result_json=json.dumps({"errcode": 0, "errmsg": "ok"}),
+            ),
+            [],
+        )
+        is ApprovalHistoryResult.FAILED
+    )
+
+
+def test_confirmed_structured_action_precedes_workflow_status():
+    consumer = _run(1, AgentRole.CONSUMER, _consumer("oa approval approve"))
+    audit = _run(
+        2,
+        AgentRole.AUDIT,
+        _confirmed_audit(),
+        parent_agent_run_id=consumer.id,
+        side_effect_state=SideEffectState.CONFIRMED,
+    )
+    assert resolve_approval_history_result(_attempt(send_status="processing"), [consumer, audit]) is ApprovalHistoryResult.APPROVED
+
