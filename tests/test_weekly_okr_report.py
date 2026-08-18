@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -18,12 +19,14 @@ from app.weekly_okr_report import (
     ManagerReportAnalysis,
     PublishedDocument,
     WeeklyOkrAnalysis,
+    WeeklyOkrReportResult,
     _manager_scorecards,
     _extract_report_payload,
     refresh_company_okr_archive,
     run_weekly_okr_report,
     weekly_okr_report_window_open,
 )
+import app.weekly_okr_report as weekly_okr_report_module
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -860,6 +863,38 @@ def test_codex_agent_retries_incomplete_kr_coverage_once(tmp_path):
     assert len(prompts) == 2
     assert "必须返回恰好 1 条 kr_reviews" in prompts[0]
     assert "上一轮输出未通过结构化校验" in prompts[1]
+
+
+def test_weekly_command_honors_configured_codex_deadlines(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run_weekly_okr_report(**kwargs):
+        captured["agent"] = kwargs["agent"]
+        return WeeklyOkrReportResult(status="dry_run", report_date="2026-08-17")
+
+    monkeypatch.setattr(
+        weekly_okr_report_module,
+        "run_weekly_okr_report",
+        fake_run_weekly_okr_report,
+    )
+    monkeypatch.setenv("CEO_OKR_LIVE_SOURCE_COMMAND", "echo")
+    settings = SimpleNamespace(
+        db_path=tmp_path / "auto-reply.sqlite3",
+        ding_robot_code="",
+        ding_robot_name="",
+        ding_receiver_user_id="",
+        dws_transient_retry_attempts=1,
+        dws_transient_retry_delay_seconds=0.1,
+        workspace=tmp_path,
+        codex_timeout_seconds=37,
+        codex_idle_timeout_seconds=19,
+        dry_run=True,
+    )
+
+    weekly_okr_report_module.weekly_okr_report_command(settings, force=True)
+
+    assert captured["agent"].timeout_seconds == 37
+    assert captured["agent"].idle_timeout_seconds == 19
 
 
 def _weekly_payload_for(name):

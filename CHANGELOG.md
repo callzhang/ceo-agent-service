@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Weekly OKR reporting
+
+- Honor the configured Codex total and idle deadlines for each manager score.
+  A failed score now cancels queued managers instead of allowing the executor
+  to continue launching the full roster; valid per-manager caches remain
+  available for the next deduplicated run.
+
 ### Material reading and local parsing
 
 - Treat URL-only Markdown images, including presentation avatars in quoted or

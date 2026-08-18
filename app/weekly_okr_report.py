@@ -254,21 +254,28 @@ class CodexWeeklyOkrAgent:
             )
             jobs.append((manager, manager_source, analysis_path, source_hash))
 
-        with ThreadPoolExecutor(max_workers=min(3, len(jobs))) as executor:
-            futures = {
-                manager.user_id: executor.submit(
-                    self._analyze_one,
-                    source_path=manager_source,
-                    analysis_path=analysis_path,
-                    source_hash=source_hash,
-                    manager=manager,
-                    period_label=period_label,
-                    week_start=week_start,
-                    week_end=week_end,
-                )
-                for manager, manager_source, analysis_path, source_hash in jobs
-            }
+        executor = ThreadPoolExecutor(max_workers=min(3, len(jobs)))
+        futures = {
+            manager.user_id: executor.submit(
+                self._analyze_one,
+                source_path=manager_source,
+                analysis_path=analysis_path,
+                source_hash=source_hash,
+                manager=manager,
+                period_label=period_label,
+                week_start=week_start,
+                week_end=week_end,
+            )
+            for manager, manager_source, analysis_path, source_hash in jobs
+        }
+        try:
             results = [futures[manager.user_id].result() for manager in managers]
+        except BaseException:
+            for future in futures.values():
+                future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        executor.shutdown(wait=True)
 
         return WeeklyOkrAnalysis(
             executive_summary=(
@@ -1104,8 +1111,8 @@ def weekly_okr_report_command(
         source=source,
         agent=CodexWeeklyOkrAgent(
             workspace=settings.workspace,
-            timeout_seconds=max(settings.codex_timeout_seconds, 1800),
-            idle_timeout_seconds=max(settings.codex_idle_timeout_seconds, 900),
+            timeout_seconds=settings.codex_timeout_seconds,
+            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
         ),
         workspace=settings.workspace,
         now=current,
