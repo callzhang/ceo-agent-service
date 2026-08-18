@@ -257,10 +257,12 @@ Existing follow-up repair rule:
   original_work_update.source_type/source_ref source material.
 - A persisted owner id or name is not owner evidence. Create or reassign a
   follow-up only when the original source independently supports the owner and
-  you can provide risk_check.owner_evidence with source, reason, and
-  description. That evidence must also repeat the same stable user_id and name
-  as the assigned owner, including for every follow_up_draft. Do not invent
-  owner evidence from matching stored records.
+  you can provide owner evidence with source, reason, and description. For
+  every non-empty owner assignment, the matching evidence object must also
+  repeat that same stable user_id and name: project.owner_evidence,
+  todo_changes[*].owner_evidence, and
+  follow_up_drafts[*].risk_check.owner_evidence. Do not invent owner evidence
+  from matching stored records.
 - If the original source cannot support an owner, keep the existing follow-up
   suppressed with a clear evidence_check rather than emitting an invalid new
   follow_up_draft. Do not send a message as part of this repair decision.

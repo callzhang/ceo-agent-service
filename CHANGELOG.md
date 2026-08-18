@@ -50,7 +50,9 @@
   and unsupported drafts are omitted instead of failing the complete work
   summary before any external write. Owner evidence now repeats the assigned
   stable ID and name, so valid first-pass decisions do not need a broad repair
-  read merely to satisfy persisted identity validation.
+  read merely to satisfy persisted identity validation. The prompt names the
+  project, TODO, and follow-up evidence paths explicitly, rather than relying
+  on the model to generalize that contract.
 - Allow a required live DWS read up to three minutes without Codex JSONL output
   while retaining the five-minute total task-agent cap. This avoids falsely
   terminating material-backed decisions during a slow read.
