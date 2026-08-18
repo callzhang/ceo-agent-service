@@ -579,7 +579,7 @@ def test_history_approval_card_uses_confirmed_structured_business_result(
     html = render_attempt_list(
         store,
         include_chart=False,
-        search_object_types=("approval",),
+        search_object_type="approval",
     )
     card = _history_attempt_card(html, attempt_id)
 
@@ -630,7 +630,7 @@ def test_history_batches_structured_approval_run_summaries_once(
     html = render_attempt_list(
         store,
         include_chart=False,
-        search_object_types=("approval",),
+        search_object_type="approval",
     )
 
     assert html.count("✓ 已同意") == 2
@@ -670,7 +670,7 @@ def test_history_approval_cards_show_direct_return_and_unknown_results(tmp_path:
     html = render_attempt_list(
         store,
         include_chart=False,
-        search_object_types=("approval",),
+        search_object_type="approval",
     )
     returned_card = _history_attempt_card(html, returned_id)
     unknown_card = _history_attempt_card(html, unknown_id)
@@ -768,7 +768,7 @@ def test_history_neutral_approval_results_use_steel_text_contrast(tmp_path: Path
     html = render_attempt_list(
         store,
         include_chart=False,
-        search_object_types=("approval",),
+        search_object_type="approval",
     )
     no_action_card = _history_attempt_card(html, no_action_id)
     unknown_card = _history_attempt_card(html, unknown_id)
@@ -815,7 +815,7 @@ def test_history_approval_workflow_results_keep_failure_attention_actions(
     html = render_attempt_list(
         store,
         include_chart=False,
-        search_object_types=("approval",),
+        search_object_type="approval",
     )
     needs_human_card = _history_attempt_card(html, needs_human_id)
     failed_card = _history_attempt_card(html, failed_id)
@@ -862,7 +862,7 @@ def test_history_recovered_approval_keeps_business_and_recovery_pills(
         render_attempt_list(
             store,
             include_chart=False,
-            search_object_types=("approval",),
+            search_object_type="approval",
         ),
         attempt_id,
     )
@@ -905,7 +905,7 @@ def test_history_superseded_approval_keeps_system_pill_without_raw_actions(
         render_attempt_list(
             store,
             include_chart=False,
-            search_object_types=("approval",),
+            search_object_type="approval",
         ),
         failed_id,
     )
@@ -1140,7 +1140,7 @@ def test_history_wechat_send_button_matches_exact_trigger(tmp_path: Path):
         channel="wechat",
     )
 
-    html = render_attempt_list(store, search_object_types=("wechat",))
+    html = render_attempt_list(store, search_object_type="wechat")
 
     assert html.count(f"/wechat/deliveries/{delivery_id}/approve?next=/") == 1
     assert html.count(f"/wechat/deliveries/{delivery_id}/reject?next=/") == 1
@@ -1156,7 +1156,7 @@ def test_history_wechat_actions_use_batched_delivery_lookup(tmp_path: Path, monk
     monkeypatch.setattr(store, "get_reply_task_for_message", unexpected_per_row_lookup)
     monkeypatch.setattr(store, "get_wechat_delivery_for_task", unexpected_per_row_lookup)
 
-    html = render_attempt_list(store, search_object_types=("wechat",))
+    html = render_attempt_list(store, search_object_type="wechat")
 
     assert f"/wechat/deliveries/{delivery_id}/approve?next=/" in html
 
@@ -1226,7 +1226,7 @@ def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
         status="draft",
     )
 
-    html = render_attempt_list(store, search_object_types=("task",))
+    html = render_attempt_list(store, search_object_type="task")
 
     assert f"#follow-up-{follow_up_id}" in html
     assert (
@@ -1366,7 +1366,7 @@ def test_history_search_shows_similar_codex_sessions(tmp_path: Path):
     assert f"/meeting-attempts/{run_id}" in html
 
 
-def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
+def test_history_object_dropdown_controls_results(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_reply_attempt(
         conversation_id="cid-history",
@@ -1431,11 +1431,15 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
         query="风险预算",
         query_embedding=[1.0, 0.0],
     )
-    assert 'name="object_type" value="replay" checked' in default_html
-    assert 'name="object_type" value="approval" checked' in default_html
-    assert ">审批</span>" in default_html
-    assert 'name="object_type" value="task" checked' in default_html
-    assert 'name="object_type" value="meeting" checked' in default_html
+    assert '<select name="object_type" class="table-type-select history-object-type-select" aria-label="History object filter" onchange="this.form.submit()">' in default_html
+    assert '<option value="" selected>对象：全部</option>' in default_html
+    assert '<option value="replay">replay</option>' in default_html
+    assert '<option value="wechat">wechat</option>' in default_html
+    assert '<option value="approval">审批</option>' in default_html
+    assert '<option value="task">task</option>' in default_html
+    assert '<option value="meeting">meeting</option>' in default_html
+    assert 'type="checkbox" name="object_type"' not in default_html
+    assert 'history-object-type-filter' not in default_html
     assert "History Search Group" in default_html
     assert "Approval Search Group" in default_html
     assert "Agent Approval Search Group" in default_html
@@ -1445,18 +1449,19 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
     replay_only_html = render_attempt_list(
         store,
         query="风险预算",
-        search_object_types=("replay",),
+        search_object_type="replay",
         query_embedding=[1.0, 0.0],
     )
     assert "History Search Group" in replay_only_html
     assert "Approval Search Group" not in replay_only_html
     assert "Task Search Group" not in replay_only_html
     assert "相似 Codex sessions" not in replay_only_html
+    assert '<option value="replay" selected>replay</option>' in replay_only_html
 
     approval_only_html = render_attempt_list(
         store,
         query="风险预算",
-        search_object_types=("approval",),
+        search_object_type="approval",
         query_embedding=[1.0, 0.0],
     )
     assert "Approval Search Group" in approval_only_html
@@ -1464,40 +1469,39 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
     assert "History Search Group" not in approval_only_html
     assert "Task Search Group" not in approval_only_html
     assert "相似 Codex sessions" not in approval_only_html
+    assert '<option value="approval" selected>审批</option>' in approval_only_html
 
     meeting_only_html = render_attempt_list(
         store,
         query="风险预算",
-        search_object_types=("meeting",),
+        search_object_type="meeting",
         query_embedding=[1.0, 0.0],
     )
     assert "History Search Group" not in meeting_only_html
     assert "Task Search Group" not in meeting_only_html
     assert "相似 Codex sessions" in meeting_only_html
     assert f"/meeting-attempts/{run_id}" in meeting_only_html
+    assert '<option value="meeting" selected>meeting</option>' in meeting_only_html
 
     task_only_html = render_attempt_list(
         store,
         query="风险预算",
-        search_object_types=("task",),
+        search_object_type="task",
         query_embedding=[1.0, 0.0],
     )
     assert "History Search Group" not in task_only_html
     assert "Task Search Group" in task_only_html
     assert "相似 Codex sessions" not in task_only_html
+    assert '<option value="task" selected>task</option>' in task_only_html
 
     object_type_html = render_attempt_list(
         store,
         limit=1,
         query="风险预算",
-        search_object_types=("meeting",),
+        search_object_type="meeting",
         query_embedding=[1.0, 0.0],
     )
-    assert 'name="object_type" value="replay"' in object_type_html
-    assert 'name="object_type" value="replay" checked' not in object_type_html
-    assert 'name="object_type" value="approval" checked' not in object_type_html
-    assert 'name="object_type" value="task" checked' not in object_type_html
-    assert 'name="object_type" value="meeting" checked' in object_type_html
+    assert '<option value="meeting" selected>meeting</option>' in object_type_html
 
 
 def test_history_wechat_object_filter_separates_message_channels(tmp_path: Path):
@@ -1525,23 +1529,117 @@ def test_history_wechat_object_filter_separates_message_channels(tmp_path: Path)
     )
 
     default_html = render_attempt_list(store, query="channel filter")
-    assert 'name="object_type" value="wechat" checked' in default_html
+    assert '<option value="" selected>对象：全部</option>' in default_html
 
     wechat_html = render_attempt_list(
         store,
         query="channel filter",
-        search_object_types=("wechat",),
+        search_object_type="wechat",
     )
     assert "WeChat History Group" in wechat_html
     assert "DingTalk History Group" not in wechat_html
+    assert '<option value="wechat" selected>wechat</option>' in wechat_html
 
     replay_html = render_attempt_list(
         store,
         query="channel filter",
-        search_object_types=("replay",),
+        search_object_type="replay",
     )
     assert "DingTalk History Group" in replay_html
     assert "WeChat History Group" not in replay_html
+
+
+def test_history_object_filter_invalid_value_defaults_to_all(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-history-invalid-filter",
+        conversation_title="Invalid Filter History Group",
+        trigger_message_id="msg-history-invalid-filter",
+        trigger_sender="Mina",
+        trigger_text="invalid object filter",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+
+    html = render_attempt_list(
+        store,
+        query="invalid object filter",
+        search_object_type=" not-a-history-object ",
+    )
+
+    assert audit_web_module._history_search_object_type(" APPROVAL ") == "approval"
+    assert audit_web_module._history_search_object_type("not-a-history-object") == ""
+    assert '<option value="" selected>对象：全部</option>' in html
+    assert "Invalid Filter History Group" in html
+
+
+def test_history_pagination_preserves_single_object_filter_query_params(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    complete_setup_wizard(store)
+    for index in range(101):
+        store.record_reply_attempt(
+            conversation_id=f"cid-approval-page-{index}",
+            conversation_title=f"Approval Page Group {index}",
+            trigger_message_id=f"msg-approval-page-{index}",
+            trigger_sender="Mina",
+            trigger_text="approval page query",
+            action="oa_approval",
+            sensitivity_kind="general",
+            oa_process_instance_id=f"proc-approval-page-{index}",
+            oa_task_id=f"task-approval-page-{index}",
+            oa_action="同意",
+            send_status="sent",
+        )
+
+    response = TestClient(create_audit_app(db_path)).get(
+        "/history?q=approval+page+query&type=sent&object_type=approval&limit=50&page=2"
+    )
+
+    assert response.status_code == 200
+    toolbar_html = response.text.split(
+        '<form class="table-toolbar" data-table-toolbar="history"', 1
+    )[1].split("</form>", 1)[0]
+    assert '<option value="approval" selected>审批</option>' in toolbar_html
+    assert (
+        'href="/history?limit=50&amp;q=approval+page+query&amp;type=sent&amp;object_type=approval"'
+        in toolbar_html
+    )
+    assert (
+        'href="/history?page=3&amp;limit=50&amp;q=approval+page+query&amp;type=sent&amp;object_type=approval"'
+        in toolbar_html
+    )
+
+
+def test_history_default_pagination_url_omits_object_type(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for index in range(2):
+        store.record_reply_attempt(
+            conversation_id=f"cid-default-page-{index}",
+            conversation_title=f"Default Page Group {index}",
+            trigger_message_id=f"msg-default-page-{index}",
+            trigger_sender="Mina",
+            trigger_text="default page query",
+            action="send_reply",
+            sensitivity_kind="general",
+            send_status="sent",
+        )
+
+    html = render_attempt_list(
+        store,
+        limit=1,
+        query="default page query",
+        type_filter="sent",
+    )
+
+    toolbar_html = html.split(
+        '<form class="table-toolbar" data-table-toolbar="history"', 1
+    )[1].split("</form>", 1)[0]
+    assert 'href="/history?page=2&amp;limit=1&amp;q=default+page+query&amp;type=sent"' in toolbar_html
+    assert "object_type=" not in toolbar_html
 
 
 def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
