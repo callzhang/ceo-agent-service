@@ -774,6 +774,9 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
     seen = []
 
     def executor(_command, prompt, _env):
+        assert not any(
+            part.startswith("developer_instructions=") for part in _command
+        )
         source_line = next(
             line for line in prompt.splitlines() if line.startswith("- 实时叮当 OKR 聚合文件：")
         )

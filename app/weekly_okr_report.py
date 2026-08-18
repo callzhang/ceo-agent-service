@@ -346,6 +346,7 @@ class CodexWeeklyOkrAgent:
                 attempt_prompt,
                 session_id=None,
                 output_schema_path=WEEKLY_OKR_REPORT_SCHEMA_PATH,
+                preserve_native_instructions=True,
             )
             if self.executor is not None:
                 raw = self.executor(command, attempt_prompt, env)

@@ -9,6 +9,9 @@
   output. A failed score now cancels queued managers instead of allowing the
   executor to continue launching the full roster; valid per-manager caches
   remain available for the next deduplicated run.
+- Run scoring with the dedicated weekly-OKR prompt and schema only. It no
+  longer inherits the interactive message-consumer contract, which requires
+  unrelated memory and Audit steps before it can return a report.
 
 ### Material reading and local parsing
 
