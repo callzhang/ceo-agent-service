@@ -88,6 +88,9 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert env["CEO_SERVICE_ROOT"] == (
         "/Users/derek/Documents/Projects/ceo-agent-service-release"
     )
+    assert env["CEO_OKR_BROWSER_STORAGE_STATE"] == (
+        "/Users/derek/Documents/memory/AI听记/.storage_state.json"
+    )
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
     assert "HOME" not in env
     assert "CODEX_HOME" not in env
