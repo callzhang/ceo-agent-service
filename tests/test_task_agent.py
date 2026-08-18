@@ -3366,6 +3366,7 @@ def test_task_agent_prompts_require_stable_follow_up_participants():
 
     assert "participant has a stable user_id from a focused live" in prompt
     assert "do not emit a\n  follow_up_draft" in prompt
+    assert "evidence must also repeat the same stable user_id and name" in prompt
     assert "participants must be a non-empty list of\nstable user identities" in repair_prompt
 
 

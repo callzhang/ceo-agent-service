@@ -48,7 +48,9 @@
 - Align task-agent follow-up prompts with the persisted participant contract:
   every draft now requires a non-empty set of live-resolved stable user IDs,
   and unsupported drafts are omitted instead of failing the complete work
-  summary before any external write.
+  summary before any external write. Owner evidence now repeats the assigned
+  stable ID and name, so valid first-pass decisions do not need a broad repair
+  read merely to satisfy persisted identity validation.
 - Allow a required live DWS read up to three minutes without Codex JSONL output
   while retaining the five-minute total task-agent cap. This avoids falsely
   terminating material-backed decisions during a slow read.
