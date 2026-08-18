@@ -2803,6 +2803,7 @@ def test_done_unknown_audit_with_sent_reply_is_settled_from_delivery_ledger(
     assert settled.status == "completed"
     assert settled.side_effect_state == "confirmed"
     assert settled.reconciliation_suspended is False
+    assert store.get_reply_attempt(1) is None
 
 
 def test_unknown_agent_run_uses_explicit_reconciliation_event_path(tmp_path: Path):

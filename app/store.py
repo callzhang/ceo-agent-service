@@ -5110,15 +5110,6 @@ class AutoReplyStore:
                 )
                 if cursor.rowcount != 1:
                     continue
-                self._insert_reconciliation_attempt_in_connection(
-                    db,
-                    run_id=run_id,
-                    task_id=task_id,
-                    codex_reason="direct delivery confirmed from sent reply ledger",
-                    audit_summary="direct delivery confirmed from sent reply ledger",
-                    send_status="completed",
-                    send_error="",
-                )
                 settled += 1
             return settled
 
