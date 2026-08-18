@@ -30,6 +30,8 @@ from app.todo_completion import complete_follow_ups_for_todo
 
 
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
+TASK_AGENT_MAX_TIMEOUT_SECONDS = 300
+TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS = 90
 RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
 FOLLOW_UP_WORK_START_HOUR = 9
 FOLLOW_UP_WORK_END_HOUR = 18
@@ -115,8 +117,11 @@ class TaskAgentCodexRunner:
         self.workspace = workspace
         self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
         self.executor = executor
-        self.timeout_seconds = timeout_seconds
-        self.idle_timeout_seconds = idle_timeout_seconds
+        self.timeout_seconds = min(timeout_seconds, TASK_AGENT_MAX_TIMEOUT_SECONDS)
+        self.idle_timeout_seconds = min(
+            idle_timeout_seconds,
+            TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+        )
         self._run_process_with_idle_timeout = run_process_with_idle_timeout
         self._extract_codex_session_id = extract_codex_session_id
         self._extract_codex_audit_events = extract_codex_audit_events

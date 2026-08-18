@@ -3937,6 +3937,17 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     assert "--disable" not in command
 
 
+def test_task_agent_codex_runner_caps_stalled_codex_timeouts(tmp_path):
+    runner = TaskAgentCodexRunner(
+        workspace=tmp_path,
+        timeout_seconds=1_200,
+        idle_timeout_seconds=900,
+    )
+
+    assert runner.timeout_seconds == 300
+    assert runner.idle_timeout_seconds == 90
+
+
 def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
     from app.task_agent import TaskAgentCodexRunner
 
