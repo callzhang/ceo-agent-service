@@ -1,6 +1,8 @@
 import json
 import os
+import subprocess
 from pathlib import Path
+from collections.abc import Callable
 
 from app.dws_client import dws_noninteractive_environment
 from app.dingtalk_models import CodexDecision
@@ -28,6 +30,40 @@ CODEX_MODEL_PROVIDER_ENV = "CEO_CODEX_MODEL_PROVIDER"
 CODEX_MODEL_REASONING_EFFORT_ENV = "CEO_CODEX_MODEL_REASONING_EFFORT"
 DEFAULT_CODEX_MODEL = "gpt-5.5"
 DEFAULT_CODEX_MODEL_REASONING_EFFORT = "medium"
+
+
+def native_codex_login_available(
+    *,
+    executor: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> bool:
+    """Return whether the native CLI can currently use its persisted login."""
+    try:
+        completed = executor(
+            ["codex", "login", "status"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+def recover_native_codex_auth_failures(
+    store: object,
+    *,
+    channel: str,
+    auth_probe: Callable[[], bool] = native_codex_login_available,
+) -> list[int]:
+    """Requeue no-effect native-auth failures only after the login recovers."""
+    if selected_codex_model_provider() != "openai":
+        return []
+    has_failures = getattr(store, "has_failed_native_codex_auth_tasks")
+    recover = getattr(store, "recover_failed_native_codex_auth_tasks")
+    if not has_failures(channel=channel) or not auth_probe():
+        return []
+    return recover(channel=channel, reason="codex_auth_recovered")
 
 
 def codex_developer_instructions() -> str:

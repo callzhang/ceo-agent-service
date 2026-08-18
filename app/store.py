@@ -18,6 +18,10 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, TypeAdapter
 
 from app.agent_result import SideEffectState
+from app.codex_failure import (
+    CODEX_PROVIDER_AUTH_FAILED,
+    classify_codex_process_failure,
+)
 from app.wechat.models import WechatReplyScope
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
@@ -6609,6 +6613,113 @@ class AutoReplyStore:
             if updated is None:
                 raise RuntimeError("recovered pre-agent reply task was not persisted")
             return self._reply_task_from_row(updated)
+
+    def has_failed_native_codex_auth_tasks(self, *, channel: str) -> bool:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select tasks.error, tasks.recovery_code, attempts.send_error
+                from reply_tasks as tasks
+                left join reply_attempts as attempts
+                  on attempts.id=(
+                      select latest.id from reply_attempts as latest
+                      where latest.channel=tasks.channel
+                        and latest.conversation_id=tasks.conversation_id
+                        and latest.trigger_message_id=tasks.trigger_message_id
+                      order by latest.id desc limit 1
+                  )
+                where tasks.channel=? and tasks.status='failed'
+                """,
+                (channel,),
+            ).fetchall()
+        return any(
+            self._is_native_codex_auth_failure_row(row) for row in rows
+        )
+
+    def recover_failed_native_codex_auth_tasks(
+        self,
+        *,
+        channel: str,
+        reason: str,
+    ) -> list[int]:
+        """Requeue only no-effect failures after a verified native-login recovery."""
+        if not reason.strip():
+            raise ValueError("native Codex auth recovery reason must be non-empty")
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            rows = db.execute(
+                """
+                select tasks.id, tasks.execution_generation, tasks.error,
+                       tasks.recovery_code, attempts.send_error
+                from reply_tasks as tasks
+                left join reply_attempts as attempts
+                  on attempts.id=(
+                      select latest.id from reply_attempts as latest
+                      where latest.channel=tasks.channel
+                        and latest.conversation_id=tasks.conversation_id
+                        and latest.trigger_message_id=tasks.trigger_message_id
+                      order by latest.id desc limit 1
+                  )
+                where tasks.channel=? and tasks.status='failed'
+                  and not exists (
+                      select 1 from sent_replies as sent
+                      where sent.channel=tasks.channel
+                        and sent.conversation_id=tasks.conversation_id
+                        and sent.trigger_message_id=tasks.trigger_message_id
+                  )
+                  and not exists (
+                      select 1 from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and (
+                            runs.status in ('running', 'unknown')
+                            or runs.side_effect_state<>'none'
+                            or exists (
+                                select 1 from agent_execution_receipts as receipts
+                                where receipts.agent_run_id=runs.id
+                                  and receipts.completed=1 and receipts.persisted=1
+                            )
+                        )
+                  )
+                  and not exists (
+                      select 1 from wechat_deliveries as deliveries
+                      where deliveries.reply_task_id=tasks.id
+                        and deliveries.execution_generation=tasks.execution_generation
+                        and not (
+                            deliveries.status='failed'
+                            and deliveries.pre_action_failure=1
+                        )
+                  )
+                """,
+                (channel,),
+            ).fetchall()
+            recovered: list[int] = []
+            for row in rows:
+                if not self._is_native_codex_auth_failure_row(row):
+                    continue
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', attempts=0, locked_at=null,
+                        available_at='', error=?, recovery_code='', updated_at=?
+                    where id=? and status='failed' and execution_generation=?
+                    """,
+                    (reason, now_text, row["id"], row["execution_generation"]),
+                )
+                if cursor.rowcount == 1:
+                    recovered.append(int(row["id"]))
+            return recovered
+
+    @staticmethod
+    def _is_native_codex_auth_failure_row(row: sqlite3.Row) -> bool:
+        if str(row["recovery_code"] or "") == CODEX_PROVIDER_AUTH_FAILED:
+            return True
+        for field in ("error", "send_error"):
+            detail = str(row[field] or "")
+            if detail.startswith(f"{CODEX_PROVIDER_AUTH_FAILED}:"):
+                return True
+            if classify_codex_process_failure(detail, "") == CODEX_PROVIDER_AUTH_FAILED:
+                return True
+        return False
 
     def requeue_failed_unknown_audit_reconciliation(
         self,

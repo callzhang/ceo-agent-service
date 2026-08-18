@@ -2565,7 +2565,7 @@ def test_legacy_direct_chat_without_delivery_record_rotates_generation(setup):
     assert executor.commands == []
 
 
-def test_controlled_group_chat_without_delivery_record_rotates_generation(setup):
+def test_controlled_group_chat_without_delivery_record_requires_audit_readback(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     group_proposal = ConsumerProposal.model_validate(
         {
@@ -2595,20 +2595,51 @@ def test_controlled_group_chat_without_delivery_record_rotates_generation(setup)
         }
     )
     executor = CapturingExecutor("")
-    result = AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-    ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
+    with pytest.raises(ResultParseError):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
 
     persisted = store.get_agent_run(run.id)
-    requeued = store.get_reply_task(task.id)
-    assert result.result.error is not None
-    assert result.result.error.code == "persisted_delivery_absent"
-    assert persisted is not None and persisted.status == "failed"
-    assert requeued is not None and requeued.status == "pending"
-    assert requeued.execution_generation != task.execution_generation
-    assert executor.commands == []
+    assert persisted is not None and persisted.status == "unknown"
+
+
+def test_group_delivery_ledger_does_not_finish_direct_recovery(setup):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    group_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send group result",
+            "actions": [
+                {
+                    "description": "Send group message",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"group": "group-1"},
+                    "payload": {
+                        "argv": [
+                            "dws", "chat", "+send-to-group",
+                            "--group", "group-1", "--text", "done",
+                        ]
+                    },
+                    "expected_verification": "Message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Requested by Derek",
+        }
+    )
+    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "done")
+    with pytest.raises(ResultParseError):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(""),
+        ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.status == "unknown"
 
 
 def test_completed_recovery_action_overrides_older_absent_reconciliation(setup):

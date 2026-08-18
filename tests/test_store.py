@@ -2900,6 +2900,55 @@ def test_retry_failed_reply_task_creates_a_new_retryable_consumer_turn(
     assert store.get_agent_run(claim.run.id).status == "failed"
 
 
+def test_recover_failed_native_codex_auth_task_requires_no_effect_or_delivery(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    claim = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    )
+    store.fail_agent_run(
+        claim.run.id,
+        {"code": "codex_provider_auth_failed: native login unavailable", "retryable": False},
+        owner="worker-1",
+    )
+    store.fail_reply_task(
+        task_id,
+        "codex_provider_auth_failed: native login unavailable",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    assert store.has_failed_native_codex_auth_tasks(channel="dingtalk") is True
+    assert store.recover_failed_native_codex_auth_tasks(
+        channel="dingtalk", reason="codex_auth_recovered"
+    ) == [task_id]
+    recovered = store.get_reply_task(task_id)
+    assert recovered is not None
+    assert recovered.status == "pending"
+    assert recovered.attempts == 0
+    assert recovered.error == "codex_auth_recovered"
+
+    claimed = store.claim_reply_task(task_id)
+    assert claimed is not None
+    store.fail_reply_task(
+        task_id,
+        "codex_provider_auth_failed: native login unavailable",
+        expected_execution_generation=claimed.execution_generation,
+    )
+    store.record_sent_reply(claimed.conversation_id, claimed.trigger_message_id, "done")
+    assert store.recover_failed_native_codex_auth_tasks(
+        channel="dingtalk", reason="codex_auth_recovered"
+    ) == []
+
+
 @pytest.mark.parametrize(
     ("retryable", "side_effect_state"),
     ((False, "none"), (True, "unknown"), (True, "confirmed")),

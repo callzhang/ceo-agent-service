@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from app.agent_envelope import SendDingTalkReplyAction
 from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
+from app.codex_runner import recover_native_codex_auth_failures
 from app.dingtalk_models import CodexAction
 from app.wechat.models import WechatAccount, WechatMessage
 from app.wechat.prompt import build_wechat_turn_prompt
@@ -66,6 +67,7 @@ class WechatReplyConsumer:
         ).strftime("%Y-%m-%d %H:%M:%S")
 
     def run_once(self, limit: int = 50) -> int:
+        recover_native_codex_auth_failures(self.store, channel="wechat")
         processed = 0
         for task in self.store.claim_reply_tasks(limit, channel="wechat"):
             try:
@@ -200,6 +202,11 @@ class WechatReplyConsumer:
                 audit_summary=getattr(decision, "audit_summary", "") or "",
                 send_status="failed",
                 send_error=decision.reason or "stop_with_error",
+                recovery_code=(
+                    CODEX_PROVIDER_AUTH_FAILED
+                    if decision.failure_code == CODEX_PROVIDER_AUTH_FAILED
+                    else ""
+                ),
                 task_status="pending" if retryable else "failed",
                 available_at=self._retry_available_at() if retryable else "",
             )

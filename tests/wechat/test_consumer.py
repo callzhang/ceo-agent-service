@@ -171,7 +171,7 @@ def test_external_dependency_failure_defers_wechat_task_for_retry(
     )[0].id == task.id
 
 
-def test_auth_failure_is_terminal_without_service_recovery(fake_codex, consumer, store):
+def test_auth_failure_records_recoverable_login_state(fake_codex, consumer, store):
     fake_codex.decision = CodexDecision(
         action=CodexAction.STOP_WITH_ERROR,
         reason="native authentication unavailable",
@@ -185,8 +185,40 @@ def test_auth_failure_is_terminal_without_service_recovery(fake_codex, consumer,
     task = store.get_reply_task(1)
     assert task is not None
     assert task.status == "failed"
-    assert task.recovery_code == ""
+    assert task.recovery_code == CODEX_PROVIDER_AUTH_FAILED
     assert task.available_at == ""
+
+
+def test_auth_recovery_reprocesses_original_wechat_message(
+    fake_codex, consumer, store, monkeypatch
+):
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.STOP_WITH_ERROR,
+        reason="native authentication unavailable",
+        audit_summary="native authentication unavailable",
+        external_dependency_failed=True,
+        failure_code=CODEX_PROVIDER_AUTH_FAILED,
+    )
+    assert consumer.run_once(limit=1) == 1
+
+    monkeypatch.setattr(
+        "app.wechat.consumer.recover_native_codex_auth_failures",
+        lambda current_store, *, channel: current_store.recover_failed_native_codex_auth_tasks(
+            channel=channel,
+            reason="codex_auth_recovered",
+        ),
+    )
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.NO_REPLY,
+        audit_summary="感谢消息无需再回复。",
+    )
+
+    assert consumer.run_once(limit=1) == 1
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "done"
+    assert task.attempts == 1
+    assert task.error == ""
 
 
 def test_consumer_marks_read_only_decision_phase_before_calling_codex(

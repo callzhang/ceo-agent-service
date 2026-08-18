@@ -59,7 +59,10 @@ from app.dingtalk_models import (
     DingTalkConversation,
     DingTalkMessage,
 )
-from app.codex_runner import selected_codex_model_provider
+from app.codex_runner import (
+    recover_native_codex_auth_failures,
+    selected_codex_model_provider,
+)
 from app.codex_capacity import (
     CODEX_CAPACITY_EXHAUSTED_MESSAGE,
     CODEX_PROVIDER_CAPACITY_EXHAUSTED,
@@ -1481,6 +1484,7 @@ class DingTalkAutoReplyWorker:
         self.store.suspend_reconciliation_event_limited_agent_runs()
         self._recover_due_unknown_agent_reply_tasks(limit=limit)
         self._recover_stale_agent_reply_tasks()
+        recover_native_codex_auth_failures(self.store, channel="dingtalk")
         if self.store.active_codex_capacity_pause(now=self._now()):
             return 0
         claimed_tasks = 0
