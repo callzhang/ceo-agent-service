@@ -170,6 +170,7 @@ def test_successful_direct_chinese_actions(action, expected):
     ("status", "expected"),
     [
         ("needs_human", ApprovalHistoryResult.NEEDS_HUMAN),
+        ("pending", ApprovalHistoryResult.PROCESSING),
         ("pending_reconciliation", ApprovalHistoryResult.PROCESSING),
         ("processing", ApprovalHistoryResult.PROCESSING),
         ("failed", ApprovalHistoryResult.FAILED),
@@ -182,17 +183,54 @@ def test_workflow_statuses(status, expected):
 
 def test_structured_consumer_no_action_returns_no_action():
     consumer = _run(1, AgentRole.CONSUMER, _consumer(None, outcome=ConsumerOutcome.NO_ACTION))
-    assert resolve_approval_history_result(_attempt(), [consumer]) is ApprovalHistoryResult.NO_ACTION
+    assert resolve_approval_history_result(_attempt(send_status="closed"), [consumer]) is ApprovalHistoryResult.NO_ACTION
 
 
 def test_proposal_without_audit_confirmation_is_unknown():
     consumer = _run(1, AgentRole.CONSUMER, _consumer())
-    assert resolve_approval_history_result(_attempt(), [consumer]) is ApprovalHistoryResult.UNKNOWN
+    assert resolve_approval_history_result(_attempt(send_status="closed"), [consumer]) is ApprovalHistoryResult.UNKNOWN
+
+
+def test_confirmed_audit_result_does_not_require_row_side_effect_state():
+    consumer = _run(1, AgentRole.CONSUMER, _consumer("oa approval approve"))
+    audit = _run(
+        2,
+        AgentRole.AUDIT,
+        _confirmed_audit(),
+        parent_agent_run_id=consumer.id,
+    )
+    assert audit.side_effect_state == "none"
+    assert resolve_approval_history_result(_attempt(), [consumer, audit]) is ApprovalHistoryResult.APPROVED
 
 
 def test_malformed_consumer_json_is_unknown():
     consumer = _run(1, AgentRole.CONSUMER, "not-json")
-    assert resolve_approval_history_result(_attempt(), [consumer]) is ApprovalHistoryResult.UNKNOWN
+    assert resolve_approval_history_result(_attempt(send_status="closed"), [consumer]) is ApprovalHistoryResult.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("consumer", "status", "expected"),
+    [
+        (_consumer(), "failed", ApprovalHistoryResult.FAILED),
+        (_consumer(), "processing", ApprovalHistoryResult.PROCESSING),
+        (_consumer(None, outcome=ConsumerOutcome.NO_ACTION), "failed", ApprovalHistoryResult.FAILED),
+        (_consumer(None, outcome=ConsumerOutcome.NO_ACTION), "processing", ApprovalHistoryResult.PROCESSING),
+    ],
+)
+def test_workflow_status_precedes_unconfirmed_or_no_action_consumer(consumer, status, expected):
+    run = _run(1, AgentRole.CONSUMER, consumer)
+    assert resolve_approval_history_result(_attempt(send_status=status), [run]) is expected
+
+
+def test_latest_valid_consumer_skips_malformed_newest_run():
+    valid = _run(
+        1,
+        AgentRole.CONSUMER,
+        _consumer(None, outcome=ConsumerOutcome.NO_ACTION),
+        status="completed",
+    )
+    malformed = _run(2, AgentRole.CONSUMER, "not-json", status="completed")
+    assert resolve_approval_history_result(_attempt(send_status="closed"), [valid, malformed]) is ApprovalHistoryResult.NO_ACTION
 
 
 def test_conflicting_confirmed_approval_actions_are_unknown():
@@ -220,16 +258,44 @@ def test_non_approval_attempt_returns_none():
 
 
 def test_failed_direct_receipt_does_not_yield_success():
+    for receipt in ("not-json", json.dumps({"success": False}), json.dumps({"errcode": 1})):
+        assert (
+            resolve_approval_history_result(
+                _attempt(
+                    oa_action="approve",
+                    send_status="closed",
+                    oa_action_result_json=receipt,
+                ),
+                [],
+            )
+            is ApprovalHistoryResult.UNKNOWN
+        )
+
+
+def test_terminal_direct_action_succeeds_without_receipt():
     assert (
         resolve_approval_history_result(
             _attempt(
                 oa_action="approve",
-                send_status="failed",
-                oa_action_result_json=json.dumps({"errcode": 0, "errmsg": "ok"}),
+                send_status="sent",
             ),
             [],
         )
-        is ApprovalHistoryResult.FAILED
+        is ApprovalHistoryResult.APPROVED
+    )
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [json.dumps({"success": True}), json.dumps({"errcode": 0, "errmsg": "ok"})],
+)
+def test_structured_direct_receipt_succeeds_while_pending(receipt):
+    assert (
+        resolve_approval_history_result(
+            _attempt(oa_action="approve", send_status="pending", oa_action_result_json=receipt),
+            [],
+        )
+        is ApprovalHistoryResult.APPROVED
     )
 
 
@@ -243,4 +309,3 @@ def test_confirmed_structured_action_precedes_workflow_status():
         side_effect_state=SideEffectState.CONFIRMED,
     )
     assert resolve_approval_history_result(_attempt(send_status="processing"), [consumer, audit]) is ApprovalHistoryResult.APPROVED
-

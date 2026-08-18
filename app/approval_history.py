@@ -63,7 +63,7 @@ def resolve_approval_history_result(
         return None
 
     consumers = [run for run in agent_runs if run.role is AgentRole.CONSUMER]
-    consumer_results, malformed_latest_consumer = _consumer_results(consumers)
+    consumer_results = _consumer_results(consumers)
 
     structured_results = _confirmed_structured_results(agent_runs, consumer_results)
     if len(structured_results) == 1:
@@ -75,16 +75,18 @@ def resolve_approval_history_result(
     if direct is not None:
         return direct
 
-    if malformed_latest_consumer:
-        return ApprovalHistoryResult.UNKNOWN
-    latest_consumer = _latest_consumer(consumers)
+    workflow = _workflow_result(attempt.send_status)
+    if workflow is not ApprovalHistoryResult.UNKNOWN:
+        return workflow
+
+    latest_consumer = _latest_consumer(consumers, consumer_results)
     latest_result = consumer_results.get(latest_consumer.id) if latest_consumer else None
     if latest_result is not None and latest_result.outcome is ConsumerOutcome.NO_ACTION:
         return ApprovalHistoryResult.NO_ACTION
     if latest_result is not None and latest_result.outcome is ConsumerOutcome.PROPOSAL:
         return ApprovalHistoryResult.UNKNOWN
 
-    return _workflow_result(attempt.send_status)
+    return workflow
 
 
 def _is_approval_attempt(attempt: ReplyAttempt) -> bool:
@@ -98,7 +100,12 @@ def _normalize(value: str) -> str:
     return " ".join(value.strip().casefold().split())
 
 
-def _latest_consumer(consumers: list[AgentRun]) -> AgentRun | None:
+def _latest_consumer(
+    consumers: list[AgentRun],
+    valid_results: dict[int, ConsumerAgentResult] | None = None,
+) -> AgentRun | None:
+    if valid_results is not None:
+        consumers = [run for run in consumers if run.id in valid_results]
     if not consumers:
         return None
     return max(consumers, key=lambda run: (run.created_at, run.id))
@@ -106,17 +113,14 @@ def _latest_consumer(consumers: list[AgentRun]) -> AgentRun | None:
 
 def _consumer_results(
     consumers: list[AgentRun],
-) -> tuple[dict[int, ConsumerAgentResult], bool]:
+) -> dict[int, ConsumerAgentResult]:
     results: dict[int, ConsumerAgentResult] = {}
-    latest = _latest_consumer(consumers)
-    malformed_latest = False
     for run in consumers:
         try:
             results[run.id] = ConsumerAgentResult.model_validate_json(run.final_result_json)
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
-            if latest is not None and run.id == latest.id:
-                malformed_latest = True
-    return results, malformed_latest
+            continue
+    return results
 
 
 def _confirmed_structured_results(
@@ -134,7 +138,6 @@ def _confirmed_structured_results(
         if (
             audit.outcome is not AuditOutcome.EXECUTED
             or audit.side_effect_state is not SideEffectState.CONFIRMED
-            or _normalize(run.side_effect_state) != SideEffectState.CONFIRMED.value
             or run.parent_agent_run_id not in consumer_results
         ):
             continue
@@ -152,12 +155,9 @@ def _direct_result(attempt: ReplyAttempt) -> ApprovalHistoryResult | None:
     action = _DIRECT_ACTIONS.get(_normalize(attempt.oa_action))
     if action is None:
         return None
-    status = _normalize(attempt.send_status)
-    if status not in _DIRECT_TERMINAL_STATUSES:
-        return None
     raw = attempt.oa_action_result_json.strip()
     if not raw:
-        return action
+        return action if _normalize(attempt.send_status) in _DIRECT_TERMINAL_STATUSES else None
     try:
         payload = json.loads(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
