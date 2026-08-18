@@ -1549,7 +1549,7 @@ def test_history_wechat_object_filter_separates_message_channels(tmp_path: Path)
     assert "WeChat History Group" not in replay_html
 
 
-def test_history_object_filter_invalid_value_defaults_to_all(tmp_path: Path):
+def test_history_object_filter_empty_or_invalid_value_defaults_to_all(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_reply_attempt(
         conversation_id="cid-history-invalid-filter",
@@ -1561,8 +1561,20 @@ def test_history_object_filter_invalid_value_defaults_to_all(tmp_path: Path):
         sensitivity_kind="general",
         send_status="sent",
     )
+    store.record_reply_attempt(
+        conversation_id="cid-history-invalid-filter-wechat",
+        conversation_title="Invalid Filter WeChat Group",
+        trigger_message_id="msg-history-invalid-filter-wechat",
+        trigger_sender="Alex",
+        trigger_text="invalid object filter",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+        channel="wechat",
+    )
 
-    html = render_attempt_list(
+    empty_html = render_attempt_list(store, query="invalid object filter")
+    invalid_html = render_attempt_list(
         store,
         query="invalid object filter",
         search_object_type=" not-a-history-object ",
@@ -1570,8 +1582,10 @@ def test_history_object_filter_invalid_value_defaults_to_all(tmp_path: Path):
 
     assert audit_web_module._history_search_object_type(" APPROVAL ") == "approval"
     assert audit_web_module._history_search_object_type("not-a-history-object") == ""
-    assert '<option value="" selected>对象：全部</option>' in html
-    assert "Invalid Filter History Group" in html
+    for html in (empty_html, invalid_html):
+        assert '<option value="" selected>对象：全部</option>' in html
+        assert "Invalid Filter History Group" in html
+        assert "Invalid Filter WeChat Group" in html
 
 
 def test_history_pagination_preserves_single_object_filter_query_params(
@@ -1586,7 +1600,7 @@ def test_history_pagination_preserves_single_object_filter_query_params(
             conversation_title=f"Approval Page Group {index}",
             trigger_message_id=f"msg-approval-page-{index}",
             trigger_sender="Mina",
-            trigger_text="approval page query",
+            trigger_text="风险预算 A/B",
             action="oa_approval",
             sensitivity_kind="general",
             oa_process_instance_id=f"proc-approval-page-{index}",
@@ -1596,7 +1610,7 @@ def test_history_pagination_preserves_single_object_filter_query_params(
         )
 
     response = TestClient(create_audit_app(db_path)).get(
-        "/history?q=approval+page+query&type=sent&object_type=approval&limit=50&page=2"
+        "/history?q=%E9%A3%8E%E9%99%A9%E9%A2%84%E7%AE%97+A%2FB&type=sent&object_type=approval&limit=50&page=2"
     )
 
     assert response.status_code == 200
@@ -1605,11 +1619,11 @@ def test_history_pagination_preserves_single_object_filter_query_params(
     )[1].split("</form>", 1)[0]
     assert '<option value="approval" selected>审批</option>' in toolbar_html
     assert (
-        'href="/history?limit=50&amp;q=approval+page+query&amp;type=sent&amp;object_type=approval"'
+        'href="/history?limit=50&amp;q=%E9%A3%8E%E9%99%A9%E9%A2%84%E7%AE%97+A%2FB&amp;type=sent&amp;object_type=approval"'
         in toolbar_html
     )
     assert (
-        'href="/history?page=3&amp;limit=50&amp;q=approval+page+query&amp;type=sent&amp;object_type=approval"'
+        'href="/history?page=3&amp;limit=50&amp;q=%E9%A3%8E%E9%99%A9%E9%A2%84%E7%AE%97+A%2FB&amp;type=sent&amp;object_type=approval"'
         in toolbar_html
     )
 
