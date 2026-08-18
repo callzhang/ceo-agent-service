@@ -2962,6 +2962,32 @@ def test_recover_failed_native_codex_auth_task_requires_no_effect_or_delivery(tm
     ) == []
 
 
+def test_recover_native_codex_auth_resumes_orphaned_recovery_lock(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            """
+            update reply_tasks
+            set status='processing', locked_at=datetime('now', '-2 minutes'),
+                error='codex_auth_recovered'
+            where id=?
+            """,
+            (task_id,),
+        )
+
+    assert store.has_failed_native_codex_auth_tasks(channel="dingtalk") is True
+    assert store.recover_failed_native_codex_auth_tasks(
+        channel="dingtalk", reason="codex_auth_recovered"
+    ) == [task_id]
+    recovered = store.get_reply_task(task_id)
+    assert recovered is not None
+    assert recovered.status == "pending"
+    assert recovered.execution_generation != task.execution_generation
+
+
 @pytest.mark.parametrize(
     ("retryable", "side_effect_state"),
     ((False, "none"), (True, "unknown"), (True, "confirmed")),

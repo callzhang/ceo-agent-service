@@ -6628,7 +6628,15 @@ class AutoReplyStore:
                         and latest.trigger_message_id=tasks.trigger_message_id
                       order by latest.id desc limit 1
                   )
-                where tasks.channel=? and tasks.status='failed'
+                where tasks.channel=? and (
+                    tasks.status='failed'
+                    or (
+                        tasks.status='processing'
+                        and tasks.error='codex_auth_recovered'
+                        and tasks.locked_at<>''
+                        and tasks.locked_at<=datetime('now', '-90 seconds')
+                    )
+                )
                 """,
                 (channel,),
             ).fetchall()
@@ -6648,7 +6656,8 @@ class AutoReplyStore:
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             rows = db.execute(
                 """
-                select tasks.id, tasks.execution_generation, tasks.error,
+                select tasks.id, tasks.status, tasks.locked_at,
+                       tasks.execution_generation, tasks.error,
                        tasks.recovery_code, attempts.send_error
                 from reply_tasks as tasks
                 left join reply_attempts as attempts
@@ -6659,7 +6668,15 @@ class AutoReplyStore:
                         and latest.trigger_message_id=tasks.trigger_message_id
                       order by latest.id desc limit 1
                   )
-                where tasks.channel=? and tasks.status='failed'
+                where tasks.channel=? and (
+                    tasks.status='failed'
+                    or (
+                        tasks.status='processing'
+                        and tasks.error='codex_auth_recovered'
+                        and tasks.locked_at<>''
+                        and tasks.locked_at<=datetime('now', '-90 seconds')
+                    )
+                )
                   and not exists (
                       select 1 from sent_replies as sent
                       where sent.channel=tasks.channel
@@ -6703,7 +6720,14 @@ class AutoReplyStore:
                     set status='pending', attempts=0, locked_at=null,
                         available_at='', execution_generation=?, error=?,
                         recovery_code='', updated_at=?
-                    where id=? and status='failed' and execution_generation=?
+                    where id=? and execution_generation=? and (
+                        status='failed'
+                        or (
+                            status='processing' and error='codex_auth_recovered'
+                            and locked_at<>''
+                            and locked_at<=datetime(?, '-90 seconds')
+                        )
+                    )
                     """,
                     (
                         next_generation,
@@ -6711,6 +6735,7 @@ class AutoReplyStore:
                         now_text,
                         row["id"],
                         row["execution_generation"],
+                        now_text,
                     ),
                 )
                 if cursor.rowcount == 1:
@@ -6723,6 +6748,8 @@ class AutoReplyStore:
             return True
         for field in ("error", "send_error"):
             detail = str(row[field] or "")
+            if detail == "codex_auth_recovered":
+                return True
             if detail.startswith(f"{CODEX_PROVIDER_AUTH_FAILED}:"):
                 return True
             if classify_codex_process_failure(detail, "") == CODEX_PROVIDER_AUTH_FAILED:
