@@ -15156,6 +15156,11 @@ def test_needs_human_agent_attempt_publishes_browser_notification(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "needs_human"
+    persisted_options = json.loads(attempt.human_decision_options_json)
+    assert [option["key"] for option in persisted_options] == [
+        "recheck_and_offer_choices",
+        "stop_without_action",
+    ]
     assert browser_notifications == [
         {
             "title": "CEO 需要确认：@Alex Chen(明哥) 需要本人确认",

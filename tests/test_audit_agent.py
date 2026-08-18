@@ -153,7 +153,7 @@ def test_audit_composed_instructions_are_skill_first_and_schema_authoritative(se
         dynamic_skill_body=AUDIT_DYNAMIC_SKILL_BODY,
         audit_rules=audit_rules,
         context_facts=context_facts,
-        size_limit=32_000,
+        size_limit=36_000,
         require_runtime_safety_sections=True,
     )
     assert audit_rules in instructions
@@ -241,6 +241,7 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
         "feedback": result["feedback"],
         "external_result": result["external_result"],
         "reconciliation": result["reconciliation"],
+        "decision_options": result.get("decision_options", []),
         "error_code": error["code"],
         "error_retryable": error["retryable"],
         "error_authorization_required": error["authorization_required"],
@@ -387,6 +388,20 @@ def _audit_result_jsonl(
             "side_effect_state": "none",
             "feedback": None,
             "external_result": None,
+            "decision_options": [
+                {
+                    "key": "A",
+                    "label": "Confirm occurred",
+                    "instruction": "Confirm the external action occurred.",
+                    "consequence": "The action will not be replayed.",
+                },
+                {
+                    "key": "B",
+                    "label": "Confirm absent",
+                    "instruction": "Confirm the external action did not occur.",
+                    "consequence": "The task may be safely reopened.",
+                },
+            ],
             "error": {
                 "code": "audit_recovery_ambiguous",
                 "retryable": False,
@@ -586,6 +601,20 @@ def _dry_run_suppressed_jsonl(*, proposal_revision: int = 0) -> str:
         "side_effect_state": "none",
         "feedback": None,
         "external_result": None,
+        "decision_options": [
+            {
+                "key": "A",
+                "label": "Execute after dry-run",
+                "instruction": "Run the verified candidate outside dry-run.",
+                "consequence": "Audit may execute the verified external action.",
+            },
+            {
+                "key": "B",
+                "label": "Keep dry-run only",
+                "instruction": "Stop after dry-run without an external action.",
+                "consequence": "No external action will run.",
+            },
+        ],
         "error": {
             "code": "dry_run_execution_suppressed",
             "retryable": False,

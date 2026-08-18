@@ -20,7 +20,7 @@ from app.agent_context import (
     MaterialReference,
     PriorReceipt,
 )
-from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, DecisionOption
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
 from app.audit_agent import AuditAgentRunner
 from app.channel_gate import (
@@ -2165,6 +2165,48 @@ class DingTalkAutoReplyWorker:
             result.consumer_result,
             result.audit_result,
         )
+        decision_options: tuple[DecisionOption, ...] = (
+            result.consumer_result.decision_options
+            if result.consumer_result is not None
+            else (
+                result.audit_result.decision_options
+                if result.audit_result is not None
+                else ()
+            )
+        )
+        if not decision_options and result.status == "needs_human" and result.feedback:
+            decision_options = (
+                DecisionOption(
+                    key="apply_audit_revision",
+                    label="按审计意见修订",
+                    instruction=result.feedback.requested_revision,
+                    consequence="Agent 会按已核验的审计意见重新规划并再次审计。",
+                ),
+                DecisionOption(
+                    key="stop_without_action",
+                    label="停止当前事项",
+                    instruction="停止当前事项，不执行新的外部动作。",
+                    consequence="保留审计记录并关闭当前事项。",
+                ),
+            )
+        if not decision_options and result.status == "needs_human":
+            decision_options = (
+                DecisionOption(
+                    key="recheck_and_offer_choices",
+                    label="重新核验并给出方案",
+                    instruction=(
+                        "重新读取当前事实，只生成两到四个可执行选项供我选择；"
+                        "不要执行新的外部动作。"
+                    ),
+                    consequence="Agent 只会补齐具体选项，不会直接执行外部动作。",
+                ),
+                DecisionOption(
+                    key="stop_without_action",
+                    label="停止当前事项",
+                    instruction="停止当前事项，不执行新的外部动作。",
+                    consequence="保留审计记录并关闭当前事项。",
+                ),
+            )
         attempt_id = self.store.finalize_orchestrated_reply_task(
             task_id=task.id,
             expected_execution_generation=task.execution_generation,
@@ -2187,6 +2229,11 @@ class DingTalkAutoReplyWorker:
                 separators=(",", ":"),
             ),
             audit_summary=result.summary,
+            human_decision_options_json=json.dumps(
+                [option.model_dump(mode="json") for option in decision_options],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
             send_status=send_status,
             send_error=send_error,
             channel=task.channel,

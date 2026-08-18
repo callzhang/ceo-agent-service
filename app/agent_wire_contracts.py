@@ -105,6 +105,7 @@ class _AuditExecutedWire(_AuditWireBase):
     feedback: None
     external_result: AuditExternalResult
     reconciliation: list[AuditReconciliation] = Field(max_length=0)
+    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
 class _AuditRevisionRequiredWire(_AuditWireBase):
@@ -113,6 +114,7 @@ class _AuditRevisionRequiredWire(_AuditWireBase):
     feedback: AuditFeedback
     external_result: None
     reconciliation: list[AuditReconciliation] = Field(max_length=0)
+    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
 class _AuditNeedsHumanWire(_AuditWireBase):
@@ -121,6 +123,11 @@ class _AuditNeedsHumanWire(_AuditWireBase):
     feedback: None
     external_result: None
     reconciliation: list[AuditReconciliation] = Field(max_length=0)
+    decision_options: list[DecisionOption] = Field(
+        min_length=2,
+        max_length=4,
+        json_schema_extra={"uniqueItems": True},
+    )
 
 
 class _AuditFailedWire(_AuditWireBase):
@@ -129,6 +136,7 @@ class _AuditFailedWire(_AuditWireBase):
     feedback: None
     external_result: None
     reconciliation: list[AuditReconciliation] = Field(max_length=0)
+    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
 class _AuditUnknownWire(_AuditWireBase):
@@ -137,6 +145,7 @@ class _AuditUnknownWire(_AuditWireBase):
     feedback: None
     external_result: None
     reconciliation: list[AuditReconciliation] = Field(max_length=0)
+    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
 class _AuditReconciledWire(_AuditWireBase):
@@ -147,6 +156,7 @@ class _AuditReconciledWire(_AuditWireBase):
     reconciliation: list[AuditReconciliation] = Field(
         json_schema_extra={"uniqueItems": True}
     )
+    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
 AuditWirePayload = Annotated[
@@ -179,6 +189,7 @@ class AuditAgentWireResult(RootModel[AuditWirePayload]):
                 "feedback": payload.feedback,
                 "external_result": payload.external_result,
                 "reconciliation": payload.reconciliation,
+                "decision_options": payload.decision_options,
                 "error": payload.error_payload(),
             }
         )

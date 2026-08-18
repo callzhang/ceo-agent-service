@@ -28,7 +28,13 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
-from app.agent_contracts import ConsumerAgentResult, ConsumerOutcome, DecisionOption
+from app.agent_contracts import (
+    AuditAgentResult,
+    AuditOutcome,
+    ConsumerAgentResult,
+    ConsumerOutcome,
+    DecisionOption,
+)
 from app.audit_rules import (
     audit_rules_template_path,
     read_audit_rules_template,
@@ -9490,16 +9496,32 @@ def _needs_human_decision_options(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
 ) -> tuple[DecisionOption, ...]:
+    try:
+        persisted_options = json.loads(attempt.human_decision_options_json)
+        if persisted_options:
+            return tuple(
+                DecisionOption.model_validate(item) for item in persisted_options
+            )
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
     matching_runs = [run for run in agent_runs if run.id == attempt.agent_run_id]
     for run in matching_runs or list(reversed(agent_runs)):
-        if run.role is not AgentRole.CONSUMER or not run.final_result_json.strip():
+        if not run.final_result_json.strip():
             continue
-        try:
-            result = ConsumerAgentResult.model_validate_json(run.final_result_json)
-        except ValueError:
-            continue
-        if result.outcome is ConsumerOutcome.NEEDS_HUMAN:
-            return result.decision_options
+        if run.role is AgentRole.CONSUMER:
+            try:
+                result = ConsumerAgentResult.model_validate_json(run.final_result_json)
+            except ValueError:
+                continue
+            if result.outcome is ConsumerOutcome.NEEDS_HUMAN:
+                return result.decision_options
+        elif run.role is AgentRole.AUDIT:
+            try:
+                result = AuditAgentResult.model_validate_json(run.final_result_json)
+            except ValueError:
+                continue
+            if result.outcome is AuditOutcome.NEEDS_HUMAN:
+                return result.decision_options
     return ()
 
 
