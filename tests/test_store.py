@@ -2771,7 +2771,7 @@ def test_unknown_agent_run_resolves_atomically_and_cannot_return_to_running(
         )
 
 
-def test_done_unknown_audit_with_sent_reply_is_settled_from_delivery_ledger(
+def test_done_unknown_audit_with_legacy_sent_reply_is_settled_from_delivery_ledger(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2796,7 +2796,7 @@ def test_done_unknown_audit_with_sent_reply_is_settled_from_delivery_ledger(
             (task_id,),
         )
 
-    assert store.settle_done_unknown_audit_runs_with_sent_reply() == 1
+    assert store.settle_unknown_audit_runs_with_sent_reply() == 1
 
     settled = store.get_agent_run(run.id)
     assert settled is not None
@@ -2804,6 +2804,98 @@ def test_done_unknown_audit_with_sent_reply_is_settled_from_delivery_ledger(
     assert settled.side_effect_state == "confirmed"
     assert settled.reconciliation_suspended is False
     assert store.get_reply_attempt(1) is None
+
+
+def test_pending_unknown_audit_with_exact_sent_reply_is_settled_atomically(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task_id,
+        task.execution_generation,
+        owner="worker-1",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker-1",
+    )
+    store.requeue_reply_task(
+        task_id,
+        "unknown_agent_run_reconciliation",
+        expected_execution_generation=task.execution_generation,
+    )
+    store.record_sent_reply(
+        task.conversation_id,
+        task.trigger_message_id,
+        "delivered",
+        send_result_json=json.dumps(
+            {"agent_run_id": run.id, "operation_id": run.operation_id},
+            separators=(",", ":"),
+        ),
+    )
+
+    assert store.settle_unknown_audit_runs_with_sent_reply() == 1
+
+    settled_run = store.get_agent_run(run.id)
+    settled_task = store.get_reply_task(task_id)
+    assert settled_run is not None
+    assert settled_run.status == "completed"
+    assert settled_run.side_effect_state == "confirmed"
+    assert settled_task is not None
+    assert settled_task.status == "done"
+    assert settled_task.error == ""
+
+
+@pytest.mark.parametrize(
+    ("agent_run_id_delta", "operation_id"),
+    ((1, None), (0, "different-operation")),
+)
+def test_pending_unknown_audit_rejects_inexact_sent_reply_binding(
+    tmp_path: Path,
+    agent_run_id_delta: int,
+    operation_id: str | None,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task_id,
+        task.execution_generation,
+        owner="worker-1",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker-1",
+    )
+    store.requeue_reply_task(
+        task_id,
+        "unknown_agent_run_reconciliation",
+        expected_execution_generation=task.execution_generation,
+    )
+    store.record_sent_reply(
+        task.conversation_id,
+        task.trigger_message_id,
+        "older delivery",
+        send_result_json=json.dumps(
+            {
+                "agent_run_id": run.id + agent_run_id_delta,
+                "operation_id": operation_id or run.operation_id,
+            },
+            separators=(",", ":"),
+        ),
+    )
+
+    assert store.settle_unknown_audit_runs_with_sent_reply() == 0
+    assert store.get_agent_run(run.id).status == "unknown"
+    assert store.get_reply_task(task_id).status == "pending"
 
 
 def test_unknown_agent_run_uses_explicit_reconciliation_event_path(tmp_path: Path):
@@ -3076,6 +3168,45 @@ def test_retry_failed_reply_task_rejects_unsafe_runs(
     assert store.get_reply_task(task_id).status == "failed"
 
 
+def test_retry_failed_reply_task_rejects_exact_delivery_ledger(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task_id,
+        task.execution_generation,
+        owner="worker-1",
+    ).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "runtime_failure", "retryable": True},
+        owner="worker-1",
+    )
+    store.fail_reply_task(
+        task_id,
+        "runtime_failure",
+        expected_execution_generation=task.execution_generation,
+    )
+    store.record_sent_reply(
+        task.conversation_id,
+        task.trigger_message_id,
+        "delivered",
+        send_result_json=json.dumps(
+            {"agent_run_id": run.id, "operation_id": run.operation_id},
+            separators=(",", ":"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="not safely retryable"):
+        store.retry_failed_reply_task(
+            task_id,
+            run.id,
+            reason="operator_retry_after_runtime_fix",
+        )
+
+
 def test_requeue_failed_unknown_audit_reconciliation_preserves_generation(
     tmp_path: Path,
 ):
@@ -3114,7 +3245,7 @@ def test_requeue_failed_unknown_audit_reconciliation_preserves_generation(
     assert store.claim_unknown_agent_run(unknown.id, owner="reconciler").claimed
 
 
-def test_retry_failed_reply_task_rejects_older_and_audit_runs(
+def test_retry_failed_reply_task_rejects_older_run_and_reopens_safe_latest_audit(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -3164,13 +3295,15 @@ def test_retry_failed_reply_task_rejects_older_and_audit_runs(
             reason="operator_retry_after_runtime_fix",
         )
 
-    with pytest.raises(ValueError, match="not safely retryable"):
-        store.retry_failed_reply_task(
-            task_id,
-            latest.run.id,
-            reason="operator_retry_after_runtime_fix",
-        )
-    assert store.get_reply_task(task_id).status == "failed"
+    recovered = store.retry_failed_reply_task(
+        task_id,
+        latest.run.id,
+        reason="operator_retry_after_runtime_fix",
+    )
+
+    assert recovered.status == "pending"
+    assert recovered.execution_generation == task.execution_generation
+    assert recovered.error == "operator_retry_after_runtime_fix"
 
 
 def test_unknown_agent_run_confirmed_absent_rotates_task(tmp_path: Path):

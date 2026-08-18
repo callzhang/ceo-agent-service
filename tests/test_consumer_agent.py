@@ -43,6 +43,32 @@ def test_agent_cli_receipt_accepts_json_encoded_mcp_result() -> None:
     assert _agent_cli_receipt(wrapped) == receipt
 
 
+def test_agent_cli_receipt_accepts_valid_bounded_large_cli_output() -> None:
+    receipt = {
+        "cli": "dws",
+        "operation": "chat message list",
+        "operation_digest": "digest",
+        "target_identifiers": {"conversation": "cid-1"},
+        "result_digest": "result-digest",
+        "stdout": "x" * (1024 * 1024),
+        "stderr": "",
+    }
+    result = {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(receipt, ensure_ascii=False, separators=(",", ":")),
+            }
+        ]
+    }
+
+    parsed = _agent_cli_receipt(result)
+
+    assert parsed is not None
+    assert parsed["operation_digest"] == "digest"
+    assert parsed["result_digest"] == "result-digest"
+
+
 def test_consumer_records_specific_missing_agent_cli_receipt(
     store, task, context
 ):

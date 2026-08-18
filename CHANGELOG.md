@@ -10,6 +10,12 @@
 - Settle legacy unknown Audit runs when an exact channel, conversation, and
   trigger match already has a persisted direct-delivery receipt. Completed
   tasks no longer retain an unresolvable unknown-side-effect warning.
+- Atomically finish a pending unknown Audit when its delivery ledger names the
+  exact Agent run and operation, while rejecting older-generation or unrelated
+  sends. Accept bounded Agent CLI receipts up to the CLI's documented output
+  envelope instead of misclassifying valid large reads as missing receipts;
+  operators may then reopen an effect-free failed Audit turn without rotating
+  or replaying its proposal.
 - Fix meeting-alignment jobs created during the settling window so they become
   claimable when their eligibility time arrives, even if discovery does not
   encounter the same meeting again.
