@@ -8,6 +8,7 @@ from app.store import AutoReplyStore
 from app.task_agent import (
     TaskAgentRunner,
     apply_task_agent_decision,
+    build_owner_resolution_prompt,
     build_task_agent_prompt,
     process_work_item,
 )
@@ -3339,6 +3340,33 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
     assert "Memory connector status facts" in prompt
     assert "memory_connector_runtime_unavailable" in prompt
     assert '"summary":' in prompt
+
+
+def test_task_agent_prompts_require_stable_follow_up_participants():
+    prompt = build_task_agent_prompt(_work_item(), "无候选项目")
+    rejected = TaskAgentDecision.model_validate(
+        {
+            "action": "discard",
+            "discard_reason": "Previous follow-up draft lacked a stable participant.",
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "Discard invalid follow-up.",
+            "merge_reason": "",
+            "memory_recall_used": False,
+            "confidence": 1.0,
+        }
+    )
+    repair_prompt = build_owner_resolution_prompt(
+        _work_item(),
+        "无候选项目",
+        rejected,
+        validation_error="follow_up_draft.participants is required",
+    )
+
+    assert "participant has a stable user_id from a focused live" in prompt
+    assert "do not emit a\n  follow_up_draft" in prompt
+    assert "participants must be a non-empty list of\nstable user identities" in repair_prompt
 
 
 def test_task_agent_prompt_requires_existing_follow_up_repair_without_inventing_owner_evidence():

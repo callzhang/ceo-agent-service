@@ -260,6 +260,15 @@ Existing follow-up repair rule:
   suppressed with a clear evidence_check rather than emitting an invalid new
   follow_up_draft. Do not send a message as part of this repair decision.
 
+Follow-up draft participant contract:
+- Emit a follow_up_draft only when its participants list is non-empty and every
+  participant has a stable user_id from a focused live directory/contact read.
+  Include every identified recipient and responsible person relevant to that
+  follow-up; names alone are not enough.
+- If you cannot reliably identify at least one participant, do not emit a
+  follow_up_draft. You may retain a supported project update, but must omit the
+  owner-dependent TODO or follow-up rather than guessing an identity.
+
 Material-to-task boundary:
 - Decide first whether the source records a durable work update. A reference
   document, script, presentation, or other informational artifact is not a
@@ -323,6 +332,11 @@ If the source establishes a real work update but a responsible person cannot be
 uniquely resolved, keep the project owner fields and owner_evidence empty. Do
 not create a TODO or follow-up that depends on that unverified owner. Do not
 send a message while repairing this decision.
+
+For every follow_up_draft you keep, participants must be a non-empty list of
+stable user identities returned by a focused live directory/contact read; each
+entry must include user_id. If no participant can be reliably identified, omit
+the follow-up draft rather than guessing from a display name or source text.
 
 Memory connector status facts:
 {_memory_connector_prompt_status(memory_issue)}

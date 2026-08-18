@@ -45,6 +45,10 @@
 
 ### Task-agent recovery
 
+- Align task-agent follow-up prompts with the persisted participant contract:
+  every draft now requires a non-empty set of live-resolved stable user IDs,
+  and unsupported drafts are omitted instead of failing the complete work
+  summary before any external write.
 - Keep task-agent output on its native `TaskAgentDecision` contract instead of
   injecting the message-consumer envelope. Bound a stalled task run to five
   minutes total or 90 seconds without output, and stop automatic requeueing
