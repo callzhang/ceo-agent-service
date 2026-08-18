@@ -8468,7 +8468,7 @@ class AutoReplyStore:
                 with candidates as (
                     select id
                     from meeting_alignment_jobs
-                    where status in ('pending', 'retry')
+                    where status in ('waiting', 'pending', 'retry')
                       and datetime(eligible_at) <= datetime(?)
                       and (
                           available_at=''
@@ -8483,7 +8483,7 @@ class AutoReplyStore:
                     locked_at=current_timestamp,
                     updated_at=current_timestamp
                 where id in (select id from candidates)
-                  and status in ('pending', 'retry')
+                  and status in ('waiting', 'pending', 'retry')
                 returning *
                 """,
                 (now, now, limit),

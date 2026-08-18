@@ -163,6 +163,28 @@ def test_meeting_job_claim_requires_both_eligibility_and_availability(tmp_path):
     ] == [future_available]
 
 
+def test_meeting_job_claim_promotes_elapsed_waiting_job(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    waiting_job = seed_job(
+        store,
+        meeting_id="settling-meeting",
+        status="waiting",
+        eligible_at="2026-07-14 02:20:00",
+    )
+
+    assert store.claim_meeting_alignment_jobs(
+        limit=1, now="2026-07-14 02:19:59"
+    ) == []
+
+    [claimed] = store.claim_meeting_alignment_jobs(
+        limit=1, now="2026-07-14 02:20:00"
+    )
+
+    assert claimed.id == waiting_job
+    assert claimed.status == "processing"
+    assert claimed.attempts == 1
+
+
 def test_meeting_job_update_uses_an_explicit_allowlist(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = seed_job(store)

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix meeting-alignment jobs created during the settling window so they become
+  claimable when their eligibility time arrives, even if discovery does not
+  encounter the same meeting again.
+
 ### Runtime deployment
 
 - Persist the production release checkout as `CEO_SERVICE_ROOT` in the main
