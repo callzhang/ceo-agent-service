@@ -5061,13 +5061,20 @@ class AutoReplyStore:
             row = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
             return self._agent_run_from_row(row, db=db)
 
-    def settle_done_unknown_audit_runs_with_sent_reply(
+    def settle_unknown_audit_runs_with_sent_reply(
         self,
         *,
         limit: int = 100,
+        include_processing: bool = False,
         now: str | datetime | None = None,
     ) -> int:
-        """Close legacy unknown Audits only when the direct delivery ledger proves send."""
+        """Close unknown Audits when the direct delivery ledger proves the send.
+
+        Pending tasks require an exact run and operation binding. Already-completed
+        legacy tasks retain the older trigger-level fallback because their delivery
+        was terminalized before bound receipts were introduced. Processing tasks
+        are accepted only during service-start recovery, before workers run.
+        """
         if limit <= 0:
             return 0
         final_result_json = _json_object_text(
@@ -5080,30 +5087,57 @@ class AutoReplyStore:
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             rows = db.execute(
                 """
-                select runs.id, runs.reply_task_id
+                select runs.id, runs.reply_task_id, tasks.status as task_status
                 from agent_runs as runs
                 join reply_tasks as tasks on tasks.id=runs.reply_task_id
                 where runs.role='audit'
                   and runs.status='unknown'
                   and runs.side_effect_state='unknown'
-                  and tasks.status='done'
+                  and (runs.lease_owner='' or runs.lease_expires_at<=?)
                   and tasks.execution_generation=runs.execution_generation
-                  and exists (
-                      select 1
-                      from sent_replies as replies
-                      where replies.channel=tasks.channel
-                        and replies.conversation_id=tasks.conversation_id
-                        and replies.trigger_message_id=tasks.trigger_message_id
+                  and (
+                      (
+                          tasks.status='done'
+                          and exists (
+                              select 1
+                              from sent_replies as replies
+                              where replies.channel=tasks.channel
+                                and replies.conversation_id=tasks.conversation_id
+                                and replies.trigger_message_id=tasks.trigger_message_id
+                          )
+                      )
+                      or (
+                          (
+                              (tasks.status='pending' and tasks.locked_at is null)
+                              or (?=1 and tasks.status='processing')
+                          )
+                          and runs.operation_id<>''
+                          and exists (
+                              select 1
+                              from sent_replies as replies
+                              where replies.channel=tasks.channel
+                                and replies.conversation_id=tasks.conversation_id
+                                and replies.trigger_message_id=tasks.trigger_message_id
+                                and json_valid(replies.send_result_json)=1
+                                and json_extract(
+                                    replies.send_result_json, '$.agent_run_id'
+                                )=runs.id
+                                and json_extract(
+                                    replies.send_result_json, '$.operation_id'
+                                )=runs.operation_id
+                          )
+                      )
                   )
                 order by runs.updated_at, runs.id
                 limit ?
                 """,
-                (limit,),
+                (now_text, int(include_processing), limit),
             ).fetchall()
             settled = 0
             for row in rows:
                 run_id = int(row["id"])
                 task_id = int(row["reply_task_id"])
+                task_status = str(row["task_status"])
                 cursor = db.execute(
                     """
                     update agent_runs
@@ -5113,23 +5147,98 @@ class AutoReplyStore:
                         lease_expires_at='', completed_at=?, updated_at=?
                     where id=? and role='audit' and status='unknown'
                       and side_effect_state='unknown'
+                      and (lease_owner='' or lease_expires_at<=?)
                       and exists (
                           select 1
                           from reply_tasks as tasks
-                          join sent_replies as replies
-                            on replies.channel=tasks.channel
-                           and replies.conversation_id=tasks.conversation_id
-                           and replies.trigger_message_id=tasks.trigger_message_id
                           where tasks.id=agent_runs.reply_task_id
-                            and tasks.status='done'
                             and tasks.execution_generation=
                                 agent_runs.execution_generation
+                            and (
+                                (
+                                    tasks.status='done'
+                                    and exists (
+                                        select 1 from sent_replies as replies
+                                        where replies.channel=tasks.channel
+                                          and replies.conversation_id=
+                                              tasks.conversation_id
+                                          and replies.trigger_message_id=
+                                              tasks.trigger_message_id
+                                    )
+                                )
+                                or (
+                                    (
+                                        (
+                                            tasks.status='pending'
+                                            and tasks.locked_at is null
+                                        )
+                                        or (?=1 and tasks.status='processing')
+                                    )
+                                    and agent_runs.operation_id<>''
+                                    and exists (
+                                        select 1 from sent_replies as replies
+                                        where replies.channel=tasks.channel
+                                          and replies.conversation_id=
+                                              tasks.conversation_id
+                                          and replies.trigger_message_id=
+                                              tasks.trigger_message_id
+                                          and json_valid(
+                                              replies.send_result_json
+                                          )=1
+                                          and json_extract(
+                                              replies.send_result_json,
+                                              '$.agent_run_id'
+                                          )=agent_runs.id
+                                          and json_extract(
+                                              replies.send_result_json,
+                                              '$.operation_id'
+                                          )=agent_runs.operation_id
+                                    )
+                                )
+                            )
                       )
                     """,
-                    (final_result_json, now_text, now_text, run_id),
+                    (
+                        final_result_json,
+                        now_text,
+                        now_text,
+                        run_id,
+                        now_text,
+                        int(include_processing),
+                    ),
                 )
                 if cursor.rowcount != 1:
                     continue
+                if task_status in {"pending", "processing"}:
+                    task_cursor = db.execute(
+                        """
+                        update reply_tasks
+                        set status='done', locked_at=null, available_at='', error='',
+                            updated_at=?
+                        where id=?
+                          and (
+                              (status='pending' and locked_at is null)
+                              or (?=1 and status='processing')
+                          )
+                          and execution_generation=(
+                              select execution_generation from agent_runs where id=?
+                          )
+                        """,
+                        (now_text, task_id, int(include_processing), run_id),
+                    )
+                    if task_cursor.rowcount != 1:
+                        raise AgentRunLeaseLostError(
+                            f"reply task changed during delivery settlement: {task_id}"
+                        )
+                    self._insert_reconciliation_attempt_in_connection(
+                        db,
+                        run_id=run_id,
+                        task_id=task_id,
+                        codex_reason="direct delivery confirmed from exact sent reply ledger",
+                        audit_summary="direct delivery confirmed from exact sent reply ledger",
+                        send_status="completed",
+                        send_error="",
+                    )
                 settled += 1
             return settled
 
@@ -6624,7 +6733,7 @@ class AutoReplyStore:
         *,
         reason: str,
     ) -> ReplyTask:
-        """Reopen one failed task only when its persisted run is safe to retry."""
+        """Reopen a failed Consumer or Audit turn only when retry is effect-free."""
         reason = reason.strip()
         if not reason:
             raise ValueError("retry reason must be non-empty")
@@ -6656,7 +6765,8 @@ class AutoReplyStore:
                     structured_error = {}
                 retryable = (
                     row["task_status"] == "failed"
-                    and row["run_role"] == AgentRole.CONSUMER.value
+                    and row["run_role"]
+                    in {AgentRole.CONSUMER.value, AgentRole.AUDIT.value}
                     and row["run_status"] == "failed"
                     and row["side_effect_state"] == "none"
                     and isinstance(structured_error, dict)
@@ -6677,6 +6787,24 @@ class AutoReplyStore:
                               from agent_execution_receipts as receipts
                               where receipts.agent_run_id=runs.id
                                 and receipts.completed=1 and receipts.persisted=1
+                          )
+                          or exists (
+                              select 1
+                              from reply_tasks as sent_tasks
+                              join sent_replies as replies
+                                on replies.channel=sent_tasks.channel
+                               and replies.conversation_id=
+                                   sent_tasks.conversation_id
+                               and replies.trigger_message_id=
+                                   sent_tasks.trigger_message_id
+                              where sent_tasks.id=runs.reply_task_id
+                                and json_valid(replies.send_result_json)=1
+                                and json_extract(
+                                    replies.send_result_json, '$.agent_run_id'
+                                )=runs.id
+                                and json_extract(
+                                    replies.send_result_json, '$.operation_id'
+                                )=runs.operation_id
                           )
                       )
                     limit 1
