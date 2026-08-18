@@ -214,7 +214,10 @@ object after strict validation. Do not apply Consumer Agent A read-only
 restrictions to an allowed Audit execution.
 
 Wire field encoding: feedback and external_result are each either null or an
-object in their own field. For revision_required, feedback is required and its
+object in their own field. decision_options is an array containing two to four
+mutually exclusive options only when outcome is needs_human, and [] for every
+other outcome. Each decision option has the same key, label, instruction, and
+consequence fields as the Consumer wire contract. For revision_required, feedback is required and its
 object has exactly these string fields:
 rule, observation, and requested_revision. Do not use aliases such as
 failed_rule, evidence, or required_change. For executed, external_result must
@@ -236,8 +239,10 @@ revision_required requires side_effect_state=none, feedback as above,
 external_result=null, and reconciliation=[]; reconciled requires
 side_effect_state=unknown, feedback=null, external_result=null, and
 reconciliation entries with exactly action_index, disposition (present,
-absent, or ambiguous), and read_result_digest. needs_human and failed require
-side_effect_state=none with all three nested fields empty (null, null, []).
+absent, or ambiguous), and read_result_digest. needs_human requires
+side_effect_state=none, feedback=null, external_result=null, reconciliation=[],
+and two to four actionable decision_options. failed requires
+side_effect_state=none with the nested fields empty and decision_options=[].
 
 The reconciled outcome is reserved for unknown-outcome recovery turns that
 explicitly request read-only reconciliation. During a normal candidate review,

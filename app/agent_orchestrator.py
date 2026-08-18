@@ -13,6 +13,7 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     ConsumerOutcome,
     ConsumerProposal,
+    DecisionOption,
 )
 from app.agent_result import AgentError, ResultParseError, SideEffectState
 from app.codex_capacity import is_codex_provider_recovery_code
@@ -915,6 +916,28 @@ def _failed_audit_result(
     outcome: AuditOutcome,
     error: AgentError,
 ) -> AuditAgentResult:
+    decision_options: tuple[DecisionOption, ...] = ()
+    if outcome is AuditOutcome.NEEDS_HUMAN:
+        decision_options = (
+            DecisionOption(
+                key="confirmed_occurred",
+                label="确认已执行",
+                instruction="确认外部动作已经发生，并结束当前任务。",
+                consequence="不会重放外部动作。",
+            ),
+            DecisionOption(
+                key="confirmed_not_occurred",
+                label="确认未执行",
+                instruction="确认外部动作没有发生，并安全重开当前任务。",
+                consequence="Agent 会重新审核后再决定是否执行。",
+            ),
+            DecisionOption(
+                key="terminate_unrecoverable",
+                label="无法确认并停止",
+                instruction="无法确认外部结果，停止当前任务且不自动重放。",
+                consequence="保留审计记录，不执行新的外部动作。",
+            ),
+        )
     return AuditAgentResult(
         outcome=outcome,
         summary=error.code or "Audit Agent failed.",
@@ -926,5 +949,6 @@ def _failed_audit_result(
         ),
         feedback=None,
         external_result=None,
+        decision_options=decision_options,
         error=error,
     )

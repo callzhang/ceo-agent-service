@@ -77,6 +77,7 @@ def _audit_result(
     feedback = None
     external_result = None
     side_effect_state = SideEffectState.NONE
+    decision_options = []
     if outcome == "revision_required":
         feedback = {
             "rule": "current evidence",
@@ -90,6 +91,21 @@ def _audit_result(
             "verification_summary": "Verified from live state.",
             "live_result_reference": {"id": f"result-{revision}"},
         }
+    elif outcome == "needs_human":
+        decision_options = [
+            {
+                "key": "A",
+                "label": "Proceed after confirmation",
+                "instruction": "Proceed with the verified recovery path.",
+                "consequence": "Audit will verify the recovered action.",
+            },
+            {
+                "key": "B",
+                "label": "Stop safely",
+                "instruction": "Stop without executing another external action.",
+                "consequence": "No new external action will run.",
+            },
+        ]
     return AuditAgentResult.model_validate(
         {
             "outcome": outcome,
@@ -98,6 +114,7 @@ def _audit_result(
             "side_effect_state": side_effect_state.value,
             "feedback": feedback,
             "external_result": external_result,
+            "decision_options": decision_options,
             "error": {
                 "code": code,
                 "retryable": retryable,

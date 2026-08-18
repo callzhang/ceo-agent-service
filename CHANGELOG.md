@@ -49,6 +49,11 @@
 
 ### Audit visibility
 
+- Require both Consumer and Audit `needs_human` results to include two to four
+  actionable choices. Persist those choices on the History item itself so
+  post-completion conflicts and non-Agent recovery paths remain actionable even
+  when their original Agent run was already successful; missing legacy choices
+  fall back to safe re-verification or stop-without-action options.
 - Show an active work item's persisted summary in Workers Attention instead of
   its opaque internal source reference, while retaining the source type and
   underlying error state for diagnosis.

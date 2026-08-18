@@ -7661,6 +7661,115 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
     assert 'name="instruction" value="同意已核验方案并发布。"' in html
 
 
+def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-audit-choice",
+        conversation_title="管理群",
+        trigger_message_id="msg-audit-choice",
+        trigger_sender="Mina",
+        trigger_text="这个执行冲突请确认。",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="实时状态与此前回执冲突，需要管理判断。",
+        send_status="needs_human",
+    )
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    run = AgentRun.model_validate(
+        {
+            "id": 2,
+            "reply_task_id": 1,
+            "execution_generation": "initial",
+            "role": "audit",
+            "proposal_revision": 0,
+            "turn_attempt": 0,
+            "parent_agent_run_id": 1,
+            "operation_id": "op-1",
+            "status": "completed",
+            "final_result_json": json.dumps(
+                {
+                    "outcome": "needs_human",
+                    "summary": "实时状态与此前回执冲突，需要管理判断。",
+                    "proposal_revision": 0,
+                    "side_effect_state": "none",
+                    "feedback": None,
+                    "external_result": None,
+                    "reconciliation": [],
+                    "decision_options": [
+                        {
+                            "key": "A",
+                            "label": "恢复到已确认位置",
+                            "instruction": "把材料恢复到此前已确认的位置。",
+                            "consequence": "会执行一次经过审计的位置调整。",
+                        },
+                        {
+                            "key": "B",
+                            "label": "保持当前状态",
+                            "instruction": "保持当前状态并结束本事项。",
+                            "consequence": "不会执行新的外部动作。",
+                        },
+                    ],
+                    "error": {
+                        "code": "live_state_conflict",
+                        "retryable": False,
+                        "authorization_required": False,
+                    },
+                }
+            ),
+            "created_at": "2026-08-18 10:00:00",
+            "updated_at": "2026-08-18 10:00:00",
+        }
+    )
+
+    html = audit_web_module._needs_human_decision_card(attempt, [run])
+
+    assert "A. 恢复到已确认位置" in html
+    assert "B. 保持当前状态" in html
+    assert "不会执行新的外部动作。" in html
+
+
+def test_needs_human_detail_prefers_options_persisted_on_actionable_attempt(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-reopened-choice",
+        conversation_title="管理群",
+        trigger_message_id="msg-reopened-choice",
+        trigger_sender="Mina",
+        trigger_text="完成后核验发现状态冲突。",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="原动作已完成，但实时状态后来发生变化。",
+        send_status="needs_human",
+        human_decision_options_json=json.dumps(
+            [
+                {
+                    "key": "A",
+                    "label": "恢复已确认状态",
+                    "instruction": "恢复到此前已确认的状态。",
+                    "consequence": "会执行一次经过审计的恢复动作。",
+                },
+                {
+                    "key": "B",
+                    "label": "保持当前状态",
+                    "instruction": "保持当前状态并关闭事项。",
+                    "consequence": "不会执行新的外部动作。",
+                },
+            ]
+        ),
+    )
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+
+    html = audit_web_module._needs_human_decision_card(attempt, [])
+
+    assert "A. 恢复已确认状态" in html
+    assert "B. 保持当前状态" in html
+    assert "不会执行新的外部动作。" in html
+
+
 def test_reviewed_reply_api_rejects_mutable_text_lookup_payload(tmp_path: Path):
     client = TestClient(
         create_audit_app(tmp_path / "worker.sqlite3"),

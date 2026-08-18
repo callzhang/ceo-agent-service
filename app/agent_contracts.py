@@ -236,6 +236,7 @@ class AuditAgentResult(BaseModel):
     feedback: AuditFeedback | None
     external_result: AuditExternalResult | None
     reconciliation: tuple[AuditReconciliation, ...] = ()
+    decision_options: tuple[DecisionOption, ...] = ()
     error: AgentError
 
     @field_validator("outcome", mode="before")
@@ -248,9 +249,9 @@ class AuditAgentResult(BaseModel):
     def accept_json_side_effect_state(cls, value: object) -> object:
         return SideEffectState(value) if isinstance(value, str) else value
 
-    @field_validator("reconciliation", mode="before")
+    @field_validator("reconciliation", "decision_options", mode="before")
     @classmethod
-    def accept_json_reconciliation(cls, value: object) -> object:
+    def accept_json_arrays(cls, value: object) -> object:
         return tuple(value) if isinstance(value, list) else value
 
     @model_validator(mode="after")
@@ -279,4 +280,12 @@ class AuditAgentResult(BaseModel):
                 raise ValueError("non-executed result cannot claim a side effect")
         if self.outcome is not AuditOutcome.RECONCILED and self.reconciliation:
             raise ValueError("reconciliation entries are only valid for reconciled outcome")
+        if self.outcome is AuditOutcome.NEEDS_HUMAN:
+            if not 2 <= len(self.decision_options) <= 4:
+                raise ValueError("needs_human requires two to four decision options")
+            keys = [option.key for option in self.decision_options]
+            if len(keys) != len(set(keys)):
+                raise ValueError("decision option keys must be unique")
+        elif self.decision_options:
+            raise ValueError("decision options are only valid for needs_human")
         return self

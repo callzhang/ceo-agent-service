@@ -820,6 +820,9 @@ def _agent_result_event(result) -> dict[str, object]:
             "reconciliation": [
                 item.model_dump(mode="json") for item in result.reconciliation
             ],
+            "decision_options": [
+                option.model_dump(mode="json") for option in result.decision_options
+            ],
             "error_code": error.code,
             "error_retryable": error.retryable,
             "error_authorization_required": error.authorization_required,
@@ -884,6 +887,24 @@ def _audit_protocol_result(
     authorization_required: bool = False,
 ) -> AuditAgentResult:
     executed = outcome == "executed"
+    decision_options = (
+        [
+            {
+                "key": "A",
+                "label": "Proceed after review",
+                "instruction": "Proceed with the verified candidate after review.",
+                "consequence": "Audit may execute the reviewed external action.",
+            },
+            {
+                "key": "B",
+                "label": "Stop safely",
+                "instruction": "Stop without executing another external action.",
+                "consequence": "No new external action will run.",
+            },
+        ]
+        if outcome == "needs_human"
+        else []
+    )
     return AuditAgentResult.model_validate(
         {
             "outcome": outcome,
@@ -900,6 +921,7 @@ def _audit_protocol_result(
                 if executed
                 else None
             ),
+            "decision_options": decision_options,
             "error": {
                 "code": code,
                 "retryable": retryable,

@@ -94,6 +94,7 @@ def _audit_wire_payload(**overrides: object) -> dict[str, object]:
         "feedback": None,
         "external_result": None,
         "reconciliation": [],
+        "decision_options": [],
         "error_code": "dependency_failed",
         "error_retryable": True,
         "error_authorization_required": False,
@@ -124,6 +125,7 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
         },
         "external_result": None,
         "reconciliation": [],
+        "decision_options": [],
         "error": _error(),
     }
     payload.update(overrides)
@@ -172,7 +174,13 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
                 },
             ),
         ),
-        (AuditAgentWireResult, _audit_wire_payload(outcome="needs_human")),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(
+                outcome="needs_human",
+                decision_options=_decision_options(),
+            ),
+        ),
         (AuditAgentWireResult, _audit_wire_payload(outcome="failed")),
         (
             AuditAgentWireResult,
@@ -448,6 +456,28 @@ def test_needs_human_requires_actionable_options_and_wire_preserves_them():
             "error_retryable": False,
             "error_authorization_required": False,
         }
+    ).to_result()
+
+    assert result.decision_options[0].instruction == options[0]["instruction"]
+
+
+def test_audit_needs_human_requires_actionable_options_and_wire_preserves_them():
+    options = _decision_options()
+    with pytest.raises(ValidationError, match="decision options"):
+        AuditAgentResult.model_validate(
+            _audit_payload(
+                outcome="needs_human",
+                feedback=None,
+            )
+        )
+
+    result = AuditAgentWireResult.model_validate(
+        _audit_wire_payload(
+            outcome="needs_human",
+            decision_options=options,
+            error_code="decision_required",
+            error_retryable=False,
+        )
     ).to_result()
 
     assert result.decision_options[0].instruction == options[0]["instruction"]
@@ -757,6 +787,7 @@ def test_audit_wire_result_preserves_nested_result_fields():
             "feedback": None,
             "external_result": None,
             "reconciliation": [],
+            "decision_options": _decision_options(),
             "error_code": "decision_required",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -765,6 +796,7 @@ def test_audit_wire_result_preserves_nested_result_fields():
 
     assert result.outcome is AuditOutcome.NEEDS_HUMAN
     assert result.error.code == "decision_required"
+    assert result.decision_options[0].key == "A"
 
 
 def test_audit_wire_result_preserves_revision_feedback_fields():

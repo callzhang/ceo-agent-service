@@ -120,6 +120,7 @@ class ReplyAttempt(BaseModel):
     audit_documents_json: str = "[]"
     audit_tool_events_json: str = "[]"
     audit_summary: str = ""
+    human_decision_options_json: str = "[]"
     oa_process_instance_id: str = ""
     oa_task_id: str = ""
     oa_url: str = ""
@@ -897,6 +898,7 @@ class AutoReplyStore:
                     audit_documents_json text not null default '[]',
                     audit_tool_events_json text not null default '[]',
                     audit_summary text not null default '',
+                    human_decision_options_json text not null default '[]',
                     oa_process_instance_id text not null default '',
                     oa_task_id text not null default '',
                     oa_url text not null default '',
@@ -1972,6 +1974,7 @@ class AutoReplyStore:
                 ("audit_documents_json", "text not null default '[]'"),
                 ("audit_tool_events_json", "text not null default '[]'"),
                 ("audit_summary", "text not null default ''"),
+                ("human_decision_options_json", "text not null default '[]'"),
                 ("oa_process_instance_id", "text not null default ''"),
                 ("oa_task_id", "text not null default ''"),
                 ("oa_url", "text not null default ''"),
@@ -10560,6 +10563,7 @@ class AutoReplyStore:
         audit_documents_json: str = "[]",
         audit_tool_events_json: str = "[]",
         audit_summary: str = "",
+        human_decision_options_json: str = "[]",
         oa_process_instance_id: str = "",
         oa_task_id: str = "",
         oa_url: str = "",
@@ -10598,6 +10602,7 @@ class AutoReplyStore:
                     audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
+                    human_decision_options_json,
                     oa_process_instance_id,
                     oa_task_id,
                     oa_url,
@@ -10615,7 +10620,7 @@ class AutoReplyStore:
                     send_status,
                     channel
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -10635,6 +10640,7 @@ class AutoReplyStore:
                     audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
+                    human_decision_options_json,
                     oa_process_instance_id,
                     oa_task_id,
                     oa_url,
@@ -10681,6 +10687,7 @@ class AutoReplyStore:
         audit_documents_json: str = "[]",
         audit_tool_events_json: str = "[]",
         audit_summary: str = "",
+        human_decision_options_json: str = "[]",
         oa_process_instance_id: str = "",
         oa_task_id: str = "",
         oa_url: str = "",
@@ -10722,6 +10729,7 @@ class AutoReplyStore:
                 audit_documents_json=audit_documents_json,
                 audit_tool_events_json=audit_tool_events_json,
                 audit_summary=audit_summary,
+                human_decision_options_json=human_decision_options_json,
                 oa_process_instance_id=oa_process_instance_id,
                 oa_task_id=oa_task_id,
                 oa_url=oa_url,
@@ -10759,6 +10767,7 @@ class AutoReplyStore:
                     audit_documents_json=?,
                     audit_tool_events_json=?,
                     audit_summary=?,
+                    human_decision_options_json=?,
                     oa_process_instance_id=?,
                     oa_task_id=?,
                     oa_url=?,
@@ -10800,6 +10809,7 @@ class AutoReplyStore:
                     audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
+                    human_decision_options_json,
                     oa_process_instance_id,
                     oa_task_id,
                     oa_url,
@@ -10853,6 +10863,7 @@ class AutoReplyStore:
         document_action_result_json: str | None = None,
         audit_tool_events_json: str | None = None,
         audit_summary: str | None = None,
+        human_decision_options_json: str | None = None,
         send_status: str | None = None,
         send_error: str | None = None,
         retry_count: int | None = None,
@@ -10882,6 +10893,7 @@ class AutoReplyStore:
             document_action_result_json=document_action_result_json,
             audit_tool_events_json=audit_tool_events_json,
             audit_summary=audit_summary,
+            human_decision_options_json=human_decision_options_json,
             send_status=send_status,
             send_error=send_error,
             retry_count=retry_count,
@@ -10917,6 +10929,7 @@ class AutoReplyStore:
         codex_transcript_end_line: int,
         audit_tool_events_json: str,
         audit_summary: str,
+        human_decision_options_json: str = "[]",
         send_status: str,
         send_error: str,
         channel: str,
@@ -10975,10 +10988,11 @@ class AutoReplyStore:
                     agent_run_id, codex_reason, codex_session_id,
                     codex_transcript_start_line, codex_transcript_end_line,
                     audit_tool_events_json, audit_summary,
+                    human_decision_options_json,
                     oa_process_instance_id, oa_task_id, oa_url, oa_action,
                     oa_remark, oa_action_result_json, send_status, send_error,
                     channel
-                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -10993,6 +11007,7 @@ class AutoReplyStore:
                     codex_transcript_end_line,
                     audit_tool_events_json,
                     audit_summary,
+                    human_decision_options_json,
                     persisted_process_id,
                     persisted_task_id,
                     persisted_oa_url,
@@ -11363,6 +11378,7 @@ class AutoReplyStore:
             "document_action_result_json",
             "audit_tool_events_json",
             "audit_summary",
+            "human_decision_options_json",
             "send_status",
             "send_error",
             "retry_count",
