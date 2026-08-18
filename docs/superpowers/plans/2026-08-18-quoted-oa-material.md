@@ -287,10 +287,11 @@ Expected: all selected tests pass, including the existing historical-context and
 
 - [x] **Step 5: Run lint for changed Python files**
 
-Run:
+Run (this checkout's virtual environment does not install Ruff; use the configured machine-level executable):
 
 ```bash
-.venv/bin/ruff check app/worker.py tests/test_agent_runtime_worker.py
+/Users/derek/miniforge3/bin/ruff check \
+  app/worker.py tests/test_agent_runtime_worker.py
 ```
 
 Expected: no lint errors.
@@ -307,7 +308,7 @@ git commit -m "fix: bind quoted OA approval material"
 **Files:**
 - Modify: `docs/reply-worker-reliability.md:92-97`
 
-- [ ] **Step 1: Update the OA material reliability paragraph**
+- [x] **Step 1: Update the OA material reliability paragraph**
 
 Append to the paragraph beginning `OA 待办扫描产生的是合成 trigger`:
 
@@ -318,7 +319,7 @@ process/task ID 时补充同一种 `dingtalk_oa` 材料，并把来源绑定到�
 trigger 的原始字段，也不生成审批动作。识别引用卡片本身不会触发同意、拒绝、退回或评论。
 ```
 
-- [ ] **Step 2: Run documentation and diff checks**
+- [x] **Step 2: Run documentation and diff checks**
 
 Run:
 
@@ -329,7 +330,7 @@ rg -n "引用消息|被引用消息|不完整引用" docs/reply-worker-reliabili
 
 Expected: `git diff --check` prints nothing; `rg` prints the new reliability paragraph.
 
-- [ ] **Step 3: Run focused worker suites**
+- [x] **Step 3: Run focused worker suites**
 
 Run:
 
@@ -343,7 +344,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 4: Run the full repository test command**
+- [x] **Step 4: Run the full repository test command**
 
 Run:
 
@@ -353,7 +354,7 @@ npm test
 
 Expected: backend and frontend suites pass with no new failures. Record exact counts in the handoff.
 
-- [ ] **Step 5: Commit documentation**
+- [x] **Step 5: Commit documentation**
 
 ```bash
 git add docs/reply-worker-reliability.md
