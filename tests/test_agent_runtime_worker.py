@@ -3256,6 +3256,44 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
     assert executor.audit_attempts == 4
 
 
+def test_oa_material_binds_exact_target_from_quoted_approval_card(tmp_path: Path):
+    quoted_url = (
+        "https://aflow.dingtalk.com/detail"
+        "?procInstId=quoted-proc&taskId=quoted-task"
+    )
+    trigger = _message("@CEO Agent 请审阅这条审批").model_copy(
+        update={
+            "quoted_message_id": "quoted-oa-1",
+            "quoted_content": f"[OA 审批] {quoted_url}",
+        }
+    )
+    worker, runner, dws = _worker(
+        tmp_path,
+        [trigger],
+        [ScriptedRun(_result(ScriptOutcome.NO_ACTION, summary="Review only."))],
+    )
+    _enqueue(worker.store, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    material = next(
+        item for item in runner.calls[0][2].materials if item.kind == "dingtalk_oa"
+    )
+    assert json.loads(material.reference) == {
+        "process_instance_id": "quoted-proc",
+        "task_id": "quoted-task",
+        "url": quoted_url,
+    }
+    assert material.source_message_id == "quoted-oa-1"
+    assert material.read_commands == (
+        ".venv/bin/python -m app.cli read-oa-approval-detail "
+        "--instance-id quoted-proc",
+        "dws oa approval tasks --instance-id quoted-proc --format json",
+    )
+    assert dws.forbidden_material_reads == []
+    assert len(runner.calls) == 1
+
+
 def test_oa_material_does_not_recover_target_from_historical_context(tmp_path: Path):
     historical = _message(
         "https://aflow.dingtalk.com/detail?procInstId=old-proc&taskId=old-task",
