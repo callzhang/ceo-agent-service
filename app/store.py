@@ -6696,14 +6696,22 @@ class AutoReplyStore:
             for row in rows:
                 if not self._is_native_codex_auth_failure_row(row):
                     continue
+                next_generation = uuid4().hex
                 cursor = db.execute(
                     """
                     update reply_tasks
                     set status='pending', attempts=0, locked_at=null,
-                        available_at='', error=?, recovery_code='', updated_at=?
+                        available_at='', execution_generation=?, error=?,
+                        recovery_code='', updated_at=?
                     where id=? and status='failed' and execution_generation=?
                     """,
-                    (reason, now_text, row["id"], row["execution_generation"]),
+                    (
+                        next_generation,
+                        reason,
+                        now_text,
+                        row["id"],
+                        row["execution_generation"],
+                    ),
                 )
                 if cursor.rowcount == 1:
                     recovered.append(int(row["id"]))

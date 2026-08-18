@@ -2935,6 +2935,19 @@ def test_recover_failed_native_codex_auth_task_requires_no_effect_or_delivery(tm
     assert recovered.status == "pending"
     assert recovered.attempts == 0
     assert recovered.error == "codex_auth_recovered"
+    assert recovered.execution_generation != task.execution_generation
+
+    rerun = store.claim_agent_run(
+        task_id,
+        recovered.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-2",
+    )
+    assert rerun.claimed is True
 
     claimed = store.claim_reply_task(task_id)
     assert claimed is not None
