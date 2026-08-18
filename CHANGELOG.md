@@ -49,6 +49,9 @@
   every draft now requires a non-empty set of live-resolved stable user IDs,
   and unsupported drafts are omitted instead of failing the complete work
   summary before any external write.
+- Allow a required live DWS read up to three minutes without Codex JSONL output
+  while retaining the five-minute total task-agent cap. This avoids falsely
+  terminating material-backed decisions during a slow read.
 - Keep task-agent output on its native `TaskAgentDecision` contract instead of
   injecting the message-consumer envelope. Bound a stalled task run to five
   minutes total or 90 seconds without output, and stop automatic requeueing

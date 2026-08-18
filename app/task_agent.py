@@ -31,7 +31,10 @@ from app.todo_completion import complete_follow_ups_for_todo
 
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 TASK_AGENT_MAX_TIMEOUT_SECONDS = 300
-TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS = 90
+# A required live DWS read can legitimately take longer than 90 seconds
+# without producing Codex JSONL output. The total five-minute bound still
+# prevents a stalled task from monopolizing the maintenance loop.
+TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS = 180
 RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
 FOLLOW_UP_WORK_START_HOUR = 9
 FOLLOW_UP_WORK_END_HOUR = 18

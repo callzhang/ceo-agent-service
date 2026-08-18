@@ -3973,7 +3973,7 @@ def test_task_agent_codex_runner_caps_stalled_codex_timeouts(tmp_path):
     )
 
     assert runner.timeout_seconds == 300
-    assert runner.idle_timeout_seconds == 90
+    assert runner.idle_timeout_seconds == 180
 
 
 def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
