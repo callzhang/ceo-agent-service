@@ -3905,6 +3905,26 @@ def test_effect_registry_accepts_registered_direct_message_readback():
     )
 
 
+def test_effect_registry_accepts_document_move_info_readback():
+    registry = McpToolEffectRegistry.default()
+
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "doc info",
+            "target_identifiers": {"node": "node-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "doc +move",
+            "target_identifiers": {"node": "node-1"},
+        },
+        registry,
+    )
+
+
 def test_effect_registry_accepts_registered_reply_and_todo_readbacks():
     registry = McpToolEffectRegistry.default()
 

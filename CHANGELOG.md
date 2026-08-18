@@ -17,6 +17,9 @@
   instead of truncated JSON that appears to have no receipt; operators may then
   reopen an effect-free failed Audit turn without rotating or replaying its
   proposal.
+- Recognize `doc info` on the same document node as the live readback for a
+  controlled `doc +move`, so a completed document move can reconcile from its
+  persisted digest instead of exhausting retries as unrelated evidence.
 - Fix meeting-alignment jobs created during the settling window so they become
   claimable when their eligibility time arrives, even if discovery does not
   encounter the same meeting again.

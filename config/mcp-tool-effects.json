@@ -20,6 +20,7 @@
             {"read": "chat +chat-messages", "write": "chat +messages-reply"},
             {"read": "chat +chat-messages", "write": "chat message reply"},
             {"read": "chat message reaction list", "write": "chat message reaction add"},
+            {"read": "doc info", "write": "doc +move"},
             {
               "read": "mail message verify",
               "write": "mail message reply",
