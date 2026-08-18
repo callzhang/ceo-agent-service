@@ -1,5 +1,7 @@
 # CEO Agent Service
 
+![CEO Agent capabilities](docs/assets/ceo-agent-capabilities.png)
+
 面向企业管理者的本地优先钉钉消息自动处理系统。
 
 CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批、日程邀请和会议权限请求，把需要判断的消息交给 Codex Agent 处理，并把每一次决策、证据、发送结果和错误状态写入本地 SQLite，方便审计、反馈和持续修复。
