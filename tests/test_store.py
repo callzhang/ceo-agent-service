@@ -3251,6 +3251,47 @@ def test_suspended_unknown_run_requires_structured_manual_resolution(
     assert store.list_suspended_unknown_agent_runs(limit=10) == []
 
 
+def test_manual_resolution_closes_suspended_unknown_run_requeued_pending(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store, task_id, task.execution_generation, owner="worker-1"
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker-1",
+    )
+    store.claim_unknown_agent_run(run.id, owner="reconciler-1")
+    store.defer_unknown_agent_run_reconciliation(
+        run.id,
+        {"code": "reconciliation_needs_human", "retryable": False},
+        owner="reconciler-1",
+        expected_execution_generation=task.execution_generation,
+        next_attempt_at="",
+        suspended=True,
+    )
+    store.requeue_reply_task(
+        task.id,
+        "unknown_agent_run_reconciliation",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    resolved = store.resolve_agent_run_manually(
+        run.id,
+        expected_execution_generation=task.execution_generation,
+        resolution="confirmed_occurred",
+        reason="外部回读已验证受控操作发生",
+        actor="Codex",
+    )
+
+    assert resolved.resolution == "confirmed_occurred"
+    assert store.get_agent_run(run.id).status == "completed"
+    assert store.get_reply_task(task.id).status == "done"
+
+
 def test_suspended_unknown_run_remains_visible_until_manual_resolution(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

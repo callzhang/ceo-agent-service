@@ -7,6 +7,9 @@
 - Persist the production release checkout as `CEO_SERVICE_ROOT` in the main
   LaunchAgent. Reloading the job can no longer silently fall back to the
   developer checkout after inherited shell variables are cleared.
+- Allow a suspended Audit run to be closed from its requeued `pending` task
+  after a structured live reconciliation confirms the original effect. The
+  closure remains generation-bound and rejects active work.
 
 ### Weekly OKR reporting
 

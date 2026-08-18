@@ -5386,7 +5386,7 @@ class AutoReplyStore:
                 row is not None
                 and row["status"] == "unknown"
                 and bool(row["reconciliation_suspended"])
-                and row["task_status"] == "processing"
+                and row["task_status"] in {"pending", "processing"}
             )
             is_failed_with_confirmed_effect = (
                 row is not None
