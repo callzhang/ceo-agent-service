@@ -51,7 +51,12 @@ from app.config import load_env_file
 from app.dingtalk_models import DingTalkMessage
 from app.setup_wizard_models import SetupWizardEvent
 from app.setup_wizard import SETUP_WIZARD_STEPS
-from app.store import AgentRole, AgentRun, AutoReplyStore
+from app.store import (
+    MAX_RECONCILIATION_EVENTS,
+    AgentRole,
+    AgentRun,
+    AutoReplyStore,
+)
 from app.wechat.models import WechatMessage
 
 
@@ -6931,6 +6936,73 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
     attempt = store.get_reply_attempt(response.json()["attempt_id"])
     assert attempt is not None
     assert "untrusted-client-value" not in attempt.audit_summary
+
+
+def test_suspended_unknown_run_exposes_safe_resolution_choices_in_history(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-suspended",
+        conversation_title="Operations",
+        single_chat=False,
+        trigger_message_id="msg-suspended",
+        trigger_create_time="2026-08-17 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="请处理并确认结果。",
+        trigger_message_json="{}",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    run = _claim_audit_run(store, task).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
+        owner="worker",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set reconciliation_event_count=? where id=?",
+            (MAX_RECONCILIATION_EVENTS, run.id),
+        )
+
+    assert store.suspend_reconciliation_event_limited_agent_runs() == 1
+    attempt = store.get_latest_reply_attempt_for_trigger(
+        task.conversation_id,
+        task.trigger_message_id,
+    )
+    assert attempt is not None
+
+    history_html = render_attempt_list(store)
+    assert "确认已执行" in history_html
+    assert "确认未执行" in history_html
+    assert "无法确认并停止" in history_html
+    assert "重试当前任务" not in history_html
+    assert f'/agent-runs/{run.id}/resolution-form' in history_html
+
+    status, detail_html = render_attempt_detail(store, attempt.id)
+    assert status == 200
+    assert "需要你确认外部结果" in detail_html
+    assert "确认已执行" in detail_html
+    assert "确认未执行" in detail_html
+    assert "无法确认并停止" in detail_html
+    assert "其他处理指令" not in detail_html
+
+    client = loopback_test_client(create_audit_app(store.path))
+    response = client.post(
+        f"/agent-runs/{run.id}/resolution-form",
+        data={
+            "execution_generation": task.execution_generation,
+            "resolution": "confirmed_not_occurred",
+            "reason": "已回读外部系统，确认动作未发生",
+            "return_to": "/history",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/history"
+    assert store.get_agent_run(run.id).side_effect_state == "none"
+    assert store.get_reply_task(task.id).status == "pending"
 
 
 def test_agent_run_resolution_handler_rejects_free_text_without_enum(tmp_path: Path):

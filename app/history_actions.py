@@ -47,6 +47,7 @@ def reply_history_attention(
     task: ReplyTask | None,
     decision_options: tuple[DecisionOption, ...],
     side_effect_state: str,
+    requires_reconciliation_resolution: bool = False,
 ) -> HistoryAttention | None:
     external_effects = {
         "none": "未执行任何外部动作",
@@ -83,6 +84,30 @@ def reply_history_attention(
         )
 
     if status == "needs_human":
+        if requires_reconciliation_resolution:
+            return HistoryAttention(
+                kind="needs_manager",
+                reason=reason,
+                external_effect=external_effect,
+                actions=(
+                    HistoryAction(
+                        "confirmed_occurred",
+                        "确认已执行",
+                        consequence="确认外部动作已经发生，并结束当前任务。",
+                    ),
+                    HistoryAction(
+                        "confirmed_not_occurred",
+                        "确认未执行",
+                        consequence="确认外部动作没有发生，并安全重开同一个任务。",
+                    ),
+                    HistoryAction(
+                        "terminate_unrecoverable",
+                        "无法确认并停止",
+                        consequence="保留审计记录并停止处理，不会自动重放。",
+                    ),
+                    HistoryAction("details", "技术详情"),
+                ),
+            )
         choices = tuple(
             HistoryAction(
                 option.key,

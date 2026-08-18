@@ -5126,6 +5126,7 @@ class AutoReplyStore:
             select reply_tasks.channel, reply_tasks.conversation_id,
                    reply_tasks.conversation_title, reply_tasks.trigger_message_id,
                    reply_tasks.trigger_sender, reply_tasks.trigger_text,
+                   reply_tasks.oa_url,
                    agent_runs.codex_session_id, agent_runs.transcript_start_line,
                    agent_runs.transcript_end_line, agent_runs.tool_events_json
             from reply_tasks
@@ -5136,16 +5137,21 @@ class AutoReplyStore:
         ).fetchone()
         if row is None:
             raise ValueError("reconciliation run and task were not found")
+        oa_url = str(row["oa_url"] or "")
+        oa_process_instance_id, oa_task_id = AutoReplyStore._oa_identifiers_from_url(
+            oa_url
+        )
         cursor = db.execute(
             """
             insert into reply_attempts (
                 conversation_id, conversation_title, trigger_message_id,
                 trigger_sender, trigger_text, action, sensitivity_kind,
-                codex_reason, codex_session_id,
+                agent_run_id, codex_reason, codex_session_id,
                 codex_transcript_start_line, codex_transcript_end_line,
                 audit_tool_events_json, audit_summary, send_status,
-                send_error, channel
-            ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                send_error, channel, oa_process_instance_id, oa_task_id,
+                oa_url, oa_action
+            ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["conversation_id"],
@@ -5153,6 +5159,7 @@ class AutoReplyStore:
                 row["trigger_message_id"],
                 row["trigger_sender"],
                 row["trigger_text"],
+                run_id,
                 codex_reason,
                 row["codex_session_id"],
                 row["transcript_start_line"],
@@ -5162,6 +5169,10 @@ class AutoReplyStore:
                 send_status,
                 send_error,
                 row["channel"],
+                oa_process_instance_id,
+                oa_task_id,
+                oa_url,
+                "review" if oa_process_instance_id else "",
             ),
         )
         return int(cursor.lastrowid)
@@ -5196,7 +5207,7 @@ class AutoReplyStore:
         *,
         now: str | datetime | None = None,
     ) -> int:
-        """Stop exhausted read-only recoveries before they can be reclaimed."""
+        """Close exhausted read-only recoveries as one actionable human item."""
         structured_error = _json_object_text(
             {
                 "code": RECONCILIATION_EVENT_LIMIT_ERROR,
@@ -5209,32 +5220,77 @@ class AutoReplyStore:
             field="structured_error",
         )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            cursor = db.execute(
+            rows = db.execute(
                 """
-                update agent_runs
-                set structured_error_json=?, reconciliation_suspended=1,
-                    reconciliation_next_attempt_at='', lease_owner='',
-                    lease_expires_at='', updated_at=?
-                where status='unknown' and role='audit'
-                  and reconciliation_suspended=0
-                  and reconciliation_event_count>=?
-                  and (lease_owner='' or lease_expires_at<=?)
-                  and exists (
-                      select 1 from reply_tasks
-                      where reply_tasks.id=agent_runs.reply_task_id
-                        and reply_tasks.execution_generation=
-                            agent_runs.execution_generation
-                        and reply_tasks.status in ('pending', 'processing', 'failed')
+                select agent_runs.id as run_id,
+                       agent_runs.reply_task_id as task_id
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.status='unknown'
+                  and agent_runs.role='audit'
+                  and reply_tasks.execution_generation=
+                      agent_runs.execution_generation
+                  and (
+                      (
+                          agent_runs.reconciliation_suspended=0
+                          and agent_runs.reconciliation_event_count>=?
+                          and (agent_runs.lease_owner=''
+                               or agent_runs.lease_expires_at<=?)
+                          and reply_tasks.status in ('pending', 'processing', 'failed')
+                      )
+                      or (
+                          agent_runs.reconciliation_suspended=1
+                          and reply_tasks.status in ('pending', 'processing')
+                      )
                   )
+                order by agent_runs.id
                 """,
-                (
-                    structured_error,
-                    now_text,
-                    MAX_RECONCILIATION_EVENTS,
-                    now_text,
-                ),
-            )
-            return cursor.rowcount
+                (MAX_RECONCILIATION_EVENTS, now_text),
+            ).fetchall()
+            for row in rows:
+                run_id = int(row["run_id"])
+                task_id = int(row["task_id"])
+                run_cursor = db.execute(
+                    """
+                    update agent_runs
+                    set structured_error_json=?, reconciliation_suspended=1,
+                        reconciliation_next_attempt_at='', lease_owner='',
+                        lease_expires_at='', updated_at=?
+                    where id=? and status='unknown' and role='audit'
+                    """,
+                    (structured_error, now_text, run_id),
+                )
+                task_cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='failed', locked_at=null, available_at='',
+                        error=?, updated_at=?
+                    where id=? and status in ('pending', 'processing', 'failed')
+                    """,
+                    (
+                        RECONCILIATION_EVENT_LIMIT_ERROR,
+                        now_text,
+                        task_id,
+                    ),
+                )
+                if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
+                    raise AgentRunLeaseLostError(
+                        f"reconciliation suspension target is stale: {run_id}"
+                    )
+                self._insert_reconciliation_attempt_in_connection(
+                    db,
+                    run_id=run_id,
+                    task_id=task_id,
+                    codex_reason=RECONCILIATION_EVENT_LIMIT_ERROR,
+                    audit_summary=(
+                        "自动核对已达到安全上限，外部动作结果仍无法确认。"
+                        "请先从外部系统回读，再选择确认已执行、确认未执行或停止处理；"
+                        "系统不会自动重放。"
+                    ),
+                    send_status="needs_human",
+                    send_error=RECONCILIATION_EVENT_LIMIT_ERROR,
+                )
+            return len(rows)
 
     def resume_suspended_unknown_agent_run(
         self,
@@ -5390,7 +5446,7 @@ class AutoReplyStore:
                 row is not None
                 and row["status"] == "unknown"
                 and bool(row["reconciliation_suspended"])
-                and row["task_status"] in {"pending", "processing"}
+                and row["task_status"] in {"pending", "processing", "failed"}
             )
             is_failed_with_confirmed_effect = (
                 row is not None

@@ -227,6 +227,60 @@ def test_event_limited_unknown_run_is_suspended_before_pending_claim(tmp_path):
     assert store.peek_reply_tasks(limit=10) == []
 
 
+def test_suspended_unknown_run_closes_pending_task_once_for_human_resolution(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    oa_url = (
+        "https://aflow.dingtalk.com/process?procInstId=process-123&taskId=task-456"
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute("update reply_tasks set oa_url=? where id=?", (oa_url, task.id))
+    run = _claim_audit(store, task)
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
+        owner="audit",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="audit-recovery")
+    assert claim.claimed
+    store.defer_unknown_agent_run_reconciliation(
+        run.id,
+        {"code": "audit_reconciliation_evidence_mismatch", "retryable": False},
+        owner="audit-recovery",
+        expected_execution_generation=task.execution_generation,
+        next_attempt_at="",
+        suspended=True,
+    )
+    store.requeue_reply_task(
+        task.id,
+        "agent_run_unavailable",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    assert store.suspend_reconciliation_event_limited_agent_runs() == 1
+
+    closed_task = store.get_reply_task(task.id)
+    attempt = store.get_latest_reply_attempt_for_trigger(
+        task.conversation_id,
+        task.trigger_message_id,
+    )
+    assert closed_task is not None and closed_task.status == "failed"
+    assert closed_task.available_at == ""
+    assert attempt is not None and attempt.send_status == "needs_human"
+    assert attempt.agent_run_id == run.id
+    assert attempt.send_error == RECONCILIATION_EVENT_LIMIT_ERROR
+    assert attempt.oa_process_instance_id == "process-123"
+    assert attempt.oa_task_id == "task-456"
+    assert attempt.oa_url == oa_url
+    attempt_count = store.count_reply_attempts()
+
+    assert store.suspend_reconciliation_event_limited_agent_runs() == 0
+    assert store.count_reply_attempts() == attempt_count
+    assert store.claim_reply_task(task.id) is None
+
+
 def _normalize_read_skill_event(store, task, payload):
     return AgentTurnProcess(
         store=store,
