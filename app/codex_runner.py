@@ -131,6 +131,7 @@ class CodexRunner:
         preserve_native_model_config: bool = False,
         preserve_native_instructions: bool = False,
         preserve_native_approval_config: bool = False,
+        ignore_user_config: bool = False,
     ) -> list[str]:
         if approval_policy not in {"untrusted", "never"}:
             raise ValueError("unsupported approval policy")
@@ -182,6 +183,7 @@ class CodexRunner:
         )
         common_options = [
             "--json",
+            *(["--ignore-user-config"] if ignore_user_config else []),
             *(
                 []
                 if preserve_native_model_config

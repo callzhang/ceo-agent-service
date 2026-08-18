@@ -12,6 +12,8 @@
 - Run scoring with the dedicated weekly-OKR prompt and schema only. It no
   longer inherits the interactive message-consumer contract, which requires
   unrelated memory and Audit steps before it can return a report.
+- Use an isolated Codex CLI configuration for scoring, so an unavailable MCP
+  plugin cannot prevent a read-only report from returning its final JSON.
 
 ### Material reading and local parsing
 
