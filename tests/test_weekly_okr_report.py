@@ -514,6 +514,36 @@ def test_scheduled_run_waits_until_sunday_hour_and_deduplicates(tmp_path):
     assert len(gateway.sent) == 1
 
 
+def test_scheduled_run_recovers_a_missed_sunday_on_monday(tmp_path):
+    store = FakeStore()
+    store.state["weekly_okr_report:last_success_date"] = "2026-07-26"
+    gateway = FakeGateway(managers())
+    source = FakeSource()
+
+    result = run_weekly_okr_report(
+        store=store,
+        gateway=gateway,
+        source=source,
+        agent=FakeAgent(),
+        workspace=tmp_path,
+        now=datetime(2026, 8, 3, 9, tzinfo=SHANGHAI),
+        force=False,
+        deliver=True,
+        period_label="2026 Q3",
+    )
+
+    assert result.status == "sent"
+    assert result.report_date == "2026-08-02"
+    assert store.state["weekly_okr_report:last_success_date"] == "2026-08-02"
+    assert gateway.ensured == [
+        ("folder-1", "CEO-2 管理者 OKR 进度周报（2026-07-27—2026-08-02）")
+    ]
+    assert weekly_okr_report_window_open(
+        datetime(2026, 8, 3, 9, tzinfo=SHANGHAI),
+        schedule_hour=18,
+    )
+
+
 def test_extract_report_payload_reads_final_codex_jsonl_message():
     payload = {
         "executive_summary": "摘要",

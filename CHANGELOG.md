@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+- Recover a missed weekly OKR report after the scheduled Sunday window. The
+  retry retains the missed Sunday as the report date and week end, rather than
+  publishing a partial report for the recovery day.
 
 - Associate work-item execution errors with their exact input and close them
   once that input reaches a terminal state, instead of retaining a generic

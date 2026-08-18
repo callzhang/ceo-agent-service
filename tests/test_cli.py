@@ -5075,6 +5075,11 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
     )
     monkeypatch.setattr(
         cli,
+        "weekly_okr_report_command",
+        lambda received, quiet_not_due=False: calls.append("weekly-okr"),
+    )
+    monkeypatch.setattr(
+        cli,
         "scan_task_sources_command",
         lambda received, max_new_items=None: calls.append("scan"),
     )
@@ -5114,6 +5119,7 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         "resolve-blocked",
         "resolve-service",
         "resolve-inactive-trigger",
+        "weekly-okr",
         "scan",
         ("error", "", "", "task_maintenance_process_work_items", "bad todo field"),
         "okr",

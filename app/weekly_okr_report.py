@@ -884,7 +884,12 @@ def run_weekly_okr_report(
     retry_seconds: int = DEFAULT_RETRY_SECONDS,
 ) -> WeeklyOkrReportResult:
     local_now = now.astimezone()
-    report_date = local_now.date().isoformat()
+    scheduled_report_date = _scheduled_report_date(
+        local_now,
+        schedule_hour=schedule_hour,
+    )
+    report_end = local_now.date() if force else scheduled_report_date
+    report_date = report_end.isoformat()
     if not force and not _scheduled_run_is_due(
         store,
         now=local_now,
@@ -901,8 +906,12 @@ def run_weekly_okr_report(
     resolved_period = period_label.strip() or current_quarter_period(
         local_now.date().isoformat()
     ).period_label
-    week_start = local_now.date() - timedelta(days=local_now.weekday())
-    week_end = local_now.date()
+    week_start = (
+        local_now.date() - timedelta(days=local_now.weekday())
+        if force
+        else report_end - timedelta(days=6)
+    )
+    week_end = report_end
     run_dir = workspace / "OKR周报运行" / report_date
     run_dir.mkdir(parents=True, exist_ok=True)
     raw_path = run_dir / "live_okr.json"
@@ -1446,9 +1455,13 @@ def _scheduled_run_is_due(
     schedule_hour: int,
     retry_seconds: int,
 ) -> bool:
-    if now.weekday() != 6 or now.hour < schedule_hour:
+    local_now = now.astimezone()
+    if local_now.weekday() == 6 and local_now.hour < schedule_hour:
         return False
-    report_date = now.date().isoformat()
+    report_date = _scheduled_report_date(
+        local_now,
+        schedule_hour=schedule_hour,
+    ).isoformat()
     if store.get_service_state(LAST_SUCCESS_STATE_KEY) == report_date:
         return False
     raw_attempt = store.get_service_state(LAST_ATTEMPT_STATE_KEY)
@@ -1459,17 +1472,27 @@ def _scheduled_run_is_due(
             last_attempt = None
         if last_attempt is not None:
             if last_attempt.tzinfo is None:
-                last_attempt = last_attempt.replace(tzinfo=now.tzinfo)
-            if (now - last_attempt).total_seconds() < retry_seconds:
+                last_attempt = last_attempt.replace(tzinfo=local_now.tzinfo)
+            if (local_now - last_attempt).total_seconds() < retry_seconds:
                 return False
     return True
 
 
-def weekly_okr_report_window_open(now: datetime, *, schedule_hour: int) -> bool:
+def _scheduled_report_date(now: datetime, *, schedule_hour: int) -> date:
     if schedule_hour < 0 or schedule_hour > 23:
         raise ValueError("CEO_WEEKLY_OKR_REPORT_HOUR must be between 0 and 23")
     local_now = now.astimezone()
-    return local_now.weekday() == 6 and local_now.hour >= schedule_hour
+    days_since_sunday = (local_now.weekday() - 6) % 7
+    report_date = local_now.date() - timedelta(days=days_since_sunday)
+    if local_now.weekday() == 6 and local_now.hour < schedule_hour:
+        report_date -= timedelta(days=7)
+    return report_date
+
+
+def weekly_okr_report_window_open(now: datetime, *, schedule_hour: int) -> bool:
+    _scheduled_report_date(now, schedule_hour=schedule_hour)
+    local_now = now.astimezone()
+    return not (local_now.weekday() == 6 and local_now.hour < schedule_hour)
 
 
 def _validate_live_okr_payload(payload: object, *, manager: ManagerIdentity) -> None:
