@@ -598,7 +598,7 @@ def test_history_approval_card_uses_confirmed_structured_business_result(
     assert '<span class="history-type-badge history-type-oa">审批</span>' in card
     assert "history-approval-result" in card
     assert "✓ 已同意" in card
-    assert "💬 Completed" in card
+    assert "💬 Completed" not in card
     assert "🧾 review" not in card
 
 
@@ -809,7 +809,7 @@ def test_history_approval_cards_merge_business_evidence_with_latest_system_state
     failed_card = _history_attempt_card(html, latest_failure_id)
 
     assert "✓ 已同意" in approved_card
-    assert "💬 Skipped" in approved_card
+    assert "💬 Skipped" not in approved_card
     assert "✎ 已留言，仍待审批" in failed_card
     assert "💬 Failed" in failed_card
     assert f'action="/attempts/{latest_failure_id}/rerun?return_to=/history"' in failed_card

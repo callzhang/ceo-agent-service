@@ -9805,14 +9805,27 @@ def _history_approval_pills(
             f'<span class="pill status-action {_action_state_class(state)}">'
             f"{escape(label)}</span>"
         )
-    elif result in {
-        ApprovalHistoryResult.APPROVED,
-        ApprovalHistoryResult.RETURNED,
-        ApprovalHistoryResult.REJECTED,
-        ApprovalHistoryResult.COMMENTED_PENDING,
-        ApprovalHistoryResult.NO_ACTION,
-        ApprovalHistoryResult.UNKNOWN,
-    }:
+    elif (
+        result
+        in {
+            ApprovalHistoryResult.APPROVED,
+            ApprovalHistoryResult.RETURNED,
+            ApprovalHistoryResult.REJECTED,
+            ApprovalHistoryResult.COMMENTED_PENDING,
+            ApprovalHistoryResult.NO_ACTION,
+            ApprovalHistoryResult.UNKNOWN,
+        }
+        and attempt.send_status.strip().lower()
+        in {
+            "failed",
+            "blocked",
+            "needs_human",
+            "pending",
+            "processing",
+            "pending_reconciliation",
+            "dry_run",
+        }
+    ):
         label, state = _send_status_action(attempt)
         pills.append(
             f'<span class="pill status-action {_action_state_class(state)}">'
