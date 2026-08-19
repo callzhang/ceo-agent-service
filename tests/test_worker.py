@@ -15288,6 +15288,131 @@ def test_provider_capacity_failure_stays_pending_after_retry_limit(
     assert worker.store.active_codex_capacity_pause(now=fixed_worker_now()) > ""
 
 
+def test_capacity_recovery_process_failures_remain_retryable_after_one_day(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    script_agent_result(
+        worker,
+        explicit_agent_result(
+            ScriptOutcome.FAILED,
+            "Codex provider capacity is temporarily unavailable.",
+            code="codex_provider_capacity_exhausted",
+            retryable=True,
+        ),
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+
+    worker.run_once()
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+
+    next_day = fixed_worker_now() + timedelta(days=1, minutes=1)
+    worker.now_provider = lambda: next_day
+    script_agent_result(
+        worker,
+        explicit_agent_result(
+            ScriptOutcome.FAILED,
+            "Codex exited before returning a result.",
+            code="codex_process_failed",
+            retryable=True,
+        ),
+    )
+
+    worker.run_once()
+
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+    assert task.error == "codex_provider_capacity_exhausted"
+    assert datetime.fromisoformat(task.available_at) > next_day.replace(tzinfo=None)
+
+
+def test_capacity_recovery_completes_when_codex_recovers_next_day(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    script_agent_result(
+        worker,
+        explicit_agent_result(
+            ScriptOutcome.FAILED,
+            "Codex provider capacity is temporarily unavailable.",
+            code="codex_provider_capacity_exhausted",
+            retryable=True,
+        ),
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+    worker.run_once()
+
+    worker.now_provider = lambda: fixed_worker_now() + timedelta(days=1, minutes=1)
+    script_agent_result(
+        worker,
+        explicit_agent_result(ScriptOutcome.NO_ACTION, "无需回复"),
+    )
+
+    worker.run_once()
+
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "done"
+    assert task.error == ""
+    assert worker.store.codex_capacity_failure_count() == 0
+
+
+def test_capacity_retry_backoff_grows_and_caps(tmp_path: Path, monkeypatch):
+    worker = make_worker(
+        tmp_path,
+        FakeDws([], {}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+    now = fixed_worker_now()
+    worker.now_provider = lambda: now
+
+    assert worker._codex_capacity_retry_available_at() == "2026-05-13 17:30:00"
+    assert worker.store.open_codex_capacity_pause(
+        retry_at="2026-05-13T17:30:00+00:00",
+        now=now,
+    )
+    now += timedelta(minutes=31)
+    assert worker._codex_capacity_retry_available_at() == "2026-05-13 18:31:00"
+    assert worker.store.open_codex_capacity_pause(
+        retry_at="2026-05-13T18:31:00+00:00",
+        now=now,
+    )
+    now += timedelta(hours=1, minutes=1)
+    assert worker._codex_capacity_retry_available_at() == "2026-05-13 20:32:00"
+    assert worker.store.open_codex_capacity_pause(
+        retry_at="2026-05-13T20:32:00+00:00",
+        now=now,
+    )
+    now += timedelta(hours=2, minutes=1)
+    assert worker._codex_capacity_retry_available_at() == "2026-05-14 00:33:00"
+    assert worker.store.open_codex_capacity_pause(
+        retry_at="2026-05-14T00:33:00+00:00",
+        now=now,
+    )
+    now += timedelta(hours=4, minutes=1)
+    assert worker._codex_capacity_retry_available_at() == "2026-05-14 04:34:00"
+
+
 def test_codex_capacity_pause_skips_claiming_pending_reply_tasks(
     tmp_path: Path, monkeypatch
 ):

@@ -6106,6 +6106,30 @@ def test_codex_capacity_pause_is_shared_and_expires(tmp_path: Path):
     )
 
 
+def test_codex_capacity_failure_count_persists_until_successful_clear(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first = datetime.fromisoformat("2026-08-12T10:00:00+00:00")
+
+    assert store.codex_capacity_failure_count() == 0
+    assert store.open_codex_capacity_pause(
+        retry_at="2026-08-12T10:30:00+00:00",
+        now=first,
+    )
+    assert store.codex_capacity_failure_count() == 1
+    assert store.open_codex_capacity_pause(
+        retry_at="2026-08-12T11:31:00+00:00",
+        now=datetime.fromisoformat("2026-08-12T10:31:00+00:00"),
+    )
+    assert store.codex_capacity_failure_count() == 2
+
+    store.clear_codex_capacity_pause()
+
+    assert store.codex_capacity_failure_count() == 0
+    assert store.active_codex_capacity_pause(
+        now=datetime.fromisoformat("2026-08-12T10:32:00+00:00")
+    ) == ""
+
+
 def test_resolve_errors_keeps_history_with_a_resolution(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error(None, None, "consumer", "temporary failure")

@@ -662,7 +662,9 @@ def _analyze_meeting_job(
         return
     except RuntimeError as exc:
         if is_codex_capacity_exhausted(exc):
-            retry_at = now + codex_capacity_retry_duration()
+            retry_at = now + codex_capacity_retry_duration(
+                store.codex_capacity_failure_count()
+            )
             opened_capacity_pause = store.open_codex_capacity_pause(
                 retry_at=retry_at.isoformat(), now=now
             )
@@ -677,9 +679,8 @@ def _analyze_meeting_job(
                 status="retry",
                 error=error,
             )
-            store.update_meeting_alignment_job(
+            store.defer_meeting_alignment_job_for_capacity(
                 job.id,
-                status="retry",
                 available_at=retry_at.isoformat(),
                 error=error,
             )
@@ -730,6 +731,7 @@ def _analyze_meeting_job(
         )
         return
 
+    store.clear_codex_capacity_pause()
     decision_json = decision.model_dump_json()
     if decision.action == "no_action":
         run_id = _record_agent_run(

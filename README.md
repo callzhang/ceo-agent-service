@@ -259,6 +259,7 @@ cp .env.example .env
 | `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | 可选模型覆盖；默认 `gpt-5.5` + `medium`，未设置时继续使用用户的 Codex 认证与 MCP/skills |
 | `CEO_CODEX_CAPACITY_RETRY_DELAY` | Codex 明确返回 workspace credits、quota 或 usage limit 后的全局暂停期；默认 30 分钟，暂停期内不再启动新的 Codex 回复、工作汇总或会议分析，过期后自动恢复 |
+| `CEO_CODEX_CAPACITY_RETRY_MAX_DELAY` | Codex 容量持续不足时的最长探测间隔；默认 4 小时。探测从 `CEO_CODEX_CAPACITY_RETRY_DELAY` 开始逐次翻倍，成功后重置 |
 | `CEO_FEISHU_CLI_BINARY` | 飞书 CLI 二进制名，默认 `lark` |
 | `CEO_FEISHU_LIVE_SEND_ENABLED` | 飞书 CLI 真实发送开关，默认 `0`；未显式设为 `1` 时 `send_reply` 只返回 blocked，不会发送 |
 | `data/mcp-doctor-state.json` | MCP doctor 的一次性提醒状态文件；用于避免 `needs_login` / `token_expired` 状态重复弹授权提醒 |

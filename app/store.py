@@ -12902,6 +12902,41 @@ class AutoReplyStore:
                 (error, available_at, input_id),
             )
 
+    def defer_work_summary_input_for_capacity(
+        self, input_id: int, error: str, *, available_at: str
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update work_summary_inputs
+                set status='pending',
+                    attempts=max(attempts - 1, 0),
+                    error=?,
+                    available_at=?,
+                    updated_at=current_timestamp
+                where id=? and status in ('processing', 'failed')
+                """,
+                (error, available_at, input_id),
+            )
+
+    def defer_meeting_alignment_job_for_capacity(
+        self, job_id: int, *, available_at: str, error: str
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update meeting_alignment_jobs
+                set status='retry',
+                    attempts=max(attempts - 1, 0),
+                    locked_at=null,
+                    available_at=?,
+                    error=?,
+                    updated_at=current_timestamp
+                where id=? and status='processing'
+                """,
+                (available_at, error, job_id),
+            )
+
     @staticmethod
     def _filter_allowed_values(
         values: dict[str, object],
@@ -15907,6 +15942,23 @@ class AutoReplyStore:
         current = now.astimezone(timezone.utc)
         return retry_at if retry_time.astimezone(timezone.utc) > current else ""
 
+    def codex_capacity_failure_count(self) -> int:
+        raw = self.get_service_state(CODEX_CAPACITY_PAUSE_STATE_KEY)
+        if not raw:
+            return 0
+        try:
+            value = json.loads(raw)
+            return max(int(value.get("failure_count") or 0), 0)
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            return 0
+
+    def clear_codex_capacity_pause(self) -> None:
+        with self._connect() as db:
+            db.execute(
+                "delete from service_state where key=?",
+                (CODEX_CAPACITY_PAUSE_STATE_KEY,),
+            )
+
     def open_codex_capacity_pause(self, *, retry_at: str, now: datetime) -> bool:
         """Persist one shared capacity incident and report whether it is new."""
         retry_time = datetime.fromisoformat(retry_at)
@@ -15935,6 +15987,16 @@ class AutoReplyStore:
                     active = False
             if active:
                 return False
+            failure_count = 1
+            if row is not None:
+                try:
+                    previous = json.loads(row["value"])
+                    failure_count = max(
+                        int(previous.get("failure_count") or 0) + 1,
+                        1,
+                    )
+                except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                    failure_count = 1
             db.execute(
                 """
                 insert into service_state (key, value, updated_at)
@@ -15949,6 +16011,7 @@ class AutoReplyStore:
                         {
                             "reason_code": "workspace_credits_exhausted",
                             "retry_at": retry_at,
+                            "failure_count": failure_count,
                         },
                         ensure_ascii=False,
                         sort_keys=True,

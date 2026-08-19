@@ -869,6 +869,7 @@ def test_consumer_pauses_meeting_analysis_after_codex_capacity_exhaustion(tmp_pa
 
     job = store.get_meeting_alignment_job(job_id)
     assert job.status == "retry"
+    assert job.attempts == 0
     assert job.available_at == (NOW + timedelta(minutes=30)).isoformat()
     assert store.active_codex_capacity_pause(now=NOW) == job.available_at
     assert [error.kind for error in store.list_errors()] == ["codex_capacity_pause"]

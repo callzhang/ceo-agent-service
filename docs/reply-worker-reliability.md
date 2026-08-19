@@ -232,6 +232,8 @@ Rules 完成，service 不按午餐、会议等业务关键词代替 Agent 决�
 Codex 明确返回 workspace credits、配额或 usage limit 时，服务将其归类为
 `codex_provider_capacity_exhausted`，而不是普通的 `codex_provider_unavailable`。首次发现会写入一个
 持久化的共享暂停记录，并把当前任务延后到 `CEO_CODEX_CAPACITY_RETRY_DELAY`（默认 30 分钟）后；
+容量仍不足时，探测间隔逐次翻倍并封顶于 `CEO_CODEX_CAPACITY_RETRY_MAX_DELAY`（默认 4 小时）。
+容量等待不消耗任务的业务重试次数，可以跨天保持可恢复；一次成功 Codex 调用会重置该等待级别。
 回复、工作汇总和会议分析在暂停期内都不启动新的 Codex 进程，因此不会产生同一容量故障的错误风暴。
 发送回读和已开始的外部动作核验不受暂停影响。暂停期满后下一次持久队列执行才重新领取一个无副作用
 run 并真实调用 Codex；如果仍耗尽额度，只重新打开一次新的暂停期。重领旧 run 时必须 resume 该 run

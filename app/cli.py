@@ -998,6 +998,7 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         work_input = claimed[0]
         try:
             process_work_item(store, runner, work_input, dws=dws)
+            store.clear_codex_capacity_pause()
             processed += 1
         except Exception as exc:
             raw_error = str(exc)
@@ -1007,16 +1008,33 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             if capacity_exhausted:
                 now = datetime.now(timezone.utc)
                 opened_capacity_pause = store.open_codex_capacity_pause(
-                    retry_at=(now + codex_capacity_retry_duration()).isoformat(),
+                    retry_at=(
+                        now
+                        + codex_capacity_retry_duration(
+                            store.codex_capacity_failure_count()
+                        )
+                    ).isoformat(),
                     now=now,
                 )
-            if _should_retry_work_summary_input(exc, work_input.attempts):
+            if capacity_exhausted:
+                store.defer_work_summary_input_for_capacity(
+                    work_input.id,
+                    error,
+                    available_at=_work_summary_retry_available_at(
+                        work_input.attempts,
+                        capacity_exhausted=True,
+                        capacity_failure_count=max(
+                            store.codex_capacity_failure_count() - 1,
+                            0,
+                        ),
+                    ),
+                )
+            elif _should_retry_work_summary_input(exc, work_input.attempts):
                 store.schedule_work_summary_input_retry(
                     work_input.id,
                     error,
                     available_at=_work_summary_retry_available_at(
                         work_input.attempts,
-                        capacity_exhausted=capacity_exhausted,
                     ),
                 )
             elif _should_discard_work_summary_input(error):
@@ -1075,11 +1093,15 @@ def _should_discard_work_summary_input(error: str) -> bool:
 
 
 def _work_summary_retry_available_at(
-    attempts: int, *, capacity_exhausted: bool = False
+    attempts: int,
+    *,
+    capacity_exhausted: bool = False,
+    capacity_failure_count: int = 0,
 ) -> str:
     if capacity_exhausted:
         return (
-            datetime.now(timezone.utc) + codex_capacity_retry_duration()
+            datetime.now(timezone.utc)
+            + codex_capacity_retry_duration(capacity_failure_count)
         ).strftime("%Y-%m-%d %H:%M:%S")
     delay_seconds = min(
         WORK_SUMMARY_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempts - 1, 0)),

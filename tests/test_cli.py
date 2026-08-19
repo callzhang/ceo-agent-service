@@ -1865,6 +1865,10 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
             source_ref,
             item.model_dump_json(),
         )
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set attempts=3 where source_ref='1'"
+        )
 
     assert process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
@@ -1873,11 +1877,11 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
 
     with AutoReplyStore(db_path)._connect() as db:
         rows = db.execute(
-            "select status, error from work_summary_inputs order by id"
+            "select status, attempts, error from work_summary_inputs order by id"
         ).fetchall()
-    assert [(row["status"], row["error"]) for row in rows] == [
-        ("pending", "codex_provider_capacity_exhausted"),
-        ("pending", ""),
+    assert [(row["status"], row["attempts"], row["error"]) for row in rows] == [
+        ("pending", 3, "codex_provider_capacity_exhausted"),
+        ("pending", 0, ""),
     ]
     assert store.active_codex_capacity_pause(now=datetime.now().astimezone()) > ""
     assert [error.kind for error in store.list_errors()] == ["codex_capacity_pause"]

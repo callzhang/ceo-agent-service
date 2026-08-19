@@ -308,8 +308,10 @@ def fast_path_unread_backoff_duration() -> timedelta:
     return env_duration("FAST_PATH_UNREAD_BACKOFF", timedelta(minutes=5))
 
 
-def codex_capacity_retry_duration() -> timedelta:
-    return env_duration("CEO_CODEX_CAPACITY_RETRY_DELAY", timedelta(minutes=30))
+def codex_capacity_retry_duration(failure_count: int = 0) -> timedelta:
+    base = env_duration("CEO_CODEX_CAPACITY_RETRY_DELAY", timedelta(minutes=30))
+    maximum = env_duration("CEO_CODEX_CAPACITY_RETRY_MAX_DELAY", timedelta(hours=4))
+    return min(base * (2 ** max(failure_count, 0)), maximum)
 
 
 def single_chat_read_recovery_window() -> timedelta:
