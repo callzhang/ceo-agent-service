@@ -1,7 +1,7 @@
 """Resolve approval history rows from structured, persisted evidence."""
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
 
 from pydantic import ValidationError
@@ -14,6 +14,7 @@ from app.agent_contracts import (
     ProposedAction,
 )
 from app.agent_result import SideEffectState
+from app.native_cli_metadata import describe_native_command, native_command_argv
 from app.store import AgentRole, AgentRun, ReplyAttempt
 
 
@@ -29,29 +30,23 @@ class ApprovalHistoryResult(StrEnum):
     UNKNOWN = "unknown"
 
 
-_STRUCTURED_OPERATIONS = {
+_STRUCTURED_COMMAND_RESULTS = {
     "oa approval approve": ApprovalHistoryResult.APPROVED,
-    "oa approval return": ApprovalHistoryResult.RETURNED,
+    "oa approval oa-comments": ApprovalHistoryResult.COMMENTED_PENDING,
     "oa approval reject": ApprovalHistoryResult.REJECTED,
-    "oa approval comment": ApprovalHistoryResult.COMMENTED_PENDING,
+    "oa approval revert-task": ApprovalHistoryResult.RETURNED,
 }
-_DIRECT_ACTIONS = {
-    "approve": ApprovalHistoryResult.APPROVED,
-    "approved": ApprovalHistoryResult.APPROVED,
-    "同意": ApprovalHistoryResult.APPROVED,
-    "通过": ApprovalHistoryResult.APPROVED,
-    "return": ApprovalHistoryResult.RETURNED,
-    "returned": ApprovalHistoryResult.RETURNED,
-    "退回": ApprovalHistoryResult.RETURNED,
-    "reject": ApprovalHistoryResult.REJECTED,
-    "rejected": ApprovalHistoryResult.REJECTED,
-    "拒绝": ApprovalHistoryResult.REJECTED,
-    "comment": ApprovalHistoryResult.COMMENTED_PENDING,
-    "commented": ApprovalHistoryResult.COMMENTED_PENDING,
-    "评论": ApprovalHistoryResult.COMMENTED_PENDING,
-    "留言": ApprovalHistoryResult.COMMENTED_PENDING,
+_TASK_REQUIRED_COMMANDS = {
+    "oa approval approve",
+    "oa approval reject",
+    "oa approval revert-task",
 }
-_DIRECT_TERMINAL_STATUSES = {"sent", "commented", "completed"}
+_DWS_REVERT_ACTIONS = {"REVERT_FOR_APPROVAL", "REVERT_FOR_RESUBMIT"}
+_TERMINAL_BUSINESS_RESULTS = {
+    ApprovalHistoryResult.APPROVED,
+    ApprovalHistoryResult.RETURNED,
+    ApprovalHistoryResult.REJECTED,
+}
 
 
 def resolve_approval_history_result(
@@ -67,30 +62,99 @@ def resolve_approval_history_result(
     consumer_runs = {run.id: run for run in consumers}
     consumer_results = _consumer_results(consumers)
 
-    structured_results = _confirmed_structured_results(
-        attempt, agent_runs, consumer_runs, consumer_results
+    confirmed_results = _confirmed_business_results(
+        attempt,
+        agent_runs,
+        consumer_runs=consumer_runs,
+        consumer_results=consumer_results,
     )
-    if len(structured_results) == 1:
-        return next(iter(structured_results))
-    if len(structured_results) > 1:
+    if len(confirmed_results) == 1:
+        return next(iter(confirmed_results))
+    if len(confirmed_results) > 1:
         return ApprovalHistoryResult.UNKNOWN
-
-    direct = _direct_result(attempt)
-    if direct is not None:
-        return direct
 
     workflow = _workflow_result(attempt.send_status)
     if workflow is not ApprovalHistoryResult.UNKNOWN:
         return workflow
 
-    latest_consumer = _latest_consumer(consumers, consumer_results)
-    latest_result = consumer_results.get(latest_consumer.id) if latest_consumer else None
+    latest_consumer = _latest_completed_consumer(consumers)
+    latest_result = None
+    if latest_consumer is not None:
+        try:
+            latest_result = ConsumerAgentResult.model_validate_json(
+                latest_consumer.final_result_json
+            )
+        except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
+            return ApprovalHistoryResult.UNKNOWN
     if latest_result is not None and latest_result.outcome is ConsumerOutcome.NO_ACTION:
         return ApprovalHistoryResult.NO_ACTION
     if latest_result is not None and latest_result.outcome is ConsumerOutcome.PROPOSAL:
         return ApprovalHistoryResult.UNKNOWN
 
     return workflow
+
+
+def resolve_approval_history_group_result(
+    attempts: Sequence[ReplyAttempt],
+    agent_runs_by_attempt: Mapping[int, Sequence[AgentRun]],
+) -> ApprovalHistoryResult:
+    """Resolve one process while keeping business evidence separate from workflow."""
+
+    ordered = sorted(
+        attempts,
+        key=lambda attempt: (attempt.created_at, attempt.id),
+        reverse=True,
+    )
+    if not ordered:
+        return ApprovalHistoryResult.UNKNOWN
+
+    latest_comment: ApprovalHistoryResult | None = None
+    for attempt in ordered:
+        runs = agent_runs_by_attempt.get(attempt.id, ())
+        consumers = [run for run in runs if run.role is AgentRole.CONSUMER]
+        results = _confirmed_business_results(
+            attempt,
+            runs,
+            consumer_runs={run.id: run for run in consumers},
+            consumer_results=_consumer_results(consumers),
+        )
+        if len(results) > 1:
+            return ApprovalHistoryResult.UNKNOWN
+        if not results:
+            continue
+        result = next(iter(results))
+        if result in _TERMINAL_BUSINESS_RESULTS:
+            return result
+        if latest_comment is None and result is ApprovalHistoryResult.COMMENTED_PENDING:
+            latest_comment = result
+
+    if latest_comment is not None:
+        return latest_comment
+    newest = ordered[0]
+    return (
+        resolve_approval_history_result(
+            newest,
+            agent_runs_by_attempt.get(newest.id, ()),
+        )
+        or ApprovalHistoryResult.UNKNOWN
+    )
+
+
+def _confirmed_business_results(
+    attempt: ReplyAttempt,
+    agent_runs: Sequence[AgentRun],
+    *,
+    consumer_runs: dict[int, AgentRun],
+    consumer_results: dict[int, ConsumerAgentResult],
+) -> set[ApprovalHistoryResult]:
+    results = _confirmed_structured_results(
+        attempt,
+        agent_runs,
+        consumer_runs,
+        consumer_results,
+    )
+    results.update(_direct_results(attempt))
+    return results
 
 
 def _is_approval_attempt(attempt: ReplyAttempt) -> bool:
@@ -104,19 +168,13 @@ def _normalize(value: str) -> str:
     return " ".join(value.strip().casefold().split())
 
 
-def _latest_consumer(
-    consumers: list[AgentRun],
-    valid_results: dict[int, ConsumerAgentResult] | None = None,
-) -> AgentRun | None:
-    if valid_results is not None:
-        consumers = [
-            run
-            for run in consumers
-            if run.id in valid_results and _normalize(run.status) == "completed"
-        ]
-    if not consumers:
+def _latest_completed_consumer(consumers: list[AgentRun]) -> AgentRun | None:
+    completed = [
+        run for run in consumers if _normalize(run.status) == "completed"
+    ]
+    if not completed:
         return None
-    return max(consumers, key=lambda run: (run.created_at, run.id))
+    return max(completed, key=lambda run: (run.created_at, run.id))
 
 
 def _consumer_results(
@@ -169,54 +227,149 @@ def _confirmed_structured_results(
             continue
         approval_actions: list[ApprovalHistoryResult] = []
         for action in consumer.proposal.actions:
-            result = _STRUCTURED_OPERATIONS.get(_normalize(action.operation))
+            result = _structured_action_result(attempt, action, audit)
             if result is not None:
-                if not _approval_action_target_matches(attempt, action, audit):
-                    approval_actions = []
-                    break
                 approval_actions.append(result)
         results.update(approval_actions)
     return results
 
 
-def _approval_action_target_matches(
+def _structured_action_result(
     attempt: ReplyAttempt,
     action: ProposedAction,
     audit: AuditAgentResult,
-) -> bool:
+) -> ApprovalHistoryResult | None:
+    descriptor = describe_native_command(
+        {"type": "command_execution", **action.payload}
+    )
+    if descriptor is None or descriptor.cli != "dws":
+        return None
+    result = _STRUCTURED_COMMAND_RESULTS.get(descriptor.command_path)
+    if result is None:
+        return None
+
     process_instance_id = attempt.oa_process_instance_id.strip()
-    if not process_instance_id:
-        return True
-    target_values = [
-        action.target[key]
-        for key in ("process_instance_id", "instance_id")
-        if key in action.target
-    ]
-    if (
-        not target_values
-        or any(type(value) is not str or value != process_instance_id for value in target_values)
+    command_process_id = descriptor.target_identifiers.get("instance-id", "")
+    if not command_process_id or (
+        process_instance_id and command_process_id != process_instance_id
     ):
-        return False
+        return None
+
+    if descriptor.command_path in _TASK_REQUIRED_COMMANDS:
+        command_task_id = descriptor.target_identifiers.get("task-id", "")
+        if not command_task_id:
+            return None
+        task_id = attempt.oa_task_id.strip()
+        if task_id and command_task_id != task_id:
+            return None
+
+    if descriptor.command_path == "oa approval revert-task":
+        argv = native_command_argv(
+            {"type": "command_execution", **action.payload}
+        )
+        if argv is None or _argv_option_value(argv, "--action") not in _DWS_REVERT_ACTIONS:
+            return None
+
     live_reference = audit.external_result.live_result_reference if audit.external_result else {}
     if "process_instance_id" in live_reference:
-        return live_reference["process_instance_id"] == process_instance_id
-    return True
+        if live_reference["process_instance_id"] != command_process_id:
+            return None
+    return result
 
 
-def _direct_result(attempt: ReplyAttempt) -> ApprovalHistoryResult | None:
-    action = _DIRECT_ACTIONS.get(_normalize(attempt.oa_action))
-    if action is None:
-        return None
+def _argv_option_value(argv: tuple[str, ...], option: str) -> str:
+    for index, value in enumerate(argv):
+        if value == option:
+            if index + 1 < len(argv):
+                return argv[index + 1]
+            return ""
+        prefix = f"{option}="
+        if value.startswith(prefix):
+            return value[len(prefix) :]
+    return ""
+
+
+def _direct_results(attempt: ReplyAttempt) -> set[ApprovalHistoryResult]:
+    if _normalize(attempt.send_status) == "commented":
+        return {ApprovalHistoryResult.COMMENTED_PENDING}
+
     raw = attempt.oa_action_result_json.strip()
     if not raw:
-        return action if _normalize(attempt.send_status) in _DIRECT_TERMINAL_STATUSES else None
+        return set()
     try:
         payload = json.loads(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+
+    typed_result = _typed_legacy_result(attempt, payload)
+    if typed_result is not None:
+        return {typed_result}
+    if _legacy_comment_receipt_matches(attempt, payload):
+        return {ApprovalHistoryResult.COMMENTED_PENDING}
+    return set()
+
+
+def _typed_legacy_result(
+    attempt: ReplyAttempt,
+    payload: dict[str, object],
+) -> ApprovalHistoryResult | None:
+    readback = payload.get("readback")
+    typed = readback if isinstance(readback, dict) else payload
+    task_status = _normalize(str(typed.get("taskStatus") or ""))
+    task_result = str(typed.get("taskResult") or "").strip().upper()
+    if task_status != "completed":
         return None
-    if not isinstance(payload, dict) or not _receipt_proves_success(payload):
+
+    process_id = str(payload.get("process_instance_id") or "").strip()
+    if process_id and process_id != attempt.oa_process_instance_id.strip():
         return None
-    return action
+    task_id = str(payload.get("task_id") or "").strip()
+    if task_id and attempt.oa_task_id.strip() and task_id != attempt.oa_task_id.strip():
+        return None
+
+    if task_result == "AGREE":
+        return ApprovalHistoryResult.APPROVED
+    if task_result == "REFUSE":
+        return ApprovalHistoryResult.REJECTED
+    if task_result != "REDIRECT_PROCESS":
+        return None
+    invocation = payload.get("invocation")
+    if not isinstance(invocation, dict):
+        return None
+    if _normalize(str(invocation.get("canonical_path") or "")) != "oa approval revert-task":
+        return None
+    return ApprovalHistoryResult.RETURNED
+
+
+def _legacy_comment_receipt_matches(
+    attempt: ReplyAttempt,
+    payload: dict[str, object],
+) -> bool:
+    invocation = payload.get("invocation")
+    if not isinstance(invocation, dict):
+        return False
+    if _normalize(str(invocation.get("canonical_path") or "")) not in {
+        "oa approval oa-comments",
+        "oa.dingflow_comments",
+    }:
+        return False
+    params = invocation.get("params")
+    if not isinstance(params, dict):
+        return False
+    process_id = str(
+        params.get("processInstanceId") or params.get("instance-id") or ""
+    ).strip()
+    if not process_id or (
+        attempt.oa_process_instance_id.strip()
+        and process_id != attempt.oa_process_instance_id.strip()
+    ):
+        return False
+    response = payload.get("response")
+    if isinstance(response, dict) and isinstance(response.get("content"), dict):
+        return _receipt_proves_success(response["content"])
+    return _receipt_proves_success(payload)
 
 
 def _receipt_proves_success(payload: dict[str, object]) -> bool:

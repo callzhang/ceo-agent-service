@@ -2,6 +2,8 @@ import json
 
 import pytest
 
+import app.approval_history as approval_history_module
+
 from app.agent_contracts import (
     AgentError,
     AuditAgentResult,
@@ -107,6 +109,37 @@ def _consumer(
     )
 
 
+def _consumer_command(
+    argv: list[str],
+    *,
+    outcome: ConsumerOutcome = ConsumerOutcome.PROPOSAL,
+    operation_label: str = "misleading generated label",
+) -> ConsumerAgentResult:
+    proposal = None
+    if outcome is ConsumerOutcome.PROPOSAL:
+        proposal = ConsumerProposal(
+            objective="objective",
+            actions=(
+                ProposedAction(
+                    description="the executable payload is authoritative",
+                    capability="misleading.generated.capability",
+                    operation=operation_label,
+                    target={"process_instance_id": "misleading-target"},
+                    payload={"argv": argv},
+                    expected_verification="verification",
+                ),
+            ),
+            sourced_facts=(),
+            authored_judgment="judgment",
+        )
+    return ConsumerAgentResult(
+        outcome=outcome,
+        summary="summary",
+        proposal=proposal,
+        error=AgentError(),
+    )
+
+
 def _confirmed_audit(
     operation_id: str = "operation-2",
     live_process: str | None = None,
@@ -129,16 +162,51 @@ def _confirmed_audit(
 
 
 @pytest.mark.parametrize(
-    ("operation", "expected"),
+    ("argv", "expected"),
     [
-        ("oa approval approve", ApprovalHistoryResult.APPROVED),
-        ("oa approval return", ApprovalHistoryResult.RETURNED),
-        ("oa approval reject", ApprovalHistoryResult.REJECTED),
-        ("oa approval comment", ApprovalHistoryResult.COMMENTED_PENDING),
+        (
+            [
+                "dws", "oa", "approval", "approve",
+                "--instance-id", "process", "--task-id", "task", "--yes",
+            ],
+            ApprovalHistoryResult.APPROVED,
+        ),
+        (
+            [
+                "dws", "oa", "approval", "oa-comments",
+                "--instance-id", "process", "--content", "need details", "--yes",
+            ],
+            ApprovalHistoryResult.COMMENTED_PENDING,
+        ),
+        (
+            [
+                "dws", "oa", "approval", "reject",
+                "--instance-id", "process", "--task-id", "task", "--yes",
+            ],
+            ApprovalHistoryResult.REJECTED,
+        ),
+        (
+            [
+                "dws", "oa", "approval", "revert-task",
+                "--instance-id", "process", "--task-id", "task",
+                "--target-activity-id", "activity",
+                "--action", "REVERT_FOR_APPROVAL", "--yes",
+            ],
+            ApprovalHistoryResult.RETURNED,
+        ),
+        (
+            [
+                "dws", "oa", "approval", "revert-task",
+                "--instance-id", "process", "--task-id", "task",
+                "--target-activity-id", "sid-startevent",
+                "--action", "REVERT_FOR_RESUBMIT", "--yes",
+            ],
+            ApprovalHistoryResult.RETURNED,
+        ),
     ],
 )
-def test_confirmed_structured_approval_operations(operation, expected):
-    consumer = _run(1, AgentRole.CONSUMER, _consumer(operation))
+def test_confirmed_structured_result_uses_native_dws_command_descriptor(argv, expected):
+    consumer = _run(1, AgentRole.CONSUMER, _consumer_command(argv))
     audit = _run(
         2,
         AgentRole.AUDIT,
@@ -147,39 +215,75 @@ def test_confirmed_structured_approval_operations(operation, expected):
         side_effect_state=SideEffectState.CONFIRMED,
     )
 
-    assert resolve_approval_history_result(_attempt(), [consumer, audit]) is expected
+    attempt = _attempt(oa_process_instance_id="process", oa_task_id="task")
+
+    assert resolve_approval_history_result(attempt, [consumer, audit]) is expected
 
 
 @pytest.mark.parametrize(
-    ("action", "expected"),
+    "argv",
     [
-        ("approve", ApprovalHistoryResult.APPROVED),
-        ("approved", ApprovalHistoryResult.APPROVED),
-        ("同意", ApprovalHistoryResult.APPROVED),
-        ("通过", ApprovalHistoryResult.APPROVED),
-        ("return", ApprovalHistoryResult.RETURNED),
-        ("returned", ApprovalHistoryResult.RETURNED),
-        ("退回", ApprovalHistoryResult.RETURNED),
-        ("reject", ApprovalHistoryResult.REJECTED),
-        ("rejected", ApprovalHistoryResult.REJECTED),
-        ("拒绝", ApprovalHistoryResult.REJECTED),
-        ("comment", ApprovalHistoryResult.COMMENTED_PENDING),
-        ("commented", ApprovalHistoryResult.COMMENTED_PENDING),
-        ("评论", ApprovalHistoryResult.COMMENTED_PENDING),
-        ("留言", ApprovalHistoryResult.COMMENTED_PENDING),
+        ["dws", "oa", "approval", "redirect-task", "--instance-id", "process", "--task-id", "task"],
+        ["dws", "oa", "approval", "revert-activities", "--task-id", "task"],
+        ["dws", "oa", "approval", "revoke", "--instance-id", "process", "--task-id", "task"],
+        ["other-cli", "oa", "approval", "approve", "--instance-id", "process", "--task-id", "task"],
+        ["dws", "oa", "approval", "approve", "--task-id", "task"],
+        ["dws", "oa", "approval", "approve", "--instance-id", "other", "--task-id", "task"],
+        ["dws", "oa", "approval", "approve", "--instance-id", "process", "--task-id", "other"],
+        [
+            "dws", "oa", "approval", "revert-task",
+            "--instance-id", "process", "--task-id", "task",
+            "--target-activity-id", "activity", "--action", "REDIRECT_PROCESS",
+        ],
     ],
 )
-def test_successful_direct_chinese_actions(action, expected):
+def test_unrecognized_or_mismatched_native_command_is_unknown(argv):
+    consumer = _run(1, AgentRole.CONSUMER, _consumer_command(argv))
+    audit = _run(
+        2,
+        AgentRole.AUDIT,
+        _confirmed_audit(),
+        parent_agent_run_id=consumer.id,
+        side_effect_state=SideEffectState.CONFIRMED,
+    )
+
+    result = resolve_approval_history_result(
+        _attempt(
+            oa_process_instance_id="process",
+            oa_task_id="task",
+            send_status="closed",
+        ),
+        [consumer, audit],
+    )
+
+    assert result is ApprovalHistoryResult.UNKNOWN
+
+
+def test_confirmed_comment_does_not_require_task_identifier():
+    consumer = _run(
+        1,
+        AgentRole.CONSUMER,
+        _consumer_command(
+            [
+                "dws", "oa", "approval", "oa-comments",
+                "--instance-id", "process", "--content", "need details", "--yes",
+            ]
+        ),
+    )
+    audit = _run(
+        2,
+        AgentRole.AUDIT,
+        _confirmed_audit(),
+        parent_agent_run_id=consumer.id,
+        side_effect_state=SideEffectState.CONFIRMED,
+    )
+
     assert (
         resolve_approval_history_result(
-            _attempt(
-                oa_action=action,
-                send_status="completed" if action in {"comment", "commented", "评论", "留言"} else "sent",
-                oa_action_result_json=json.dumps({"errcode": 0, "errmsg": "ok"}),
-            ),
-            [],
+            _attempt(oa_process_instance_id="process", oa_task_id="task"),
+            [consumer, audit],
         )
-        is expected
+        is ApprovalHistoryResult.COMMENTED_PENDING
     )
 
 
@@ -209,7 +313,23 @@ def test_proposal_without_audit_confirmation_is_unknown():
 
 
 def test_confirmed_audit_result_does_not_require_row_side_effect_state():
-    consumer = _run(1, AgentRole.CONSUMER, _consumer("oa approval approve"))
+    consumer = _run(
+        1,
+        AgentRole.CONSUMER,
+        _consumer_command(
+            [
+                "dws",
+                "oa",
+                "approval",
+                "approve",
+                "--instance-id",
+                "process",
+                "--task-id",
+                "task",
+                "--yes",
+            ]
+        ),
+    )
     audit = _run(
         2,
         AgentRole.AUDIT,
@@ -217,7 +337,13 @@ def test_confirmed_audit_result_does_not_require_row_side_effect_state():
         parent_agent_run_id=consumer.id,
     )
     assert audit.side_effect_state == "none"
-    assert resolve_approval_history_result(_attempt(), [consumer, audit]) is ApprovalHistoryResult.APPROVED
+    assert (
+        resolve_approval_history_result(
+            _attempt(oa_process_instance_id="process", oa_task_id="task"),
+            [consumer, audit],
+        )
+        is ApprovalHistoryResult.APPROVED
+    )
 
 
 def test_malformed_consumer_json_is_unknown():
@@ -239,7 +365,7 @@ def test_workflow_status_precedes_unconfirmed_or_no_action_consumer(consumer, st
     assert resolve_approval_history_result(_attempt(send_status=status), [run]) is expected
 
 
-def test_latest_valid_consumer_skips_malformed_newest_run():
+def test_malformed_latest_completed_consumer_does_not_fall_back_to_older_valid_run():
     valid = _run(
         1,
         AgentRole.CONSUMER,
@@ -247,7 +373,7 @@ def test_latest_valid_consumer_skips_malformed_newest_run():
         status="completed",
     )
     malformed = _run(2, AgentRole.CONSUMER, "not-json", status="completed")
-    assert resolve_approval_history_result(_attempt(send_status="closed"), [valid, malformed]) is ApprovalHistoryResult.NO_ACTION
+    assert resolve_approval_history_result(_attempt(send_status="closed"), [valid, malformed]) is ApprovalHistoryResult.UNKNOWN
 
 
 @pytest.mark.parametrize("status", ["pending", "processing", "failed", "unknown"])
@@ -278,8 +404,17 @@ def test_latest_non_completed_no_action_consumer_falls_back_to_completed_evidenc
 
 
 def test_conflicting_confirmed_approval_actions_are_unknown():
-    consumer_approve = _run(1, AgentRole.CONSUMER, _consumer("oa approval approve"))
-    consumer_reject = _run(3, AgentRole.CONSUMER, _consumer("oa approval reject"))
+    common = ["--instance-id", "process", "--task-id", "task", "--yes"]
+    consumer_approve = _run(
+        1,
+        AgentRole.CONSUMER,
+        _consumer_command(["dws", "oa", "approval", "approve", *common]),
+    )
+    consumer_reject = _run(
+        3,
+        AgentRole.CONSUMER,
+        _consumer_command(["dws", "oa", "approval", "reject", *common]),
+    )
     audit_approve = _run(
         2,
         AgentRole.AUDIT,
@@ -294,7 +429,13 @@ def test_conflicting_confirmed_approval_actions_are_unknown():
         parent_agent_run_id=consumer_reject.id,
         side_effect_state=SideEffectState.CONFIRMED,
     )
-    assert resolve_approval_history_result(_attempt(), [consumer_approve, audit_approve, consumer_reject, audit_reject]) is ApprovalHistoryResult.UNKNOWN
+    assert (
+        resolve_approval_history_result(
+            _attempt(oa_process_instance_id="process", oa_task_id="task"),
+            [consumer_approve, audit_approve, consumer_reject, audit_reject],
+        )
+        is ApprovalHistoryResult.UNKNOWN
+    )
 
 
 def test_non_approval_attempt_returns_none():
@@ -316,7 +457,7 @@ def test_failed_direct_receipt_does_not_yield_success():
         )
 
 
-def test_terminal_direct_action_succeeds_without_receipt():
+def test_terminal_direct_action_without_receipt_is_unknown():
     assert (
         resolve_approval_history_result(
             _attempt(
@@ -325,7 +466,7 @@ def test_terminal_direct_action_succeeds_without_receipt():
             ),
             [],
         )
-        is ApprovalHistoryResult.APPROVED
+        is ApprovalHistoryResult.UNKNOWN
     )
 
 
@@ -333,18 +474,34 @@ def test_terminal_direct_action_succeeds_without_receipt():
     "receipt",
     [json.dumps({"success": True}), json.dumps({"errcode": 0, "errmsg": "ok"})],
 )
-def test_structured_direct_receipt_succeeds_while_pending(receipt):
+def test_generic_direct_receipt_does_not_guess_action_while_pending(receipt):
     assert (
         resolve_approval_history_result(
             _attempt(oa_action="approve", send_status="pending", oa_action_result_json=receipt),
             [],
         )
-        is ApprovalHistoryResult.APPROVED
+        is ApprovalHistoryResult.PROCESSING
     )
 
 
 def test_confirmed_structured_action_precedes_workflow_status():
-    consumer = _run(1, AgentRole.CONSUMER, _consumer("oa approval approve"))
+    consumer = _run(
+        1,
+        AgentRole.CONSUMER,
+        _consumer_command(
+            [
+                "dws",
+                "oa",
+                "approval",
+                "approve",
+                "--instance-id",
+                "process",
+                "--task-id",
+                "task",
+                "--yes",
+            ]
+        ),
+    )
     audit = _run(
         2,
         AgentRole.AUDIT,
@@ -352,7 +509,17 @@ def test_confirmed_structured_action_precedes_workflow_status():
         parent_agent_run_id=consumer.id,
         side_effect_state=SideEffectState.CONFIRMED,
     )
-    assert resolve_approval_history_result(_attempt(send_status="processing"), [consumer, audit]) is ApprovalHistoryResult.APPROVED
+    assert (
+        resolve_approval_history_result(
+            _attempt(
+                send_status="processing",
+                oa_process_instance_id="process",
+                oa_task_id="task",
+            ),
+            [consumer, audit],
+        )
+        is ApprovalHistoryResult.APPROVED
+    )
 
 
 @pytest.mark.parametrize(
@@ -362,13 +529,350 @@ def test_confirmed_structured_action_precedes_workflow_status():
         {"dws_action_result": {"success": True}},
     ],
 )
-def test_nested_direct_receipt_success_shapes(payload):
+def test_nested_generic_receipt_does_not_guess_action(payload):
     assert (
         resolve_approval_history_result(
             _attempt(oa_action="approve", send_status="pending", oa_action_result_json=json.dumps(payload)),
             [],
         )
+        is ApprovalHistoryResult.PROCESSING
+    )
+
+
+def test_commented_legacy_return_is_a_pending_comment_not_a_return():
+    attempt = _attempt(
+        oa_action="退回",
+        send_status="commented",
+        oa_action_result_json=json.dumps(
+            {"dingOpenErrcode": 0, "result": True, "success": True}
+        ),
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [])
+        is ApprovalHistoryResult.COMMENTED_PENDING
+    )
+
+
+def test_generic_success_does_not_guess_direct_approval_action():
+    attempt = _attempt(
+        oa_action="通过",
+        send_status="pending",
+        oa_action_result_json=json.dumps({"result": True, "success": True}),
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [])
+        is ApprovalHistoryResult.PROCESSING
+    )
+
+
+def test_typed_legacy_agree_receipt_is_strong_approval_evidence():
+    attempt = _attempt(
+        oa_process_instance_id="process",
+        oa_task_id="task",
+        oa_action="approve",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {"success": True, "taskStatus": "COMPLETED", "taskResult": "AGREE"}
+        ),
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.APPROVED
+    )
+
+
+def test_salvaged_typed_legacy_agree_receipt_is_strong_approval_evidence():
+    attempt = _attempt(
+        oa_process_instance_id="process",
+        oa_task_id="task",
+        oa_action="同意",
+        send_status="skipped",
+        oa_action_result_json=json.dumps(
+            {
+                "action": "同意",
+                "outcome": "salvaged",
+                "process_instance_id": "process",
+                "task_id": "task",
+                "readback": {
+                    "taskResult": "AGREE",
+                    "taskStatus": "COMPLETED",
+                },
+            }
+        ),
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [])
+        is ApprovalHistoryResult.APPROVED
+    )
+
+
+def test_typed_redirect_process_receipt_is_strong_return_evidence():
+    attempt = _attempt(
+        oa_process_instance_id="process",
+        oa_task_id="task",
+        oa_action="退回",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {
+                "action": "退回",
+                "outcome": "applied",
+                "process_instance_id": "process",
+                "task_id": "task",
+                "invocation": {"canonical_path": "oa approval revert-task"},
+                "readback": {
+                    "taskResult": "REDIRECT_PROCESS",
+                    "taskStatus": "COMPLETED",
+                },
+            }
+        ),
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [])
+        is ApprovalHistoryResult.RETURNED
+    )
+
+
+def test_conflicting_structured_and_direct_evidence_on_same_attempt_is_unknown():
+    consumer = _run(
+        1,
+        AgentRole.CONSUMER,
+        _consumer_command(
+            [
+                "dws", "oa", "approval", "approve",
+                "--instance-id", "process", "--task-id", "task", "--yes",
+            ]
+        ),
+    )
+    audit = _run(
+        2,
+        AgentRole.AUDIT,
+        _confirmed_audit(),
+        parent_agent_run_id=consumer.id,
+        side_effect_state=SideEffectState.CONFIRMED,
+    )
+    attempt = _attempt(
+        oa_process_instance_id="process",
+        oa_task_id="task",
+        oa_action="reject",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {"success": True, "taskStatus": "COMPLETED", "taskResult": "REFUSE"}
+        ),
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [consumer, audit])
+        is ApprovalHistoryResult.UNKNOWN
+    )
+
+
+def _resolve_group(
+    attempts: list[ReplyAttempt],
+    runs_by_attempt: dict[int, list[AgentRun]] | None = None,
+) -> ApprovalHistoryResult:
+    return approval_history_module.resolve_approval_history_group_result(
+        attempts,
+        runs_by_attempt or {},
+    )
+
+
+def test_group_keeps_confirmed_comment_when_newer_generic_success_cannot_prove_approval():
+    older_comment = _attempt(
+        id=908,
+        created_at="2026-08-18T00:00:01Z",
+        oa_process_instance_id="process",
+        oa_action="退回",
+        send_status="commented",
+        oa_action_result_json=json.dumps(
+            {
+                "invocation": {
+                    "canonical_path": "oa.dingflow_comments",
+                    "params": {"processInstanceId": "process", "text": "more"},
+                },
+                "response": {
+                    "content": {"result": True, "success": True}
+                },
+            }
+        ),
+    )
+    newer_unproved_approval = _attempt(
+        id=912,
+        created_at="2026-08-18T00:00:02Z",
+        oa_process_instance_id="process",
+        oa_action="通过",
+        send_status="skipped",
+        oa_action_result_json=json.dumps({"result": True, "success": True}),
+    )
+
+    assert (
+        _resolve_group([older_comment, newer_unproved_approval])
+        is ApprovalHistoryResult.COMMENTED_PENDING
+    )
+
+
+def test_group_uses_newer_typed_approval_after_older_blocked_comment():
+    older_blocked_comment = _attempt(
+        id=4029,
+        created_at="2026-08-18T00:00:01Z",
+        oa_process_instance_id="process",
+        oa_action="comment",
+        send_status="blocked",
+        oa_action_result_json=json.dumps(
+            {"action": "comment", "outcome": "blocked"}
+        ),
+    )
+    newer_approval = _attempt(
+        id=4057,
+        created_at="2026-08-18T00:00:02Z",
+        oa_process_instance_id="process",
+        oa_action="approve",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {"success": True, "taskStatus": "COMPLETED", "taskResult": "AGREE"}
+        ),
+    )
+
+    assert (
+        _resolve_group([older_blocked_comment, newer_approval])
+        is ApprovalHistoryResult.APPROVED
+    )
+
+
+def test_group_preserves_older_confirmed_comment_when_latest_attempt_failed():
+    comment = _attempt(
+        id=4800,
+        created_at="2026-08-18T00:00:01Z",
+        oa_process_instance_id="process",
+        send_status="commented",
+        oa_action="comment",
+    )
+    latest_failure = _attempt(
+        id=4824,
+        created_at="2026-08-18T00:00:02Z",
+        oa_process_instance_id="process",
+        send_status="failed",
+        oa_action="review",
+    )
+
+    assert (
+        _resolve_group([comment, latest_failure])
+        is ApprovalHistoryResult.COMMENTED_PENDING
+    )
+
+
+def test_group_terminal_action_has_priority_over_newer_confirmed_comment():
+    approval = _attempt(
+        id=10,
+        created_at="2026-08-18T00:00:01Z",
+        oa_process_instance_id="process",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {"taskStatus": "COMPLETED", "taskResult": "AGREE"}
+        ),
+    )
+    comment = _attempt(
+        id=11,
+        created_at="2026-08-18T00:00:02Z",
+        oa_process_instance_id="process",
+        send_status="commented",
+        oa_action="comment",
+    )
+
+    assert _resolve_group([approval, comment]) is ApprovalHistoryResult.APPROVED
+
+
+def test_group_uses_latest_confirmed_terminal_action():
+    approval = _attempt(
+        id=10,
+        created_at="2026-08-18T00:00:01Z",
+        oa_process_instance_id="process",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {"taskStatus": "COMPLETED", "taskResult": "AGREE"}
+        ),
+    )
+    rejection = _attempt(
+        id=11,
+        created_at="2026-08-18T00:00:02Z",
+        oa_process_instance_id="process",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {"taskStatus": "COMPLETED", "taskResult": "REFUSE"}
+        ),
+    )
+
+    assert _resolve_group([approval, rejection]) is ApprovalHistoryResult.REJECTED
+
+
+def test_group_same_attempt_conflict_is_unknown_even_with_older_terminal_evidence():
+    older_approval = _attempt(
+        id=9,
+        created_at="2026-08-18T00:00:00Z",
+        oa_process_instance_id="process",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {"taskStatus": "COMPLETED", "taskResult": "AGREE"}
+        ),
+    )
+    consumer = _run(
+        1,
+        AgentRole.CONSUMER,
+        _consumer_command(
+            [
+                "dws", "oa", "approval", "approve",
+                "--instance-id", "process", "--task-id", "task", "--yes",
+            ]
+        ),
+    )
+    audit = _run(
+        2,
+        AgentRole.AUDIT,
+        _confirmed_audit(),
+        parent_agent_run_id=consumer.id,
+        side_effect_state=SideEffectState.CONFIRMED,
+    )
+    conflicting_latest = _attempt(
+        id=10,
+        created_at="2026-08-18T00:00:01Z",
+        oa_process_instance_id="process",
+        oa_task_id="task",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {"taskStatus": "COMPLETED", "taskResult": "REFUSE"}
+        ),
+    )
+
+    assert (
+        _resolve_group(
+            [older_approval, conflicting_latest],
+            {conflicting_latest.id: [consumer, audit]},
+        )
+        is ApprovalHistoryResult.UNKNOWN
+    )
+
+
+def test_group_without_business_evidence_uses_latest_workflow_state():
+    older_unknown = _attempt(
+        id=1,
+        created_at="2026-08-18T00:00:01Z",
+        oa_process_instance_id="process",
+        send_status="completed",
+    )
+    latest_failure = _attempt(
+        id=2,
+        created_at="2026-08-18T00:00:02Z",
+        oa_process_instance_id="process",
+        send_status="failed",
+    )
+
+    assert (
+        _resolve_group([older_unknown, latest_failure])
+        is ApprovalHistoryResult.FAILED
     )
 
 
