@@ -1887,6 +1887,77 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
     assert [error.kind for error in store.list_errors()] == ["codex_capacity_pause"]
 
 
+def test_work_summary_process_failure_continues_prior_capacity_wait(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class CapacityThenProcessFailureRunner:
+        calls = 0
+        last_session_id = "task-session-capacity"
+        last_audit_tool_events = []
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def decide(self, *, prompt, session_id=None):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                raise RuntimeError("Your workspace is out of credits.")
+            raise RuntimeError("codex_process_failed")
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", CapacityThenProcessFailureRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    input_id = store.enqueue_work_summary_input(
+        "reply_attempt",
+        "capacity-across-days",
+        WorkItem.model_validate(
+            {
+                "source": {"type": "reply_attempt", "ref": "capacity-across-days"},
+                "summary": "Capacity recovery across days.",
+                "project_name": "Capacity recovery project",
+                "context": {
+                    "sender": "Mina",
+                    "participants": [],
+                    "source_conversation_kind": "group",
+                    "source_conversation_title": "Test group",
+                },
+            }
+        ).model_dump_json(),
+    )
+    with store._connect() as db:
+        db.execute("update work_summary_inputs set attempts=3 where id=?", (input_id,))
+
+    settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    assert process_work_items_command(settings) == 0
+    capsys.readouterr()
+    state = json.loads(store.get_service_state("codex_capacity_pause"))
+    state["retry_at"] = "2000-01-01T00:00:00+00:00"
+    store.set_service_state("codex_capacity_pause", json.dumps(state))
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set available_at='' where id=?",
+            (input_id,),
+        )
+
+    assert process_work_items_command(settings) == 0
+    capsys.readouterr()
+
+    with store._connect() as db:
+        row = db.execute(
+            "select status, attempts, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert (row["status"], row["attempts"], row["error"]) == (
+        "pending",
+        3,
+        "codex_provider_capacity_exhausted",
+    )
+
+
 def test_process_work_items_command_fails_typed_external_failure_after_limit(
     tmp_path,
     monkeypatch,

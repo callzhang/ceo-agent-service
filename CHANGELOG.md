@@ -1,5 +1,11 @@
 # Changelog
 
+- Keep Codex capacity exhaustion recoverable across days. Reply, work-summary,
+  and meeting queues no longer spend their business retry limit while waiting
+  for capacity; probes back off from 30 minutes to a four-hour ceiling, retain
+  the capacity incident through generic process disconnects, and reset after a
+  successful Codex turn.
+
 - Resolve the weekly OKR recipient through DingTalk's paginated group search
   instead of the recent-conversation feed. Exact-name uniqueness is now checked
   across every search page, so an inactive but valid management group is not

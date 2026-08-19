@@ -880,6 +880,44 @@ def test_consumer_pauses_meeting_analysis_after_codex_capacity_exhaustion(tmp_pa
     assert len(store.list_meeting_alignment_runs(job_id)) == 1
 
 
+def test_meeting_process_failure_continues_prior_capacity_wait(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class CapacityThenProcessFailureRunner:
+        last_session_id = "meeting-capacity"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+        calls = 0
+
+        def decide(self, *, prompt: str):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("Your workspace is out of credits.")
+            raise RuntimeError("[Errno 32] Broken pipe")
+
+    runner = CapacityThenProcessFailureRunner()
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1, max_attempts=1
+    ) == 1
+    assert consume_meeting_alignment_jobs(
+        store,
+        dws,
+        runner,
+        now=NOW + timedelta(minutes=31),
+        limit=1,
+        max_attempts=1,
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.attempts == 0
+    assert job.available_at == (NOW + timedelta(minutes=91)).isoformat()
+    assert "codex_capacity_pause" in job.error
+
+
 def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

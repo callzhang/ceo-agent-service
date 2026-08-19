@@ -10,6 +10,7 @@ from app.codex_capacity import (
     CODEX_CAPACITY_EXHAUSTED_MESSAGE,
     is_codex_capacity_exhausted,
 )
+from app.codex_failure import CODEX_PROCESS_FAILED, classify_codex_process_failure
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.external_retry import is_external_dependency_error
 from app.meeting_alignment_agent import (
@@ -631,6 +632,14 @@ def _analyze_meeting_job(
     )
     agent = MeetingAlignmentAgent(runner)
     try:
+        previous_error = json.loads(job.error) if job.error else {}
+    except json.JSONDecodeError:
+        previous_error = {}
+    capacity_recovery_active = store.codex_capacity_failure_count() > 0 or (
+        isinstance(previous_error, dict)
+        and previous_error.get("kind") == "codex_capacity_pause"
+    )
+    try:
         decision = agent.decide(source, similar_sessions=similar_sessions)
     except MeetingAlignmentTargetError as exc:
         error = _error_json("meeting_target", str(exc))
@@ -661,7 +670,11 @@ def _analyze_meeting_job(
         )
         return
     except RuntimeError as exc:
-        if is_codex_capacity_exhausted(exc):
+        capacity_exhausted = is_codex_capacity_exhausted(exc) or (
+            capacity_recovery_active
+            and classify_codex_process_failure("", str(exc)) == CODEX_PROCESS_FAILED
+        )
+        if capacity_exhausted:
             retry_at = now + codex_capacity_retry_duration(
                 store.codex_capacity_failure_count()
             )

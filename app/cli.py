@@ -102,12 +102,14 @@ from app.work_profile import (
 )
 from app.worker import (
     DingTalkAutoReplyWorker,
+    RECOVERABLE_AGENT_RUNTIME_ERRORS,
     _is_codex_provider_recovery_wait_reason,
     _is_terminal_codex_auth_failure,
     _normalize_codex_stop_error_reason,
 )
 from app.codex_capacity import (
     CODEX_CAPACITY_EXHAUSTED_MESSAGE,
+    CODEX_PROVIDER_CAPACITY_EXHAUSTED,
     is_codex_capacity_exhausted,
 )
 from app.weekly_okr_report import (
@@ -996,6 +998,7 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         if not claimed:
             break
         work_input = claimed[0]
+        capacity_recovery_active = store.codex_capacity_failure_count() > 0
         try:
             process_work_item(store, runner, work_input, dws=dws)
             store.clear_codex_capacity_pause()
@@ -1003,6 +1006,8 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         except Exception as exc:
             raw_error = str(exc)
             error = _normalize_codex_stop_error_reason(raw_error)
+            if capacity_recovery_active and error in RECOVERABLE_AGENT_RUNTIME_ERRORS:
+                error = CODEX_PROVIDER_CAPACITY_EXHAUSTED
             capacity_exhausted = is_codex_capacity_exhausted(error)
             opened_capacity_pause = False
             if capacity_exhausted:
