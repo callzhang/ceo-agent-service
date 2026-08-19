@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app.codex_decision import _subprocess_failure_reason
 from app.codex_runner import CodexRunner
 from app.dws_client import DwsClient, DwsError
+from app.external_retry import run_external
 from app.okr_review import DwsLiveOkrSource, current_quarter_period
 from app.process_runner import run_process_with_idle_timeout
 
@@ -357,22 +358,30 @@ class CodexWeeklyOkrAgent:
             if self.executor is not None:
                 raw = self.executor(command, attempt_prompt, env)
             else:
-                completed = run_process_with_idle_timeout(
-                    command,
-                    prompt=attempt_prompt,
-                    env=env,
-                    total_timeout_seconds=self.timeout_seconds,
-                    idle_timeout_seconds=self.idle_timeout_seconds,
+                def run_read_only_analysis() -> str:
+                    completed = run_process_with_idle_timeout(
+                        command,
+                        prompt=attempt_prompt,
+                        env=env,
+                        total_timeout_seconds=self.timeout_seconds,
+                        idle_timeout_seconds=self.idle_timeout_seconds,
+                    )
+                    if completed.timed_out:
+                        raise RuntimeError(
+                            completed.timeout_reason or "weekly OKR agent timed out"
+                        )
+                    if completed.returncode != 0:
+                        raise RuntimeError(
+                            _subprocess_failure_reason(completed.stderr, completed.stdout)
+                        )
+                    return completed.stdout
+
+                raw = run_external(
+                    "weekly_okr_manager_analysis",
+                    run_read_only_analysis,
+                    max_attempts=3,
+                    dependency="codex",
                 )
-                if completed.timed_out:
-                    raise RuntimeError(
-                        completed.timeout_reason or "weekly OKR agent timed out"
-                    )
-                if completed.returncode != 0:
-                    raise RuntimeError(
-                        _subprocess_failure_reason(completed.stderr, completed.stdout)
-                    )
-                raw = completed.stdout
             try:
                 analysis = WeeklyOkrAnalysis.model_validate(_extract_report_payload(raw))
                 _validate_manager_coverage(analysis, [manager])
