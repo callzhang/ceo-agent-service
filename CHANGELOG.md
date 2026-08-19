@@ -1,5 +1,10 @@
 # Changelog
 
+- Resolve the weekly OKR recipient through DingTalk's paginated group search
+  instead of the recent-conversation feed. Exact-name uniqueness is now checked
+  across every search page, so an inactive but valid management group is not
+  misreported as missing.
+
 - Allow a complete weekly OKR manager review up to 15 minutes. The structured
   Codex CLI emits only on completion, so its no-output deadline matches the
   total limit instead of terminating a valid evidence-heavy review early.

@@ -63,15 +63,58 @@ class CurrentDwsRoster:
 
     def run_json(self, command, **_kwargs):
         self.commands.append(command)
-        if command[1:3] == ["chat", "+conversation-list"]:
+        if command[1:3] == ["chat", "+chat-search"]:
+            return {
+                "success": True,
+                "result": {
+                    "groups": [
+                        {
+                            "title": "CEO-2 管理群",
+                            "openConversationId": "cid-ceo-2",
+                        }
+                    ],
+                    "hasMore": False,
+                },
+            }
+        if command[1:3] == ["chat", "+chat-members-list"]:
             return {
                 "complete": True,
-                "conversations": [
-                    {
-                        "conversationName": "CEO-2 管理群",
-                        "openConversationId": "cid-ceo-2",
-                    }
+                "users": [
+                    {"name": "甲", "openDingtalkId": "open-1"},
+                    {"name": "乙", "openDingtalkId": "open-2"},
                 ],
+            }
+        if command[1:3] == ["contact", "+search-user"]:
+            name = command[command.index("--query") + 1]
+            suffix = "1" if name == "甲" else "2"
+            return {
+                "users": [
+                    {
+                        "name": name,
+                        "openDingTalkId": f"open-{suffix}",
+                        "userId": f"user-{suffix}",
+                        "title": "总监",
+                    }
+                ]
+            }
+        raise AssertionError(command)
+
+
+class SearchOnlyDwsRoster(CurrentDwsRoster):
+    def run_json(self, command, **_kwargs):
+        self.commands.append(command)
+        if command[1:3] == ["chat", "+chat-search"]:
+            return {
+                "success": True,
+                "result": {
+                    "groups": [
+                        {
+                            "title": "CEO-2 管理群",
+                            "openConversationId": "cid-ceo-2",
+                        }
+                    ],
+                    "hasMore": False,
+                },
             }
         if command[1:3] == ["chat", "+chat-members-list"]:
             return {
@@ -635,8 +678,9 @@ def test_resolve_group_roster_uses_current_dws_conversation_contract():
     assert dws.commands[0] == [
         "dws",
         "chat",
-        "+conversation-list",
-        "--page-all",
+        "+chat-search",
+        "--query",
+        "CEO-2 管理群",
         "--limit",
         "100",
         "--format",
@@ -650,6 +694,25 @@ def test_resolve_group_roster_uses_current_dws_conversation_contract():
         "cid-ceo-2",
         "--member-types",
         "user",
+        "--format",
+        "json",
+    ]
+
+
+def test_resolve_group_roster_searches_by_name_when_group_is_not_recent():
+    dws = SearchOnlyDwsRoster()
+
+    roster = DwsWeeklyOkrGateway(dws).resolve_group_roster("CEO-2 管理群")
+
+    assert roster.conversation_id == "cid-ceo-2"
+    assert dws.commands[0] == [
+        "dws",
+        "chat",
+        "+chat-search",
+        "--query",
+        "CEO-2 管理群",
+        "--limit",
+        "100",
         "--format",
         "json",
     ]

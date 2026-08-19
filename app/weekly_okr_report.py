@@ -408,23 +408,39 @@ class DwsWeeklyOkrGateway:
         self.dws = dws
 
     def resolve_group_roster(self, group_name: str) -> GroupRoster:
-        conversations_payload = self.dws.run_json(
-            [
+        groups: list[dict[str, Any]] = []
+        cursor = "0"
+        while True:
+            command = [
                 self.dws.dws_bin,
                 "chat",
-                "+conversation-list",
-                "--page-all",
+                "+chat-search",
+                "--query",
+                group_name,
                 "--limit",
                 "100",
                 "--format",
                 "json",
             ]
-        )
-        conversations = _nested_list(conversations_payload, "conversations")
+            if cursor != "0":
+                command[3:3] = ["--cursor", cursor]
+            payload = self.dws.run_json(command)
+            groups.extend(_nested_list(payload, "groups"))
+            result = payload.get("result") if isinstance(payload, dict) else None
+            if not isinstance(result, dict) or not result.get("hasMore"):
+                break
+            cursor = str(result.get("nextCursor") or "").strip()
+            if not cursor:
+                raise DwsError("DingTalk group search is incomplete without nextCursor")
         exact_groups = [
             conversation
-            for conversation in conversations
-            if conversation.get("conversationName") == group_name
+            for conversation in groups
+            if (
+                conversation.get("conversationName")
+                or conversation.get("title")
+                or conversation.get("name")
+            )
+            == group_name
         ]
         if len(exact_groups) != 1:
             raise DwsError(
