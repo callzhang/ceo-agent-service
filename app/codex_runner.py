@@ -149,8 +149,6 @@ class CodexRunner:
         if preserve_local_cli_auth:
             env.pop("DINGTALK_DWS_AGENTCODE", None)
             env.pop("CEO_DWS_AGENT_CODE", None)
-            env.pop("OPENAI_API_KEY", None)
-            env.pop("CODEX_API_KEY", None)
         for key in DWS_CLI_AUTH_ENV_KEYS:
             env.pop(key, None)
         env.pop("MEMORY_CONNECTOR_USER_ID", None)

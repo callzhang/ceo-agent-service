@@ -867,7 +867,8 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
     seen = []
 
     def executor(_command, prompt, _env):
-        assert "--ignore-user-config" in _command
+        assert "--ignore-user-config" not in _command
+        assert "-m" not in _command
         assert not any(
             part.startswith("developer_instructions=") for part in _command
         )
@@ -1026,7 +1027,7 @@ def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):
     assert captured["agent"].idle_timeout_seconds == 900
 
 
-def test_codex_agent_preserves_local_cli_auth(tmp_path, monkeypatch):
+def test_codex_agent_preserves_configured_model_provider(tmp_path, monkeypatch):
     manager = managers()[0]
     source = FakeSource()
     source_path = tmp_path / "live-auth.json"
@@ -1049,15 +1050,18 @@ def test_codex_agent_preserves_local_cli_auth(tmp_path, monkeypatch):
     )
     agent = CodexWeeklyOkrAgent(workspace=tmp_path)
     seen = []
+    commands = []
 
     def build_env(*, preserve_local_cli_auth=False):
         seen.append(preserve_local_cli_auth)
         return {}
 
     monkeypatch.setattr(agent.runner, "build_env", build_env)
-    agent.executor = lambda _command, _prompt, _env: json.dumps(
-        _weekly_payload_for(manager.name), ensure_ascii=False
-    )
+    def executor(command, _prompt, _env):
+        commands.append(command)
+        return json.dumps(_weekly_payload_for(manager.name), ensure_ascii=False)
+
+    agent.executor = executor
 
     agent.analyze(
         source_path=source_path,
@@ -1067,7 +1071,9 @@ def test_codex_agent_preserves_local_cli_auth(tmp_path, monkeypatch):
         week_end=datetime(2026, 8, 23).date(),
     )
 
-    assert seen == [True]
+    assert seen == [False]
+    assert "--ignore-user-config" not in commands[0]
+    assert "-m" not in commands[0]
 
 
 def _weekly_payload_for(name):

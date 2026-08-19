@@ -339,7 +339,7 @@ class CodexWeeklyOkrAgent:
             f"\n硬性输出校验：{manager.name} 必须返回恰好 {expected_kr_count} 条 "
             "kr_reviews；少一条或多一条都不可提交。"
         )
-        env = self.runner.build_env(preserve_local_cli_auth=True)
+        env = self.runner.build_env()
         validation_error = ""
         for attempt in range(2):
             attempt_prompt = prompt
@@ -352,8 +352,8 @@ class CodexWeeklyOkrAgent:
                 attempt_prompt,
                 session_id=None,
                 output_schema_path=WEEKLY_OKR_REPORT_SCHEMA_PATH,
+                preserve_native_model_config=True,
                 preserve_native_instructions=True,
-                ignore_user_config=True,
             )
             if self.executor is not None:
                 raw = self.executor(command, attempt_prompt, env)
