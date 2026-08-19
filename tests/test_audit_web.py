@@ -314,10 +314,22 @@ def _seed_confirmed_approval_attempt(
                 "actions": [
                     {
                         "description": "Approve the budget.",
-                        "capability": "dingtalk_oa",
-                        "operation": "oa approval approve",
-                        "target": {"process_instance_id": process_instance_id},
-                        "payload": {},
+                        "capability": "misleading_capability",
+                        "operation": "misleading operation",
+                        "target": {"process_instance_id": "misleading-target"},
+                        "payload": {
+                            "argv": [
+                                "dws",
+                                "oa",
+                                "approval",
+                                "approve",
+                                "--instance-id",
+                                process_instance_id,
+                                "--task-id",
+                                f"task-history-confirmed-{suffix}",
+                                "--yes",
+                            ]
+                        },
                         "expected_verification": "Read back the approval result.",
                     }
                 ],
@@ -586,7 +598,7 @@ def test_history_approval_card_uses_confirmed_structured_business_result(
     assert '<span class="history-type-badge history-type-oa">审批</span>' in card
     assert "history-approval-result" in card
     assert "✓ 已同意" in card
-    assert "💬 Completed" not in card
+    assert "💬 Completed" in card
     assert "🧾 review" not in card
 
 
@@ -595,16 +607,34 @@ def test_history_batches_structured_approval_run_summaries_once(
     monkeypatch,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    first_id = _seed_confirmed_approval_attempt(store, suffix="first")
-    second_id = _seed_confirmed_approval_attempt(store, suffix="second")
-    first_attempt = store.get_reply_attempt(first_id)
-    second_attempt = store.get_reply_attempt(second_id)
-    assert first_attempt is not None and first_attempt.agent_run_id is not None
-    assert second_attempt is not None and second_attempt.agent_run_id is not None
+    first_business_id = _seed_confirmed_approval_attempt(store, suffix="first")
+    second_business_id = _seed_confirmed_approval_attempt(store, suffix="second")
+    first_business = store.get_reply_attempt(first_business_id)
+    second_business = store.get_reply_attempt(second_business_id)
+    assert first_business is not None and first_business.agent_run_id is not None
+    assert second_business is not None and second_business.agent_run_id is not None
+    latest_ids = [
+        store.record_reply_attempt(
+            conversation_id=business.conversation_id,
+            conversation_title=business.conversation_title,
+            trigger_message_id=f"{business.trigger_message_id}-retry",
+            trigger_sender=business.trigger_sender,
+            trigger_text=business.trigger_text,
+            action="agent_run",
+            sensitivity_kind="general",
+            oa_process_instance_id=business.oa_process_instance_id,
+            oa_task_id=business.oa_task_id,
+            oa_action="review",
+            send_status="failed",
+        )
+        for business in (first_business, second_business)
+    ]
 
     bulk_calls: list[list[int]] = []
+    history_bulk_calls: list[list[str]] = []
     agent_run_calls: list[int] = []
     bulk_method = getattr(store, "list_agent_run_summaries_for_terminal_runs", None)
+    history_bulk_method = store.list_oa_attempt_histories
     original_agent_runs = audit_web_module._agent_runs_for_attempt
 
     def track_bulk(run_ids: list[int]):
@@ -614,6 +644,13 @@ def test_history_batches_structured_approval_run_summaries_once(
     def track_legacy_agent_runs(*args, **kwargs):
         agent_run_calls.append(args[1].id)
         return original_agent_runs(*args, **kwargs)
+
+    def track_history_bulk(process_ids: list[str]):
+        history_bulk_calls.append(process_ids)
+        return history_bulk_method(process_ids)
+
+    def reject_single_history(*args, **kwargs):
+        raise AssertionError("History cards must not load approval attempts one process at a time")
 
     monkeypatch.setattr(
         store,
@@ -626,6 +663,8 @@ def test_history_batches_structured_approval_run_summaries_once(
         "_agent_runs_for_attempt",
         track_legacy_agent_runs,
     )
+    monkeypatch.setattr(store, "list_oa_attempt_histories", track_history_bulk)
+    monkeypatch.setattr(store, "list_oa_attempt_history", reject_single_history)
 
     html = render_attempt_list(
         store,
@@ -633,9 +672,23 @@ def test_history_batches_structured_approval_run_summaries_once(
         search_object_type="approval",
     )
 
-    assert html.count("✓ 已同意") == 2
+    for latest_id in latest_ids:
+        card = _history_attempt_card(html, latest_id)
+        assert "✓ 已同意" in card
+        assert "💬 Failed" in card
+        assert f'action="/attempts/{latest_id}/rerun?return_to=/history"' in card
+    assert f'data-history-detail-href="/attempts/{first_business_id}"' not in html
+    assert f'data-history-detail-href="/attempts/{second_business_id}"' not in html
+    assert len(history_bulk_calls) == 1
+    assert set(history_bulk_calls[0]) == {
+        first_business.oa_process_instance_id,
+        second_business.oa_process_instance_id,
+    }
     assert len(bulk_calls) == 1
-    assert set(bulk_calls[0]) == {first_attempt.agent_run_id, second_attempt.agent_run_id}
+    assert set(bulk_calls[0]) == {
+        first_business.agent_run_id,
+        second_business.agent_run_id,
+    }
     assert agent_run_calls == []
 
 
@@ -675,7 +728,7 @@ def test_history_approval_cards_show_direct_return_and_unknown_results(tmp_path:
     returned_card = _history_attempt_card(html, returned_id)
     unknown_card = _history_attempt_card(html, unknown_id)
 
-    assert "↩ 已退回" in returned_card
+    assert "✎ 已留言，仍待审批" in returned_card
     assert "结果未知" in unknown_card
     assert "🧾" not in returned_card
     assert "🧾" not in unknown_card
@@ -688,6 +741,93 @@ def test_history_approval_cards_show_direct_return_and_unknown_results(tmp_path:
         ".action-state-unknown{background:var(--surface);color:var(--stone);"
         "border-color:var(--hairline)}"
     ) in html
+
+
+def test_history_approval_cards_merge_business_evidence_with_latest_system_state(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_comment_id = store.record_reply_attempt(
+        conversation_id="cid-history-production-a",
+        conversation_title="Production-shaped approval A",
+        trigger_message_id="msg-history-production-a-comment",
+        trigger_sender="Mina",
+        trigger_text="Review approval A.",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-production-a",
+        oa_action="退回",
+        send_status="commented",
+    )
+    latest_approval_id = store.record_reply_attempt(
+        conversation_id="cid-history-production-a",
+        conversation_title="Production-shaped approval A",
+        trigger_message_id="msg-history-production-a-approved",
+        trigger_sender="Mina",
+        trigger_text="Review approval A.",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-production-a",
+        oa_action="通过",
+        oa_action_result_json=json.dumps(
+            {"success": True, "result": True, "errorCode": None}
+        ),
+        send_status="skipped",
+    )
+    old_failed_group_comment_id = store.record_reply_attempt(
+        conversation_id="cid-history-production-b",
+        conversation_title="Production-shaped approval B",
+        trigger_message_id="msg-history-production-b-comment",
+        trigger_sender="Mina",
+        trigger_text="Review approval B.",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-production-b",
+        oa_action="comment",
+        send_status="commented",
+    )
+    latest_failure_id = store.record_reply_attempt(
+        conversation_id="cid-history-production-b",
+        conversation_title="Production-shaped approval B",
+        trigger_message_id="msg-history-production-b-failed",
+        trigger_sender="Mina",
+        trigger_text="Review approval B.",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-production-b",
+        oa_action="review",
+        audit_summary="Approval retry failed.",
+        send_status="failed",
+    )
+
+    html = render_attempt_list(
+        store,
+        include_chart=False,
+        search_object_type="approval",
+    )
+    approved_card = _history_attempt_card(html, latest_approval_id)
+    failed_card = _history_attempt_card(html, latest_failure_id)
+
+    assert "✓ 已同意" in approved_card
+    assert "💬 Skipped" in approved_card
+    assert "✎ 已留言，仍待审批" in failed_card
+    assert "💬 Failed" in failed_card
+    assert f'action="/attempts/{latest_failure_id}/rerun?return_to=/history"' in failed_card
+    assert f'data-history-detail-href="/attempts/{old_comment_id}"' not in html
+    assert f'data-history-detail-href="/attempts/{old_failed_group_comment_id}"' not in html
+
+
+def test_history_css_has_readable_dark_palette(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+
+    html = render_attempt_list(store, include_chart=False)
+
+    assert "@media (prefers-color-scheme:dark)" in html
+    assert ":root{color-scheme:dark;--ink:#f5f7fa;" in html
+    assert "body{background:var(--canvas);color:var(--ink)}" in html
+    assert ".history-approval-result{color:var(--ink)}" in html
+    assert ".table-type-select,.table-page-size,select option{" in html
 
 
 def test_history_neutral_approval_results_use_steel_text_contrast(tmp_path: Path):

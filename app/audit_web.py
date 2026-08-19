@@ -37,7 +37,7 @@ from app.agent_contracts import (
 )
 from app.approval_history import (
     ApprovalHistoryResult,
-    resolve_approval_history_result,
+    resolve_approval_history_group_result,
 )
 from app.audit_rules import (
     audit_rules_template_path,
@@ -609,6 +609,18 @@ label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-wei
 .review-link:hover{text-decoration:none;border-color:var(--ink);background:var(--surface-soft)}
 .danger{background:#9f1d1d}
 .muted{color:var(--steel)}
+@media (prefers-color-scheme:dark){
+:root{color-scheme:dark;--ink:#f5f7fa;--charcoal:#e5e9ef;--slate:#c6ced8;--steel:#aeb8c5;--stone:#929dab;--muted:#7f8996;--canvas:#11151b;--surface:#1a2029;--surface-soft:#151b23;--surface-code:#0b0f14;--hairline:#343d49;--hairline-soft:#28313c;--mint:#42dfbd;--mint-deep:#2bcaa8;--tag:#8db8ff;--error:#ff8f8f}
+body{background:var(--canvas);color:var(--ink)}
+header{background:rgba(17,21,27,.94)}
+.attempt-item[data-history-detail-href]:hover{background:#18212c}
+.history-approval-result{color:var(--ink)}
+.status-sent,.status-resolved,.action-state-sent,.action-state-accepted,.action-state-approved,.action-state-resolved,.action-state-recovered{color:#7ee8ca;border-color:rgba(66,223,189,.45)}
+.status-pending,.status-processing,.status-commented,.action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented,.action-state-superseded{color:#a9c9ff;border-color:rgba(141,184,255,.42)}
+.status-needs-human,.action-state-needs-human,.action-state-tentative,.action-state-returned{color:#ffd28a;border-color:rgba(255,210,138,.42)}
+.status-failed,.status-blocked,.status-active,.action-state-failed,.action-state-blocked,.action-state-declined,.action-state-rejected{color:#ffadad;border-color:rgba(255,143,143,.42)}
+.table-type-select,.table-page-size,select option{background:var(--canvas);color:var(--ink)}
+}
 @media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}.attempt-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:960px){.sent-todos-toolbar{grid-template-columns:1fr 1fr}.sent-todos-toolbar-spacer{display:none}.sent-todos-toolbar .table-toolbar-search{width:100%}.section-head{align-items:flex-start;flex-direction:column}}
 @media (max-width:960px){.worker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -4370,17 +4382,38 @@ def _render_attempt_list(
         [item.source_id for item in history_items if item.kind == "reply"]
     )
     attempts_by_id = {attempt.id: attempt for attempt in attempts}
+    approval_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.action.strip().lower() == "oa_approval"
+        or attempt.oa_process_instance_id.strip()
+    ]
+    approval_attempt_histories = store.list_oa_attempt_histories(
+        [
+            attempt.oa_process_instance_id
+            for attempt in approval_attempts
+            if attempt.oa_process_instance_id.strip()
+        ]
+    )
+    approval_evidence_attempts = {
+        evidence.id: evidence
+        for history in approval_attempt_histories.values()
+        for evidence in history
+    }
+    approval_evidence_attempts.update(
+        {attempt.id: attempt for attempt in approval_attempts}
+    )
     approval_agent_run_summaries = store.list_agent_run_summaries_for_terminal_runs(
         [
             attempt.agent_run_id
-            for attempt in attempts
+            for attempt in approval_evidence_attempts.values()
             if attempt.agent_run_id
-            and (
-                attempt.action.strip().lower() == "oa_approval"
-                or attempt.oa_process_instance_id.strip()
-            )
         ]
     )
+    approval_runs_by_attempt_id = {
+        attempt.id: approval_agent_run_summaries.get(attempt.agent_run_id, [])
+        for attempt in approval_evidence_attempts.values()
+    }
     wechat_ready_delivery_by_attempt = _wechat_ready_delivery_by_attempt(
         store, attempts
     )
@@ -4402,10 +4435,7 @@ def _render_attempt_list(
         attempt = attempts_by_id.get(history_item.source_id)
         if attempt is None:
             continue
-        if (attempt.channel or "").strip().lower() == "wechat":
-            attempt = attempt.model_copy(
-                update={"send_status": history_item.status}
-            )
+        attempt = attempt.model_copy(update={"send_status": history_item.status})
         sent_reply = sent_replies_by_attempt.get(
             (attempt.conversation_id, attempt.trigger_message_id)
         )
@@ -4427,10 +4457,22 @@ def _render_attempt_list(
         history_type = _history_attempt_type(attempt)
         approval_history = history_type[0] == "oa"
         agent_runs = (
-            approval_agent_run_summaries.get(attempt.agent_run_id, [])
+            approval_runs_by_attempt_id.get(attempt.id, [])
             if approval_history
             else []
         )
+        approval_result = None
+        if approval_history:
+            process_id = attempt.oa_process_instance_id.strip()
+            group_attempts = approval_attempt_histories.get(process_id, [attempt])
+            group_attempts = [
+                attempt if candidate.id == attempt.id else candidate
+                for candidate in group_attempts
+            ]
+            approval_result = resolve_approval_history_group_result(
+                group_attempts,
+                approval_runs_by_attempt_id,
+            )
         attention = None
         later_attempt = None
         terminal_run = None
@@ -4491,7 +4533,7 @@ def _render_attempt_list(
         action_pills = (
             _history_approval_pills(
                 attempt,
-                agent_runs,
+                approval_result or ApprovalHistoryResult.UNKNOWN,
                 later_attempt=later_attempt,
                 recovery_state=recovery_state,
             )
@@ -9731,11 +9773,7 @@ def _attempt_action_pills(
     )
 
 
-def _history_approval_result_pill(
-    attempt: ReplyAttempt,
-    agent_runs: list[AgentRun],
-) -> str:
-    result = resolve_approval_history_result(attempt, agent_runs)
+def _history_approval_result_pill(result: ApprovalHistoryResult) -> str:
     label, state = {
         ApprovalHistoryResult.APPROVED: ("✓ 已同意", "approved"),
         ApprovalHistoryResult.RETURNED: ("↩ 已退回", "returned"),
@@ -9746,7 +9784,7 @@ def _history_approval_result_pill(
         ApprovalHistoryResult.PROCESSING: ("处理中", "processing"),
         ApprovalHistoryResult.FAILED: ("处理失败", "failed"),
         ApprovalHistoryResult.UNKNOWN: ("结果未知", "unknown"),
-    }.get(result or ApprovalHistoryResult.UNKNOWN)
+    }[result]
     return (
         f'<span class="pill status-action history-approval-result '
         f'action-state-{state}">{escape(label)}</span>'
@@ -9755,14 +9793,27 @@ def _history_approval_result_pill(
 
 def _history_approval_pills(
     attempt: ReplyAttempt,
-    agent_runs: list[AgentRun],
+    result: ApprovalHistoryResult,
     *,
     later_attempt: ReplyAttempt | None,
     recovery_state: str,
 ) -> str:
-    pills = [_history_approval_result_pill(attempt, agent_runs)]
+    pills = [_history_approval_result_pill(result)]
     if recovery_state:
         label, state = _recovery_action(recovery_state)
+        pills.append(
+            f'<span class="pill status-action {_action_state_class(state)}">'
+            f"{escape(label)}</span>"
+        )
+    elif result in {
+        ApprovalHistoryResult.APPROVED,
+        ApprovalHistoryResult.RETURNED,
+        ApprovalHistoryResult.REJECTED,
+        ApprovalHistoryResult.COMMENTED_PENDING,
+        ApprovalHistoryResult.NO_ACTION,
+        ApprovalHistoryResult.UNKNOWN,
+    }:
+        label, state = _send_status_action(attempt)
         pills.append(
             f'<span class="pill status-action {_action_state_class(state)}">'
             f"{escape(label)}</span>"

@@ -29,9 +29,11 @@ History 对审批、回复、会议和任务使用同一套管理者关注状态
 History 以 OA `process_instance_id` 作为审批事项身份，不以单次 Attempt 作为审批最终状态。`task_id` 只表示流程中的一个审批节点，不参与拆分审批事项。
 
 - Agent 重试、恢复核对和启动前失败都必须从原始 `reply_task.oa_url` 继承 OA 流程与任务标识。
-- 同一审批事项只在 History 首页展示一条当前记录；旧 Failed 保留在审批详情时间线中。
-- 后续恢复记录已经核验当前节点完成或无需重复执行时，旧的系统失败不再作为该审批事项的首页状态。
-- 只有没有后续可核验结果的系统失败才显示 Failed；材料不足或等待管理者选择继续使用“需要你处理”。
+- 同一审批事项只在 History 首页展示一条当前记录，固定选择 `(created_at DESC, id DESC)` 的最新 Attempt；筛选、计数、分页、卡片编号、详情链接、当前系统状态、注意力和恢复入口都以这条记录为准。旧记录保留在审批详情时间线中。
+- 业务结果与当前系统状态分开显示。业务结果批量读取当前页所有审批流程的全部 Attempts，并按 Attempt 从新到旧查找持久化强证据；已确认的同意、拒绝或实际退回优先于留言，只有没有终态动作时才保留最新已确认留言。
+- 同一 Attempt 的 structured Audit 与 direct receipt 必须全部收集后求唯一结果；相互冲突立即显示“结果未知”，不得回退到更旧证据。没有业务证据时才使用最新 Attempt 的 workflow、`no_action` 或 unknown。
+- structured 审批动作只信任 `payload.argv` 解析出的 DWS canonical command、流程标识和需要时的任务标识，不读取模型生成的 operation、capability 或 target 标签。退回还必须是允许的 `revert-task --action`；普通成功回执不能把“退回”猜成已退回。
+- 这些归并规则只使用现有持久化字段和批量只读查询，不新增审批 case 表或数据库迁移。
 
 ## 安全边界
 
