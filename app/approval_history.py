@@ -42,6 +42,15 @@ _TASK_REQUIRED_COMMANDS = {
     "oa approval revert-task",
 }
 _DWS_REVERT_ACTIONS = {"REVERT_FOR_APPROVAL", "REVERT_FOR_RESUBMIT"}
+_DIRECT_CONFIRMED_ACTIONS = {
+    "approve": ApprovalHistoryResult.APPROVED,
+    "approved": ApprovalHistoryResult.APPROVED,
+    "同意": ApprovalHistoryResult.APPROVED,
+    "通过": ApprovalHistoryResult.APPROVED,
+    "reject": ApprovalHistoryResult.REJECTED,
+    "rejected": ApprovalHistoryResult.REJECTED,
+    "拒绝": ApprovalHistoryResult.REJECTED,
+}
 _TERMINAL_BUSINESS_RESULTS = {
     ApprovalHistoryResult.APPROVED,
     ApprovalHistoryResult.RETURNED,
@@ -308,6 +317,9 @@ def _direct_results(attempt: ReplyAttempt) -> set[ApprovalHistoryResult]:
         return {typed_result}
     if _legacy_comment_receipt_matches(attempt, payload):
         return {ApprovalHistoryResult.COMMENTED_PENDING}
+    direct_result = _DIRECT_CONFIRMED_ACTIONS.get(_normalize(attempt.oa_action))
+    if direct_result is not None and _receipt_proves_success(payload):
+        return {direct_result}
     return set()
 
 
@@ -315,6 +327,8 @@ def _typed_legacy_result(
     attempt: ReplyAttempt,
     payload: dict[str, object],
 ) -> ApprovalHistoryResult | None:
+    if _receipt_has_explicit_failure(payload):
+        return None
     readback = payload.get("readback")
     typed = readback if isinstance(readback, dict) else payload
     task_status = _normalize(str(typed.get("taskStatus") or ""))
@@ -373,6 +387,8 @@ def _legacy_comment_receipt_matches(
 
 
 def _receipt_proves_success(payload: dict[str, object]) -> bool:
+    if _receipt_has_explicit_failure(payload):
+        return False
     indicators: list[bool] = []
 
     if "success" in payload:
@@ -399,6 +415,16 @@ def _receipt_proves_success(payload: dict[str, object]) -> bool:
         indicators.append(errcode == 0)
 
     return bool(indicators) and all(indicators)
+
+
+def _receipt_has_explicit_failure(payload: dict[str, object]) -> bool:
+    if payload.get("success") is False or payload.get("result") is False:
+        return True
+    for key in ("errcode", "errorCode", "dingOpenErrcode"):
+        value = payload.get(key)
+        if value is not None and type(value) is int and value != 0:
+            return True
+    return False
 
 
 def _workflow_result(status: str) -> ApprovalHistoryResult:

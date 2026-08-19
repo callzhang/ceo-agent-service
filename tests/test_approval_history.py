@@ -474,13 +474,13 @@ def test_terminal_direct_action_without_receipt_is_unknown():
     "receipt",
     [json.dumps({"success": True}), json.dumps({"errcode": 0, "errmsg": "ok"})],
 )
-def test_generic_direct_receipt_does_not_guess_action_while_pending(receipt):
+def test_generic_direct_receipt_confirms_persisted_approval_while_pending(receipt):
     assert (
         resolve_approval_history_result(
             _attempt(oa_action="approve", send_status="pending", oa_action_result_json=receipt),
             [],
         )
-        is ApprovalHistoryResult.PROCESSING
+        is ApprovalHistoryResult.APPROVED
     )
 
 
@@ -529,13 +529,13 @@ def test_confirmed_structured_action_precedes_workflow_status():
         {"dws_action_result": {"success": True}},
     ],
 )
-def test_nested_generic_receipt_does_not_guess_action(payload):
+def test_nested_generic_receipt_confirms_persisted_approval(payload):
     assert (
         resolve_approval_history_result(
             _attempt(oa_action="approve", send_status="pending", oa_action_result_json=json.dumps(payload)),
             [],
         )
-        is ApprovalHistoryResult.PROCESSING
+        is ApprovalHistoryResult.APPROVED
     )
 
 
@@ -554,7 +554,7 @@ def test_commented_legacy_return_is_a_pending_comment_not_a_return():
     )
 
 
-def test_generic_success_does_not_guess_direct_approval_action():
+def test_generic_success_uses_persisted_direct_approval_action():
     attempt = _attempt(
         oa_action="通过",
         send_status="pending",
@@ -563,7 +563,7 @@ def test_generic_success_does_not_guess_direct_approval_action():
 
     assert (
         resolve_approval_history_result(attempt, [])
-        is ApprovalHistoryResult.PROCESSING
+        is ApprovalHistoryResult.APPROVED
     )
 
 
@@ -581,6 +581,28 @@ def test_typed_legacy_agree_receipt_is_strong_approval_evidence():
     assert (
         resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.APPROVED
+    )
+
+
+def test_typed_legacy_receipt_with_explicit_failure_is_unknown():
+    attempt = _attempt(
+        oa_process_instance_id="process",
+        oa_task_id="task",
+        oa_action="approve",
+        send_status="closed",
+        oa_action_result_json=json.dumps(
+            {
+                "success": False,
+                "errorCode": 500,
+                "taskStatus": "COMPLETED",
+                "taskResult": "AGREE",
+            }
+        ),
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [])
+        is ApprovalHistoryResult.UNKNOWN
     )
 
 
@@ -681,7 +703,7 @@ def _resolve_group(
     )
 
 
-def test_group_keeps_confirmed_comment_when_newer_generic_success_cannot_prove_approval():
+def test_group_uses_newer_persisted_approval_with_generic_success():
     older_comment = _attempt(
         id=908,
         created_at="2026-08-18T00:00:01Z",
@@ -700,7 +722,7 @@ def test_group_keeps_confirmed_comment_when_newer_generic_success_cannot_prove_a
             }
         ),
     )
-    newer_unproved_approval = _attempt(
+    newer_approval = _attempt(
         id=912,
         created_at="2026-08-18T00:00:02Z",
         oa_process_instance_id="process",
@@ -710,8 +732,8 @@ def test_group_keeps_confirmed_comment_when_newer_generic_success_cannot_prove_a
     )
 
     assert (
-        _resolve_group([older_comment, newer_unproved_approval])
-        is ApprovalHistoryResult.COMMENTED_PENDING
+        _resolve_group([older_comment, newer_approval])
+        is ApprovalHistoryResult.APPROVED
     )
 
 
