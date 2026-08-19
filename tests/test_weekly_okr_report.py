@@ -1026,6 +1026,50 @@ def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):
     assert captured["agent"].idle_timeout_seconds == 900
 
 
+def test_codex_agent_preserves_local_cli_auth(tmp_path, monkeypatch):
+    manager = managers()[0]
+    source = FakeSource()
+    source_path = tmp_path / "live-auth.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "managers": [
+                    {
+                        "manager": {"name": manager.name, "userId": manager.user_id},
+                        "liveOkr": source.fetch_user_okr(
+                            user_id=manager.user_id,
+                            period_label="2026 Q3",
+                        ),
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    agent = CodexWeeklyOkrAgent(workspace=tmp_path)
+    seen = []
+
+    def build_env(*, preserve_local_cli_auth=False):
+        seen.append(preserve_local_cli_auth)
+        return {}
+
+    monkeypatch.setattr(agent.runner, "build_env", build_env)
+    agent.executor = lambda _command, _prompt, _env: json.dumps(
+        _weekly_payload_for(manager.name), ensure_ascii=False
+    )
+
+    agent.analyze(
+        source_path=source_path,
+        managers=[manager],
+        period_label="2026 Q3",
+        week_start=datetime(2026, 8, 17).date(),
+        week_end=datetime(2026, 8, 23).date(),
+    )
+
+    assert seen == [True]
+
+
 def _weekly_payload_for(name):
     return {
         "executive_summary": f"{name}摘要",
