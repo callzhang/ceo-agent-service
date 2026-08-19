@@ -5682,7 +5682,9 @@ def test_history_treats_superseded_blocked_reply_as_skipped(tmp_path: Path):
     assert [item.source_id for item in skipped_items] == [blocked_id]
 
 
-def test_history_groups_approval_retries_under_latest_meaningful_review(tmp_path: Path):
+def test_history_groups_approval_retries_under_latest_attempt_for_filters_and_counts(
+    tmp_path: Path,
+):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     reviewed_id = store.record_reply_attempt(
         conversation_id="oa_pending_scan",
@@ -5710,12 +5712,88 @@ def test_history_groups_approval_retries_under_latest_meaningful_review(tmp_path
         oa_action="review",
         send_status="failed",
     )
+    completed_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-2:first",
+        trigger_sender="Derek OA",
+        trigger_text="合同申请",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-2",
+        oa_task_id="task-2",
+        oa_action="review",
+        send_status="completed",
+    )
+
+    items = store.list_history_items(object_types=("approval",))
+    failed_items = store.list_history_items(
+        object_types=("approval",), send_statuses=("failed",)
+    )
+    needs_human_items = store.list_history_items(
+        object_types=("approval",), send_statuses=("needs_human",)
+    )
+
+    assert len({reviewed_id, failed_retry_id, completed_id}) == 3
+    assert [item.source_id for item in items] == [completed_id, failed_retry_id]
+    assert [item.status for item in items] == ["completed", "failed"]
+    assert [item.source_id for item in failed_items] == [failed_retry_id]
+    assert needs_human_items == []
+    assert store.count_history_items(object_types=("approval",)) == 2
+    assert (
+        store.count_history_items(
+            object_types=("approval",), send_statuses=("failed",)
+        )
+        == 1
+    )
+    assert [
+        item.source_id
+        for item in store.list_history_items(
+            limit=1, offset=0, object_types=("approval",)
+        )
+    ] == [completed_id]
+    assert [
+        item.source_id
+        for item in store.list_history_items(
+            limit=1, offset=1, object_types=("approval",)
+        )
+    ] == [failed_retry_id]
+
+
+def test_history_approval_group_breaks_created_at_ties_with_larger_id(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    older_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-tie:first",
+        trigger_sender="Derek OA",
+        trigger_text="采购申请",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-tie",
+        send_status="commented",
+    )
+    newer_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-tie:retry",
+        trigger_sender="Derek OA",
+        trigger_text="采购申请",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-tie",
+        send_status="failed",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set created_at=? where id in (?, ?)",
+            ("2026-08-19 00:00:00", older_id, newer_id),
+        )
 
     items = store.list_history_items(object_types=("approval",))
 
-    assert failed_retry_id != reviewed_id
-    assert [item.source_id for item in items] == [reviewed_id]
-    assert items[0].status == "needs_human"
+    assert [item.source_id for item in items] == [newer_id]
+    assert items[0].status == "failed"
 
 
 def test_history_keeps_blocked_side_effects_visible_after_terminal_reply(
@@ -6314,9 +6392,20 @@ def test_list_oa_attempt_history_returns_newest_first(tmp_path: Path):
     )
 
     history = store.list_oa_attempt_history("proc-1")
+    histories = store.list_oa_attempt_histories(
+        ["proc-1", "proc-2", "proc-1", "missing", ""]
+    )
 
     assert [attempt.id for attempt in history] == [second_id, first_id]
     assert store.list_oa_attempt_history("") == []
+    assert {
+        process_id: [attempt.id for attempt in attempts]
+        for process_id, attempts in histories.items()
+    } == {
+        "proc-1": [second_id, first_id],
+        "proc-2": [second_id + 1],
+        "missing": [],
+    }
 
 
 def test_backfill_oa_audit_metadata_recovers_completed_agent_scan_attempt(

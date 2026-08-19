@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -12035,14 +12035,7 @@ class AutoReplyStore:
                         from reply_attempts as process_attempts
                         where process_attempts.oa_process_instance_id = reply_attempts.oa_process_instance_id
                           and process_attempts.oa_process_instance_id <> ''
-                        order by
-                            case
-                                when process_attempts.send_status in (
-                                    'completed', 'commented', 'needs_human'
-                                ) then 0
-                                else 1
-                            end,
-                            process_attempts.created_at desc,
+                        order by process_attempts.created_at desc,
                             process_attempts.id desc
                         limit 1
                    )
@@ -12265,12 +12258,44 @@ class AutoReplyStore:
                 select *
                 from reply_attempts
                 where oa_process_instance_id=?
-                order by id desc
+                order by created_at desc, id desc
                 limit ?
                 """,
                 (process_id, max(1, limit)),
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def list_oa_attempt_histories(
+        self, process_instance_ids: Sequence[str]
+    ) -> dict[str, list[ReplyAttempt]]:
+        """Load every attempt for several approval processes in one query."""
+        process_ids = list(
+            dict.fromkeys(
+                process_id.strip()
+                for process_id in process_instance_ids
+                if process_id.strip()
+            )
+        )
+        histories: dict[str, list[ReplyAttempt]] = {
+            process_id: [] for process_id in process_ids
+        }
+        if not process_ids:
+            return histories
+        placeholders = ", ".join("?" for _ in process_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select *
+                from reply_attempts
+                where oa_process_instance_id in ({placeholders})
+                order by oa_process_instance_id, created_at desc, id desc
+                """,
+                process_ids,
+            ).fetchall()
+        for row in rows:
+            attempt = ReplyAttempt.model_validate(dict(row))
+            histories[attempt.oa_process_instance_id].append(attempt)
+        return histories
 
     def backfill_oa_audit_metadata(self) -> int:
         """Recover OA identity for historical agent attempts by exact task key."""
