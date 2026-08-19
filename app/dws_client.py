@@ -488,6 +488,35 @@ class DwsClient:
             "json",
         ]
 
+    def build_read_direct_messages_since_command(
+        self,
+        user_id: str,
+        *,
+        start: str,
+    ) -> list[str]:
+        if not user_id.strip():
+            raise ValueError("direct-message readback requires a user id")
+        if not start.strip():
+            raise ValueError("direct-message readback requires a start time")
+        return [
+            self.dws_bin,
+            "chat",
+            "+chat-messages",
+            "--user",
+            user_id.strip(),
+            "--time",
+            start.strip(),
+            "--direction",
+            "newer",
+            "--page-all",
+            "--page-limit",
+            "10",
+            "--max-results",
+            "200",
+            "--format",
+            "json",
+        ]
+
     def build_search_conversations_command(self, query: str) -> list[str]:
         return [
             self.dws_bin,
@@ -1782,6 +1811,19 @@ class DwsClient:
                 cursor=cursor,
             )
         )
+
+    def read_direct_messages_since(
+        self,
+        user_id: str,
+        *,
+        start: str,
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_read_direct_messages_since_command(user_id, start=start)
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("direct-message readback returned invalid JSON")
+        return payload
 
     def search_messages(
         self,

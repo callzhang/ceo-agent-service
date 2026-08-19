@@ -421,6 +421,47 @@ def _reconcile_unknown_follow_up_attempt(
         )
     if (
         authoritative_state != "sent"
+        and verification.get("state") == "ambiguous"
+        and draft.target_kind == "direct"
+        and attempt_revision == draft.revision
+        and hasattr(dws, "read_direct_messages_since")
+    ):
+        try:
+            readback = dws.read_direct_messages_since(
+                draft.owner_user_id,
+                start=str(attempt.get("claimed_at") or now),
+            )
+            messages = readback.get("messages")
+            complete = readback.get("complete") is True
+            if complete and isinstance(messages, list):
+                expected_text = _follow_up_message_text(store, draft)
+                delivered = any(
+                    isinstance(message, dict)
+                    and str(message.get("text") or "").startswith(expected_text)
+                    for message in messages
+                )
+                verification = {
+                    "state": "sent" if delivered else "failed",
+                    "reason": (
+                        "exact outbound text found in complete direct-message readback"
+                        if delivered
+                        else "exact outbound text absent from complete direct-message readback"
+                    ),
+                    "messages_checked": len(messages),
+                }
+            else:
+                verification = {
+                    "state": "ambiguous",
+                    "reason": "direct-message readback is incomplete",
+                }
+        except Exception as exc:
+            verification = {
+                "state": "ambiguous",
+                "reason": "direct-message readback failed",
+                "error": str(exc),
+            }
+    if (
+        authoritative_state != "sent"
         and isinstance(send_result, dict)
         and hasattr(dws, "verify_message_send_result")
     ):

@@ -1,5 +1,10 @@
 # Changelog
 
+- Reconcile unknown direct follow-up sends with a complete, exact DingTalk
+  conversation readback. A matching outbound message now finalizes delivery;
+  a complete absence releases the same revision for an idempotent retry, while
+  partial or failed reads remain unknown and are never replayed.
+
 - Keep Codex capacity exhaustion recoverable across days. Reply, work-summary,
   and meeting queues no longer spend their business retry limit while waiting
   for capacity; probes back off from 30 minutes to a four-hour ceiling, retain

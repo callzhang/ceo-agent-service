@@ -64,6 +64,9 @@ class FakeDws:
     def get_todo_task(self, task_id):
         return self.todo_payloads.get(task_id, {"id": task_id, "done": False})
 
+    def read_direct_messages_since(self, user_id, *, start):
+        return {"complete": True, "messages": []}
+
 
 def _create_bound_todo(
     store: AutoReplyStore,
@@ -2452,6 +2455,164 @@ def test_unknown_dws_send_outcome_enters_reconciliation_with_stable_uuid(
     assert result["idempotency_uuid"] == dws.sent[0]["idempotency_uuid"]
     assert result["idempotency_uuid"]
     assert attempt["idempotency_uuid"] == result["idempotency_uuid"]
+
+
+def test_unknown_direct_follow_up_is_finalized_from_exact_message_readback(tmp_path):
+    from app.dws_client import DwsError
+
+    class ReadbackDws(FakeDws):
+        def __init__(self):
+            super().__init__()
+            self.readbacks = 0
+            self.expected_text = ""
+
+        def send_message(self, *args, **kwargs):
+            self.sent.append(kwargs)
+            raise DwsError("network interrupted after send", code="1")
+
+        def read_direct_messages_since(self, user_id, *, start):
+            self.readbacks += 1
+            return {
+                "complete": True,
+                "messages": [
+                        {
+                            "createTime": "2026-06-08 10:01:00",
+                            "sender": "磊哥",
+                            "text": self.expected_text,
+                    }
+                ],
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请同步进展",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    dws = ReadbackDws()
+    from app.follow_up import _follow_up_message_text
+
+    dws.expected_text = _follow_up_message_text(
+        store, store.get_follow_up_draft(draft_id)
+    )
+
+    assert process_due_follow_ups(
+        store, dws, now="2026-06-08 02:00:00", auto_send=True
+    ) == 0
+    assert process_due_follow_ups(
+        store, dws, now="2026-06-08 02:16:00", auto_send=True
+    ) == 0
+
+    assert dws.readbacks == 1
+    assert len(dws.sent) == 1
+    assert store.get_follow_up_draft(draft_id).status == "sent"
+    attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id, draft_revision=1
+    )
+    assert attempt["state"] == "sent"
+    assert json.loads(attempt["result_json"])["reconciliation"]["reason"] == (
+        "exact outbound text found in complete direct-message readback"
+    )
+
+
+def test_unknown_direct_follow_up_retries_only_after_complete_absence_readback(
+    tmp_path,
+):
+    from app.dws_client import DwsError
+
+    class ReadbackDws(FakeDws):
+        def __init__(self):
+            super().__init__()
+            self.fail_first_send = True
+
+        def send_message(self, *args, **kwargs):
+            if self.fail_first_send:
+                self.fail_first_send = False
+                self.sent.append(kwargs)
+                raise DwsError("network interrupted before send", code="1")
+            return super().send_message(*args, **kwargs)
+
+        def read_direct_messages_since(self, user_id, *, start):
+            return {"complete": True, "messages": []}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请同步进展",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    dws = ReadbackDws()
+
+    assert process_due_follow_ups(
+        store, dws, now="2026-06-08 02:00:00", auto_send=True
+    ) == 0
+    assert process_due_follow_ups(
+        store, dws, now="2026-06-08 02:16:00", auto_send=True
+    ) == 0
+    retryable = store.get_follow_up_send_attempt(
+        draft_id=draft_id, draft_revision=1
+    )
+    assert retryable["state"] == "retryable"
+    assert json.loads(retryable["result_json"])["reconciliation"]["reason"] == (
+        "exact outbound text absent from complete direct-message readback"
+    )
+
+    assert process_due_follow_ups(
+        store, dws, now="2026-06-08 02:17:00", auto_send=True
+    ) == 1
+    assert len(dws.sent) == 2
+    assert store.get_follow_up_draft(draft_id).status == "sent"
+
+
+def test_unknown_direct_follow_up_stays_unknown_on_partial_message_readback(tmp_path):
+    from app.dws_client import DwsError
+
+    class PartialReadbackDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            self.sent.append(kwargs)
+            raise DwsError("network interrupted after send", code="1")
+
+        def read_direct_messages_since(self, user_id, *, start):
+            return {"complete": False, "messages": []}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请同步进展",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    dws = PartialReadbackDws()
+
+    assert process_due_follow_ups(
+        store, dws, now="2026-06-08 02:00:00", auto_send=True
+    ) == 0
+    assert process_due_follow_ups(
+        store, dws, now="2026-06-08 02:16:00", auto_send=True
+    ) == 0
+
+    attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id, draft_revision=1
+    )
+    assert attempt["state"] == "unknown"
+    assert len(dws.sent) == 1
 
 
 def test_correction_holds_new_revision_while_old_send_outcome_is_unknown(tmp_path):
