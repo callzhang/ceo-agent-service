@@ -464,12 +464,16 @@ def test_codex_runner_can_preserve_native_local_cli_auth_environment(
 ):
     monkeypatch.setenv("LARK_CLI_AUTH_HOME", "/safe/lark-auth")
     monkeypatch.setenv(DWS_AGENT_CODE_ENV, "legacy-agent-code")
+    monkeypatch.setenv("OPENAI_API_KEY", "stale-openai-key")
+    monkeypatch.setenv("CODEX_API_KEY", "stale-codex-key")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     env = runner.build_env(preserve_local_cli_auth=True)
 
     assert env["LARK_CLI_AUTH_HOME"] == "/safe/lark-auth"
     assert DWS_AGENT_CODE_ENV not in env
+    assert "OPENAI_API_KEY" not in env
+    assert "CODEX_API_KEY" not in env
 
 
 def test_codex_runner_inherits_personal_mcp_auth_without_copying_it(
